@@ -1,0 +1,20 @@
+{
+  "name": "auth2",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev:server": "bun run --cwd server dev",
+    "dev:client": "bun run --cwd client dev",
+    "dev": "concurrently \"bun run dev:server\" \"bun run dev:client\""
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/dotenv": "^8.2.3",
+    "@types/node": "^22.14.1",
+    "concurrently": "^9.1.2"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
