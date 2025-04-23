@@ -10,15 +10,27 @@
     "preview": "bunx --bun vite preview"
   },
   "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@radix-ui/react-dialog": "^1.1.11",
+    "@radix-ui/react-label": "^2.1.4",
+    "@radix-ui/react-slot": "^1.2.0",
+    "@supabase/auth-ui-react": "^0.4.7",
+    "@supabase/auth-ui-shared": "^0.1.8",
+    "@supabase/supabase-js": "^2.49.1",
+    "@tailwindcss/vite": "^4.1.4",
+    "@vitejs/plugin-react-swc": "^3.9.0",
+    "class-variance-authority": "^0.7.1",
+    "lucide-react": "^0.503.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-router-dom": "^6.10.0",
+    "tailwind-merge": "^3.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
     "@types/dotenv": "^8.2.3",
     "@types/node": "^22.14.1",
-    "@types/react": "^19.0.10",
-    "@types/react-dom": "^19.0.4",
+    "@types/react": "^18.2.37",
+    "@types/react-dom": "^18.2.15",
     "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^9.22.0",
     "eslint-plugin-react-hooks": "^5.2.0",
@@ -27,5 +39,8 @@
     "typescript": "~5.7.2",
     "typescript-eslint": "^8.26.1",
     "vite": "^6.3.1"
+  },
+  "resolutions": {
+    "@types/react": "^18.2.37"
   }
 }
