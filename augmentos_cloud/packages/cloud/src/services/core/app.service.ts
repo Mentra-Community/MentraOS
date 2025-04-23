@@ -633,6 +633,25 @@ export class AppService {
     return crypto.createHash('sha256').update(apiKey).digest('hex');
   }
 
+  /**
+   * Hash a string using an app's hashed API key
+   * @param stringToHash - String to be hashed
+   * @param packageName - Package name of the app to use its hashed API key
+   * @returns Promise resolving to the resulting hash string
+   */
+  async hashWithApiKey(stringToHash: string, packageName: string): Promise<string> {
+    const app = await App.findOne({ packageName });
+    
+    if (!app || !app.hashedApiKey) {
+      throw new Error(`App ${packageName} not found or has no API key`);
+    }
+    
+    // Create a hash using the provided string and the app's hashed API key
+    return crypto.createHash('sha256')
+      .update(stringToHash)
+      .update(app.hashedApiKey)
+      .digest('hex');
+  }
 
   /**
    * Get apps by developer ID

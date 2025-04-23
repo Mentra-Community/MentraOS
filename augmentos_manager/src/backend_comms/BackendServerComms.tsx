@@ -357,4 +357,37 @@ export default class BackendServerComms {
       throw error; // Re-throw the original error or a new one
     }
   }
+
+  public async hashWithApiKey(stringToHash: string, packageName: string): Promise<string> {
+    if (!this.coreToken) {
+      throw new Error('No core token available for authentication');
+    }
+
+    const url = `${this.serverUrl}/api/auth/hash-with-api-key`;
+    
+    const config: AxiosRequestConfig = {
+      method: 'POST',
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.coreToken}`,
+      },
+      data: {
+        stringToHash,
+        packageName
+      },
+    };
+
+    try {
+      const response = await axios(config);
+      if (response.status === 200 && response.data.success) {
+        return response.data.hash;
+      } else {
+        throw new Error(`Failed to generate hash: ${response.data.error || response.statusText}`);
+      }
+    } catch (error: any) {
+      console.error(`${this.TAG}: Error generating hash:`, error.message || error);
+      throw error;
+    }
+  }
 }

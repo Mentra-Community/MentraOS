@@ -56,6 +56,15 @@ const AppWebView: React.FC<AppWebViewProps> = ({ route, navigation, isDarkTheme,
     }
   }, [navigation, fromSettings, packageName, appName, isDarkTheme]);
 
+  function determineCloudUrl():string|undefined {
+    const cloudHostName = process.env.CLOUD_PUBLIC_HOST_NAME || process.env.CLOUD_HOST_NAME || process.env.AUGMENTOS_HOST;
+    if (cloudHostName && cloudHostName.trim() !== 'prod.augmentos.cloud' && cloudHostName.trim() !== 'cloud' && cloudHostName.includes('.')) {
+      console.log(`For TPA webview token verification, using cloud host name: ${cloudHostName}`);
+      return `https://${cloudHostName}`;
+    }
+    return undefined;
+  }
+
   // Theme colors
   const theme = {
     backgroundColor: isDarkTheme ? '#1c1c1c' : '#f9f9f9',
@@ -88,10 +97,17 @@ const AppWebView: React.FC<AppWebViewProps> = ({ route, navigation, isDarkTheme,
       try {
         const backendComms = BackendServerComms.getInstance();
         const tempToken = await backendComms.generateWebviewToken(packageName);
+        const cloudApiUrl = determineCloudUrl();
 
         // Construct final URL
         const url = new URL(webviewURL);
         url.searchParams.set('aos_temp_token', tempToken);
+        if (cloudApiUrl) {
+          const checksum = await backendComms.hashWithApiKey(cloudApiUrl, packageName);
+          url.searchParams.set('cloudApiUrl', cloudApiUrl);
+          url.searchParams.set('cloudApiUrlChecksum', checksum);
+        }
+
         setFinalUrl(url.toString());
         console.log(`Constructed final webview URL: ${url.toString()}`);
 

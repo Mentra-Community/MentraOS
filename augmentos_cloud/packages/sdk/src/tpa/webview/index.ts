@@ -130,6 +130,14 @@ function verifySession(token: string, secret: string, maxAge?: number): string |
   }
 }
 
+function validateCloudApiUrlChecksum(checksum: string, cloudApiUrl: string, apiKey: string): boolean {
+  const hashedApiKey = crypto.createHash('sha256').update(apiKey).digest('hex');
+  const expectedChecksum = crypto.createHash('sha256').update(cloudApiUrl)
+    .update(hashedApiKey)
+    .digest('hex');
+
+  return expectedChecksum === checksum;
+}
 /**
  * Express middleware for automatically handling the token exchange.
  * Assumes API key and Cloud URL are available (e.g., via environment variables).
@@ -144,7 +152,6 @@ function verifySession(token: string, secret: string, maxAge?: number): string |
  * @param options.cookieOptions Options for the session cookie (default: { httpOnly: true, secure: process.env.NODE_ENV === 'production' }).
  */
 export function createAuthMiddleware(options: {
-  cloudApiUrl: string;
   apiKey: string;
   packageName: string;
   tokenQueryParam?: string;
@@ -159,7 +166,6 @@ export function createAuthMiddleware(options: {
   };
 }) {
   const { 
-    cloudApiUrl, 
     apiKey, 
     packageName,
     tokenQueryParam = 'aos_temp_token',
@@ -174,8 +180,8 @@ export function createAuthMiddleware(options: {
     }
   } = options;
 
-  if (!cloudApiUrl || !apiKey) {
-    throw new Error("Cloud API URL and API Key are required for the auth middleware.");
+  if (!apiKey) {
+    throw new Error("API Key are required for the auth middleware.");
   }
 
   if (!cookieSecret || typeof cookieSecret !== 'string' || cookieSecret.length < 8) {
@@ -189,6 +195,19 @@ export function createAuthMiddleware(options: {
     // If temporary token exists, authenticate with it
     if (tempToken) {
       try {
+        let cloudApiUrl = `https://prod.augmentos.cloud`;
+        const cloudApiUrlFromQuery = req.query['cloudApiUrl'] as string;
+        if (cloudApiUrlFromQuery) {
+          const cloudApiUrlChecksum = req.query['cloudApiUrlChecksum'] as string;
+
+          if (validateCloudApiUrlChecksum(cloudApiUrlChecksum, cloudApiUrlFromQuery, apiKey)) {
+            console.log(`Cloud API is being routed to alternate url at request of the server: ${cloudApiUrlFromQuery}`);
+            cloudApiUrl = cloudApiUrlFromQuery;
+          } else {
+            console.error(`Server requested alternate cloud url of ${cloudApiUrlFromQuery} but the checksum is invalid (checksum: ${cloudApiUrlChecksum}).  Using default cloud url of ${cloudApiUrl} instead.`);
+          }
+        }
+
         const { userId } = await exchangeToken(cloudApiUrl, tempToken, apiKey, packageName);
         
         // Set the user ID on the request

@@ -7,6 +7,7 @@ import { validateCoreToken } from '../middleware/supabaseMiddleware';
 import { tokenService } from '../services/core/temp-token.service';
 import { validateTpaApiKey } from '../middleware/validateApiKey';
 import { logger } from '@augmentos/utils';
+import appService from '../services/core/app.service';
 
 const router = express.Router();
 
@@ -81,6 +82,23 @@ router.post('/exchange-user-token', validateTpaApiKey, async (req: Request, res:
   } catch (error) {
     logger.error(`Error exchanging webview token ${aos_temp_token} for ${packageName}:`, error);
     res.status(500).json({ success: false, error: 'Failed to exchange token' });
+  }
+});
+
+// Create a hash with the app's hashed API key
+router.post('/hash-with-api-key', validateCoreToken, async (req: Request, res: Response) => {
+  const { stringToHash, packageName } = req.body;
+
+  if (!stringToHash || !packageName) {
+    return res.status(400).json({ success: false, error: 'stringToHash and packageName are required' });
+  }
+
+  try {
+    const hash = await appService.hashWithApiKey(stringToHash, packageName);
+    res.json({ success: true, hash });
+  } catch (error) {
+    logger.error(`Error hashing string for package ${packageName}:`, error);
+    res.status(500).json({ success: false, error: 'Failed to generate hash' });
   }
 });
 
