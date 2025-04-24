@@ -43,6 +43,7 @@ router.post('/generate-webview-token', validateCoreToken, async (req: Request, r
   res.json({ success: true, token: result.token });
 });
 
+
 // Exchange a temporary token for user details (called by TPA backend)
 router.post('/exchange-user-token', validateTpaApiKey, async (req: Request, res: Response) => {
   const { aos_temp_token, packageName } = req.body;
@@ -62,6 +63,7 @@ router.post('/exchange-user-token', validateTpaApiKey, async (req: Request, res:
   }
   
   res.json({ success: true, userId: result.userId });
+
 });
 
 export default router;

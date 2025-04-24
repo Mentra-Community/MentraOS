@@ -1,8 +1,8 @@
 // src/services/core/token.service.ts
 import crypto from 'crypto';
-import { TempToken, ITempToken } from '../models/temp-token.model';
+import { TempToken, type ITempToken } from '../models/temp-token.model';
 import { logger } from '@augmentos/utils';
-import App, { AppI } from '@augmentos/cloud/src/models/app.model';
+import App, { type AppI } from '@augmentos/cloud/src/models/app.model';
 
 export class TokenService {
   /**

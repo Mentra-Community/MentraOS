@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const exchangeForCoreToken = useCallback(async (supabaseToken: string) => {
     try {
       // Call the server endpoint instead of using authService directly
-      const response = await axios.post('/exchange-token', { 
+      const response = await axios.post('/api/exchange-token', { 
         supabaseToken 
       });
       

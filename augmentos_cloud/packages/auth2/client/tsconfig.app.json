@@ -23,5 +23,5 @@
     "noUncheckedSideEffectImports": true,
     "types": ["dotenv"]
   },
-  "include": ["src"]
+  "include": ["src", "vite.config.ts"]
 }
