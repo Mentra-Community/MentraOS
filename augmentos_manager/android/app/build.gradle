@@ -133,6 +133,9 @@ dependencies {
     //implementation "androidx.lifecycle:lifecycle-process:2.5.1" // Use the version appropriate for your project
 
     implementation project(':react-native-config')
+
+    // Added based on user feedback - Corrected filename
+    implementation files('libs/ffmpeg-kit-full-6.0-2.LTS.aar')
 }
 
 // Include custom vector icons fonts from react-native-vector-icons
