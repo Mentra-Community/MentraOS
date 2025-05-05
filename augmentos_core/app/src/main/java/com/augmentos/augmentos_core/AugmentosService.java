@@ -687,16 +687,6 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
                             6
                     );
 
-                    if (alwaysOnStatusBarEnabled) {
-                        // BATTERY OPTIMIZATION: Use the existing handler instead of creating a new one
-                        uiHandler.postDelayed(() ->
-                                smartGlassesManager.windowManager.showAppLayer(
-                                    "serverappid",
-                                    () -> smartGlassesManager.sendTextWall(cachedDashboardTopLine),
-                                    0
-                            ), 3000); // Delay of 3 seconds
-                    }
-
                     // Set isInitializing to false after booting sequence is finished, with 100ms delay
                     uiHandler.postDelayed(() -> isInitializing = false, 500);
                     return; // Stop looping
@@ -855,23 +845,13 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
                 case "empty":
                     return () -> smartGlassesManager.sendTextWall(cachedDashboardTopLine);
                 case "reference_card":
-                    if (alwaysOnStatusBarEnabled && cachedDashboardTopLine != null
-                            && !layout.getString("title").contains("AugmentOS")) {
-                        title = layout.getString("title") + " | " + cachedDashboardTopLine;
-                    } else {
-                        title = layout.getString("title");
-                    }
+                    title = layout.getString("title");
                     text = layout.getString("text");
                     return () -> smartGlassesManager.sendReferenceCard(title, text);
                 case "text_wall":
                 case "text_line": // This assumes that the dashboard doesn't use textwall layout
                     text = layout.getString("text");
-                    if (alwaysOnStatusBarEnabled && cachedDashboardTopLine != null) {
-                        String finalText = cachedDashboardTopLine + "\n" + text;
-                        return () -> smartGlassesManager.sendTextWall(finalText);
-                    } else {
-                        return () -> smartGlassesManager.sendTextWall(text);
-                    }
+                    return () -> smartGlassesManager.sendTextWall(text);
                 case "double_text_wall":
                     String topText = layout.getString("topText");
                     String bottomText = layout.getString("bottomText");
@@ -1087,7 +1067,6 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             coreInfo.put("bypass_vad_for_debugging", SmartGlassesManager.getBypassVadForDebugging(this));
             coreInfo.put("bypass_audio_encoding_for_debugging", SmartGlassesManager.getBypassAudioEncodingForDebugging(this));
             coreInfo.put("contextual_dashboard_enabled", this.contextualDashboardEnabled);
-            coreInfo.put("always_on_status_bar_enabled", this.alwaysOnStatusBarEnabled);
             coreInfo.put("force_core_onboard_mic", SmartGlassesManager.getForceCoreOnboardMic(this));
             coreInfo.put("default_wearable", SmartGlassesManager.getPreferredWearable(this));
             coreInfo.put("is_mic_enabled_for_frontend", isMicEnabledForFrontend);
@@ -1176,13 +1155,6 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             @Override
             public void onConnectionAck() {
                 serverCommsHandler.postDelayed(() -> locationSystem.sendLocationToServer(), 500);
-                if (alwaysOnStatusBarEnabled) {
-                    smartGlassesManager.windowManager.showAppLayer(
-                            "serverappid",
-                            () -> smartGlassesManager.sendTextWall(cachedDashboardTopLine),
-                            0
-                    );
-                }
             }
             @Override
             public void onAppStateChange(List<ThirdPartyCloudApp> appList) {
@@ -1214,11 +1186,6 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
                 cachedDashboardDisplayObject = dashboardDisplayData;
                 // Parse the top line for logging/debugging
                 cachedDashboardTopLine = parseDashboardTopLine(dashboardDisplayData);
-
-                if (alwaysOnStatusBarEnabled) {
-                    onDisplayEvent(cachedDisplayData);
-//                    Log.d("AugmentosService", "Dashboard display event received: " + dashboardDisplayData.toString());
-                }
 
                 // Create the runnable as before
                 cachedDashboardDisplayRunnable = parseDisplayEventMessage(dashboardDisplayData);
@@ -1440,19 +1407,19 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
 
     @Override
     public void setAlwaysOnStatusBarEnabled(boolean alwaysOnStatusBarEnabled) {
-        if (alwaysOnStatusBarEnabled) {
-            smartGlassesManager.windowManager.showAppLayer(
-                    "serverappid",
-                    () -> smartGlassesManager.sendTextWall(cachedDashboardTopLine),
-                    0
-            );
-        }
-        else {
-            EventBus.getDefault().post(new HomeScreenEvent());
-        }
+        // if (alwaysOnStatusBarEnabled) {
+        //     smartGlassesManager.windowManager.showAppLayer(
+        //             "serverappid",
+        //             () -> smartGlassesManager.sendTextWall(cachedDashboardTopLine),
+        //             0
+        //     );
+        // }
+        // else {
+        //     EventBus.getDefault().post(new HomeScreenEvent());
+        // }
 
-        saveAlwaysOnStatusBarEnabled(alwaysOnStatusBarEnabled);
-        this.alwaysOnStatusBarEnabled = alwaysOnStatusBarEnabled;
+        // saveAlwaysOnStatusBarEnabled(alwaysOnStatusBarEnabled);
+        // this.alwaysOnStatusBarEnabled = alwaysOnStatusBarEnabled;
     }
 
     public boolean getContextualDashboardEnabled() {

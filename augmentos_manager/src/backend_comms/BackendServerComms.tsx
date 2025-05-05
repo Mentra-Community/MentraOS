@@ -433,4 +433,77 @@ export default class BackendServerComms {
       throw error;
     }
   }
+
+  /**
+   * Update the always on status bar setting in the cloud
+   * @param isEnabled Whether the always on status bar should be enabled
+   * @returns Response from the server
+   */
+  public async updateAlwaysOnStatusBar(isEnabled: boolean): Promise<any> {
+    if (!this.coreToken) {
+      throw new Error('No core token available for authentication');
+    }
+
+    const url = `${this.serverUrl}/apps/settings/always-on-statusbar`;
+    console.log('Updating always on status bar setting:', isEnabled);
+
+    const config: AxiosRequestConfig = {
+      method: 'POST',
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.coreToken}`,
+      },
+      data: { isEnabled },
+    };
+
+    try {
+      const response = await axios(config);
+      if (response.status === 200 && response.data) {
+        console.log('Always on status bar setting updated successfully:', isEnabled);
+        return response.data;
+      } else {
+        throw new Error(`Bad response: ${response.statusText}`);
+      }
+    } catch (error: any) {
+      console.error('Error updating always on status bar setting:', error.message || error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the always on status bar setting from the cloud
+   * @returns The status bar setting from the server
+   */
+  public async getAlwaysOnStatusBar(): Promise<boolean> {
+    if (!this.coreToken) {
+      throw new Error('No core token available for authentication');
+    }
+
+    const url = `${this.serverUrl}/apps/settings/always-on-statusbar`;
+    console.log('Fetching always on status bar setting');
+
+    const config: AxiosRequestConfig = {
+      method: 'GET',
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.coreToken}`,
+      },
+    };
+
+    try {
+      const response = await axios(config);
+      if (response.status === 200 && response.data && response.data.success) {
+        const isEnabled = response.data.data?.isEnabled || false;
+        console.log('Always on status bar setting retrieved:', isEnabled);
+        return isEnabled;
+      } else {
+        throw new Error(`Bad response: ${response.statusText}`);
+      }
+    } catch (error: any) {
+      console.error('Error getting always on status bar setting:', error.message || error);
+      throw error;
+    }
+  }
 }

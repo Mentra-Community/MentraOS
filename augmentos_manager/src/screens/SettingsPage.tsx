@@ -22,6 +22,7 @@ import { SETTINGS_KEYS } from '../consts';
 import { supabase } from '../supabaseClient';
 import { requestFeaturePermissions, PermissionFeatures } from '../logic/PermissionsUtils';
 import showAlert from '../utils/AlertUtils';
+import BackendServerComms from '../backend_comms/BackendServerComms';
 
 interface SettingsPageProps {
   isDarkTheme: boolean;
@@ -57,8 +58,34 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
     status.core_info.force_core_onboard_mic,
   );
   const [isAlwaysOnStatusBarEnabled, setIsAlwaysOnStatusBarEnabled] = useState(
-    status.core_info.always_on_status_bar_enabled,
+    false,
   );
+
+  // Fetch always-on status bar setting from the server when component loads
+  useEffect(() => {
+    const fetchAlwaysOnStatusBar = async () => {
+      try {
+        const backendComms = BackendServerComms.getInstance();
+        const isEnabled = await backendComms.getAlwaysOnStatusBar();
+        // Only update if different from current state to avoid extra renders
+        if (isEnabled !== isAlwaysOnStatusBarEnabled) {
+          setIsAlwaysOnStatusBarEnabled(isEnabled);
+          // Also sync with core if there's a mismatch
+          // if (isEnabled !== status.core_info.always_on_status_bar_enabled) {
+          //   await coreCommunicator.sendToggleAlwaysOnStatusBar(isEnabled);
+          // }
+        }
+      } catch (error) {
+        console.error('Error fetching always-on status bar setting:', error);
+        // Fall back to local state if server fetch fails
+      }
+    };
+
+    // Only try to fetch if there's likely an active session
+    if (status.core_info.puck_connected) {
+      fetchAlwaysOnStatusBar();
+    }
+  }, [status.core_info.puck_connected]);
 
   // -- Handlers for toggles, etc. --
   const toggleSensing = async () => {
@@ -96,7 +123,21 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const toggleAlwaysOnStatusBar = async () => {
     const newVal = !isAlwaysOnStatusBarEnabled;
-    await coreCommunicator.sendToggleAlwaysOnStatusBar(newVal);
+    
+    // Send to core service (this will update the glasses)
+    // await coreCommunicator.sendToggleAlwaysOnStatusBar(newVal);
+    
+    // Also send to cloud via BackendServerComms
+    try {
+      const backendComms = BackendServerComms.getInstance();
+      await backendComms.updateAlwaysOnStatusBar(newVal);
+      console.log('Successfully updated always-on status bar setting in cloud');
+    } catch (error) {
+      console.error('Error updating always-on status bar setting in cloud:', error);
+      // Continue with local update even if cloud update fails
+    }
+    
+    // Update the UI state
     setIsAlwaysOnStatusBarEnabled(newVal);
   };
 
