@@ -30,6 +30,11 @@ interface UserDocument extends Document {
     description?: string;
     logo?: string;
   };
+  OSSettings?: {
+    brightness?: number;
+    volume?: number;
+    alwaysOnStatusBar?: boolean;
+  };
 
   setLocation(location: Location): Promise<void>;
   addRunningApp(appName: string): Promise<void>;
@@ -43,6 +48,9 @@ interface UserDocument extends Document {
   installApp(packageName: string): Promise<void>;
   uninstallApp(packageName: string): Promise<void>;
   isAppInstalled(packageName: string): boolean;
+  
+  // Method for updating OS settings
+  updateOSSettings(settings: Partial<{ brightness: number; volume: number; alwaysOnStatusBar: boolean }>): Promise<void>;
 }
 
 const InstalledAppSchema = new Schema({
@@ -140,6 +148,15 @@ const UserSchema = new Schema<UserDocument>({
       },
       message: 'Installed apps must be unique'
     }
+  },
+  
+  OSSettings: {
+    type: {
+      brightness: { type: Number, min: 0, max: 100, default: 50 },
+      volume: { type: Number, min: 0, max: 100, default: 50 },
+      alwaysOnStatusBar: { type: Boolean, default: false }
+    },
+    default: { brightness: 50, volume: 50, alwaysOnStatusBar: false }
   }
 }, {
   timestamps: true,
@@ -288,6 +305,23 @@ UserSchema.methods.getAppSettings = function (this: UserDocument, appName: strin
 
 UserSchema.methods.isAppRunning = function (this: UserDocument, appName: string): boolean {
   return this.runningApps.includes(appName);
+};
+
+// Add a method to update OS settings
+UserSchema.methods.updateOSSettings = async function(
+  this: UserDocument, 
+  settings: Partial<{ brightness: number; volume: number; alwaysOnStatusBar: boolean }>
+): Promise<void> {
+  if (!this.OSSettings) {
+    this.OSSettings = { brightness: 50, volume: 50, alwaysOnStatusBar: false };
+  }
+  
+  // Update only provided settings
+  if (settings.brightness !== undefined) this.OSSettings.brightness = settings.brightness;
+  if (settings.volume !== undefined) this.OSSettings.volume = settings.volume;
+  if (settings.alwaysOnStatusBar !== undefined) this.OSSettings.alwaysOnStatusBar = settings.alwaysOnStatusBar;
+  
+  await this.save();
 };
 
 // --- Static Methods ---

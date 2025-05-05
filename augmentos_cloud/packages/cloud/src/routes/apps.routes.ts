@@ -743,11 +743,34 @@ async function getAvailableApps (req: Request, res: Response) {
 async function getAlwaysOnStatusBar(req: Request, res: Response) {
   try {
     const session = (req as any).userSession;
+    let isAlwaysOnStatusBarEnabled = false;
     
-    // Get the always on status bar setting from the session
-    const isAlwaysOnStatusBarEnabled = session.OSSettings?.alwaysOnStatusBar !== undefined 
-      ? session.OSSettings.alwaysOnStatusBar 
-      : false;
+    // Try to get the setting from the database first
+    try {
+      const user = await User.findByEmail(session.userId);
+      if (user && user.OSSettings) {
+        isAlwaysOnStatusBarEnabled = !!user.OSSettings.alwaysOnStatusBar;
+        session.logger.info(`[apps.routes]: Retrieved alwaysOnStatusBar setting from database: ${isAlwaysOnStatusBarEnabled}`);
+        
+        // Update session with the database value to ensure consistency
+        if (!session.OSSettings) {
+          session.OSSettings = { brightness: 50, volume: 50, alwaysOnStatusBar: isAlwaysOnStatusBarEnabled };
+        } else {
+          session.OSSettings.alwaysOnStatusBar = isAlwaysOnStatusBarEnabled;
+        }
+      } else {
+        // Fall back to session value if database lookup fails
+        isAlwaysOnStatusBarEnabled = session.OSSettings?.alwaysOnStatusBar !== undefined 
+          ? session.OSSettings.alwaysOnStatusBar 
+          : false;
+      }
+    } catch (error) {
+      session.logger.error(`[apps.routes]: Error retrieving alwaysOnStatusBar from database:`, error);
+      // Fall back to session value if database lookup fails
+      isAlwaysOnStatusBarEnabled = session.OSSettings?.alwaysOnStatusBar !== undefined 
+        ? session.OSSettings.alwaysOnStatusBar 
+        : false;
+    }
     
     res.json({
       success: true,
@@ -782,8 +805,22 @@ async function updateAlwaysOnStatusBar(req: Request, res: Response) {
       session.OSSettings = { brightness: 50, volume: 50 };
     }
     
-    // Update the always on status bar setting
+    // Update the always on status bar setting in session
     session.OSSettings.alwaysOnStatusBar = !!isEnabled;
+    
+    // Also update the setting in the database
+    try {
+      const user = await User.findByEmail(session.userId);
+      if (user) {
+        await user.updateOSSettings({ alwaysOnStatusBar: !!isEnabled });
+        session.logger.info(`[apps.routes]: Updated alwaysOnStatusBar setting in database to ${!!isEnabled}`);
+      } else {
+        session.logger.warn(`[apps.routes]: User ${session.userId} not found in database to update alwaysOnStatusBar`);
+      }
+    } catch (error) {
+      session.logger.error(`[apps.routes]: Error updating alwaysOnStatusBar in database:`, error);
+      // Continue with success response as session update was successful
+    }
     
     // Generate app state change to return
     const appStateChange = await webSocketService.generateAppStateStatus(session);

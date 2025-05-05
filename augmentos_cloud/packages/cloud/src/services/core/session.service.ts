@@ -18,6 +18,7 @@ import { AudioWriter } from "../debug/audio-writer";
 import { systemApps } from './system-apps';
 import { SubscriptionManager } from './subscription.manager'; // Import the new manager
 import { Logger } from 'winston';
+import { User } from '../../models/user.model';
 
 const RECONNECT_GRACE_PERIOD_MS = 1000 * 30; // 30 seconds
 const LOG_AUDIO = false;
@@ -98,6 +99,21 @@ export class SessionService {
       // Ensure installedApps are fresh if reusing
       existingSession.installedApps = await appService.getAllApps(userId);
 
+      // Update user settings from database
+      try {
+        const user = await User.findByEmail(userId);
+        if (user && user.OSSettings) {
+          existingSession.OSSettings = {
+            brightness: user.OSSettings.brightness || 50,
+            volume: user.OSSettings.volume || 50,
+            alwaysOnStatusBar: user.OSSettings.alwaysOnStatusBar || false
+          };
+          existingSession.logger.info(`[session.service]: Updated session OSSettings from user database record`);
+        }
+      } catch (error) {
+        existingSession.logger.error(`[session.service]: Error loading OSSettings from database:`, error);
+      }
+
       return existingSession;
     }
 
@@ -105,6 +121,22 @@ export class SessionService {
     const sessionId = userId;
     const sessionLogger = createLoggerForUserSession(sessionId);
     const installedApps = await appService.getAllApps(userId); // Fetch apps first
+
+    // Try to get user settings from database
+    let userOSSettings = { brightness: 50, volume: 50, alwaysOnStatusBar: false };
+    try {
+      const user = await User.findByEmail(userId);
+      if (user && user.OSSettings) {
+        userOSSettings = {
+          brightness: user.OSSettings.brightness || 50,
+          volume: user.OSSettings.volume || 50,
+          alwaysOnStatusBar: user.OSSettings.alwaysOnStatusBar || false
+        };
+        sessionLogger.info(`[session.service]: Loaded OSSettings from user database record`);
+      }
+    } catch (error) {
+      sessionLogger.error(`[session.service]: Error loading OSSettings from database:`, error);
+    }
 
     // Create partial session first to pass to manager constructor
     const partialSession: Partial<ExtendedUserSession> = {
@@ -117,7 +149,7 @@ export class SessionService {
       transcriptionStreams: new Map<string, ASRStreamInstance>(),
       loadingApps: new Set<string>(),
       appConnections: new Map<string, WebSocket | any>(),
-      OSSettings: { brightness: 50, volume: 50 },
+      OSSettings: userOSSettings, // Use the settings fetched from database
       displayManager: new DisplayManager(),
       transcript: { 
         segments: [],
