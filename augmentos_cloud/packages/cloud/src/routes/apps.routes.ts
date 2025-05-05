@@ -737,10 +737,86 @@ async function getAvailableApps (req: Request, res: Response) {
   }
 };
 
+/**
+ * Get always on status bar setting
+ */
+async function getAlwaysOnStatusBar(req: Request, res: Response) {
+  try {
+    const session = (req as any).userSession;
+    
+    // Get the always on status bar setting from the session
+    const isAlwaysOnStatusBarEnabled = session.OSSettings?.alwaysOnStatusBar !== undefined 
+      ? session.OSSettings.alwaysOnStatusBar 
+      : false;
+    
+    res.json({
+      success: true,
+      data: { isEnabled: isAlwaysOnStatusBarEnabled }
+    });
+  } catch (error) {
+    console.error('Error fetching always on status bar setting:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching always on status bar setting'
+    });
+  }
+}
+
+/**
+ * Update always on status bar setting
+ */
+async function updateAlwaysOnStatusBar(req: Request, res: Response) {
+  try {
+    const session = (req as any).userSession;
+    const { isEnabled } = req.body;
+    
+    if (isEnabled === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'isEnabled parameter is required'
+      });
+    }
+    
+    // Initialize OSSettings if it doesn't exist
+    if (!session.OSSettings) {
+      session.OSSettings = { brightness: 50, volume: 50 };
+    }
+    
+    // Update the always on status bar setting
+    session.OSSettings.alwaysOnStatusBar = !!isEnabled;
+    
+    // Generate app state change to return
+    const appStateChange = await webSocketService.generateAppStateStatus(session);
+    
+    res.json({
+      success: true,
+      data: { 
+        isEnabled: !!isEnabled,
+        appState: appStateChange 
+      }
+    });
+    
+    // If the session has a websocket connection, also send the update there
+    if (session.websocket && session.websocket.readyState === 1) {
+      session.websocket.send(JSON.stringify(appStateChange));
+    }
+  } catch (error) {
+    console.error('Error updating always on status bar setting:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating always on status bar setting'
+    });
+  }
+}
+
 // Route Definitions
 router.get('/', getAllApps);
 router.get('/public', getPublicApps);
 router.get('/search', searchApps);
+
+// Always on status bar endpoints
+router.get('/settings/always-on-statusbar', sessionAuthMiddleware, getAlwaysOnStatusBar);
+router.post('/settings/always-on-statusbar', sessionAuthMiddleware, updateAlwaysOnStatusBar);
 
 // App store operations - use dual-mode auth (work with or without active sessions)
 router.get('/installed', dualModeAuthMiddleware, getInstalledApps);

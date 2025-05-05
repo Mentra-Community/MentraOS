@@ -64,7 +64,7 @@ export interface ExtendedUserSession extends UserSession {
   transcriptionStreams: Map<string, ASRStreamInstance>;
   isTranscribing: boolean;
   loadingApps: Set<string>;
-  OSSettings: { brightness: number, volume: number };
+  OSSettings: { brightness: number, volume: number, alwaysOnStatusBar?: boolean };
   appConnections: Map<string, WebSocket | any>; // Consider stricter type if possible
   installedApps: AppI[]; // Add type from SDK
 
