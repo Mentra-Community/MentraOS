@@ -1,7 +1,7 @@
 "on":
     push:
         branches:
-            - isaiah/dm
+            - isaiah/dm3
 name: 🚀 [debug] Porter.run Deploy
 jobs:
     porter-deploy:
