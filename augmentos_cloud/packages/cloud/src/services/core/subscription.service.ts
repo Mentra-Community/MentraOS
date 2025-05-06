@@ -22,6 +22,16 @@ interface SubscriptionHistory {
 }
 
 /**
+ * Location data structure
+ */
+interface Location {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timestamp: Date;
+}
+
+/**
  * Implementation of the subscription management service.
  * Design decisions:
  * 1. In-memory storage for fast access
@@ -49,6 +59,12 @@ export class SubscriptionService {
   private lastCalendarEventCache = new Map<string, CalendarEvent>();
 
   /**
+   * Cache for the last location per session
+   * @private
+   */
+  private lastLocationCache = new Map<string, Location>();
+
+  /**
    * Caches the last calendar event for a session
    * @param sessionId - User session identifier
    * @param event - Calendar event to cache
@@ -65,6 +81,25 @@ export class SubscriptionService {
    */
   getLastCalendarEvent(sessionId: string): CalendarEvent | undefined {
     return this.lastCalendarEventCache.get(sessionId);
+  }
+
+  /**
+   * Caches the last location for a session
+   * @param sessionId - User session identifier
+   * @param location - Location to cache
+   */
+  cacheLocation(sessionId: string, location: Location): void {
+    this.lastLocationCache.set(sessionId, location);
+    logger.info(`Cached location for session ${sessionId}`);
+  }
+
+  /**
+   * Gets the last cached location for a session
+   * @param sessionId - User session identifier
+   * @returns The last location or undefined if none exists
+   */
+  getLastLocation(sessionId: string): Location | undefined {
+    return this.lastLocationCache.get(sessionId);
   }
 
   /**
@@ -255,6 +290,9 @@ export class SubscriptionService {
 
     // Remove cached calendar event for this session
     this.lastCalendarEventCache.delete(sessionId);
+    
+    // Remove cached location for this session
+    this.lastLocationCache.delete(sessionId);
 
     logger.info(`Removed subscription history for session ${sessionId} (${keysToRemove.length} entries)`);
   }

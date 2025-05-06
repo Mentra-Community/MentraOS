@@ -733,6 +733,7 @@ export class WebSocketService {
   /**
    * 🥳🤓 Handles new glasses client connections.
    * @param ws - WebSocket connection
+   * @param request - Incoming message
    * @private
    */
   private async handleGlassesConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
@@ -1083,6 +1084,14 @@ export class WebSocketService {
         case GlassesToCloudMessageType.LOCATION_UPDATE: {
           const locationUpdate = message as LocationUpdate;
           try {
+            console.log("🔥🔥🔥: Received location update from glasses:", locationUpdate);
+            // Cache the location update in subscription service
+            subscriptionService.cacheLocation(userSession.sessionId, {
+              latitude: locationUpdate.lat,
+              longitude: locationUpdate.lng,
+              timestamp: new Date()
+            });
+            
             const user = await User.findByEmail(userSession.userId);
             if (user) {
               await user.setLocation(locationUpdate);
@@ -1195,6 +1204,11 @@ export class WebSocketService {
                 !subscriptionService.hasSubscription(userSessionId, message.packageName, StreamType.CALENDAR_EVENT) &&
                 subMessage.subscriptions.includes(StreamType.CALENDAR_EVENT);
 
+              // Check if the app is newly subscribing to location updates
+              const isNewLocationSubscription = 
+                !subscriptionService.hasSubscription(userSessionId, message.packageName, StreamType.LOCATION_UPDATE) &&
+                subMessage.subscriptions.includes(StreamType.LOCATION_UPDATE);
+
               // Update subscriptions
               subscriptionService.updateSubscriptions(
                 userSessionId,
@@ -1252,6 +1266,36 @@ export class WebSocketService {
                       sessionId: tpaSessionId,
                       streamType: StreamType.CALENDAR_EVENT,
                       data: lastCalendarEvent,
+                      timestamp: new Date()
+                    };
+                    tpaWs.send(JSON.stringify(dataStream));
+                  }
+                }
+              }
+
+              // Send cached location if app just subscribed to location updates
+              if (isNewLocationSubscription) {
+                console.log("🔥🔥🔥: isNewLocationSubscription:", isNewLocationSubscription);
+                const lastLocation = subscriptionService.getLastLocation(userSessionId);
+                if (lastLocation) {
+                  userSession.logger.info(`Sending cached location to newly subscribed app ${message.packageName}`);
+                  const tpaSessionId = `${userSessionId}-${message.packageName}`;
+                  const tpaWs = userSession.appConnections.get(message.packageName);
+                  
+                  if (tpaWs && tpaWs.readyState === WebSocket.OPEN) {
+                    const locationUpdate: LocationUpdate = {
+                      type: GlassesToCloudMessageType.LOCATION_UPDATE,
+                      sessionId: tpaSessionId,
+                      lat: lastLocation.latitude,
+                      lng: lastLocation.longitude,
+                      timestamp: new Date()
+                    };
+                    
+                    const dataStream: DataStream = {
+                      type: CloudToTpaMessageType.DATA_STREAM,
+                      sessionId: tpaSessionId,
+                      streamType: StreamType.LOCATION_UPDATE,
+                      data: locationUpdate,
                       timestamp: new Date()
                     };
                     tpaWs.send(JSON.stringify(dataStream));
@@ -1504,6 +1548,30 @@ export class WebSocketService {
             timestamp: new Date()
           };
           this.broadcastToTpa(userSessionId, StreamType.LOCATION_UPDATE, locationUpdate);
+        }
+      }
+      
+      // Send cached location to any app that subscribes to location updates
+      if (subscriptionService.hasSubscription(userSessionId, initMessage.packageName, StreamType.LOCATION_UPDATE)) {
+        const lastLocation = subscriptionService.getLastLocation(userSessionId);
+        if (lastLocation) {
+          userSession.logger.info(`Sending cached location to app ${initMessage.packageName} on connect`);
+          const locationUpdate: LocationUpdate = {
+            type: GlassesToCloudMessageType.LOCATION_UPDATE,
+            sessionId: initMessage.sessionId,
+            lat: lastLocation.latitude,
+            lng: lastLocation.longitude,
+            timestamp: new Date()
+          };
+          
+          const dataStream: DataStream = {
+            type: CloudToTpaMessageType.DATA_STREAM,
+            sessionId: initMessage.sessionId,
+            streamType: StreamType.LOCATION_UPDATE,
+            data: locationUpdate,
+            timestamp: new Date()
+          };
+          ws.send(JSON.stringify(dataStream));
         }
       }
     } catch (error) {
