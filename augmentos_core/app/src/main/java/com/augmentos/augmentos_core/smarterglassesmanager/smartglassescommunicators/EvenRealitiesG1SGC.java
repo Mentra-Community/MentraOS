@@ -474,7 +474,7 @@ public class EvenRealitiesG1SGC extends SmartGlassesCommunicator {
 
                         // Handle MIC audio data
                         if (data.length > 0 && (data[0] & 0xFF) == 0xF1) {
-                            Log.d(TAG, "Lc3 Audio data received. Data: " + Arrays.toString(data) + ", from: " + deviceName);
+                            // Log.d(TAG, "Lc3 Audio data received. Data: " + Arrays.toString(data) + ", from: " + deviceName);
                             int seq = data[1] & 0xFF; // Sequence number
                             // eg. LC3 to PCM
                             byte[] lc3 = Arrays.copyOfRange(data, 2, 202);
@@ -510,7 +510,7 @@ public class EvenRealitiesG1SGC extends SmartGlassesCommunicator {
                             audioProcessingCallback.onLC3AudioDataAvailable(lc3);
 
                         } else {
-                            Log.d(TAG, "Lc3 Audio data received. Seq: " + seq + ", Data: " + Arrays.toString(lc3) + ", from: " + deviceName);
+                            // Log.d(TAG, "Lc3 Audio data received. Seq: " + seq + ", Data: " + Arrays.toString(lc3) + ", from: " + deviceName);
                         }
                     }
                         //HEAD UP MOVEMENTS
