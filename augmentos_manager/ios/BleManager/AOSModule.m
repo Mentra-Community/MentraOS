@@ -198,6 +198,21 @@ RCT_EXPORT_METHOD(
   }
 }
 
+RCT_EXPORT_METHOD(
+  onAppStarted:
+  (NSString *)packageName
+  resolver:(RCTPromiseResolveBlock)resolve
+  rejecter:(RCTPromiseRejectBlock)reject
+)
+{
+  @try {
+    [self.aosManager onAppStarted:packageName];
+    resolve(@[@"App started event processed"]);
+  }
+  @catch(NSException *exception) {
+    reject(@"0", exception.description, nil);
+  }
+}
 
 RCT_EXPORT_METHOD(
   sendWhitelist:

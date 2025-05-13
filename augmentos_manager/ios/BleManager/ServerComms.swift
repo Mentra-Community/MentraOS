@@ -425,7 +425,17 @@ class ServerComms {
       } else {
         print("ServerComms: Received speech message but speechRecCallback is null!")
       }
-      
+    
+    case "app_started":
+      if let callback = serverCommsCallback {
+        callback.onAppStarted(msg["packageName"] as? String ?? "")
+      }
+    
+    // case "app_stopped":
+    //   if let callback = serverCommsCallback {
+    //     callback.onAppStopped(msg["packageName"] as? String ?? "")
+    //   }
+
     case "reconnect":
       print("ServerComms: Server is requesting a reconnect.")
       

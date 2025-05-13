@@ -39,6 +39,9 @@
 // Calendar sync method
 - (void)syncCalendarEvents:(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
 
+// Handle app started event 
+- (void)onAppStarted:(NSString *)packageName :(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
+
 // Add support for events
 - (NSArray<NSString *> *)supportedEvents;
 

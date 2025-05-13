@@ -170,6 +170,26 @@ struct ViewState {
     serverComms.stopApp(packageName: packageName)
   }
   
+  @objc func onAppStarted(_ packageName: String) {
+    // If glasses are disconnected but there is a saved pair, initiate connection
+    if let g1Manager = self.g1Manager, !g1Manager.g1Ready {
+      // Check if we have stored UUIDs for glasses by using connectByUUID method
+      if g1Manager.connectByUUID() {
+        print("🔄 App started: Attempting to connect to stored glasses")
+      } else {
+        print("⚠️ App started: No stored glasses found to connect to")
+      }
+    }
+  }
+
+  // @objc func onAppStopped(_ packageName: String) {
+  //   If glasses are connected, disconnect
+  //   if let g1Manager = self.g1Manager, g1Manager.g1Ready {
+  //     g1Manager.disconnect()
+  //     print("🔄 App stopped: Disconnecting from glasses")
+  //   }
+  // }
+  
   func onConnectionAck() {
     handleRequestStatus()
   }
