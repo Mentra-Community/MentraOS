@@ -86,6 +86,24 @@ export interface SettingsUpdate extends BaseMessage {
 }
 
 /**
+ * App started notification to glasses
+ */
+export interface AppStarted extends BaseMessage {
+  type: CloudToGlassesMessageType.APP_STARTED;
+  packageName: string;
+  timestamp: Date;
+}
+
+/**
+ * App stopped notification to glasses
+ */
+export interface AppStopped extends BaseMessage {
+  type: CloudToGlassesMessageType.APP_STOPPED;
+  packageName: string;
+  timestamp: Date;
+}
+
+/**
  * Union type for all messages from cloud to glasses
  */
 export type CloudToGlassesMessage =
@@ -95,7 +113,9 @@ export type CloudToGlassesMessage =
   | DisplayEvent
   | AppStateChange
   | MicrophoneStateChange
-  | SettingsUpdate;
+  | SettingsUpdate
+  | AppStarted
+  | AppStopped;
 
 //===========================================================
 // Type guards

@@ -412,6 +412,7 @@ async function startApp(req: Request, res: Response) {
     });
     if (session.websocket && session.websocket.readyState === 1) {
       session.websocket.send(JSON.stringify(appStateChange));
+      webSocketService.sendAppStarted(session, packageName);
     }
   } catch (error) {
     console.error(`Error starting app ${packageName}:`, error);
@@ -448,6 +449,7 @@ async function stopApp(req: Request, res: Response) {
     });
     if (session.websocket && session.websocket.readyState === 1) {
       session.websocket.send(JSON.stringify(appStateChange));
+      webSocketService.sendAppStopped(session, packageName);
     }
   } catch (error) {
     console.error(`Error stopping app ${packageName}:`, error);

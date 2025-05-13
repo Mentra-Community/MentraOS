@@ -57,6 +57,8 @@ export enum CloudToGlassesMessageType {
   APP_STATE_CHANGE = 'app_state_change',
   MICROPHONE_STATE_CHANGE = 'microphone_state_change',
   SETTINGS_UPDATE = 'settings_update',
+  APP_STARTED = 'app_started',
+  APP_STOPPED = 'app_stopped',
   
   // Dashboard updates
   DASHBOARD_MODE_CHANGE = 'dashboard_mode_change',

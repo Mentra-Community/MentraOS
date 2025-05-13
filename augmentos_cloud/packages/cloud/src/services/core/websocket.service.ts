@@ -109,6 +109,19 @@ const DEFAULT_AUGMENTOS_SETTINGS = {
   enablePhoneNotifications: false
 } as const;
 
+// Inline definitions for AppStarted and AppStopped
+interface AppStarted {
+  type: typeof CloudToGlassesMessageType.APP_STARTED;
+  packageName: string;
+  timestamp: Date;
+}
+
+interface AppStopped {
+  type: typeof CloudToGlassesMessageType.APP_STOPPED;
+  packageName: string;
+  timestamp: Date;
+}
+
 /**
  * ⚡️🕸️🚀 Implementation of the WebSocket service.
  */
@@ -1839,6 +1852,34 @@ export class WebSocketService {
       timestamp: new Date()
     };
     ws.send(JSON.stringify(errorMessage));
+  }
+
+  /**
+   * Send an app started message to the glasses client
+   */
+  public sendAppStarted(userSession: UserSession, packageName: string) {
+    if (userSession.websocket && userSession.websocket.readyState === 1) {
+      const msg: AppStarted = {
+        type: CloudToGlassesMessageType.APP_STARTED,
+        packageName,
+        timestamp: new Date(),
+      };
+      userSession.websocket.send(JSON.stringify(msg));
+    }
+  }
+
+  /**
+   * Send an app stopped message to the glasses client
+   */
+  public sendAppStopped(userSession: UserSession, packageName: string) {
+    if (userSession.websocket && userSession.websocket.readyState === 1) {
+      const msg: AppStopped = {
+        type: CloudToGlassesMessageType.APP_STOPPED,
+        packageName,
+        timestamp: new Date(),
+      };
+      userSession.websocket.send(JSON.stringify(msg));
+    }
   }
 }
 
