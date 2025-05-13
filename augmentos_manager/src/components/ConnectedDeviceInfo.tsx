@@ -25,7 +25,6 @@ const ConnectedDeviceInfo: React.FC<ConnectedDeviceInfoProps> = ({ isDarkTheme }
   const [microphoneActive, setMicrophoneActive] = useState(status.core_info.is_mic_enabled_for_frontend);
 
   const [isConnectButtonDisabled, setConnectButtonDisabled] = useState(false);
-  const [isDisconnectButtonDisabled, setDisconnectButtonDisabled] = useState(false);
 
   console.log('222 status.glasses_info', status.glasses_info);
 
@@ -63,7 +62,7 @@ const ConnectedDeviceInfo: React.FC<ConnectedDeviceInfoProps> = ({ isDarkTheme }
         ]).start();
       }
       if (status.core_info.default_wearable !== '') {
-        setDisconnectButtonDisabled(false);
+        setConnectButtonDisabled(false);
       }
       // Cleanup function
       return () => {
@@ -107,7 +106,6 @@ const ConnectedDeviceInfo: React.FC<ConnectedDeviceInfoProps> = ({ isDarkTheme }
     }
 
     setConnectButtonDisabled(true);
-    setDisconnectButtonDisabled(false);
 
     try {
       console.log('Connecting to glasses:', status.core_info.default_wearable);
@@ -126,7 +124,6 @@ const ConnectedDeviceInfo: React.FC<ConnectedDeviceInfoProps> = ({ isDarkTheme }
   };
 
   const sendDisconnectWearable = async () => {
-    setDisconnectButtonDisabled(true);
     setConnectButtonDisabled(false);
 
     console.log('Disconnecting wearable');
@@ -224,9 +221,9 @@ const ConnectedDeviceInfo: React.FC<ConnectedDeviceInfoProps> = ({ isDarkTheme }
                       }
                     </View>
                     <TouchableOpacity
-                      style={[styles.disconnectButton, isDisconnectButtonDisabled && styles.disabledDisconnectButton]}
+                      style={[styles.disconnectButton, !status.glasses_info && styles.disabledDisconnectButton]}
                       onPress={sendDisconnectWearable}
-                      disabled={isDisconnectButtonDisabled}
+                      disabled={!status.glasses_info}
                     >
                       <Icon name="power-off" size={18} color="white" style={styles.icon} />
                       <Text style={styles.disconnectText}>

@@ -197,16 +197,16 @@ export const AppStatusProvider = ({ children }: { children: ReactNode }) => {
             console.log('APP_STOPPED_EVENT', packageName);
             optimisticallyStopApp(packageName);
         };
-        // @ts-ignore
-        GlobalEventEmitter.on('APP_STARTED_EVENT', onAppStarted);
-        // @ts-ignore
-        GlobalEventEmitter.on('APP_STOPPED_EVENT', onAppStopped);
-        return () => {
-            // @ts-ignore
-            GlobalEventEmitter.off('APP_STARTED_EVENT', onAppStarted);
-            // @ts-ignore
-            GlobalEventEmitter.off('APP_STOPPED_EVENT', onAppStopped);
-        };
+        // // @ts-ignore
+        // GlobalEventEmitter.on('APP_STARTED_EVENT', onAppStarted);
+        // // @ts-ignore
+        // GlobalEventEmitter.on('APP_STOPPED_EVENT', onAppStopped);
+        // return () => {
+        //     // @ts-ignore
+        //     GlobalEventEmitter.off('APP_STARTED_EVENT', onAppStarted);
+        //     // @ts-ignore
+        //     GlobalEventEmitter.off('APP_STOPPED_EVENT', onAppStopped);
+        // };
     }, [optimisticallyStartApp, optimisticallyStopApp]);
 
     return (
