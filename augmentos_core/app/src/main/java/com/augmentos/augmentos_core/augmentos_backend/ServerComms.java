@@ -2,6 +2,8 @@ package com.augmentos.augmentos_core.augmentos_backend;
 
 import android.content.Context;
 import android.os.Environment;
+import android.os.Looper;
+import android.os.Handler;
 import android.util.Log;
 
 import com.augmentos.augmentos_core.BuildConfig;
@@ -576,10 +578,9 @@ public class ServerComms {
         JSONArray installedApps;
         JSONArray activeAppPackageNames;
 
-        // Log.d(TAG, "Received message of type: " + type);
-        // Log.d(TAG, "Full message: " + msg.toString());
-
-//        Log.d(TAG, "Received message of type: " + msg);
+        Log.d(TAG, "Received message of type: " + type);
+        Log.d(TAG, "Full message: " + msg.toString());
+        Log.d(TAG, "Received message of type: " + msg);
 
         switch (type) {
             case "connection_ack":
@@ -672,14 +673,18 @@ public class ServerComms {
             case "app_started":
                 String startedPackage = msg.optString("packageName", "");
                 if (serverCommsCallback != null) {
-                    serverCommsCallback.onAppStarted(startedPackage);
+                    new Handler(Looper.getMainLooper()).post(() -> {
+                        serverCommsCallback.onAppStarted(startedPackage);
+                    });
                 }
                 break;
 
             case "app_stopped":
                 String stoppedPackage = msg.optString("packageName", "");
                 if (serverCommsCallback != null) {
-                    serverCommsCallback.onAppStopped(stoppedPackage);
+                    new Handler(Looper.getMainLooper()).post(() -> {
+                        serverCommsCallback.onAppStopped(stoppedPackage);
+                    });
                 }
                 break;
 

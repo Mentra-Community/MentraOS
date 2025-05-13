@@ -1828,29 +1828,43 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
 
     // Called when the backend notifies that an app has started
     public void onAppStarted(String packageName) {
-        if (blePeripheral != null) {
-            try {
-                JSONObject msg = new JSONObject();
-                msg.put("type", "app_started");
-                msg.put("packageName", packageName);
-                blePeripheral.sendDataToAugmentOsManager(msg.toString());
-            } catch (JSONException e) {
-                // Optionally log or handle error
+        // If glasses are disconnected but there is a saved pair, initiate connection
+        if (smartGlassesManager.getSmartGlassesConnectState() == SmartGlassesConnectionState.DISCONNECTED) {
+            String preferredWearable = SmartGlassesManager.getPreferredWearable(this);
+            if (preferredWearable != null && !preferredWearable.isEmpty()) {
+                SmartGlassesDevice preferredDevice = SmartGlassesManager.getSmartGlassesDeviceFromModelName(preferredWearable);
+                if (preferredDevice != null) {
+                    startSmartGlassesManager();
+                    smartGlassesManager.connectToSmartGlasses(preferredDevice);
+                }
             }
         }
+
+        // if (blePeripheral != null) {
+        //     try {
+        //         JSONObject msg = new JSONObject();
+        //         msg.put("type", "app_started");
+        //         msg.put("packageName", packageName);
+        //         blePeripheral.sendDataToAugmentOsManager(msg.toString());
+        //     } catch (JSONException e) {
+        //         // Optionally log or handle error
+        //     }
+        // }
     }
 
     // Called when the backend notifies that an app has stopped
     public void onAppStopped(String packageName) {
-        if (blePeripheral != null) {
-            try {
-                JSONObject msg = new JSONObject();
-                msg.put("type", "app_stopped");
-                msg.put("packageName", packageName);
-                blePeripheral.sendDataToAugmentOsManager(msg.toString());
-            } catch (JSONException e) {
-                // Optionally log or handle error
-            }
-        }
+
+
+        // if (blePeripheral != null) {
+        //     try {
+        //         JSONObject msg = new JSONObject();
+        //         msg.put("type", "app_stopped");
+        //         msg.put("packageName", packageName);
+        //         blePeripheral.sendDataToAugmentOsManager(msg.toString());
+        //     } catch (JSONException e) {
+        //         // Optionally log or handle error
+        //     }
+        // }
     }
 }
