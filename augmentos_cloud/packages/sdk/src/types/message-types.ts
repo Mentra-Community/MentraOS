@@ -78,7 +78,7 @@ export enum TpaToCloudMessageType {
   // Requests
   DISPLAY_REQUEST = 'display_event',
   PHOTO_REQUEST = 'photo_request',
-  VIDEO_STREAM_REQUEST = 'video_stream_request'
+  VIDEO_STREAM_REQUEST = 'video_stream_request',
   
   // Dashboard requests
   DASHBOARD_CONTENT_UPDATE = 'dashboard_content_update',

@@ -15,7 +15,7 @@ COPY packages/sdk/package.json packages/sdk/tsconfig.json ./packages/sdk/
 COPY packages/utils/package.json packages/utils/tsconfig.json ./packages/utils/
 COPY packages/agents/package.json packages/agents/tsconfig.json ./packages/agents/
 COPY packages/cloud/package.json packages/cloud/tsconfig.json ./packages/cloud/
-COPY packages/apps/dashboard-manager/package.json packages/apps/dashboard-manager/tsconfig.json ./packages/apps/dashboard-manager/
+COPY packages/apps/dashboard/package.json packages/apps/dashboard/tsconfig.json ./packages/apps/dashboard/
 
 # Copy source files for build
 COPY packages/sdk/src ./packages/sdk/src
