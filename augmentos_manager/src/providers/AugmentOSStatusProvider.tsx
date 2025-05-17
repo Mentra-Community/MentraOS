@@ -38,9 +38,11 @@ export const StatusProvider = ({ children }: { children: ReactNode }) => {
     }, []);
 
     // Add user as a dependency to trigger re-initialization after login
-    const { user } = useAuth();
+    const { user, loading } = useAuth();
 
     useEffect(() => {
+        if (loading) return ; // 
+
         // Force a complete reset of status during sign-out/sign-in transition
         if (!user) {
             console.log('User signed out, resetting status');

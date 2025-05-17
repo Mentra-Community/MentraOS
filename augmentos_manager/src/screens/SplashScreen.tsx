@@ -7,6 +7,7 @@ import { useStatus } from '../providers/AugmentOSStatusProvider';
 import { doesHaveAllPermissions } from '../logic/PermissionsUtils';
 import { loadSetting } from '../logic/SettingsHelper';
 import { SETTINGS_KEYS } from '../consts';
+import { useRoute } from '@react-navigation/native';
 
 interface SplashScreenProps {
   //navigation: any;
@@ -16,6 +17,8 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ }) => {
   const navigation = useNavigation<NavigationProps>();
   const { user, loading } = useAuth();
   const { status, initializeCoreConnection } = useStatus();
+  const route = useRoute();
+  const redirectPath = (route.params as any)?.path;
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -42,7 +45,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ }) => {
 
       navigation.reset({
         index: 0,
-        routes: [{ name: 'ConnectingToPuck' }],
+        routes: [{ name: 'ConnectingToPuck', params: { redirectPath } }],
       });
     };
 

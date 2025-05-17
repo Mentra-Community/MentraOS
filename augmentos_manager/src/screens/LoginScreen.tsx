@@ -1,4 +1,5 @@
 import React, {useState, useRef, useEffect} from 'react';
+import { useRoute } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -41,7 +42,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({navigation}) => {
   const translateY = useRef(new Animated.Value(20)).current;
   const formScale = useRef(new Animated.Value(0)).current;
   const authOverlayOpacity = useRef(new Animated.Value(0)).current;
-
+  
+  const route = useRoute();
+  const redirectPath = (route.params as any)?.redirectPath;
   //pswd visibility
   const [showPassword, setShowPassword] = useState(false);
   const togglePasswordVisibility = () => {
@@ -348,7 +351,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({navigation}) => {
             useNativeDriver: true,
           }).start(() => {
             setIsAuthLoading(false);
-            navigation.replace('SplashScreen');
+
+            if (redirectPath) {
+                    // if redirectpath is not empty then navigate to path:
+                    navigation.replace('SplashScreen', { path: redirectPath });
+                  } else {
+                    navigation.replace('SplashScreen');
+                  }
+
           });
         }, 500); // Give a slight delay to ensure the animation is seen
       }

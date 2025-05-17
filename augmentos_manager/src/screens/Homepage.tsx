@@ -46,9 +46,27 @@ const Homepage: React.FC<HomepageProps> = ({ isDarkTheme, toggleTheme }) => {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [nonProdBackend, setNonProdBackend] = useState(false);
   const route = useRoute();
-
+  const redirectPath = (route.params as any)?.redirectPath;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(-50)).current;
+
+
+useEffect(() => {
+  if (redirectPath) {
+    // Assume that redirectPath is not a route name but a path or parameter (e.g., "/package/abc").
+    // Extract the target screen and parameter from this path.
+    // For example, if the path is '/package/:packageName':
+
+const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
+    if (packageMatch) {
+      navigation.navigate('AppStoreWeb', { packageName: packageMatch[1] });
+    } else if (redirectPath === 'AppStore') {
+      navigation.navigate('AppStore');
+    }
+    // If you need another route you can use here.
+  }
+}, [redirectPath, navigation]);
+
 
   // Reset loading state when connection status changes
   useEffect(() => {

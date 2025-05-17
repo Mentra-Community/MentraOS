@@ -19,6 +19,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Button from './Button';
 import { loadSetting } from '../logic/SettingsHelper.tsx';
 import { SETTINGS_KEYS } from '../consts.tsx';
+import { useRoute } from '@react-navigation/native';
 
 interface ConnectingToPuckComponentProps {
   isDarkTheme?: boolean;
@@ -37,6 +38,8 @@ const ConnectingToPuckComponent = ({
   const [errorMessage, setErrorMessage] = useState('Connection to AugmentOS failed. Please check your connection and try again.');
   const hasAttemptedConnection = useRef(false);
   const loadingOverlayOpacity = useRef(new Animated.Value(1)).current;
+  const route = useRoute();
+  const redirectPath = (route.params as any)?.redirectPath;
 
   const handleTokenExchange = async () => {
     if (isLoading) return;
@@ -122,7 +125,7 @@ const ConnectingToPuckComponent = ({
         BackendServerComms.getInstance().setCoreToken(status.core_info.core_token);
         navigation.reset({
           index: 0,
-          routes: [{ name: 'Home' }],
+          routes: [{ name: 'Home', params: { redirectPath } }],
         });
       }
     }

@@ -78,6 +78,10 @@ const Routes: React.FC<{ isDarkTheme: boolean, toggleTheme: () => void }> = ({ i
     ],
     config: {
       screens: {
+        AppStore: 'open/appstore', //Deeplink 
+        Home: 'open/home',
+        Register: 'open/register',
+        ProfileSettings: 'open/profile-settings',
         VerifyEmailScreen: 'verify_email',
         AppStoreWeb: {
           path: 'package/:packageName',
@@ -102,7 +106,7 @@ const Routes: React.FC<{ isDarkTheme: boolean, toggleTheme: () => void }> = ({ i
 
         // Return a state object that navigates to the Login screen instead
         return {
-          routes: [{ name: 'Login' }],
+          routes: [{ name: 'Login', params: { redirectPath: path } }],
         };
       }
 
