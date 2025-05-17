@@ -313,3 +313,4 @@ server/auth/serviceAccountKey.json
 .env.development
 .env.production
 .env.staging
+augmentos_manager/android/app/google-services.json

@@ -103,7 +103,8 @@ dependencies {
     implementation project(':react-native-linear-gradient')
     implementation project(':react-native-webview')
     implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.0.0'
-    
+    implementation 'com.onesignal:OneSignal:[5.1.6, 5.1.99]'
+
     implementation(project(':react-native-camera')) {
         attributes {
             attribute(Attribute.of('react-native-camera', String), 'general') // Or 'mlkit'

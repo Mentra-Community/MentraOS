@@ -31,6 +31,9 @@ import fr.greweb.reactnativeviewshot.RNViewShotPackage
 import com.reactlibrary.createthumbnail.CreateThumbnailPackage
 
 // import com.augmentos.augmentos_manager.NotificationServicePackage
+import com.onesignal.OneSignal
+import com.onesignal.debug.LogLevel
+
 
 class MainApplication : Application(), ReactApplication {
 
@@ -80,6 +83,14 @@ class MainApplication : Application(), ReactApplication {
     override fun onCreate() {
         super.onCreate()
         SoLoader.init(this, /* native exopackage */ false)
+
+        OneSignal.Debug.logLevel = LogLevel.VERBOSE
+        OneSignal.initWithContext(this, "151135d2-9034-4f09-a422-f704d09df154")
+        // Use this method to prompt for push notifications.
+        // We recommend removing this method after testing and instead use In-App Messages to prompt for notification permission.
+        //CoroutineScope(Dispatchers.IO).launch {
+        //    OneSignal.Notifications.requestPermission(true)
+        //}
 /*
         // Register a listener to set up notificationReceiver once React context is available
         reactNativeHost.reactInstanceManager.addReactInstanceEventListener(
