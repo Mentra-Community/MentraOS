@@ -1447,7 +1447,7 @@ export class WebSocketService {
               useOnboardMic: coreInfo.force_core_onboard_mic,
               contextualDashboard: coreInfo.contextual_dashboard_enabled,
               metricSystemEnabled: coreInfo.metric_system_enabled,
-              headUpAngle: connectedGlasses.headUp_angle,
+              headUpAngle: connectedGlasses.head_up_angle,
               brightness: parseInt(connectedGlasses.brightness),
               autoBrightness: connectedGlasses.auto_brightness,
               sensingEnabled: coreInfo.sensing_enabled,

@@ -36,6 +36,7 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
   const [inLiveCaptionsPhase, setInLiveCaptionsPhase] = useState(false);
   const [showSettingsHint, setShowSettingsHint] = useState(false);
   const [showOnboardingTip, setShowOnboardingTip] = useState(false);
+  // Static values instead of animations
   const bounceAnim = React.useRef(new Animated.Value(0)).current;
   const pulseAnim = React.useRef(new Animated.Value(0)).current;
 
@@ -91,14 +92,10 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
     }, []),
   );
 
-  // Set arrow to static position (no animation)
+  // Just set arrow to static position
   useEffect(() => {
-    // Just set to a fixed value instead of animating
-    if (showOnboardingTip) {
-      arrowAnimation.setValue(0.5); // Middle value for static appearance
-    } else {
-      arrowAnimation.setValue(0);
-    }
+    // Set static value
+    arrowAnimation.setValue(0);
   }, [showOnboardingTip]);
 
   // Check if onboarding is completed on initial load
@@ -112,65 +109,58 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
     checkOnboardingStatus();
   }, []);
 
-  // Add animation effect when onboarding tip is shown
+  // Set static values instead of animations
   useEffect(() => {
     if (showOnboardingTip) {
-      // Bounce animation with reduced movement
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(bounceAnim, {
-            toValue: 1,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(bounceAnim, {
-            toValue: 0,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-        ]),
-      ).start();
-
-      // Pulse animation
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 0,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-        ]),
-      ).start();
+      // Set static values instead of animating
+      bounceAnim.setValue(0);
+      pulseAnim.setValue(0.5);
     } else {
       bounceAnim.setValue(0);
       pulseAnim.setValue(0);
     }
   }, [showOnboardingTip]);
 
-  // Measure Live Captions position when onboarding tip should be shown
+  // Safely measure Live Captions position when onboarding tip should be shown
   useEffect(() => {
-    if (showOnboardingTip && liveCaptionsRef.current) {
-      // Allow layout to complete, then measure
-      setTimeout(() => {
-        liveCaptionsRef?.current?.measure(
-          (x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
-            setLiveCaptionsPosition({
-              x: pageX,
-              y: pageY,
-              width,
-              height,
-              index: liveCaptionsPosition.index,
-            });
-          },
-        );
-      }, 100);
-    }
-  }, [showOnboardingTip, liveCaptionsRef.current, appStatus]);
+    // Only try to measure if the tip should be shown
+    if (!showOnboardingTip) return;
+
+    // Track if component is mounted for safety
+    let isMounted = true;
+    
+    // Use timeout to ensure we measure after layout
+    const timeoutId = setTimeout(() => {
+      // Safety check that the component is still mounted and ref is valid
+      if (isMounted && liveCaptionsRef.current) {
+        try {
+          liveCaptionsRef.current.measure(
+            (x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
+              // Another safety check before state update
+              if (isMounted) {
+                setLiveCaptionsPosition(prev => ({
+                  ...prev, // Keep existing index if we have it
+                  x: pageX,
+                  y: pageY,
+                  width: width || prev.width,  // Keep previous values if new ones are invalid
+                  height: height || prev.height,
+                }));
+              }
+            },
+          );
+        } catch (e) {
+          // Silently handle measurement errors
+          console.log('Could not measure Live Captions position');
+        }
+      }
+    }, 500); // Give more time for layout to settle
+    
+    // Cleanup timeout on unmount and mark as unmounted
+    return () => {
+      clearTimeout(timeoutId);
+      isMounted = false;
+    };
+  }, [showOnboardingTip]);
 
   const completeOnboarding = () => {
     saveSetting(SETTINGS_KEYS.ONBOARDING_COMPLETED, true);
@@ -377,29 +367,29 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
     if (!showOnboardingTip) {
       return null;
     }
-
+    
+    // Default to a reasonable position if we don't have valid measurements yet
+    const defaultPosition = 90; // Default Y position from top if we can't calculate
+    const calculatedPosition = liveCaptionsPosition.height > 0 && liveCaptionsPosition.index >= 0 
+      ? (liveCaptionsPosition.index * (liveCaptionsPosition.height + 10) - 40)
+      : defaultPosition;
+    
     return (
       <View
         style={[
           styles.arrowContainer,
           {
             position: 'absolute',
-            top: liveCaptionsPosition.index * (liveCaptionsPosition.height + 10) - 40,
+            top: calculatedPosition,
+            // Make sure it's visible in the viewport
+            opacity: liveCaptionsPosition.height > 0 ? 1 : 0.9,
           },
         ]}>
         <View style={styles.arrowWrapper}>
-          <Animated.View
+          <View
             style={[
               styles.arrowBubble,
               {
-                transform: [
-                  {
-                    scale: pulseAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1, 1.03],
-                    }),
-                  },
-                ],
                 backgroundColor: '#00B0FF',
                 borderColor: '#0288D1',
                 shadowColor: '#0288D1',
@@ -415,7 +405,7 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
                   textShadowRadius: 2,
                 },
               ]}>
-              Tap to start
+              TAP TO START
             </Text>
             <Icon
               name="gesture-tap"
@@ -430,20 +420,12 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
                 },
               ]}
             />
-          </Animated.View>
-          <Animated.View
+          </View>
+          <View
             style={[
               styles.arrowIconContainer,
               isDarkTheme ? styles.arrowIconContainerDark : styles.arrowIconContainerLight,
               {
-                transform: [
-                  {
-                    translateY: bounceAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, -5],
-                    }),
-                  },
-                ],
                 backgroundColor: '#00B0FF',
                 borderColor: '#0288D1',
                 marginTop: 5,
@@ -451,14 +433,11 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
                 shadowOpacity: 0.4,
               },
             ]}>
-            <Animated.View
+            <View
               style={[
                 styles.glowEffect,
                 {
-                  opacity: pulseAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.3, 0.5],
-                  }),
+                  opacity: 0.4,
                   backgroundColor: 'rgba(0, 176, 255, 0.3)',
                 },
               ]}
@@ -473,7 +452,7 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
                 textShadowRadius: 3,
               }}
             />
-          </Animated.View>
+          </View>
         </View>
       </View>
     );
@@ -509,17 +488,22 @@ const YourAppsList: React.FC<YourAppsListProps> = ({isDarkTheme}) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollViewContent}>
         {availableApps.map((app, index) => {
-          let isLiveCaptions = app.packageName === 'com.augmentos.livecaptions';
-          let ref = isLiveCaptions ? liveCaptionsRef : null;
+          // Check if this is the LiveCaptions app
+          const isLiveCaptions = app.packageName === 'com.augmentos.livecaptions' || 
+                               app.packageName === 'cloud.augmentos.live-captions';
+          
+          // Only set ref for LiveCaptions app
+          const ref = isLiveCaptions ? liveCaptionsRef : null;
+          
+          // Update LiveCaptions index without causing rerender loops
+          // This is safer than updating state during render
           if (isLiveCaptions && liveCaptionsPosition.index !== index) {
-            setLiveCaptionsPosition({
-              x: liveCaptionsPosition.x,
-              y: liveCaptionsPosition.y,
-              width: liveCaptionsPosition.width,
-              height: liveCaptionsPosition.height,
-              index: index,
-            });
+            // Use setTimeout to defer the state update until after render
+            setTimeout(() => {
+              setLiveCaptionsPosition(prev => ({ ...prev, index }));
+            }, 0);
           }
+          
           return (
             <TouchableOpacity
               key={app.packageName}

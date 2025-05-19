@@ -32,6 +32,11 @@ export interface AppI extends _AppI, Document {
   reviewedAt?: Date;
   tools?: ToolSchema[];
   permissions?: Permission[];
+  developerId: string;
+  organizationDomain: string | null;
+  sharedWithOrganization: boolean;
+  visibility: 'private' | 'organization';
+  sharedWithEmails: string[];
 }
 
 
@@ -112,7 +117,32 @@ const AppSchema = new Schema({
       type: String,
       required: false
     }
-  }]
+  }],
+
+  developerId: {
+    type: String,
+    required: true
+  },
+  organizationDomain: {
+    type: String,
+    required: false,
+    default: null
+  },
+  sharedWithOrganization: {
+    type: Boolean,
+    required: false,
+    default: false
+  },
+  visibility: {
+    type: String,
+    enum: ['private', 'organization'],
+    default: 'private'
+  },
+  sharedWithEmails: {
+    type: [String],
+    required: false,
+    default: []
+  }
 }, { 
   strict: false,
   timestamps: true 

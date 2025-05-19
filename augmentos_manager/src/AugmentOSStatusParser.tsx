@@ -9,9 +9,9 @@ interface Glasses {
 }
 
 interface GlassesSettings {
-  brightness: string;
+  brightness: number;
   auto_brightness: boolean;
-  headUp_angle: number | null; // 0-60
+  head_up_angle: number | null; // 0-60
   dashboard_height: number;
   depth: number;
 }
@@ -91,7 +91,7 @@ export class AugmentOSParser {
       auto_brightness: false,
       dashboard_height: 4,
       depth: 5,
-      headUp_angle: 30,
+      head_up_angle: 30,
     },
     wifi: { is_connected: false, ssid: '', signal_strength: 0 },
     gsm: { is_connected: false, carrier: '', signal_strength: 0 },
@@ -135,7 +135,7 @@ export class AugmentOSParser {
       auto_brightness: false,
       dashboard_height: 4,
       depth: 5,
-      headUp_angle: 20,
+      head_up_angle: 20,
     },
     wifi: { is_connected: true, ssid: 'TP-LINK69', signal_strength: 100 },
     gsm: { is_connected: false, carrier: '', signal_strength: 0 },
@@ -194,7 +194,7 @@ export class AugmentOSParser {
           auto_brightness: status.glasses_settings.auto_brightness ?? false,
           dashboard_height: status.glasses_settings.dashboard_height ?? 4,
           depth: status.glasses_settings.depth ?? 5,
-          headUp_angle: status.glasses_settings.headUp_angle ?? 30,
+          head_up_angle: status.glasses_settings.head_up_angle ?? 30,
         },
         wifi: status.wifi ?? AugmentOSParser.defaultStatus.wifi,
         gsm: status.gsm ?? AugmentOSParser.defaultStatus.gsm,

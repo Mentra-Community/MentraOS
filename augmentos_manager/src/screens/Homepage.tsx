@@ -1,31 +1,25 @@
-import React, {
-  useRef,
-  useCallback,
-  PropsWithChildren,
-  useState,
-  useEffect,
-} from 'react';
-import { View, StyleSheet, Animated, Text, Platform, ActivityIndicator } from 'react-native';
-import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
-import type { NavigationProp } from '@react-navigation/native';
+import React, {useRef, useCallback, PropsWithChildren, useState, useEffect} from 'react';
+import {View, StyleSheet, Animated, Text, Platform, ActivityIndicator} from 'react-native';
+import {useNavigation, useFocusEffect, useRoute} from '@react-navigation/native';
+import type {NavigationProp} from '@react-navigation/native';
 import Header from '../components/Header';
 import ConnectedDeviceInfo from '../components/ConnectedDeviceInfo';
 import ConnectedSimulatedGlassesInfo from '../components/ConnectedSimulatedGlassesInfo';
 import RunningAppsList from '../components/RunningAppsList';
 import YourAppsList from '../components/YourAppsList';
-import { useStatus } from '../providers/AugmentOSStatusProvider';
-import { useAppStatus } from '../providers/AppStatusProvider';
-import { ScrollView } from 'react-native-gesture-handler';
+import {useStatus} from '../providers/AugmentOSStatusProvider';
+import {useAppStatus} from '../providers/AppStatusProvider';
+import {ScrollView} from 'react-native-gesture-handler';
 import BackendServerComms from '../backend_comms/BackendServerComms';
 import semver from 'semver';
-import { Config } from 'react-native-config';
+import {Config} from 'react-native-config';
 import CloudConnection from '../components/CloudConnection';
-import { loadSetting, saveSetting } from '../logic/SettingsHelper';
+import {loadSetting, saveSetting} from '../logic/SettingsHelper';
 
-import { NativeModules, NativeEventEmitter } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {NativeModules, NativeEventEmitter} from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import SensingDisabledWarning from '../components/SensingDisabledWarning';
-import { SETTINGS_KEYS } from '../consts';
+import {SETTINGS_KEYS} from '../consts';
 import NonProdWarning from '../components/NonProdWarning';
 
 interface HomepageProps {
@@ -37,10 +31,10 @@ interface AnimatedSectionProps extends PropsWithChildren {
   delay?: number;
 }
 
-const Homepage: React.FC<HomepageProps> = ({ isDarkTheme, toggleTheme }) => {
+const Homepage: React.FC<HomepageProps> = ({isDarkTheme, toggleTheme}) => {
   const navigation = useNavigation<NavigationProp<any>>();
-  const { appStatus, refreshAppStatus } = useAppStatus();
-  const { status } = useStatus();
+  const {appStatus, refreshAppStatus} = useAppStatus();
+  const {status} = useStatus();
   const [isSimulatedPuck, setIsSimulatedPuck] = React.useState(false);
   const [isCheckingVersion, setIsCheckingVersion] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -81,8 +75,8 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
 
   const checkNonProdBackend = async () => {
     const url = await loadSetting(SETTINGS_KEYS.CUSTOM_BACKEND_URL, null);
-    setNonProdBackend(url && (!url.includes('prod.augmentos.cloud') && !url.includes('global.augmentos.cloud')));
-  }
+    setNonProdBackend(url && !url.includes('prod.augmentos.cloud') && !url.includes('global.augmentos.cloud'));
+  };
 
   // Clear loading state if apps are loaded
   useEffect(() => {
@@ -125,7 +119,7 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
         // Navigate to update screen with connection error
         navigation.navigate('VersionUpdateScreen', {
           isDarkTheme,
-          connectionError: true
+          connectionError: true,
         });
         setIsCheckingVersion(false);
         return;
@@ -133,7 +127,7 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
 
       // Call the endpoint to get cloud version
       await backendComms.restRequest('/apps/version', null, {
-        onSuccess: (data) => {
+        onSuccess: data => {
           const cloudVer = data.version;
           console.log(`Comparing local version (${localVer}) with cloud version (${cloudVer})`);
 
@@ -144,7 +138,7 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
             navigation.navigate('VersionUpdateScreen', {
               isDarkTheme,
               localVersion: localVer,
-              cloudVersion: cloudVer
+              cloudVersion: cloudVer,
             });
           } else {
             console.log('Local version is up-to-date.');
@@ -152,15 +146,15 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
           }
           setIsCheckingVersion(false);
         },
-        onFailure: (errorCode) => {
+        onFailure: errorCode => {
           console.error('Failed to fetch cloud version:', errorCode);
           // Navigate to update screen with connection error
           navigation.navigate('VersionUpdateScreen', {
             isDarkTheme,
-            connectionError: true
+            connectionError: true,
           });
           setIsCheckingVersion(false);
-        }
+        },
       });
       // console.log('Version check completed');
     } catch (error) {
@@ -168,7 +162,7 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
       // Navigate to update screen with connection error
       navigation.navigate('VersionUpdateScreen', {
         isDarkTheme,
-        connectionError: true
+        connectionError: true,
       });
       setIsCheckingVersion(false);
     }
@@ -183,13 +177,12 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
 
   // Simple animated wrapper so we do not duplicate logic
   const AnimatedSection: React.FC<AnimatedSectionProps> = useCallback(
-    ({ children }) => (
+    ({children}) => (
       <Animated.View
         style={{
           opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        }}
-      >
+          transform: [{translateY: slideAnim}],
+        }}>
         {children}
       </Animated.View>
     ),
@@ -198,7 +191,6 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
 
   useFocusEffect(
     useCallback(() => {
-
       checkNonProdBackend();
 
       // Reset animations when screen is about to focus
@@ -232,25 +224,25 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
   const currentThemeStyles = isDarkTheme ? darkThemeStyles : lightThemeStyles;
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{flex: 1}}>
       <View style={currentThemeStyles.container}>
         <AnimatedSection>
           <Header isDarkTheme={isDarkTheme} navigation={navigation} />
         </AnimatedSection>
-        <ScrollView 
+        <ScrollView
           style={currentThemeStyles.contentContainer}
           contentContainerStyle={{paddingBottom: 0, flexGrow: 1}} // Force content to fill available space
         >
-          {status.core_info.cloud_connection_status !== 'CONNECTED' &&
+          {status.core_info.cloud_connection_status !== 'CONNECTED' && (
             <AnimatedSection>
               <CloudConnection isDarkTheme={isDarkTheme} />
             </AnimatedSection>
-          }
-          
+          )}
+
           {/* Sensing Disabled Warning */}
-            <AnimatedSection>
-              <SensingDisabledWarning isSensingEnabled={status.core_info.sensing_enabled} />
-            </AnimatedSection>
+          <AnimatedSection>
+            <SensingDisabledWarning isSensingEnabled={status.core_info.sensing_enabled} />
+          </AnimatedSection>
 
           {nonProdBackend && (
             <AnimatedSection>
@@ -258,16 +250,16 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
             </AnimatedSection>
           )}
 
-          <AnimatedSection>
-            {/* Use the simulated version if we're connected to simulated glasses */}
-            {status.glasses_info?.model_name && 
-             status.glasses_info.model_name.toLowerCase().includes('simulated') ? (
-              <ConnectedSimulatedGlassesInfo isDarkTheme={isDarkTheme} />
-            ) : (
-              <ConnectedDeviceInfo isDarkTheme={isDarkTheme} />
-            )}
-          </AnimatedSection>
-
+          <View style={{flex: 1}}>
+            <AnimatedSection>
+              {/* Use the simulated version if we're connected to simulated glasses */}
+              {status.glasses_info?.model_name && status.glasses_info.model_name.toLowerCase().includes('simulated') ? (
+                <ConnectedSimulatedGlassesInfo isDarkTheme={isDarkTheme} />
+              ) : (
+                <ConnectedDeviceInfo isDarkTheme={isDarkTheme} />
+              )}
+            </AnimatedSection>
+          </View>
           {status.core_info.puck_connected && (
             <>
               {appStatus.length > 0 ? (
@@ -277,19 +269,14 @@ const packageMatch = redirectPath.match(/^\/?package\/(.+)$/);
                   </AnimatedSection>
 
                   <AnimatedSection>
-                    <YourAppsList
-                      isDarkTheme={isDarkTheme}
-                      key={`apps-list-${appStatus.length}`}
-                    />
+                    <YourAppsList isDarkTheme={isDarkTheme} key={`apps-list-${appStatus.length}`} />
                   </AnimatedSection>
                 </>
               ) : status.core_info.cloud_connection_status === 'CONNECTED' ? (
                 isInitialLoading ? (
                   <AnimatedSection>
                     <View style={currentThemeStyles.loadingContainer}>
-                      <Text style={currentThemeStyles.loadingText}>
-                        Loading your apps...
-                      </Text>
+                      <Text style={currentThemeStyles.loadingText}>Loading your apps...</Text>
                     </View>
                   </AnimatedSection>
                 ) : (

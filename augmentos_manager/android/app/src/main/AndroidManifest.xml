@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" 
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.augmentos.augmentos_manager">
+    package="com.augmentos.augmentos">
 
     <!-- Existing Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
     <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -38,7 +39,7 @@
         <!-- FileProvider for sharing media files -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.augmentos.augmentos_manager.fileprovider"
+            android:authorities="com.augmentos.augmentos.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true"
             tools:replace="android:authorities">
@@ -49,7 +50,7 @@
         </provider>
 
         <!-- Notification Listener Service -->
-        <service android:name="com.augmentos.augmentos_manager.NotificationService" android:label="@string/app_name" android:exported="false" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+        <service android:name="com.augmentos.augmentos.NotificationService" android:label="@string/app_name" android:exported="false" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>

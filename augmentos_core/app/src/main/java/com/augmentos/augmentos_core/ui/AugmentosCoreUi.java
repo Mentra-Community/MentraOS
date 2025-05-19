@@ -37,7 +37,7 @@ import java.util.ArrayList;
 public class AugmentosCoreUi extends Fragment {
   public String TAG = "WearableAi_AugmentOSUi";
 
-  private static final String TARGET_PACKAGE = "com.augmentos.augmentos_manager";
+  private static final String TARGET_PACKAGE = "com.augmentos.augmentos";
 
      //UI
   private ResponseTextUiAdapter responseTextUiAdapter;

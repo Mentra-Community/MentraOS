@@ -1,13 +1,17 @@
 package com.augmentos.augmentos_core.smarterglassesmanager.hci;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioRecord;
+import android.media.AudioRecordingConfiguration;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,6 +19,10 @@ import android.telephony.PhoneStateListener;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
 
 import com.augmentos.augmentos_core.smarterglassesmanager.SmartGlassesManager;
@@ -73,6 +81,15 @@ public class PhoneMicrophoneManager {
     private boolean isExternalAudioActive = false;
     private boolean isReceiverRegistered = false;
     
+    // Audio recording detection (API 23+)
+    private AudioManager.AudioRecordingCallback audioRecordingCallback;
+    private final List<Integer> ourAudioClientIds = new ArrayList<>();
+    private boolean isAudioRecordingCallbackRegistered = false;
+    
+    // Debounce for mode changes to prevent feedback loops
+    private long lastModeChangeTime = 0;
+    private static final long MODE_CHANGE_DEBOUNCE_MS = 2000; // 2 second minimum between mode changes
+    
     // Retry logic
     private int scoRetries = 0;
     private static final int MAX_SCO_RETRIES = 3;
@@ -106,6 +123,8 @@ public class PhoneMicrophoneManager {
         this.audioProcessingCallback = audioProcessingCallback;
         this.glassesRep = glassesRep;
         this.phoneMicListener = phoneMicListener;
+        
+        Log.d(TAG, "Initializing PhoneMicrophoneManager");
         
         // Create a chunk callback that forwards data through the SmartGlassesRepresentative's receiveChunk
         this.audioChunkCallback = new AudioChunkCallback() {
@@ -181,6 +200,13 @@ public class PhoneMicrophoneManager {
             return;
         }
         
+        // Check if we've changed modes too recently (debounce)
+        long now = System.currentTimeMillis();
+        if (now - lastModeChangeTime < MODE_CHANGE_DEBOUNCE_MS) {
+            Log.d(TAG, "Ignoring mode change request - too soon after previous change");
+            return;
+        }
+        
         // Try SCO first (will fall back if unavailable)
         switchToScoMode();
     }
@@ -209,9 +235,10 @@ public class PhoneMicrophoneManager {
         try {
             Log.d(TAG, "Switching to SCO mode");
             // Create new microphone with SCO enabled - this should forward audio to the speech recognition system
-            micInstance = new MicrophoneLocalAndBluetooth(context, true, audioChunkCallback);
+            micInstance = new MicrophoneLocalAndBluetooth(context, true, audioChunkCallback, this);
             Log.d(TAG, "✅ Phone SCO mic initialized - audio should now flow to speech recognition");
             currentStatus = MicStatus.SCO_MODE;
+            lastModeChangeTime = System.currentTimeMillis(); // Track mode change time
             notifyStatusChange();
             scoRetries = 0; // Reset retry counter on success
         } catch (Exception e) {
@@ -244,10 +271,11 @@ public class PhoneMicrophoneManager {
         try {
             Log.d(TAG, "Switching to normal phone microphone mode");
             // Create new microphone with SCO disabled
-            micInstance = new MicrophoneLocalAndBluetooth(context, false, audioChunkCallback);
+            micInstance = new MicrophoneLocalAndBluetooth(context, false, audioChunkCallback, this);
             Log.d(TAG, "✅ Normal phone mic initialized - audio should now flow to speech recognition");
             
             currentStatus = MicStatus.NORMAL_MODE;
+            lastModeChangeTime = System.currentTimeMillis(); // Track mode change time
             notifyStatusChange();
         } catch (Exception e) {
             Log.e(TAG, "Failed to start normal mode", e);
@@ -282,6 +310,7 @@ public class PhoneMicrophoneManager {
             SmartGlassesManager.setForceCoreOnboardMic(context, false);
             
             currentStatus = MicStatus.GLASSES_MIC;
+            lastModeChangeTime = System.currentTimeMillis(); // Track mode change time  
             notifyStatusChange();
         } catch (Exception e) {
             Log.e(TAG, "Failed to switch to glasses mic", e);
@@ -301,6 +330,9 @@ public class PhoneMicrophoneManager {
         
         Log.d(TAG, "Pausing microphone recording");
         
+        // Check if we're coming from SCO mode
+        boolean wasScoMode = currentStatus == MicStatus.SCO_MODE;
+        
         // Stop any active recording
         cleanUpCurrentMic();
         
@@ -308,6 +340,10 @@ public class PhoneMicrophoneManager {
         if (audioManager != null) {
             try {
                 // Stop SCO if it was active
+                if (wasScoMode) {
+                    Log.d(TAG, "Coming from SCO mode - stopping Bluetooth SCO");
+                }
+                
                 audioManager.stopBluetoothSco();
                 audioManager.setMode(AudioManager.MODE_NORMAL);
             } catch (Exception e) {
@@ -317,6 +353,7 @@ public class PhoneMicrophoneManager {
         
         // Update status
         currentStatus = MicStatus.PAUSED;
+        lastModeChangeTime = System.currentTimeMillis(); // Track mode change time
         notifyStatusChange();
         
         Log.d(TAG, "Microphone recording fully paused");
@@ -351,6 +388,33 @@ public class PhoneMicrophoneManager {
                 // Always clear the reference even if destroy fails
                 micInstance = null;
             }
+        }
+    }
+    
+    /**
+     * Registers an AudioRecord's session ID as belonging to us
+     * This helps us filter out our own recordings in the AudioRecordingCallback
+     */
+    public void registerOurAudioRecord(AudioRecord audioRecord) {
+        if (audioRecord != null) {
+            int clientId = audioRecord.getAudioSessionId();
+            Log.d(TAG, "Registering our audio client ID: " + clientId);
+            
+            if (!ourAudioClientIds.contains(clientId)) {
+                ourAudioClientIds.add(clientId);
+            }
+        }
+    }
+    
+    /**
+     * Unregisters an AudioRecord's session ID when we're done with it
+     */
+    public void unregisterOurAudioRecord(AudioRecord audioRecord) {
+        if (audioRecord != null) {
+            int clientId = audioRecord.getAudioSessionId();
+            Log.d(TAG, "Unregistering our audio client ID: " + clientId);
+            
+            ourAudioClientIds.remove(Integer.valueOf(clientId));
         }
     }
     
@@ -443,10 +507,11 @@ public class PhoneMicrophoneManager {
         filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
         
         audioStateReceiver = new BroadcastReceiver() {
+            @SuppressLint("MissingPermission")
             @Override
             public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
-                
+                Log.d(TAG, "Audio state changed: " + action);
                 if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(action)) {
                     // Audio route changed - possible conflict
                     Log.d(TAG, "Audio becoming noisy - possible conflict detected");
@@ -489,6 +554,114 @@ public class PhoneMicrophoneManager {
             isReceiverRegistered = true;
         } catch (Exception e) {
             Log.e(TAG, "Failed to register audio state receiver", e);
+        }
+        
+        // Register AudioRecordingCallback to detect when other apps use microphone
+        try {
+            audioRecordingCallback = new AudioManager.AudioRecordingCallback() {
+                @Override
+                public void onRecordingConfigChanged(List<AudioRecordingConfiguration> configs) {
+                    if (configs == null) {
+                        Log.d(TAG, "Recording configuration update: null configs");
+                        return;
+                    }
+                    
+                    // Filter out our own audio recordings by client ID 
+                    List<AudioRecordingConfiguration> otherAppRecordings = new ArrayList<>();
+                    for (AudioRecordingConfiguration config : configs) {
+                        int clientId = config.getClientAudioSessionId();
+                        if (!ourAudioClientIds.contains(clientId)) {
+                            otherAppRecordings.add(config);
+                        }
+                    }
+                    
+                    boolean otherAppsRecording = !otherAppRecordings.isEmpty();
+                    
+                    // Log what's happening but only when there's a change or there are external recordings
+                    if (otherAppsRecording || otherAppsRecording != isExternalAudioActive) {
+                        Log.d(TAG, "Recording configuration change detected:");
+                        Log.d(TAG, "- Total recordings: " + configs.size());
+                        Log.d(TAG, "- Our recordings: " + (configs.size() - otherAppRecordings.size()));
+                        Log.d(TAG, "- Other app recordings: " + otherAppRecordings.size());
+                        
+                        // For debugging, log details about the other recordings
+                        for (AudioRecordingConfiguration config : otherAppRecordings) {
+                            Log.d(TAG, "  - Client: " + config.getClientAudioSessionId() +
+                                  ", Source: " + config.getAudioSource());
+                        }
+                    }
+                    
+                    // Only take action if this represents a change in state
+                    if (otherAppsRecording != isExternalAudioActive) {
+                        isExternalAudioActive = otherAppsRecording;
+                        
+                        // Check if we've changed modes too recently (debounce)
+                        long now = System.currentTimeMillis();
+                        if (now - lastModeChangeTime < MODE_CHANGE_DEBOUNCE_MS) {
+                            Log.d(TAG, "Detected audio configuration change but ignoring (debounce active)");
+                            return;
+                        }
+                        
+                        if (isExternalAudioActive) {
+                            Log.d(TAG, "🎤 External app now using microphone - adjusting our recording");
+                            
+                            // For any phone-based recording (SCO or normal), try to use glasses mic or pause entirely
+                            if (currentStatus == MicStatus.SCO_MODE || currentStatus == MicStatus.NORMAL_MODE) {
+                                // Check if glasses onboard mic is available
+                                if (glassesRep != null && glassesRep.smartGlassesDevice.getHasInMic()) {
+                                    Log.d(TAG, "External app needs mic - switching to glasses onboard mic");
+                                    switchToGlassesMic();
+                                } else {
+                                    Log.d(TAG, "External app needs mic - no glasses mic available, pausing recording");
+                                    pauseRecording();
+                                }
+                            }
+                            
+                            // We're either using glasses mic or fully paused now
+                        } else {
+                            Log.d(TAG, "🎤 External apps released microphone - can return to preferred mode");
+                            
+                            // Only switch back if we're not already in SCO and there's no phone call
+                            if (currentStatus != MicStatus.SCO_MODE && !isPhoneCallActive) {
+                                // Add a slightly longer delay before reclaiming preferred mode
+                                mainHandler.postDelayed(() -> {
+                                    // Double-check we still want to do this and that debounce has passed
+                                    if (!isExternalAudioActive && !isPhoneCallActive && 
+                                        System.currentTimeMillis() - lastModeChangeTime >= MODE_CHANGE_DEBOUNCE_MS) {
+                                        Log.d(TAG, "Returning to preferred mode after external mic release");
+                                        startPreferredMicMode();
+                                    }
+                                }, 1000); // 1000ms delay to let other app fully release resources
+                            }
+                        }
+                    }
+                }
+            };
+            
+            audioManager.registerAudioRecordingCallback(audioRecordingCallback, mainHandler);
+            isAudioRecordingCallbackRegistered = true;
+            Log.d(TAG, "Successfully registered AudioRecordingCallback");
+            
+            // Get initial state
+            List<AudioRecordingConfiguration> initialConfigs = 
+                    audioManager.getActiveRecordingConfigurations();
+            
+            // Count how many external recordings are already happening
+            int externalRecordings = 0;
+            for (AudioRecordingConfiguration config : initialConfigs) {
+                if (!ourAudioClientIds.contains(config.getClientAudioSessionId())) {
+                    externalRecordings++;
+                }
+            }
+            
+            isExternalAudioActive = externalRecordings > 0;
+            if (isExternalAudioActive) {
+                Log.d(TAG, "🎤 Detected " + externalRecordings + 
+                      " active external recordings at initialization");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to register AudioRecordingCallback", e);
+            // Continue without this feature - it's enhanced functionality
         }
     }
     
@@ -533,5 +706,19 @@ public class PhoneMicrophoneManager {
                 Log.e(TAG, "Error unregistering audio state receiver", e);
             }
         }
+        
+        // Unregister AudioRecordingCallback
+        if (audioManager != null && audioRecordingCallback != null && isAudioRecordingCallbackRegistered) {
+            try {
+                audioManager.unregisterAudioRecordingCallback(audioRecordingCallback);
+                isAudioRecordingCallbackRegistered = false;
+                Log.d(TAG, "Successfully unregistered AudioRecordingCallback");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering AudioRecordingCallback", e);
+            }
+        }
+        
+        // Clear tracked audio client IDs
+        ourAudioClientIds.clear();
     }
 }

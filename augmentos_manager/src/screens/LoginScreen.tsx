@@ -267,9 +267,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     setIsFormLoading(true);
 
     try {
-      //const redirectUrl = encodeURIComponent("com.augmentos.augmentos_manager://verify_email/");
+      //const redirectUrl = encodeURIComponent("com.augmentos.augmentos://verify_email/");
       const redirectUrl = 'https://augmentos.org/verify-email'; // No encoding needed
-      //const redirectUrl = "com.augmentos.augmentos_manager://verify_email/";
+      //const redirectUrl = "com.augmentos.augmentos://verify_email/";
 
       const { data, error } = await supabase.auth.signUp({
         email,

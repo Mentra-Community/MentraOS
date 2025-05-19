@@ -82,7 +82,13 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
     name: 'Bluetooth',
     description: 'Used to connect to your glasses',
     ios: [PERMISSIONS.IOS.BLUETOOTH], // iOS Bluetooth permission (correct constant)
-    android: [], // Android handles Bluetooth differently - see pairing screens
+    android: Platform.OS === 'android' && typeof Platform.Version === 'number' && Platform.Version >= 31 ? 
+      [
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE
+      ] : 
+      [], // For Android 12+, include the Bluetooth permissions in the normal flow
     critical: true, // Critical for glasses pairing
     specialRequestNeeded: Platform.OS === 'ios', // Special handling for iOS
   }
@@ -131,6 +137,16 @@ if (Platform.OS === 'android') {
     basicPermissions.push(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
   }
   
+  if (Platform.Version >= 31) {
+    // Android 12+ (API 31+) requires explicit runtime permission for Bluetooth
+    // Android 14+ (API 34+) requires these for foreground services with type "connectedDevice"
+    console.log("Adding Bluetooth permissions to basic permissions for Android 12+/14+");
+    
+    // These three permissions are required for Bluetooth operations on Android 12+
+    basicPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
+    basicPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+    basicPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE);
+  }
   // Bluetooth permissions are now handled in the pairing flow
   // NOT requesting here anymore:
   // - BLUETOOTH, BLUETOOTH_ADMIN (Android 11)

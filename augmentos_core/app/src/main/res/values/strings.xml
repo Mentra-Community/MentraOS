@@ -79,7 +79,7 @@
     <string name="BYPASS_VAD_FOR_DEBUGGING">bypass_vad_for_debugging</string>
     <string name="BYPASS_AUDIO_ENCODING_FOR_DEBUGGING">bypass_audio_encoding_for_debugging</string>
 <!--    <string name="BYPASS_VAD_ENABLED">bypass_vad_enabled</string>-->
-    <string name="HEADUP_ANGLE">headUp_Angle</string>
+    <string name="HEAD_UP_ANGLE">head_up_angle</string>
 
     <string name="SETTING_WILL_APPLY_ON_NEXT_GLASSES_CONNECTION">Setting will apply next time you connect to glasses</string>
 </resources>

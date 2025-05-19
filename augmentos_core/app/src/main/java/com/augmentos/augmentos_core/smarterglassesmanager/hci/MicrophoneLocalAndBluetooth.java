@@ -13,11 +13,14 @@ import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
+
+import com.augmentos.augmentos_core.microphone.MicrophoneService;
 
 import androidx.core.app.ActivityCompat;
 
@@ -87,7 +90,9 @@ public class MicrophoneLocalAndBluetooth {
                         startRecording();
                         break;
                     case AudioManager.SCO_AUDIO_STATE_CONNECTING:
-                        handleBluetoothStateChange(BluetoothState.UNAVAILABLE);
+                        // Don't treat CONNECTING as UNAVAILABLE - it's a normal transition state
+                        // Continue using normal mic mode while waiting for SCO to connect
+                        Log.d(TAG, "SCO connecting - continuing with current recording...");
                         break;
                     case AudioManager.SCO_AUDIO_STATE_DISCONNECTED:
                         handleBluetoothStateChange(BluetoothState.UNAVAILABLE);
@@ -152,19 +157,31 @@ public class MicrophoneLocalAndBluetooth {
     private Context mContext;
 
     private AudioChunkCallback mChunkCallback;
+    private PhoneMicrophoneManager phoneMicManager;
     private CountDownTimer mCountDown;
 
     public MicrophoneLocalAndBluetooth(Context context, boolean useBluetoothSco, AudioChunkCallback chunkCallback) {
-        this(context, chunkCallback);
+        this(context, useBluetoothSco, chunkCallback, null);
+    }
+
+    public MicrophoneLocalAndBluetooth(Context context, boolean useBluetoothSco, AudioChunkCallback chunkCallback, 
+                                      PhoneMicrophoneManager phoneMicManager) {
+        this(context, chunkCallback, phoneMicManager);
         useBluetoothMic(useBluetoothSco);
     }
 
     public MicrophoneLocalAndBluetooth(Context context, AudioChunkCallback chunkCallback) {
+        this(context, chunkCallback, null);
+    }
+
+    public MicrophoneLocalAndBluetooth(Context context, AudioChunkCallback chunkCallback, 
+                                     PhoneMicrophoneManager phoneMicManager) {
         bufferSize = Math.round(SAMPLING_RATE_IN_HZ * BUFFER_SIZE_SECONDS);
 
         mIsStarting = true;
 
         mContext = context;
+        this.phoneMicManager = phoneMicManager;
 
         audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
 
@@ -173,10 +190,56 @@ public class MicrophoneLocalAndBluetooth {
         // Always use the main thread's Looper to prevent threading issues
         mHandler = new Handler(Looper.getMainLooper());
 
+        // Start the dedicated microphone service
+        startMicrophoneService(context);
+
         // Initialize the countdown timer
         initCountDownTimer();
 
         startRecording();
+    }
+    
+    /**
+     * Starts the dedicated microphone foreground service
+     */
+    private void startMicrophoneService(Context context) {
+        Intent intent = new Intent(context, MicrophoneService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
+        }
+        Log.d(TAG, "Started MicrophoneService for microphone permissions");
+    }
+
+    /**
+     * Stops the dedicated microphone foreground service
+     */
+    private void stopMicrophoneService(Context context) {
+        if (context == null) return;
+        
+        // On Android 14 (SDK 34+), we need to ensure the service has enough time to call
+        // startForeground() before stopping it, otherwise we'll get a ForegroundServiceDidNotStartInTimeException
+        
+        try {
+            // Instead of immediately stopping, wait briefly to ensure startForeground() has been called
+            Handler handler = new Handler(Looper.getMainLooper());
+            handler.postDelayed(() -> {
+                try {
+                    if (context != null) {
+                        Intent intent = new Intent(context, MicrophoneService.class);
+                        context.stopService(intent);
+                        Log.d(TAG, "Stopped MicrophoneService after delay");
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error stopping MicrophoneService", e);
+                }
+            }, 500); // 500ms delay to allow startForeground() to complete
+            
+            Log.d(TAG, "Scheduled MicrophoneService stop with delay");
+        } catch (Exception e) {
+            Log.e(TAG, "Error in delayed MicrophoneService stop", e);
+        }
     }
 
     private void initCountDownTimer() {
@@ -299,7 +362,16 @@ public class MicrophoneLocalAndBluetooth {
                 stopRecording();
                 return;
             }
+            
+            // Register our AudioRecord with the PhoneMicrophoneManager for conflict detection
+            // Do this BEFORE starting recording so we can filter out events from our own app
+            if (phoneMicManager != null) {
+                int sessionId = recorder.getAudioSessionId();
+                Log.d(TAG, "Registering our AudioRecord with session ID: " + sessionId);
+                phoneMicManager.registerOurAudioRecord(recorder);
+            }
 
+            // Start recording AFTER registering the AudioRecord
             recorder.startRecording();
 
             recordingInProgress.set(true);
@@ -333,11 +405,23 @@ public class MicrophoneLocalAndBluetooth {
         }
 
         recordingInProgress.set(false);
+        
+        // Store the recorder reference temporarily to ensure we can unregister it
+        // even if an exception occurs during the stop process
+        AudioRecord tempRecorder = recorder;
 
         try {
+            // Unregister from PhoneMicrophoneManager BEFORE stopping to ensure
+            // we don't react to our own recorder's stop event
+            if (phoneMicManager != null && tempRecorder != null) {
+                int sessionId = tempRecorder.getAudioSessionId();
+                Log.d(TAG, "Unregistering our AudioRecord with session ID: " + sessionId);
+                phoneMicManager.unregisterOurAudioRecord(tempRecorder);
+            }
+            
             // Only call stop if the recorder is actually recording.
-            if (recorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-                recorder.stop();
+            if (tempRecorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                tempRecorder.stop();
             } else {
                 Log.d(TAG, "AudioRecord is not recording; skipping stop.");
             }
@@ -345,7 +429,9 @@ public class MicrophoneLocalAndBluetooth {
             Log.e(TAG, "Error stopping AudioRecord", e);
         } finally {
             try {
-                recorder.release();
+                if (tempRecorder != null) {
+                    tempRecorder.release();
+                }
             } catch (Exception e) {
                 Log.e(TAG, "Error releasing AudioRecord", e);
             }
@@ -631,6 +717,9 @@ public class MicrophoneLocalAndBluetooth {
         // Set the destroyed flag first to prevent any new operations
         isDestroyed.set(true);
 
+        // Stop the dedicated microphone service
+        stopMicrophoneService(mContext);
+
         // Cancel the countdown timer
         if (mCountDown != null) {
             mIsCountDownOn = false;
@@ -663,6 +752,7 @@ public class MicrophoneLocalAndBluetooth {
         }
 
         // Clear references
+        Context localContext = mContext; // Store temporarily to stop service
         mContext = null;
         mChunkCallback = null;
         mHandler = null;

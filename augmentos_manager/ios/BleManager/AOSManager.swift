@@ -54,7 +54,6 @@ struct ViewState {
   private var settingsLoaded = false
   private let settingsLoadedSemaphore = DispatchSemaphore(value: 0)
   private var connectTask: Task<Void, Never>?
-  private var datetimeTimer: Timer?
   
   var viewStates: [ViewState] = [
     ViewState(topText: " ", bottomText: " ", layoutType: "text_wall", text: "", eventStr: ""),
@@ -144,8 +143,6 @@ struct ViewState {
         handleRequestStatus()
       }
       .store(in: &cancellables)
-    
-    startDatetimeTimer()
   }
   
   @objc func connectServer() {
@@ -455,6 +452,10 @@ struct ViewState {
         return
       }
       
+      if (!self.somethingConnected) {
+        return
+      }
+      
       let layoutType = currentViewState.layoutType
       switch layoutType {
       case "text_wall":
@@ -722,7 +723,7 @@ struct ViewState {
       case forgetSmartGlasses = "forget_smart_glasses"
       case startApp = "start_app"
       case stopApp = "stop_app"
-      case updateGlassesHeadUpAngle = "update_glasses_headUp_angle"
+      case updateGlassesHeadUpAngle = "update_glasses_head_up_angle"
       case updateGlassesBrightness = "update_glasses_brightness"
       case updateGlassesDashboardHeight = "update_glasses_dashboard_height"
       case updateGlassesDepth = "update_glasses_depth"
@@ -785,7 +786,6 @@ struct ViewState {
         case .disconnectWearable:
           self.sendText(" ")// clear the screen
           handleDisconnectWearable()
-          handleRequestStatus()
           break
           
         case .forgetSmartGlasses:
@@ -848,7 +848,7 @@ struct ViewState {
           break
         case .updateGlassesHeadUpAngle:
           guard let params = params, let value = params["headUpAngle"] as? Int else {
-            print("update_glasses_headUp_angle invalid params")
+            print("update_glasses_head_up_angle invalid params")
             break
           }
           self.headUpAngle = value
@@ -983,10 +983,12 @@ struct ViewState {
   }
   
   private func handleDisconnectWearable() {
-    connectTask?.cancel()
-    disconnect()
-    self.isSearching = false
-    handleRequestStatus()
+    Task {
+      connectTask?.cancel()
+      disconnect()
+      self.isSearching = false
+      handleRequestStatus()
+    }
   }
 
   private func getGlassesHasMic() -> Bool {
@@ -1026,7 +1028,7 @@ struct ViewState {
         "auto_brightness": self.autoBrightness,
         "dashboard_height": self.dashboardHeight,
         "depth": self.depth,
-        "headUp_angle": self.headUpAngle,
+        "head_up_angle": self.headUpAngle,
     ]
     
     let cloudConnectionStatus = self.serverComms.isWebSocketConnected() ? "CONNECTED" : "DISCONNECTED"
@@ -1347,25 +1349,6 @@ struct ViewState {
   
   @objc func cleanup() {
     cancellables.removeAll()
-    datetimeTimer?.invalidate()
-    datetimeTimer = nil
     saveSettings()
-  }
-  
-  private func startDatetimeTimer() {
-    datetimeTimer?.invalidate()
-    datetimeTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
-      self?.sendCurrentDatetimeToBackend()
-    }
-    // Fire once after a short delay
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-      self?.sendCurrentDatetimeToBackend()
-    }
-  }
-
-  private func sendCurrentDatetimeToBackend() {
-    let formatter = ISO8601DateFormatter()
-    let isoDatetime = formatter.string(from: Date())
-    serverComms.sendUserDatetimeToBackend(userId: self.coreTokenOwner, isoDatetime: isoDatetime)
   }
 }

@@ -106,30 +106,41 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
     }
 
     public void findCompatibleDeviceNames(){
-        // If we have not created a communicator yet (or the device changed), create it once
-        //if (smartGlassesCommunicator == null || !isSameDevice(smartGlassesDevice, smartGlassesCommunicator)) {
-        if (smartGlassesCommunicator == null) {
-            smartGlassesCommunicator = createCommunicator();
+        // Always create a fresh communicator for findCompatibleDeviceNames
+        // Previous implementation had smartGlassesCommunicator.destroy() nulling out fields
+        // but not updating our reference, leading to NPEs on subsequent calls
+        if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Destroying existing communicator before creating new one");
+            smartGlassesCommunicator.destroy();
         }
+        
+        // Always create a fresh communicator for findCompatibleDeviceNames
+        smartGlassesCommunicator = createCommunicator();
 
         if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Finding compatible device names with fresh communicator");
             smartGlassesCommunicator.findCompatibleDeviceNames();
         } else {
-            Log.d(TAG, "SmartGlassesCommunicator is NULL, something truly awful must have transpired");
+            Log.e(TAG, "Failed to create SmartGlassesCommunicator");
         }
     }
 
     public void connectToSmartGlasses(){
-        // Same approach: if the communicator is null, create it
-        //if (smartGlassesCommunicator == null || !isSameDevice(smartGlassesDevice, smartGlassesCommunicator)) {
-        if (smartGlassesCommunicator == null) {
-            smartGlassesCommunicator = createCommunicator();
+        // Similar to findCompatibleDeviceNames, always create a fresh communicator
+        // This ensures we don't reuse a communicator with null fields after destroy()
+        if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Destroying existing communicator before connecting to glasses");
+            smartGlassesCommunicator.destroy();
         }
+        
+        // Create a fresh communicator for connecting
+        smartGlassesCommunicator = createCommunicator();
 
         if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Connecting to smart glasses with fresh communicator");
             smartGlassesCommunicator.connectToSmartGlasses();
         } else {
-            Log.d(TAG, "SmartGlassesCommunicator is NULL, something truly awful must have transpired");
+            Log.e(TAG, "Failed to create SmartGlassesCommunicator for connection");
         }
 
         if (SmartGlassesManager.getSensingEnabled(context)) {

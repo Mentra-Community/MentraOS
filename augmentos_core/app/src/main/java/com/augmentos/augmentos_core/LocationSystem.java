@@ -1,14 +1,25 @@
 package com.augmentos.augmentos_core;
 
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
 import android.content.Context;
+import android.content.Intent;
 import android.util.Log;
 import android.content.pm.PackageManager;
 import android.location.Location;
+import android.os.Binder;
+import android.os.Build;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 
+import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
 
 import com.augmentos.augmentos_core.augmentos_backend.ServerComms;
 import com.google.android.gms.location.FusedLocationProviderClient;
@@ -18,9 +29,17 @@ import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 
 
-public class LocationSystem {
+public class LocationSystem extends Service {
     private static final String TAG = "LocationSystem";
-    private Context context;
+    private static final int NOTIFICATION_ID = 1004;
+    private static final String CHANNEL_ID = "LocationServiceChannel";
+    
+    // Service binder
+    private final IBinder binder = new LocationBinder();
+    
+    // We no longer need this context since we are a Service
+    // private Context context;
+    
     public double lat = 0;
     public double lng = 0;
 
@@ -37,17 +56,103 @@ public class LocationSystem {
     private Runnable locationSendingRunnableCode;
     private final long locationSendTime = 1000 * 60 * 30; // 30 minutes
 
-    public LocationSystem(Context context) {
-        this.context = context;
-        fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context);
+    /**
+     * Class for clients to access this service
+     */
+    public class LocationBinder extends Binder {
+        public LocationSystem getService() {
+            return LocationSystem.this;
+        }
+    }
+    
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "LocationService created");
+        createNotificationChannel();
+        
+        // Initialize location components
+        fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
         setupLocationCallbacks();
         getLastKnownLocation();
         requestFastLocationUpdate(); // Get a quick fix immediately on startup
         scheduleLocationUpdates();
     }
+    
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        Log.d(TAG, "Starting LocationService as foreground service");
+        startForeground(NOTIFICATION_ID, createNotification());
+        return START_NOT_STICKY; // Don't restart if killed
+    }
+    
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        return binder;
+    }
+    
+    @Override
+    public void onDestroy() {
+        Log.d(TAG, "LocationService destroyed");
+        cleanup();
+        super.onDestroy();
+    }
+    
+    /**
+     * Create notification for the foreground service
+     */
+    private Notification createNotification() {
+        Intent notificationIntent = new Intent(this, MainActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE
+        );
+        
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Location Service")
+                .setContentText("Providing location for smart glasses")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build();
+    }
+    
+    /**
+     * Create the notification channel for Android O and above
+     */
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Location Service",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Used for location updates for smart glasses");
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
+    
+    // Required no-argument constructor for Android services
+    public LocationSystem() {
+        // No initialization here - it will be done in onCreate()
+    }
+    
+    // For backward compatibility - this constructor is no longer the main entry point
+    // since we're now a Service, but keeping it allows existing code to work
+    public LocationSystem(Context context) {
+        // We don't need to do anything here since onCreate() will handle initialization
+        // This is just for API compatibility
+    }
 
     private void getLastKnownLocation() {
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             return;
         }
 
@@ -64,7 +169,7 @@ public class LocationSystem {
     }
 
     public void requestFastLocationUpdate() {
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             return;
         }
 
@@ -91,7 +196,7 @@ public class LocationSystem {
     }
 
     public void requestLocationUpdate() {
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             return;
         }
 

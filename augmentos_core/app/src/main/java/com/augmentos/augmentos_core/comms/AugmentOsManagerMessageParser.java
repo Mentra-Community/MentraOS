@@ -150,7 +150,7 @@ public class AugmentOsManagerMessageParser {
                     }
                     break;
 
-                case "update_glasses_headUp_angle":
+                case "update_glasses_head_up_angle":
                     int headUpAngle = commandObject.getJSONObject("params").getInt("headUpAngle");
                     callback.updateGlassesHeadUpAngle(headUpAngle);
                     break;

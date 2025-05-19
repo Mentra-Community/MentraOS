@@ -1,15 +1,5 @@
 import React, {useState, useEffect} from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Switch,
-  TouchableOpacity,
-  Platform,
-  ScrollView,
-  TextInput,
-  Alert,
-} from 'react-native';
+import {View, Text, StyleSheet, Switch, TouchableOpacity, Platform, ScrollView, TextInput, Alert} from 'react-native';
 import {useStatus} from '../providers/AugmentOSStatusProvider';
 import coreCommunicator from '../bridge/CoreCommunicator';
 import NavigationBar from '../components/NavigationBar';
@@ -17,6 +7,7 @@ import {saveSetting, loadSetting} from '../logic/SettingsHelper';
 import {SETTINGS_KEYS} from '../consts';
 import axios from 'axios';
 import showAlert from '../utils/AlertUtils';
+import TestFlightDetector from '../bridge/TestFlightDetector';
 
 interface DeveloperSettingsScreenProps {
   isDarkTheme: boolean;
@@ -24,18 +15,15 @@ interface DeveloperSettingsScreenProps {
   navigation: any;
 }
 
-const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
-  isDarkTheme,
-  toggleTheme,
-  navigation,
-}) => {
+const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({isDarkTheme, toggleTheme, navigation}) => {
   const {status} = useStatus();
-  const [isBypassVADForDebuggingEnabled, setIsBypassVADForDebuggingEnabled] =
-    React.useState(status.core_info.bypass_vad_for_debugging);
-  const [
-    isBypassAudioEncodingForDebuggingEnabled,
-    setIsBypassAudioEncodingForDebuggingEnabled,
-  ] = React.useState(status.core_info.bypass_audio_encoding_for_debugging);
+  const [isBypassVADForDebuggingEnabled, setIsBypassVADForDebuggingEnabled] = React.useState(
+    status.core_info.bypass_vad_for_debugging,
+  );
+  const [isBypassAudioEncodingForDebuggingEnabled, setIsBypassAudioEncodingForDebuggingEnabled] = React.useState(
+    status.core_info.bypass_audio_encoding_for_debugging,
+  );
+  const [isTestFlightOrDev, setIsTestFlightOrDev] = useState<boolean>(false);
 
   // State for custom URL management
   const [customUrlInput, setCustomUrlInput] = useState('');
@@ -53,10 +41,16 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
   }, []);
 
   useEffect(() => {
-    setIsBypassVADForDebuggingEnabled(
-      status.core_info.bypass_vad_for_debugging,
-    );
+    setIsBypassVADForDebuggingEnabled(status.core_info.bypass_vad_for_debugging);
   }, [status.core_info.bypass_vad_for_debugging]);
+
+  // Check if running on TestFlight (iOS) or development mode
+  useEffect(() => {
+    async function checkTestFlightOrDev() {
+      setIsTestFlightOrDev(await TestFlightDetector.isTestFlightOrDev());
+    }
+    checkTestFlightOrDev();
+  }, []);
 
   const toggleBypassVadForDebugging = async () => {
     let newSetting = !isBypassVADForDebuggingEnabled;
@@ -66,9 +60,7 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
 
   const toggleBypassAudioEncodingForDebugging = async () => {
     let newSetting = !isBypassAudioEncodingForDebuggingEnabled;
-    await coreCommunicator.sendToggleBypassAudioEncodingForDebugging(
-      newSetting,
-    );
+    await coreCommunicator.sendToggleBypassAudioEncodingForDebugging(newSetting);
     setIsBypassAudioEncodingForDebuggingEnabled(newSetting);
   };
 
@@ -78,21 +70,13 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
 
     // Basic validation
     if (!urlToTest) {
-      showAlert(
-        'Empty URL',
-        'Please enter a URL or reset to default.',
-        [{text: 'OK'}],
-        {isDarkTheme},
-      );
+      showAlert('Empty URL', 'Please enter a URL or reset to default.', [{text: 'OK'}], {isDarkTheme});
       return;
     }
     if (!urlToTest.startsWith('http://') && !urlToTest.startsWith('https://')) {
-      showAlert(
-        'Invalid URL',
-        'Please enter a valid URL starting with http:// or https://',
-        [{text: 'OK'}],
-        {isDarkTheme},
-      );
+      showAlert('Invalid URL', 'Please enter a valid URL starting with http:// or https://', [{text: 'OK'}], {
+        isDarkTheme,
+      });
       return;
     }
 
@@ -129,22 +113,12 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
       }
     } catch (error: unknown) {
       // Handle network errors or timeouts
-      console.error(
-        'URL Test Failed:',
-        error instanceof Error ? error.message : 'Unknown error',
-      );
-      let errorMessage =
-        'Could not connect to the specified URL. Please check the URL and your network connection.';
+      console.error('URL Test Failed:', error instanceof Error ? error.message : 'Unknown error');
+      let errorMessage = 'Could not connect to the specified URL. Please check the URL and your network connection.';
 
       // Type guard for axios error with code property
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'ECONNABORTED'
-      ) {
-        errorMessage =
-          'Connection timed out. Please check the URL and server status.';
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ECONNABORTED') {
+        errorMessage = 'Connection timed out. Please check the URL and server status.';
       }
       // Type guard for axios error with response property
       else if (
@@ -179,8 +153,7 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
       false: isDarkTheme ? '#666666' : '#D1D1D6',
       true: '#2196F3',
     },
-    thumbColor:
-      Platform.OS === 'ios' ? undefined : isDarkTheme ? '#FFFFFF' : '#FFFFFF',
+    thumbColor: Platform.OS === 'ios' ? undefined : isDarkTheme ? '#FFFFFF' : '#FFFFFF',
     ios_backgroundColor: isDarkTheme ? '#666666' : '#D1D1D6',
   };
 
@@ -190,20 +163,11 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
         {/* Bypass VAD for Debugging Toggle */}
         <View style={styles.settingItem}>
           <View style={styles.settingTextContainer}>
-            <Text
-              style={[
-                styles.label,
-                isDarkTheme ? styles.lightText : styles.darkText,
-              ]}>
+            <Text style={[styles.label, isDarkTheme ? styles.lightText : styles.darkText]}>
               Bypass VAD for Debugging
             </Text>
-            <Text
-              style={[
-                styles.value,
-                isDarkTheme ? styles.lightSubtext : styles.darkSubtext,
-              ]}>
-              Bypass Voice Activity Detection in case transcription stops
-              working.
+            <Text style={[styles.value, isDarkTheme ? styles.lightSubtext : styles.darkSubtext]}>
+              Bypass Voice Activity Detection in case transcription stops working.
             </Text>
           </View>
           <Switch
@@ -215,94 +179,81 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({
           />
         </View>
 
-        <View style={styles.warningContainer}>
-          <Text style={styles.warningText}>
-            Warning: These settings may break the app. Use at your own risk.
-          </Text>
-        </View>
+        {isTestFlightOrDev && (
+          <>
+            <View style={styles.warningContainer}>
+              <Text style={styles.warningText}>Warning: These settings may break the app. Use at your own risk.</Text>
+            </View>
 
-        <View style={styles.settingItem}>
-          <View style={styles.settingTextContainer}>
-            <Text
-              style={[
-                styles.label,
-                isDarkTheme ? styles.lightText : styles.darkText,
-              ]}>
-              Custom Backend URL
-            </Text>
-            <Text
-              style={[
-                styles.value,
-                isDarkTheme ? styles.lightSubtext : styles.darkSubtext,
-              ]}>
-              Override the default backend server URL. Leave blank to use
-              default.
-              {savedCustomUrl && `\nCurrently using: ${savedCustomUrl}`}
-            </Text>
-            <TextInput
-              style={[
-                styles.urlInput,
-                {
-                  backgroundColor: isDarkTheme ? '#333333' : '#FFFFFF',
-                  borderColor: isDarkTheme ? '#555555' : '#CCCCCC',
-                  color: isDarkTheme ? '#FFFFFF' : '#000000',
-                },
-              ]}
-              placeholder="e.g., http://192.168.1.100:7002"
-              placeholderTextColor={isDarkTheme ? '#999999' : '#666666'}
-              value={customUrlInput}
-              onChangeText={setCustomUrlInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              editable={!isSavingUrl}
-            />
-            <View style={styles.buttonRow}>
-              <TouchableOpacity
-                style={[
-                  styles.saveButton,
-                  {backgroundColor: isDarkTheme ? '#3b82f6' : '#007BFF'},
-                  isSavingUrl && styles.disabledItem,
-                ]}
-                onPress={handleSaveUrl}
-                disabled={isSavingUrl}>
-                <Text style={styles.buttonText}>
-                  {isSavingUrl ? 'Testing...' : 'Save & Test URL'}
+            <View style={styles.settingItem}>
+              <View style={styles.settingTextContainer}>
+                <Text style={[styles.label, isDarkTheme ? styles.lightText : styles.darkText]}>Custom Backend URL</Text>
+                <Text style={[styles.value, isDarkTheme ? styles.lightSubtext : styles.darkSubtext]}>
+                  Override the default backend server URL. Leave blank to use default.
+                  {savedCustomUrl && `\nCurrently using: ${savedCustomUrl}`}
                 </Text>
+                <TextInput
+                  style={[
+                    styles.urlInput,
+                    {
+                      backgroundColor: isDarkTheme ? '#333333' : '#FFFFFF',
+                      borderColor: isDarkTheme ? '#555555' : '#CCCCCC',
+                      color: isDarkTheme ? '#FFFFFF' : '#000000',
+                    },
+                  ]}
+                  placeholder="e.g., http://192.168.1.100:7002"
+                  placeholderTextColor={isDarkTheme ? '#999999' : '#666666'}
+                  value={customUrlInput}
+                  onChangeText={setCustomUrlInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  editable={!isSavingUrl}
+                />
+                <View style={styles.buttonRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.saveButton,
+                      {backgroundColor: isDarkTheme ? '#3b82f6' : '#007BFF'},
+                      isSavingUrl && styles.disabledItem,
+                    ]}
+                    onPress={handleSaveUrl}
+                    disabled={isSavingUrl}>
+                    <Text style={styles.buttonText}>{isSavingUrl ? 'Testing...' : 'Save & Test URL'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.resetButton,
+                      {backgroundColor: isDarkTheme ? '#555555' : '#AAAAAA'},
+                      isSavingUrl && styles.disabledItem,
+                    ]}
+                    onPress={handleResetUrl}
+                    disabled={isSavingUrl}>
+                    <Text style={styles.buttonText}>Reset</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.buttonColumn}>
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => setCustomUrlInput('https://prod.augmentos.cloud:443')}>
+                <Text style={styles.buttonText}>Production</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[
-                  styles.resetButton,
-                  {backgroundColor: isDarkTheme ? '#555555' : '#AAAAAA'},
-                  isSavingUrl && styles.disabledItem,
-                ]}
-                onPress={handleResetUrl}
-                disabled={isSavingUrl}>
-                <Text style={styles.buttonText}>Reset</Text>
+                style={styles.button}
+                onPress={() => setCustomUrlInput('https://debug.augmentos.cloud:443')}>
+                <Text style={styles.buttonText}>Debug</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => setCustomUrlInput('https://global.augmentos.cloud:443')}>
+                <Text style={styles.buttonText}>Global</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-
-        <View style={styles.buttonColumn}>
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => setCustomUrlInput('https://prod.augmentos.cloud:443')}>
-            <Text style={styles.buttonText}>Production</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => setCustomUrlInput('https://debug.augmentos.cloud:443')}>
-            <Text style={styles.buttonText}>Debug</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() =>
-              setCustomUrlInput('https://global.augmentos.cloud:443')
-            }>
-            <Text style={styles.buttonText}>Global</Text>
-          </TouchableOpacity>
-        </View>
+          </>
+        )}
 
         {/* Bypass Audio Encoding for Debugging Toggle
         <View style={styles.settingItem}>

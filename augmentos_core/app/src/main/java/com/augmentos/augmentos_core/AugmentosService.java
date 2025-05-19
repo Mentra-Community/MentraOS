@@ -21,6 +21,7 @@ import android.app.Service;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.hardware.display.VirtualDisplay;
@@ -141,7 +142,51 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
     public AugmentosBlePeripheral blePeripheral;
 
     public SmartGlassesManager smartGlassesManager;
+    private boolean smartGlassesManagerBound = false;
     private final List<Runnable> smartGlassesReadyListeners = new ArrayList<>();
+    
+    /**
+     * Connection to SmartGlassesManager service
+     */
+    private ServiceConnection smartGlassesServiceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName className, IBinder service) {
+            SmartGlassesManager.SmartGlassesBinder binder = (SmartGlassesManager.SmartGlassesBinder) service;
+            smartGlassesManager = binder.getService();
+            smartGlassesManager.setLifecycleOwnerAndEventHandler(AugmentosService.this, smartGlassesEventHandler);
+            smartGlassesManagerBound = true;
+            
+            // Set it in the EdgeTPASystem 
+            if (edgeTpaSystem != null) {
+                edgeTpaSystem.setSmartGlassesManager(smartGlassesManager);
+            }
+            
+            // Execute any pending actions
+            for (Runnable action : smartGlassesReadyListeners) {
+                action.run();
+            }
+            smartGlassesReadyListeners.clear();
+            
+            Log.d(TAG, "SmartGlassesManager service bound");
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName className) {
+            smartGlassesManager = null;
+            smartGlassesManagerBound = false;
+            Log.d(TAG, "SmartGlassesManager service unbound");
+            
+            // Update EdgeTPASystem
+            if (edgeTpaSystem != null) {
+                edgeTpaSystem.setSmartGlassesManager(null);
+            }
+            
+            // Update connection state
+            if (webSocketLifecycleManager != null) {
+                webSocketLifecycleManager.updateSmartGlassesState(SmartGlassesConnectionState.DISCONNECTED);
+            }
+        }
+    };
     private NotificationSystem notificationSystem;
     private CalendarSystem calendarSystem;
 
@@ -439,9 +484,21 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             if (preferredDevice != null) {
                 // Initialize SmartGlassesManager
                 startSmartGlassesManager();
-                // Connect to glasses
-                smartGlassesManager.connectToSmartGlasses(preferredDevice);
-                sendStatusToAugmentOsManager();
+                
+                // Store the device to connect when SmartGlassesManager is ready
+                final SmartGlassesDevice deviceToConnect = preferredDevice;
+                
+                // Add a listener that will be called when the service is connected
+                executeOnceSmartGlassesManagerReady(() -> {
+                    // Connect to glasses once the manager is available
+                    if (smartGlassesManager != null) {
+                        Log.d(TAG, "Connecting to preferred smart glasses: " + deviceToConnect.deviceModelName);
+                        smartGlassesManager.connectToSmartGlasses(deviceToConnect);
+                        sendStatusToAugmentOsManager();
+                    } else {
+                        Log.e(TAG, "SmartGlassesManager still null when ready listener called!");
+                    }
+                });
             } else {
                 // We have some invalid device saved... delete from preferences
                 SmartGlassesManager.savePreferredWearable(this, "");
@@ -620,27 +677,55 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         return builder.build();
     }
 
-    // Method to initialize the SmartGlassesManager
+    // Method to initialize the SmartGlassesManager by binding to the service
     public void startSmartGlassesManager() {
-        if (smartGlassesManager == null) {
-            // Now we can pass 'this' as the LifecycleOwner since we extend LifecycleService
-            smartGlassesManager = new SmartGlassesManager(this, this, smartGlassesEventHandler);
-            edgeTpaSystem.setSmartGlassesManager(smartGlassesManager);
-            // Execute any pending actions
-            for (Runnable action : smartGlassesReadyListeners) {
-                action.run();
+        if (!smartGlassesManagerBound && smartGlassesManager == null) {
+            Log.d(TAG, "Binding to SmartGlassesManager service");
+            
+            // Start and bind to the SmartGlassesManager service
+            Intent intent = new Intent(this, SmartGlassesManager.class);
+            
+            // Start the service as a foreground service for Android O+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
             }
-            smartGlassesReadyListeners.clear();
+            
+            // Bind to the service
+            bindService(intent, smartGlassesServiceConnection, Context.BIND_AUTO_CREATE);
+            
+            // The service connection callbacks will handle the rest
+        } else if (smartGlassesManager != null) {
+            Log.d(TAG, "SmartGlassesManager already initialized");
         }
     }
 
     // Method to clean up the SmartGlassesManager
     public void stopSmartGlassesManager() {
-        if (smartGlassesManager != null) {
-            smartGlassesManager.cleanup();
-            smartGlassesManager = null;
-            edgeTpaSystem.setSmartGlassesManager(null);
-            webSocketLifecycleManager.updateSmartGlassesState(SmartGlassesConnectionState.DISCONNECTED);
+        if (smartGlassesManagerBound) {
+            Log.d(TAG, "Unbinding from SmartGlassesManager service");
+            
+            // Unbind from the service
+            unbindService(smartGlassesServiceConnection);
+            smartGlassesManagerBound = false;
+            
+            // Stop the service
+            Intent intent = new Intent(this, SmartGlassesManager.class);
+            stopService(intent);
+            
+            // Clean up references
+            if (smartGlassesManager != null) {
+                smartGlassesManager = null;
+            }
+            
+            // Update state
+            if (edgeTpaSystem != null) {
+                edgeTpaSystem.setSmartGlassesManager(null);
+            }
+            if (webSocketLifecycleManager != null) {
+                webSocketLifecycleManager.updateSmartGlassesState(SmartGlassesConnectionState.DISCONNECTED);
+            }
         }
     }
 
@@ -1124,7 +1209,12 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
                 && smartGlassesManager.getSmartGlassesConnectState() != SmartGlassesConnectionState.CONNECTED;
     }
 
-    private void executeOnceSmartGlassesManagerReady(Context context, Runnable action) {
+    /**
+     * Executes an action once the SmartGlassesManager is ready.
+     * If the manager is already initialized, the action is executed immediately.
+     * Otherwise, it's queued to be executed when the manager is bound.
+     */
+    private void executeOnceSmartGlassesManagerReady(Runnable action) {
         if (smartGlassesManager != null) {
             // If the manager is already initialized, execute the action immediately
             action.run();
@@ -1136,6 +1226,13 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
 
         // Ensure the manager is started
         startSmartGlassesManager();
+    }
+    
+    /**
+     * Overloaded version that takes a context parameter (for backward compatibility)
+     */
+    private void executeOnceSmartGlassesManagerReady(Context context, Runnable action) {
+        executeOnceSmartGlassesManagerReady(action);
     }
 
     public JSONObject generateStatusJson() {
@@ -1190,23 +1287,17 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             // Adding glasses settings
             JSONObject glassesSettings = new JSONObject();
             glassesSettings.put("auto_brightness", autoBrightness);
-            glassesSettings.put("headUp_angle", headUpAngle);
+            glassesSettings.put("head_up_angle", headUpAngle);
             glassesSettings.put("dashboard_height", 4);// TODO
             glassesSettings.put("depth", 5);// TODO
-
-            String brightnessString;
             if (brightnessLevel == null) {
-                brightnessString = "-";
-            } else if (brightnessLevel == -1){
-                brightnessString = "AUTO";
-            } else {
-                brightnessString = brightnessLevel + "%";
+                brightnessLevel = 50;
             }
-            connectedGlasses.put("brightness", brightnessString);
+            glassesSettings.put("brightness", brightnessLevel);
             if (headUpAngle == null) {
                 headUpAngle = 20;
             }
-            connectedGlasses.put("headUp_angle", headUpAngle);
+            glassesSettings.put("head_up_angle", headUpAngle);
             status.put("glasses_settings", glassesSettings);
             
             
@@ -1496,7 +1587,22 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             return;
         }
 
-        executeOnceSmartGlassesManagerReady(this, () -> {
+        // Ensure we have a fresh SmartGlassesManager instance for searching
+        // First check if it's already running
+        if (smartGlassesManager != null) {
+            // Stop the existing instance to ensure a clean state
+            try {
+                stopSmartGlassesManager();
+                smartGlassesManager = null;
+                smartGlassesManagerBound = false;
+                Log.d(TAG, "Stopped existing SmartGlassesManager before device search");
+            } catch (Exception e) {
+                Log.e(TAG, "Error stopping SmartGlassesManager: " + e.getMessage());
+            }
+        }
+
+        // Now execute with a fresh instance
+        executeOnceSmartGlassesManagerReady(() -> {
             smartGlassesManager.findCompatibleDeviceNames(device);
             // blePeripheral.sendGlassesSearchResultsToManager(modelName, compatibleDeviceNames);
         });
@@ -1556,7 +1662,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             }
         }
 
-        executeOnceSmartGlassesManagerReady(this, () -> {
+        executeOnceSmartGlassesManagerReady(() -> {
             smartGlassesManager.connectToSmartGlasses(device);
             sendStatusToAugmentOsManager();
         });
@@ -1569,10 +1675,25 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         glassesWifiConnected = false;
         glassesWifiSsid = "";
         
-        // Instead of stopping the service, reset the state
+        // Reset state AND completely stop the service to get a clean state
         if (smartGlassesManager != null) {
-            smartGlassesManager.resetState();
+            try {
+                // First reset state to ensure proper event handling
+                smartGlassesManager.resetState();
+                
+                // Then stop and unbind from the service completely
+                stopSmartGlassesManager();
+                
+                // Set to null to ensure we don't try to use it
+                smartGlassesManager = null;
+                smartGlassesManagerBound = false;
+                
+                Log.d(TAG, "Successfully stopped SmartGlassesManager service for clean reconnect");
+            } catch (Exception e) {
+                Log.e(TAG, "Error stopping SmartGlassesManager: " + e.getMessage());
+            }
         }
+        
         sendStatusToAugmentOsManager();
     }
 
@@ -1753,6 +1874,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         this.brightnessLevel = brightness;
         this.autoBrightness = false;
         sendStatusToBackend();
+        sendStatusToAugmentOsManager();
     }
 
     @Override
@@ -1763,6 +1885,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         }
         this.autoBrightness = autoBrightness;
         sendStatusToBackend();
+        sendStatusToAugmentOsManager();
     }
 
     @Override
@@ -1973,10 +2096,10 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         // Remove all pending posts to avoid any UI updates after destruction
         uiHandler.removeCallbacksAndMessages(null);
         
-        // Reset glasses connection
-        if (smartGlassesManager != null) {
-            smartGlassesManager.resetState();
-            smartGlassesManager.cleanup();
+        // Reset glasses connection - unbind from the service
+        if (smartGlassesManagerBound) {
+            stopSmartGlassesManager(); // This method handles all the cleanup
+        } else if (smartGlassesManager != null) {
             smartGlassesManager = null;
             edgeTpaSystem.setSmartGlassesManager(null);
         }

@@ -517,7 +517,7 @@ export class CoreCommunicator extends EventEmitter {
 
   async setGlassesHeadUpAngle(headUpAngle: number) {
     return await this.sendData({
-      command: 'update_glasses_headUp_angle',
+      command: 'update_glasses_head_up_angle',
       params: {
         headUpAngle: headUpAngle,
       },

@@ -135,10 +135,10 @@ const DashboardSettingsScreen: React.FC<DashboardSettingsScreenProps> = ({
   // };
 
   useEffect(() => {
-    if (status.glasses_settings.headUp_angle != null) {
-      setHeadUpAngle(status.glasses_settings.headUp_angle);
+    if (status.glasses_settings.head_up_angle != null) {
+      setHeadUpAngle(status.glasses_settings.head_up_angle);
     }
-  }, [status.glasses_settings.headUp_angle]);
+  }, [status.glasses_settings.head_up_angle]);
 
   // Update isMetricSystemEnabled when status changes
   useEffect(() => {

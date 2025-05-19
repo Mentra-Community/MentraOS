@@ -147,8 +147,6 @@ enum GlassesError: Error {
   private var rightInitialized: Bool = false
   @Published public var isHeadUp = false
   
-  private var aiTriggerTimeoutTimer: Timer?
-  
   private var leftGlassUUID: UUID? {
       get {
           if let uuidString = UserDefaults.standard.string(forKey: "leftGlassUUID") {
@@ -183,9 +181,25 @@ enum GlassesError: Error {
   
   override init() {
     super.init()
-    // centralManager = CBCentralManager(delegate: self, queue: ERG1Manager._bluetoothQueue)
-    // setupCommandQueue()
     startHeartbeatTimer()
+  }
+  
+  deinit {
+      // Stop the heartbeat timer
+      heartbeatTimer?.invalidate()
+      heartbeatTimer = nil
+      
+      // Stop the reconnection timer if active
+      stopReconnectionTimer()
+      
+      // Clean up central manager delegate
+      centralManager?.delegate = nil
+      
+      // Clean up peripheral delegates
+      leftPeripheral?.delegate = nil
+      rightPeripheral?.delegate = nil
+      
+      print("ERG1Manager deinitialized")
   }
   
   // @@@ REACT NATIVE FUNCTIONS @@@
@@ -385,38 +399,6 @@ enum GlassesError: Error {
   // @@@ END REACT NATIVE FUNCTIONS
   
   
-  //  private func setupCommandQueue() {
-  //    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-  //      guard let self = self else { return }
-  //
-  //      while true {
-  //        var commandToProcess: BufferedCommand?
-  //
-  //        // Try to get a number from the queue
-  //        self.queueLock.wait()
-  //        if !self.commandQueue.isEmpty {
-  //          commandToProcess = self.commandQueue.removeFirst()  // FIFO - remove from the front
-  //        }
-  //        self.queueLock.signal()
-  //
-  //        // If no command, just poll again after a short delay
-  //        guard let command = commandToProcess else {
-  //          Thread.sleep(forTimeInterval: 0.1)  // Simple polling
-  //          continue
-  //        }
-  //
-  //        let semaphore = DispatchSemaphore(value: 0)
-  //        Task {
-  //          await self.processCommand(command)
-  //          semaphore.signal()
-  //        }
-  //        semaphore.wait()// waits until the command is done processing
-  //      }
-  //    }
-  //
-  //  }
-  
-  
   actor CommandQueue {
     private var commands: [BufferedCommand] = []
     
@@ -547,28 +529,6 @@ enum GlassesError: Error {
     let result = semaphore.wait(timeout: .now() + timeout)
     return result == .success
   }
-  
-  //  private func startAITriggerTimeoutTimer() {
-  //    let backgroundQueue = DispatchQueue(label: "com.sample.aiTriggerTimerQueue", qos: .default)
-  //
-  //    backgroundQueue.async { [weak self] in
-  //      self?.aiTriggerTimeoutTimer = Timer(timeInterval: 6.0, repeats: false) { [weak self] _ in
-  //        guard let self = self else { return }
-  //        guard let rightPeripheral = self.rightPeripheral else { return }
-  //        guard let leftPeripheral = self.leftPeripheral else { return }
-  //        sendMicOn(to: rightPeripheral, isOn: false)
-  //
-  //        if let leftChar = getWriteCharacteristic(for: leftPeripheral),
-  //           let rightChar = getWriteCharacteristic(for: rightPeripheral) {
-  //          exitAllFunctions(to: leftPeripheral, characteristic: leftChar)
-  //          exitAllFunctions(to: rightPeripheral, characteristic: rightChar)
-  //        }
-  //      }
-  //
-  //      RunLoop.current.add((self?.aiTriggerTimeoutTimer)!, forMode: .default)
-  //      RunLoop.current.run()
-  //    }
-  //  }
   
   func startHeartbeatTimer() {
     

@@ -40,25 +40,10 @@ const SelectGlassesModelScreen: React.FC<SelectGlassesModelScreenProps> = ({
 
     // Check if running on TestFlight (iOS) or development mode
     useEffect(() => {
-        // Always show all options in development mode
-        if (__DEV__) {
-            setIsTestFlightOrDev(true);
-            return;
+        async function checkTestFlightOrDev() {
+            setIsTestFlightOrDev(await TestFlightDetector.isTestFlightOrDev());
         }
-        
-        // For iOS production builds, check if we're on TestFlight
-        if (Platform.OS === 'ios') {
-            TestFlightDetector.isTestFlight()
-                .then(isTestFlight => {
-                    console.log('Running on TestFlight:', isTestFlight);
-                    setIsTestFlightOrDev(isTestFlight);
-                })
-                .catch(error => {
-                    console.error('Error checking TestFlight status:', error);
-                    // If error, default to showing more options rather than fewer
-                    setIsTestFlightOrDev(true);
-                });
-        }
+        checkTestFlightOrDev();
     }, []);
 
     // Platform-specific glasses options
@@ -71,10 +56,12 @@ const SelectGlassesModelScreen: React.FC<SelectGlassesModelScreenProps> = ({
                     // iOS TestFlight or development - include Simulated Glasses
                     { modelName: 'Simulated Glasses', key: 'Simulated Glasses' }, // Moved to first position
                     { modelName: 'Even Realities G1', key: 'evenrealities_g1' },
+                    { modelName: 'Mentra Live', key: 'mentra_live' },
                 ]
                 : [
                     // iOS App Store production build - hide Simulated Glasses
                     { modelName: 'Even Realities G1', key: 'evenrealities_g1' },
+                    { modelName: 'Mentra Live', key: 'mentra_live' },
                 ]
         )
         : [

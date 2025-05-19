@@ -15,6 +15,12 @@ class TestFlightDetector implements TestFlightDetectorInterface {
     
     return TestFlightDetectorModule.isTestFlight();
   }
+  isTestFlightOrDev(): Promise<boolean> {
+    if (__DEV__) {
+      return Promise.resolve(true);
+    }
+    return this.isTestFlight();
+  }
 }
 
 export default new TestFlightDetector();

@@ -1,7 +1,7 @@
 pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
 plugins { id("com.facebook.react.settings") }
 extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
-rootProject.name = 'AugmentOS_Manager'
+rootProject.name = 'AugmentOS'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
 

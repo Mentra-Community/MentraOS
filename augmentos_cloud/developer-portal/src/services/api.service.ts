@@ -50,6 +50,7 @@ export interface AppResponse extends AppI {
   reviewNotes?: string;
   reviewedBy?: string;
   reviewedAt?: string;
+  sharedWithEmails?: string[];
 }
 
 // API key response
@@ -150,6 +151,18 @@ const api = {
         const response = await axios.patch(`/api/permissions/${packageName}`, { permissions });
         return response.data;
       },
+    },
+
+    // Update app visibility (sharedWithOrganization)
+    updateVisibility: async (packageName: string, sharedWithOrganization: boolean): Promise<AppResponse> => {
+      const response = await axios.patch(`/api/dev/apps/${packageName}/visibility`, { sharedWithOrganization });
+      return response.data;
+    },
+
+    // Update sharedWithEmails
+    updateSharedEmails: async (packageName: string, emails: string[]): Promise<AppResponse> => {
+      const response = await axios.patch(`/api/dev/apps/${packageName}/share-emails`, { emails });
+      return response.data;
     },
   },
 

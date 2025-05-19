@@ -19,10 +19,14 @@ import { normalizeUrl } from '@/libs/utils';
 import { toast } from 'sonner';
 import PermissionsForm from '../components/forms/PermissionsForm';
 import { Permission } from '@/types/tpa';
+import { useAuth } from '../hooks/useAuth';
 // import { TPA } from '@/types/tpa';
+// Import the public email provider list
+import publicEmailDomains from 'email-providers/all.json';
 
 const CreateTPA: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   // Form state
   const [formData, setFormData] = useState<Partial<AppI>>({
@@ -48,6 +52,14 @@ const CreateTPA: React.FC = () => {
   const [apiKey, setApiKey] = useState<string>('');
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false);
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false);
+
+  // Add sharedWithOrganization state
+  const [sharedWithOrganization, setSharedWithOrganization] = useState(false);
+
+  // Helper to get org domain from user email
+  const orgDomain = user?.email?.split('@')[1] || '';
+  // Check if orgDomain is a public email provider
+  const isPublicEmailDomain = publicEmailDomains.includes(orgDomain);
 
   // Handle form changes
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -207,7 +219,8 @@ const CreateTPA: React.FC = () => {
       const normalizedFormData = {
         ...formData,
         publicUrl: normalizeUrl(formData.publicUrl || ''),
-        webviewURL: formData.webviewURL ? normalizeUrl(formData.webviewURL) : undefined
+        webviewURL: formData.webviewURL ? normalizeUrl(formData.webviewURL) : undefined,
+        sharedWithOrganization,
       };
 
       // Call API to create TPA
@@ -465,6 +478,29 @@ const CreateTPA: React.FC = () => {
                   permissions={formData.permissions || []} 
                   onChange={handlePermissionsChange} 
                 />
+              </div>
+
+              {/* Shared with Organization Toggle */}
+              <div className="flex items-center space-x-3 mb-2">
+                <div className={`flex items-center gap-3 ${isPublicEmailDomain ? 'opacity-50 pointer-events-none' : ''}`}> 
+                  <input
+                    type="checkbox"
+                    id="sharedWithOrganization"
+                    checked={sharedWithOrganization}
+                    onChange={e => setSharedWithOrganization(e.target.checked)}
+                    className="form-checkbox h-5 w-5 text-blue-600"
+                    disabled={isPublicEmailDomain}
+                  />
+                  <Label htmlFor="sharedWithOrganization" className="mb-0 cursor-pointer">
+                    Share with my organization
+                  </Label>
+                  {orgDomain && !isPublicEmailDomain && (
+                    <span className="ml-2 text-xs text-gray-500">({orgDomain})</span>
+                  )}
+                </div>
+                {isPublicEmailDomain && (
+                  <span className="ml-2 text-xs text-red-500 font-bold">Cannot share with organization using a public email provider ({orgDomain})</span>
+                )}
               </div>
 
             </CardContent>
