@@ -24,3 +24,10 @@ project(':SmartGlassesManager').projectDir = new File(rootProject.projectDir, '.
 
 include ':augmentos_core'
 project(':augmentos_core').projectDir = new File(rootProject.projectDir, '../augmentos_core/app')
+
+// StreamPackLite modules
+include ':core'
+project(':core').projectDir = new File(rootProject.projectDir, 'StreamPackLite/core')
+
+include ':extension-rtmp'
+project(':extension-rtmp').projectDir = new File(rootProject.projectDir, 'StreamPackLite/extensions/rtmp')

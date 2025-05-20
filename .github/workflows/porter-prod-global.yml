@@ -1,0 +1,64 @@
+name: Deploy to all regions
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  east-asia:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Git SHA tag
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Setup Porter CLI
+        uses: porter-dev/setup-porter@v0.1.0
+
+      - name: Deploy to east-asia
+        timeout-minutes: 30
+        run: exec porter apply -f ./augmentos_cloud/porter.yaml
+        env:
+          PORTER_APP_NAME: cloud-prod
+          NODE_ENV: production
+          PORTER_CLUSTER: "4754"         # Use your production cluster ID
+          PORTER_PROJECT: "15081"          # Use your Porter project ID
+          PORTER_HOST: https://dashboard.porter.run
+          PORTER_PR_NUMBER: ${{ github.event.number }}
+          PORTER_REPO_NAME: ${{ github.event.repository.name }}
+          PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
+          PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_4754 }}
+          PORTER_DEPLOYMENT_TARGET_ID: 7ed60823-5c81-40a8-8162-95cb0e1e1480
+
+  # France
+  france:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Git SHA tag
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Setup Porter CLI
+        uses: porter-dev/setup-porter@v0.1.0
+
+      - name: Deploy stack to Production
+        timeout-minutes: 30
+        run: exec porter apply -f ./augmentos_cloud/porter.yaml
+        env:
+          PORTER_APP_NAME: cloud-prod
+          NODE_ENV: production
+          PORTER_CLUSTER: "4696"         # Use your production cluster ID
+          PORTER_PROJECT: "15081"          # Use your Porter project ID
+          PORTER_HOST: https://dashboard.porter.run
+          PORTER_PR_NUMBER: ${{ github.event.number }}
+          PORTER_REPO_NAME: ${{ github.event.repository.name }}
+          PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
+          PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_4696 }}
+          PORTER_DEPLOYMENT_TARGET_ID: 6d7f479b-fd7e-4f5d-83ad-154edc538012

@@ -1,6 +1,6 @@
 // src/services/api.service.ts
 import axios from "axios";
-import { TPA } from "@/types/tpa";
+import { Permission, TPA } from "@/types/tpa";
 import { AppI } from "@augmentos/sdk";
 
 // Set default config
@@ -50,6 +50,7 @@ export interface AppResponse extends AppI {
   reviewNotes?: string;
   reviewedBy?: string;
   reviewedAt?: string;
+  sharedWithEmails?: string[];
 }
 
 // API key response
@@ -135,6 +136,33 @@ const api = {
         const response = await axios.post(`/api/dev/apps/${packageName}/api-key`);
         return response.data;
       },
+    },
+    
+    // Permissions management
+    permissions: {
+      // Get permissions for a TPA
+      get: async (packageName: string): Promise<{permissions: Permission[]}> => {
+        const response = await axios.get(`/api/permissions/${packageName}`);
+        return response.data;
+      },
+      
+      // Update permissions for a TPA
+      update: async (packageName: string, permissions: Permission[]): Promise<{permissions: Permission[]}> => {
+        const response = await axios.patch(`/api/permissions/${packageName}`, { permissions });
+        return response.data;
+      },
+    },
+
+    // Update app visibility (sharedWithOrganization)
+    updateVisibility: async (packageName: string, sharedWithOrganization: boolean): Promise<AppResponse> => {
+      const response = await axios.patch(`/api/dev/apps/${packageName}/visibility`, { sharedWithOrganization });
+      return response.data;
+    },
+
+    // Update sharedWithEmails
+    updateSharedEmails: async (packageName: string, emails: string[]): Promise<AppResponse> => {
+      const response = await axios.patch(`/api/dev/apps/${packageName}/share-emails`, { emails });
+      return response.data;
     },
   },
 

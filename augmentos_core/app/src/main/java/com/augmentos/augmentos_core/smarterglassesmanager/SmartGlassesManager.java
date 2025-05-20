@@ -1,13 +1,26 @@
 package com.augmentos.augmentos_core.smarterglassesmanager;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
 import android.content.Context;
+import android.content.Intent;
+import android.os.Binder;
+import android.os.Build;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
 import androidx.lifecycle.LifecycleOwner;
 
 import com.augmentos.augmentos_core.AugmentosService;
+import com.augmentos.augmentos_core.LocationSystem;
+import com.augmentos.augmentos_core.MainActivity;
 import com.augmentos.augmentos_core.R;
 import com.augmentos.augmentos_core.WindowManagerWithTimeouts;
 import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.BypassVadForDebuggingEvent;
@@ -24,6 +37,7 @@ import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.Audio
 import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.EvenRealitiesG1;
 import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.InmoAirOne;
 import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.MentraMach1;
+import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.MentraLive;
 import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.SmartGlassesDevice;
 import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.SmartGlassesOperatingSystem;
 import com.augmentos.augmentos_core.smarterglassesmanager.supportedglasses.TCLRayNeoXTwo;
@@ -65,17 +79,21 @@ import android.graphics.Bitmap;
 import io.reactivex.rxjava3.subjects.PublishSubject;
 
 /**
- * Manages smart glasses functionality without being a service
- * Converted from SmartGlassesAndroidService to work within AugmentosService
+ * Manages smart glasses functionality as a dedicated foreground service
+ * Meets Android 14 (SDK 34) requirements for connectedDevice type services
  */
-public class SmartGlassesManager {
-    private static final String TAG = "SGM_Manager"; // Equivalent to AugmentosSmartGlassesService "AugmentOS_AugmentOSService"
+public class SmartGlassesManager extends Service {
+    private static final String TAG = "SGM_Manager";
+    private static final int NOTIFICATION_ID = 1003;
+    private static final String CHANNEL_ID = "SmartGlassesServiceChannel";
 
-    // Context and lifecycle owner references
-    private Context context;
+    // Service binder
+    private final IBinder binder = new SmartGlassesBinder();
+    
+    // Lifecycle owner reference (no need for context since we are a Service)
     private LifecycleOwner lifecycleOwner;
 
-    // Components from original service
+    // Components from original implementation
     private TextToSpeechSystem textToSpeechSystem;
     private SpeechRecSwitchSystem speechRecSwitchSystem;
     private PublishSubject<JSONObject> dataObservable;
@@ -110,30 +128,102 @@ public class SmartGlassesManager {
     }
     
     private SmartGlassesEventHandler eventHandler;
-
-    public SmartGlassesManager(Context context, LifecycleOwner lifecycleOwner, SmartGlassesEventHandler eventHandler) {
-        this.context = context;
+    
+    /**
+     * Class for clients to access this service
+     */
+    public class SmartGlassesBinder extends Binder {
+        public SmartGlassesManager getService() {
+            return SmartGlassesManager.this;
+        }
+    }
+    
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "SmartGlassesManager service created");
+        createNotificationChannel();
+        initialize();
+    }
+    
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        Log.d(TAG, "Starting SmartGlassesManager as foreground service");
+        startForeground(NOTIFICATION_ID, createNotification());
+        
+        // Start the LocationSystem service for location functionality
+        // This is required for Android 14 (SDK 34) which requires separate services
+        // for each foreground service type
+        startLocationService();
+        
+        return START_NOT_STICKY; // Don't restart if killed
+    }
+    
+    /**
+     * Start the LocationSystem service for location functionality
+     */
+    private void startLocationService() {
+        Log.d(TAG, "Starting LocationSystem service");
+        Intent intent = new Intent(this, LocationSystem.class);
+        
+        // Start as foreground service for Android O+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+    }
+    
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        return binder;
+    }
+    
+    @Override
+    public void onDestroy() {
+        Log.d(TAG, "SmartGlassesManager service destroyed");
+        
+        // Stop the LocationSystem service
+        stopLocationService();
+        
+        cleanup();
+        super.onDestroy();
+    }
+    
+    /**
+     * Stop the LocationSystem service
+     */
+    private void stopLocationService() {
+        Log.d(TAG, "Stopping LocationSystem service");
+        Intent intent = new Intent(this, LocationSystem.class);
+        stopService(intent);
+    }
+    
+    /**
+     * Set the lifecycle owner and event handler after binding
+     */
+    public void setLifecycleOwnerAndEventHandler(LifecycleOwner lifecycleOwner, SmartGlassesEventHandler eventHandler) {
         this.lifecycleOwner = lifecycleOwner;
         this.eventHandler = eventHandler;
-        initialize();
     }
 
     /**
-     * Initialize all components - replaces onCreate from service
+     * Initialize all components
      */
     public void initialize() {
-        saveChosenAsrFramework(context, ASR_FRAMEWORKS.AUGMENTOS_ASR_FRAMEWORK);
+        saveChosenAsrFramework(this, ASR_FRAMEWORKS.AUGMENTOS_ASR_FRAMEWORK);
 
         // Start speech recognition
-        speechRecSwitchSystem = new SpeechRecSwitchSystem(context);
-        ASR_FRAMEWORKS asrFramework = getChosenAsrFramework(context);
+        speechRecSwitchSystem = new SpeechRecSwitchSystem(this);
+        ASR_FRAMEWORKS asrFramework = getChosenAsrFramework(this);
         speechRecSwitchSystem.startAsrFramework(asrFramework);
 
         // Setup data observable
         dataObservable = PublishSubject.create();
 
         // Start text to speech
-        textToSpeechSystem = new TextToSpeechSystem(context);
+        textToSpeechSystem = new TextToSpeechSystem(this);
         textToSpeechSystem.setup();
         
         // Create window manager for UI
@@ -146,7 +236,57 @@ public class SmartGlassesManager {
         try {
             EventBus.getDefault().register(this);
         } catch(EventBusException e) {
-            e.printStackTrace();
+            Log.e(TAG, "Error registering with EventBus", e);
+        }
+    }
+    
+    /**
+     * Create notification for the foreground service
+     */
+    private Notification createNotification() {
+        String title = "Smart Glasses Connection Service";
+        String content = "";
+        
+        if (smartGlassesRepresentative != null && 
+            smartGlassesRepresentative.getConnectionState() == SmartGlassesConnectionState.CONNECTED) {
+            SmartGlassesDevice device = smartGlassesRepresentative.smartGlassesDevice;
+            title = device.deviceModelName;
+            content = "Connected";
+        }
+        
+        Intent notificationIntent = new Intent(this, MainActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, 
+                0, 
+                notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE
+        );
+        
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build();
+    }
+    
+    /**
+     * Create the notification channel for Android O and above
+     */
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Smart Glasses Service",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Used for maintaining smart glasses connectivity");
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
         }
     }
 
@@ -200,8 +340,7 @@ public class SmartGlassesManager {
             windowManager = null; // BATTERY OPTIMIZATION: Set to null to avoid memory leaks
         }
         
-        // BATTERY OPTIMIZATION: Explicitly remove any references to context
-        context = null;
+        // BATTERY OPTIMIZATION: Explicitly remove any references
         lifecycleOwner = null;
         eventHandler = null;
     }
@@ -227,16 +366,28 @@ public class SmartGlassesManager {
     }
 
     public void connectToSmartGlasses(SmartGlassesDevice device) {
-        // If we already have a representative for the same device, reuse it
-        if (smartGlassesRepresentative == null || !smartGlassesRepresentative.smartGlassesDevice.deviceModelName.equals(device.deviceModelName)) {
-            smartGlassesRepresentative = new SmartGlassesRepresentative(
-                    context,
-                    device,
-                    lifecycleOwner,
-                    dataObservable,
-                    speechRecSwitchSystem // Pass SpeechRecSwitchSystem as the audio processing callback
-            );
+        // Check that we have a lifecycle owner set
+        if (lifecycleOwner == null) {
+            Log.e(TAG, "Cannot connect to smart glasses: lifecycleOwner is null");
+            return;
         }
+        
+        // In Android 14, we need to be very careful about service/object lifecycle
+        // Always create a fresh representative to avoid stale objects with null fields
+        if (smartGlassesRepresentative != null) {
+            Log.d(TAG, "Destroying old SmartGlassesRepresentative before connecting to new glasses");
+            smartGlassesRepresentative.destroy();
+            smartGlassesRepresentative = null;
+        }
+            
+        // Create a new representative with a fresh state
+        smartGlassesRepresentative = new SmartGlassesRepresentative(
+                this, // Use service as context
+                device,
+                lifecycleOwner,
+                dataObservable,
+                speechRecSwitchSystem // Pass SpeechRecSwitchSystem as the audio processing callback
+        );
 
         // Connect directly instead of using a handler
         Log.d(TAG, "CONNECTING TO SMART GLASSES");
@@ -264,22 +415,46 @@ public class SmartGlassesManager {
                 Log.d(TAG, "BATTERY OPTIMIZATION: Also registered special AndroidSGC callback");
             }
         }
+        
+        // Update the notification to show connected state
+        NotificationManager notificationManager = getSystemService(NotificationManager.class);
+        if (notificationManager != null) {
+            notificationManager.notify(NOTIFICATION_ID, createNotification());
+        }
     }
 
     public void findCompatibleDeviceNames(SmartGlassesDevice device) {
-        // Same check as above: do not re-create the representative if it's the same device
-        if (smartGlassesRepresentative == null || !smartGlassesRepresentative.smartGlassesDevice.deviceModelName.equals(device.deviceModelName)) {
-            smartGlassesRepresentative = new SmartGlassesRepresentative(
-                    context,
-                    device,
-                    lifecycleOwner,
-                    dataObservable,
-                    speechRecSwitchSystem // Pass SpeechRecSwitchSystem as the audio processing callback
-            );
+        // Check that we have a lifecycle owner set
+        if (lifecycleOwner == null) {
+            Log.e(TAG, "Cannot find compatible devices: lifecycleOwner is null");
+            return;
         }
+        
+        // In Android 14, we need to be very careful about service/object lifecycle
+        // Always create a fresh representative when searching for devices to prevent stale objects
+        if (smartGlassesRepresentative != null) {
+            Log.d(TAG, "Destroying old SmartGlassesRepresentative before creating new one");
+            smartGlassesRepresentative.destroy();
+            smartGlassesRepresentative = null;
+        }
+            
+        // Create a new representative with a fresh state
+        smartGlassesRepresentative = new SmartGlassesRepresentative(
+                this, // Use service as context
+                device,
+                lifecycleOwner,
+                dataObservable,
+                speechRecSwitchSystem // Pass SpeechRecSwitchSystem as the audio processing callback
+        );
 
         Log.d(TAG, "FINDING COMPATIBLE SMART GLASSES DEVICE NAMES");
         smartGlassesRepresentative.findCompatibleDeviceNames();
+        
+        // Update notification to show we're searching
+        NotificationManager notificationManager = getSystemService(NotificationManager.class);
+        if (notificationManager != null) {
+            notificationManager.notify(NOTIFICATION_ID, createNotification());
+        }
     }
 
     public void sendUiUpdate() {
@@ -297,7 +472,7 @@ public class SmartGlassesManager {
             
             // Save preferred wearable if connected
             if (connectionState == SmartGlassesConnectionState.CONNECTED) {
-                savePreferredWearable(context, smartGlassesRepresentative.smartGlassesDevice.deviceModelName);
+                savePreferredWearable(this, smartGlassesRepresentative.smartGlassesDevice.deviceModelName);
                 
                 setFontSize(SmartGlassesFontSize.MEDIUM);
             }
@@ -371,6 +546,18 @@ public class SmartGlassesManager {
         PreferenceManager.getDefaultSharedPreferences(context)
                 .edit()
                 .putBoolean(context.getResources().getString(R.string.FORCE_CORE_ONBOARD_MIC), toForce)
+                .apply();
+    }
+
+    public static String getPreferredMic(Context context) {
+        return PreferenceManager.getDefaultSharedPreferences(context)
+                .getString(context.getResources().getString(R.string.PREFERRED_MIC), "glasses");
+    }
+
+    public static void setPreferredMic(Context context, String mic) {
+        PreferenceManager.getDefaultSharedPreferences(context)
+                .edit()
+                .putString(context.getResources().getString(R.string.PREFERRED_MIC), mic)
                 .apply();
     }
     
@@ -447,6 +634,18 @@ public class SmartGlassesManager {
     public void updateGlassesHeadUpAngle(int headUpAngle) {
         if (smartGlassesRepresentative != null) {
             smartGlassesRepresentative.updateGlassesHeadUpAngle(headUpAngle);
+        }
+    }
+
+    public void updateGlassesDashboardHeight(int height) {
+        if (smartGlassesRepresentative != null) {
+            smartGlassesRepresentative.updateGlassesDashboardHeight(height);
+        }
+    }
+
+    public void updateGlassesDepth(int depth) {
+        if (smartGlassesRepresentative != null) {
+            smartGlassesRepresentative.updateGlassesDepth(depth);
         }
     }
 
@@ -535,9 +734,22 @@ public class SmartGlassesManager {
         }
     }
 
+    public void requestWifiScan() {
+        if (smartGlassesRepresentative != null && smartGlassesRepresentative.smartGlassesCommunicator != null) {
+            smartGlassesRepresentative.smartGlassesCommunicator.requestWifiScan();
+        }
+    }
+
+    public void sendWifiCredentials(String ssid, String password) {
+        if (smartGlassesRepresentative != null && smartGlassesRepresentative.smartGlassesCommunicator != null) {
+            smartGlassesRepresentative.smartGlassesCommunicator.sendWifiCredentials(ssid, password);
+        }
+    }
+
+
     public void changeMicrophoneState(boolean isMicrophoneEnabled) {
         Log.d(TAG, "Want to changing microphone state to " + isMicrophoneEnabled);
-        Log.d(TAG, "Force core onboard mic: " + getForceCoreOnboardMic(this.context));
+        Log.d(TAG, "Force core onboard mic: " + getForceCoreOnboardMic(this));
 
         if (smartGlassesRepresentative == null || smartGlassesRepresentative.smartGlassesDevice == null) {
             Log.d(TAG, "Cannot change microphone state: smartGlassesRepresentative or smartGlassesDevice is null");
@@ -581,7 +793,7 @@ public class SmartGlassesManager {
 
     public void applyMicrophoneState(boolean isMicrophoneEnabled) {
         Log.d(TAG, "Want to change microphone state to " + isMicrophoneEnabled);
-        Log.d(TAG, "Force core onboard mic: " + getForceCoreOnboardMic(this.context));
+        Log.d(TAG, "Force core onboard mic: " + getForceCoreOnboardMic(this));
 
         // Prevent NullPointerException
         if (smartGlassesRepresentative == null || smartGlassesRepresentative.smartGlassesDevice == null) {
@@ -589,7 +801,7 @@ public class SmartGlassesManager {
             return;
         }
 
-        if (smartGlassesRepresentative.smartGlassesDevice.getHasInMic() && !getForceCoreOnboardMic(this.context)) {
+        if (smartGlassesRepresentative.smartGlassesDevice.getHasInMic() && !getForceCoreOnboardMic(this)) {
             // If we should be using the glasses microphone
             smartGlassesRepresentative.smartGlassesCommunicator.changeSmartGlassesMicrophoneState(isMicrophoneEnabled);
         } else {
@@ -610,6 +822,74 @@ public class SmartGlassesManager {
         sendHomeScreen();
     }
     
+    /**
+     * Sends a custom command to the connected smart glasses
+     * This is used for device-specific commands like WiFi configuration
+     * 
+     * @param commandJson The command in JSON string format
+     * @return boolean True if the command was sent, false otherwise
+     */
+    public boolean sendCustomCommand(String commandJson) {
+        if (smartGlassesRepresentative != null && 
+            smartGlassesRepresentative.smartGlassesCommunicator != null && 
+            smartGlassesRepresentative.getConnectionState() == SmartGlassesConnectionState.CONNECTED) {
+            
+            Log.d(TAG, "Sending custom command to glasses: " + commandJson);
+            
+            // Pass the command to the smart glasses communicator
+            // Each device-specific communicator will handle it appropriately
+            smartGlassesRepresentative.smartGlassesCommunicator.sendCustomCommand(commandJson);
+            return true;
+        } else {
+            Log.e(TAG, "Cannot send custom command - glasses not connected");
+            return false;
+        }
+    }
+    
+    /**
+     * Request a photo from the connected smart glasses
+     * 
+     * @param requestId The unique ID for this photo request
+     * @param appId The ID of the app requesting the photo
+     * @return true if request was sent, false if glasses not connected
+     */
+    public boolean requestPhoto(String requestId, String appId) {
+        if (smartGlassesRepresentative != null && 
+            smartGlassesRepresentative.smartGlassesCommunicator != null && 
+            smartGlassesRepresentative.getConnectionState() == SmartGlassesConnectionState.CONNECTED) {
+            
+            Log.d(TAG, "Requesting photo from glasses, requestId: " + requestId + ", appId: " + appId);
+            
+            // Pass the request to the smart glasses communicator
+            smartGlassesRepresentative.smartGlassesCommunicator.requestPhoto(requestId, appId);
+            return true;
+        } else {
+            Log.e(TAG, "Cannot request photo - glasses not connected");
+            return false;
+        }
+    }
+    
+    /**
+     * Request a video stream from the connected smart glasses
+     * 
+     * @return true if request was sent, false if glasses not connected
+     */
+    public boolean requestVideoStream() {
+        if (smartGlassesRepresentative != null && 
+            smartGlassesRepresentative.smartGlassesCommunicator != null && 
+            smartGlassesRepresentative.getConnectionState() == SmartGlassesConnectionState.CONNECTED) {
+            
+            Log.d(TAG, "Requesting video stream from glasses");
+            
+            // Pass the request to the smart glasses communicator
+            smartGlassesRepresentative.smartGlassesCommunicator.requestVideoStream();
+            return true;
+        } else {
+            Log.e(TAG, "Cannot request video stream - glasses not connected");
+            return false;
+        }
+    }
+    
     @Subscribe
     public void handleNewAsrLanguagesEvent(NewAsrLanguagesEvent event) {
         Log.d(TAG, "NewAsrLanguages: " + event.languages.toString());
@@ -621,6 +901,7 @@ public class SmartGlassesManager {
                 Arrays.asList(
                         new VuzixUltralite(),
                         new MentraMach1(),
+                        new MentraLive(),
                         new EvenRealitiesG1(),
                         new VuzixShield(),
                         new InmoAirOne(),

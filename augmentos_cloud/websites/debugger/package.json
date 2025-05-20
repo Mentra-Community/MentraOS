@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "mock-server": "tsx src/mock-server.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.11.1",
@@ -34,6 +35,7 @@
     "lucide-react": "^0.473.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^7.5.3",
     "slate": "^0.94.1",
     "slate-history": "^0.93.0",
     "slate-react": "^0.95.0",
@@ -44,8 +46,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
-    "@types/react": "^18.0.28",
-    "@types/react-dom": "^18.0.11",
+    "@types/react": "^18.3.21",
+    "@types/react-dom": "^18.3.7",
     "@types/styled-components": "^5.1.26",
     "@typescript-eslint/eslint-plugin": "^5.57.1",
     "@typescript-eslint/parser": "^5.57.1",
@@ -56,6 +58,7 @@
     "eslint-plugin-react-refresh": "^0.3.4",
     "postcss": "^8.4.23",
     "tailwindcss": "^3.3.2",
+    "tsx": "^4.19.4",
     "typescript": "^5.0.2",
     "vite": "^4.3.2"
   }

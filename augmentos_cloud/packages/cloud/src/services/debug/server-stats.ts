@@ -1,4 +1,4 @@
-import sessionService from "../core/session.service";
+import { getSessionService } from "../core/session.service";
 // Debug Tools and KPIs for the server.
 
 // Interface for the server stats
@@ -12,7 +12,7 @@ export interface ServerStats {
 // Function to get the number of active sessions from sessionService.
 export function getSessionStats(): { total: number, active: number, disconnected: number } {
     try {
-        const sessions = sessionService.getAllSessions();
+        const sessions = getSessionService().getAllSessions();
         const total = sessions.length;
         const active = sessions.filter(session => !!!session.disconnectedAt).length;
         const disconnected = sessions.filter(session => !!session.disconnectedAt).length;

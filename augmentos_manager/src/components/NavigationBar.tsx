@@ -27,13 +27,13 @@ const NavigationBar: React.FC<NavigationBarProps> = React.memo(({
   const iconSets = {
     v1: {
       home: 'home-variant-outline',
-      mirror: 'cast-variant',
+      mirror: 'glasses',
       apps: 'grid',
       settings: 'cog-outline',
     },
     v2: {
       home: 'home-minus-outline',
-      mirror: 'monitor-screenshot',
+      mirror: 'glasses',
       apps: 'apps',
       settings: 'settings-helper',
     },
@@ -45,7 +45,7 @@ const NavigationBar: React.FC<NavigationBarProps> = React.memo(({
     },
     v4: {
       home: 'home-modern',
-      mirror: 'mirror',
+      mirror: 'glasses',
       apps: 'grid-large',
       settings: 'dots-horizontal',
     },
@@ -99,7 +99,6 @@ const NavigationBar: React.FC<NavigationBarProps> = React.memo(({
         {/* Settings Icon */}
         <TouchableOpacity
           onPress={() => navigation.navigate({name: 'SettingsPage', params: undefined})}
-          onLongPress={() => navigation.navigate({name: 'Testing', params: undefined})}// super secret testing page
           style={styles.iconWrapper}>
           <MaterialCommunityIcons
             name={icons.settings}

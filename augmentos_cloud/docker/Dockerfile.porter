@@ -6,8 +6,10 @@ WORKDIR /app
 # Copy source code
 COPY . .
 
-# Install dependencies
-RUN bun install
+# Install dependencies and ensure correct bun-types version
+RUN bun install && \
+    rm -rf node_modules/@types/bun && \
+    bun add -d bun-types@1.0.17
 
 # Build packages in sequence
 RUN echo "🚀 Starting build process..." && \
@@ -23,9 +25,12 @@ RUN echo "🚀 Starting build process..." && \
     echo "⚙️ Building packages/cloud..." && \
     cd ../cloud && bun run build && \
     echo "✅ Building packages/cloud..." && \
-    echo "⚙️ Building packages/apps/dashboard-manager..." && \
-    cd ../apps/dashboard-manager && bun run build && \
+    echo "⚙️ Building packages/apps/dashboard..." && \
+    cd ../apps/dashboard && bun run build && \
     echo "🎉🎉🎉 All packages built successfully! 🎉🎉🎉"
+
+# Skip running tests in CI for now
+RUN echo "⚠️ Skipping tests in CI build"
 
 # Use Bun to run the application
 ENV NODE_ENV=production

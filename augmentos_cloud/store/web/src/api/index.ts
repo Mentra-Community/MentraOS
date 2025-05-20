@@ -4,11 +4,7 @@ import axios from "axios";
 
 // Configure base axios defaults
 axios.defaults.withCredentials = true;
-
-// Get appropriate base URL based on endpoint type
-const getBaseUrl = (): string => {
-  return import.meta.env.VITE_CLOUD_API_URL || "http://localhost:8002";
-};
+axios.defaults.baseURL = import.meta.env.VITE_CLOUD_API_URL || "http://localhost:8002";
 
 // Response interfaces
 export interface ApiResponse<T> {
@@ -49,7 +45,7 @@ const appService = {
   getPublicApps: async (): Promise<AppI[]> => {
     try {
       const response = await axios.get<ApiResponse<AppI[]>>(
-        `${getBaseUrl()}/api/apps/public`
+        `/api/apps/public`
       );
       return response.data.data || [];
     } catch (error) {
@@ -65,7 +61,7 @@ const appService = {
   getAvailableApps: async (): Promise<AppI[]> => {
     try {
       const response = await axios.get<ApiResponse<AppI[]>>(
-        `${getBaseUrl()}/api/apps/available`
+        `/api/apps/available`
       );
       return response.data.data;
     } catch (error) {
@@ -81,7 +77,7 @@ const appService = {
   getInstalledApps: async (): Promise<AppI[]> => {
     try {
       const response = await axios.get<ApiResponse<AppI[]>>(
-        `${getBaseUrl()}/api/apps/installed`
+        `/api/apps/installed`
       );
       return response.data.data;
     } catch (error) {
@@ -97,7 +93,7 @@ const appService = {
   getAppByPackageName: async (packageName: string): Promise<AppI | null> => {
     try {
       const response = await axios.get<ApiResponse<AppI>>(
-        `${getBaseUrl()}/api/apps/${packageName}`
+        `/api/apps/${packageName}`
       );
       return response.data.data;
     } catch (error) {
@@ -113,7 +109,7 @@ const appService = {
   installApp: async (packageName: string): Promise<boolean> => {
     try {
       const response = await axios.post<ApiResponse<null>>(
-        `${getBaseUrl()}/api/apps/install/${packageName}`
+        `/api/apps/install/${packageName}`
       );
       return response.data.success;
     } catch (error) {
@@ -129,14 +125,15 @@ const appService = {
   uninstallApp: async (packageName: string): Promise<boolean> => {
     try {
       // First stop the app and verify it was successful
-      const stopSuccess = await appService.stopApp(packageName);
-      if (!stopSuccess) {
-        throw new Error(`Failed to stop app ${packageName} before uninstallation`);
-      }
+      // const stopSuccess = await appService.stopApp(packageName);
+      // if (!stopSuccess) {
+      //   throw new Error(`Failed to stop app ${packageName} before uninstallation`);
+      // }
+      // backend will stop the app automatically if it is running.
       
       // Then uninstall it
       const response = await axios.post<ApiResponse<null>>(
-        `${getBaseUrl()}/api/apps/uninstall/${packageName}`
+        `/api/apps/uninstall/${packageName}`
       );
       return response.data.success;
     } catch (error) {
@@ -152,7 +149,7 @@ const appService = {
   startApp: async (packageName: string): Promise<boolean> => {
     try {
       const response = await axios.post<ApiResponse<null>>(
-        `${getBaseUrl()}/api/apps/${packageName}/start`,
+        `/api/apps/${packageName}/start`,
       );
       return response.data.success;
     } catch (error) {
@@ -168,7 +165,7 @@ const appService = {
   stopApp: async (packageName: string): Promise<boolean> => {
     try {
       const response = await axios.post<ApiResponse<null>>(
-        `${getBaseUrl()}/api/apps/${packageName}/stop`,
+        `/api/apps/${packageName}/stop`,
       );
       return response.data.success;
     } catch (error) {
@@ -184,7 +181,7 @@ const appService = {
   searchApps: async (query: string): Promise<AppI[]> => {
     try {
       const response = await axios.get<ApiResponse<AppI[]>>(
-        `${getBaseUrl()}/api/apps/search?q=${encodeURIComponent(query)}`
+        `/api/apps/search?q=${encodeURIComponent(query)}`
       );
       return response.data.data || [];
     } catch (error) {
@@ -203,7 +200,7 @@ const userService = {
   getCurrentUser: async (): Promise<User | null> => {
     try {
       const response = await axios.get<ApiResponse<User>>(
-        `${getBaseUrl()}/api/user/me`
+        `/api/user/me`
       );
       return response.data.data;
     } catch (error) {
@@ -223,7 +220,7 @@ const authService = {
   exchangeToken: async (supabaseToken: string): Promise<string> => {
     try {
       const response = await axios.post<TokenExchangeResponse>(
-        `${getBaseUrl()}/api/auth/exchange-token`,
+        `/api/auth/exchange-token`,
         { supabaseToken },
         {
           headers: { 'Content-Type': 'application/json' }
@@ -250,7 +247,7 @@ const authService = {
   exchangeTemporaryToken: async (tempToken: string, packageName: string): Promise<TempTokenExchangeResponse> => {
     try {
       const response = await axios.post<TempTokenExchangeResponse>(
-        `${getBaseUrl()}/api/auth/exchange-store-token`,
+        `/api/auth/exchange-store-token`,
         { aos_temp_token: tempToken, packageName },
         {
           headers: { 'Content-Type': 'application/json' }

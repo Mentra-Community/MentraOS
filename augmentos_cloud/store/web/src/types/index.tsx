@@ -28,6 +28,10 @@ export interface AppI {
   // App details
   version?: string;
   settings?: AppSettings;
+  permissions?: {
+    type: string;
+    description?: string;
+  }[];
   
   // Frontend-specific properties
   developerId?: string; // Developer's email address

@@ -17,15 +17,21 @@
   <uses-permission android:name="android.permission.RECORD_AUDIO"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 <!--  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>-->
-  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
 
   <uses-permission android:name="android.permission.BLUETOOTH" />
   <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
   <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
   <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
   <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+  
+  <!-- Android 14 (API 34) Foreground Service Type Permissions -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -34,8 +40,6 @@
 <!--  <uses-permission android:name="android.permission.CAMERA" />-->
 
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-  <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
 <!--  <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />-->
 
@@ -57,14 +61,8 @@
 <!--      android:supportsRtl="true"-->
 <!--      android:theme="@style/AppTheme">-->
 
-    <receiver
-        android:name=".BootReceiver"
-        android:enabled="true"
-        android:exported="true">
-      <intent-filter>
-        <action android:name="android.intent.action.BOOT_COMPLETED" />
-      </intent-filter>
-    </receiver>
+    <!-- Boot receiver removed as per BOOT_RECEIVER_PLAN.md
+         Boot functionality is now implemented in the ASG client -->
 
     <activity
         android:name="com.augmentos.augmentos_core.MainActivity"
@@ -116,7 +114,7 @@
           android:exported="false"
           android:foregroundServiceType="camera|microphone" />
     <service android:name="com.augmentos.augmentos_core.AugmentosService"
-        android:foregroundServiceType="microphone"
+        android:foregroundServiceType="dataSync"
         android:exported="true"
         android:label="AugmentOS Main"
         android:theme="@style/AppTheme">
@@ -128,6 +126,15 @@
           <action android:name="ACTION_STOP_CORE" />  <!-- Must match the action used in the Manager -->
         </intent-filter>
     </service>
+    <service android:name=".microphone.MicrophoneService"
+        android:foregroundServiceType="microphone"
+        android:exported="false" />
+    <service android:name=".smarterglassesmanager.SmartGlassesManager"
+        android:foregroundServiceType="connectedDevice"
+        android:exported="false" />
+    <service android:name=".LocationSystem"
+        android:foregroundServiceType="location"
+        android:exported="false" />
 
     <receiver
         android:name="com.augmentos.augmentos_core.tpa.AugmentOSLibBroadcastReceiver"
@@ -165,7 +172,7 @@
   </queries>
 
   <queries>
-    <package android:name="com.augmentos.augmentos_manager" />
+    <package android:name="com.augmentos.augmentos" />
   </queries>
 
 </manifest>

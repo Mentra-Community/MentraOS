@@ -2,8 +2,8 @@ version: v2
 # Omit a hard-coded name here. Use environment variables to supply dynamic values.
 namespace: ${PORTER_NAMESPACE}
 
-envGroups:
-- dev
+# envGroups:
+# - dev
 
 build:
   method: docker
@@ -15,14 +15,14 @@ services:
   type: web
   run: node packages/cloud/dist/index.js
   port: 80
-  cpuCores: 3
+  cpuCores: 5
   ramMegabytes: 4096
   env:
     HOST: "0.0.0.0"
     SERVICE_NAME: "cloud"
 - name: dashboard-manager
   type: web
-  run: node packages/apps/dashboard-manager/dist/index.js
+  run: node packages/apps/dashboard/dist/index.js
   port: 80
   cpuCores: 0.5
   ramMegabytes: 512

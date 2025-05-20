@@ -29,6 +29,7 @@ import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.SetFo
 import com.augmentos.augmentoslib.events.TextWallViewRequestEvent;
 import com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunicators.AudioWearableSGC;
 import com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunicators.EvenRealitiesG1SGC;
+import com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunicators.MentraLiveSGC;
 import com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunicators.UltraliteSGC;
 import com.augmentos.augmentoslib.events.BulletPointListViewRequestEvent;
 import com.augmentos.augmentoslib.events.FinalScrollingTextRequestEvent;
@@ -105,30 +106,41 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
     }
 
     public void findCompatibleDeviceNames(){
-        // If we have not created a communicator yet (or the device changed), create it once
-        //if (smartGlassesCommunicator == null || !isSameDevice(smartGlassesDevice, smartGlassesCommunicator)) {
-        if (smartGlassesCommunicator == null) {
-            smartGlassesCommunicator = createCommunicator();
+        // Always create a fresh communicator for findCompatibleDeviceNames
+        // Previous implementation had smartGlassesCommunicator.destroy() nulling out fields
+        // but not updating our reference, leading to NPEs on subsequent calls
+        if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Destroying existing communicator before creating new one");
+            smartGlassesCommunicator.destroy();
         }
+        
+        // Always create a fresh communicator for findCompatibleDeviceNames
+        smartGlassesCommunicator = createCommunicator();
 
         if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Finding compatible device names with fresh communicator");
             smartGlassesCommunicator.findCompatibleDeviceNames();
         } else {
-            Log.d(TAG, "SmartGlassesCommunicator is NULL, something truly awful must have transpired");
+            Log.e(TAG, "Failed to create SmartGlassesCommunicator");
         }
     }
 
     public void connectToSmartGlasses(){
-        // Same approach: if the communicator is null, create it
-        //if (smartGlassesCommunicator == null || !isSameDevice(smartGlassesDevice, smartGlassesCommunicator)) {
-        if (smartGlassesCommunicator == null) {
-            smartGlassesCommunicator = createCommunicator();
+        // Similar to findCompatibleDeviceNames, always create a fresh communicator
+        // This ensures we don't reuse a communicator with null fields after destroy()
+        if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Destroying existing communicator before connecting to glasses");
+            smartGlassesCommunicator.destroy();
         }
+        
+        // Create a fresh communicator for connecting
+        smartGlassesCommunicator = createCommunicator();
 
         if (smartGlassesCommunicator != null) {
+            Log.d(TAG, "Connecting to smart glasses with fresh communicator");
             smartGlassesCommunicator.connectToSmartGlasses();
         } else {
-            Log.d(TAG, "SmartGlassesCommunicator is NULL, something truly awful must have transpired");
+            Log.e(TAG, "Failed to create SmartGlassesCommunicator for connection");
         }
 
         if (SmartGlassesManager.getSensingEnabled(context)) {
@@ -157,10 +169,6 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
         SmartGlassesCommunicator communicator;
         
         switch (smartGlassesDevice.getGlassesOs()) {
-            case ANDROID_OS_GLASSES:
-                communicator = new AndroidSGC(context, smartGlassesDevice, dataObservable);
-                break;
-                
             case AUDIO_WEARABLE_GLASSES:
                 communicator = new AudioWearableSGC(context, smartGlassesDevice);
                 break;
@@ -179,6 +187,11 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
                 
             case SELF_OS_GLASSES:
                 communicator = new SelfSGC(context, smartGlassesDevice);
+                break;
+
+            case ANDROID_OS_GLASSES:
+            case MENTRA_LIVE_OS:
+                communicator = new MentraLiveSGC(context, smartGlassesDevice, dataObservable);
                 break;
                 
             default:
@@ -238,6 +251,19 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
             smartGlassesCommunicator.updateGlassesHeadUpAngle(headUpAngle);
         }
     }
+
+    public void updateGlassesDashboardHeight(int height) {
+        if (smartGlassesCommunicator != null) {
+            smartGlassesCommunicator.updateGlassesDashboardHeight(height);
+        }
+    }
+
+    public void updateGlassesDepth(int depth) {
+        if (smartGlassesCommunicator != null) {
+            smartGlassesCommunicator.updateGlassesDepth(depth);
+        }
+    }
+    
 
     @Subscribe
     public void onDisableBleScoEvent(DisableBleScoAudioEvent receivedEvent) {
@@ -490,6 +516,18 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
     }
 
     public void changeMicrophoneState(boolean isMicrophoneEnabled) {}
+    
+    /**
+     * Sends WiFi credentials to the smart glasses
+     * 
+     * @param ssid The WiFi network name
+     * @param password The WiFi password
+     */
+    public void sendWifiCredentials(String ssid, String password) {
+        if (smartGlassesCommunicator != null) {
+            smartGlassesCommunicator.sendWifiCredentials(ssid, password);
+        }
+    }
     
     /**
      * Implementation of PhoneMicListener interface

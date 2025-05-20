@@ -7,17 +7,20 @@
  * to maintain core functionality regardless of database state.
  */
 
-import { AppI, StopWebhookRequest, TpaType, WebhookResponse, AppState, SessionWebhookRequest, ToolCall } from '@augmentos/sdk';
+import { AppI, StopWebhookRequest, TpaType, WebhookResponse, AppState, SessionWebhookRequest, ToolCall, PermissionType } from '@augmentos/sdk';
 import axios, { AxiosError } from 'axios';
 import { systemApps } from './system-apps';
 import App from '../../models/app.model';
 import { ToolSchema, ToolParameterSchema } from '@augmentos/sdk';
 import { User } from '../../models/user.model';
 import crypto from 'crypto';
+import { logger as rootLogger } from '../logging/pino-logger';
+const logger = rootLogger.child({ service: 'app.service' });
 
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET;
 const APPSTORE_ENABLED = true;
 export const PRE_INSTALLED = ["com.augmentos.livecaptions", "cloud.augmentos.notify", "cloud.augmentos.mira"];
+// export const PRE_INSTALLED = ["cloud.augmentos.live-captions-global", "cloud.augmentos.notify", "cloud.augmentos.mira"];
 
 /**
  * System TPAs that are always available.
@@ -40,82 +43,6 @@ export const LOCAL_APPS: AppI[] = [];
   });
 })();
 
-// export const LOCAL_APPS: AppI[] = [
-//   // {
-//   //   packageName: systemApps.captions.packageName,
-//   //   name: systemApps.captions.name,
-//   //   tpaType: TpaType.STANDARD,
-//   //   publicUrl: `http://${systemApps.captions.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.captions.packageName}.png`,
-//   //   description: systemApps.captions.description
-//   // },
-//   // {
-//   //   packageName: systemApps.notify.packageName,
-//   //   name: systemApps.notify.name,
-//   //   tpaType: TpaType.BACKGROUND,
-//   //   publicUrl: `http://${systemApps.notify.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.notify.packageName}.png`,
-//   //   description: systemApps.notify.description,
-//   // },
-//   // {
-//   //   packageName: systemApps.mira.packageName,
-//   //   name: systemApps.mira.name,
-//   //   tpaType: TpaType.BACKGROUND,
-//   //   publicUrl: `http://${systemApps.mira.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.mira.packageName}.png`,
-//   //   description: systemApps.mira.description,
-//   // },
-//   // {
-//   //   packageName: systemApps.merge.packageName,
-//   //   name: systemApps.merge.name,
-//   //   tpaType: TpaType.BACKGROUND,
-//   //   publicUrl: `http://${systemApps.merge.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.merge.packageName}.png`,
-//   //   description: "Proactive AI that helps you during conversations. Turn it on, have a conversation, and let Merge agents enhance your convo.",
-//   // },
-//   // {
-//   //   packageName: systemApps.liveTranslation.packageName,
-//   //   name: systemApps.liveTranslation.name,
-//   //   tpaType: TpaType.STANDARD,
-//   //   publicUrl: `http://${systemApps.liveTranslation.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.liveTranslation.packageName}.png`,
-//   //   description: systemApps.liveTranslation.description,
-//   // },
-//   // {
-//   //   packageName: systemApps.teleprompter.packageName,
-//   //   name: "Teleprompt",
-//   //   tpaType: TpaType.STANDARD,
-//   //   publicUrl: `http://${systemApps.teleprompter.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.teleprompter.packageName}.png`,
-//   //   description: systemApps.teleprompter.description,
-//   // },
-//   // {
-//   //   packageName: systemApps.xstats.packageName,
-//   //   name: systemApps.xstats.name,
-//   //   tpaType: TpaType.BACKGROUND,
-//   //   publicUrl: `http://${systemApps.xstats.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.xstats.packageName}.png`,
-//   //   description: systemApps.xstats.description,
-//   // },
-//   // {
-//   //   packageName: systemApps.calendarreminder.packageName,
-//   //   name: systemApps.calendarreminder.name,
-//   //   tpaType: TpaType.BACKGROUND,
-//   //   publicUrl: `http://${systemApps.calendarreminder.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.calendarreminder.packageName}.png`,
-//   //   description: systemApps.calendarreminder.description,
-//   // },
-//   // {
-//   //   packageName: systemApps.tictactoe.packageName,
-//   //   name: systemApps.tictactoe.name,
-//   //   tpaType: TpaType.STANDARD,
-//   //   publicUrl: `http://${systemApps.tictactoe.host}`,
-//   //   logoURL: `https://cloud.augmentos.org/${systemApps.tictactoe.packageName}.png`,
-//   //   description: systemApps.tictactoe.description,
-//   // }
-// ];
-
-
 /**
  * System TPAs that are always available.
  * These are core applications provided by the platform.
@@ -129,6 +56,12 @@ export const SYSTEM_APPS: AppI[] = [
     description: "The time, The news, The weather, The notifications, The everything. 😎🌍🚀",
     publicUrl: `http://${systemApps.dashboard.host}`,
     logoURL: `https://cloud.augmentos.org/${systemApps.dashboard.packageName}.png`,
+    permissions: [
+      {
+        type: PermissionType.ALL,
+        description: "The dashboard app needs access to everything to provide a seamless experience."
+      }
+    ],
   },
 ];
 
@@ -169,8 +102,11 @@ export class AppService {
       // Fetch the apps from the appstore.
       const _appstoreApps = await App.find({ packageName: { $in: _installedApps } }) as AppI[];
 
+      // Fetch apps shared with this user by email
+      const _sharedWithUser = await App.find({ sharedWithEmails: userId }) as AppI[];
+
       // remove duplicates.
-      const _allApps = [..._madeByUser, ..._appstoreApps];
+      const _allApps = [..._madeByUser, ..._appstoreApps, ..._sharedWithUser];
       const _appMap = new Map<string, AppI>();
       _allApps.forEach(app => {
         _appMap.set(app.packageName, app);
@@ -205,10 +141,12 @@ export class AppService {
     if (APPSTORE_ENABLED) {
       if (!app) {
         // Check if the app is in the app store
-        console.log('Checking app store for app:', packageName);
+        logger.debug('Checking app store for app:', packageName);
+        
+        // Use lean() to get a plain JavaScript object instead of a Mongoose document
         app = await App.findOne({
           packageName: packageName
-        }) as AppI;
+        }).lean() as AppI;
       }
     }
 
@@ -218,7 +156,7 @@ export class AppService {
   async findFromAppStore(packageName: string): Promise<AppI | undefined> {
     const app = await App.findOne({
       packageName: packageName
-    }) as AppI;
+    }).lean() as AppI;
     return app;
   }
 
@@ -244,10 +182,13 @@ export class AppService {
       } catch (error: unknown) {
         if (attempt === maxRetries - 1) {
           if (axios.isAxiosError(error)) {
-            console.error(`Webhook failed: ${error}`);
-            console.error(`URL: ${url}`);
-            console.error(`Response: ${error.response?.data}`);
-            console.error(`Status: ${error.response?.status}`);
+            logger.error(`triggerWebhook failed`, {
+              url,
+              attempt,
+              status: error.response?.status,
+              data: error.response?.data,
+              message: error.message
+            });
           }
           throw new Error(`Webhook failed after ${maxRetries} attempts: ${(error as AxiosError).message || 'Unknown error'}`);
         }
@@ -297,7 +238,7 @@ export class AppService {
   async validateApiKey(packageName: string, apiKey: string, clientIp?: string): Promise<boolean> {
     const app = await this.getApp(packageName);
     if (!app) {
-      console.warn(`App ${packageName} not found`);
+      logger.warn(`App ${packageName} not found`);
       return false;
     }
 
@@ -323,11 +264,11 @@ export class AppService {
         ipv4 === '127.0.0.1' ||
         ipv4 === 'localhost';
 
-      console.log(`System app ${packageName} connection IP check: ${clientIp} (IPv4: ${ipv4}), isInternal: ${isInternalIp}`);
+      logger.debug(`System app ${packageName} connection IP check: ${clientIp} (IPv4: ${ipv4}), isInternal: ${isInternalIp}`);
 
       if (isInternalIp) {
         // Reject connection if not from internal network
-        console.warn(`System app ${packageName} connection is an internal IP: ${clientIp} (IPv4: ${ipv4}) - allowing access`);
+        logger.warn(`System app ${packageName} connection is an internal IP: ${clientIp} (IPv4: ${ipv4}) - allowing access`);
         return true;
       }
     }
@@ -337,7 +278,7 @@ export class AppService {
     const appDoc = await App.findOne({ packageName });
 
     if (!appDoc) {
-      console.warn(`App ${packageName} not found in database`);
+      logger.warn(`App ${packageName} not found in database`);
       return false;
     }
 
@@ -345,14 +286,14 @@ export class AppService {
     // If the app is a system app, we don't need to validate the API key
 
     if (!appDoc?.hashedApiKey) {
-      console.warn(`App ${packageName} does not have a hashed API key`);
+      logger.warn(`App ${packageName} does not have a hashed API key`);
       return false;
     }
 
     // Hash the provided API key and compare with stored hash
     const hashedKey = this.hashApiKey(apiKey);
 
-    console.log(`Validating API key for ${packageName}: ${hashedKey} === ${appDoc.hashedApiKey}`);
+    logger.debug(`Validating API key for ${packageName}: ${hashedKey} === ${appDoc.hashedApiKey}`);
     // Compare the hashed API key with the stored hashed API key
 
     return hashedKey === appDoc.hashedApiKey;
@@ -377,7 +318,7 @@ export class AppService {
    * @returns Validated and sanitized tools array or throws error if invalid
    */
   private validateToolDefinitions(tools: any[]): ToolSchema[] {
-    console.log('Validating tool definitions:', tools);
+    logger.debug('Validating tool definitions:', tools);
     if (!Array.isArray(tools)) {
       throw new Error('Tools must be an array');
     }
@@ -449,11 +390,27 @@ export class AppService {
         throw new Error(`Invalid tool definitions: ${error.message}`);
       }
     }
-    
+
+    // Determine organization domain if shared
+    let organizationDomain = null;
+    let sharedWithOrganization = false;
+    let visibility: 'private' | 'organization' = 'private';
+    if (appData.sharedWithOrganization) {
+      const emailParts = developerId.split('@');
+      if (emailParts.length === 2) {
+        organizationDomain = emailParts[1].toLowerCase();
+        sharedWithOrganization = true;
+        visibility = 'organization';
+      }
+    }
+
     // Create app
     const app = await App.create({
       ...appData,
       developerId,
+      organizationDomain,
+      sharedWithOrganization,
+      visibility,
       hashedApiKey
     });
 
@@ -465,22 +422,26 @@ export class AppService {
    * Update an app
    */
   async updateApp(packageName: string, appData: any, developerId: string): Promise<AppI> {
-    // Ensure developer owns the app
+    // Ensure developer owns the app or is in the org if shared
     const app = await App.findOne({ packageName });
-
     if (!app) {
       throw new Error(`App with package name ${packageName} not found`);
     }
-
     if (!developerId) {
       throw new Error('Developer ID is required');
     }
-
     if (!app.developerId) {
       throw new Error('Developer ID not found for this app');
     }
-
-    if (app.developerId.toString() !== developerId) {
+    const isOwner = app.developerId.toString() === developerId;
+    let isOrgMember = false;
+    if (app.sharedWithOrganization && app.organizationDomain) {
+      const emailParts = developerId.split('@');
+      if (emailParts.length === 2 && emailParts[1].toLowerCase() === app.organizationDomain) {
+        isOrgMember = true;
+      }
+    }
+    if (!isOwner && !isOrgMember) {
       throw new Error('You do not have permission to update this app');
     }
     
@@ -523,22 +484,26 @@ export class AppService {
    * Publish an app to the app store
    */
   async publishApp(packageName: string, developerId: string): Promise<AppI> {
-    // Ensure developer owns the app
+    // Ensure developer owns the app or is in the org if shared
     const app = await App.findOne({ packageName });
-
     if (!app) {
       throw new Error(`App with package name ${packageName} not found`);
     }
-
     if (!developerId) {
       throw new Error('Developer ID is required');
     }
-
     if (!app.developerId) {
       throw new Error('Developer ID not found for this app');
     }
-
-    if (app.developerId.toString() !== developerId) {
+    const isOwner = app.developerId.toString() === developerId;
+    let isOrgMember = false;
+    if (app.sharedWithOrganization && app.organizationDomain) {
+      const emailParts = developerId.split('@');
+      if (emailParts.length === 2 && emailParts[1].toLowerCase() === app.organizationDomain) {
+        isOrgMember = true;
+      }
+    }
+    if (!isOwner && !isOrgMember) {
       throw new Error('You do not have permission to publish this app');
     }
 
@@ -567,26 +532,28 @@ export class AppService {
    * Delete an app
    */
   async deleteApp(packageName: string, developerId: string): Promise<void> {
-    // Ensure developer owns the app
+    // Ensure developer owns the app or is in the org if shared
     const app = await App.findOne({ packageName });
-
     if (!app) {
       throw new Error(`App with package name ${packageName} not found`);
     }
-
     if (!developerId) {
       throw new Error('Developer ID is required');
     }
-
     if (!app.developerId) {
       throw new Error('Developer ID not found for this app');
     }
-
-
-    if (app.developerId.toString() !== developerId) {
+    const isOwner = app.developerId.toString() === developerId;
+    let isOrgMember = false;
+    if (app.sharedWithOrganization && app.organizationDomain) {
+      const emailParts = developerId.split('@');
+      if (emailParts.length === 2 && emailParts[1].toLowerCase() === app.organizationDomain) {
+        isOrgMember = true;
+      }
+    }
+    if (!isOwner && !isOrgMember) {
       throw new Error('You do not have permission to delete this app');
     }
-
     await App.findOneAndDelete({ packageName });
   }
 
@@ -594,22 +561,26 @@ export class AppService {
    * Regenerate API key for an app
    */
   async regenerateApiKey(packageName: string, developerId: string): Promise<string> {
-    // Ensure developer owns the app
+    // Ensure developer owns the app or is in the org if shared
     const app = await App.findOne({ packageName });
-
     if (!app) {
       throw new Error(`App with package name ${packageName} not found`);
     }
-
     if (!developerId) {
       throw new Error('Developer ID is required');
     }
-
     if (!app.developerId) {
       throw new Error('Developer ID not found for this app');
     }
-
-    if (app.developerId.toString() !== developerId) {
+    const isOwner = app.developerId.toString() === developerId;
+    let isOrgMember = false;
+    if (app.sharedWithOrganization && app.organizationDomain) {
+      const emailParts = developerId.split('@');
+      if (emailParts.length === 2 && emailParts[1].toLowerCase() === app.organizationDomain) {
+        isOrgMember = true;
+      }
+    }
+    if (!isOwner && !isOrgMember) {
       throw new Error('You do not have permission to update this app');
     }
 
@@ -654,13 +625,6 @@ export class AppService {
   }
 
   /**
-   * Get apps by developer ID
-   */
-  async getAppsByDeveloperId(developerId: string): Promise<AppI[]> {
-    return App.find({ developerId }).lean();
-  }
-
-  /**
    * Get app by package name
    */
   async getAppByPackageName(packageName: string, developerId?: string): Promise<AppI | null> {
@@ -671,6 +635,7 @@ export class AppService {
       query.developerId = developerId;
     }
 
+    // Use lean() to get a plain JavaScript object instead of a Mongoose document
     return App.findOne(query).lean();
   }
 
@@ -680,7 +645,7 @@ export class AppService {
    */
   // export async function getPublicApps(developerEmail?: string): Promise<AppI[]> {
   async getPublicApps(): Promise<AppI[]> {
-    // console.log('Getting public apps - developerEmail', developerEmail);
+    // logger.debug('Getting public apps - developerEmail', developerEmail);
     // if (developerEmail) {
     //   const developer
     //     = await User.findOne({ email: developerEmail }).lean();
@@ -717,7 +682,7 @@ export class AppService {
     // Look up the TPA by packageName
     const app = await this.getApp(packageName);
 
-    console.log('🔨 Triggering tool webhook for:', packageName);
+    logger.debug('🔨 Triggering tool webhook for:', packageName);
     
     if (!app) {
       throw new Error(`App ${packageName} not found`);
@@ -744,8 +709,8 @@ export class AppService {
     const maxRetries = 2;
     const baseDelay = 1000; // 1 second
 
-    console.log('🔨 Sending tool webhook to:', webhookUrl);
-    console.log('🔨 Payload:', payload);
+    logger.debug('🔨 Sending tool webhook to:', webhookUrl);
+    logger.debug('🔨 Payload:', payload);
     
     // Attempt to send the webhook with retries
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -755,7 +720,7 @@ export class AppService {
             'Content-Type': 'application/json',
             'X-TPA-API-Key': appDoc.hashedApiKey, // Use the hashed API key for authentication
           },
-          timeout: 10000 // 10 second timeout
+          timeout: 20000 // 10 second timeout
         });
         
         // Return successful response
@@ -768,10 +733,15 @@ export class AppService {
         if (attempt === maxRetries - 1) {
           if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError;
-            console.error(`Tool webhook failed for ${packageName}: ${axiosError.message}`);
-            console.error(`URL: ${webhookUrl}`);
-            console.error(`Response: ${axiosError.response?.data}`);
-            console.error(`Status: ${axiosError.response?.status}`);
+            logger.error(`Tool webhook failed for ${packageName}: ${axiosError.message}`,
+              {
+                packageName,
+                webhookUrl,
+                attempt,
+                status: axiosError.response?.status,
+                data: axiosError.response?.data
+              }
+            );
             
             // Return a standardized error response
             return {
@@ -829,7 +799,7 @@ export class AppService {
       throw new Error(`App ${packageName} does not have a public URL`);
     }
 
-    console.log('Getting TPA tools for:', packageName);
+    logger.debug('Getting TPA tools for:', packageName);
     
     try {
       // Fetch the tpa_config.json from the app's publicUrl
@@ -840,7 +810,7 @@ export class AppService {
       const config = response.data;
       if (config && Array.isArray(config.tools)) {
         // Validate the tools before returning them
-        console.log(`Found ${config.tools.length} tools in ${packageName}, validating...`);
+        logger.debug(`Found ${config.tools.length} tools in ${packageName}, validating...`);
         return this.validateToolDefinitions(config.tools);
       }
       
@@ -850,20 +820,95 @@ export class AppService {
       // Check if error is a 404 (file not found) and silently ignore
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         // Config file doesn't exist, silently return empty array
-        console.log(`No tpa_config.json found for app ${packageName} (404)`);
+        logger.debug(`No tpa_config.json found for app ${packageName} (404)`);
         return [];
       }
-      
-      // Log other errors but still return empty array
-      //console.error(`Failed to fetch tpa_config.json for app ${packageName}:`, error);
       return [];
     }
+  }
+
+  // Add a method to update app visibility
+  async updateAppVisibility(packageName: string, developerId: string, sharedWithOrganization: boolean): Promise<AppI> {
+    // Ensure developer owns the app
+    const app = await App.findOne({ packageName });
+    if (!app) {
+      throw new Error(`App with package name ${packageName} not found`);
+    }
+    if (!developerId || app.developerId.toString() !== developerId) {
+      throw new Error('You do not have permission to update this app');
+    }
+    let organizationDomain = null;
+    let visibility: 'private' | 'organization' = 'private';
+    if (sharedWithOrganization) {
+      const emailParts = developerId.split('@');
+      if (emailParts.length === 2) {
+        organizationDomain = emailParts[1].toLowerCase();
+        visibility = 'organization';
+      }
+    }
+    app.sharedWithOrganization = sharedWithOrganization;
+    app.organizationDomain = organizationDomain;
+    app.visibility = visibility;
+    await app.save();
+    return app;
+  }
+
+  async updateSharedWithEmails(packageName: string, emails: string[], developerId: string): Promise<AppI> {
+    // Ensure developer owns the app or is in the org if shared
+    const app = await App.findOne({ packageName });
+    if (!app) {
+      throw new Error(`App with package name ${packageName} not found`);
+    }
+    if (!developerId) {
+      throw new Error('Developer ID is required');
+    }
+    const isOwner = app.developerId.toString() === developerId;
+    let isOrgMember = false;
+    if (app.sharedWithOrganization && app.organizationDomain) {
+      const emailDomain = developerId.split('@')[1]?.toLowerCase();
+      isOrgMember = emailDomain === app.organizationDomain;
+    }
+    if (!isOwner && !isOrgMember) {
+      throw new Error('Not authorized to update sharing list');
+    }
+    // Validate emails (basic)
+    const validEmails = emails.filter(email => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email));
+    app.sharedWithEmails = validEmails;
+    await app.save();
+    return app.toObject();
+  }
+
+  /**
+   * Get apps by developer ID
+   */
+  async getAppsByDeveloperId(developerId: string): Promise<AppI[]> {
+    return App.find({ developerId }).lean();
+  }
+
+  /**
+   * Get apps shared with a user by email
+   */
+  async getAppsSharedWithEmail(email: string): Promise<AppI[]> {
+    return App.find({ sharedWithEmails: email }).lean();
+  }
+
+  /**
+   * Get apps created by or shared with a user (deduplicated)
+   */
+  async getAppsCreatedOrSharedWith(email: string): Promise<AppI[]> {
+    const createdApps = await this.getAppsByDeveloperId(email);
+    const sharedApps = await this.getAppsSharedWithEmail(email);
+
+    const appMap = new Map<string, AppI>();
+    createdApps.forEach(app => appMap.set(app.packageName, app));
+    sharedApps.forEach(app => appMap.set(app.packageName, app));
+    return Array.from(appMap.values());
   }
 
 }
 
 // Create singleton instance
 export const appService = new AppService();
-console.log('✅ App Service');
+logger.info('✅ App Service initialized');
 
 export default appService;

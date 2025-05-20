@@ -8,6 +8,7 @@ import { StreamType } from "./streams";
 export enum GlassesToCloudMessageType {
   // Control actions
   CONNECTION_INIT = 'connection_init',
+  REQUEST_SETTINGS = 'request_settings',
   // START_APP = 'start_app',
   // STOP_APP = 'stop_app',
 
@@ -16,6 +17,12 @@ export enum GlassesToCloudMessageType {
 
   DASHBOARD_STATE = 'dashboard_state',
   OPEN_DASHBOARD = StreamType.OPEN_DASHBOARD,
+
+  // Mentra Live
+  PHOTO_RESPONSE = 'photo_response',
+  VIDEO_STREAM_RESPONSE = 'video_stream_response',
+  // photo_response = 'photo_response',
+  // video_stream_response = 'video_stream_response',
   
   // OPEN_DASHBOARD = 'open_dashboard',
   // Events and data
@@ -37,7 +44,9 @@ export enum GlassesToCloudMessageType {
   VAD = StreamType.VAD,
   PHONE_NOTIFICATION = StreamType.PHONE_NOTIFICATION,
   NOTIFICATION_DISMISSED = StreamType.NOTIFICATION_DISMISSED,
-  CALENDAR_EVENT = StreamType.CALENDAR_EVENT
+  CALENDAR_EVENT = StreamType.CALENDAR_EVENT,
+  AUGMENTOS_SETTINGS_UPDATE_REQUEST = StreamType.AUGMENTOS_SETTINGS_UPDATE_REQUEST,
+  CORE_STATUS_UPDATE = StreamType.CORE_STATUS_UPDATE
 }
 
 /**
@@ -53,6 +62,13 @@ export enum CloudToGlassesMessageType {
   DISPLAY_EVENT = 'display_event',
   APP_STATE_CHANGE = 'app_state_change',
   MICROPHONE_STATE_CHANGE = 'microphone_state_change',
+  PHOTO_REQUEST = 'photo_request',
+  VIDEO_STREAM_REQUEST = 'video_stream_request',
+  SETTINGS_UPDATE = 'settings_update',
+  
+  // Dashboard updates
+  DASHBOARD_MODE_CHANGE = 'dashboard_mode_change',
+  DASHBOARD_ALWAYS_ON_CHANGE = 'dashboard_always_on_change',
 
   WEBSOCKET_ERROR = 'websocket_error'
 }
@@ -66,7 +82,14 @@ export enum TpaToCloudMessageType {
   SUBSCRIPTION_UPDATE = 'subscription_update',
   
   // Requests
-  DISPLAY_REQUEST = 'display_event'
+  DISPLAY_REQUEST = 'display_event',
+  PHOTO_REQUEST = 'photo_request',
+  VIDEO_STREAM_REQUEST = 'video_stream_request',
+  
+  // Dashboard requests
+  DASHBOARD_CONTENT_UPDATE = 'dashboard_content_update',
+  DASHBOARD_MODE_CHANGE = 'dashboard_mode_change',
+  DASHBOARD_SYSTEM_UPDATE = 'dashboard_system_update'
 }
 
 /**
@@ -81,10 +104,21 @@ export enum CloudToTpaMessageType {
   APP_STOPPED = 'app_stopped',
   SETTINGS_UPDATE = 'settings_update',
   
+  // Dashboard updates
+  DASHBOARD_MODE_CHANGED = 'dashboard_mode_changed',
+  DASHBOARD_ALWAYS_ON_CHANGED = 'dashboard_always_on_changed',
+  
   // Stream data
   DATA_STREAM = 'data_stream',
+  
+  // Media responses
+  PHOTO_RESPONSE = 'photo_response',
+  VIDEO_STREAM_RESPONSE = 'video_stream_response',
 
-  WEBSOCKET_ERROR = 'websocket_error'
+  WEBSOCKET_ERROR = 'websocket_error',
+  
+  // General purpose messaging
+  CUSTOM_MESSAGE = 'custom_message'
 }
 
 /**
@@ -111,7 +145,9 @@ export const EventTypes = [
   GlassesToCloudMessageType.VAD,
   GlassesToCloudMessageType.PHONE_NOTIFICATION,
   GlassesToCloudMessageType.NOTIFICATION_DISMISSED,
-  GlassesToCloudMessageType.CALENDAR_EVENT
+  GlassesToCloudMessageType.CALENDAR_EVENT,
+  GlassesToCloudMessageType.AUGMENTOS_SETTINGS_UPDATE_REQUEST,
+  GlassesToCloudMessageType.CORE_STATUS_UPDATE
 ] as const;
 
 /**
@@ -129,5 +165,21 @@ export const ResponseTypes = [
 export const UpdateTypes = [
   CloudToGlassesMessageType.DISPLAY_EVENT,
   CloudToGlassesMessageType.APP_STATE_CHANGE,
-  CloudToGlassesMessageType.MICROPHONE_STATE_CHANGE
+  CloudToGlassesMessageType.MICROPHONE_STATE_CHANGE,
+  CloudToGlassesMessageType.PHOTO_REQUEST,
+  CloudToGlassesMessageType.VIDEO_STREAM_REQUEST,
+  CloudToGlassesMessageType.SETTINGS_UPDATE,
+  CloudToGlassesMessageType.DASHBOARD_MODE_CHANGE,
+  CloudToGlassesMessageType.DASHBOARD_ALWAYS_ON_CHANGE
+] as const;
+
+/**
+ * Dashboard message types
+ */
+export const DashboardMessageTypes = [
+  TpaToCloudMessageType.DASHBOARD_CONTENT_UPDATE,
+  TpaToCloudMessageType.DASHBOARD_MODE_CHANGE,
+  TpaToCloudMessageType.DASHBOARD_SYSTEM_UPDATE,
+  CloudToTpaMessageType.DASHBOARD_MODE_CHANGED,
+  CloudToTpaMessageType.DASHBOARD_ALWAYS_ON_CHANGED
 ] as const;

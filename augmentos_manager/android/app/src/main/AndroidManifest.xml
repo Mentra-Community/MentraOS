@@ -1,4 +1,6 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.augmentos.augmentos_manager">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" 
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.augmentos.augmentos">
 
     <!-- Existing Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -9,31 +11,44 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
     <uses-permission android:name="android.permission.NEARBY_DEVICES"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
-    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL" /> -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_PRECISE_PHONE_STATE" />
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- <uses-permission android:name="android.permission.READ_CALL_LOG" /> -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- For error reporting -->
-    <uses-permission android:name="android.permission.READ_LOGS" />
+    <!-- <uses-permission android:name="android.permission.READ_LOGS" /> -->
 
 
     <!-- Add Permission for Notification Listener -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
 
-    <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true">
+    <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:requestLegacyExternalStorage="true">
+
+        <!-- FileProvider for sharing media files -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.augmentos.augmentos.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true"
+            tools:replace="android:authorities">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"
+                tools:replace="android:resource" />
+        </provider>
 
         <!-- Notification Listener Service -->
-        <service android:name="com.augmentos.augmentos_manager.NotificationService" android:label="@string/app_name" android:exported="false" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+        <service android:name="com.augmentos.augmentos.NotificationService" android:label="@string/app_name" android:exported="false" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
@@ -59,7 +74,6 @@
             </intent-filter>
             
             <!-- Deep links for appstore URLs -->
-            <!-- Temporarily commented out until token exchange flow is fixed
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -69,10 +83,8 @@
                     android:host="appstore.augmentos.org"
                     android:pathPattern="/package/.*" />
             </intent-filter>
-            -->
             
             <!-- Custom app scheme for direct deeplinks -->
-            <!-- Temporarily commented out until token exchange flow is fixed
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -81,7 +93,6 @@
                     android:scheme="augmentosappstore"
                     android:host="package" />
             </intent-filter>
-            -->
         </activity>
     </application>
 

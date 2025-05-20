@@ -24,8 +24,10 @@ import {
   // Language stream helpers
   createTranscriptionStream,
   isValidLanguageCode,
-  createTranslationStream
+  createTranslationStream,
+  CustomMessage
 } from '../../types';
+import { DashboardMode } from '../../types/dashboard';
 
 /** 🎯 Type-safe event handler function */
 type Handler<T> = (data: T) => void;
@@ -33,9 +35,18 @@ type Handler<T> = (data: T) => void;
 /** 🔄 System events not tied to streams */
 interface SystemEvents {
   'connected': AppSettings | undefined;
-  'disconnected': string;
+  'disconnected': string | {
+    message: string;     // Human-readable close message
+    code: number;        // WebSocket close code (1000 = normal)
+    reason: string;      // Reason provided by server
+    wasClean: boolean;   // Whether this was a clean closure
+    permanent?: boolean; // Whether this is a permanent disconnection (no more reconnection attempts)
+  };
   'error': WebSocketError | Error;
   'settings_update': AppSettings;
+  'dashboard_mode_change': { mode: DashboardMode | 'none' };
+  'dashboard_always_on_change': { enabled: boolean };
+  'custom_message': CustomMessage;
 }
 
 /** 📡 All possible event types */
@@ -208,6 +219,26 @@ export class EventManager {
     this.emitter.on('settings_update', handler);
     return () => this.emitter.off('settings_update', handler);
   }
+
+  /**
+   * 🌐 Listen for dashboard mode changes
+   * @param handler - Function to handle dashboard mode changes
+   * @returns Cleanup function to remove the handler
+   */
+  onDashboardModeChange(handler: Handler<SystemEvents['dashboard_mode_change']>) {
+    this.emitter.on('dashboard_mode_change', handler);
+    return () => this.emitter.off('dashboard_mode_change', handler);
+  }
+
+  /**
+   * 🌐 Listen for dashboard always-on mode changes
+   * @param handler - Function to handle dashboard always-on mode changes
+   * @returns Cleanup function to remove the handler
+   */
+  onDashboardAlwaysOnChange(handler: Handler<SystemEvents['dashboard_always_on_change']>) {
+    this.emitter.on('dashboard_always_on_change', handler);
+    return () => this.emitter.off('dashboard_always_on_change', handler);
+  }
   
   /**
    * 🔄 Listen for changes to a specific setting
@@ -359,5 +390,22 @@ export class EventManager {
         }
       }
     }
+  }
+
+  /**
+   * 📨 Listen for custom messages with a specific action
+   * @param action - The action identifier to filter by
+   * @param handler - Function to handle the message
+   * @returns Cleanup function to remove the handler
+   */
+  onCustomMessage(action: string, handler: (payload: any) => void): () => void {
+    const messageHandler = (message: CustomMessage) => {
+      if (message.action === action) {
+        handler(message.payload);
+      }
+    };
+    
+    this.emitter.on('custom_message', messageHandler);
+    return () => this.emitter.off('custom_message', messageHandler);
   }
 }

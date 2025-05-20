@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path
-        name="external_downloads"
-        path="Download/" />
+    <!-- Share files from the app's external storage directory -->
+    <external-files-path 
+        name="app_external_files" 
+        path="." />
+    
+    <!-- Shared media (like recorded videos) -->
+    <external-files-path 
+        name="augmentos_recordings" 
+        path="AugmentOSRecordings/" />
+    
+    <!-- Cache directory for temporarily copied files -->
+    <cache-path 
+        name="shared_media" 
+        path="shared_media/" />
 </paths>

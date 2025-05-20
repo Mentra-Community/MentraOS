@@ -33,9 +33,10 @@ public class AugmentOsManagerMessageParser {
                 break;
 
                 case "connect_wearable":
-                    Log.d(TAG,"GOT A COMMAND TO CONNECT TO WEARABLE????");
+                    Log.d(TAG,"GOT A COMMAND TO CONNECT TO WEARABLE");
                     String modelName = commandObject.getJSONObject("params").getString("model_name");
                     String deviceName = commandObject.getJSONObject("params").getString("device_name");
+                    Log.d(TAG,"Connect to model: " + modelName + ", device address: " + deviceName);
                     callback.connectToWearable(modelName, deviceName);
                     break;
 
@@ -72,6 +73,13 @@ public class AugmentOsManagerMessageParser {
                 case "enable_contextual_dashboard":
                     boolean dashboardEnabled = commandObject.getJSONObject("params").getBoolean("enabled");
                     callback.setContextualDashboardEnabled(dashboardEnabled);
+                    break;
+
+                case "set_metric_system_enabled":
+                    // Log.d(TAG, "GOT A COMMAND TO SET METRIC SYSTEM ENABLED");
+                    boolean metricSystemEnabled = commandObject.getJSONObject("params").getBoolean("enabled");
+                    // Log.d(TAG, "Metric system enabled: " + metricSystemEnabled);
+                    callback.setMetricSystemEnabled(metricSystemEnabled);
                     break;
 
                 case "bypass_vad_for_debugging":
@@ -142,9 +150,35 @@ public class AugmentOsManagerMessageParser {
                     }
                     break;
 
-                case "update_glasses_headUp_angle":
+                case "update_glasses_head_up_angle":
                     int headUpAngle = commandObject.getJSONObject("params").getInt("headUpAngle");
                     callback.updateGlassesHeadUpAngle(headUpAngle);
+                    break;
+
+                case "update_glasses_dashboard_height":
+                    int dashboardHeight = commandObject.getJSONObject("params").getInt("height");
+                    callback.updateGlassesDashboardHeight(dashboardHeight);
+                    break;
+
+                case "update_glasses_depth":
+                    int depth = commandObject.getJSONObject("params").getInt("depth");
+                    callback.updateGlassesDepth(depth);
+                    break;
+                    
+                    
+                case "send_wifi_credentials":
+                    String ssid = commandObject.getJSONObject("params").getString("ssid");
+                    String password = commandObject.getJSONObject("params").getString("password");
+                    callback.setGlassesWifiCredentials(ssid, password);
+                    break;
+                    
+                case "request_wifi_scan":
+                    callback.requestWifiScan();
+                    break;
+
+                case "set_preferred_mic":
+                    String mic = commandObject.getJSONObject("params").getString("mic");
+                    callback.setPreferredMic(mic);
                     break;
 
                 default:

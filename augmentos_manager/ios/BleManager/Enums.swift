@@ -26,8 +26,11 @@ enum Commands: UInt8 {
   case BRIGHTNESS = 0x01
   case WHITELIST = 0x04
   case SILENT_MODE = 0x03
-  case DASHBOARD_POSITION_COMMAND = 0x26
+  case DASHBOARD_LAYOUT_COMMAND = 0x26
+  case DASHBOARD_SHOW = 0x06
   case HEAD_UP_ANGLE = 0x0B
+  case UNK_2 = 0x39
+  case UNK_1 = 0x50
 }
 
 enum DeviceOrders: UInt8 {
@@ -57,7 +60,7 @@ enum DisplayStatus: UInt8 {
   case SIMPLE_TEXT = 0x70
 }
 
-public enum DashboardPosition: UInt8 {
+public enum DashboardHeight: UInt8 {
   case position0 = 0x00  // Bottom
   case position1 = 0x01
   case position2 = 0x02
@@ -67,6 +70,19 @@ public enum DashboardPosition: UInt8 {
   case position6 = 0x06
   case position7 = 0x07
   case position8 = 0x08  // Top
+}
+
+public enum DashboardDepth: UInt8 {
+  case position0 = 0x00  // Bottom
+  case position1 = 0x01
+  case position2 = 0x02
+  case position3 = 0x03
+  case position4 = 0x04
+  case position5 = 0x05
+  case position6 = 0x06
+  case position7 = 0x07
+  case position8 = 0x08
+  case position9 = 0x09
 }
 
 public enum DashboardMode: UInt8 {

@@ -17,7 +17,7 @@
 // import { WebSocketServer, WebSocket } from 'ws';
 import WebSocket from 'ws';
 import { IncomingMessage, Server } from 'http';
-import sessionService, { ExtendedUserSession, IS_LC3, SequencedAudioChunk } from './session.service';
+import { ExtendedUserSession, IS_LC3, SequencedAudioChunk } from './session.service';
 import subscriptionService from './subscription.service';
 import transcriptionService from '../processing/transcription.service';
 import appService from './app.service';
@@ -40,6 +40,9 @@ import {
   GlassesToCloudMessageType,
   LocationUpdate,
   MicrophoneStateChange,
+  PhotoRequest,
+  PhotoRequestToGlasses,
+  PhotoResponse,
   StartApp,
   StopApp,
   StreamType,
@@ -48,20 +51,32 @@ import {
   TpaConnectionInit,
   TpaSubscriptionUpdate,
   TpaToCloudMessage,
+  TpaToCloudMessageType,
   TpaType,
   UserSession,
   Vad,
-  WebhookRequestType
+  WebhookRequestType,
+  AugmentosSettingsUpdateRequest,
+  SettingsUpdate,
+  RequestSettings,
+  CoreStatusUpdate,
+  VideoStreamRequest,
+  VideoStreamRequestToGlasses
 } from '@augmentos/sdk';
 
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import { PosthogService } from '../logging/posthog.service';
 import { systemApps } from './system-apps';
 import { User } from '../../models/user.model';
-import { logger } from '@augmentos/utils';
-import tpaRegistrationService from './tpa-registration.service';
-import healthMonitorService from './health-monitor.service';
+// import { logger } from '@augmentos/utils';
+import { logger as rootLogger } from '../logging/pino-logger';
+import photoRequestService from './photo-request.service';
 import axios from 'axios';
+import { SessionService } from './session.service';
+import { getSessionService } from './session.service';
+import { DisconnectInfo } from './HeartbeatManager';
+
+const logger = rootLogger.child({ service: 'websocket.service' });
 
 export const CLOUD_PUBLIC_HOST_NAME = process.env.CLOUD_PUBLIC_HOST_NAME; // e.g., "prod.augmentos.cloud"
 export const CLOUD_LOCAL_HOST_NAME = process.env.CLOUD_LOCAL_HOST_NAME; // e.g., "localhost:8002" | "cloud" | "cloud-debug-cloud.default.svc.cluster.local:80"
@@ -85,9 +100,32 @@ logger.info(`🔥🔥🔥 [websocket.service]: CLOUD_LOCAL_HOST_NAME: ${CLOUD_LO
 const WebSocketServer = WebSocket.Server || WebSocket.WebSocketServer;
 
 // Constants
-const TPA_SESSION_TIMEOUT_MS = 5000;  // 30 seconds
+const TPA_SESSION_TIMEOUT_MS = 5000;  // 5 seconds
 const LOG_AUDIO = false;               // Whether to log audio processing details
+const AUTO_RESTART_APPS = true;        // Whether to automatically try to restart apps after disconnection
+const AUTO_RESTART_DELAY_MS = 500;     // Delay before attempting auto-restart
 type MicrophoneStateChangeDebouncer = { timer: ReturnType<typeof setTimeout> | null; lastState: boolean; lastSentState: boolean };
+
+const DEFAULT_AUGMENTOS_SETTINGS = {
+  useOnboardMic: false,
+  contextualDashboard: true,
+  headUpAngle: 20,
+  brightness: 50,
+  autoBrightness: false,
+  sensingEnabled: true,
+  alwaysOnStatusBar: false,
+  bypassVad: false,
+  bypassAudioEncoding: false,
+  metricSystemEnabled: false
+} as const;
+
+// Utility function to get changed keys between two objects
+function getChangedKeys<T extends Record<string, any>>(before: T, after: T): string[] {
+  return Object.keys(after).filter(
+    key => before[key] !== after[key] ||
+      (typeof before[key] !== typeof after[key] && before[key] != after[key])
+  );
+}
 
 /**
  * ⚡️🕸️🚀 Implementation of the WebSocket service.
@@ -95,13 +133,42 @@ type MicrophoneStateChangeDebouncer = { timer: ReturnType<typeof setTimeout> | n
 export class WebSocketService {
   private glassesWss: WebSocket.Server;
   private tpaWss: WebSocket.Server;
+  private sessionService?: SessionService; // Make optional
+  private static instance: WebSocketService;
 
   // Global counter for generating sequential audio chunk numbers
   private globalAudioSequence: number = 0;
 
-  constructor() {
+  // We no longer track photo requests here - using photoRequestService instead
+
+  private constructor() {
     this.glassesWss = new WebSocketServer({ noServer: true });
     this.tpaWss = new WebSocketServer({ noServer: true });
+  }
+
+  public static getInstance(): WebSocketService {
+    if (!WebSocketService.instance) {
+      WebSocketService.instance = new WebSocketService();
+    }
+    return WebSocketService.instance;
+  }
+
+  public initialize() {
+    try {
+      this.sessionService = getSessionService();
+      logger.info('✅ WebSocket Service initialized');
+    } catch (error) {
+      logger.error('Failed to initialize WebSocket Service:', error);
+      throw error;
+    }
+  }
+
+  // Add a helper method to ensure session service exists
+  private getSessionService(): SessionService {
+    if (!this.sessionService) {
+      throw new Error('WebSocket Service not initialized');
+    }
+    return this.sessionService;
   }
 
   /**
@@ -246,8 +313,105 @@ export class WebSocketService {
    * @param server - HTTP/HTTPS server instance to attach WebSocket servers to
    */
   setupWebSocketServers(server: Server): void {
-    this.initializeWebSocketServers();
-    this.setupUpgradeHandler(server);
+    server.on('upgrade', (request, socket, head) => {
+      try {
+        const url = new URL(request.url || '', `http://${request.headers.host}`);
+
+        // Log detailed information about the upgrade request
+        logger.debug({
+          msg: 'WebSocket upgrade request received',
+          path: url.pathname,
+          headers: {
+            host: request.headers.host,
+            origin: request.headers.origin,
+            upgrade: request.headers.upgrade,
+            connection: request.headers.connection,
+            secWebSocketKey: request.headers['sec-websocket-key']?.substring(0, 10) + '...',
+            secWebSocketVersion: request.headers['sec-websocket-version']
+          },
+          remoteAddress: request.socket.remoteAddress
+        });
+
+        if (url.pathname === '/glasses-ws') {
+          logger.debug({ msg: 'Processing glasses-ws upgrade request' });
+
+          try {
+            this.glassesWss.handleUpgrade(request, socket, head, ws => {
+              logger.debug({ msg: 'Glasses WebSocket upgrade successful' });
+              this.glassesWss.emit('connection', ws, request);
+            });
+          } catch (upgradeError) {
+            logger.error({
+              msg: 'Failed to upgrade glasses WebSocket connection',
+              error: upgradeError
+            });
+            socket.destroy();
+          }
+
+        } else if (url.pathname === '/tpa-ws') {
+          logger.debug({ msg: 'Processing tpa-ws upgrade request' });
+
+          try {
+            this.tpaWss.handleUpgrade(request, socket, head, ws => {
+              logger.debug({ msg: 'TPA WebSocket upgrade successful' });
+              this.tpaWss.emit('connection', ws, request);
+            });
+          } catch (upgradeError) {
+            logger.error({
+              msg: 'Failed to upgrade TPA WebSocket connection',
+              error: upgradeError
+            });
+            socket.destroy();
+          }
+
+        } else {
+          logger.debug({
+            msg: 'Unknown WebSocket path, destroying socket',
+            path: url.pathname
+          });
+          socket.destroy();
+        }
+      } catch (error) {
+        logger.error({
+          msg: 'Error in WebSocket upgrade handler',
+          error,
+          url: request.url
+        });
+        socket.destroy();
+      }
+    });
+
+    // Glasses connection handler with enhanced error logging
+    this.glassesWss.on('connection', (ws, request) => {
+      logger.info({ msg: 'New glasses WebSocket connection established' });
+
+      this.handleGlassesConnection(ws, request).catch(error => {
+        logger.error({
+          msg: 'Error handling glasses connection',
+          error: {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+          }
+        });
+      });
+    });
+
+    // TPA connection handler with enhanced error logging
+    this.tpaWss.on('connection', (ws, request) => {
+      logger.info({ msg: 'New TPA WebSocket connection established' });
+
+      this.handleTpaConnection(ws, request).catch(error => {
+        logger.error({
+          msg: 'Error handling TPA connection',
+          error: {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+          }
+        });
+      });
+    });
   }
 
   private microphoneStateChangeDebouncers = new Map<string, MicrophoneStateChangeDebouncer>();
@@ -415,14 +579,14 @@ export class WebSocketService {
     // If this is a STANDARD app, we need to stop any other STANDARD apps that are running
     // if (app.tpaType === TpaType.STANDARD) {
     //   userSession.logger.info(`[websocket.service]: 🚦 Starting STANDARD app, checking for other STANDARD apps to stop`);
-      
+
     //   // Find all active STANDARD apps
     //   const runningStandardApps = [];
-      
+
     //   for (const activeAppName of userSession.activeAppSessions) {
     //     // Skip if this is the app we're trying to start
     //     if (activeAppName === packageName) continue;
-        
+
     //     // Get the app details to check its type
     //     try {
     //       const activeApp = await appService.getApp(activeAppName);
@@ -434,7 +598,7 @@ export class WebSocketService {
     //       // Continue with the next app even if there's an error
     //     }
     //   }
-      
+
     //   // Stop any running STANDARD apps
     //   for (const standardAppToStop of runningStandardApps) {
     //     userSession.logger.info(`[websocket.service]: 🛑 Stopping STANDARD app ${standardAppToStop} before starting ${packageName}`);
@@ -449,11 +613,12 @@ export class WebSocketService {
 
     // Store pending session.
     userSession.loadingApps.add(packageName);
-    userSession.logger.debug(`[websocket.service]: Current Loading Apps:`, userSession.loadingApps);
+    userSession.logger.debug({ loadingApps: userSession.loadingApps }, `[websocket.service]: Current Loading Apps:`,);
 
     try {
       // Trigger TPA webhook 
-      userSession.logger.info("[websocket.service]: ⚡️Triggering webhook for app⚡️: ", app.publicUrl);
+      const { packageName, name, publicUrl } = app;
+      userSession.logger.debug({ packageName, name, publicUrl }, "[websocket.service]: ⚡️Triggering webhook for app⚡️");
 
       // Set up the websocket URL for the TPA connection
       let augmentOSWebsocketUrl = '';
@@ -482,7 +647,7 @@ export class WebSocketService {
       } else {
         // For non-system apps, use the public host
         augmentOSWebsocketUrl = `wss://${CLOUD_PUBLIC_HOST_NAME}/tpa-ws`;
-        userSession.logger.info(`Using public URL for app ${packageName}`);
+        userSession.logger.info({augmentOSWebsocketUrl, packageName, name}, `Using public URL for app ${packageName}`);
       }
 
       userSession.logger.info(`🔥🔥🔥 [websocket.service]: Server WebSocket URL: ${augmentOSWebsocketUrl}`);
@@ -531,7 +696,15 @@ export class WebSocketService {
       }
 
       // Check if we need to update microphone state for media subscriptions
-      if (userSession.websocket) {
+      if (userSession.websocket && userSession.websocket.readyState === 1) {
+        // Send explicit app_started message
+        const appStartedMessage = {
+          type: 'app_started',
+          packageName,
+          timestamp: new Date(),
+        };
+        userSession.websocket.send(JSON.stringify(appStartedMessage));
+
         const mediaSubscriptions = subscriptionService.hasMediaSubscriptions(userSession.sessionId);
         if (mediaSubscriptions) {
           userSession.logger.info('Media subscriptions detected after starting app, updating microphone state');
@@ -618,7 +791,15 @@ export class WebSocketService {
       userSession.displayManager.handleAppStop(packageName, userSession);
 
       // Check if we need to update microphone state based on remaining apps
-      if (userSession.websocket) {
+      if (userSession.websocket && userSession.websocket.readyState === 1) {
+        // Send explicit app_stopped message
+        const appStoppedMessage = {
+          type: 'app_stopped',
+          packageName,
+          timestamp: new Date(),
+        };
+        userSession.websocket.send(JSON.stringify(appStoppedMessage));
+
         const mediaSubscriptions = subscriptionService.hasMediaSubscriptions(userSession.sessionId);
         if (!mediaSubscriptions) {
           userSession.logger.info('No media subscriptions after stopping app, updating microphone state');
@@ -645,7 +826,7 @@ export class WebSocketService {
    * @param data - Data to broadcast
    */
   broadcastToTpa(userSessionId: string, streamType: StreamType, data: CloudToTpaMessage): void {
-    const userSession = sessionService.getSession(userSessionId);
+    const userSession = this.getSessionService().getSession(userSessionId);
     if (!userSession) {
       logger.error(`[websocket.service]: User session not found for ${userSessionId}`);
       return;
@@ -698,38 +879,48 @@ export class WebSocketService {
       }
     }
   }
+
   /**
-   * ⚡️⚡️ Initializes the WebSocket servers for both glasses and TPAs.
-   * @private
+   * Forward a photo response to the requesting TPA
+   * @param requestId The ID of the photo request
+   * @param photoUrl The URL of the uploaded photo
+   * @returns True if the response was forwarded, false if no pending request was found
+   * @deprecated Use photoRequestService.processPhotoResponse instead
    */
-  private initializeWebSocketServers(): void {
-    this.glassesWss.on('connection', this.handleGlassesConnection.bind(this));
-    this.tpaWss.on('connection', this.handleTpaConnection.bind(this));
+  forwardPhotoResponse(requestId: string, photoUrl: string): boolean {
+    // Forward to the new service
+    return photoRequestService.processPhotoResponse(requestId, photoUrl);
   }
 
   /**
-   * 🗿 Sets up the upgrade handler for WebSocket connections.
-   * @param server - HTTP/HTTPS server instance
-   * @private
+   * Forward a video stream response to the requesting TPA
+   * @param appId The ID of the app requesting the stream
+   * @param streamUrl The URL of the video stream
+   * @param userSession The user session
+   * @returns True if the response was forwarded, false if TPA not found or connection closed
    */
-  private setupUpgradeHandler(server: Server): void {
-    server.on('upgrade', (request, socket, head) => {
-      const { url } = request;
+  forwardVideoStreamResponse(appId: string, streamUrl: string, userSession: UserSession): boolean {
+    // Find the TPA connection
+    const tpaWebSocket = userSession.appConnections.get(appId);
 
-      if (url === '/glasses-ws') {
-        this.glassesWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
-          this.glassesWss.emit('connection', ws, request);
-        });
-      } else if (url === '/tpa-ws') {
-        this.tpaWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
-          this.tpaWss.emit('connection', ws, request);
-        });
-      } else {
-        socket.destroy();
-      }
-    });
+    if (!tpaWebSocket || tpaWebSocket.readyState !== WebSocket.OPEN) {
+      logger.warn(`[websocket.service]: Cannot forward video stream response, TPA ${appId} not connected`);
+      return false;
+    }
+
+    // Send the video stream response to the TPA
+    const videoStreamResponse = {
+      type: CloudToTpaMessageType.VIDEO_STREAM_RESPONSE,
+      streamUrl,
+      appId,
+      timestamp: new Date()
+    };
+
+    tpaWebSocket.send(JSON.stringify(videoStreamResponse));
+    logger.info(`[websocket.service]: Video stream response sent to TPA ${appId}`);
+
+    return true;
   }
-
   /**
    * 🥳🤓 Handles new glasses client connections.
    * @param ws - WebSocket connection
@@ -776,9 +967,11 @@ export class WebSocketService {
     const startTimestamp = new Date();
 
 
-    // Register this connection with the health monitor
-    healthMonitorService.registerGlassesConnection(ws);
-    const userSession = await sessionService.createSession(ws, userId);
+    // Create the user session
+    const userSession = await this.getSessionService().createSession(ws, userId);
+
+    // Register this connection with the HeartbeatManager
+    userSession.heartbeatManager.registerGlassesConnection(ws);
 
     // Set up the audio buffer processing interval
     // if (userSession.audioBuffer) {
@@ -809,7 +1002,7 @@ export class WebSocketService {
             _buffer.byteOffset + _buffer.byteLength
           );
           // Process the audio data
-          const _arrayBuffer = await sessionService.handleAudioData(userSession, arrayBuf);
+          const _arrayBuffer = await this.getSessionService().handleAudioData(userSession, arrayBuf);
           // Send audio chunk to TPAs subscribed to audio_chunk
           if (_arrayBuffer) {
             this.broadcastToTpaAudio(userSession, _arrayBuffer);
@@ -818,7 +1011,7 @@ export class WebSocketService {
         }
 
         // Update the last activity timestamp for this connection
-        healthMonitorService.updateGlassesActivity(ws);
+        userSession.heartbeatManager.updateGlassesActivity(ws);
         // console.log("🔥🔥🔥: Received message from glasses:", message);
 
         // Handle JSON messages
@@ -836,7 +1029,7 @@ export class WebSocketService {
     // Set up ping handler to track connection health
     ws.on('ping', () => {
       // Update activity whenever a ping is received
-      healthMonitorService.updateGlassesActivity(ws);
+      userSession.heartbeatManager.updateGlassesActivity(ws);
       // Send pong response
       try {
         ws.pong();
@@ -846,35 +1039,45 @@ export class WebSocketService {
     });
 
     const RECONNECT_GRACE_PERIOD_MS = 1000 * 60 * 1; // 1 minute
-    ws.on('close', () => {
-      userSession.logger.info(`[websocket.service]: Glasses WebSocket disconnected: ${userSession.sessionId}`);
+    ws.on('close', (code: number, reason: string) => {
+      // Capture detailed disconnect information
+      const disconnectInfo = userSession.heartbeatManager.captureDisconnect(ws, code, reason);
+
+      userSession.logger.info(`[websocket.service]: Glasses WebSocket disconnected: ${userSession.sessionId}, reason: ${disconnectInfo?.reason || 'unknown'}`);
+
       // Mark the session as disconnected but do not remove it immediately
-      sessionService.markSessionDisconnected(userSession);
+      this.getSessionService().markSessionDisconnected(userSession);
 
       // Set a timeout to eventually clean up the session if not reconnected
       setTimeout(() => {
         userSession.logger.info(`[websocket.service]: Grace period expired, checking if we should cleanup session: ${userSession.sessionId}`);
         if (userSession.websocket.readyState === WebSocket.CLOSED || userSession.websocket.readyState === WebSocket.CLOSING) {
           userSession.logger.info(`[websocket.service]: User disconnected: ${userSession.sessionId}`);
-          sessionService.endSession(userSession);
+          this.getSessionService().endSession(userSession);
         }
       }, RECONNECT_GRACE_PERIOD_MS);
 
-      // Track disconnection event in posthog
+      // Track disconnection event in posthog with more detailed information
       const endTimestamp = new Date();
       const connectionDuration = endTimestamp.getTime() - startTimestamp.getTime();
       PosthogService.trackEvent('disconnected', userSession.userId, {
         userId: userSession.userId,
         sessionId: userSession.sessionId,
         timestamp: new Date().toISOString(),
-        duration: connectionDuration
+        duration: connectionDuration,
+        disconnectReason: disconnectInfo?.reason || 'unknown',
+        disconnectCode: disconnectInfo?.code || 0
       });
     });
 
     // TODO(isaiahb): Investigate if we really need to destroy the session on an error.
     ws.on('error', (error) => {
       userSession.logger.error(`[websocket.service]: Glasses WebSocket error:`, error);
-      sessionService.endSession(userSession);
+
+      // Unregister from heartbeat manager
+      userSession.heartbeatManager.unregisterConnection(ws);
+
+      this.getSessionService().endSession(userSession);
       ws.close();
     });
   }
@@ -950,7 +1153,7 @@ export class WebSocketService {
           const ackMessage: ConnectionAck = {
             type: CloudToGlassesMessageType.CONNECTION_ACK,
             sessionId: userSession.sessionId,
-            userSession: await sessionService.transformUserSessionForClient(userSession as ExtendedUserSession),
+            userSession: await this.getSessionService().transformUserSessionForClient(userSession as ExtendedUserSession),
             timestamp: new Date()
           };
 
@@ -962,6 +1165,36 @@ export class WebSocketService {
             sessionId: userSession.sessionId,
             timestamp: new Date().toISOString()
           });
+          break;
+        }
+
+        case "request_settings": {
+          userSession.logger.info('Received settings request');
+
+          try {
+            const user = await User.findByEmail(userSession.userId);
+            const userSettings = user?.augmentosSettings || DEFAULT_AUGMENTOS_SETTINGS;
+
+            const settingsMessage: CloudToGlassesMessage = {
+              type: CloudToGlassesMessageType.SETTINGS_UPDATE,
+              sessionId: userSession.sessionId,
+              settings: userSettings,
+              timestamp: new Date()
+            };
+
+            console.log("🔥🔥🔥: Sending settings update:", JSON.stringify(settingsMessage));
+
+            ws.send(JSON.stringify(settingsMessage));
+            userSession.logger.info('Sent settings update');
+          } catch (error) {
+            userSession.logger.error('Error sending settings:', error);
+            const errorMessage: ConnectionError = {
+              type: CloudToGlassesMessageType.CONNECTION_ERROR,
+              message: 'Error retrieving settings',
+              timestamp: new Date()
+            };
+            ws.send(JSON.stringify(errorMessage));
+          }
           break;
         }
 
@@ -1091,7 +1324,7 @@ export class WebSocketService {
               longitude: locationUpdate.lng,
               timestamp: new Date()
             });
-            
+
             const user = await User.findByEmail(userSession.userId);
             if (user) {
               await user.setLocation(locationUpdate);
@@ -1117,17 +1350,187 @@ export class WebSocketService {
           break;
         }
 
+        // case 'photo_response': {
+        case GlassesToCloudMessageType.PHOTO_RESPONSE: {
+          const photoUploadMessage = message as any;
+          userSession.logger.info(`[websocket.service]: Received photo response from glasses, requestId: ${photoUploadMessage.requestId}`);
+
+          // Process the photo response
+          const success = photoRequestService.processPhotoResponse(
+            photoUploadMessage.requestId,
+            photoUploadMessage.photoUrl
+          );
+
+          if (!success) {
+            userSession.logger.warn(`[websocket.service]: Failed to process photo response, no pending request found for requestId: ${photoUploadMessage.requestId}`);
+          }
+          break;
+        }
+
+        // case 'video_stream_response': {
+        case 'video_stream_response': {
+          const videoStreamResponse = message as any;
+          userSession.logger.info(`[websocket.service]: Received video stream response from glasses, appId: ${videoStreamResponse.appId}`);
+
+          // Get the appId from the response
+          const appId = videoStreamResponse.appId;
+          const streamUrl = videoStreamResponse.streamUrl;
+
+          if (!appId || !streamUrl) {
+            userSession.logger.warn(`[websocket.service]: Invalid video stream response, missing appId or streamUrl`);
+            return;
+          }
+
+          // Forward the video stream response to the requesting TPA
+          const success = this.forwardVideoStreamResponse(appId, streamUrl, userSession);
+
+          if (!success) {
+            userSession.logger.warn(`[websocket.service]: Failed to forward video stream response to TPA ${appId}`);
+          }
+          break;
+        }
+
+        case "settings_update_request": {
+          const settingsUpdate = message as AugmentosSettingsUpdateRequest;
+          userSession.logger.info('Received AugmentOS settings update request via WebSocket');
+
+          try {
+            // Find or create the user
+            const user = await User.findOrCreateUser(userSession.userId);
+
+            // Get current settings from database
+            const currentSettings = user.augmentosSettings || DEFAULT_AUGMENTOS_SETTINGS;
+            userSession.logger.info('Current settings from database:', currentSettings.brightness);
+
+            // Send current settings back to the client
+            const responseMessage = {
+              type: 'settings_update',
+              success: true,
+              message: 'Current settings retrieved successfully',
+              settings: currentSettings,
+              timestamp: new Date()
+            };
+
+            ws.send(JSON.stringify(responseMessage));
+          } catch (error) {
+            userSession.logger.error('Error retrieving AugmentOS settings:', error);
+
+            // Send error back to client
+            const errorMessage = {
+              type: 'augmentos_settings_update_error',
+              success: false,
+              message: error instanceof Error ? error.message : 'Error retrieving settings',
+              timestamp: new Date()
+            };
+            ws.send(JSON.stringify(errorMessage));
+          }
+          break;
+        }
+
+        case "core_status_update": {
+          const coreStatusUpdate = message as CoreStatusUpdate;
+          // userSession.logger.info('Received core status update:', coreStatusUpdate);
+
+          try {
+            // The status is already an object, no need to parse
+            const statusObj = coreStatusUpdate.status as any;
+            const coreInfo = statusObj.status.core_info;
+            const connectedGlasses = statusObj.status.connected_glasses;
+
+            if (!coreInfo || !connectedGlasses) {
+              userSession.logger.error('Invalid core status update format - missing required fields');
+              break;
+            }
+
+            // Map core status fields to augmentos settings
+            const newSettings = {
+              useOnboardMic: coreInfo.force_core_onboard_mic,
+              contextualDashboard: coreInfo.contextual_dashboard_enabled,
+              metricSystemEnabled: coreInfo.metric_system_enabled,
+              headUpAngle: connectedGlasses.head_up_angle,
+              brightness: parseInt(connectedGlasses.brightness),
+              autoBrightness: connectedGlasses.auto_brightness,
+              sensingEnabled: coreInfo.sensing_enabled,
+              alwaysOnStatusBar: coreInfo.always_on_status_bar_enabled,
+              bypassVad: coreInfo.bypass_vad_for_debugging,
+              bypassAudioEncoding: coreInfo.bypass_audio_encoding_for_debugging,
+            };
+
+            console.log("🔥🔥🔥: newSettings:", newSettings);
+
+            // Find or create the user
+            const user = await User.findOrCreateUser(userSession.userId);
+
+            // Get current settings before update
+            const currentSettingsBeforeUpdate = JSON.parse(JSON.stringify(user.augmentosSettings));
+            userSession.logger.info('Current settings before update:', currentSettingsBeforeUpdate);
+
+            console.log("🔥🔥🔥: currentSettingsBeforeUpdate:", currentSettingsBeforeUpdate);
+            console.log("🔥🔥🔥: newSettings:", newSettings);
+
+            // Check if anything actually changed
+            const changedKeys = getChangedKeys(currentSettingsBeforeUpdate, newSettings);
+            console.log("🔥🔥🔥: changedKeys:", changedKeys);
+            if (changedKeys.length === 0) {
+              userSession.logger.info('No changes detected in settings from core status update');
+            } else {
+              userSession.logger.info('Changes detected in settings from core status update:', {
+                changedFields: changedKeys.map(key => ({
+                  key,
+                  from: `${(currentSettingsBeforeUpdate as Record<string, any>)[key]} (${typeof (currentSettingsBeforeUpdate as Record<string, any>)[key]})`,
+                  to: `${(newSettings as Record<string, any>)[key]} (${typeof (newSettings as Record<string, any>)[key]})`
+                }))
+              });
+              // Update the settings in the database before broadcasting
+              try {
+                await user.updateAugmentosSettings(newSettings);
+                userSession.logger.info('Updated AugmentOS settings in the database.');
+              } catch (dbError) {
+                userSession.logger.error('Failed to update AugmentOS settings in the database:', dbError);
+                return; // Do not broadcast if DB update fails
+              }
+              // Only notify for changed keys
+              const notifiedApps = new Set<string>();
+              for (const key of changedKeys) {
+                const subscribedApps = subscriptionService.getSubscribedAppsForAugmentosSetting(userSession, key);
+                // userSession.logger.info('Subscribed apps for key:', key, subscribedApps);
+                console.log("fgdsgfdgfd", key)
+                console.log("fgdsgfdgfd", subscribedApps)
+                for (const packageName of subscribedApps) {
+                  if (notifiedApps.has(packageName)) continue;
+                  console.log("fgdsgfdgfd", packageName)
+                  const tpaWs = userSession.appConnections.get(packageName);
+                  console.log("fgdsgfdgfd", tpaWs)
+                  if (tpaWs && tpaWs.readyState === 1) {
+                    userSession.logger.info(`[websocket.service]: Broadcasting AugmentOS settings update to ${packageName}`);
+                    const augmentosSettingsUpdate = {
+                      type: 'augmentos_settings_update',
+                      sessionId: `${userSession.sessionId}-${packageName}`,
+                      settings: newSettings,
+                      timestamp: new Date()
+                    };
+                    tpaWs.send(JSON.stringify(augmentosSettingsUpdate));
+                    notifiedApps.add(packageName);
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            userSession.logger.error('Error updating settings from core status:', error);
+          }
+          break;
+        }
+
         // All other message types are broadcast to TPAs.
         default: {
           userSession.logger.info(`[Session ${userSession.sessionId}] Catching and Sending message type:`, message.type);
-          // check if it's a type of Client to TPA message.
           this.broadcastToTpa(userSession.sessionId, message.type as any, message as any);
+          break;
         }
       }
     } catch (error) {
       userSession.logger.error(`[Session ${userSession.sessionId}] Error handling message:`, error);
       // Optionally send error to client
-      // const errorMessage: CloudConnectionErrorMessage = {
       const errorMessage: ConnectionError = {
         type: CloudToGlassesMessageType.CONNECTION_ERROR,
         message: error instanceof Error ? error.message : 'Error processing message',
@@ -1139,7 +1542,6 @@ export class WebSocketService {
         eventType: message.type,
         timestamp: new Date().toISOString(),
         error: error,
-        // message: message, // May contain sensitive data so let's not log it. just the event name cause i'm ethical like that 😇
       });
       ws.send(JSON.stringify(errorMessage));
     }
@@ -1148,34 +1550,110 @@ export class WebSocketService {
   /**
    * 🥳 Handles new TPA connections.
    * @param ws - WebSocket connection
+   * @param request - Incoming message
    * @private
    */
-  private handleTpaConnection(ws: WebSocket): void {
-    logger.info('New TPA attempting to connect...');
+  private async handleTpaConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
+    logger.info({
+      msg: 'New TPA attempting to connect...',
+      headers: {
+        origin: request.headers.origin,
+        host: request.headers.host,
+        userAgent: request.headers['user-agent']
+      },
+      remoteAddress: request.socket.remoteAddress
+    });
+
     let currentAppSession: string | null = null;
     const setCurrentSessionId = (appSessionId: string) => {
       currentAppSession = appSessionId;
+      logger.debug({ msg: 'TPA session ID set', sessionId: appSessionId });
     }
     let userSessionId = '';
-    let userSession: UserSession | null = null;
+    let userSession: ExtendedUserSession | null = null;
 
-    // Register this connection with the health monitor
-    healthMonitorService.registerTpaConnection(ws);
+    // Add error handler to catch WebSocket errors
+    ws.on('error', (wsError) => {
+      logger.error({
+        msg: 'WebSocket error in TPA connection',
+        error: {
+          name: wsError.name,
+          message: wsError.message,
+          stack: wsError.stack
+        },
+        sessionId: currentAppSession,
+        userSessionId
+      });
+    });
+
+    // Add close handler to track connection closures
+    ws.on('close', (code, reason) => {
+      logger.info({
+        msg: 'TPA WebSocket connection closed',
+        code,
+        reason: reason.toString(),
+        sessionId: currentAppSession,
+        userSessionId
+      });
+    });
+
+    // Note: Will register with HeartbeatManager after we know which session/TPA this belongs to
 
     ws.on('message', async (data: Buffer | string, isBinary: boolean) => {
-      // Update activity timestamp whenever a message is received
-      healthMonitorService.updateTpaActivity(ws);
+      // Update activity timestamp if we have a user session
+      if (userSession) {
+        userSession.heartbeatManager.updateTpaActivity(ws);
+      }
 
       if (isBinary) {
-        userSession?.logger.warn('Received unexpected binary message from TPA');
+        logger.warn({
+          msg: 'Received unexpected binary message from TPA',
+          binaryLength: data instanceof Buffer ? data.length : 'unknown',
+          userSessionId,
+          currentAppSession
+        });
         return;
       }
 
       try {
-        const message = JSON.parse(data.toString()) as TpaToCloudMessage;
+        // Log the raw message for debugging (truncated for safety)
+        const messageStr = data.toString();
+        logger.debug({
+          msg: 'Received TPA message data',
+          dataLength: messageStr.length,
+          dataSample: messageStr.length > 100 ? messageStr.substring(0, 100) + '...' : messageStr,
+          userSessionId,
+          currentAppSession
+        });
+
+        const message = JSON.parse(messageStr) as TpaToCloudMessage;
+
+        logger.debug({
+          msg: 'Parsed TPA message',
+          messageType: message.type,
+          packageName: message.packageName,
+          sessionId: message.sessionId
+        });
+
         if (message.sessionId) {
           userSessionId = message.sessionId.split('-')[0];
-          userSession = sessionService.getSession(userSessionId);
+          logger.debug({ msg: 'Extracted user session ID', userSessionId });
+
+          userSession = this.getSessionService().getSession(userSessionId);
+
+          if (userSession) {
+            logger.debug({
+              msg: 'Retrieved user session',
+              userId: userSession.userId,
+              sessionId: userSession.sessionId
+            });
+          } else {
+            logger.warn({
+              msg: 'User session not found',
+              userSessionId,
+              messageSessionId: message.sessionId
+            });
+          }
         }
 
         // Handle TPA messages here.
@@ -1183,7 +1661,28 @@ export class WebSocketService {
           switch (message.type) {
             case 'tpa_connection_init': {
               const initMessage = message as TpaConnectionInit;
-              await this.handleTpaInit(ws, initMessage, setCurrentSessionId);
+              logger.info({
+                msg: 'TPA connection initialization received',
+                packageName: initMessage.packageName,
+                sessionId: initMessage.sessionId
+              });
+
+              try {
+                await this.handleTpaInit(ws, initMessage, setCurrentSessionId);
+                logger.info({
+                  msg: 'TPA connection initialized successfully',
+                  packageName: initMessage.packageName,
+                  sessionId: initMessage.sessionId
+                });
+              } catch (initError) {
+                logger.error({
+                  msg: 'Failed to initialize TPA connection',
+                  error: initError,
+                  packageName: initMessage.packageName,
+                  sessionId: initMessage.sessionId
+                });
+                throw initError; // Re-throw to propagate to client
+              }
               break;
             }
 
@@ -1200,17 +1699,17 @@ export class WebSocketService {
               const previousLanguageSubscriptions = subscriptionService.getMinimalLanguageSubscriptions(userSessionId);
 
               // Check if the app is newly subscribing to calendar events
-              const isNewCalendarSubscription = 
+              const isNewCalendarSubscription =
                 !subscriptionService.hasSubscription(userSessionId, message.packageName, StreamType.CALENDAR_EVENT) &&
                 subMessage.subscriptions.includes(StreamType.CALENDAR_EVENT);
 
               // Check if the app is newly subscribing to location updates
-              const isNewLocationSubscription = 
+              const isNewLocationSubscription =
                 !subscriptionService.hasSubscription(userSessionId, message.packageName, StreamType.LOCATION_UPDATE) &&
                 subMessage.subscriptions.includes(StreamType.LOCATION_UPDATE);
 
-              // Update subscriptions
-              subscriptionService.updateSubscriptions(
+              // Update subscriptions (async)
+              await subscriptionService.updateSubscriptions(
                 userSessionId,
                 message.packageName,
                 userSession.userId,
@@ -1254,21 +1753,23 @@ export class WebSocketService {
               // Send cached calendar event if app just subscribed to calendar events
               if (isNewCalendarSubscription) {
                 console.log("🔥🔥🔥: isNewCalendarSubscription:", isNewCalendarSubscription);
-                const lastCalendarEvent = subscriptionService.getLastCalendarEvent(userSessionId);
-                if (lastCalendarEvent) {
-                  userSession.logger.info(`Sending cached calendar event to newly subscribed app ${message.packageName}`);
+                const allCalendarEvents = subscriptionService.getAllCalendarEvents(userSessionId);
+                if (allCalendarEvents.length > 0) {
+                  userSession.logger.info(`Sending ${allCalendarEvents.length} cached calendar events to newly subscribed app ${message.packageName}`);
                   const tpaSessionId = `${userSessionId}-${message.packageName}`;
                   const tpaWs = userSession.appConnections.get(message.packageName);
-                  
+
                   if (tpaWs && tpaWs.readyState === WebSocket.OPEN) {
-                    const dataStream: DataStream = {
-                      type: CloudToTpaMessageType.DATA_STREAM,
-                      sessionId: tpaSessionId,
-                      streamType: StreamType.CALENDAR_EVENT,
-                      data: lastCalendarEvent,
-                      timestamp: new Date()
-                    };
-                    tpaWs.send(JSON.stringify(dataStream));
+                    for (const event of allCalendarEvents) {
+                      const dataStream: DataStream = {
+                        type: CloudToTpaMessageType.DATA_STREAM,
+                        sessionId: tpaSessionId,
+                        streamType: StreamType.CALENDAR_EVENT,
+                        data: event,
+                        timestamp: new Date()
+                      };
+                      tpaWs.send(JSON.stringify(dataStream));
+                    }
                   }
                 }
               }
@@ -1281,7 +1782,7 @@ export class WebSocketService {
                   userSession.logger.info(`Sending cached location to newly subscribed app ${message.packageName}`);
                   const tpaSessionId = `${userSessionId}-${message.packageName}`;
                   const tpaWs = userSession.appConnections.get(message.packageName);
-                  
+
                   if (tpaWs && tpaWs.readyState === WebSocket.OPEN) {
                     const locationUpdate: LocationUpdate = {
                       type: GlassesToCloudMessageType.LOCATION_UPDATE,
@@ -1290,7 +1791,7 @@ export class WebSocketService {
                       lng: lastLocation.longitude,
                       timestamp: new Date()
                     };
-                    
+
                     const dataStream: DataStream = {
                       type: CloudToTpaMessageType.DATA_STREAM,
                       sessionId: tpaSessionId,
@@ -1303,10 +1804,35 @@ export class WebSocketService {
                 }
               }
 
+              // Send cached userDatetime if app just subscribed to custom_message
+              const isNewCustomMessageSubscription = subMessage.subscriptions.includes(StreamType.CUSTOM_MESSAGE);
+
+              // console.log('🔥🔥🔥: userSession:', message.packageName);
+              // console.log('🔥🔥🔥: subMessage:', subMessage.subscriptions);
+
+              // console.log('🔥🔥🔥: isNewCustomMessageSubscription:', isNewCustomMessageSubscription);
+              if (isNewCustomMessageSubscription && (userSession as ExtendedUserSession).userDatetime) {
+                userSession.logger.info(`Sending cached userDatetime to app ${message.packageName} on custom_message subscription`);
+                const tpaSessionId = `${userSessionId}-${message.packageName}`;
+                const tpaWs = userSession.appConnections.get(message.packageName);
+                if (tpaWs && tpaWs.readyState === WebSocket.OPEN) {
+                  const customMessage = {
+                    type: CloudToTpaMessageType.CUSTOM_MESSAGE,
+                    action: 'update_datetime',
+                    payload: {
+                      datetime: (userSession as ExtendedUserSession).userDatetime,
+                      section: 'topLeft'
+                    },
+                    timestamp: new Date()
+                  };
+                  tpaWs.send(JSON.stringify(customMessage));
+                }
+              }
+
               const clientResponse: AppStateChange = {
                 type: CloudToGlassesMessageType.APP_STATE_CHANGE,
                 sessionId: userSession.sessionId,
-                userSession: await sessionService.transformUserSessionForClient(userSession as ExtendedUserSession),
+                userSession: await this.getSessionService().transformUserSessionForClient(userSession as ExtendedUserSession),
                 timestamp: new Date()
               };
               userSession?.websocket.send(JSON.stringify(clientResponse));
@@ -1320,17 +1846,162 @@ export class WebSocketService {
               }
 
               const displayMessage = message as DisplayRequest;
-              sessionService.updateDisplay(userSession.sessionId, displayMessage);
+              this.getSessionService().updateDisplay(userSession.sessionId, displayMessage);
+              break;
+            }
+
+            // Dashboard message handling
+            case TpaToCloudMessageType.DASHBOARD_CONTENT_UPDATE:
+            case TpaToCloudMessageType.DASHBOARD_MODE_CHANGE:
+            case TpaToCloudMessageType.DASHBOARD_SYSTEM_UPDATE: {
+              if (!userSession) {
+                ws.close(1008, 'No active session');
+                return;
+              }
+
+              try {
+                // Import dashboard service functions dynamically to avoid circular dependencies
+                const dashboardService = require('../dashboard');
+
+                // Handle the dashboard message, passing both message and userSession
+                const handled = dashboardService.handleTpaMessage(message, userSession);
+
+                if (!handled) {
+                  userSession.logger.warn(`Dashboard message ${message.type} not handled`, message);
+                }
+              } catch (error) {
+                userSession.logger.error(`Error handling dashboard message ${message.type}:`, error);
+              }
+              break;
+            }
+
+            case 'photo_request': {
+              if (!userSession) {
+                ws.close(1008, 'No active session');
+                return;
+              }
+
+              // Check if app has permission to request photos
+              const photoRequestMessage = message as PhotoRequest;
+              const appId = photoRequestMessage.packageName;
+              const saveToGallery = photoRequestMessage.saveToGallery || false;
+
+              // Check if the app is currently running
+              if (!userSession.activeAppSessions) {
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'No active app sessions available'
+                });
+                return;
+              }
+
+              // Check if app is in the active sessions array (it's an array, not an object)
+              const isAppActive = userSession.activeAppSessions.includes(appId);
+              if (!isAppActive) {
+                userSession.logger.warn(`[websocket.service]: App ${appId} tried to request photo but is not in active sessions: ${JSON.stringify(userSession.activeAppSessions)}`);
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'App not currently running'
+                });
+                return;
+              }
+
+              // Create a TPA photo request using PhotoRequestService
+              const requestId = photoRequestService.createTpaPhotoRequest(
+                appId,
+                userSession.userId,
+                ws,
+                { saveToGallery }
+              );
+
+              // // Build request to glasses
+              // const photoRequestToGlasses = photoRequestService.buildPhotoRequestMessage(
+              //   requestId,
+              //   userSession.userId,
+              //   userSession.sessionId,
+              //   appId,
+              //   saveToGallery
+              // );
+              // photoRequestMessage
+              // Send request to glasses
+              // userSession.websocket.send(JSON.stringify(photoRequestToGlasses));
+              userSession.websocket.send(JSON.stringify({
+                type: CloudToGlassesMessageType.PHOTO_REQUEST,
+                requestId,
+                appId,
+                timestamp: new Date()
+              }));
+              userSession.logger.info(`[websocket.service]: Photo request sent to glasses, requestId: ${requestId}`);
+
+              break;
+            }
+
+            case 'video_stream_request': {
+              if (!userSession) {
+                ws.close(1008, 'No active session');
+                return;
+              }
+
+              // Check if app has permission to request video stream
+              const videoStreamRequestMessage = message as VideoStreamRequest;
+              const appId = videoStreamRequestMessage.packageName;
+
+              // Check if the app is currently running
+              if (!userSession.activeAppSessions) {
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'No active app sessions available'
+                });
+                return;
+              }
+
+              // Check if app is in the active sessions array (it's an array, not an object)
+              const isAppActive = userSession.activeAppSessions.includes(appId);
+              if (!isAppActive) {
+                userSession.logger.warn(`[websocket.service]: App ${appId} tried to request photo but is not in active sessions: ${JSON.stringify(userSession.activeAppSessions)}`);
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'App not currently running'
+                });
+                return;
+              }
+
+              // Build request to glasses
+              const videoStreamRequestToGlasses: VideoStreamRequestToGlasses = {
+                type: CloudToGlassesMessageType.VIDEO_STREAM_REQUEST,
+                userSession: {
+                  sessionId: userSession.sessionId,
+                  userId: userSession.userId
+                },
+                appId,
+                timestamp: new Date()
+              };
+
+              // Send request to glasses
+              userSession.websocket.send(JSON.stringify(videoStreamRequestToGlasses));
+              userSession.logger.info(`[websocket.service]: Video stream request sent to glasses for app: ${appId}`);
+
               break;
             }
           }
         }
         catch (error) {
-          userSession?.logger.error('[websocket.service]: Error handling TPA message:', message, error);
+          // Enhanced error logging with structured data
+          logger.error({
+            error: error,
+            messageType: message.type,
+            packageName: message.packageName,
+            sessionId: message.sessionId,
+            userSessionId
+          }, "Error handling TPA message");
+
+          // Send error back to client
           this.sendError(ws, {
             type: CloudToTpaMessageType.CONNECTION_ERROR,
-            message: 'Error processing message'
+            message: `Error processing message: ${(error as any)?.message}`
           });
+
+          // Track error for analytics
           PosthogService.trackEvent("error-handleTpaMessage", "anonymous", {
             eventType: message.type,
             timestamp: new Date().toISOString(),
@@ -1338,10 +2009,17 @@ export class WebSocketService {
           });
         }
       } catch (error) {
-        userSession?.logger.error('[websocket.service]: Error handling TPA message:', error);
+        // This catch handles JSON parsing errors or other issues
+        logger.error({
+          error: error,
+          rawDataLength: typeof data === 'string' ? data.length : (data instanceof Buffer ? data.length : 'unknown'),
+          userSessionId,
+          currentAppSession
+        }, 'Error parsing or pre-processing TPA message');
+
         this.sendError(ws, {
           type: CloudToTpaMessageType.CONNECTION_ERROR,
-          message: 'Error processing message'
+          message: `Error processing message`
         });
       }
     });
@@ -1349,8 +2027,9 @@ export class WebSocketService {
     // Set up ping handler to track connection health
     ws.on('ping', () => {
       // Update activity whenever a ping is received
-      healthMonitorService.updateTpaActivity(ws);
-      console.log("🔥🔥🔥: Received ping from TPA");
+      if (userSession) {
+        userSession.heartbeatManager.updateTpaActivity(ws);
+      }
       // Send pong response
       try {
         ws.pong();
@@ -1359,16 +2038,19 @@ export class WebSocketService {
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', async (code: number, reason: string) => {
       if (currentAppSession) {
         const userSessionId = currentAppSession.split('-')[0];
         const packageName = currentAppSession.split('-')[1];
-        const userSession = sessionService.getSession(userSessionId);
+        const userSession = this.getSessionService().getSession(userSessionId);
 
         if (!userSession) {
           logger.error(`[websocket.service]: User session not found for ${currentAppSession}`);
           return;
         }
+
+        // Capture detailed disconnect information
+        const disconnectInfo = userSession.heartbeatManager.captureDisconnect(ws, code, reason);
 
         // Clean up the connection 
         if (userSession.appConnections.has(packageName)) {
@@ -1376,31 +2058,250 @@ export class WebSocketService {
           subscriptionService.removeSubscriptions(userSession, packageName);
         }
 
-        // Log the disconnection
-        userSession.logger.info(`[websocket.service]: TPA session ${currentAppSession} disconnected`);
+        // Log the disconnection with reason
+        userSession.logger.info(
+          `[websocket.service]: TPA session ${currentAppSession} disconnected: ` +
+          `reason=${disconnectInfo?.reason || 'unknown'}, code=${code}`
+        );
 
-        // Notify the registration service that this session is disconnected
-        // but DON'T remove it from registry - we want to enable recovery!
-        // Just note that the session is temporarily disconnected
-        tpaRegistrationService.handleTpaSessionEnd(currentAppSession);
+        // [IMPROVED APP STATE CONSISTENCY WITH RECONNECTION GRACE PERIOD]
+        // Check if the app is still in the active sessions list and handle potential reconnection
+        if (userSession.activeAppSessions.includes(packageName)) {
+          const wasExplicitStop = disconnectInfo?.reason === 'explicit_stop';
+
+          if (!wasExplicitStop) {
+            // Store reconnection timer in a map if it doesn't already exist there
+            if (!userSession._reconnectionTimers) {
+              userSession._reconnectionTimers = new Map();
+            }
+
+            // Clear any existing timer for this package
+            if (userSession._reconnectionTimers.has(packageName)) {
+              clearTimeout(userSession._reconnectionTimers.get(packageName));
+            }
+
+            userSession.logger.info(
+              `[websocket.service]: Starting 5-second reconnection grace period for ${packageName}. ` +
+              `Disconnect reason: ${disconnectInfo?.reason || 'unknown'}, code: ${code}`
+            );
+
+            // Set a 5-second timer before removing from active sessions
+            const timerId = setTimeout(async () => {
+              // Check if the app is still in active sessions and not reconnected
+              if (userSession.activeAppSessions.includes(packageName) &&
+                !userSession.appConnections.has(packageName)) {
+
+                userSession.logger.warn(
+                  `[websocket.service]: Reconnection grace period expired for ${packageName}. ` +
+                  `Removing from active app sessions to prevent zombie app state.`
+                );
+
+                // Remove the app from active sessions after grace period
+                userSession.activeAppSessions = userSession.activeAppSessions.filter(
+                  (appName) => appName !== packageName
+                );
+
+                // Try to update database if possible
+                try {
+                  const user = await User.findByEmail(userSession.userId);
+                  if (user) {
+                    await user.removeRunningApp(packageName);
+                  }
+                } catch (dbError) {
+                  userSession.logger.error(`Error updating user's running apps:`, dbError);
+                }
+
+                // Update the glasses client with new app state to ensure UI correctness
+                try {
+                  if (userSession.websocket && userSession.websocket.readyState === WebSocket.OPEN) {
+                    const appStateChange = await this.generateAppStateStatus(userSession);
+                    userSession.websocket.send(JSON.stringify(appStateChange));
+                    userSession.logger.info(`Sent updated app state to glasses after grace period for ${packageName}`);
+                  }
+                } catch (updateError) {
+                  userSession.logger.error(`Error updating glasses client app state:`, updateError);
+                }
+
+                // Update the display to reflect the app's removal
+                try {
+                  userSession.displayManager.handleAppStop(packageName, userSession);
+                } catch (displayError) {
+                  userSession.logger.error(`Error updating display after grace period:`, displayError);
+                }
+
+                // Clean up the timer reference
+                userSession._reconnectionTimers?.delete(packageName);
+
+                // Auto-restart the app if enabled
+                if (AUTO_RESTART_APPS) {
+                  userSession.logger.info(
+                    `[websocket.service]: Will attempt auto-restart of ${packageName} in ${AUTO_RESTART_DELAY_MS}ms`
+                  );
+
+                  // Add a small delay before attempting restart
+                  setTimeout(async () => {
+                    try {
+                      userSession.logger.info(`[websocket.service]: Auto-restarting ${packageName} after disconnect`);
+                      await this.startAppSession(userSession, packageName);
+                      userSession.logger.info(`[websocket.service]: Successfully auto-restarted ${packageName}`);
+                    } catch (restartError) {
+                      userSession.logger.error(
+                        `[websocket.service]: Failed to auto-restart ${packageName}: ${restartError instanceof Error ? restartError.message : String(restartError)}`
+                      );
+                    }
+                  }, AUTO_RESTART_DELAY_MS);
+                }
+              } else {
+                userSession.logger.info(
+                  `[websocket.service]: App ${packageName} reconnected during grace period or was already removed`
+                );
+                userSession._reconnectionTimers?.delete(packageName);
+              }
+            }, 5000); // 5 second grace period
+
+            // Store the timer ID for potential cancellation
+            userSession._reconnectionTimers.set(packageName, timerId);
+          }
+        }
+
+        // Clean up dashboard content for the disconnected TPA
+        try {
+          // Import dashboard service dynamically to avoid circular dependencies
+          const dashboardService = require('../dashboard');
+          // Pass both the packageName and the userSession
+          dashboardService.handleTpaDisconnected(packageName, userSession);
+        } catch (error) {
+          userSession.logger.error(`Error cleaning up dashboard content for TPA ${packageName}:`, error);
+        }
       }
     });
 
-    ws.on('error', (error) => {
+    ws.on('error', async (error) => {
       logger.error('[websocket.service]: TPA WebSocket error:', error);
       if (currentAppSession) {
         const userSessionId = currentAppSession.split('-')[0];
         const packageName = currentAppSession.split('-')[1];
-        const userSession = sessionService.getSession(userSessionId);
+        const userSession = this.getSessionService().getSession(userSessionId);
         if (!userSession) {
           logger.error(`[websocket.service]: User session not found for ${currentAppSession}`);
           return;
         }
+
+        // Unregister from heartbeat manager
+        userSession.heartbeatManager.unregisterConnection(ws);
+
         if (userSession.appConnections.has(packageName)) {
           userSession.appConnections.delete(packageName);
           subscriptionService.removeSubscriptions(userSession, packageName);
         }
-        userSession?.logger.info(`[websocket.service]: TPA session ${currentAppSession} disconnected`);
+
+        // [IMPROVED APP STATE CONSISTENCY WITH RECONNECTION GRACE PERIOD]
+        // Give app a chance to reconnect before removing from active sessions
+        if (userSession.activeAppSessions.includes(packageName)) {
+          // Initialize reconnection timers map if needed
+          if (!userSession._reconnectionTimers) {
+            userSession._reconnectionTimers = new Map();
+          }
+
+          // Clear any existing timer for this package
+          if (userSession._reconnectionTimers.has(packageName)) {
+            clearTimeout(userSession._reconnectionTimers.get(packageName));
+          }
+
+          userSession.logger.info(
+            `[websocket.service]: Starting 5-second reconnection grace period for ${packageName} after error. ` +
+            `Error: ${error.message || 'unknown error'}`
+          );
+
+          // Set a 5-second timer before removing from active sessions
+          const timerId = setTimeout(async () => {
+            // Check if the app is still in active sessions and not reconnected
+            if (userSession.activeAppSessions.includes(packageName) &&
+              !userSession.appConnections.has(packageName)) {
+
+              userSession.logger.warn(
+                `[websocket.service]: Reconnection grace period expired for ${packageName} after error. ` +
+                `Removing from active app sessions to prevent zombie app state.`
+              );
+
+              // Remove the app from active sessions after grace period
+              userSession.activeAppSessions = userSession.activeAppSessions.filter(
+                (appName) => appName !== packageName
+              );
+
+              // Update database
+              try {
+                const user = await User.findByEmail(userSession.userId);
+                if (user) {
+                  await user.removeRunningApp(packageName);
+                }
+              } catch (dbError) {
+                userSession.logger.error(`Error updating user's running apps:`, dbError);
+              }
+
+              // Update glasses client with new app state
+              try {
+                if (userSession.websocket && userSession.websocket.readyState === WebSocket.OPEN) {
+                  const appStateChange = await this.generateAppStateStatus(userSession);
+                  userSession.websocket.send(JSON.stringify(appStateChange));
+                  userSession.logger.info(`Sent updated app state to glasses after grace period for ${packageName}`);
+                }
+              } catch (updateError) {
+                userSession.logger.error(`Error updating glasses client app state:`, updateError);
+              }
+
+              // Update display
+              try {
+                userSession.displayManager.handleAppStop(packageName, userSession);
+              } catch (displayError) {
+                userSession.logger.error(`Error updating display after grace period:`, displayError);
+              }
+
+              // Clean up the timer reference
+              userSession._reconnectionTimers?.delete(packageName);
+
+              // Auto-restart the app if enabled
+              if (AUTO_RESTART_APPS) {
+                userSession.logger.info(
+                  `[websocket.service]: Will attempt auto-restart of ${packageName} in ${AUTO_RESTART_DELAY_MS}ms`
+                );
+
+                // Add a small delay before attempting restart
+                setTimeout(async () => {
+                  try {
+                    userSession.logger.info(`[websocket.service]: Auto-restarting ${packageName} after error`);
+                    await this.startAppSession(userSession, packageName);
+                    userSession.logger.info(`[websocket.service]: Successfully auto-restarted ${packageName}`);
+                  } catch (restartError) {
+                    userSession.logger.error(
+                      `[websocket.service]: Failed to auto-restart ${packageName}: ${restartError instanceof Error ? restartError.message : String(restartError)}`
+                    );
+                  }
+                }, AUTO_RESTART_DELAY_MS);
+              }
+            } else {
+              userSession.logger.info(
+                `[websocket.service]: App ${packageName} reconnected during error grace period or was already removed`
+              );
+              userSession._reconnectionTimers?.delete(packageName);
+            }
+          }, 5000); // 5 second grace period
+
+          // Store the timer ID for potential cancellation
+          userSession._reconnectionTimers.set(packageName, timerId);
+        }
+
+        // Clean up dashboard content for the disconnected TPA
+        try {
+          // Import dashboard service dynamically to avoid circular dependencies
+          const dashboardService = require('../dashboard');
+          // Pass both the packageName and the userSession
+          dashboardService.handleTpaDisconnected(packageName, userSession);
+        } catch (dashboardError) {
+          userSession.logger.error(`Error cleaning up dashboard content for TPA ${packageName}:`, dashboardError);
+        }
+
+        userSession.logger.error(`[websocket.service]: TPA session ${currentAppSession} disconnected due to error: ${error.message || 'unknown error'}`);
       }
       ws.close();
     });
@@ -1419,7 +2320,7 @@ export class WebSocketService {
     setCurrentSessionId: (sessionId: string) => void
   ): Promise<void> {
     const userSessionId = initMessage.sessionId.split('-')[0];
-    const userSession = sessionService.getSession(userSessionId);
+    const userSession = this.getSessionService().getSession(userSessionId);
 
     if (!userSession) {
       logger.error(`[websocket.service] User session not found for ${userSessionId}`);
@@ -1445,21 +2346,10 @@ export class WebSocketService {
     }
 
 
-    // Validate the TPA connection using the registration service
-    // This checks the API key against registered servers
-    const isValidTpa = tpaRegistrationService.handleTpaSessionStart(initMessage);
-
+    // Check if this is a system app
     const isSystemApp = Object.values(systemApps).some(
       app => app.packageName === initMessage.packageName
     );
-
-    // Skip validation for system apps but validate all others
-    if (!isSystemApp && !isValidTpa) {
-      userSession.logger.warn(`[websocket.service] Unregistered TPA attempting to connect: ${initMessage.packageName}`);
-      // We still allow the connection for now, but in production we would reject unregistered TPAs
-      // ws.close(1008, 'Unregistered TPA');
-      // return;
-    }
 
     // For regular apps, check if they're in the loading apps list or already active
     const isLoading = userSession.loadingApps.has(initMessage.packageName);
@@ -1476,6 +2366,18 @@ export class WebSocketService {
     userSession.appConnections.set(initMessage.packageName, ws);
     setCurrentSessionId(initMessage.sessionId);
 
+    // Register the connection with the heartbeat manager
+    userSession.heartbeatManager.registerTpaConnection(ws, initMessage.packageName);
+
+    // Check if there's a pending reconnection timer and clear it
+    if (userSession._reconnectionTimers && userSession._reconnectionTimers.has(initMessage.packageName)) {
+      userSession.logger.info(
+        `[websocket.service]: Clearing reconnection timer for ${initMessage.packageName} - app successfully reconnected`
+      );
+      clearTimeout(userSession._reconnectionTimers.get(initMessage.packageName));
+      userSession._reconnectionTimers.delete(initMessage.packageName);
+    }
+
     // If the app was in loading state, move it to active
     if (isLoading) {
       userSession.loadingApps.delete(initMessage.packageName);
@@ -1489,7 +2391,7 @@ export class WebSocketService {
     try {
       const user = await User.findOrCreateUser(userSession.userId);
       userSettings = user.getAppSettings(initMessage.packageName) || [];
-      
+
       // If no settings found, try to fetch and create default settings
       if (!userSettings || userSettings.length === 0) {
         try {
@@ -1498,7 +2400,7 @@ export class WebSocketService {
           if (app && app.publicUrl) {
             const tpaConfigResponse = await axios.get(`${app.publicUrl}/tpa_config.json`);
             const tpaConfig = tpaConfigResponse.data;
-            
+
             if (tpaConfig && tpaConfig.settings) {
               const defaultSettings = tpaConfig.settings
                 .filter((setting: any) => setting.type !== 'group')
@@ -1510,7 +2412,7 @@ export class WebSocketService {
                   label: setting.label,
                   options: setting.options || []
                 }));
-                
+
               await user.updateAppSettings(initMessage.packageName, defaultSettings);
               userSettings = defaultSettings;
               userSession.logger.info(`Created default settings for ${initMessage.packageName}`);
@@ -1523,7 +2425,7 @@ export class WebSocketService {
     } catch (error) {
       userSession.logger.error(`Error retrieving settings for ${initMessage.packageName}: ${error}`);
     }
-    
+
     // Send acknowledgment with settings
     const ackMessage: TpaConnectionAck = {
       type: CloudToTpaMessageType.CONNECTION_ACK,
@@ -1550,7 +2452,7 @@ export class WebSocketService {
           this.broadcastToTpa(userSessionId, StreamType.LOCATION_UPDATE, locationUpdate);
         }
       }
-      
+
       // Send cached location to any app that subscribes to location updates
       if (subscriptionService.hasSubscription(userSessionId, initMessage.packageName, StreamType.LOCATION_UPDATE)) {
         const lastLocation = subscriptionService.getLastLocation(userSessionId);
@@ -1563,7 +2465,7 @@ export class WebSocketService {
             lng: lastLocation.longitude,
             timestamp: new Date()
           };
-          
+
           const dataStream: DataStream = {
             type: CloudToTpaMessageType.DATA_STREAM,
             sessionId: initMessage.sessionId,
@@ -1582,23 +2484,18 @@ export class WebSocketService {
   /**
    * 😬 Sends an error message to a WebSocket client.
    * @param ws - WebSocket connection
-   * @param error - Error details
+   * @param errorDetails - Object containing the error type and message
    * @private
    */
-  private sendError(ws: WebSocket, error: ConnectionError | AuthError | TpaConnectionError): void {
-    const errorMessage: CloudToGlassesMessage | CloudToTpaMessage = {
-      type: CloudToGlassesMessageType.CONNECTION_ERROR,
-      message: error.message,
+  private sendError(ws: WebSocket, errorDetails: { type: CloudToGlassesMessageType | CloudToTpaMessageType; message: string }): void {
+    const errorMessageToSend = {
+      type: errorDetails.type,
+      message: errorDetails.message,
       timestamp: new Date()
     };
-    ws.send(JSON.stringify(errorMessage));
+    ws.send(JSON.stringify(errorMessageToSend));
   }
 }
 
-/**
- * ☝️ Singleton instance for websocket service.
- */
-export const webSocketService = new WebSocketService();
-logger.info('✅ WebSocket Service');
-
+export const webSocketService = WebSocketService.getInstance();
 export default webSocketService;

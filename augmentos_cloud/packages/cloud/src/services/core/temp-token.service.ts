@@ -1,8 +1,8 @@
 // src/services/core/token.service.ts
 import crypto from 'crypto';
 import { TempToken, ITempToken } from '../../models/temp-token.model';
-import { logger } from '@augmentos/utils';
-import App from '../../models/app.model'; // Import App model for validation
+import { logger as rootLogger } from "../logging";
+const logger = rootLogger.child({ service: 'temp-token.service' });
 
 export class TokenService {
   /**
@@ -12,6 +12,7 @@ export class TokenService {
    * @returns The generated temporary token string.
    */
   async generateTemporaryToken(userId: string, packageName: string): Promise<string> {
+    const logger = rootLogger.child({ service: 'temp-token.service', userId, packageName });
     const token = crypto.randomBytes(32).toString('hex');
 
     const tempTokenDoc = new TempToken({
@@ -39,6 +40,7 @@ export class TokenService {
    * @returns An object containing the userId if the token is valid and unused, otherwise null.
    */
   async exchangeTemporaryToken(tempToken: string, requestingPackageName: string): Promise<{ userId: string } | null> {
+    const logger = rootLogger.child({ service: 'temp-token.service', requestingPackageName, tempToken });
     try {
       const tokenDoc = await TempToken.findOne({ token: tempToken });
 
@@ -76,7 +78,7 @@ export class TokenService {
       return { userId: tokenDoc.userId };
 
     } catch (error) {
-      logger.error(`Error exchanging temporary token ${tempToken}:`, error);
+      logger.error(`Error exchanging temporary token ${tempToken}:`, { error, requestingPackageName, tempToken });
       return null; // Return null on any error during exchange
     }
   }

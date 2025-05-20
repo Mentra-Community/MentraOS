@@ -32,12 +32,16 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
-import androidx.navigation.NavController;
-import androidx.navigation.fragment.NavHostFragment;
 import androidx.preference.PreferenceManager;
 
 // import com.firebase.ui.auth.AuthUI;
@@ -52,15 +56,12 @@ public class MainActivity extends AppCompatActivity {
   public final String TAG = "Augmentos_MainActivity";
   public AsgClientService mService;
   boolean mBound;
-  private NavController navController;
   PermissionsUtils permissionsUtils;
-
+  
   //Permissions
   private static final int PERMISSIONS_REQUEST_RECORD_AUDIO = 1;
   private static final int PICK_CONTACT_REQUEST = 1;
   private static final int READ_CONTACTS_PERMISSIONS_REQUEST = 2;
-
-
 
   public boolean gettingPermissions = false;
 
@@ -73,17 +74,16 @@ public class MainActivity extends AppCompatActivity {
 
     permissionsUtils = new PermissionsUtils(this, TAG);
     permissionsUtils.getSomePermissions();
-    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-        != PackageManager.PERMISSION_GRANTED) {
+    
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
       gettingPermissions = true;
+      permissionsUtils.getSomePermissions();
     }
 
-   //finish();
-    // Launch WebViewActivity FOR THE DEMO TODO:
-    Intent webViewIntent = new Intent(this, WebViewActivity.class);
-    webViewIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-    startActivity(webViewIntent);
+    // Set layout for launcher
+    setContentView(R.layout.activity_main);
   }
+  
 
   @Override
   public void onStart() {
@@ -162,25 +162,32 @@ public class MainActivity extends AppCompatActivity {
   @Override
   protected void onResume() {
     super.onResume();
-//    UiUtils.setupTitle(this, defaultFragmentLabel);
-    //register receiver that gets data from the service
-
+    
+    // Make the launcher fullscreen
+    getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    
+    // Bind to service if running
     if (isMyServiceRunning(AsgClientService.class)) {
-      //bind to WearableAi service
       bindAsgClientService();
-
-      //ask the service to send us all the Augmentos responses
+      
       if (mService != null) {
         //mService.sendUiUpdateFull();
       }
     }
+    
   }
 
   @Override
   protected void onPause() {
     super.onPause();
 
-    //unbind wearableAi service
+    //unbind service
     unbindAsgClientService();
   }
 
@@ -212,14 +219,26 @@ public class MainActivity extends AppCompatActivity {
     if (!isMyServiceRunning(AsgClientService.class)) return;
     Intent stopIntent = new Intent(this, AsgClientService.class);
     stopIntent.setAction(AsgClientService.ACTION_STOP_FOREGROUND_SERVICE);
-    startService(stopIntent);
+    
+    // For Android O+, use startForegroundService 
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+      startForegroundService(stopIntent);
+    } else {
+      startService(stopIntent);
+    }
   }
 
   public void sendAsgClientServiceMessage(String message) {
     if (!isMyServiceRunning(AsgClientService.class)) return;
     Intent messageIntent = new Intent(this, AsgClientService.class);
     messageIntent.setAction(message);
-    startService(messageIntent);
+    
+    // For Android O+, use startForegroundService
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+      startForegroundService(messageIntent);
+    } else {
+      startService(messageIntent);
+    }
   }
 
   public void startAsgClientService() {
@@ -231,7 +250,15 @@ public class MainActivity extends AppCompatActivity {
     Log.d(TAG, "Starting Augmentos service.");
     Intent startIntent = new Intent(this, AsgClientService.class);
     startIntent.setAction(AsgClientService.ACTION_START_FOREGROUND_SERVICE);
-    startService(startIntent);
+    
+    // Use startForegroundService instead of startService for Android O+
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+      Log.d(TAG, "Using startForegroundService for Android O+");
+      startForegroundService(startIntent);
+    } else {
+      startService(startIntent);
+    }
+    
     bindAsgClientService();
   }
 
@@ -285,11 +312,6 @@ public class MainActivity extends AppCompatActivity {
 
   private static final int REQUEST_CODE_CAPTURE = 100;
 
-  @Override
-  public boolean onSupportNavigateUp() {
-    onBackPressed();
-    return true;
-  }
 
   public void setSavedAuthToken(Context context, String newAuthToken){
     PreferenceManager.getDefaultSharedPreferences(context)
@@ -298,5 +320,17 @@ public class MainActivity extends AppCompatActivity {
             .apply();
   }
 
-
+  @Override
+  public void onWindowFocusChanged(boolean hasFocus) {
+    super.onWindowFocusChanged(hasFocus);
+    if (hasFocus) {
+      getWindow().getDecorView().setSystemUiVisibility(
+              View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                      | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+  }
 }

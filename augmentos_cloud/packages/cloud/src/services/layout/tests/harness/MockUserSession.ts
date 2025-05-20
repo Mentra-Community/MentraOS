@@ -71,7 +71,6 @@ export class MockUserSession implements Partial<UserSession> {
   transcript: any = {};
   bufferedAudio: ArrayBufferLike[] = [];
   whatToStream: any[] = [];
-  OSSettings: any = {};
   
   constructor(userId: string = 'test-user', timeMachine?: TimeMachine) {
     this.sessionId = uuidv4();

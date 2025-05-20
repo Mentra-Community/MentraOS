@@ -335,8 +335,29 @@ export class TpaServer {
     });
 
     // Setup session event handlers
-    const cleanupDisconnect = session.events.onDisconnected(() => {
-      console.log(`👋 Session ${sessionId} disconnected`);
+    const cleanupDisconnect = session.events.onDisconnected((info) => {
+      // Handle different disconnect info formats (string or object)
+      if (typeof info === 'string') {
+        console.log(`👋 Session ${sessionId} disconnected: ${info}`);
+      } else {
+        // It's an object with detailed disconnect information
+        console.log(`👋 Session ${sessionId} disconnected: ${info.message} (code: ${info.code}, reason: ${info.reason})`);
+        
+        // Check if this is a permanent disconnection after exhausted reconnection attempts
+        if (info.permanent === true) {
+          console.log(`🛑 Permanent disconnection detected for session ${sessionId}, calling onStop`);
+          
+          // Keep track of the original session before removal
+          const session = this.activeSessions.get(sessionId);
+          
+          // Call onStop with a reconnection failure reason
+          this.onStop(sessionId, userId, `Connection permanently lost: ${info.reason}`).catch(error => {
+            console.error(`❌ Error in onStop handler for permanent disconnection:`, error);
+          });
+        }
+      }
+      
+      // Remove the session from active sessions in all cases
       this.activeSessions.delete(sessionId);
     });
 

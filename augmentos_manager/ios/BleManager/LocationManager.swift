@@ -22,7 +22,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
   public func setup() {
     locationManager.delegate = self
     locationManager.desiredAccuracy = kCLLocationAccuracyBest
-    locationManager.distanceFilter = 10 // Update when user moves 10 meters
+    locationManager.distanceFilter = 2 // Update when user moves 2 meters
     locationManager.allowsBackgroundLocationUpdates = false
     locationManager.pausesLocationUpdatesAutomatically = true
     
@@ -42,8 +42,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     guard let location = locations.last else { return }
     
     // Only process significant changes (>10m or first location)
-    if currentLocation == nil || location.distance(from: currentLocation!) > 10 {
+    if currentLocation == nil || location.distance(from: currentLocation!) > locationManager.distanceFilter {
       currentLocation = location
+
+      print("LocationManager: Location updated to \(location.coordinate.latitude), \(location.coordinate.longitude)")
       
       // Notify via callback
       locationChangedCallback?()

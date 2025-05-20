@@ -3,13 +3,17 @@ import { MOCK_CONNECTION } from './consts';
 interface Glasses {
   model_name: string;
   battery_life: number;
-  is_searching: boolean;
-  brightness: string;
+  glasses_use_wifi?: boolean; // Flag to indicate if glasses model supports WiFi
+  glasses_wifi_connected?: boolean;
+  glasses_wifi_ssid?: string;
+}
+
+interface GlassesSettings {
+  brightness: number;
   auto_brightness: boolean;
-  headUp_angle: number | null; // 0-60
-  dashboard_height: number | null; // 0-8
-  dashboard_distance: number | null; // ???
-  dashboard_x_offset: number | null; // 0-1
+  head_up_angle: number | null; // 0-60
+  dashboard_height: number;
+  dashboard_depth: number;
 }
 
 interface WifiConnection {
@@ -40,16 +44,20 @@ export interface CoreInfo {
   default_wearable: string | null,
   sensing_enabled: boolean;
   force_core_onboard_mic: boolean;
+  preferred_mic: string;
   is_mic_enabled_for_frontend: boolean;
   contextual_dashboard_enabled: boolean;
   bypass_vad_for_debugging: boolean;
   bypass_audio_encoding_for_debugging: boolean;
   always_on_status_bar_enabled: boolean;
+  metric_system_enabled: boolean;
+  is_searching: boolean;
 }
 
 export interface AugmentOSMainStatus {
   core_info: CoreInfo;
   glasses_info: Glasses | null;
+  glasses_settings: GlassesSettings;
   wifi: WifiConnection | null;
   gsm: GSMConnection | null;
   auth: CoreAuthInfo;
@@ -67,14 +75,24 @@ export class AugmentOSParser {
       puck_charging_status: false,
       sensing_enabled: false,
       force_core_onboard_mic: false,
+      preferred_mic: "glasses",
       is_mic_enabled_for_frontend: false,
       contextual_dashboard_enabled: false,
       bypass_vad_for_debugging: false,
       bypass_audio_encoding_for_debugging: false,
       default_wearable: null,
       always_on_status_bar_enabled: false,
+      metric_system_enabled: true,
+      is_searching: false,
     },
     glasses_info: null,
+    glasses_settings: {
+      brightness: 50,
+      auto_brightness: false,
+      dashboard_height: 4,
+      dashboard_depth: 5,
+      head_up_angle: 30,
+    },
     wifi: { is_connected: false, ssid: '', signal_strength: 0 },
     gsm: { is_connected: false, carrier: '', signal_strength: 0 },
     auth: {
@@ -94,6 +112,7 @@ export class AugmentOSParser {
       puck_battery_life: 88,
       puck_charging_status: true,
       sensing_enabled: true,
+      preferred_mic: "glasses",
       force_core_onboard_mic: false,
       is_mic_enabled_for_frontend: false,
       contextual_dashboard_enabled: true,
@@ -101,14 +120,22 @@ export class AugmentOSParser {
       bypass_audio_encoding_for_debugging: false,
       default_wearable: 'evenrealities_g1',
       always_on_status_bar_enabled: false,
+      metric_system_enabled: true,
+      is_searching: false,
     },
     glasses_info: {
       model_name: 'Even Realities G1',
       battery_life: 60,
-      is_searching: false,
-      brightness: '87',
+      glasses_use_wifi: false,
+      glasses_wifi_connected: false,
+      glasses_wifi_ssid: '',
+    },
+    glasses_settings: {
+      brightness: 87,
       auto_brightness: false,
-      headUp_angle: 20,
+      dashboard_height: 4,
+      dashboard_depth: 5,
+      head_up_angle: 20,
     },
     wifi: { is_connected: true, ssid: 'TP-LINK69', signal_strength: 100 },
     gsm: { is_connected: false, carrier: '', signal_strength: 0 },
@@ -141,6 +168,7 @@ export class AugmentOSParser {
           puck_charging_status: status.core_info.charging_status ?? false,
           sensing_enabled: status.core_info.sensing_enabled ?? false,
           force_core_onboard_mic: status.core_info.force_core_onboard_mic ?? false,
+          preferred_mic: status.core_info.preferred_mic ?? "glasses",
           contextual_dashboard_enabled: status.core_info.contextual_dashboard_enabled ?? true,
           bypass_vad_for_debugging: status.core_info.bypass_vad_for_debugging ?? false,
           bypass_audio_encoding_for_debugging: status.core_info.bypass_audio_encoding_for_debugging ?? false,
@@ -149,20 +177,25 @@ export class AugmentOSParser {
             : (status.core_info.default_wearable ?? null),
           is_mic_enabled_for_frontend: status.core_info.is_mic_enabled_for_frontend ?? false,
           always_on_status_bar_enabled: status.core_info.always_on_status_bar_enabled ?? false,
+          metric_system_enabled: status.core_info.metric_system_enabled ?? true,
+          is_searching: status.core_info.is_searching ?? false,
         },
         glasses_info: status.connected_glasses
           ? {
             model_name: glassesInfo.model_name,
             battery_life: glassesInfo.battery_life,
-            is_searching: glassesInfo.is_searching ?? false,
-            brightness: glassesInfo.brightness,
-            auto_brightness: glassesInfo.auto_brightness ?? false,
-            headUp_angle: glassesInfo.headUp_angle,
-            dashboard_height: glassesInfo.dashboard_height,
-            dashboard_distance: glassesInfo.dashboard_distance,
-            dashboard_x_offset: glassesInfo.dashboard_x_offset,
+            glasses_use_wifi: glassesInfo.glasses_use_wifi || false,
+            glasses_wifi_connected: glassesInfo.glasses_wifi_connected || false,
+            glasses_wifi_ssid: glassesInfo.glasses_wifi_ssid || '',
           }
           : null,
+        glasses_settings: {
+          brightness: status.glasses_settings.brightness ?? '50%',
+          auto_brightness: status.glasses_settings.auto_brightness ?? false,
+          dashboard_height: status.glasses_settings.dashboard_height ?? 4,
+          dashboard_depth: status.glasses_settings.dashboard_depth ?? 5,
+          head_up_angle: status.glasses_settings.head_up_angle ?? 30,
+        },
         wifi: status.wifi ?? AugmentOSParser.defaultStatus.wifi,
         gsm: status.gsm ?? AugmentOSParser.defaultStatus.gsm,
         auth: {
@@ -170,7 +203,11 @@ export class AugmentOSParser {
           core_token_status: authInfo.core_token_status,
           last_verification_timestamp: authInfo.last_verification_timestamp,
         },
-        force_update: status.force_update ?? false,
+        force_update: false // status.force_update ?? false
+        // TODO: Hardcoding this false fixes a bug that 
+        // causes us to jump back to the home screen whenever 
+        // a setting is changed. I don't know why this works.
+        // Somebody look at this please.
       };
     }
     return AugmentOSParser.defaultStatus;
@@ -178,3 +215,4 @@ export class AugmentOSParser {
 }
 
 export default AugmentOSParser;
+//(350/576)*23

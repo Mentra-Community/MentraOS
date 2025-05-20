@@ -154,7 +154,7 @@ public class UltraliteSGC extends SmartGlassesCommunicator {
             });
 
             //setup battery status
-            EventBus.getDefault().post(new BatteryLevelEvent(ultraliteSdk.getBatteryLevel()));
+            EventBus.getDefault().post(new BatteryLevelEvent(ultraliteSdk.getBatteryLevel(), false));
             batteryStatusObserver = ultraliteSdk.getBatteryStatus();
             batteryStatusObserver.observe(lifecycleOwner, batteryStatus -> {
                 onUltraliteBatteryChanged(batteryStatus);
@@ -166,7 +166,7 @@ public class UltraliteSGC extends SmartGlassesCommunicator {
             batteryStatusObserver = ultraliteSdk.getBatteryStatus();
             
             // Still send the initial battery level
-            EventBus.getDefault().post(new BatteryLevelEvent(ultraliteSdk.getBatteryLevel()));
+            EventBus.getDefault().post(new BatteryLevelEvent(ultraliteSdk.getBatteryLevel(), false));
             
             // Note: We don't need polling anymore since we'll be using LifecycleService
         }
@@ -221,7 +221,7 @@ public class UltraliteSGC extends SmartGlassesCommunicator {
     private void onUltraliteBatteryChanged(BatteryStatus batteryStatus) {
         Log.d(TAG, "Ultralite new battery status");
         int batteryLevel = batteryStatus.getLevel();
-        EventBus.getDefault().post(new BatteryLevelEvent(batteryLevel));
+        EventBus.getDefault().post(new BatteryLevelEvent(batteryLevel, false));
     }
 
 

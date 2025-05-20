@@ -30,6 +30,24 @@ After a thorough code review of the current DisplayManager implementation, the f
 
 ## Planned Improvements
 
+### 0. View Type Enhancements
+
+The View Type system has been enhanced to properly support the always-on dashboard as a persistent overlay:
+
+```typescript
+export enum ViewType {
+    DASHBOARD = 'dashboard',   // Regular dashboard (main/expanded)
+    ALWAYS_ON = 'always_on',   // Persistent overlay dashboard
+    MAIN = 'main'              // Regular app content
+}
+```
+
+This change:
+- Separates the always-on dashboard from the regular dashboard modes
+- Allows the client to properly display both simultaneously
+- Enables the dashboard manager to update each independently
+- Makes the system more consistent with the actual user experience
+
 ### 1. Configuration System
 
 Replace hard-coded values with a configuration system:

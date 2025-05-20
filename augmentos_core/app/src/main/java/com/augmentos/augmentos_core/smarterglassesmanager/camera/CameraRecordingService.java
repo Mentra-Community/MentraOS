@@ -69,11 +69,11 @@ public class CameraRecordingService extends Service implements ConnectCheckerRtm
      private static final int INITIAL_RETRY_DELAY_MS = 6000;
      private static final int BACKOFF_FACTOR = 2;
 
-     private int videoWidth = 640;
-     private int videoHeight = 480;
-     private int videoFps = 10;
-     private int videoBitrate = 500 * 1024; // (2 Mbps)
-    private int videoRotation = 0;
+     private int videoWidth = 120;//640;
+     private int videoHeight = 720;//480;
+     private int videoFps = 24;
+     private int videoBitrate = 2000 * 1024; // (2 Mbps)
+    private int videoRotation = 90;
     private int audioBitrate = 128 * 1024;
     private int audioSampleRate = 44100;
     private boolean audioStereo = true;
@@ -154,6 +154,12 @@ public class CameraRecordingService extends Service implements ConnectCheckerRtm
             case ACTION_TAKE_PHOTO:
                 String filePath = intent.getStringExtra(EXTRA_PHOTO_FILE_PATH);
                 takePhoto(filePath);
+                break;
+                
+            case ACTION_TAKE_PHOTO_WITH_CALLBACK:
+                String filePathWithCallback = intent.getStringExtra(EXTRA_PHOTO_FILE_PATH);
+                // Use the static callback that was set before calling this action
+                takePhoto(filePathWithCallback, sPhotoCaptureCallback);
                 break;
         }
         return START_STICKY;
@@ -307,8 +313,31 @@ public class CameraRecordingService extends Service implements ConnectCheckerRtm
         }, delay);
     }
 
+    /**
+     * Interface for photo capture callbacks
+     */
+    public interface PhotoCaptureCallback {
+        void onPhotoCaptured(String filePath);
+        void onPhotoError(String errorMessage);
+    }
+    
     private void takePhoto(String filePath) {
-        if(isDummyRecording) return;
+        takePhoto(filePath, null);
+    }
+
+    /**
+     * Take a photo and notify through callback when complete
+     * @param filePath Path to save the photo
+     * @param callback Callback to notify when photo is taken
+     */
+    private void takePhoto(String filePath, PhotoCaptureCallback callback) {
+        if(isDummyRecording) {
+            if (callback != null) {
+                callback.onPhotoError("Camera in dummy recording mode, cannot take photo");
+            }
+            return;
+        }
+        
         if (filePath == null || filePath.isEmpty()) {
             // Construct a default file path if none provided
             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
@@ -352,8 +381,12 @@ public class CameraRecordingService extends Service implements ConnectCheckerRtm
                 }
                 if (bitmap == null) {
                     Log.e(TAG, "takePhoto() returned a null Bitmap");
+                    if (callback != null) {
+                        callback.onPhotoError("Camera returned a null bitmap");
+                    }
                     return;
                 }
+                
                 // Save the bitmap to the filePath as a JPEG
                 File file = new File(finalFilePath);
                 FileOutputStream fos = null;
@@ -363,11 +396,19 @@ public class CameraRecordingService extends Service implements ConnectCheckerRtm
                     fos.flush();
                     Log.d(TAG, "Photo saved to: " + file.getAbsolutePath());
                     lastPhotoPath = file.getAbsolutePath();
+                    
+                    // Notify through callback if provided
+                    if (callback != null) {
+                        callback.onPhotoCaptured(file.getAbsolutePath());
+                    }
                 } catch (IOException e) {
                     Log.e(TAG, "Error saving photo", e);
+                    if (callback != null) {
+                        callback.onPhotoError("Error saving photo: " + e.getMessage());
+                    }
                 } finally {
-                    // TODO: uncomment this to prevent possible memory leak
-                    // bitmap.recycle();
+                    // Recycle bitmap to prevent memory leaks
+                    bitmap.recycle();
                     if (fos != null) {
                         try {
                             fos.close();
@@ -517,6 +558,33 @@ public class CameraRecordingService extends Service implements ConnectCheckerRtm
     public static void takePicture(Context context, String filePath) {
         Intent intent = new Intent(context, CameraRecordingService.class);
         intent.setAction(ACTION_TAKE_PHOTO);
+        intent.putExtra(EXTRA_PHOTO_FILE_PATH, filePath);
+        context.startForegroundService(intent);
+    }
+    
+    /**
+     * Action for taking a photo with callback
+     */
+    public static final String ACTION_TAKE_PHOTO_WITH_CALLBACK = "com.augmentos.camera.ACTION_TAKE_PHOTO_WITH_CALLBACK";
+    
+    /**
+     * Static photo capture callback - only one can be active at a time
+     */
+    private static PhotoCaptureCallback sPhotoCaptureCallback;
+    
+    /**
+     * Take a picture and get notified through callback when complete
+     * 
+     * @param context Application context
+     * @param filePath File path to save the photo
+     * @param callback Callback to be notified when photo is captured
+     */
+    public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback) {
+        // Store the callback statically (limitation: only one callback can be active at a time)
+        sPhotoCaptureCallback = callback;
+        
+        Intent intent = new Intent(context, CameraRecordingService.class);
+        intent.setAction(ACTION_TAKE_PHOTO_WITH_CALLBACK);
         intent.putExtra(EXTRA_PHOTO_FILE_PATH, filePath);
         context.startForegroundService(intent);
     }

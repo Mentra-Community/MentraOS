@@ -51,6 +51,11 @@ const config: Config = {
     ],
   ],
 
+  markdown: {
+    mermaid: true,
+  },
+  themes: ['@docusaurus/theme-mermaid'],
+
   themeConfig: {
     // Social card for link previews
     image: 'img/augmentos-social-card.png',

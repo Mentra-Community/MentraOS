@@ -2,8 +2,10 @@
 import { Router, Request, Response } from 'express';
 import { validateAdminEmail } from '../middleware/admin-auth.middleware';
 import App from '../models/app.model';
-import { logger } from '@augmentos/utils';
+// import { logger } from '@augmentos/utils';
 import { Exception } from '@sentry/node';
+import { logger as rootLogger } from '../services/logging/pino-logger';
+const logger = rootLogger.child({ service: 'admin.routes' });
 
 const router = Router();
 

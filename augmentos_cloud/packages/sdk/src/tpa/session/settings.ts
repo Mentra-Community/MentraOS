@@ -7,6 +7,9 @@
 import EventEmitter from 'events';
 import { AppSetting, AppSettings } from '../../types';
 import { ApiClient } from './api-client';
+// import { logger } from '@augmentos/utils'; // Ensure logger is available
+// Note(Isaiah): Let's not import @augmentos/utils in the SDK to avoid circular dependencies. Also i'm deprecating it in favor of the new logging system.
+import { logger } from "../../logging/logger"; // Adjust import path as needed
 
 /**
  * Change information for a single setting
@@ -55,6 +58,11 @@ export class SettingsManager {
   // API client for fetching settings
   private apiClient?: ApiClient;
   
+  // --- AugmentOS settings event system ---
+  private augmentosSettings: Record<string, any> = {};
+  private augmentosEmitter = new EventEmitter();
+  private subscribeFn?: (streams: string[]) => Promise<void>; // Added for auto-subscriptions
+  
   /**
    * Create a new settings manager
    * 
@@ -62,14 +70,17 @@ export class SettingsManager {
    * @param packageName Package name for the TPA
    * @param wsUrl WebSocket URL (for deriving HTTP API URL)
    * @param userId User ID (for authenticated requests)
+   * @param subscribeFn Optional function to call to subscribe to streams
    */
   constructor(
     initialSettings: AppSettings = [],
     packageName?: string,
     wsUrl?: string,
-    userId?: string
+    userId?: string,
+    subscribeFn?: (streams: string[]) => Promise<void> // Added parameter
   ) {
     this.settings = [...initialSettings];
+    this.subscribeFn = subscribeFn; // Store the subscribe function
     
     // Create API client if we have enough information
     if (packageName) {
@@ -282,5 +293,88 @@ export class SettingsManager {
       console.error('Error fetching settings:', error);
       throw error;
     }
+  }
+  
+  /**
+   * Listen for changes to a specific AugmentOS setting (e.g., metricSystemEnabled)
+   * This is a convenience wrapper for onValueChange for well-known augmentosSettings keys.
+   * @param key The augmentosSettings key to listen for (e.g., 'metricSystemEnabled')
+   * @param handler Function to call when the value changes
+   * @returns Function to remove the listener
+   */
+  onAugmentosSettingsChange<T = any>(key: string, handler: SettingValueChangeHandler<T>): () => void {
+    return this.onValueChange(key, handler);
+  }
+
+  /**
+   * Update the current AugmentOS settings
+   * Compares new and old values, emits per-key events, and updates stored values.
+   * @param newSettings The new AugmentOS settings object
+   */
+  updateAugmentosSettings(newSettings: Record<string, any>): void {
+    const oldSettings = this.augmentosSettings;
+    logger.debug(`[SettingsManager] Updating AugmentOS settings. New settings:`, newSettings);
+    for (const key of Object.keys(newSettings)) {
+      const oldValue = oldSettings[key];
+      const newValue = newSettings[key];
+      if (oldValue !== newValue) {
+        logger.info(`[SettingsManager] AugmentOS setting '${key}' changed: ${oldValue} -> ${newValue}. Emitting event.`);
+        this.augmentosEmitter.emit(`augmentos:value:${key}`, newValue, oldValue);
+      }
+    }
+    // Also handle keys that might have been removed from newSettings but existed in oldSettings
+    for (const key of Object.keys(oldSettings)) {
+      if (!(key in newSettings)) {
+        logger.info(`[SettingsManager] AugmentOS setting '${key}' removed. Old value: ${oldSettings[key]}. Emitting event with undefined newValue.`);
+        this.augmentosEmitter.emit(`augmentos:value:${key}`, undefined, oldSettings[key]);
+      }
+    }
+    this.augmentosSettings = { ...newSettings };
+    logger.debug(`[SettingsManager] Finished updating AugmentOS settings. Current state:`, this.augmentosSettings);
+  }
+
+  /**
+   * Subscribe to changes for a specific AugmentOS setting (e.g., 'metricSystemEnabled')
+   * @param key The AugmentOS setting key to listen for
+   * @param handler Function to call when the value changes (newValue, oldValue)
+   * @returns Function to remove the listener
+   */
+  onAugmentosSettingChange<T = any>(key: string, handler: (newValue: T, oldValue: T) => void): () => void {
+    const eventName = `augmentos:value:${key}`;
+    logger.info(`[SettingsManager] Registering handler for AugmentOS setting '${key}' on event '${eventName}'.`);
+    this.augmentosEmitter.on(eventName, (...args) => {
+      logger.info(`[SettingsManager] AugmentOS setting '${key}' event fired. Args:`, args);
+      handler(...(args as [T, T]));
+    });
+
+    if (this.subscribeFn) {
+      const subscriptionKey = `augmentos:${key}`;
+      logger.info(`[SettingsManager] Calling subscribeFn for stream '${subscriptionKey}'.`);
+      this.subscribeFn([subscriptionKey])
+        .then(() => {
+          logger.info(`[SettingsManager] subscribeFn resolved for stream '${subscriptionKey}'.`);
+        })
+        .catch(err => {
+          logger.error(`[SettingsManager] subscribeFn failed for stream '${subscriptionKey}':`, err);
+        });
+    } else {
+      logger.warn(`[SettingsManager] 'subscribeFn' not provided. Cannot auto-subscribe for AugmentOS setting '${key}'. Manual TPA subscription might be required.`);
+    }
+
+    return () => {
+      logger.info(`[SettingsManager] Unregistering handler for AugmentOS setting '${key}' from event '${eventName}'.`);
+      this.augmentosEmitter.off(eventName, handler as (newValue: unknown, oldValue: unknown) => void);
+    };
+  }
+
+  /**
+   * Get the current value of an AugmentOS setting
+   */
+  getAugmentosSetting<T = any>(key: string, defaultValue?: T): T {
+    console.log(`[SettingsManager] Getting AugmentOS setting '${key}' with settings:`, this.augmentosSettings);
+    if (key in this.augmentosSettings) {
+      return this.augmentosSettings[key] as T;
+    }
+    return defaultValue as T;
   }
 }

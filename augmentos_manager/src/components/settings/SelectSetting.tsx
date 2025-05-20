@@ -19,6 +19,7 @@ type SelectSettingProps = {
   options: Option[];
   onValueChange: (value: string) => void;
   theme: Theme;
+  description?: string;
 };
 
 const SelectSetting: React.FC<SelectSettingProps> = ({
@@ -27,6 +28,7 @@ const SelectSetting: React.FC<SelectSettingProps> = ({
   options,
   onValueChange,
   theme,
+  description,
 }) => {
   // Convert your Option[] to PickerItem[]
   const pickerItems: PickerItem[] = options.map((option) => ({
@@ -37,6 +39,7 @@ const SelectSetting: React.FC<SelectSettingProps> = ({
   return (
     <View style={styles.container}>
       <Text style={[styles.label, { color: theme.textColor }]}>{label}</Text>
+      {description && <Text style={[styles.description, { color: theme.textColor }]}>{description}</Text>}
       <View
         style={[
           styles.pickerContainer,
@@ -73,7 +76,11 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     overflow: 'hidden',
     justifyContent: 'center',
-    paddingHorizontal: 10,
+  },
+  description: {
+    fontSize: 12,
+    marginBottom: 8,
+    flexWrap: 'wrap',
   },
 });
 

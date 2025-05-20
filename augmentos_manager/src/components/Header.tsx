@@ -4,6 +4,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { checkNotificationAccessSpecialPermission } from '../utils/NotificationServiceUtils';
 import { checkFeaturePermissions, PermissionFeatures } from '../logic/PermissionsUtils';
 import { showAlert } from '../utils/AlertUtils';
+import { useRoute } from '@react-navigation/native';
 
 interface HeaderProps {
   isDarkTheme: boolean;
@@ -16,6 +17,7 @@ const Header: React.FC<HeaderProps> = ({ isDarkTheme, navigation }) => {
   const [hasNotificationListenerPermission, setHasNotificationListenerPermission] = useState(true);
   const [hasCalendarPermission, setHasCalendarPermission] = useState(true);
   const [appState, setAppState] = useState(AppState.currentState);
+  const route = useRoute();
 
   // Check permissions when component mounts
   // and when app comes back to foreground
@@ -54,7 +56,7 @@ const Header: React.FC<HeaderProps> = ({ isDarkTheme, navigation }) => {
     return () => {
       subscription.remove();
     };
-  }, [appState]);
+  }, [appState, route.name]);
 
   const handleLogout = () => {
     setIsLoggedIn(false);

@@ -15,6 +15,8 @@
   },
   "dependencies": {
     "@augmentos/sdk": "workspace:*",
+    "@logtail/pino": "^0.5.4",
+    "pino": "^9.6.0",
     "posthog-node": "^4.14.0"
   },
   "devDependencies": {

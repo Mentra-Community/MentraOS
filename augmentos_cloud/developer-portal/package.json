@@ -14,7 +14,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@augmentos/sdk": "^1.1.0",
+    "@augmentos/sdk": "^1.1.8",
     "@hookform/resolvers": "^5.0.1",
     "@radix-ui/react-accordion": "^1.2.4",
     "@radix-ui/react-alert-dialog": "^1.1.7",
@@ -53,6 +53,7 @@
     "cmdk": "^1.0.0",
     "date-fns": "^3.6.0",
     "dotenv": "^16.4.7",
+    "email-providers": "^2.11.0",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.476.0",

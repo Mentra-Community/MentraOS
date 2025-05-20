@@ -40,6 +40,10 @@
   <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
   <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+  
+  <!-- Screen wake permissions -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- BACKGROUND CAMERA FOR GLASSES -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
@@ -61,33 +65,55 @@
 <!--      android:supportsRtl="true"-->
 <!--      android:theme="@style/AppTheme">-->
 
-    <activity
-        android:name=".WebViewActivity"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar"
-        android:exported="true" />
 
     <receiver
-        android:name=".BootReceiver"
+        android:name=".AsgClientBootReceiver"
         android:enabled="true"
-        android:exported="true">
+        android:exported="true"
+        android:directBootAware="true">
       <intent-filter>
         <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+        <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
       </intent-filter>
     </receiver>
+    
+    <!-- Transparent bootstrap activity that starts the service -->
+    <activity
+        android:name=".BootstrapActivity"
+        android:theme="@android:style/Theme.Translucent.NoTitleBar"
+        android:excludeFromRecents="true"
+        android:taskAffinity=""
+        android:exported="false" />
     <service
         android:name=".AsgClientService"
         android:enabled="true"
         android:exported="true"
         android:foregroundServiceType="microphone"
         />
+        
+    <service
+        android:name=".camera.CameraNeo"
+        android:enabled="true"
+        android:exported="false"
+        android:foregroundServiceType="camera" />
 
-    <activity
+    <service
+        android:name=".streaming.RtmpStreamingService"
+        android:enabled="true"
+        android:exported="false"
+        android:foregroundServiceType="camera|microphone" />
+
+      <activity
         android:name="com.augmentos.asg_client.MainActivity"
         android:exported="true"
         android:theme="@style/AppTheme">
               <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>
+        <category android:name="android.intent.category.HOME"/>
+        <category android:name="android.intent.category.DEFAULT"/>
       </intent-filter>
       <intent-filter>
         <action android:name="android.intent.action.VIEW" />
@@ -126,7 +152,7 @@
   </queries>
 
   <queries>
-    <package android:name="com.augmentos.augmentos_manager" />
+    <package android:name="com.augmentos.augmentos" />
   </queries>
 
 </manifest>

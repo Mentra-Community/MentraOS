@@ -7,7 +7,7 @@
 
 #import <Foundation/Foundation.h>
 #import "./AOSModule.h"
-#import "AugmentOS_Manager-Swift.h"
+#import "AugmentOS-Swift.h"
 
 @interface AOSModule ()
 @property (nonatomic, strong) AOSManager *aosManager;
@@ -136,37 +136,6 @@ RCT_EXPORT_METHOD(
 }
 
 RCT_EXPORT_METHOD(
-  setDashboardPosition:
-  (NSInteger)position
-  resolver:(RCTPromiseResolveBlock)resolve
-  rejecter:(RCTPromiseRejectBlock)reject
-)
-{
-  @try {
-    [self.aosManager.g1Manager RN_setDashboardPosition:position];
-    resolve(@[@"Set mic enabled"]);
-  }
-  @catch(NSException *exception) {
-    reject(@"0", exception.description, nil);
-  }
-}
-
-RCT_EXPORT_METHOD(
-  connectServer:
-  (RCTPromiseResolveBlock)resolve
-  rejecter:(RCTPromiseRejectBlock)reject
-)
-{
-  @try {
-    [self.aosManager connectServer];
-    resolve(@[@"Connected to server!"]);
-  }
-  @catch(NSException *exception) {
-    reject(@"0", exception.description, nil);
-  }
-}
-
-RCT_EXPORT_METHOD(
   getBatteryStatus:
   (RCTPromiseResolveBlock)resolve
   rejecter:(RCTPromiseRejectBlock)reject
@@ -175,22 +144,6 @@ RCT_EXPORT_METHOD(
   @try {
     [self.aosManager.g1Manager RN_getBatteryStatus];
     resolve(@[@"Got battery status!"]);
-  }
-  @catch(NSException *exception) {
-    reject(@"0", exception.description, nil);
-  }
-}
-
-RCT_EXPORT_METHOD(
-  syncCalendarEvents:
-  (RCTPromiseResolveBlock)resolve
-  rejecter:(RCTPromiseRejectBlock)reject
-)
-{
-  @try {
-    // Trigger calendar sync via AOSManager
-    [self.aosManager syncCalendarEvents];
-    resolve(@[@"Calendar sync triggered"]);
   }
   @catch(NSException *exception) {
     reject(@"0", exception.description, nil);

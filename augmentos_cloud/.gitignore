@@ -15,3 +15,6 @@ old/
 .env.production
 .env.staging
 .ssh
+
+# Local override file
+docker-compose.override.yml

@@ -31,6 +31,21 @@ export interface DeveloperProfile {
   logo?: string;
 }
 
+// Define PermissionType enum until it's added to the SDK
+export enum PermissionType {
+  MICROPHONE = 'MICROPHONE',
+  LOCATION = 'LOCATION',
+  CALENDAR = 'CALENDAR',
+  NOTIFICATIONS = 'NOTIFICATIONS',
+  ALL = 'ALL'
+}
+
+// Permission interface
+export interface Permission {
+  type: PermissionType;
+  description?: string;
+}
+
 /**
  * Base interface for applications
  */
@@ -52,6 +67,7 @@ export interface AppI {
   hashedApiKey?: string;
   
   // App details
+  permissions?: Permission[];
   description?: string;
   version?: string;
   settings?: AppSettings;

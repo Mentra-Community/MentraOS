@@ -1,14 +1,19 @@
 // posthog.service.ts
-import { logger } from '@augmentos/utils';
+import { logger } from './pino-logger';
 import { PostHog } from 'posthog-node';
 
-export const POSTHOG_PROJECT_API_KEY = process.env.POSTHOG_PROJECT_API_KEY || "";
-export const POSTHOG_HOST = process.env.POSTHOG_HOST || "https://app.posthog.com";
+export const posthog = process.env.POSTHOG_PROJECT_API_KEY ? new PostHog(
+  process.env.POSTHOG_PROJECT_API_KEY!,                         // project API key
+  {
+    host: process.env.POSTHOG_HOST || 'https://us.i.posthog.com',
+    flushAt: 20,          // batch size
+    flushInterval: 5_000, // ms
+  }
+) : null
 
-// Initialize PostHog client if API key is provided
-let posthogClient: PostHog | null = null;
-if (POSTHOG_PROJECT_API_KEY) {
-  posthogClient = new PostHog(POSTHOG_PROJECT_API_KEY, { host: POSTHOG_HOST });
+if (posthog) {
+  console.log("POSTHOG INITIALIZED")
+  process.on('beforeExit', async () => posthog.shutdown())   // ensure flush
 } else {
   console.warn('PostHog API key not provided. Analytics will be disabled.');
 }
@@ -30,9 +35,9 @@ async function trackEvent(
   properties: EventProperties = {}
 ): Promise<void> {
   // Only proceed if PostHog is initialized
-  if (!posthogClient) return;
+  if (!posthog) return;
   try {
-    posthogClient.capture({
+    posthog.capture({
       distinctId: userId || properties.sessionId || 'anonymous',  // use provided user ID or fallback
       event: eventName,
       properties: {

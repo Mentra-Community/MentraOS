@@ -48,6 +48,8 @@ const DashboardSettingsScreen: React.FC<DashboardSettingsScreenProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [dashboardHeight, setDashboardHeight] = useState<number | null>(null);
+  const [isMetricSystemEnabled, setIsMetricSystemEnabled] = useState(status.core_info.metric_system_enabled);
+  const [depth, setDepth] = useState<number | null>(null);
 
   const dashboardContentOptions = [
     { label: 'None', value: 'none' },
@@ -63,6 +65,16 @@ const DashboardSettingsScreen: React.FC<DashboardSettingsScreenProps> = ({
     const newVal = !isContextualDashboardEnabled;
     await coreCommunicator.sendToggleContextualDashboard(newVal);
     setIsContextualDashboardEnabled(newVal);
+  };
+
+  const toggleMetricSystem = async () => {
+    const newVal = !isMetricSystemEnabled;
+    try {
+      await coreCommunicator.sendSetMetricSystemEnabled(newVal);
+      setIsMetricSystemEnabled(newVal);
+    } catch (error) {
+      console.error('Error toggling metric system:', error);
+    }
   };
 
   const onSaveHeadUpAngle = async (newHeadUpAngle: number) => {
@@ -123,12 +135,20 @@ const DashboardSettingsScreen: React.FC<DashboardSettingsScreenProps> = ({
   // };
 
   useEffect(() => {
-    if (status.glasses_info) {
-      if (status.glasses_info?.headUp_angle != null) {
-        setHeadUpAngle(status.glasses_info.headUp_angle);
-      }
+    if (status.glasses_settings.head_up_angle != null) {
+      setHeadUpAngle(status.glasses_settings.head_up_angle);
     }
-  }, [status.glasses_info?.headUp_angle, status.glasses_info]);
+  }, [status.glasses_settings.head_up_angle]);
+
+  // Update isMetricSystemEnabled when status changes
+  useEffect(() => {
+    setIsMetricSystemEnabled(status.core_info.metric_system_enabled);
+  }, [status.core_info.metric_system_enabled]);
+
+  // Update isContextualDashboardEnabled when status changes
+  useEffect(() => {
+    setIsContextualDashboardEnabled(status.core_info.contextual_dashboard_enabled);
+  }, [status.core_info.contextual_dashboard_enabled]);
 
   // Switch track colors
   const switchColors = {
@@ -139,12 +159,6 @@ const DashboardSettingsScreen: React.FC<DashboardSettingsScreenProps> = ({
     thumbColor: Platform.OS === 'ios' ? undefined : '#FFFFFF',
     ios_backgroundColor: '#D1D1D6',
   };
-
-  // Condition to disable HeadUp Angle setting
-  const disableHeadUpAngle =
-    !status.glasses_info?.model_name ||
-    status.glasses_info?.brightness === '-' ||
-    !status.glasses_info.model_name.toLowerCase().includes('even');
 
   // ContentPicker Modal
   const renderContentPicker = () => (
@@ -244,6 +258,24 @@ const DashboardSettingsScreen: React.FC<DashboardSettingsScreenProps> = ({
               ios_backgroundColor={switchColors.ios_backgroundColor}
             />
           </View>
+          
+          <View style={[styles.settingItem, styles.elevatedCard]}>
+            <View style={styles.settingTextContainer}>
+              <Text style={styles.label}>
+                Use Metric System
+              </Text>
+              <Text style={styles.value}>
+                Metric System (°C) or Imperial System (°F).
+              </Text>
+            </View>
+            <Switch
+              value={isMetricSystemEnabled}
+              onValueChange={toggleMetricSystem}
+              trackColor={switchColors.trackColor}
+              thumbColor={switchColors.thumbColor}
+              ios_backgroundColor={switchColors.ios_backgroundColor}
+            />
+          </View>
         </View>
 
         {/* Dashboard Content Selection */}
@@ -295,16 +327,14 @@ const DashboardSettingsScreen: React.FC<DashboardSettingsScreenProps> = ({
             style={[
               styles.settingItem,
               styles.elevatedCard,
-              disableHeadUpAngle && styles.disabledItem,
             ]}
-            disabled={disableHeadUpAngle}
             onPress={() => setHeadUpAngleComponentVisible(true)}
           >
             <View style={styles.settingTextContainer}>
               <Text style={styles.label}>
                 Adjust Head-Up Angle
               </Text>
-              <Text style={[styles.value, disableHeadUpAngle && styles.disabledItem]}>
+              <Text style={[styles.value]}>
                 Adjust the angle at which the contextual dashboard appears when you look up.
               </Text>
             </View>

@@ -4,7 +4,7 @@
 ![GitHub Release Version](https://img.shields.io/github/v/release/TeamOpenSmartGlasses/Convoscope)
 ![Last Updated](https://img.shields.io/github/last-commit/TeamOpenSmartGlasses/Convoscope)
 
-# AugmentOS - smart glasses OS and super app.
+# AugmentOS - smart glasses app store and OS.
 
 **The open source operating system for your smart glasses. Access the best apps and AI agents on your smart glasses and build new apps and agents:**
 
@@ -120,9 +120,9 @@ The community is working on many more apps - fully open source - join us and hel
 
 Developer Console: https://console.AugmentOS.org
 
-SDK Documentation: https://docs.AugmentOS.org.
+SDK Documentation: https://docs.AugmentOS.org
 
-AugmentOS Example App: https://github.com/AugmentOS-Community/AugmentOS-Cloud-Example-App.
+AugmentOS Example App: https://github.com/AugmentOS-Community/AugmentOS-Cloud-Example-App
 
 ## Required Hardware
 
@@ -145,11 +145,15 @@ AugmentOS is made by a decentralized community of contributors, and managed by [
 - Nicolo Micheletti
 - Isaiah Ballah
 
-Contributions welcome! Our team is growing and we have a lot to do! Join our Discord and reach out!
+Contributions welcome! Our team is growing and we have a lot to do! See our [Contributing Guide](https://docs.augmentos.org/contributing) for how to get started, or join our [Discord](https://discord.gg/bAKsjh8CtE) and reach out!
 
 ## AugmentOS Community
 
 The AugmentOS Community is a team building open-source smart glasses tech towards an open, self-empowered, intercognitive, augmented future. Our industry partners include companies like Vuzix, Activelook, TCL, and others. To get involved, check out [our website](https://augmentos.org) and join our [Discord server](https://discord.gg/bAKsjh8CtE).
+
+## Contributing
+
+Contributor Guide: https://docs.augmentos.org/contributing
 
 ## License
 

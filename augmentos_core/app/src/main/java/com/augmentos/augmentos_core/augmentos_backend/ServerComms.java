@@ -28,6 +28,13 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import okhttp3.RequestBody;
+import okhttp3.Request;
+import okhttp3.OkHttpClient;
+import okhttp3.Callback;
+import okhttp3.Response;
+import okhttp3.Call;
+
 /**
  * ServerComms is the single facade for all WebSocket interactions in AugmentOS_Core.
  * It delegates the low-level socket to WebSocketManager, handles handshake, routing messages,
@@ -528,12 +535,66 @@ public class ServerComms {
     public void sendCoreStatus(JSONObject status) {
         try {
             JSONObject event = new JSONObject();
-            event.put("type", "core_status");
+            event.put("type", "core_status_update");
             event.put("status", status);
             event.put("timestamp", System.currentTimeMillis());
             wsManager.sendText(event.toString());
         } catch (JSONException e) {
             Log.e(TAG, "Error building location_update JSON", e);
+        }
+    }
+    
+    /**
+     * Sends a photo response message to the server
+     * 
+     * @param requestId The unique ID of the photo request
+     * @param photoUrl URL of the uploaded photo
+     */
+    public void sendPhotoResponse(String requestId, String photoUrl) {
+        try {
+            JSONObject event = new JSONObject();
+            event.put("type", "photo_response");
+            event.put("requestId", requestId);
+            event.put("photoUrl", photoUrl);
+            event.put("timestamp", System.currentTimeMillis());
+            wsManager.sendText(event.toString());
+            Log.d(TAG, "Sent photo response for requestId: " + requestId);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error building photo_response JSON", e);
+        }
+    }
+    
+    /**
+     * Sends a video stream response message to the server
+     * 
+     * @param appId The ID of the app requesting the stream
+     * @param streamUrl URL of the video stream
+     */
+    public void sendVideoStreamResponse(String appId, String streamUrl) {
+        try {
+            JSONObject event = new JSONObject();
+            event.put("type", "video_stream_response");
+            event.put("appId", appId);
+            event.put("streamUrl", streamUrl);
+            event.put("timestamp", System.currentTimeMillis());
+            wsManager.sendText(event.toString());
+            Log.d(TAG, "Sent video stream response for appId: " + appId);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error building video_stream_response JSON", e);
+        }
+    }
+
+    /**
+     * Requests settings from server via WebSocket
+     */
+    public void requestSettingsFromServer() {
+        try {
+            Log.d(TAG, "Requesting settings from server");
+            JSONObject settingsRequest = new JSONObject();
+            settingsRequest.put("type", "settings_update_request");
+            wsManager.sendText(settingsRequest.toString());
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating settings request", e);
         }
     }
 
@@ -550,6 +611,9 @@ public class ServerComms {
         JSONArray installedApps;
         JSONArray activeAppPackageNames;
 
+        // Log.d(TAG, "Received message of type: " + type);
+        // Log.d(TAG, "Full message: " + msg.toString());
+
 //        Log.d(TAG, "Received message of type: " + msg);
 
         switch (type) {
@@ -561,6 +625,7 @@ public class ServerComms {
                     // Log.d(TAG, "Apps installed: " + msg);
                     serverCommsCallback.onAppStateChange(parseAppList(msg));
                     serverCommsCallback.onConnectionAck();
+                    requestSettingsFromServer();
                 }
                 break;
 
@@ -591,6 +656,27 @@ public class ServerComms {
                 //Log.d(TAG, "Received turn_microphone_on message." + isMicrophoneEnabled);
                 if (serverCommsCallback != null)
                     serverCommsCallback.onMicrophoneStateChange(isMicrophoneEnabled);
+                break;
+                
+            case "photo_request":
+                String requestId = msg.optString("requestId");
+                String appId = msg.optString("appId");
+                Log.d(TAG, "Received photo_request, requestId: " + requestId + ", appId: " + appId);
+                if (serverCommsCallback != null && !requestId.isEmpty() && !appId.isEmpty()) {
+                    serverCommsCallback.onPhotoRequest(requestId, appId);
+                } else {
+                    Log.e(TAG, "Invalid photo request: missing requestId or appId");
+                }
+                break;
+                
+            case "video_stream_request":
+                String videoAppId = msg.optString("appId");
+                Log.d(TAG, "Received video_stream_request, appId: " + videoAppId);
+                if (serverCommsCallback != null && !videoAppId.isEmpty()) {
+                    serverCommsCallback.onVideoStreamRequest(videoAppId);
+                } else {
+                    Log.e(TAG, "Invalid video stream request: missing appId");
+                }
                 break;
 
             case "display_event":
@@ -623,8 +709,34 @@ public class ServerComms {
                 }
                 break;
 
+            case "settings_update":
+                Log.d(TAG, "Received settings update from WebSocket");
+                try {
+                    JSONObject settings = msg.optJSONObject("settings");
+                    if (settings != null && serverCommsCallback != null) {
+                        serverCommsCallback.onSettingsUpdate(settings);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error handling settings update", e);
+                }
+                break;
+
             case "reconnect":
                 Log.d(TAG, "Server is requesting a reconnect.");
+                break;
+
+            case "app_started":
+                String startedPackage = msg.optString("packageName", "");
+                if (serverCommsCallback != null) {
+                    serverCommsCallback.onAppStarted(startedPackage);
+                }
+                break;
+
+            case "app_stopped":
+                String stoppedPackage = msg.optString("packageName", "");
+                if (serverCommsCallback != null) {
+                    serverCommsCallback.onAppStopped(stoppedPackage);
+                }
                 break;
 
             default:
@@ -759,5 +871,55 @@ public class ServerComms {
     public void cleanup() {
         wsManager.cleanup();
         disconnectWebSocket();
+    }
+
+    // Helper to get the backend server URL, with placeholder for custom URL logic
+    private String getServerUrlForRest() {
+        // TODO: If you want to support a custom backend URL (like the TSX module),
+        // you could load it from SharedPreferences or another config here.
+        // For now, use the default logic:
+        String host = BuildConfig.AUGMENTOS_HOST;
+        String port = BuildConfig.AUGMENTOS_PORT;
+        boolean secureServer = Boolean.parseBoolean(BuildConfig.AUGMENTOS_SECURE);
+        return String.format("%s://%s:%s", secureServer ? "https" : "http", host, port);
+    }
+
+    // Add this method to send user datetime to backend
+    public void sendUserDatetimeToBackend(String userId, String isoDatetime) {
+        try {
+            String baseUrl = getServerUrlForRest();
+            String url = baseUrl + "/api/user-data/set-datetime";
+
+            JSONObject body = new JSONObject();
+            body.put("userId", userId);
+            body.put("datetime", isoDatetime);
+
+            RequestBody requestBody = RequestBody.create(
+                body.toString(), okhttp3.MediaType.get("application/json; charset=utf-8")
+            );
+            Request request = new Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .build();
+
+            Log.d(TAG, "Sending datetime to backend: " + url);
+            OkHttpClient client = new OkHttpClient();
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    Log.e(TAG, "Failed to send datetime to backend: " + e.getMessage());
+                }
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    if (response.isSuccessful()) {
+                        Log.d(TAG, "Datetime sent to backend successfully: " + response.body().string());
+                    } else {
+                        Log.e(TAG, "Failed to send datetime to backend. Response: " + response.code() + ", " + response.body().string());
+                    }
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Exception while sending datetime to backend: " + e.getMessage());
+        }
     }
 }

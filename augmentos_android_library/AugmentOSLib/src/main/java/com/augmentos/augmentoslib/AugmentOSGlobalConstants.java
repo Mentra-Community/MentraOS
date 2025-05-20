@@ -18,7 +18,7 @@ public class AugmentOSGlobalConstants {
     public static final int SERVICE_CORE_NOTIFICATION_ID = 1001;
     public static final int SERVICE_TPA_NOTIFICATION_ID = 1002;
     public static final int GROUP_SUMMARY_NOTIFICATION_ID = 1000;
-    public static final String AugmentOSManagerPackageName = "com.augmentos.augmentos_manager";
+    public static final String AugmentOSManagerPackageName = "com.augmentos.augmentos";
     public static final String AugmentOSAsgClientPackageName = "com.augmentos.asg_client";
     public static final String AugmentOSPkgName = "com.augmentos.augmentoslib";
     public static final String FROM_TPA_FILTER = "com.augmentos.fromtpa";

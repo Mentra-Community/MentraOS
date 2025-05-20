@@ -44,6 +44,19 @@ public class MessageTypes {
     public static final String POV_IMAGE = "POV_IMAGE";
     public static final String JPG_BYTES_BASE64 = "JPG_BYTES_BASE64";
     public static final String IMAGE_ID = "IMAGE_ID";
+    
+    //PHOTO REQUEST
+    public static final String PHOTO_REQUEST = "photo_request";
+    public static final String PHOTO_RESPONSE = "photo_response";
+    public static final String PHOTO_REQUEST_ID = "requestId";
+    public static final String PHOTO_URL = "photoUrl";
+    public static final String PHOTO_APP_ID = "appId";
+    
+    //VIDEO STREAM REQUEST
+    public static final String VIDEO_STREAM_REQUEST = "video_stream_request";
+    public static final String VIDEO_STREAM_RESPONSE = "video_stream_response";
+    public static final String VIDEO_STREAM_URL = "streamUrl";
+    public static final String VIDEO_APP_ID = "appId";
 
     //specific message types (after MESSAGE_TYPE_*)
     //TRANSCRIPTS

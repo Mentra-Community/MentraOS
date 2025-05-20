@@ -6,6 +6,9 @@ export const getGlassesImage = (glasses: string | null) => {
       case 'Mentra Mach1':
       case 'Mach1':
         return require('../assets/glasses/vuzix-z100-glasses.png');
+      case 'Mentra Live':
+      case 'mentra_live':
+        return require('../assets/glasses/mentra_live.png');
       case 'inmo_air':
         return require('../assets/glasses/inmo_air.png');
       case 'tcl_rayneo_x_two':

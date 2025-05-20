@@ -1,0 +1,24 @@
+services:
+  cloud:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8002:8002"
+    environment:
+      - NODE_ENV=development
+      - HOST=0.0.0.0
+      - SERVICE_NAME=cloud
+      - CONTAINER_ENVIRONMENT=true
+      - PORT=8002
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+      - node_modules:/app/node_modules
+      - bun_cache:/root/.bun
+    command: bash -c "cd packages/cloud && PORT=8002 HOST=0.0.0.0 bun --watch src/index.ts"
+
+volumes:
+  node_modules:
+  bun_cache:

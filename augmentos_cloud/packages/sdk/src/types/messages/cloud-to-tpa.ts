@@ -5,6 +5,8 @@ import { CloudToTpaMessageType } from '../message-types';
 import { StreamType } from '../streams';
 import { AppSettings, TpaConfig } from '../models';
 import { LocationUpdate, CalendarEvent } from './glasses-to-cloud';
+import { DashboardMode } from '../dashboard';
+import { TpaSession } from 'src/tpa/session';
 
 //===========================================================
 // Responses
@@ -48,6 +50,16 @@ export interface SettingsUpdate extends BaseMessage {
   type: CloudToTpaMessageType.SETTINGS_UPDATE;
   packageName: string;
   settings: AppSettings;
+}
+
+/**
+ * AugmentOS settings update to TPA
+ */
+export interface AugmentosSettingsUpdate extends BaseMessage {
+  type: 'augmentos_settings_update';
+  sessionId: string;
+  settings: Record<string, any>;
+  timestamp: Date;
 }
 
 //===========================================================
@@ -117,12 +129,85 @@ export interface DataStream extends BaseMessage {
   data: unknown; // Type depends on the streamType
 }
 
+//===========================================================
+// Dashboard messages
+//===========================================================
+
+/**
+ * Dashboard mode changed notification
+ */
+export interface DashboardModeChanged extends BaseMessage {
+  type: CloudToTpaMessageType.DASHBOARD_MODE_CHANGED;
+  mode: DashboardMode;
+}
+
+/**
+ * Dashboard always-on state changed notification
+ */
+export interface DashboardAlwaysOnChanged extends BaseMessage {
+  type: CloudToTpaMessageType.DASHBOARD_ALWAYS_ON_CHANGED;
+  enabled: boolean;
+}
+
+/**
+ * Standard connection error (for server compatibility)
+ */
+export interface StandardConnectionError extends BaseMessage {
+  type: 'connection_error';
+  message: string;
+}
+
+/**
+ * Custom message for general-purpose communication (cloud to TPA)
+ */
+export interface CustomMessage extends BaseMessage {
+  type: CloudToTpaMessageType.CUSTOM_MESSAGE;
+  action: string;  // Identifies the specific action/message type
+  payload: any;    // Custom data payload
+}
+
+/**
+ * Photo response to TPA
+ */
+export interface PhotoResponse extends BaseMessage {
+  type: CloudToTpaMessageType.PHOTO_RESPONSE;
+  photoUrl: string;
+  requestId: string;
+}
+
+/**
+ * Video stream response to TPA
+ */
+export interface VideoStreamResponse extends BaseMessage {
+  type: CloudToTpaMessageType.VIDEO_STREAM_RESPONSE;
+  streamUrl: string;
+  appId: string;
+}
+
+/**
+ * Standard connection error (for server compatibility)
+ */
+export interface StandardConnectionError extends BaseMessage {
+  type: 'connection_error';
+  message: string;
+}
+
+/**
+ * Custom message for general-purpose communication (cloud to TPA)
+ */
+export interface CustomMessage extends BaseMessage {
+  type: CloudToTpaMessageType.CUSTOM_MESSAGE;
+  action: string;  // Identifies the specific action/message type
+  payload: any;    // Custom data payload
+}
+
 /**
  * Union type for all messages from cloud to TPAs
  */
 export type CloudToTpaMessage =
   | TpaConnectionAck
   | TpaConnectionError
+  | StandardConnectionError
   | AppStopped
   | SettingsUpdate
   | TranscriptionData
@@ -130,7 +215,14 @@ export type CloudToTpaMessage =
   | AudioChunk
   | LocationUpdate
   | CalendarEvent
-  | DataStream;
+  | DataStream
+  | PhotoResponse
+  | VideoStreamResponse
+  | DashboardModeChanged
+  | DashboardAlwaysOnChanged
+  | CustomMessage
+  | AugmentosSettingsUpdate
+  | CustomMessage;
 
 //===========================================================
 // Type guards
@@ -141,7 +233,7 @@ export function isTpaConnectionAck(message: CloudToTpaMessage): message is TpaCo
 }
 
 export function isTpaConnectionError(message: CloudToTpaMessage): message is TpaConnectionError {
-  return message.type === CloudToTpaMessageType.CONNECTION_ERROR;
+  return message.type === CloudToTpaMessageType.CONNECTION_ERROR || message.type === 'connection_error';
 }
 
 export function isAppStopped(message: CloudToTpaMessage): message is AppStopped {
@@ -158,4 +250,20 @@ export function isDataStream(message: CloudToTpaMessage): message is DataStream 
 
 export function isAudioChunk(message: CloudToTpaMessage): message is AudioChunk {
   return message.type === StreamType.AUDIO_CHUNK;
+}
+
+export function isPhotoResponse(message: CloudToTpaMessage): message is PhotoResponse {
+  return message.type === CloudToTpaMessageType.PHOTO_RESPONSE;
+}
+
+export function isVideoStreamResponse(message: CloudToTpaMessage): message is VideoStreamResponse {
+  return message.type === CloudToTpaMessageType.VIDEO_STREAM_RESPONSE;
+}
+
+export function isDashboardModeChanged(message: CloudToTpaMessage): message is DashboardModeChanged {
+  return message.type === CloudToTpaMessageType.DASHBOARD_MODE_CHANGED;
+}
+
+export function isDashboardAlwaysOnChanged(message: CloudToTpaMessage): message is DashboardAlwaysOnChanged {
+  return message.type === CloudToTpaMessageType.DASHBOARD_ALWAYS_ON_CHANGED;
 }

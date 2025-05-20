@@ -10,7 +10,6 @@
  */
 
 import { WebSocket } from 'ws';
-import { logger } from '@augmentos/utils';
 import { 
   TpaConnectionInit, 
   WebhookRequestType,
@@ -20,6 +19,8 @@ import { tpaServerRegistry, TpaServerRegistration } from '../../models/tpa-serve
 import appService from './app.service';
 import sessionService from './session.service';
 import { systemApps } from './system-apps';
+import { logger as rootLogger } from "../logging";
+const logger = rootLogger.child({ service: 'tpa-registration.service' });
 
 /**
  * Registration request from a TPA server

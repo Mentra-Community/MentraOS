@@ -1,6 +1,42 @@
 # augmentos_asg_client
 
-This is the Android code that runs on the Puck device.
+This is the Android code that runs on Android-based smart glasses (ex: Mentra Live).
+
+## Documentation
+- [ASG_MEDIA_SYSTEM.md](./ASG_MEDIA_SYSTEM.md) - Detailed documentation about the camera button press system, photo/video capture workflow, and how TPAs (Third Party Applications) can interact with the media system.
+
+## Compatible Devices
+
+### Tested
+- Mentra Live
+
+### Untested (likely compatible)
+- TCL Rayneo X2
+- INMO Air 2
+- Other Android-based smart glasses
+
+We'd appreciate testers for these untested devices - let us know if you get it working!
+
+### Environment Setup
+
+1. Create a `.env` file by copying the provided example:
+   ```
+   cp .env.example .env
+   ```
+
+2. By default, the example contains production settings:
+   ```
+   AUGMENTOS_HOST=cloud.augmentos.org
+   AUGMENTOS_PORT=443
+   AUGMENTOS_SECURE=true
+   ```
+
+3. For local development:
+   - If using an Android device, you can use either:
+     - The ADB tunnel: uncomment the localhost settings in `.env`
+     - Your computer's local IP: replace `localhost` with your IP address
+   - Ensure your device and computer are on the same network
+   - To use ADB tunnel: `adb reverse tcp:8002 tcp:8002`
 
 ### Build Notes
 

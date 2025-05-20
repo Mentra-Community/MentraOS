@@ -1,17 +1,47 @@
 buildscript {
+    // Add necessary variables for StreamPackLite
+    ext {
+        // StreamPack version
+        streampackCode = 2_006_001
+        streampackVersion = '2.6.1'
+
+        // SDK versions
+        minSdk = 21
+        compileSdk = 34
+        targetSdk = 34
+        appTargetSdk = 34
+
+        kotlinVersion = '1.9.24'
+        dokkaVersion = '1.9.20'
+        agpVersion = '8.5.2'
+
+        androidxCoreVersion = '1.13.1'
+    }
+
     repositories {
         google()
         mavenCentral()
+        gradlePluginPortal()
+        // Add Google's early-access repository for alpha/beta dependencies
+        maven { url 'https://androidx.dev/archives/builds/7968150/artifacts/repository' }
+        // Add JitPack for video.api:rtmpdroid dependency
+        maven { url 'https://jitpack.io' }
     }
     dependencies {
         //classpath 'com.google.gms:google-services:4.4.0'
         classpath "androidx.navigation:navigation-safe-args-gradle-plugin:2.5.3"
+        // Add dokka plugin for StreamPackLite compatibility
+        classpath "org.jetbrains.dokka:dokka-gradle-plugin:$dokkaVersion"
+        // Add Kotlin Gradle plugin for StreamPackLite
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
     }
 }// Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
-    id 'com.android.application' version '8.0.1' apply false
-    id 'com.android.library' version '8.0.1' apply false
+    id 'com.android.application' version '8.5.2' apply false
+    id 'com.android.library' version '8.5.2' apply false
     //id 'com.google.gms.google-services' version '4.4.0' apply false
+    id 'org.jetbrains.dokka' version '1.9.20' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
 }
 
 tasks.register('clean') {

@@ -1,0 +1,75 @@
+{
+  "name": "Dash",
+  "description": "Unified content provider for AugmentOS dashboard",
+  "version": "1.0.0",
+  "settings": [
+    {
+      "type": "group",
+      "title": "Content Settings"
+    },
+    {
+      "key": "content_type",
+      "type": "select",
+      "label": "Content Type",
+      "defaultValue": "none",
+      "options": [
+        {
+          "label": "None",
+          "value": "none"
+        },
+        {
+          "label": "Fun Facts",
+          "value": "fun_facts"
+        },
+        {
+          "label": "Inspirational Quotes",
+          "value": "quotes"
+        },
+        {
+          "label": "Gratitude Reminders",
+          "value": "gratitude"
+        },
+        {
+          "label": "News Updates",
+          "value": "news"
+        },
+        {
+          "label": "Trash Talk",
+          "value": "trash_talk"
+        },
+        {
+          "label": "Chinese Words",
+          "value": "chinese_words"
+        }
+      ]
+    },
+    {
+      "key": "content_frequency",
+      "type": "select",
+      "label": "Content Update Frequency (minutes)",
+      "defaultValue": "10",
+      "options": [
+        {
+          "label": "5 minutes",
+          "value": "5"
+        },
+        {
+          "label": "10 minutes",
+          "value": "10"
+        },
+        {
+          "label": "15 minutes",
+          "value": "15"
+        },
+        {
+          "label": "30 minutes",
+          "value": "30"
+        },
+        {
+          "label": "1 hour",
+          "value": "60"
+        }
+      ]
+    }
+  ]
+}

@@ -5,7 +5,9 @@
     "@langchain/core": "^0.3.40",
     "@langchain/google-vertexai": "^0.1.8",
     "@langchain/openai": "^0.4.3",
-    "langchain": "^0.3.15"
+    "langchain": "^0.3.15",
+    "react-native-fs": "^2.20.0",
+    "react-native-share": "^12.0.9"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",

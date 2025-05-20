@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 
 const AppStore: React.FC = () => {
   const navigate = useNavigate();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -172,6 +172,7 @@ const AppStore: React.FC = () => {
     }
 
     try {
+      console.log('Uninstalling app:', packageName);
       setInstallingApp(packageName);
 
       const success = await api.app.uninstallApp(packageName);
@@ -276,7 +277,7 @@ const AppStore: React.FC = () => {
                     <img
                       src={app.logoURL}
                       alt={`${app.name} logo`}
-                      className="w-12 h-12 object-cover"
+                      className="w-12 h-12 object-cover rounded-lg"
                       onError={(e) => {
                         // Fallback for broken images
                         (e.target as HTMLImageElement).src = "https://placehold.co/48x48/gray/white?text=App";

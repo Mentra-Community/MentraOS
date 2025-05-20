@@ -3,6 +3,7 @@
 import { BaseMessage } from './base';
 import { GlassesToCloudMessageType, ControlActionTypes, EventTypes } from '../message-types';
 import { StreamType } from '../streams';
+import { PhotoRequest } from './tpa-to-cloud';
 
 //===========================================================
 // Control actions
@@ -15,6 +16,11 @@ export interface ConnectionInit extends BaseMessage {
   type: GlassesToCloudMessageType.CONNECTION_INIT;
   userId?: string;
   coreToken?: string;
+}
+
+export interface RequestSettings extends BaseMessage {
+  type: GlassesToCloudMessageType.REQUEST_SETTINGS;
+  sessionId: string;
 }
 
 /**
@@ -146,10 +152,45 @@ export interface NotificationDismissed extends BaseMessage {
 }
 
 /**
+ * AugmentOS settings update from glasses
+ */
+export interface AugmentosSettingsUpdateRequest extends BaseMessage {
+  type: GlassesToCloudMessageType.AUGMENTOS_SETTINGS_UPDATE_REQUEST;
+}
+
+/**
+ * Core status update from glasses
+ */
+export interface CoreStatusUpdate extends BaseMessage {
+  type: GlassesToCloudMessageType.CORE_STATUS_UPDATE;
+  status: string;
+  details?: Record<string, any>;
+}
+
+
+// ===========================================================
+// Mentra Live
+// ===========================================================
+export interface PhotoResponse extends BaseMessage {
+  type: GlassesToCloudMessageType.PHOTO_RESPONSE;
+  requestId: string;  // Unique ID for the photo request
+  photoUrl: string;  // URL of the uploaded photo
+  savedToGallery: boolean;  // Whether the photo was saved to gallery
+}
+
+export interface VideoStreamResponse extends BaseMessage {
+  type: GlassesToCloudMessageType.VIDEO_STREAM_RESPONSE;
+  requestId: string;  // Unique ID for the video stream request
+  videoUrl: string;  // URL of the video stream
+  savedToGallery: boolean;  // Whether the video was saved to gallery
+}
+
+/**
  * Union type for all messages from glasses to cloud
  */
 export type GlassesToCloudMessage = 
   | ConnectionInit
+  | RequestSettings
   | StartApp
   | StopApp
   | DashboardState
@@ -163,7 +204,12 @@ export type GlassesToCloudMessage =
   | CalendarEvent
   | Vad
   | PhoneNotification
-  | NotificationDismissed;
+  | NotificationDismissed
+  | AugmentosSettingsUpdateRequest
+  | CoreStatusUpdate
+
+  | PhotoResponse
+  | VideoStreamResponse
 
 //===========================================================
 // Type guards
@@ -180,6 +226,10 @@ export function isEvent(message: GlassesToCloudMessage): boolean {
 // Individual type guards
 export function isConnectionInit(message: GlassesToCloudMessage): message is ConnectionInit {
   return message.type === GlassesToCloudMessageType.CONNECTION_INIT;
+}
+
+export function isRequestSettings(message: GlassesToCloudMessage): message is RequestSettings {
+  return message.type === GlassesToCloudMessageType.REQUEST_SETTINGS;
 }
 
 export function isStartApp(message: GlassesToCloudMessage): message is StartApp {

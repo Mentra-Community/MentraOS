@@ -16,47 +16,49 @@ interface TroubleshootingModalProps {
   isDarkTheme: boolean;
 }
 
+export const getModelSpecificTips = (model: string) => {
+  switch (model) {
+    case 'Even Realities G1':
+      return [
+        "Make sure you closed the G1's left arm FIRST before putting it in the case",
+        "Plug your G1 case into a charger during the pairing process",
+        "Try closing the charging case and opening it again",
+        "Ensure no other app is currently connected to your G1",
+        "Restart your phone's Bluetooth",
+        "Make sure your phone is within 3 feet of your glasses & case",
+        "If your glasses were previously paired to a different phone, you must unpair/forget the glasses in your phone's Bluetooth settings before retrying the pairing process"
+      ];
+    case 'Mentra Mach1':
+    case 'Vuzix Z100':
+      return [
+        "Make sure your glasses are turned on",
+        "Check that your glasses are paired in the 'Vuzix Connect' app",
+        "Try resetting your Bluetooth connection"
+      ];
+    case 'Mentra Live':
+      return [
+        "Make sure your Mentra Live is fully charged",
+        "Check that your Mentra Live is in pairing mode",
+        "Ensure no other app is currently connected to your glasses",
+        "Try restarting your glasses",
+        "Check that your phone's Bluetooth is enabled"
+      ];
+    default:
+      return [
+        "Make sure your glasses are charged and turned on",
+        "Ensure no other device is connected to your glasses",
+        "Try restarting both your glasses and phone",
+        "Make sure your phone is within range of your glasses"
+      ];
+  }
+};
+
 const GlassesTroubleshootingModal: React.FC<TroubleshootingModalProps> = ({ 
   isVisible, 
   onClose, 
   glassesModelName, 
   isDarkTheme 
 }) => {
-  const getModelSpecificTips = (model: string) => {
-    switch (model) {
-      case 'Even Realities G1':
-        return [
-          "Make sure you closed the G1's left arm FIRST before putting it in the case",
-          "Plug your G1 case into a charger during the pairing process",
-          "Try closing the charging case and opening it again",
-          "Ensure no other app is currently connected to your G1",
-          "Restart your phone's Bluetooth",
-          "Make sure your phone is within 3 feet of your glasses & case"
-        ];
-      case 'Mentra Mach1':
-      case 'Vuzix Z100':
-        return [
-          "Make sure your glasses are turned on",
-          "Check that your glasses are paired in the 'Vuzix Connect' app",
-          "Try resetting your Bluetooth connection"
-        ];
-      case 'Mentra Live':
-        return [
-          "Make sure your Mentra Live is fully charged",
-          "Check that your Mentra Live is in pairing mode",
-          "Ensure no other app is currently connected to your glasses",
-          "Try restarting your glasses",
-          "Check that your phone's Bluetooth is enabled"
-        ];
-      default:
-        return [
-          "Make sure your glasses are charged and turned on",
-          "Ensure no other device is connected to your glasses",
-          "Try restarting both your glasses and phone",
-          "Make sure your phone is within range of your glasses"
-        ];
-    }
-  };
 
   const themeColors = {
     background: isDarkTheme ? '#2d2d2d' : '#ffffff',

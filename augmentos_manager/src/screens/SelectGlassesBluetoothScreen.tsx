@@ -1,6 +1,6 @@
 // SelectGlassesBluetoothScreen.tsx
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -132,13 +132,11 @@ const SelectGlassesBluetoothScreen: React.FC<SelectGlassesBluetoothScreenProps> 
       console.log('Searching for compatible devices for: ', glassesModelName);
       setSearchResults([]);
       
-      // For iOS, make sure BleManager is initialized before searching
-      if (Platform.OS === 'ios') {
-        // Using any type since we don't have direct access to the private method
-        await (coreCommunicator as any).initializeBleManager?.();
-      }
-      
       coreCommunicator.sendSearchForCompatibleDeviceNames(glassesModelName);
+      // todo: remove this once we figure out why it's not working w/o it (ios / core communicator isn't fully initialized or something)
+      setTimeout(() => {
+        coreCommunicator.sendSearchForCompatibleDeviceNames(glassesModelName);
+      }, 1000);
     };
     
     initializeAndSearchForDevices();
@@ -188,9 +186,15 @@ const SelectGlassesBluetoothScreen: React.FC<SelectGlassesBluetoothScreenProps> 
       );
       return; // Stop the connection process
     }
+
+    // update the preferredmic to be the phone mic:
+    coreCommunicator.sendSetPreferredMic("phone");
     
     // All permissions granted, proceed with connecting to the wearable
-    coreCommunicator.sendConnectWearable(glassesModelName, deviceName);
+    setTimeout(() => {
+      // give some time to show the loader (otherwise it's a bit jarring)
+      coreCommunicator.sendConnectWearable(glassesModelName, deviceName);
+    }, 2000);
     navigation.navigate('GlassesPairingGuideScreen', {
       glassesModelName: glassesModelName,
     });
@@ -209,6 +213,8 @@ const SelectGlassesBluetoothScreen: React.FC<SelectGlassesBluetoothScreenProps> 
     selectedChipBg: isDarkTheme ? '#666666' : '#333333',
     selectedChipText: isDarkTheme ? '#FFFFFF' : '#FFFFFF',
   };
+
+  const glassesImage = useMemo(() => getGlassesImage(glassesModelName), [glassesModelName]);
 
   return (
     <View style={[styles.container, isDarkTheme ? styles.darkBackground : styles.lightBackground]}>
@@ -235,7 +241,7 @@ const SelectGlassesBluetoothScreen: React.FC<SelectGlassesBluetoothScreenProps> 
                   }}
                 >
                   <Image
-                    source={getGlassesImage(glassesModelName)}
+                    source={glassesImage}
                     style={styles.glassesImage}
                   />
                   <View style={styles.settingTextContainer}>

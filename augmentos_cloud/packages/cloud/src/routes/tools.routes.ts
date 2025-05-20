@@ -41,6 +41,8 @@ const triggerTool = async (req: Request, res: Response) => {
     
     // Call the service method to trigger the webhook
     const result = await appService.triggerTpaToolWebhook(packageName, payload);
+
+    console.log('result', result);
     
     // Return the response from the TPA
     return res.status(result.status).json(result.data);
@@ -80,56 +82,57 @@ const triggerTool = async (req: Request, res: Response) => {
    * Used by Mira AI to discover all available tools for a user
    */
   const getUserTools = async (req: Request, res: Response) => {
-  try {
-    const { userId } = req.params;
-    
-    if (!userId) {
-    return res.status(400).json({ 
-      error: true, 
-      message: 'Missing required parameter: userId' 
-    });
-    }
-    
-    // Find the user by userId (email)
-    const user = await User.findOne({ email: userId });
-    
-    if (!user) {
-    return res.status(404).json({ 
-      error: true, 
-      message: 'User not found' 
-    });
-    }
-    
-    // Get list of installed app packageNames from user
-    const installedPackageNames = user.installedApps?.map(app => app.packageName) || [];
-    
-    if (installedPackageNames.length === 0) {
-    return res.json([]);
-    }
-    
-    // Collect all tools from all installed apps
-    const allUserTools = [];
-    
-    for (const packageName of installedPackageNames) {
+
     try {
-      // Get tools for this app
-      const appTools = await appService.getTpaTools(packageName);
+      const { userId } = req.params;
       
-      // Add app identifier to each tool
-      const toolsWithAppInfo = appTools.map(tool => ({
-      ...tool,
-      appPackageName: packageName
-      }));
+      if (!userId) {
+        return res.status(400).json({ 
+          error: true, 
+          message: 'Missing required parameter: userId' 
+        });
+      }
       
-      allUserTools.push(...toolsWithAppInfo);
-    } catch (error) {
-      // Log error but continue with other apps
-      logger.error(`Error fetching tools for app ${packageName}:`, error);
-    }
-    }
-    
-    // Return the combined list of tools
-    res.json(allUserTools);
+      // Find the user by userId (email)
+      const user = await User.findOne({ email: userId });
+      
+      if (!user) {
+        return res.status(404).json({ 
+          error: true, 
+          message: 'User not found' 
+        });
+      }
+      
+      // Get list of installed app packageNames from user
+      const installedPackageNames = user.installedApps?.map(app => app.packageName) || [];
+      
+      if (installedPackageNames.length === 0) {
+        return res.json([]);
+      }
+      
+      // Collect all tools from all installed apps
+      const allUserTools = [];
+      
+      for (const packageName of installedPackageNames) {
+      try {
+        // Get tools for this app
+        const appTools = await appService.getTpaTools(packageName);
+        
+        // Add app identifier to each tool
+        const toolsWithAppInfo = appTools.map(tool => ({
+        ...tool,
+        appPackageName: packageName
+        }));
+        
+        allUserTools.push(...toolsWithAppInfo);
+      } catch (error) {
+        // Log error but continue with other apps
+        logger.error(`Error fetching tools for app ${packageName}:`, error);
+      }
+      }
+      
+      // Return the combined list of tools
+      res.json(allUserTools);
   } catch (error) {
     logger.error('Error fetching user tools:', error);
     res.status(500).json({ 

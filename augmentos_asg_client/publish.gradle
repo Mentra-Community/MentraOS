@@ -1,0 +1,6 @@
+// This is a dummy publish.gradle file for StreamPackLite integration
+// It's empty because we're not actually publishing any artifacts,
+// but StreamPackLite modules expect this file to exist.
+
+// If you want to enable publishing, you can add the proper Maven/JCenter publishing
+// configuration here in the future.

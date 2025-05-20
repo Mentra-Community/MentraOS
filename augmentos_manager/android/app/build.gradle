@@ -38,12 +38,12 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.augmentos.augmentos_manager"
+    namespace "com.augmentos.augmentos"
     defaultConfig {
-        applicationId "com.augmentos.augmentos_manager"
+        applicationId "com.augmentos.augmentos"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 19
+        versionCode 23
         versionName "1.9.0"
         multiDexEnabled true  // Add this if your app exceeds 64K method limit
     }
@@ -54,6 +54,12 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            storeFile file('../credentials/upload-keystore.jks')
+            storePassword AUGMENTOS_UPLOAD_STORE_PASSWORD
+            keyAlias "upload"
+            keyPassword AUGMENTOS_UPLOAD_KEY_PASSWORD
+        }
     }
     buildTypes {
         debug {
@@ -62,11 +68,11 @@ android {
             profileable true
         }
         release {
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
-            debuggable true
-            profileable true
+            debuggable false
+            profileable false
         }
     }
     packagingOptions {
@@ -133,6 +139,13 @@ dependencies {
     //implementation "androidx.lifecycle:lifecycle-process:2.5.1" // Use the version appropriate for your project
 
     implementation project(':react-native-config')
+
+    implementation project(':react-native-fs')
+    
+    // Add react-native-video
+    implementation project(':react-native-video')
+    implementation project(':react-native-view-shot')
+    implementation project(':react-native-create-thumbnail')
 }
 
 // Include custom vector icons fonts from react-native-vector-icons
@@ -142,7 +155,8 @@ project.ext.vectoricons = [
 
 project.ext.react = [
     enableHermes: false,  // Disable Hermes for troubleshooting
-    bundleInDebug: true  // This is important for profiling
+    bundleInDebug: true,  // This is important for profiling
+    nodeExecutableAndArgs: [System.getenv("NODE_BINARY") ?: "node"]
 ]
 
 //apply from: "../../node_modules/react-native/react.gradle"

@@ -25,8 +25,8 @@ Your output **must** be a valid JSON object with one key:
 
 For each notification in the output array:
   1. Include the notification "uuid".
-  2. Include a short "summary" that captures the most important points from the title, body, and (optionally) the appName if it provides relevant context (e.g., times, tasks, or key details). The summary must be under 50 characters.
-  3. If the notification title contains a name, the "summary" must include the summarized name of the sender (e.g., only their first name) or the relevant individual mentioned.
+  2. Include a short "summary" that captures the most important points from the title, body, and (optionally) the appName if it provides relevant context (e.g., times, tasks, or key details). The summary must be under 30 characters.
+  3. If the notification title contains a name, the "summary" must include the summarized name of the sender (e.g., only their first name) or the relevant individual mentioned. Do not include the name of the group chat in the summary.
   4. Include a "rank" integer between 1 and 10 (where 1 = highest importance, 10 = lowest).
 
 Criteria of Importance:

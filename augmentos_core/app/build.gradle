@@ -145,7 +145,7 @@ dependencies {
     implementation "androidx.camera:camera-view:1.2.3"
 
     implementation "org.osmdroid:osmdroid-android:6.1.10"
-    implementation "com.arthenica:ffmpeg-kit-full:6.0-2"
+    // implementation "com.arthenica:ffmpeg-kit-full:6.0-2"
 
 
     api 'com.github.pedroSG94:rtmp-rtsp-stream-client-java:2.1.3'

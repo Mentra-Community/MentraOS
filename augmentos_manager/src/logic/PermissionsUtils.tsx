@@ -74,7 +74,7 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   [PermissionFeatures.LOCATION]: {
     name: 'Location',
     description: 'Used for navigation and location-based services',
-    ios: [PERMISSIONS.IOS.LOCATION_WHEN_IN_USE, PERMISSIONS.IOS.LOCATION_ALWAYS],
+    ios: [PERMISSIONS.IOS.LOCATION_WHEN_IN_USE],
     android: [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION],
     critical: false,
   },
@@ -82,7 +82,13 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
     name: 'Bluetooth',
     description: 'Used to connect to your glasses',
     ios: [PERMISSIONS.IOS.BLUETOOTH], // iOS Bluetooth permission (correct constant)
-    android: [], // Android handles Bluetooth differently - see pairing screens
+    android: Platform.OS === 'android' && typeof Platform.Version === 'number' && Platform.Version >= 31 ? 
+      [
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE
+      ] : 
+      [], // For Android 12+, include the Bluetooth permissions in the normal flow
     critical: true, // Critical for glasses pairing
     specialRequestNeeded: Platform.OS === 'ios', // Special handling for iOS
   }
@@ -131,6 +137,16 @@ if (Platform.OS === 'android') {
     basicPermissions.push(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
   }
   
+  if (Platform.Version >= 31) {
+    // Android 12+ (API 31+) requires explicit runtime permission for Bluetooth
+    // Android 14+ (API 34+) requires these for foreground services with type "connectedDevice"
+    console.log("Adding Bluetooth permissions to basic permissions for Android 12+/14+");
+    
+    // These three permissions are required for Bluetooth operations on Android 12+
+    basicPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
+    basicPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+    basicPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE);
+  }
   // Bluetooth permissions are now handled in the pairing flow
   // NOT requesting here anymore:
   // - BLUETOOTH, BLUETOOTH_ADMIN (Android 11)
@@ -157,6 +173,24 @@ export const hasPermissionBeenRequested = async (featureKey: string): Promise<bo
     return value === 'true';
   } catch (e) {
     console.error('Failed to get permission requested status', e);
+    return false;
+  }
+};
+
+export const markPermissionGranted = async (featureKey: string): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(`PERMISSION_GRANTED_${featureKey}`, 'true');
+  } catch (e) {
+    console.error('Failed to save permission granted status', e);
+  }
+};
+
+export const hasPermissionBeenGranted = async (featureKey: string): Promise<boolean> => {
+  try {
+    const value = await AsyncStorage.getItem(`PERMISSION_GRANTED_${featureKey}`);
+    return value === 'true';
+  } catch (e) {
+    console.error('Failed to get permission granted status', e);
     return false;
   }
 };
@@ -386,10 +420,9 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
     for (const permission of config.ios) {
       try {
         const result = await request(permission);
-        console.log(`iOS permission ${permission} result:`, result);
-        
         if (result === RESULTS.GRANTED) {
           partiallyGranted = true;
+          await markPermissionGranted(permission);
         } else if (result === RESULTS.LIMITED) {
           partiallyGranted = true;
           allGranted = false;
@@ -582,6 +615,16 @@ export const checkFeaturePermissions = async (featureKey: string): Promise<boole
         const status = await check(permission);
         if (status === RESULTS.GRANTED || status === RESULTS.LIMITED) {
           return true; // We have at least one permission, feature can work
+        }
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          // this permission is wierd and we should assume it's granted if we've been granted it before, but check for sure by requesting it:
+          if (await hasPermissionBeenGranted(permission)) {
+            // request the permission again to be sure (will do nothing if already granted)
+            const result = await request(permission);
+            if (result === RESULTS.GRANTED) {
+              return true;
+            }
+          }
         }
       } catch (error) {
         console.error(`Error checking iOS permission ${permission}:`, error);

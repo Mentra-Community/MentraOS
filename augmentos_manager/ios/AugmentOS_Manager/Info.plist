@@ -44,6 +44,8 @@
 	<string>This app uses Bluetooth to connect to external devices.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>This app requires Bluetooth access to connect to devices.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>AugmentOS needs access to your calendar to schedule and manage device-related events and notifications.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>AugmentOS needs access to your calendar to schedule and manage device-related events and notifications.</string>
 	<key>NSCameraUsageDescription</key>
@@ -56,8 +58,6 @@
 	<string>AugmentOS needs access to your microphone for voice commands and communication with connected devices.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>AugmentOS needs access to your photo library to save and manage device-related media and documentation.</string>
-	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>AugmentOS needs access to your calendar to schedule and manage device-related events and notifications.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Montserrat-Bold.ttf</string>

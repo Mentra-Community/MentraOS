@@ -3,7 +3,7 @@ package com.augmentos.asg_client;
 import android.content.Context;
 import android.util.Log;
 
-import com.augmentos.augmentos_core.smarterglassesmanager.camera.CameraRecordingService;
+import com.augmentos.asg_client.camera.CameraNeo;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -91,7 +91,7 @@ public class CameraWebServer extends NanoHTTPD {
 
     private Response serveLatestPhoto() {
         // Here is where we retrieve the last photo path from the service (or static storage)
-        String path = CameraRecordingService.getLastPhotoPath();
+        String path = CameraNeo.getLastPhotoPath();
         if (path == null) {
             return newFixedLengthResponse(Response.Status.OK,
                     "text/plain", "No photo taken yet.");

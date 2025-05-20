@@ -15,6 +15,7 @@ import {
   CloudToTpaMessage,
   TpaConnectionInit,
   TpaSubscriptionUpdate,
+  PhotoRequest,
   TpaToCloudMessageType,
   CloudToTpaMessageType,
 
@@ -33,6 +34,9 @@ import {
   isDataStream,
   isAppStopped,
   isSettingsUpdate,
+  isPhotoResponse,
+  isDashboardModeChanged,
+  isDashboardAlwaysOnChanged,
 
   // Other types
   AppSettings,
@@ -44,6 +48,8 @@ import {
   createTranscriptionStream,
   createTranslationStream
 } from '../../types';
+import { DashboardAPI } from '../../types/dashboard';
+import { AugmentosSettingsUpdate } from '../../types/messages/cloud-to-tpa';
 
 /**
  * ⚙️ Configuration options for TPA Session
@@ -53,7 +59,8 @@ import {
  * const config: TpaSessionConfig = {
  *   packageName: 'org.example.myapp',
  *   apiKey: 'your_api_key',
- *   autoReconnect: true
+ *   // Auto-reconnection is enabled by default
+ *   // autoReconnect: true 
  * };
  * ```
  */
@@ -66,7 +73,7 @@ export interface TpaSessionConfig {
   augmentOSWebsocketUrl?: string;
   /** 🔄 Automatically attempt to reconnect on disconnect (default: true) */
   autoReconnect?: boolean;
-  /** 🔁 Maximum number of reconnection attempts (default: 5) */
+  /** 🔁 Maximum number of reconnection attempts (default: 3) */
   maxReconnectAttempts?: number;
   /** ⏱️ Base delay between reconnection attempts in ms (default: 1000) */
   reconnectDelay?: number;
@@ -119,6 +126,11 @@ export class TpaSession {
   private subscriptionSettingsHandler?: (settings: AppSettings) => ExtendedStreamType[];
   /** Settings that should trigger subscription updates when changed */
   private subscriptionUpdateTriggers: string[] = [];
+  /** Pending photo requests waiting for responses */
+  private pendingPhotoRequests = new Map<string, {
+    resolve: (url: string) => void,
+    reject: (reason: any) => void
+  }>();
 
   /** 🎮 Event management interface */
   public readonly events: EventManager;
@@ -126,14 +138,16 @@ export class TpaSession {
   public readonly layouts: LayoutManager;
   /** ⚙️ Settings management interface */
   public readonly settings: SettingsManager;
+  /** 📊 Dashboard management interface */
+  public readonly dashboard: DashboardAPI;
 
   constructor(private config: TpaSessionConfig) {
     // Set defaults and merge with provided config
     this.config = {
       augmentOSWebsocketUrl: `ws://localhost:8002/tpa-ws`, // Use localhost as default
-      autoReconnect: false,
-      maxReconnectAttempts: 0,
-      reconnectDelay: 1000,
+      autoReconnect: true,   // Enable auto-reconnection by default for better reliability
+      maxReconnectAttempts: 3, // Default to 3 reconnection attempts for better resilience
+      reconnectDelay: 1000,  // Start with 1 second delay (uses exponential backoff)
       ...config
     };
     
@@ -175,9 +189,52 @@ export class TpaSession {
       this.send.bind(this)
     );
     
-    // Initialize settings manager without API client configuration
-    // We'll configure it once we have the session ID and server URL
-    this.settings = new SettingsManager();
+    // Initialize settings manager with all necessary parameters, including subscribeFn for AugmentOS settings
+    this.settings = new SettingsManager(
+      this.settingsData,
+      this.config.packageName,
+      this.config.augmentOSWebsocketUrl,
+      this.sessionId ?? undefined,
+      async (streams: string[]) => {
+        console.log(`[TpaSession] subscribeFn called for streams:`, streams);
+        streams.forEach((stream) => {
+          if (!this.subscriptions.has(stream as ExtendedStreamType)) {
+            this.subscriptions.add(stream as ExtendedStreamType);
+            console.log(`[TpaSession] Auto-subscribed to stream '${stream}' for AugmentOS setting.`);
+          } else {
+            console.log(`[TpaSession] Already subscribed to stream '${stream}'.`);
+          }
+        });
+        console.log(`[TpaSession] Current subscriptions after subscribeFn:`, Array.from(this.subscriptions));
+        if (this.ws?.readyState === 1) {
+          this.updateSubscriptions();
+          console.log(`[TpaSession] Sent updated subscriptions to cloud after auto-subscribing to AugmentOS setting.`);
+        } else {
+          console.log(`[TpaSession] WebSocket not open, will send subscriptions when connected.`);
+        }
+      }
+    );
+    
+    // Initialize dashboard API with this session instance
+    // Import DashboardManager dynamically to avoid circular dependency
+    const { DashboardManager } = require('./dashboard');
+    this.dashboard = new DashboardManager(this, this.send.bind(this));
+  }
+  
+  /**
+   * Get the current session ID
+   * @returns The current session ID or 'unknown-session-id' if not connected
+   */
+  getSessionId(): string {
+    return this.sessionId || 'unknown-session-id';
+  }
+  
+  /**
+   * Get the package name for this TPA
+   * @returns The package name
+   */
+  getPackageName(): string {
+    return this.config.packageName;
   }
 
   // =====================================
@@ -437,8 +494,33 @@ export class TpaSession {
         // Connection closure handler
         const closeHandler = (code: number, reason: string) => {
           const reasonStr = reason ? `: ${reason}` : '';
-          this.events.emit('disconnected', `Connection closed (code: ${code})${reasonStr}`);
-          this.handleReconnection();
+          const closeInfo = `Connection closed (code: ${code})${reasonStr}`;
+          
+          // Emit the disconnected event with structured data for better handling
+          this.events.emit('disconnected', {
+            message: closeInfo,
+            code: code,
+            reason: reason || '',
+            wasClean: code === 1000 || code === 1001,
+          });
+          
+          // Only attempt reconnection for abnormal closures
+          // https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent/code
+          // 1000 (Normal Closure) and 1001 (Going Away) are normal
+          // 1002-1015 are abnormal, and reason "App stopped" means intentional closure
+          const isNormalClosure = (code === 1000 || code === 1001);
+          const isManualStop = reason && reason.includes('App stopped');
+          
+          // Log closure details for diagnostics
+          console.log(`🔌 [${this.config.packageName}] WebSocket closed with code ${code}${reasonStr}`);
+          console.log(`🔌 [${this.config.packageName}] isNormalClosure: ${isNormalClosure}, isManualStop: ${isManualStop}`);
+          
+          if (!isNormalClosure && !isManualStop) {
+            console.log(`🔌 [${this.config.packageName}] Abnormal closure detected, attempting reconnection`);
+            this.handleReconnection();
+          } else {
+            console.log(`🔌 [${this.config.packageName}] Normal closure detected, not attempting reconnection`);
+          }
         };
         
         this.ws.on('close', closeHandler);
@@ -528,6 +610,47 @@ export class TpaSession {
     this.sessionId = null;
     this.subscriptions.clear();
     this.reconnectAttempts = 0;
+  }
+
+  /**
+   * 📸 Request a photo from the connected glasses
+   * @param options - Optional configuration for the photo request
+   * @returns Promise that resolves with the URL to the captured photo
+   */
+  requestPhoto(options?: { saveToGallery?: boolean }): Promise<string> {
+    return new Promise((resolve, reject) => {
+      try {
+        // Generate unique request ID
+        const requestId = `photo_req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        
+        // Store promise resolvers for when we get the response
+        this.pendingPhotoRequests.set(requestId, { resolve, reject });
+        
+        // Create photo request message
+        const message: PhotoRequest = {
+          type: TpaToCloudMessageType.PHOTO_REQUEST,
+          packageName: this.config.packageName,
+          sessionId: this.sessionId!,
+          timestamp: new Date(),
+          saveToGallery: options?.saveToGallery || false
+        };
+        
+        // Send request to cloud
+        this.send(message);
+        
+        // Set timeout to avoid hanging promises
+        const timeoutMs = 30000; // 30 seconds
+        this.resources.setTimeout(() => {
+          if (this.pendingPhotoRequests.has(requestId)) {
+            this.pendingPhotoRequests.get(requestId)!.reject(new Error('Photo request timed out'));
+            this.pendingPhotoRequests.delete(requestId);
+          }
+        }, timeoutMs);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        reject(new Error(`Failed to request photo: ${errorMessage}`));
+      }
+    });
   }
 
   /**
@@ -743,7 +866,8 @@ export class TpaSession {
             this.updateSubscriptionsFromSettings();
           }
         }
-        else if (isTpaConnectionError(message)) {
+        else if (isTpaConnectionError(message) || message.type === 'connection_error') {
+          // Handle both TPA-specific connection_error and standard connection_error
           const errorMessage = message.message || 'Unknown connection error';
           this.events.emit('error', new Error(errorMessage));
         }
@@ -779,6 +903,14 @@ export class TpaSession {
             this.events.emit(messageStreamType, sanitizedData);
           }
         }
+        else if (isPhotoResponse(message)) {
+          // Handle photo response by resolving the pending promise
+          if (this.pendingPhotoRequests.has(message.requestId)) {
+            const { resolve } = this.pendingPhotoRequests.get(message.requestId)!;
+            resolve(message.photoUrl);
+            this.pendingPhotoRequests.delete(message.requestId);
+          }
+        }
         else if (isSettingsUpdate(message)) {
           // Store previous settings to check for changes
           const prevSettings = [...this.settingsData];
@@ -791,6 +923,12 @@ export class TpaSession {
           
           // Emit settings update event (for backwards compatibility)
           this.events.emit('settings_update', this.settingsData);
+          
+          // --- AugmentOS settings update logic ---
+          // If the message.settings looks like AugmentOS settings (object with known keys), update augmentosSettings
+          if (message.settings && typeof message.settings === 'object') {
+            this.settings.updateAugmentosSettings(message.settings);
+          }
           
           // Check if we should update subscriptions
           if (this.shouldUpdateSubscriptionsOnSettingsChange) {
@@ -807,10 +945,79 @@ export class TpaSession {
         else if (isAppStopped(message)) {
           const reason = message.reason || 'unknown';
           const displayReason = `App stopped: ${reason}`;
-          this.events.emit('disconnected', displayReason);
+          
+          // Emit disconnected event with clean closure info to prevent reconnection attempts
+          this.events.emit('disconnected', {
+            message: displayReason,
+            code: 1000, // Normal closure code
+            reason: displayReason,
+            wasClean: true,
+          });
+          
+          // Clear reconnection state
+          this.reconnectAttempts = 0;
+        }
+        // Handle dashboard mode changes
+        else if (isDashboardModeChanged(message)) {
+          try {
+            // Use proper type
+            const mode = message.mode || 'none';
+            
+            // Update dashboard state in the API
+            if (this.dashboard && 'content' in this.dashboard) {
+              (this.dashboard.content as any).setCurrentMode(mode);
+            }
+          } catch (error) {
+            console.error('Error handling dashboard mode change:', error);
+          }
+        }
+        // Handle always-on dashboard state changes
+        else if (isDashboardAlwaysOnChanged(message)) {
+          try {
+            // Use proper type
+            const enabled = !!message.enabled;
+            
+            // Update dashboard state in the API
+            if (this.dashboard && 'content' in this.dashboard) {
+              (this.dashboard.content as any).setAlwaysOnEnabled(enabled);
+            }
+          } catch (error) {
+            console.error('Error handling dashboard always-on change:', error);
+          }
+        }
+        // Handle custom messages
+        else if (message.type === CloudToTpaMessageType.CUSTOM_MESSAGE) {
+          this.events.emit('custom_message', message);
+          return;
+        }
+        // Handle 'connection_error' as a specific case if cloud sends this string literal
+        else if ((message as any).type === 'connection_error') {
+          // Treat 'connection_error' (string literal) like TpaConnectionError
+          // This handles cases where the cloud might send the type as a direct string
+          // instead of the enum's 'tpa_connection_error' value.
+          const errorMessage = (message as any).message || 'Unknown connection error (type: connection_error)';
+          console.warn(`Received 'connection_error' type directly. Consider aligning cloud to send 'tpa_connection_error'. Message: ${errorMessage}`);
+          this.events.emit('error', new Error(errorMessage));
+        }
+        else if (message.type === 'augmentos_settings_update') {
+          const augmentosMsg = message as AugmentosSettingsUpdate;
+          if (augmentosMsg.settings && typeof augmentosMsg.settings === 'object') {
+            this.settings.updateAugmentosSettings(augmentosMsg.settings);
+          }
+        }
+        // Handle 'connection_error' as a specific case if cloud sends this string literal
+        else if ((message as any).type === 'connection_error') {
+          // Treat 'connection_error' (string literal) like TpaConnectionError
+          // This handles cases where the cloud might send the type as a direct string
+          // instead of the enum's 'tpa_connection_error' value.
+          const errorMessage = (message as any).message || 'Unknown connection error (type: connection_error)';
+          console.warn(`Received 'connection_error' type directly. Consider aligning cloud to send 'tpa_connection_error'. Message: ${errorMessage}`);
+          this.events.emit('error', new Error(errorMessage));
         }
         // Handle unrecognized message types gracefully
         else {
+          console.log(`((())) Unrecognized message type: ${(message as any).type}`);
+          console.log(`((())) CloudToTpaMessageType.CUSTOM_MESSAGE: ${CloudToTpaMessageType.CUSTOM_MESSAGE}`);
           this.events.emit('error', new Error(`Unrecognized message type: ${(message as any).type}`));
         }
       } catch (processingError: unknown) {
@@ -957,8 +1164,7 @@ export class TpaSession {
    * 📝 Update subscription list with cloud
    */
   private updateSubscriptions(): void {
-    // console.log(`2222  Subscribing to ${Array.from(this.subscriptions)}`);
-    // console.log(`3333  Subscribing to ${this.config.packageName}`);
+    console.log(`[TpaSession] updateSubscriptions: sending subscriptions to cloud:`, Array.from(this.subscriptions));
     const message: TpaSubscriptionUpdate = {
       type: TpaToCloudMessageType.SUBSCRIPTION_UPDATE,
       packageName: this.config.packageName,
@@ -973,14 +1179,35 @@ export class TpaSession {
    * 🔄 Handle reconnection with exponential backoff
    */
   private async handleReconnection(): Promise<void> {
-    if (!this.config.autoReconnect ||
-      !this.sessionId ||
-      this.reconnectAttempts >= (this.config.maxReconnectAttempts || 5)) {
+    // Check if reconnection is allowed
+    if (!this.config.autoReconnect || !this.sessionId) {
+      console.log(`🔄 Reconnection skipped: autoReconnect=${this.config.autoReconnect}, sessionId=${this.sessionId ? 'valid' : 'invalid'}`);
       return;
     }
 
-    const delay = (this.config.reconnectDelay || 1000) * Math.pow(2, this.reconnectAttempts);
+    // Check if we've exceeded the maximum attempts
+    const maxAttempts = this.config.maxReconnectAttempts || 3;
+    if (this.reconnectAttempts >= maxAttempts) {
+      console.log(`🔄 Maximum reconnection attempts (${maxAttempts}) reached, giving up`);
+      
+      // Emit a permanent disconnection event to trigger onStop in the TPA server
+      this.events.emit('disconnected', {
+        message: `Connection permanently lost after ${maxAttempts} failed reconnection attempts`,
+        code: 4000, // Custom code for max reconnection attempts exhausted
+        reason: 'Maximum reconnection attempts exceeded',
+        wasClean: false,
+        permanent: true // Flag this as a permanent disconnection
+      });
+      
+      return;
+    }
+
+    // Calculate delay with exponential backoff
+    const baseDelay = this.config.reconnectDelay || 1000;
+    const delay = baseDelay * Math.pow(2, this.reconnectAttempts);
     this.reconnectAttempts++;
+
+    console.log(`🔄 [${this.config.packageName}] Reconnection attempt ${this.reconnectAttempts}/${maxAttempts} in ${delay}ms`);
 
     // Use the resource tracker for the timeout
     await new Promise<void>(resolve => {
@@ -988,10 +1215,28 @@ export class TpaSession {
     });
 
     try {
+      console.log(`🔄 [${this.config.packageName}] Attempting to reconnect...`);
       await this.connect(this.sessionId);
+      console.log(`✅ [${this.config.packageName}] Reconnection successful!`);
       this.reconnectAttempts = 0;
     } catch (error) {
-      this.events.emit('error', new Error('Reconnection failed'));
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`❌ [${this.config.packageName}] Reconnection failed: ${errorMessage}`);
+      this.events.emit('error', new Error(`Reconnection failed: ${errorMessage}`));
+      
+      // Check if this was the last attempt
+      if (this.reconnectAttempts >= maxAttempts) {
+        console.log(`🔄 [${this.config.packageName}] Final reconnection attempt failed, emitting permanent disconnection`);
+        
+        // Emit permanent disconnection event after the last failed attempt
+        this.events.emit('disconnected', {
+          message: `Connection permanently lost after ${maxAttempts} failed reconnection attempts`,
+          code: 4000, // Custom code for max reconnection attempts exhausted
+          reason: 'Maximum reconnection attempts exceeded',
+          wasClean: false,
+          permanent: true // Flag this as a permanent disconnection
+        });
+      }
     }
   }
 

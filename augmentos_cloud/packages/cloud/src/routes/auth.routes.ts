@@ -6,7 +6,8 @@ import { Request, Response } from 'express';
 import { validateCoreToken } from '../middleware/supabaseMiddleware';
 import { tokenService } from '../services/core/temp-token.service';
 import { validateTpaApiKey } from '../middleware/validateApiKey';
-import { logger } from '@augmentos/utils';
+import { logger as rootLogger } from '../services/logging/pino-logger';
+const logger = rootLogger.child({ module: 'auth.routes' });
 import appService from '../services/core/app.service';
 
 const router = express.Router();
@@ -56,7 +57,7 @@ router.post('/generate-webview-token', validateCoreToken, async (req: Request, r
     const tempToken = await tokenService.generateTemporaryToken(userId, packageName);
     res.json({ success: true, token: tempToken });
   } catch (error) {
-    logger.error(`Error generating webview token for user ${userId}, package ${packageName}:`, error);
+    logger.error({ error, userId, packageName }, 'Failed to generate webview token');
     res.status(500).json({ success: false, error: 'Failed to generate token' });
   }
 });
@@ -80,7 +81,7 @@ router.post('/exchange-user-token', validateTpaApiKey, async (req: Request, res:
       res.status(401).json({ success: false, error: 'Invalid or expired token' });
     }
   } catch (error) {
-    logger.error(`Error exchanging webview token ${aos_temp_token} for ${packageName}:`, error);
+    logger.error({ error, packageName }, 'Failed to exchange webview token');
     res.status(500).json({ success: false, error: 'Failed to exchange token' });
   }
 });
@@ -125,7 +126,7 @@ router.post('/exchange-store-token', async (req: Request, res: Response) => {
       res.status(401).json({ success: false, error: 'Invalid or expired token' });
     }
   } catch (error) {
-    logger.error(`Error exchanging store token ${aos_temp_token}:`, error);
+    logger.error({ error, packageName }, 'Failed to exchange store token');
     res.status(500).json({ success: false, error: 'Failed to exchange token' });
   }
 });
@@ -142,7 +143,7 @@ router.post('/hash-with-api-key', validateCoreToken, async (req: Request, res: R
     const hash = await appService.hashWithApiKey(stringToHash, packageName);
     res.json({ success: true, hash });
   } catch (error) {
-    logger.error(`Error hashing string for package ${packageName}:`, error);
+    logger.error({ error, packageName }, 'Failed to hash string with API key');
     res.status(500).json({ success: false, error: 'Failed to generate hash' });
   }
 });

@@ -14,7 +14,9 @@ import {
   UserSession // Keep UserSession for type checking if needed
 } from '@augmentos/sdk';
 import { ExtendedUserSession } from './session.service'; // Import ExtendedUserSession
-import { Logger } from 'winston';
+import { Logger } from 'pino'; // Import Logger type
+// import { logger as rootLogger } from "../logging";
+// const logger = rootLogger.child({ service: 'subscription.manager' });
 
 /**
  * Record of a subscription change for a specific app within this session

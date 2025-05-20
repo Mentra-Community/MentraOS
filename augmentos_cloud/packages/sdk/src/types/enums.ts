@@ -46,8 +46,9 @@ export enum LayoutType {
  * Types of views for displaying content
  */
 export enum ViewType {
-    DASHBOARD = 'dashboard',
-    MAIN = 'main'
+    DASHBOARD = 'dashboard',   // Regular dashboard (main/expanded)
+    ALWAYS_ON = 'always_on',   // Persistent overlay dashboard
+    MAIN = 'main'              // Regular app content
 }
 
 // Types for AppSettings

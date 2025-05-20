@@ -1,0 +1,18 @@
+{
+  "name": "dash",
+  "version": "1.0.0",
+  "description": "Unified Content Dashboard TPA for AugmentOS",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "build": "tsc",
+    "ngrok": "ngrok http --url=dash-aos.ngrok.app 8071"
+  },
+  "dependencies": {
+    "@augmentos/agents": "*",
+    "@augmentos/sdk": "*",
+    "@augmentos/utils": "*",
+    "express": "^4.21.1"
+  }
+}

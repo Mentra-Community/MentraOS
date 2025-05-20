@@ -24,8 +24,6 @@
 - (void)setBrightness:(int)level :(BOOL)autoBrightness :(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
 - (void)setMicEnabled:(BOOL)enabled :(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
 - (void)setDashboardPosition:(int)level :(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
-
-- (void)connectServer:(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
 - (void)setCoreToken:(NSString *)token :(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
 
 - (void)startCaptions:(NSString *)token :(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
@@ -37,9 +35,6 @@
 
 
 - (void)getBatteryStatus:(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
-
-// Calendar sync method
-- (void)syncCalendarEvents:(RCTPromiseResolveBlock)resolve :(RCTPromiseRejectBlock)reject;
 
 // Add support for events
 - (NSArray<NSString *> *)supportedEvents;

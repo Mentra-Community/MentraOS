@@ -10,20 +10,29 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeftIcon, CheckCircle2, AlertCircle, Loader2, KeyRound, Copy, RefreshCw, Share2, LinkIcon, Upload } from "lucide-react";
 import DashboardLayout from "../components/DashboardLayout";
 import api from '@/services/api.service';
-import { TPA } from '@/types/tpa';
+import { TPA, Permission } from '@/types/tpa';
 import { toast } from 'sonner';
 import ApiKeyDialog from '../components/dialogs/ApiKeyDialog';
 import SharingDialog from '../components/dialogs/SharingDialog';
 import PublishDialog from '../components/dialogs/PublishDialog';
 import { TpaType } from '@augmentos/sdk';
 import { normalizeUrl } from '@/libs/utils';
+import PermissionsForm from '../components/forms/PermissionsForm';
+import { useAuth } from '../hooks/useAuth';
+import publicEmailDomains from 'email-providers/all.json';
+
+// Extend TPA type locally to include sharedWithOrganization
+interface EditableTPA extends TPA {
+  sharedWithOrganization?: boolean;
+}
 
 const EditTPA: React.FC = () => {
   const navigate = useNavigate();
   const { packageName } = useParams<{ packageName: string }>();
+  const { user } = useAuth();
   
   // Form state
-  const [formData, setFormData] = useState<TPA>({
+  const [formData, setFormData] = useState<EditableTPA>({
     id: '',
     packageName: '',
     name: '',
@@ -35,7 +44,11 @@ const EditTPA: React.FC = () => {
     tpaType: 'standard' as TpaType, // Default value for TpaType with cast
     createdAt: new Date().toISOString(), // Default value for AppResponse compatibility
     updatedAt: new Date().toISOString(), // Default value for AppResponse compatibility
+    permissions: [], // Initialize permissions as empty array
   });
+  
+  // Permissions state
+  const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
   
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -50,19 +63,36 @@ const EditTPA: React.FC = () => {
   const [isLoadingShareLink, setIsLoadingShareLink] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   
-  // Fetch TPA data from API
+  // Add sharedWithOrganization state
+  const [sharedWithOrganization, setSharedWithOrganization] = useState(false);
+  const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
+  
+  // Add sharedWithEmails state
+  const [sharedWithEmails, setSharedWithEmails] = useState<string[]>([]);
+  const [newShareEmail, setNewShareEmail] = useState('');
+  const [isUpdatingEmails, setIsUpdatingEmails] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  
+  // Helper to get org domain from user email
+  const orgDomain = user?.email?.split('@')[1] || '';
+  // Check if orgDomain is a public email provider
+  const isPublicEmailDomain = publicEmailDomains.includes(orgDomain);
+  
+  // Fetch TPA data and permissions from API
   useEffect(() => {
-    const fetchTPA = async () => {
+    const fetchData = async () => {
       if (!packageName) return;
       
       try {
         setIsLoading(true);
+        setIsLoadingPermissions(true);
         setError(null);
         
+        // Fetch TPA data
         const tpaData = await api.apps.getByPackageName(packageName);
         
         // Convert API response to TPA type
-        const tpa: TPA = {
+        const tpa: EditableTPA = {
           id: tpaData.packageName, // Using packageName as id since API doesn't return id
           packageName: tpaData.packageName,
           name: tpaData.name,
@@ -81,6 +111,28 @@ const EditTPA: React.FC = () => {
         };
         
         setFormData(tpa);
+        
+        // Fetch permissions
+        try {
+          const permissionsData = await api.apps.permissions.get(packageName);
+          if (permissionsData.permissions) {
+            setFormData(prev => ({ ...prev, permissions: permissionsData.permissions }));
+          }
+        } catch (permError) {
+          console.error('Error fetching permissions:', permError);
+          // Don't fail the whole form load if permissions fail
+        } finally {
+          setIsLoadingPermissions(false);
+        }
+        
+        // After fetching TPA data, set sharedWithOrganization
+        if (tpa && typeof tpa.sharedWithOrganization === 'boolean') {
+          setSharedWithOrganization(tpa.sharedWithOrganization);
+        }
+        // Set sharedWithEmails
+        if (Array.isArray(tpaData.sharedWithEmails)) {
+          setSharedWithEmails(tpaData.sharedWithEmails);
+        }
       } catch (err) {
         console.error('Error fetching TPA:', err);
         setError('Failed to load TPA data. Please try again.');
@@ -89,7 +141,7 @@ const EditTPA: React.FC = () => {
       }
     };
     
-    fetchTPA();
+    fetchData();
   }, [packageName]);
   
   // Handle form changes
@@ -124,6 +176,14 @@ const EditTPA: React.FC = () => {
     }
   };
   
+  // Handle permissions changes
+  const handlePermissionsChange = (permissions: Permission[]) => {
+    setFormData(prev => ({
+      ...prev,
+      permissions
+    }));
+  };
+  
   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,6 +205,19 @@ const EditTPA: React.FC = () => {
       
       // Update TPA via API
       await api.apps.update(packageName, normalizedData);
+      
+      // Update permissions separately if they exist
+      if (formData.permissions && formData.permissions.length > 0) {
+        try {
+          await api.apps.permissions.update(packageName, formData.permissions);
+        } catch (permError) {
+          console.error('Error updating permissions:', permError);
+          toast.error('App updated but permissions failed to update');
+          setError('App updated but permissions failed to update. Please try again.');
+          setIsSaving(false);
+          return;
+        }
+      }
       
       // Show success message
       setIsSaved(true);
@@ -249,6 +322,61 @@ const EditTPA: React.FC = () => {
       }));
     } catch (err) {
       console.error('Error refreshing app data after publish:', err);
+    }
+  };
+  
+  // Add handler for toggling sharedWithOrganization
+  const handleToggleSharedWithOrg = async (checked: boolean) => {
+    if (!packageName) return;
+    setIsUpdatingVisibility(true);
+    try {
+      await api.apps.updateVisibility(packageName, checked);
+      setSharedWithOrganization(checked);
+      toast.success(`App is now ${checked ? 'shared with' : 'private to'} your organization${checked && orgDomain ? ' (' + orgDomain + ')' : ''}`);
+    } catch (err) {
+      toast.error('Failed to update sharing setting');
+    } finally {
+      setIsUpdatingVisibility(false);
+    }
+  };
+  
+  // Handler to add a new email to the share list
+  const handleAddShareEmail = async () => {
+    setEmailError(null);
+    const email = newShareEmail.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      setEmailError('Please enter a valid email address');
+      return;
+    }
+    if (sharedWithEmails.includes(email)) {
+      setEmailError('This email is already shared');
+      return;
+    }
+    const updatedEmails = [...sharedWithEmails, email];
+    setIsUpdatingEmails(true);
+    try {
+      await api.apps.updateSharedEmails(packageName!, updatedEmails);
+      setSharedWithEmails(updatedEmails);
+      setNewShareEmail('');
+    } catch (err: any) {
+      setEmailError(err?.response?.data?.error || 'Failed to update sharing list');
+    } finally {
+      setIsUpdatingEmails(false);
+    }
+  };
+
+  // Handler to remove an email from the share list
+  const handleRemoveShareEmail = async (email: string) => {
+    const updatedEmails = sharedWithEmails.filter(e => e !== email);
+    setIsUpdatingEmails(true);
+    setEmailError(null);
+    try {
+      await api.apps.updateSharedEmails(packageName!, updatedEmails);
+      setSharedWithEmails(updatedEmails);
+    } catch (err: any) {
+      setEmailError(err?.response?.data?.error || 'Failed to update sharing list');
+    } finally {
+      setIsUpdatingEmails(false);
     }
   };
   
@@ -384,7 +512,123 @@ const EditTPA: React.FC = () => {
                   </p>
                 </div>
                 
-
+                {/* App Sharing Section */}
+                <div className="space-y-8 mt-6">
+                  {/* Share with Editors */}
+                  <div className="border rounded-lg bg-white p-8 shadow-sm">
+                    <h3 className="text-lg font-semibold mb-4 flex items-center">
+                      <span className="inline-block bg-blue-100 rounded-full p-2 mr-2"><Share2 className="h-5 w-5 text-blue-600" /></span>
+                      Share with Editors
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-6 ml-9">
+                      Grant edit/manage access to your app for your organization or specific users.
+                    </p>
+                    {/* Share with Organization */}
+                    <div className="flex items-center space-x-3 mb-4 ml-9">
+                      <div className={`flex items-center gap-3 ${isPublicEmailDomain ? 'opacity-50 pointer-events-none' : ''}`}> 
+                        <input
+                          type="checkbox"
+                          id="sharedWithOrganization"
+                          checked={sharedWithOrganization}
+                          onChange={e => handleToggleSharedWithOrg(e.target.checked)}
+                          className="form-checkbox h-5 w-5 text-blue-600"
+                          disabled={isPublicEmailDomain}
+                        />
+                        <Label htmlFor="sharedWithOrganization" className="mb-0 cursor-pointer font-medium">
+                          Share with my organization
+                        </Label>
+                        {orgDomain && !isPublicEmailDomain && (
+                          <span className="ml-2 text-xs text-gray-500">({orgDomain})</span>
+                        )}
+                      </div>
+                      {isPublicEmailDomain && (
+                        <span className="ml-2 text-xs text-red-500 font-bold">Cannot share with organization using a public email provider ({orgDomain})</span>
+                      )}
+                      {isUpdatingVisibility && (
+                        <span className="ml-2 text-xs text-blue-500">Updating...</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mb-6 ml-16">All users with an <span className="font-mono">@{orgDomain}</span> email will have access.</p>
+                    {/* Divider */}
+                    <div className="border-t border-gray-200 my-6" />
+                    {/* Share with Users by Email */}
+                    <div className="mb-4 ml-9">
+                      <Label className="font-medium">Share with Specific Users (by Email)</Label>
+                      <p className="text-xs text-gray-500 mb-2 ml-1 pt-2">Add email addresses to grant edit/manage access to specific users, even if not in your organization.</p>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Input
+                          type="email"
+                          placeholder="user@example.com"
+                          value={newShareEmail}
+                          onChange={e => setNewShareEmail(e.target.value)}
+                          disabled={isUpdatingEmails}
+                          className="w-64"
+                        />
+                        <Button
+                          type="button"
+                          onClick={handleAddShareEmail}
+                          disabled={isUpdatingEmails || !newShareEmail.trim()}
+                        >
+                          Add
+                        </Button>
+                      </div>
+                      {emailError && <div className="text-xs text-red-500 font-bold mb-2 ml-1">{emailError}</div>}
+                      <ul className="list-disc pl-6">
+                        {sharedWithEmails.length === 0 && <li className="text-xs text-gray-400 ml-2">No users have been added yet.</li>}
+                        {sharedWithEmails.map(email => (
+                          <li key={email} className="flex items-center gap-2 mb-1">
+                            <span>{email}</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="text-xs px-2 py-0"
+                              onClick={() => handleRemoveShareEmail(email)}
+                              disabled={isUpdatingEmails}
+                            >
+                              Remove
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  {/* Share with Testers */}
+                  <div className="border rounded-lg bg-white p-8 shadow-sm">
+                    <h3 className="text-lg font-semibold mb-4 flex items-center">
+                      <span className="inline-block bg-green-100 rounded-full p-2 mr-2"><LinkIcon className="h-5 w-5 text-green-600" /></span>
+                      Share with Testers
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-6 ml-9">
+                      Anyone with this link can access and test the app (read-only access).
+                    </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 ml-9 mt-2">
+                      <Button 
+                        onClick={handleGetShareLink}
+                        className="gap-2"
+                        type="button"
+                        variant="outline"
+                        disabled={isLoadingShareLink}
+                      >
+                        {isLoadingShareLink ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading...
+                          </>
+                        ) : (
+                          <>
+                            <LinkIcon className="h-4 w-4" />
+                            Share App
+                          </>
+                        )}
+                      </Button>
+                      {shareLink && (
+                        <span className="text-xs text-blue-600 break-all ml-2 mt-1 sm:mt-0">{shareLink}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
                 {/* API Key section */}
                 <div className="border rounded-md p-4 mt-6">
                   <h3 className="text-lg font-medium mb-2 flex items-center">
@@ -401,8 +645,7 @@ const EditTPA: React.FC = () => {
                     <Button 
                       onClick={handleViewApiKey}
                       className="mr-2"
-                      variant="outline"
-                      type="button" /* Explicitly set type to button to prevent form submission */
+                      variant="outline" /* Explicitly set type to button to prevent form submission */
                     >
                       View Key
                     </Button>
@@ -428,40 +671,6 @@ const EditTPA: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Share Section */}
-                <div className="border rounded-md p-4 mt-6">
-                  <h3 className="text-lg font-medium mb-2 flex items-center">
-                    <Share2 className="h-5 w-5 mr-2" />
-                    Share with Users
-                  </h3>
-                  
-                  <p className="text-sm text-gray-600 mb-4">
-                    Share your app with testers and keep track of who you've shared it with.
-                  </p>
-                  
-                  <div className="flex items-center justify-end">
-                    <Button 
-                      onClick={handleGetShareLink}
-                      className="gap-2"
-                      type="button"
-                      variant="outline"
-                      disabled={isLoadingShareLink}
-                    >
-                      {isLoadingShareLink ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Loading...
-                        </>
-                      ) : (
-                        <>
-                          <LinkIcon className="h-4 w-4" />
-                          Share App
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-
                 {/* Status information */}
                 <div className="border rounded-md p-4 mt-6">
                   <h3 className="text-lg font-medium mb-2 flex items-center">
@@ -507,6 +716,15 @@ const EditTPA: React.FC = () => {
                       </Button>
                     </div>
                   )}
+                </div>
+                
+                {/* Permissions Section */}
+                <div className="mt-6">
+                  <h3 className="text-lg font-medium mb-4">Required Permissions</h3>
+                  <PermissionsForm 
+                    permissions={formData.permissions || []} 
+                    onChange={handlePermissionsChange} 
+                  />
                 </div>
               </CardContent>
               <CardFooter className="flex justify-between border-t p-6">

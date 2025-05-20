@@ -24,27 +24,36 @@ graph TD
     subgraph "Client Layer"
         AOSManager[AugmentOS Manager App]
         AOSCore[AugmentOS Core Module]
-        ASGClient[ASG Client]
+        AOSiOS[AugmentOS iOS Module]
     end
     
     subgraph "Cloud Layer"
         AOSCloud[AugmentOS Cloud]
+        WebApps[Web Applications]
         WebSocket[WebSocket Service]
-        Apps[App Service]
     end
     
-    subgraph "Third-Party Layer"
-        TPAs[Third-Party Apps]
+    subgraph "Web Applications"
+        AppStore[AugmentOS Store]
+        DevConsole[Developer Console]
+    end
+    
+    subgraph "External Layer"
+        TPA1[Third-Party App 1]
+        TPA2[Third-Party App 2]
+        TPA3[Third-Party App 3]
     end
     
     SG <--> Phone
     Phone --- AOSManager
     AOSManager --- AOSCore
-    SG <--> ASGClient
+    AOSManager --- AOSiOS
     AOSManager <--> AOSCloud
+    AOSCloud --- WebApps
     AOSCloud <--> WebSocket
-    WebSocket <--> TPAs
-    Apps --- TPAs
+    WebSocket <--> TPA1
+    WebSocket <--> TPA2
+    WebSocket <--> TPA3
 ```
 
 ### System Components
@@ -59,18 +68,35 @@ graph TD
    - Handles Bluetooth communication with glasses
    - Manages glass connections and capabilities
 
-3. **ASG Client** (`augmentos_asg_client/`):
+3. **iOS Native Module** (`augmentos_manager/ios`):
+   - iOS native module
+   - Handles Bluetooth communication with glasses
+   - Manages glass connections and capabilities
+
+4. **ASG Client** (`augmentos_asg_client/`):
    - Android app for Android-based smart glasses
    - Enables glasses to connect to the AugmentOS ecosystem
-   - Provides audio/visual input/output
+   - Provides a BLE API for android-based glasses to connect to AugmentOS Manager
+   - Communicates with AugmentOS Cloud directly for streaming photos/videos
 
-4. **AugmentOS Cloud** (`augmentos_cloud/`):
+5. **AugmentOS Cloud** (`augmentos_cloud/`):
    - Node.js backend services
    - Manages app sessions, transcription, and display
    - Handles real-time communication between glasses and TPAs
    - Controls app lifecycle and display rendering
 
-5. **Third-Party Apps**:
+6. **AugmentOS Store** (`augmentos_cloud/store/`):
+   - Web application for users to discover and install apps
+   - Showcases available third-party applications
+   - Provides app ratings, descriptions, and screenshots
+   - Handles app installation
+
+7. **AugmentOS Developer Console** (`augmentos_cloud/developer-portal/`):
+   - Web application for developers to register and manage apps
+   - Provides tools for app submission and updates
+   - Includes documentation and SDK resources
+
+8. **Third-Party Apps**:
    - External web servers that connect to AugmentOS cloud
    - Use webhooks and websockets for real-time communication
    - Leverage AugmentOS SDK for display and input handling
@@ -110,6 +136,12 @@ Third-party apps in the AugmentOS ecosystem follow a specific pattern:
 - Xcode (for iOS development)
 - Docker and Docker Compose (for cloud development)
 
+### Project Links
+
+- [GitHub Project Board for General Tasks](https://github.com/orgs/AugmentOS-Community/projects/2)
+- [GitHub Project Board for iOS Specific Tasks](https://github.com/orgs/AugmentOS-Community/projects/1)
+- [All GitHub Projects](https://github.com/AugmentOS-Community/AugmentOS/projects?query=is%3Aopen)
+
 ### Setting Up the Manager App
 
 ```bash
@@ -148,6 +180,40 @@ bun run dev:setup-network
 # or
 bun run setup-deps
 bun run dev
+```
+
+### Build Commands
+
+#### Android Core
+```bash
+# Build the Android core
+./gradlew build
+./gradlew assembleDebug
+
+# Run Android tests
+./gradlew test
+./gradlew androidTest
+```
+
+#### React Native
+```bash
+# Start the development server
+npm start
+
+# Build and run on Android/iOS
+npm run android
+npm run ios
+
+# Build Android packages
+npm run build-android
+npm run build-android-release
+
+# Run tests
+npm test
+npm test -- -t "test name"  # Run a single test
+
+# Lint code
+npm run lint
 ```
 
 ## Contribution Workflow
@@ -207,4 +273,4 @@ bun run dev
 
 ## License
 
-By contributing to AugmentOS, you agree that your contributions will be licensed under the project's license terms.
+By contributing to AugmentOS, you agree that your contributions will be licensed under the MIT License, which is the project's license. The full license text can be found [here](https://github.com/AugmentOS-Community/AugmentOS/blob/main/LICENSE).

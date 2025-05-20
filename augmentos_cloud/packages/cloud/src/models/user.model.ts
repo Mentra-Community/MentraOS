@@ -2,6 +2,7 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 import { AppSettingType, type AppSetting } from '@augmentos/sdk';
 import { MongoSanitizer } from '../utils/mongoSanitizer';
+import { logger } from '@augmentos/utils';
 
 interface Location {
   lat: number;
@@ -18,6 +19,18 @@ interface UserDocument extends Document {
   email: string;
   runningApps: string[];
   appSettings: Map<string, AppSetting[]>;
+  augmentosSettings: {
+    useOnboardMic: boolean;
+    contextualDashboard: boolean;
+    headUpAngle: number;
+    brightness: number;
+    autoBrightness: boolean;
+    sensingEnabled: boolean;
+    alwaysOnStatusBar: boolean;
+    bypassVad: boolean;
+    bypassAudioEncoding: boolean;
+    metricSystemEnabled: boolean;
+  };
   location?: Location;
   installedApps?: Array<{
     packageName: string;
@@ -43,6 +56,9 @@ interface UserDocument extends Document {
   installApp(packageName: string): Promise<void>;
   uninstallApp(packageName: string): Promise<void>;
   isAppInstalled(packageName: string): boolean;
+
+  updateAugmentosSettings(settings: Partial<UserDocument['augmentosSettings']>): Promise<void>;
+  getAugmentosSettings(): UserDocument['augmentosSettings'];
 }
 
 const InstalledAppSchema = new Schema({
@@ -97,6 +113,34 @@ const UserSchema = new Schema<UserDocument>({
       message: 'Invalid email format'
     }
   },
+  augmentosSettings: {
+    type: {
+      useOnboardMic: { type: Boolean, default: false },
+      contextualDashboard: { type: Boolean, default: true },
+      metricSystemEnabled: { type: Boolean, default: false },
+      headUpAngle: { type: Number, default: 20 },
+      brightness: { type: Number, default: 50 },
+      autoBrightness: { type: Boolean, default: false },
+      sensingEnabled: { type: Boolean, default: true },
+      alwaysOnStatusBar: { type: Boolean, default: false },
+      bypassVad: { type: Boolean, default: false },
+      bypassAudioEncoding: { type: Boolean, default: false },
+    },
+    default: function() {
+      return {
+        useOnboardMic: false,
+        contextualDashboard: true,
+        metricSystemEnabled: false,
+        headUpAngle: 20,
+        brightness: 50,
+        autoBrightness: false,
+        sensingEnabled: true,
+        alwaysOnStatusBar: false,
+        bypassVad: false,
+        bypassAudioEncoding: false,
+      };
+    }
+  },
   // Cache location so timezones can be calculated by dashboard manager immediately.
   location: {
     type: {
@@ -149,7 +193,12 @@ const UserSchema = new Schema<UserDocument>({
       delete ret.__v;
       ret.id = ret._id;
       delete ret._id;
-      ret.appSettings = Object.fromEntries(ret.appSettings);
+      // Safely handle appSettings transformation
+      if (ret.appSettings && ret.appSettings instanceof Map) {
+        ret.appSettings = Object.fromEntries(ret.appSettings);
+      } else {
+        ret.appSettings = {};
+      }
       return ret;
     }
   }
@@ -288,6 +337,42 @@ UserSchema.methods.getAppSettings = function (this: UserDocument, appName: strin
 
 UserSchema.methods.isAppRunning = function (this: UserDocument, appName: string): boolean {
   return this.runningApps.includes(appName);
+};
+
+UserSchema.methods.updateAugmentosSettings = async function(
+  this: UserDocument,
+  settings: Partial<UserDocument['augmentosSettings']>
+): Promise<void> {
+  // Convert to plain objects for clean logging
+  const currentSettingsClean = JSON.parse(JSON.stringify(this.augmentosSettings));
+  const newSettingsClean = JSON.parse(JSON.stringify(settings));
+  
+  logger.info('Updating AugmentOS settings:', {
+    userId: this.email,
+    currentSettings: currentSettingsClean,
+    newSettings: newSettingsClean
+  });
+
+  // Directly apply each setting to ensure updates happen properly
+  Object.entries(settings).forEach(([key, value]) => {
+    if (value !== undefined) {
+      // @ts-ignore - We're dynamically updating the settings
+      this.augmentosSettings[key] = value;
+    }
+  });
+
+  // Convert to plain object for clean logging
+  const mergedSettingsClean = JSON.parse(JSON.stringify(this.augmentosSettings));
+  logger.info('Merged settings:', mergedSettingsClean);
+  
+  await this.save();
+  logger.info('Settings saved successfully');
+};
+
+UserSchema.methods.getAugmentosSettings = function(
+  this: UserDocument
+): UserDocument['augmentosSettings'] {
+  return this.augmentosSettings;
 };
 
 // --- Static Methods ---

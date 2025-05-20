@@ -31,8 +31,6 @@ export const StatusProvider = ({ children }: { children: ReactNode }) => {
 
         const forceUpdate = parsedStatus.force_update;
 
-        console.log('1111 Parsed status:', parsedStatus);
-
         if (INTENSE_LOGGING)
             console.log('Parsed status:', parsedStatus);
         

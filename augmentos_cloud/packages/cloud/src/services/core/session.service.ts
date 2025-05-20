@@ -13,18 +13,37 @@ import {
 import appService from './app.service';
 import transcriptionService, { ASRStreamInstance } from '../processing/transcription.service';
 import DisplayManager from '../layout/DisplayManager6.1';
-import { createLC3Service, LC3Service, createLoggerForUserSession, logger } from '@augmentos/utils';
+import { createLC3Service, LC3Service, createLoggerForUserSession } from '@augmentos/utils';
 import { AudioWriter } from "../debug/audio-writer";
 import { systemApps } from './system-apps';
 import { SubscriptionManager } from './subscription.manager'; // Import the new manager
-import { Logger } from 'winston';
+// import { Logger } from 'winston';
+import { DebugService } from '../debug/debug-service';
+import { User } from '../../models/user.model';
+import { HeartbeatManager } from './HeartbeatManager';
+import { logger as rootLogger } from '../logging/pino-logger';
+import { Logger } from 'pino';
 
 const RECONNECT_GRACE_PERIOD_MS = 1000 * 30; // 30 seconds
 const LOG_AUDIO = false;
 const DEBUG_AUDIO = false;
 export const IS_LC3 = false;
+const logger = rootLogger.child({ module: 'session.service' });
 
-console.log("🔈🔈🔈🔈🔈🔈🔈🔈 IS_LC3", IS_LC3);
+logger.info("🔈🔈🔈🔈🔈🔈🔈🔈 IS_LC3", IS_LC3);
+
+const DEFAULT_AUGMENTOS_SETTINGS = {
+  useOnboardMic: false,
+  contextualDashboard: true,
+  headUpAngle: 20,
+  brightness: 50,
+  autoBrightness: false,
+  sensingEnabled: true,
+  alwaysOnStatusBar: false,
+  bypassVad: false,
+  bypassAudioEncoding: false,
+  metricSystemEnabled: false
+};
 
 // --- Interfaces ---
 export interface SequencedAudioChunk {
@@ -54,6 +73,8 @@ export interface ExtendedUserSession extends UserSession {
   cleanupTimerId?: NodeJS.Timeout;
   websocket: WebSocket;
   displayManager: DisplayManager;
+  // Add dashboard manager to the user session
+  dashboardManager: any; // Will import and use proper type later to avoid circular dependencies
   transcript: { 
     segments: TranscriptSegment[];  // For backward compatibility (English)
     languageSegments?: Map<string, TranscriptSegment[]>; // Language-indexed map for multi-language support
@@ -64,17 +85,29 @@ export interface ExtendedUserSession extends UserSession {
   transcriptionStreams: Map<string, ASRStreamInstance>;
   isTranscribing: boolean;
   loadingApps: Set<string>;
-  OSSettings: { brightness: number, volume: number };
   appConnections: Map<string, WebSocket | any>; // Consider stricter type if possible
   installedApps: AppI[]; // Add type from SDK
 
   // Add the subscription manager instance
   subscriptionManager: SubscriptionManager;
+  // Add the heartbeat manager instance
+  heartbeatManager: HeartbeatManager;
+  // Map to track reconnection timers
+  _reconnectionTimers?: Map<string, NodeJS.Timeout>;
+  recentAudioBuffer: { data: ArrayBufferLike; timestamp: number }[]; // Buffer for last 10 seconds of audio
+
+  // Custom user data
+  userDatetime?: string;
 }
 
 export class SessionService {
   private activeSessions = new Map<string, ExtendedUserSession>();
   private sessionsByUser = new Map<string, ExtendedUserSession>();
+  private debugService: DebugService;
+
+  constructor(debugService: DebugService) {
+    this.debugService = debugService;
+  }
 
   async createSession(ws: WebSocket, userId: string): Promise<ExtendedUserSession> {
     const existingSession = this.sessionsByUser.get(userId);
@@ -98,13 +131,42 @@ export class SessionService {
       // Ensure installedApps are fresh if reusing
       existingSession.installedApps = await appService.getAllApps(userId);
 
+      // Notify debug service of session reconnection
+      this.debugService.sessionConnected(existingSession.sessionId, {
+        sessionId: existingSession.sessionId,
+        userId: existingSession.userId,
+        startTime: existingSession.startTime.toISOString(),
+        disconnectedAt: null,
+        activeAppSessions: existingSession.activeAppSessions,
+        installedApps: existingSession.installedApps,
+        loadingApps: existingSession.loadingApps,
+        isTranscribing: existingSession.isTranscribing,
+        transcript: existingSession.transcript,
+        subscriptionManager: {
+          subscriptions: Object.fromEntries(Array.from(existingSession.subscriptionManager.getAllSubscriptions()).map(([k, v]) => [k, Array.from(v)]))
+        },
+        displayManager: existingSession.displayManager,
+        dashboardManager: existingSession.dashboardManager,
+        appConnections: Object.fromEntries(Array.from(existingSession.appConnections.entries()).map(([k, v]) => [k, { readyState: v.readyState }])),
+        lastAudioTimestamp: existingSession.lastAudioTimestamp,
+        transcriptionStreams: Object.fromEntries(Array.from(existingSession.transcriptionStreams.entries()).map(([k, v]) => [k, { status: 'active', language: k }])),
+        audioBuffer: existingSession.audioBuffer,
+        lc3Service: existingSession.lc3Service ? {
+          initialized: true,
+          status: 'active'
+        } : null,
+        recentEvents: []
+      });
+
       return existingSession;
     }
 
     // Create new session
     const sessionId = userId;
-    const sessionLogger = createLoggerForUserSession(sessionId);
+    // const sessionLogger = createLoggerForUserSession(sessionId);
+    const sessionLogger = rootLogger.child({ userId });
     const installedApps = await appService.getAllApps(userId); // Fetch apps first
+    sessionLogger.info(`Fetched installed apps for user ${userId}:`, installedApps);
 
     // Create partial session first to pass to manager constructor
     const partialSession: Partial<ExtendedUserSession> = {
@@ -117,8 +179,8 @@ export class SessionService {
       transcriptionStreams: new Map<string, ASRStreamInstance>(),
       loadingApps: new Set<string>(),
       appConnections: new Map<string, WebSocket | any>(),
-      OSSettings: { brightness: 50, volume: 50 },
-      displayManager: new DisplayManager(),
+      displayManager: {} as any, // Will set after full session init
+      // Will add dashboardManager after the session is fully constructed
       transcript: { 
         segments: [],
         languageSegments: new Map<string, TranscriptSegment[]>() 
@@ -127,6 +189,7 @@ export class SessionService {
       bufferedAudio: [],
       disconnectedAt: null,
       isTranscribing: false,
+      recentAudioBuffer: [], // Initialize the recent audio buffer
 
       audioBuffer: {
         chunks: [],
@@ -143,6 +206,10 @@ export class SessionService {
     // Cast to ExtendedUserSession here is safe as we're building it
     partialSession.subscriptionManager = new SubscriptionManager(partialSession as ExtendedUserSession);
     sessionLogger.info(`[session.service] SubscriptionManager created for session ${sessionId}`);
+    
+    // Instantiate the Heartbeat Manager for this session
+    partialSession.heartbeatManager = new HeartbeatManager(partialSession as ExtendedUserSession);
+    sessionLogger.info(`[session.service] HeartbeatManager created for session ${sessionId}`);
 
     // Initialize LC3 and Audio Buffer
     const lc3ServiceInstance = createLC3Service(sessionId);
@@ -154,12 +221,53 @@ export class SessionService {
       sessionLogger.error(`❌ Failed to initialize LC3 service for session ${sessionId}:`, error);
     }
 
-    // Finalize and Store Session
+    // Finalize the user session
     const userSession = partialSession as ExtendedUserSession;
 
+    // Now set up the DisplayManager
+    const DisplayManager = require('../layout/DisplayManager6.1').default;
+    userSession.displayManager = new DisplayManager(userSession);
+
+    // Now create the DashboardManager for this session
+    // We need to dynamically import to avoid circular dependency issues
+    const { DashboardManager } = require('../dashboard/DashboardManager');
+    userSession.dashboardManager = new DashboardManager(userSession, {
+      queueSize: 5,
+      updateIntervalMs: 500,
+      alwaysOnEnabled: false
+    });
+
+    // Store the session
     this.activeSessions.set(sessionId, userSession);
     this.sessionsByUser.set(userId, userSession);
     sessionLogger.info(`[session.service] Created and stored new session ${sessionId} for user ${userId}`);
+
+    // Notify debug service of new session
+    this.debugService.sessionConnected(sessionId, {
+      sessionId: userSession.sessionId,
+      userId: userSession.userId,
+      startTime: userSession.startTime.toISOString(),
+      disconnectedAt: null,
+      activeAppSessions: userSession.activeAppSessions,
+      installedApps: userSession.installedApps,
+      loadingApps: userSession.loadingApps,
+      isTranscribing: userSession.isTranscribing,
+      transcript: userSession.transcript,
+      subscriptionManager: {
+        subscriptions: {}
+      },
+      displayManager: userSession.displayManager,
+      dashboardManager: userSession.dashboardManager,
+      appConnections: {},
+      lastAudioTimestamp: userSession.lastAudioTimestamp,
+      transcriptionStreams: {},
+      audioBuffer: userSession.audioBuffer,
+      lc3Service: userSession.lc3Service ? {
+        initialized: true,
+        status: 'active'
+      } : null,
+      recentEvents: []
+    });
 
     return userSession;
   }
@@ -295,11 +403,15 @@ export class SessionService {
     // Update the last audio timestamp
     userSession.lastAudioTimestamp = Date.now();
 
-    // If not transcribing, just ignore the audio
-    // if (!userSession.isTranscribing) {
-    //   if (LOG_AUDIO) console.log('🔇 Skipping audio while transcription is paused');
-    //   return;
-    // }
+    // --- Maintain recentAudioBuffer for last 10 seconds ---
+    if (audioData && userSession.recentAudioBuffer) {
+      const now = Date.now();
+      // Store the chunk with its timestamp
+      userSession.recentAudioBuffer.push({ data: audioData, timestamp: now });
+      // Prune to keep only the last 10 seconds
+      const tenSecondsAgo = now - 10_000;
+      userSession.recentAudioBuffer = userSession.recentAudioBuffer.filter(chunk => chunk.timestamp >= tenSecondsAgo);
+    }
 
     // Lazy initialize the audio writer if it doesn't exist
     if (DEBUG_AUDIO && !userSession.audioWriter) {
@@ -428,6 +540,9 @@ export class SessionService {
 
     userSession.logger.info(`[Ending session] Starting cleanup for ${userSession.sessionId}`);
 
+    // Notify debug service of session disconnection before cleanup
+    this.debugService.sessionDisconnected(userSession.sessionId);
+
     if (userSession.cleanupTimerId) {
       clearTimeout(userSession.cleanupTimerId);
       userSession.logger.info(`[session.service]: Cleared cleanup timer during endSession for ${userSession.sessionId}`);
@@ -454,6 +569,27 @@ export class SessionService {
     }
 
     // SubscriptionManager is part of userSession, no specific cleanup needed here
+
+    // Clean up heartbeat manager
+    if (userSession.heartbeatManager) {
+      userSession.logger.info(`🧹 Cleaning up heartbeat manager for session ${userSession.sessionId}`);
+      userSession.heartbeatManager.dispose();
+    }
+    
+    // Clean up any reconnection timers
+    if (userSession._reconnectionTimers) {
+      userSession.logger.info(`🧹 Cleaning up reconnection timers for session ${userSession.sessionId}`);
+      for (const [packageName, timerId] of userSession._reconnectionTimers.entries()) {
+        clearTimeout(timerId);
+      }
+      userSession._reconnectionTimers.clear();
+    }
+
+    // Clean up dashboard manager if it exists
+    if (userSession.dashboardManager && typeof userSession.dashboardManager.dispose === 'function') {
+      userSession.logger.info(`🧹 Cleaning up dashboard manager for session ${userSession.sessionId}`);
+      userSession.dashboardManager.dispose();
+    }
 
     // Clear transcript data
     if (userSession.transcript) {
@@ -540,7 +676,9 @@ export class SessionService {
       userSession.logger.info(
         `Session ${userSession.sessionId} marked as disconnected at ${userSession.disconnectedAt.toISOString()}`
       );
-      // Keep in activeSessions until grace period timeout in websocket service
+
+      // Notify debug service of session disconnection
+      this.debugService.sessionDisconnected(userSession.sessionId);
     }
   }
 
@@ -553,6 +691,35 @@ export class SessionService {
   }
 }
 
-export const sessionService = new SessionService();
-logger.info('✅ Session Service Initialized');
-export default sessionService;
+// We'll initialize this in index.ts after creating the debug service
+let _sessionService: SessionService | null = null;
+
+export function initializeSessionService(debugService: DebugService): SessionService {
+  if (!_sessionService) {
+    _sessionService = new SessionService(debugService);
+    logger.info('✅ Session Service Initialized');
+  }
+  return _sessionService;
+}
+
+export function getSessionService(): SessionService {
+  if (!_sessionService) {
+    throw new Error('Session service not initialized');
+  }
+  return _sessionService;
+}
+
+// Create a proxy object that forwards calls to the real service once initialized
+const sessionServiceProxy = new Proxy({} as SessionService, {
+  get(target, prop: keyof SessionService) {
+    const service = _sessionService;
+    if (!service) {
+      throw new Error('Session service accessed before initialization');
+    }
+    return service[prop];
+  }
+});
+
+// Export both the named export and default export using the same proxy
+export const sessionService = sessionServiceProxy;
+export default sessionServiceProxy;

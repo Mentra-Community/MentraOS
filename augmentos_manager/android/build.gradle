@@ -2,8 +2,8 @@ buildscript {
     ext {
         buildToolsVersion = "34.0.0"
         minSdkVersion = 28
-        compileSdkVersion = 33
-        targetSdkVersion = 33
+        compileSdkVersion = 34
+        targetSdkVersion = 34
         ndkVersion = "26.1.10909125"
         kotlinVersion = "1.9.24"
     }
@@ -30,5 +30,10 @@ subprojects { subproject ->
         // Just apply dotenv.gradle here
         subproject.apply from: project(':react-native-config')
             .projectDir.getPath() + "/dotenv.gradle"
+            
+        // Add jitpack repository for all modules
+        subproject.repositories {
+            maven { url "https://jitpack.io" }
+        }
     }
 }

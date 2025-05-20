@@ -148,6 +148,16 @@ const GlassesPairingGuidePreparationScreen: React.FC<GlassesPairingGuidePreparat
       } // End of Android-specific permissions block
       
       // Cross-platform permissions needed for both iOS and Android
+
+      const hasBluetoothPermission = await requestFeaturePermissions(PermissionFeatures.BLUETOOTH);
+      if (!hasBluetoothPermission) {
+        showAlert(
+          'Bluetooth Permission Required',
+          'Bluetooth permission is required to connect to smart glasses.',
+          [{ text: 'OK' }]
+        );
+        return; // Stop the connection process
+      }
       
       // Request microphone permission (needed for both platforms)
       console.log("Requesting microphone permission...");
@@ -201,6 +211,9 @@ const GlassesPairingGuidePreparationScreen: React.FC<GlassesPairingGuidePreparat
       }
     }
 
+    console.log("needsBluetoothPermissions", needsBluetoothPermissions);
+
+    // slight delay for bluetooth perms
     navigation.navigate('SelectGlassesBluetoothScreen', {
       glassesModelName: glassesModelName,
     });
@@ -227,18 +240,19 @@ export default GlassesPairingGuidePreparationScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 20,
   },
   scrollViewContainer: {
     flex: 1,
   },
   contentContainer: {
+    paddingHorizontal: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonContainer: {
     alignItems: 'center',
-    marginBottom: 65,
+    marginBottom: 64,
+    marginTop: 16,
   },
   text: {
     fontSize: 16,

@@ -1,0 +1,1228 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00E356F31AD99517003FC87E /* AugmentOSTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 00E356F21AD99517003FC87E /* AugmentOSTests.m */; };
+		13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */ = {isa = PBXBuildFile; fileRef = 13B07FB01A68108700A75B9A /* AppDelegate.mm */; };
+		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		13B07FC11A68108700A75B9A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 13B07FB71A68108700A75B9A /* main.m */; };
+		2C6E2ACD5A866041DFC29A4C /* libPods-AugmentOS-AugmentOSTests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = AA0326F611A4F0F4FBBE7ABA /* libPods-AugmentOS-AugmentOSTests.a */; };
+		30C6EEA65F2C40649EF067EB /* Montserrat-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7BFAFAC57807483494D4A11A /* Montserrat-Bold.ttf */; };
+		4EED8A3312A7C8A950492018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = FE140319366160A1E25CF788 /* PrivacyInfo.xcprivacy */; };
+		59E61647C0F7495D97C990AD /* Montserrat-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2217E0C51BEC4E8E87F34504 /* Montserrat-Regular.ttf */; };
+		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		9DD2E831CD1117E102F9252F /* libPods-AugmentOS.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 578833B5B52BF706D8BA80F8 /* libPods-AugmentOS.a */; };
+		C51385B92D7F6DFE00710042 /* VADType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385A22D7F6DFE00710042 /* VADType.swift */; };
+		C51385BA2D7F6DFE00710042 /* Configuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385AC2D7F6DFE00710042 /* Configuration.swift */; };
+		C51385BB2D7F6DFE00710042 /* VADStrategy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385A12D7F6DFE00710042 /* VADStrategy.swift */; };
+		C51385BC2D7F6DFE00710042 /* SampleRate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385B12D7F6DFE00710042 /* SampleRate.swift */; };
+		C51385BD2D7F6DFE00710042 /* Result.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385B02D7F6DFE00710042 /* Result.swift */; };
+		C51385C02D7F6DFE00710042 /* VADQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = C513859F2D7F6DFE00710042 /* VADQuality.swift */; };
+		C51385C12D7F6DFE00710042 /* SileroVAD.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385B52D7F6DFE00710042 /* SileroVAD.swift */; };
+		C51385C32D7F6DFE00710042 /* Record.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385AF2D7F6DFE00710042 /* Record.swift */; };
+		C51385C42D7F6DFE00710042 /* SileroVADStrategy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385B62D7F6DFE00710042 /* SileroVADStrategy.swift */; };
+		C51385C72D7F6DFE00710042 /* VADState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385A02D7F6DFE00710042 /* VADState.swift */; };
+		C51385C82D7F6DFE00710042 /* ContentData.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385AD2D7F6DFE00710042 /* ContentData.swift */; };
+		C51385CA2D7F6DFE00710042 /* FrameSize.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51385AE2D7F6DFE00710042 /* FrameSize.swift */; };
+		C51385CB2D7F6DFE00710042 /* silero_vad.onnx in Resources */ = {isa = PBXBuildFile; fileRef = C51385B32D7F6DFE00710042 /* silero_vad.onnx */; };
+		C520E1B22D852981009491C1 /* CalendarManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C520E1B12D852981009491C1 /* CalendarManager.swift */; };
+		C520E1B42D874D7D009491C1 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C520E1B32D874D7D009491C1 /* LocationManager.swift */; };
+		C56BE8642D78E51100407B70 /* makefile.mk in Resources */ = {isa = PBXBuildFile; fileRef = C56BE84F2D78E51100407B70 /* makefile.mk */; };
+		C56BE8652D78E51100407B70 /* meson.build in Resources */ = {isa = PBXBuildFile; fileRef = C56BE8532D78E51100407B70 /* meson.build */; };
+		C56BE8662D78E51100407B70 /* energy.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8452D78E51100407B70 /* energy.c */; };
+		C56BE8672D78E51100407B70 /* tables.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE85E2D78E51100407B70 /* tables.c */; };
+		C56BE8682D78E51100407B70 /* tns.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8602D78E51100407B70 /* tns.c */; };
+		C56BE8692D78E51100407B70 /* plc.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8572D78E51100407B70 /* plc.c */; };
+		C56BE86A2D78E51100407B70 /* lc3.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8482D78E51100407B70 /* lc3.c */; };
+		C56BE86B2D78E51100407B70 /* attdet.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE83D2D78E51100407B70 /* attdet.c */; };
+		C56BE86C2D78E51100407B70 /* bits.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE83F2D78E51100407B70 /* bits.c */; };
+		C56BE86D2D78E51100407B70 /* PcmConverter.m in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8552D78E51100407B70 /* PcmConverter.m */; };
+		C56BE86E2D78E51100407B70 /* ltpf.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE84C2D78E51100407B70 /* ltpf.c */; };
+		C56BE86F2D78E51100407B70 /* sns.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE85A2D78E51100407B70 /* sns.c */; };
+		C56BE8702D78E51100407B70 /* mdct.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8512D78E51100407B70 /* mdct.c */; };
+		C56BE8712D78E51100407B70 /* bwdet.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8412D78E51100407B70 /* bwdet.c */; };
+		C56BE8722D78E51100407B70 /* spec.c in Sources */ = {isa = PBXBuildFile; fileRef = C56BE85C2D78E51100407B70 /* spec.c */; };
+		C56BE8752D78F28400407B70 /* AOSManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8742D78F28400407B70 /* AOSManager.swift */; };
+		C56BE8792D78F2E400407B70 /* AOSModule.m in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8782D78F2E400407B70 /* AOSModule.m */; };
+		C56BE87B2D79030800407B70 /* ServerComms.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56BE87A2D79030800407B70 /* ServerComms.swift */; };
+		C56BE87F2D79035300407B70 /* WebSocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56BE87E2D79034C00407B70 /* WebSocketManager.swift */; };
+		C56BE88A2D793E2E00407B70 /* G1Text.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8892D793E2E00407B70 /* G1Text.swift */; };
+		C56BE8C72D7D50E600407B70 /* MicrophoneManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56BE8C62D7D50E600407B70 /* MicrophoneManager.swift */; };
+		C5DC28FB2D765C2500B3F8D3 /* ERG1Manager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5DC28FA2D765C2500B3F8D3 /* ERG1Manager.swift */; };
+		C5DC29052D765EFA00B3F8D3 /* Enums.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5DC29042D765EFA00B3F8D3 /* Enums.swift */; };
+		C5DC29092D765F5900B3F8D3 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5DC29082D765F5900B3F8D3 /* Models.swift */; };
+		C5DC29832D77936900B3F8D3 /* CoreCommsService.m in Sources */ = {isa = PBXBuildFile; fileRef = C5DC29822D77936900B3F8D3 /* CoreCommsService.m */; };
+		C5DC29852D77938700B3F8D3 /* CoreCommsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5DC29842D77938700B3F8D3 /* CoreCommsService.swift */; };
+		C5E8B1E72DD3C98200E3760B /* MediaManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E8B1E62DD3C98200E3760B /* MediaManager.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		00E356F41AD99517003FC87E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 13B07F861A680F5B00A75B9A;
+			remoteInfo = AugmentOS_Manager;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		00E356EE1AD99517003FC87E /* AugmentOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AugmentOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		00E356F11AD99517003FC87E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		00E356F21AD99517003FC87E /* AugmentOSTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AugmentOSTests.m; sourceTree = "<group>"; };
+		0BB9B4E34B2187FA1E9F3DE2 /* Pods-AugmentOS_Manager-AugmentOS_ManagerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS_Manager-AugmentOS_ManagerTests.release.xcconfig"; path = "Target Support Files/Pods-AugmentOS_Manager-AugmentOS_ManagerTests/Pods-AugmentOS_Manager-AugmentOS_ManagerTests.release.xcconfig"; sourceTree = "<group>"; };
+		111B227623D50BFA15913EC7 /* Pods-AugmentOS.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS.debug.xcconfig"; path = "Target Support Files/Pods-AugmentOS/Pods-AugmentOS.debug.xcconfig"; sourceTree = "<group>"; };
+		13B07F961A680F5B00A75B9A /* AugmentOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AugmentOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		13B07FAF1A68108700A75B9A /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AppDelegate.h; path = AugmentOS_Manager/AppDelegate.h; sourceTree = "<group>"; };
+		13B07FB01A68108700A75B9A /* AppDelegate.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = AppDelegate.mm; path = AugmentOS_Manager/AppDelegate.mm; sourceTree = "<group>"; };
+		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = AugmentOS_Manager/Images.xcassets; sourceTree = "<group>"; };
+		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = AugmentOS_Manager/Info.plist; sourceTree = "<group>"; };
+		13B07FB71A68108700A75B9A /* main.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = main.m; path = AugmentOS_Manager/main.m; sourceTree = "<group>"; };
+		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = AugmentOS_Manager/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		1B4A0C720C2CC15906C10425 /* Pods-AugmentOS-AugmentOSTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS-AugmentOSTests.debug.xcconfig"; path = "Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests.debug.xcconfig"; sourceTree = "<group>"; };
+		2217E0C51BEC4E8E87F34504 /* Montserrat-Regular.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Montserrat-Regular.ttf"; path = "../src/assets/fonts/Montserrat-Regular.ttf"; sourceTree = "<group>"; };
+		256A9E5BBC920F18C66034B6 /* Pods-AugmentOS-AugmentOSTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS-AugmentOSTests.release.xcconfig"; path = "Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests.release.xcconfig"; sourceTree = "<group>"; };
+		305B6FD1175E1545623975CB /* Pods-AugmentOS.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS.release.xcconfig"; path = "Target Support Files/Pods-AugmentOS/Pods-AugmentOS.release.xcconfig"; sourceTree = "<group>"; };
+		3BE21BF318A2EF469959B54D /* Pods-AugmentOS_Manager-AugmentOS_ManagerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS_Manager-AugmentOS_ManagerTests.debug.xcconfig"; path = "Target Support Files/Pods-AugmentOS_Manager-AugmentOS_ManagerTests/Pods-AugmentOS_Manager-AugmentOS_ManagerTests.debug.xcconfig"; sourceTree = "<group>"; };
+		578833B5B52BF706D8BA80F8 /* libPods-AugmentOS.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-AugmentOS.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		7BFAFAC57807483494D4A11A /* Montserrat-Bold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Montserrat-Bold.ttf"; path = "../src/assets/fonts/Montserrat-Bold.ttf"; sourceTree = "<group>"; };
+		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = AugmentOS_Manager/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		833029AF6BED9854BF3A24E2 /* Pods-AugmentOS_Manager.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS_Manager.release.xcconfig"; path = "Target Support Files/Pods-AugmentOS_Manager/Pods-AugmentOS_Manager.release.xcconfig"; sourceTree = "<group>"; };
+		8ED6F1C558E4155DF97D5615 /* Pods-AugmentOS_Manager.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AugmentOS_Manager.debug.xcconfig"; path = "Target Support Files/Pods-AugmentOS_Manager/Pods-AugmentOS_Manager.debug.xcconfig"; sourceTree = "<group>"; };
+		AA0326F611A4F0F4FBBE7ABA /* libPods-AugmentOS-AugmentOSTests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-AugmentOS-AugmentOSTests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C513859F2D7F6DFE00710042 /* VADQuality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VADQuality.swift; sourceTree = "<group>"; };
+		C51385A02D7F6DFE00710042 /* VADState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VADState.swift; sourceTree = "<group>"; };
+		C51385A12D7F6DFE00710042 /* VADStrategy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VADStrategy.swift; sourceTree = "<group>"; };
+		C51385A22D7F6DFE00710042 /* VADType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VADType.swift; sourceTree = "<group>"; };
+		C51385AC2D7F6DFE00710042 /* Configuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Configuration.swift; sourceTree = "<group>"; };
+		C51385AD2D7F6DFE00710042 /* ContentData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentData.swift; sourceTree = "<group>"; };
+		C51385AE2D7F6DFE00710042 /* FrameSize.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameSize.swift; sourceTree = "<group>"; };
+		C51385AF2D7F6DFE00710042 /* Record.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Record.swift; sourceTree = "<group>"; };
+		C51385B02D7F6DFE00710042 /* Result.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Result.swift; sourceTree = "<group>"; };
+		C51385B12D7F6DFE00710042 /* SampleRate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleRate.swift; sourceTree = "<group>"; };
+		C51385B32D7F6DFE00710042 /* silero_vad.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; path = silero_vad.onnx; sourceTree = "<group>"; };
+		C51385B52D7F6DFE00710042 /* SileroVAD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SileroVAD.swift; sourceTree = "<group>"; };
+		C51385B62D7F6DFE00710042 /* SileroVADStrategy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SileroVADStrategy.swift; sourceTree = "<group>"; };
+		C520E1B12D852981009491C1 /* CalendarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarManager.swift; sourceTree = "<group>"; };
+		C520E1B32D874D7D009491C1 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
+		C56BE83A2D78E51100407B70 /* g1-sample-header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "g1-sample-header.h"; sourceTree = "<group>"; };
+		C56BE83C2D78E51100407B70 /* attdet.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = attdet.h; sourceTree = "<group>"; };
+		C56BE83D2D78E51100407B70 /* attdet.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = attdet.c; sourceTree = "<group>"; };
+		C56BE83E2D78E51100407B70 /* bits.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bits.h; sourceTree = "<group>"; };
+		C56BE83F2D78E51100407B70 /* bits.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = bits.c; sourceTree = "<group>"; };
+		C56BE8402D78E51100407B70 /* bwdet.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bwdet.h; sourceTree = "<group>"; };
+		C56BE8412D78E51100407B70 /* bwdet.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = bwdet.c; sourceTree = "<group>"; };
+		C56BE8422D78E51100407B70 /* common.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = common.h; sourceTree = "<group>"; };
+		C56BE8432D78E51100407B70 /* CoreObjC.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = CoreObjC.xcodeproj; sourceTree = "<group>"; };
+		C56BE8442D78E51100407B70 /* energy.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = energy.h; sourceTree = "<group>"; };
+		C56BE8452D78E51100407B70 /* energy.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = energy.c; sourceTree = "<group>"; };
+		C56BE8462D78E51100407B70 /* fastmath.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = fastmath.h; sourceTree = "<group>"; };
+		C56BE8472D78E51100407B70 /* lc3.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lc3.h; sourceTree = "<group>"; };
+		C56BE8482D78E51100407B70 /* lc3.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = lc3.c; sourceTree = "<group>"; };
+		C56BE8492D78E51100407B70 /* lc3_cpp.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lc3_cpp.h; sourceTree = "<group>"; };
+		C56BE84A2D78E51100407B70 /* lc3_private.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lc3_private.h; sourceTree = "<group>"; };
+		C56BE84B2D78E51100407B70 /* ltpf.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ltpf.h; sourceTree = "<group>"; };
+		C56BE84C2D78E51100407B70 /* ltpf.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ltpf.c; sourceTree = "<group>"; };
+		C56BE84D2D78E51100407B70 /* ltpf_arm.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ltpf_arm.h; sourceTree = "<group>"; };
+		C56BE84E2D78E51100407B70 /* ltpf_neon.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ltpf_neon.h; sourceTree = "<group>"; };
+		C56BE84F2D78E51100407B70 /* makefile.mk */ = {isa = PBXFileReference; lastKnownFileType = text; path = makefile.mk; sourceTree = "<group>"; };
+		C56BE8502D78E51100407B70 /* mdct.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mdct.h; sourceTree = "<group>"; };
+		C56BE8512D78E51100407B70 /* mdct.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = mdct.c; sourceTree = "<group>"; };
+		C56BE8522D78E51100407B70 /* mdct_neon.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mdct_neon.h; sourceTree = "<group>"; };
+		C56BE8532D78E51100407B70 /* meson.build */ = {isa = PBXFileReference; lastKnownFileType = text; path = meson.build; sourceTree = "<group>"; };
+		C56BE8542D78E51100407B70 /* PcmConverter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PcmConverter.h; sourceTree = "<group>"; };
+		C56BE8552D78E51100407B70 /* PcmConverter.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PcmConverter.m; sourceTree = "<group>"; };
+		C56BE8562D78E51100407B70 /* plc.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = plc.h; sourceTree = "<group>"; };
+		C56BE8572D78E51100407B70 /* plc.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = plc.c; sourceTree = "<group>"; };
+		C56BE8582D78E51100407B70 /* rnnoise.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = rnnoise.h; sourceTree = "<group>"; };
+		C56BE8592D78E51100407B70 /* sns.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = sns.h; sourceTree = "<group>"; };
+		C56BE85A2D78E51100407B70 /* sns.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = sns.c; sourceTree = "<group>"; };
+		C56BE85B2D78E51100407B70 /* spec.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = spec.h; sourceTree = "<group>"; };
+		C56BE85C2D78E51100407B70 /* spec.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = spec.c; sourceTree = "<group>"; };
+		C56BE85D2D78E51100407B70 /* tables.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = tables.h; sourceTree = "<group>"; };
+		C56BE85E2D78E51100407B70 /* tables.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = tables.c; sourceTree = "<group>"; };
+		C56BE85F2D78E51100407B70 /* tns.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = tns.h; sourceTree = "<group>"; };
+		C56BE8602D78E51100407B70 /* tns.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = tns.c; sourceTree = "<group>"; };
+		C56BE8742D78F28400407B70 /* AOSManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOSManager.swift; sourceTree = "<group>"; };
+		C56BE8762D78F2C300407B70 /* AOSModule.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AOSModule.h; sourceTree = "<group>"; };
+		C56BE8782D78F2E400407B70 /* AOSModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AOSModule.m; sourceTree = "<group>"; };
+		C56BE87A2D79030800407B70 /* ServerComms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerComms.swift; sourceTree = "<group>"; };
+		C56BE87E2D79034C00407B70 /* WebSocketManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketManager.swift; sourceTree = "<group>"; };
+		C56BE8892D793E2E00407B70 /* G1Text.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = G1Text.swift; sourceTree = "<group>"; };
+		C56BE8C62D7D50E600407B70 /* MicrophoneManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneManager.swift; sourceTree = "<group>"; };
+		C5DC28F92D765C2500B3F8D3 /* AugmentOS_Manager-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "AugmentOS_Manager-Bridging-Header.h"; sourceTree = "<group>"; };
+		C5DC28FA2D765C2500B3F8D3 /* ERG1Manager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ERG1Manager.swift; sourceTree = "<group>"; };
+		C5DC29042D765EFA00B3F8D3 /* Enums.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Enums.swift; sourceTree = "<group>"; };
+		C5DC29082D765F5900B3F8D3 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		C5DC29822D77936900B3F8D3 /* CoreCommsService.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = CoreCommsService.m; path = AugmentOS_Manager/CoreCommsService.m; sourceTree = "<group>"; };
+		C5DC29842D77938700B3F8D3 /* CoreCommsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CoreCommsService.swift; path = AugmentOS_Manager/CoreCommsService.swift; sourceTree = "<group>"; };
+		C5E8B1E62DD3C98200E3760B /* MediaManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaManager.swift; sourceTree = "<group>"; };
+		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		FE140319366160A1E25CF788 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = AugmentOS_Manager/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		00E356EB1AD99517003FC87E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2C6E2ACD5A866041DFC29A4C /* libPods-AugmentOS-AugmentOSTests.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		13B07F8C1A680F5B00A75B9A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9DD2E831CD1117E102F9252F /* libPods-AugmentOS.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		00E356EF1AD99517003FC87E /* AugmentOSTests */ = {
+			isa = PBXGroup;
+			children = (
+				00E356F21AD99517003FC87E /* AugmentOSTests.m */,
+				00E356F01AD99517003FC87E /* Supporting Files */,
+			);
+			path = AugmentOSTests;
+			sourceTree = "<group>";
+		};
+		00E356F01AD99517003FC87E /* Supporting Files */ = {
+			isa = PBXGroup;
+			children = (
+				00E356F11AD99517003FC87E /* Info.plist */,
+			);
+			name = "Supporting Files";
+			sourceTree = "<group>";
+		};
+		13B07FAE1A68108700A75B9A /* AugmentOS */ = {
+			isa = PBXGroup;
+			children = (
+				C5DC28DD2D70EC5100B3F8D3 /* BleManager */,
+				13B07FAF1A68108700A75B9A /* AppDelegate.h */,
+				13B07FB01A68108700A75B9A /* AppDelegate.mm */,
+				13B07FB51A68108700A75B9A /* Images.xcassets */,
+				13B07FB61A68108700A75B9A /* Info.plist */,
+				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
+				13B07FB71A68108700A75B9A /* main.m */,
+				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
+				FE140319366160A1E25CF788 /* PrivacyInfo.xcprivacy */,
+				C5DC29822D77936900B3F8D3 /* CoreCommsService.m */,
+				C5DC29842D77938700B3F8D3 /* CoreCommsService.swift */,
+			);
+			name = AugmentOS;
+			sourceTree = "<group>";
+		};
+		2D16E6871FA4F8E400B85C8A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
+				578833B5B52BF706D8BA80F8 /* libPods-AugmentOS.a */,
+				AA0326F611A4F0F4FBBE7ABA /* libPods-AugmentOS-AugmentOSTests.a */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
+			isa = PBXGroup;
+			children = (
+				C51385B82D7F6DFE00710042 /* VAD */,
+				C56BE8612D78E51100407B70 /* CoreObjC */,
+			);
+			name = Libraries;
+			sourceTree = "<group>";
+		};
+		83CBB9F61A601CBA00E9B192 = {
+			isa = PBXGroup;
+			children = (
+				13B07FAE1A68108700A75B9A /* AugmentOS */,
+				832341AE1AAA6A7D00B99B32 /* Libraries */,
+				00E356EF1AD99517003FC87E /* AugmentOSTests */,
+				83CBBA001A601CBA00E9B192 /* Products */,
+				2D16E6871FA4F8E400B85C8A /* Frameworks */,
+				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				98F4EAD8C1C84600BB24DB9E /* Resources */,
+			);
+			indentWidth = 2;
+			sourceTree = "<group>";
+			tabWidth = 2;
+			usesTabs = 0;
+		};
+		83CBBA001A601CBA00E9B192 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				13B07F961A680F5B00A75B9A /* AugmentOS.app */,
+				00E356EE1AD99517003FC87E /* AugmentOSTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		98F4EAD8C1C84600BB24DB9E /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				7BFAFAC57807483494D4A11A /* Montserrat-Bold.ttf */,
+				2217E0C51BEC4E8E87F34504 /* Montserrat-Regular.ttf */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		BBD78D7AC51CEA395F1C20DB /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				8ED6F1C558E4155DF97D5615 /* Pods-AugmentOS_Manager.debug.xcconfig */,
+				833029AF6BED9854BF3A24E2 /* Pods-AugmentOS_Manager.release.xcconfig */,
+				3BE21BF318A2EF469959B54D /* Pods-AugmentOS_Manager-AugmentOS_ManagerTests.debug.xcconfig */,
+				0BB9B4E34B2187FA1E9F3DE2 /* Pods-AugmentOS_Manager-AugmentOS_ManagerTests.release.xcconfig */,
+				111B227623D50BFA15913EC7 /* Pods-AugmentOS.debug.xcconfig */,
+				305B6FD1175E1545623975CB /* Pods-AugmentOS.release.xcconfig */,
+				1B4A0C720C2CC15906C10425 /* Pods-AugmentOS-AugmentOSTests.debug.xcconfig */,
+				256A9E5BBC920F18C66034B6 /* Pods-AugmentOS-AugmentOSTests.release.xcconfig */,
+			);
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		C51385A32D7F6DFE00710042 /* VAD */ = {
+			isa = PBXGroup;
+			children = (
+				C513859F2D7F6DFE00710042 /* VADQuality.swift */,
+				C51385A02D7F6DFE00710042 /* VADState.swift */,
+				C51385A12D7F6DFE00710042 /* VADStrategy.swift */,
+				C51385A22D7F6DFE00710042 /* VADType.swift */,
+			);
+			path = VAD;
+			sourceTree = "<group>";
+		};
+		C51385AB2D7F6DFE00710042 /* Common */ = {
+			isa = PBXGroup;
+			children = (
+				C51385A32D7F6DFE00710042 /* VAD */,
+			);
+			path = Common;
+			sourceTree = "<group>";
+		};
+		C51385B22D7F6DFE00710042 /* Data */ = {
+			isa = PBXGroup;
+			children = (
+				C51385AC2D7F6DFE00710042 /* Configuration.swift */,
+				C51385AD2D7F6DFE00710042 /* ContentData.swift */,
+				C51385AE2D7F6DFE00710042 /* FrameSize.swift */,
+				C51385AF2D7F6DFE00710042 /* Record.swift */,
+				C51385B02D7F6DFE00710042 /* Result.swift */,
+				C51385B12D7F6DFE00710042 /* SampleRate.swift */,
+			);
+			path = Data;
+			sourceTree = "<group>";
+		};
+		C51385B42D7F6DFE00710042 /* Model */ = {
+			isa = PBXGroup;
+			children = (
+				C51385B32D7F6DFE00710042 /* silero_vad.onnx */,
+			);
+			path = Model;
+			sourceTree = "<group>";
+		};
+		C51385B72D7F6DFE00710042 /* Silero */ = {
+			isa = PBXGroup;
+			children = (
+				C51385B42D7F6DFE00710042 /* Model */,
+				C51385B52D7F6DFE00710042 /* SileroVAD.swift */,
+				C51385B62D7F6DFE00710042 /* SileroVADStrategy.swift */,
+			);
+			path = Silero;
+			sourceTree = "<group>";
+		};
+		C51385B82D7F6DFE00710042 /* VAD */ = {
+			isa = PBXGroup;
+			children = (
+				C51385AB2D7F6DFE00710042 /* Common */,
+				C51385B22D7F6DFE00710042 /* Data */,
+				C51385B72D7F6DFE00710042 /* Silero */,
+			);
+			name = VAD;
+			path = Packages/VAD;
+			sourceTree = "<group>";
+		};
+		C56BE83B2D78E51100407B70 /* include */ = {
+			isa = PBXGroup;
+			children = (
+				C56BE83A2D78E51100407B70 /* g1-sample-header.h */,
+			);
+			path = include;
+			sourceTree = "<group>";
+		};
+		C56BE8612D78E51100407B70 /* CoreObjC */ = {
+			isa = PBXGroup;
+			children = (
+				C56BE83B2D78E51100407B70 /* include */,
+				C56BE83C2D78E51100407B70 /* attdet.h */,
+				C56BE83D2D78E51100407B70 /* attdet.c */,
+				C56BE83E2D78E51100407B70 /* bits.h */,
+				C56BE83F2D78E51100407B70 /* bits.c */,
+				C56BE8402D78E51100407B70 /* bwdet.h */,
+				C56BE8412D78E51100407B70 /* bwdet.c */,
+				C56BE8422D78E51100407B70 /* common.h */,
+				C56BE8432D78E51100407B70 /* CoreObjC.xcodeproj */,
+				C56BE8442D78E51100407B70 /* energy.h */,
+				C56BE8452D78E51100407B70 /* energy.c */,
+				C56BE8462D78E51100407B70 /* fastmath.h */,
+				C56BE8472D78E51100407B70 /* lc3.h */,
+				C56BE8482D78E51100407B70 /* lc3.c */,
+				C56BE8492D78E51100407B70 /* lc3_cpp.h */,
+				C56BE84A2D78E51100407B70 /* lc3_private.h */,
+				C56BE84B2D78E51100407B70 /* ltpf.h */,
+				C56BE84C2D78E51100407B70 /* ltpf.c */,
+				C56BE84D2D78E51100407B70 /* ltpf_arm.h */,
+				C56BE84E2D78E51100407B70 /* ltpf_neon.h */,
+				C56BE84F2D78E51100407B70 /* makefile.mk */,
+				C56BE8502D78E51100407B70 /* mdct.h */,
+				C56BE8512D78E51100407B70 /* mdct.c */,
+				C56BE8522D78E51100407B70 /* mdct_neon.h */,
+				C56BE8532D78E51100407B70 /* meson.build */,
+				C56BE8542D78E51100407B70 /* PcmConverter.h */,
+				C56BE8552D78E51100407B70 /* PcmConverter.m */,
+				C56BE8562D78E51100407B70 /* plc.h */,
+				C56BE8572D78E51100407B70 /* plc.c */,
+				C56BE8582D78E51100407B70 /* rnnoise.h */,
+				C56BE8592D78E51100407B70 /* sns.h */,
+				C56BE85A2D78E51100407B70 /* sns.c */,
+				C56BE85B2D78E51100407B70 /* spec.h */,
+				C56BE85C2D78E51100407B70 /* spec.c */,
+				C56BE85D2D78E51100407B70 /* tables.h */,
+				C56BE85E2D78E51100407B70 /* tables.c */,
+				C56BE85F2D78E51100407B70 /* tns.h */,
+				C56BE8602D78E51100407B70 /* tns.c */,
+			);
+			name = CoreObjC;
+			path = Packages/CoreObjC;
+			sourceTree = "<group>";
+		};
+		C56BE8622D78E51100407B70 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C5DC28DD2D70EC5100B3F8D3 /* BleManager */ = {
+			isa = PBXGroup;
+			children = (
+				C520E1B32D874D7D009491C1 /* LocationManager.swift */,
+				C5E8B1E62DD3C98200E3760B /* MediaManager.swift */,
+				C520E1B12D852981009491C1 /* CalendarManager.swift */,
+				C56BE8C62D7D50E600407B70 /* MicrophoneManager.swift */,
+				C56BE8892D793E2E00407B70 /* G1Text.swift */,
+				C56BE87E2D79034C00407B70 /* WebSocketManager.swift */,
+				C5DC28FA2D765C2500B3F8D3 /* ERG1Manager.swift */,
+				C5DC28F92D765C2500B3F8D3 /* AugmentOS_Manager-Bridging-Header.h */,
+				C5DC29042D765EFA00B3F8D3 /* Enums.swift */,
+				C5DC29082D765F5900B3F8D3 /* Models.swift */,
+				C56BE8742D78F28400407B70 /* AOSManager.swift */,
+				C56BE8762D78F2C300407B70 /* AOSModule.h */,
+				C56BE8782D78F2E400407B70 /* AOSModule.m */,
+				C56BE87A2D79030800407B70 /* ServerComms.swift */,
+			);
+			path = BleManager;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		00E356ED1AD99517003FC87E /* AugmentOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 00E357021AD99517003FC87E /* Build configuration list for PBXNativeTarget "AugmentOSTests" */;
+			buildPhases = (
+				0BDD33CD4B31C5A60DA0AF41 /* [CP] Check Pods Manifest.lock */,
+				00E356EA1AD99517003FC87E /* Sources */,
+				00E356EB1AD99517003FC87E /* Frameworks */,
+				00E356EC1AD99517003FC87E /* Resources */,
+				EC2BC4C0001FD3C396001F71 /* [CP] Embed Pods Frameworks */,
+				72D6B7CCDEEC15EA7AA89F57 /* [CP] Copy Pods Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				00E356F51AD99517003FC87E /* PBXTargetDependency */,
+			);
+			name = AugmentOSTests;
+			productName = AugmentOS_ManagerTests;
+			productReference = 00E356EE1AD99517003FC87E /* AugmentOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		13B07F861A680F5B00A75B9A /* AugmentOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "AugmentOS" */;
+			buildPhases = (
+				ACA551E4F02016D78160D035 /* [CP] Check Pods Manifest.lock */,
+				13B07F871A680F5B00A75B9A /* Sources */,
+				13B07F8C1A680F5B00A75B9A /* Frameworks */,
+				13B07F8E1A680F5B00A75B9A /* Resources */,
+				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
+				54D74005244AEBAD40673C6B /* [CP] Embed Pods Frameworks */,
+				E55DD33D5AE53AACDE3F9DF2 /* [CP] Copy Pods Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AugmentOS;
+			productName = AugmentOS_Manager;
+			productReference = 13B07F961A680F5B00A75B9A /* AugmentOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		83CBB9F71A601CBA00E9B192 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1210;
+				TargetAttributes = {
+					00E356ED1AD99517003FC87E = {
+						CreatedOnToolsVersion = 6.2;
+						TestTargetID = 13B07F861A680F5B00A75B9A;
+					};
+					13B07F861A680F5B00A75B9A = {
+						LastSwiftMigration = 1620;
+					};
+				};
+			};
+			buildConfigurationList = 83CBB9FA1A601CBA00E9B192 /* Build configuration list for PBXProject "AugmentOS" */;
+			compatibilityVersion = "Xcode 12.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 83CBB9F61A601CBA00E9B192;
+			productRefGroup = 83CBBA001A601CBA00E9B192 /* Products */;
+			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = C56BE8622D78E51100407B70 /* Products */;
+					ProjectRef = C56BE8432D78E51100407B70 /* CoreObjC.xcodeproj */;
+				},
+			);
+			projectRoot = "";
+			targets = (
+				13B07F861A680F5B00A75B9A /* AugmentOS */,
+				00E356ED1AD99517003FC87E /* AugmentOSTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		00E356EC1AD99517003FC87E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		13B07F8E1A680F5B00A75B9A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C51385CB2D7F6DFE00710042 /* silero_vad.onnx in Resources */,
+				C56BE8642D78E51100407B70 /* makefile.mk in Resources */,
+				C56BE8652D78E51100407B70 /* meson.build in Resources */,
+				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
+				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
+				30C6EEA65F2C40649EF067EB /* Montserrat-Bold.ttf in Resources */,
+				59E61647C0F7495D97C990AD /* Montserrat-Regular.ttf in Resources */,
+				4EED8A3312A7C8A950492018 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/.xcode.env.local",
+				"$(SRCROOT)/.xcode.env",
+			);
+			name = "Bundle React Native code and images";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n\nWITH_ENVIRONMENT=\"$REACT_NATIVE_PATH/scripts/xcode/with-environment.sh\"\nREACT_NATIVE_XCODE=\"$REACT_NATIVE_PATH/scripts/react-native-xcode.sh\"\n\n/bin/sh -c \"$WITH_ENVIRONMENT $REACT_NATIVE_XCODE\"\n";
+		};
+		0BDD33CD4B31C5A60DA0AF41 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-AugmentOS-AugmentOSTests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		54D74005244AEBAD40673C6B /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS/Pods-AugmentOS-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS/Pods-AugmentOS-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-AugmentOS/Pods-AugmentOS-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		72D6B7CCDEEC15EA7AA89F57 /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		ACA551E4F02016D78160D035 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-AugmentOS-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		E55DD33D5AE53AACDE3F9DF2 /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS/Pods-AugmentOS-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS/Pods-AugmentOS-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-AugmentOS/Pods-AugmentOS-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		EC2BC4C0001FD3C396001F71 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-AugmentOS-AugmentOSTests/Pods-AugmentOS-AugmentOSTests-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		00E356EA1AD99517003FC87E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				00E356F31AD99517003FC87E /* AugmentOSTests.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		13B07F871A680F5B00A75B9A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C56BE8C72D7D50E600407B70 /* MicrophoneManager.swift in Sources */,
+				13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */,
+				C56BE87B2D79030800407B70 /* ServerComms.swift in Sources */,
+				C5DC28FB2D765C2500B3F8D3 /* ERG1Manager.swift in Sources */,
+				C5E8B1E72DD3C98200E3760B /* MediaManager.swift in Sources */,
+				C56BE8662D78E51100407B70 /* energy.c in Sources */,
+				C56BE8672D78E51100407B70 /* tables.c in Sources */,
+				C56BE8682D78E51100407B70 /* tns.c in Sources */,
+				C56BE8692D78E51100407B70 /* plc.c in Sources */,
+				C56BE86A2D78E51100407B70 /* lc3.c in Sources */,
+				C56BE86B2D78E51100407B70 /* attdet.c in Sources */,
+				C56BE8792D78F2E400407B70 /* AOSModule.m in Sources */,
+				C56BE86C2D78E51100407B70 /* bits.c in Sources */,
+				C520E1B42D874D7D009491C1 /* LocationManager.swift in Sources */,
+				C520E1B22D852981009491C1 /* CalendarManager.swift in Sources */,
+				C56BE86D2D78E51100407B70 /* PcmConverter.m in Sources */,
+				C56BE86E2D78E51100407B70 /* ltpf.c in Sources */,
+				C56BE86F2D78E51100407B70 /* sns.c in Sources */,
+				C56BE8702D78E51100407B70 /* mdct.c in Sources */,
+				C56BE87F2D79035300407B70 /* WebSocketManager.swift in Sources */,
+				C56BE8712D78E51100407B70 /* bwdet.c in Sources */,
+				C51385B92D7F6DFE00710042 /* VADType.swift in Sources */,
+				C51385BA2D7F6DFE00710042 /* Configuration.swift in Sources */,
+				C51385BB2D7F6DFE00710042 /* VADStrategy.swift in Sources */,
+				C51385BC2D7F6DFE00710042 /* SampleRate.swift in Sources */,
+				C51385BD2D7F6DFE00710042 /* Result.swift in Sources */,
+				C51385C02D7F6DFE00710042 /* VADQuality.swift in Sources */,
+				C51385C12D7F6DFE00710042 /* SileroVAD.swift in Sources */,
+				C51385C32D7F6DFE00710042 /* Record.swift in Sources */,
+				C51385C42D7F6DFE00710042 /* SileroVADStrategy.swift in Sources */,
+				C51385C72D7F6DFE00710042 /* VADState.swift in Sources */,
+				C51385C82D7F6DFE00710042 /* ContentData.swift in Sources */,
+				C51385CA2D7F6DFE00710042 /* FrameSize.swift in Sources */,
+				C56BE88A2D793E2E00407B70 /* G1Text.swift in Sources */,
+				C56BE8722D78E51100407B70 /* spec.c in Sources */,
+				C5DC29092D765F5900B3F8D3 /* Models.swift in Sources */,
+				C5DC29052D765EFA00B3F8D3 /* Enums.swift in Sources */,
+				C5DC29852D77938700B3F8D3 /* CoreCommsService.swift in Sources */,
+				C56BE8752D78F28400407B70 /* AOSManager.swift in Sources */,
+				13B07FC11A68108700A75B9A /* main.m in Sources */,
+				C5DC29832D77936900B3F8D3 /* CoreCommsService.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		00E356F51AD99517003FC87E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 13B07F861A680F5B00A75B9A /* AugmentOS */;
+			targetProxy = 00E356F41AD99517003FC87E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		00E356F61AD99517003FC87E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1B4A0C720C2CC15906C10425 /* Pods-AugmentOS-AugmentOSTests.debug.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				INFOPLIST_FILE = AugmentOS_ManagerTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-ObjC",
+					"-lc++",
+					"$(inherited)",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AugmentOS.app/AugmentOS";
+			};
+			name = Debug;
+		};
+		00E356F71AD99517003FC87E /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 256A9E5BBC920F18C66034B6 /* Pods-AugmentOS-AugmentOSTests.release.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COPY_PHASE_STRIP = NO;
+				INFOPLIST_FILE = AugmentOS_ManagerTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-ObjC",
+					"-lc++",
+					"$(inherited)",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AugmentOS.app/AugmentOS";
+			};
+			name = Release;
+		};
+		13B07F941A680F5B00A75B9A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 111B227623D50BFA15913EC7 /* Pods-AugmentOS.debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = T5XXXL6N36;
+				ENABLE_BITCODE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"${PODS_ROOT}/Headers/Public\"",
+					"\"${PODS_ROOT}/Headers/Public/BVLinearGradient\"",
+					"\"${PODS_ROOT}/Headers/Public/DoubleConversion\"",
+					"\"${PODS_ROOT}/Headers/Public/FBLazyVector\"",
+					"\"${PODS_ROOT}/Headers/Public/RCT-Folly\"",
+					"\"${PODS_ROOT}/Headers/Public/RCTDeprecation\"",
+					"\"${PODS_ROOT}/Headers/Public/RCTRequired\"",
+					"\"${PODS_ROOT}/Headers/Public/RCTTypeSafety\"",
+					"\"${PODS_ROOT}/Headers/Public/RNCAsyncStorage\"",
+					"\"${PODS_ROOT}/Headers/Public/RNGestureHandler\"",
+					"\"${PODS_ROOT}/Headers/Public/RNPermissions\"",
+					"\"${PODS_ROOT}/Headers/Public/RNReanimated\"",
+					"\"${PODS_ROOT}/Headers/Public/RNSVG\"",
+					"\"${PODS_ROOT}/Headers/Public/RNScreens\"",
+					"\"${PODS_ROOT}/Headers/Public/RNVectorIcons\"",
+					"\"${PODS_ROOT}/Headers/Public/React-Core\"",
+					"\"${PODS_ROOT}/Headers/Public/React-Fabric\"",
+					"\"${PODS_ROOT}/Headers/Public/React-FabricComponents\"",
+					"\"${PODS_ROOT}/Headers/Public/React-FabricImage\"",
+					"\"${PODS_ROOT}/Headers/Public/React-ImageManager\"",
+					"\"${PODS_ROOT}/Headers/Public/React-Mapbuffer\"",
+					"\"${PODS_ROOT}/Headers/Public/React-NativeModulesApple\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTAnimation\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTAppDelegate\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTBlob\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTFabric\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTText\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RuntimeApple\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RuntimeCore\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RuntimeHermes\"",
+					"\"${PODS_ROOT}/Headers/Public/React-callinvoker\"",
+					"\"${PODS_ROOT}/Headers/Public/React-cxxreact\"",
+					"\"${PODS_ROOT}/Headers/Public/React-debug\"",
+					"\"${PODS_ROOT}/Headers/Public/React-defaultsnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-domnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-featureflags\"",
+					"\"${PODS_ROOT}/Headers/Public/React-featureflagsnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-graphics\"",
+					"\"${PODS_ROOT}/Headers/Public/React-hermes\"",
+					"\"${PODS_ROOT}/Headers/Public/React-idlecallbacksnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jserrorhandler\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jsi\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jsiexecutor\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jsinspector\"",
+					"\"${PODS_ROOT}/Headers/Public/React-logger\"",
+					"\"${PODS_ROOT}/Headers/Public/React-microtasksnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-nativeconfig\"",
+					"\"${PODS_ROOT}/Headers/Public/React-perflogger\"",
+					"\"${PODS_ROOT}/Headers/Public/React-performancetimeline\"",
+					"\"${PODS_ROOT}/Headers/Public/React-rendererconsistency\"",
+					"\"${PODS_ROOT}/Headers/Public/React-rendererdebug\"",
+					"\"${PODS_ROOT}/Headers/Public/React-runtimeexecutor\"",
+					"\"${PODS_ROOT}/Headers/Public/React-runtimescheduler\"",
+					"\"${PODS_ROOT}/Headers/Public/React-utils\"",
+					"\"${PODS_ROOT}/Headers/Public/ReactCodegen\"",
+					"\"${PODS_ROOT}/Headers/Public/ReactCommon\"",
+					"\"${PODS_ROOT}/Headers/Public/SocketRocket\"",
+					"\"${PODS_ROOT}/Headers/Public/Yoga\"",
+					"\"${PODS_ROOT}/Headers/Public/boost\"",
+					"\"${PODS_ROOT}/Headers/Public/fmt\"",
+					"\"${PODS_ROOT}/Headers/Public/glog\"",
+					"\"${PODS_ROOT}/Headers/Public/hermes-engine\"",
+					"\"${PODS_ROOT}/Headers/Public/lottie-react-native\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-ble-manager\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-bluetooth-classic\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-camera\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-config\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-image-picker\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-safe-area-context\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-slider\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-webview\"",
+					"\"$(PODS_ROOT)/DoubleConversion\"",
+					"\"$(PODS_ROOT)/boost\"",
+					"\"$(PODS_ROOT)/boost\"",
+					"\"$(PODS_ROOT)/boost-for-react-native\"",
+					"\"$(PODS_ROOT)/glog\"",
+					"\"$(PODS_ROOT)/RCT-Folly\"",
+					"\"$(PODS_ROOT)/Headers/Public/React-hermes\"",
+					"\"$(PODS_ROOT)/Headers/Public/hermes-engine\"",
+					"\"$(PODS_ROOT)/../../node_modules/react-native/ReactCommon\"",
+					"\"$(PODS_ROOT)/../../node_modules/react-native-reanimated/apple\"",
+					"\"$(PODS_ROOT)/../../node_modules/react-native-reanimated/Common/cpp\"",
+					"\"$(PODS_ROOT)/Headers/Private/React-Core\"",
+					"$(SRCROOT)/../node_modules/react-native-config/ios",
+				);
+				INFOPLIST_FILE = AugmentOS_Manager/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.augmentos.augmentos;
+				PRODUCT_NAME = AugmentOS;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_OBJC_BRIDGING_HEADER = "BleManager/AugmentOS_Manager-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		13B07F951A680F5B00A75B9A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 305B6FD1175E1545623975CB /* Pods-AugmentOS.release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = T5XXXL6N36;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"${PODS_ROOT}/Headers/Public\"",
+					"\"${PODS_ROOT}/Headers/Public/BVLinearGradient\"",
+					"\"${PODS_ROOT}/Headers/Public/DoubleConversion\"",
+					"\"${PODS_ROOT}/Headers/Public/FBLazyVector\"",
+					"\"${PODS_ROOT}/Headers/Public/RCT-Folly\"",
+					"\"${PODS_ROOT}/Headers/Public/RCTDeprecation\"",
+					"\"${PODS_ROOT}/Headers/Public/RCTRequired\"",
+					"\"${PODS_ROOT}/Headers/Public/RCTTypeSafety\"",
+					"\"${PODS_ROOT}/Headers/Public/RNCAsyncStorage\"",
+					"\"${PODS_ROOT}/Headers/Public/RNGestureHandler\"",
+					"\"${PODS_ROOT}/Headers/Public/RNPermissions\"",
+					"\"${PODS_ROOT}/Headers/Public/RNReanimated\"",
+					"\"${PODS_ROOT}/Headers/Public/RNSVG\"",
+					"\"${PODS_ROOT}/Headers/Public/RNScreens\"",
+					"\"${PODS_ROOT}/Headers/Public/RNVectorIcons\"",
+					"\"${PODS_ROOT}/Headers/Public/React-Core\"",
+					"\"${PODS_ROOT}/Headers/Public/React-Fabric\"",
+					"\"${PODS_ROOT}/Headers/Public/React-FabricComponents\"",
+					"\"${PODS_ROOT}/Headers/Public/React-FabricImage\"",
+					"\"${PODS_ROOT}/Headers/Public/React-ImageManager\"",
+					"\"${PODS_ROOT}/Headers/Public/React-Mapbuffer\"",
+					"\"${PODS_ROOT}/Headers/Public/React-NativeModulesApple\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTAnimation\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTAppDelegate\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTBlob\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTFabric\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RCTText\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RuntimeApple\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RuntimeCore\"",
+					"\"${PODS_ROOT}/Headers/Public/React-RuntimeHermes\"",
+					"\"${PODS_ROOT}/Headers/Public/React-callinvoker\"",
+					"\"${PODS_ROOT}/Headers/Public/React-cxxreact\"",
+					"\"${PODS_ROOT}/Headers/Public/React-debug\"",
+					"\"${PODS_ROOT}/Headers/Public/React-defaultsnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-domnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-featureflags\"",
+					"\"${PODS_ROOT}/Headers/Public/React-featureflagsnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-graphics\"",
+					"\"${PODS_ROOT}/Headers/Public/React-hermes\"",
+					"\"${PODS_ROOT}/Headers/Public/React-idlecallbacksnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jserrorhandler\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jsi\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jsiexecutor\"",
+					"\"${PODS_ROOT}/Headers/Public/React-jsinspector\"",
+					"\"${PODS_ROOT}/Headers/Public/React-logger\"",
+					"\"${PODS_ROOT}/Headers/Public/React-microtasksnativemodule\"",
+					"\"${PODS_ROOT}/Headers/Public/React-nativeconfig\"",
+					"\"${PODS_ROOT}/Headers/Public/React-perflogger\"",
+					"\"${PODS_ROOT}/Headers/Public/React-performancetimeline\"",
+					"\"${PODS_ROOT}/Headers/Public/React-rendererconsistency\"",
+					"\"${PODS_ROOT}/Headers/Public/React-rendererdebug\"",
+					"\"${PODS_ROOT}/Headers/Public/React-runtimeexecutor\"",
+					"\"${PODS_ROOT}/Headers/Public/React-runtimescheduler\"",
+					"\"${PODS_ROOT}/Headers/Public/React-utils\"",
+					"\"${PODS_ROOT}/Headers/Public/ReactCodegen\"",
+					"\"${PODS_ROOT}/Headers/Public/ReactCommon\"",
+					"\"${PODS_ROOT}/Headers/Public/SocketRocket\"",
+					"\"${PODS_ROOT}/Headers/Public/Yoga\"",
+					"\"${PODS_ROOT}/Headers/Public/boost\"",
+					"\"${PODS_ROOT}/Headers/Public/fmt\"",
+					"\"${PODS_ROOT}/Headers/Public/glog\"",
+					"\"${PODS_ROOT}/Headers/Public/hermes-engine\"",
+					"\"${PODS_ROOT}/Headers/Public/lottie-react-native\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-ble-manager\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-bluetooth-classic\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-camera\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-config\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-image-picker\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-safe-area-context\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-slider\"",
+					"\"${PODS_ROOT}/Headers/Public/react-native-webview\"",
+					"\"$(PODS_ROOT)/DoubleConversion\"",
+					"\"$(PODS_ROOT)/boost\"",
+					"\"$(PODS_ROOT)/boost\"",
+					"\"$(PODS_ROOT)/boost-for-react-native\"",
+					"\"$(PODS_ROOT)/glog\"",
+					"\"$(PODS_ROOT)/RCT-Folly\"",
+					"\"$(PODS_ROOT)/Headers/Public/React-hermes\"",
+					"\"$(PODS_ROOT)/Headers/Public/hermes-engine\"",
+					"\"$(PODS_ROOT)/../../node_modules/react-native/ReactCommon\"",
+					"\"$(PODS_ROOT)/../../node_modules/react-native-reanimated/apple\"",
+					"\"$(PODS_ROOT)/../../node_modules/react-native-reanimated/Common/cpp\"",
+					"\"$(PODS_ROOT)/Headers/Private/React-Core\"",
+					"$(SRCROOT)/../node_modules/react-native-config/ios",
+				);
+				INFOPLIST_FILE = AugmentOS_Manager/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+					"-lc++",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.augmentos.augmentos;
+				PRODUCT_NAME = AugmentOS;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_OBJC_BRIDGING_HEADER = "BleManager/AugmentOS_Manager-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		83CBBA201A601CBA00E9B192 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CC = "";
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				COPY_PHASE_STRIP = NO;
+				CXX = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = "";
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.4;
+				LD = "";
+				LDPLUSPLUS = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					/usr/lib/swift,
+					"$(inherited)",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"\"$(SDKROOT)/usr/lib/swift\"",
+					"\"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)\"",
+					"\"$(inherited)\"",
+				);
+				MTL_ENABLE_DEBUG_INFO = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_CPLUSPLUSFLAGS = (
+					"$(OTHER_CFLAGS)",
+					"-DFOLLY_NO_CONFIG",
+					"-DFOLLY_MOBILE=1",
+					"-DFOLLY_USE_LIBCPP=1",
+					"-DFOLLY_CFG_NO_COROUTINES=1",
+					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					" ",
+				);
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				USE_HERMES = true;
+			};
+			name = Debug;
+		};
+		83CBBA211A601CBA00E9B192 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CC = "";
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				COPY_PHASE_STRIP = YES;
+				CXX = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = "";
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.4;
+				LD = "";
+				LDPLUSPLUS = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					/usr/lib/swift,
+					"$(inherited)",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"\"$(SDKROOT)/usr/lib/swift\"",
+					"\"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)\"",
+					"\"$(inherited)\"",
+				);
+				MTL_ENABLE_DEBUG_INFO = NO;
+				OTHER_CPLUSPLUSFLAGS = (
+					"$(OTHER_CFLAGS)",
+					"-DFOLLY_NO_CONFIG",
+					"-DFOLLY_MOBILE=1",
+					"-DFOLLY_USE_LIBCPP=1",
+					"-DFOLLY_CFG_NO_COROUTINES=1",
+					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					" ",
+				);
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
+				SDKROOT = iphoneos;
+				USE_HERMES = true;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		00E357021AD99517003FC87E /* Build configuration list for PBXNativeTarget "AugmentOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				00E356F61AD99517003FC87E /* Debug */,
+				00E356F71AD99517003FC87E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "AugmentOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				13B07F941A680F5B00A75B9A /* Debug */,
+				13B07F951A680F5B00A75B9A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		83CBB9FA1A601CBA00E9B192 /* Build configuration list for PBXProject "AugmentOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				83CBBA201A601CBA00E9B192 /* Debug */,
+				83CBBA211A601CBA00E9B192 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 83CBB9F71A601CBA00E9B192 /* Project object */;
+}

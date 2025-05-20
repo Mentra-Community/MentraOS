@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -19,6 +19,7 @@ import { SETTINGS_KEYS } from '../consts';
 import NavigationBar from '../components/NavigationBar';
 import { getGlassesImage } from '../logic/getGlassesImage';
 import GlobalEventEmitter from '../logic/GlobalEventEmitter';
+import TestFlightDetector from '../bridge/TestFlightDetector';
 
 interface SelectGlassesModelScreenProps {
     isDarkTheme: boolean;
@@ -34,19 +35,41 @@ const SelectGlassesModelScreen: React.FC<SelectGlassesModelScreenProps> = ({
     const { status } = useStatus();
     const [glassesModelNameToPair, setGlassesModelNameToPair] = useState<string | null>(null);
     const [isOnboarding, setIsOnboarding] = useState(false);
+    // Track whether we're running on TestFlight (iOS) or in development mode
+    const [isTestFlightOrDev, setIsTestFlightOrDev] = useState<boolean>(true);
+
+    // Check if running on TestFlight (iOS) or development mode
+    useEffect(() => {
+        async function checkTestFlightOrDev() {
+            setIsTestFlightOrDev(await TestFlightDetector.isTestFlightOrDev());
+        }
+        checkTestFlightOrDev();
+    }, []);
 
     // Platform-specific glasses options
+    // For iOS, conditionally include Simulated Glasses based on TestFlight status
     let glassesOptions = Platform.OS === 'ios'
-        ? [
-            // iOS only supports these two options
-            { modelName: 'Simulated Glasses', key: 'Simulated Glasses' }, // Moved to first position
-            { modelName: 'Even Realities G1', key: 'evenrealities_g1' },
-        ]
+        ? (
+            // iOS: Show Simulated Glasses only in TestFlight or development
+            isTestFlightOrDev
+                ? [
+                    // iOS TestFlight or development - include Simulated Glasses
+                    { modelName: 'Simulated Glasses', key: 'Simulated Glasses' }, // Moved to first position
+                    { modelName: 'Even Realities G1', key: 'evenrealities_g1' },
+                    { modelName: 'Mentra Live', key: 'mentra_live' },
+                ]
+                : [
+                    // iOS App Store production build - hide Simulated Glasses
+                    { modelName: 'Even Realities G1', key: 'evenrealities_g1' },
+                    { modelName: 'Mentra Live', key: 'mentra_live' },
+                ]
+        )
         : [
-            // Android supports all options
+            // Android supports all options (unchanged)
             { modelName: 'Simulated Glasses', key: 'Simulated Glasses' }, // Moved to first position
             { modelName: 'Vuzix Z100', key: 'vuzix-z100' },
             { modelName: 'Mentra Mach1', key: 'mentra_mach1' },
+            { modelName: 'Mentra Live', key: 'mentra_live' },
             { modelName: 'Even Realities G1', key: 'evenrealities_g1' },
             { modelName: 'Audio Wearable', key: 'Audio Wearable' },
         ];
@@ -113,7 +136,10 @@ const SelectGlassesModelScreen: React.FC<SelectGlassesModelScreenProps> = ({
                         fontSize: 16,
                         flex: 1
                     }}>
-                        If you don't have smart glasses yet, you can select "Simulated Glasses".
+                        {Platform.OS === 'ios' && !isTestFlightOrDev 
+                            ? 'Please connect your smart glasses to continue.'
+                            : 'If you don\'t have smart glasses yet, you can select "Simulated Glasses".'
+                        }
                     </Text>
                 </View>
             )}
@@ -126,17 +152,9 @@ const SelectGlassesModelScreen: React.FC<SelectGlassesModelScreenProps> = ({
                             styles.settingItem,
                             {
                                 backgroundColor: theme.cardBg,
-                                borderColor: (isOnboarding && glasses.modelName === 'Simulated Glasses')
-                                    ? '#2196F3'
-                                    : theme.borderColor,
+                                borderColor: theme.borderColor,
                                 borderWidth: 1,
                             },
-                            (isOnboarding && glasses.modelName === 'Simulated Glasses')
-                                ? {
-                                    borderWidth: 2,
-                                    backgroundColor: isDarkTheme ? '#2c2c2c' : '#f0f7ff'
-                                }
-                                : {}
                         ]}
                         onPress={() => {
                             triggerGlassesPairingGuide(glasses.modelName)

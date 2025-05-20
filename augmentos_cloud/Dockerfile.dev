@@ -9,11 +9,23 @@ ENV BUN_INSTALL_GLOBAL_DIR=/root/.bun/install/global
 
 WORKDIR /app
 
-# Set up a specific user for better security (optional)
-# RUN groupadd -r bunuser && useradd -r -g bunuser bunuser
-# USER bunuser
+# Copy package.json and tsconfig files
+COPY package.json tsconfig.json tsconfig.base.json ./
+COPY packages/sdk/package.json packages/sdk/tsconfig.json ./packages/sdk/
+COPY packages/utils/package.json packages/utils/tsconfig.json ./packages/utils/
+COPY packages/agents/package.json packages/agents/tsconfig.json ./packages/agents/
+COPY packages/cloud/package.json packages/cloud/tsconfig.json ./packages/cloud/
+COPY packages/apps/dashboard/package.json packages/apps/dashboard/tsconfig.json ./packages/apps/dashboard/
 
-# Install dependencies
-CMD ["bun", "install"]
+# Copy source files for build
+COPY packages/sdk/src ./packages/sdk/src
+COPY packages/utils/src ./packages/utils/src
+COPY packages/agents/src ./packages/agents/src
+
+# Install dependencies and build packages
+RUN bun install --no-link && \
+    cd packages/sdk && bun run build && \
+    cd ../utils && bun run build && \
+    cd ../agents && bun run build
 
 CMD ["echo", "Ready to run services"]

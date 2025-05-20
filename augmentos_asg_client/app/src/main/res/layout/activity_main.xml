@@ -7,20 +7,20 @@
     android:layout_height="match_parent"
     android:id="@+id/main_container"
     android:theme="@style/AppTheme"
+    android:background="#000000"
     tools:context="com.augmentos.asg_client.MainActivity">
 
-  <androidx.fragment.app.FragmentContainerView
-      android:id="@+id/nav_host_fragment"
-      android:name="androidx.navigation.fragment.NavHostFragment"
-      android:layout_width="0dp"
-      android:layout_height="0dp"
-      android:layout_weight="1"
-      app:defaultNavHost="true"
-
+  <TextView
+      android:id="@+id/main_title"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:text="AugmentOS Launcher"
+      android:textColor="#FFFFFF"
+      android:textSize="24sp"
       app:layout_constraintBottom_toBottomOf="parent"
       app:layout_constraintLeft_toLeftOf="parent"
       app:layout_constraintRight_toRightOf="parent"
-      app:layout_constraintTop_toTopOf="parent"
-      app:navGraph="@navigation/nav_graph" />
+      app:layout_constraintTop_toTopOf="parent" />
+
 
 </androidx.constraintlayout.widget.ConstraintLayout>

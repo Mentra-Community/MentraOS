@@ -11,6 +11,7 @@ import {
 } from 'microsoft-cognitiveservices-speech-sdk';
 import { ExtendedStreamType, StreamType } from './streams';
 import winston from 'winston';
+import pino from 'pino';
 
 /**
  * Session for an application
@@ -77,7 +78,7 @@ export interface UserSession {
   disconnectedAt: Date | null;
 
   // Logger.
-  logger: winston.Logger;
+  logger: pino.Logger;
 
   // App Sessions and App State
   installedApps: AppI[];
@@ -107,9 +108,6 @@ export interface UserSession {
 
   // TODO:
   whatToStream: ExtendedStreamType[];
-
-  // OS Settings.
-  OSSettings: any;
 }
 
 /**

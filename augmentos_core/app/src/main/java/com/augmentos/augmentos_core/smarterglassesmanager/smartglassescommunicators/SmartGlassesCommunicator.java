@@ -3,6 +3,7 @@ package com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunica
 import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import com.augmentos.augmentoslib.events.GlassesTapOutputEvent;
 import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.SmartGlassesConnectionEvent;
@@ -129,6 +130,8 @@ public abstract class SmartGlassesCommunicator {
     public void updateGlassesBrightness(int brightness) {}
     public void updateGlassesAutoBrightness(boolean autoBrightness) {}
     public void updateGlassesHeadUpAngle(int headUpAngle) {}
+    public void updateGlassesDashboardHeight(int height) {}
+    public void updateGlassesDepth(int depth) {}
 
     public void changeSmartGlassesMicrophoneState(boolean isMicrophoneEnabled) {}
     
@@ -140,7 +143,62 @@ public abstract class SmartGlassesCommunicator {
      */
     public void registerAudioProcessingCallback(AudioProcessingCallback callback) {
         this.audioProcessingCallback = callback;
-        System.out.println("SmartGlassesCommunicator: Registered audio callback: " + 
-                          (callback != null ? "NOT NULL" : "NULL") + " in " + this.getClass().getSimpleName());
+        Log.e("SmartGlassesCommunicator", "⭐⭐⭐ REGISTERED AUDIO CALLBACK: " +
+              (callback != null ? "NOT NULL" : "NULL") + " in " + this.getClass().getSimpleName());
+    }
+    
+    /**
+     * Sends a custom command to the smart glasses
+     * This is a default implementation that can be overridden by specific communicators
+     * 
+     * @param commandJson The command in JSON string format
+     */
+    public void sendCustomCommand(String commandJson) {
+        // Default implementation does nothing
+        // Device-specific communicators should override this method
+        // e.g., MentraLiveSGC will handle WiFi credentials commands
+    }
+    
+    /**
+     * Requests the smart glasses to take a photo
+     * Default implementation does nothing - specific communicators should override
+     * 
+     * @param requestId The unique ID for this photo request
+     * @param appId The ID of the app requesting the photo
+     */
+    public void requestPhoto(String requestId, String appId) {
+        // Default implementation does nothing
+        Log.d("SmartGlassesCommunicator", "Photo request not implemented for this device");
+    }
+    
+    /**
+     * Requests the smart glasses to start a video stream
+     * Default implementation does nothing - specific communicators should override
+     * 
+     */
+    public void requestVideoStream() {
+        // Default implementation does nothing
+        Log.d("SmartGlassesCommunicator", "Video stream request not implemented for this device");
+    }
+    
+    /**
+     * Requests the smart glasses to scan for available WiFi networks
+     * Default implementation does nothing - specific communicators should override
+     */
+    public void requestWifiScan() {
+        // Default implementation does nothing
+        Log.d("SmartGlassesCommunicator", "WiFi scan request not implemented for this device");
+    }
+    
+    /**
+     * Sends WiFi credentials to the smart glasses
+     * Default implementation does nothing - specific communicators should override
+     * 
+     * @param ssid The WiFi network name
+     * @param password The WiFi password
+     */
+    public void sendWifiCredentials(String ssid, String password) {
+        // Default implementation does nothing
+        Log.d("SmartGlassesCommunicator", "WiFi credential setting not implemented for this device");
     }
 }

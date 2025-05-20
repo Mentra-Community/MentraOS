@@ -7,7 +7,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "rm -rf dist && bun x tsc -p tsconfig.json",
+    "build": "mkdir -p dist && bun x tsc -p tsconfig.json",
     "postbuild": "cp -r src/public dist/public",
     "start": "bun dist/index.js",
     "dev": "bun --watch src/index.ts",
@@ -18,7 +18,9 @@
     "test:visual": "bun run ./src/services/layout/tests/run-visual-tests.ts",
     "test:display": "bun run ./src/services/layout/tests/run-visual-tests.ts",
     "sentry:sourcemaps": "sentry-cli sourcemaps inject --org pierce-50 --project augmentos-cloud-dev ./dist && sentry-cli sourcemaps upload --org pierce-50 --project augmentos-cloud-dev ./dist",
-    "use-linked": "bun link @augmentos/utils @augmentos/sdk @augmentos/agents"
+    "use-linked": "bun link @augmentos/utils @augmentos/sdk @augmentos/agents",
+    "migrate:permissions": "bun run src/scripts/migrate-permissions.ts",
+    "verify:permissions": "bun run src/scripts/verify-permissions.ts"
   },
   "author": "Isaiah Ballah",
   "devDependencies": {
@@ -42,15 +44,17 @@
     "husky": "^7.0.1",
     "prettier": "^2.3.2",
     "pretty-quick": "^3.1.1",
-    "typescript": "^4.3.5"
+    "typescript": "^5.8.3"
   },
   "dependencies": {
     "@augmentos/sdk": "workspace:*",
     "@augmentos/utils": "workspace:*",
+    "@logtail/pino": "^0.5.4",
     "@sentry/bun": "^9.1.0",
     "@sentry/cli": "^2.42.1",
     "@supabase/supabase-js": "^2.49.1",
     "axios": "^1.7.4",
+    "bun-types": "1.0.17",
     "cookie-parser": "^1.4.5",
     "cors": "^2.8.5",
     "dotenv": "^10.0.0",
@@ -63,6 +67,8 @@
     "mongoose": "^6.5.2",
     "multer": "^1.4.5-lts.1",
     "openai": "^4.28.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
     "posthog-node": "^4.14.0",
     "uuid": "^11.0.5",
     "ws": "^8.18.1"

@@ -26,7 +26,7 @@ setup_permissions([
   # 'Contacts',
   # 'FaceID',
   'LocationAccuracy',
-  'LocationAlways',
+  # 'LocationAlways',
   'LocationWhenInUse',
   # 'MediaLibrary',
   'Microphone',
@@ -48,7 +48,7 @@ end
 
 #use_modular_headers!
 
-target 'AugmentOS_Manager' do
+target 'AugmentOS' do
   config = use_native_modules!
 
   use_react_native!(
@@ -57,7 +57,7 @@ target 'AugmentOS_Manager' do
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
 
-  target 'AugmentOS_ManagerTests' do
+  target 'AugmentOSTests' do
     inherit! :complete
     # Pods for testing
   end

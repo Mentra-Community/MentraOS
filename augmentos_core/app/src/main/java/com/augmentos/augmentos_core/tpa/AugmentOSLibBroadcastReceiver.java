@@ -52,7 +52,8 @@ public class AugmentOSLibBroadcastReceiver extends BroadcastReceiver {
         this.context = context;
         this.filterPkg = AugmentOSGlobalConstants.FROM_TPA_FILTER;
         IntentFilter intentFilter = new IntentFilter(this.filterPkg);
-        context.registerReceiver(this, intentFilter);
+        // Add RECEIVER_EXPORTED flag for Android 13+ compatibility
+        context.registerReceiver(this, intentFilter, Context.RECEIVER_EXPORTED);
     }
 
     public void onReceive(Context context, Intent intent) {

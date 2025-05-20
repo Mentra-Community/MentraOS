@@ -10,15 +10,8 @@
  */
 
 import { WebSocket } from 'ws';
-import { logger } from '@augmentos/utils';
-import {
-  CloudToGlassesMessage,
-  CloudToGlassesMessageType,
-  CloudToTpaMessage,
-  CloudToTpaMessageType,
-  UserSession
-} from '@augmentos/sdk';
-import sessionService from './session.service';
+import { logger as rootLogger} from '../logging';
+const logger = rootLogger.child({ service: 'health-monitor.service' });
 
 // Constants
 const HEARTBEAT_INTERVAL_MS = 15000; // 15 seconds
@@ -63,7 +56,7 @@ export class HealthMonitorService {
       this.logSystemStats();
     }, STATS_INTERVAL_MS);
     
-    logger.info('[health-monitor.service] Health monitor started');
+    logger.info('Health monitor started');
   }
   
   /**
@@ -80,7 +73,7 @@ export class HealthMonitorService {
       this.statsInterval = null;
     }
     
-    logger.info('[health-monitor.service] Health monitor stopped');
+    logger.info('Health monitor stopped');
   }
   
   /**
@@ -211,7 +204,7 @@ export class HealthMonitorService {
     const activeGlassesConnections = this.glassesLastSeen.size;
     const activeTpaConnections = this.tpaLastSeen.size;
     
-    logger.info(`[health-monitor.service] System Stats: 
+    logger.debug(`[health-monitor.service] System Stats: 
       - Glasses Connections: ${activeGlassesConnections}
       - TPA Connections: ${activeTpaConnections}
     `);

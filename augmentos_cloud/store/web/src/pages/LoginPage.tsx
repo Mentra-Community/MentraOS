@@ -69,7 +69,7 @@ const LoginPage: React.FC = () => {
                   button: 'hidden',
                 }
               }}
-              providers={['google']}
+              providers={['google', 'apple']}
               view="sign_in"
               redirectTo={`${window.location.origin}${from}`}
               showLinks={false}

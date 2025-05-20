@@ -14,6 +14,9 @@ import android.content.pm.PackageManager;
 
 import com.augmentos.augmentos_core.augmentos_backend.ServerComms;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * CalendarSystem wraps interactions with the Android Calendar Provider.
  * It offers methods to query for calendar events—specifically the next upcoming event.
@@ -146,13 +149,59 @@ public class CalendarSystem {
     }
 
     /**
+     * Retrieves the next N upcoming events from the device's calendar.
+     *
+     * @param count Number of events to fetch
+     * @return a List of CalendarItem representing the next upcoming events
+     */
+    private List<CalendarItem> getNextUpcomingEvents(int count) {
+        List<CalendarItem> events = new ArrayList<>();
+        if (!hasCalendarPermissions()) {
+            Log.w(TAG, "Calendar permissions are not granted.");
+            return events;
+        }
+
+        ContentResolver contentResolver = context.getContentResolver();
+        String selection = CalendarContract.Events.DTSTART + " >= ?";
+        String[] selectionArgs = new String[]{ String.valueOf(System.currentTimeMillis()) };
+        String sortOrder = CalendarContract.Events.DTSTART + " ASC LIMIT " + count;
+        Uri eventsUri = CalendarContract.Events.CONTENT_URI;
+
+        Cursor cursor = contentResolver.query(eventsUri, null, selection, selectionArgs, sortOrder);
+        if (cursor != null) {
+            while (cursor.moveToNext()) {
+                long eventId = cursor.getLong(cursor.getColumnIndexOrThrow(CalendarContract.Events._ID));
+                String title = cursor.getString(cursor.getColumnIndexOrThrow(CalendarContract.Events.TITLE));
+                long dtStart = cursor.getLong(cursor.getColumnIndexOrThrow(CalendarContract.Events.DTSTART));
+                long dtEnd = cursor.getLong(cursor.getColumnIndexOrThrow(CalendarContract.Events.DTEND));
+                String timeZone = cursor.getString(cursor.getColumnIndexOrThrow(CalendarContract.Events.EVENT_TIMEZONE));
+                events.add(new CalendarItem(eventId, title, dtStart, dtEnd, timeZone));
+            }
+            cursor.close();
+        } else {
+            Log.e(TAG, "Query to calendar content provider failed.");
+        }
+        return events;
+    }
+
+    /**
+     * Send the next 5 calendar events to the server
+     */
+    public void sendNextFiveCalendarEventsToServer() {
+        List<CalendarItem> events = getNextUpcomingEvents(5);
+        for (CalendarItem event : events) {
+            ServerComms.getInstance().sendCalendarEvent(event);
+        }
+    }
+
+    /**
      * Schedule periodic calendar updates
      */
     public final void scheduleCalendarUpdates() {
         calendarSendingRunnableCode = new Runnable() {
             @Override
             public void run() {
-                requestCalendarUpdate(); // Request calendar update
+                sendNextFiveCalendarEventsToServer(); // Send next 5 events
                 calendarSendingLoopHandler.postDelayed(this, calendarSendTime);
             }
         };

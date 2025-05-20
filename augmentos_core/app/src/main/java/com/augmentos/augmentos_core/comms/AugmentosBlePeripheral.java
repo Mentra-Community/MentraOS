@@ -64,7 +64,7 @@ public class AugmentosBlePeripheral {
 
     // Declare this at the class level
     private ByteArrayOutputStream mPartialWriteBuffer = new ByteArrayOutputStream();
-    private boolean isSimulatedPuck = false;
+    private boolean isSimulatedPuck = true;//false;
 
     public AugmentosBlePeripheral(Context context, AugmentOsActionsCallback callback) {
         this.context = context;
@@ -416,6 +416,17 @@ public class AugmentosBlePeripheral {
         }
         sendDataToAugmentOsManager(data.toString());
     }
+    
+    public void sendWifiCredentialsRequestToManager(String deviceModel) {
+        JSONObject data = new JSONObject();
+        try {
+            data.put("need_wifi_credentials", true);
+            data.put("device_model", deviceModel);
+        } catch (JSONException e) {
+            throw new RuntimeException(e);
+        }
+        sendDataToAugmentOsManager(data.toString());
+    }
 
     public void sendAuthErrorToManager() {
         JSONObject data = new JSONObject();
@@ -521,46 +532,49 @@ public class AugmentosBlePeripheral {
             return;
         }
 
-        Log.d(TAG, "Attempt to send data to AugmentOS_Manager via BLE");
-        if (characteristic == null) {
-            Log.e(TAG, "Characteristic not initialized");
-            return;
-        }
-        if (gattServer == null) {
-            Log.e(TAG, " GATT server not initialized");
-            return;
-        }
-        if (connectedDevice == null) {
-            Log.e(TAG, "Unable to send notification. Connected device is not initialized.");
-            return;
-        }
-
-        Log.d(TAG, "Attempting to send data to AugmentOS_Manager:\n" + jsonData);
-
-        // Convert the JSON string to bytes
-        byte[] dataBytes = jsonData.getBytes(StandardCharsets.UTF_8);
-
-        // Calculate maximum chunk size
-        int maxChunkSize = currentMtuSize - 3; // Subtract 3 bytes for ATT protocol overhead
-
-        // Calculate total chunks
-        int totalChunks = (int) Math.ceil((double) dataBytes.length / maxChunkSize);
-
-        // Send each chunk
-        for (int i = 0; i < totalChunks; i++) {
-            int start = i * maxChunkSize;
-            int end = Math.min(start + maxChunkSize, dataBytes.length);
-            byte[] chunk = Arrays.copyOfRange(dataBytes, start, end);
-
-            // Add metadata (e.g., sequence number, total chunks)
-            ByteBuffer buffer = ByteBuffer.allocate(chunk.length + 2);
-            buffer.put((byte) i); // Sequence number
-            buffer.put((byte) totalChunks); // Total chunks
-            buffer.put(chunk);
-
-            // Send the chunk via notification
-            sendNotificationWithDelay(buffer.array(), 50 * i);
-        }
+        Log.d(TAG, "AugmentOSBlePeripheral TODO: remove ble code");
+//
+//
+//        Log.d(TAG, "Attempt to send data to AugmentOS_Manager via BLE");
+//        if (characteristic == null) {
+//            Log.e(TAG, "Characteristic not initialized");
+//            return;
+//        }
+//        if (gattServer == null) {
+//            Log.e(TAG, " GATT server not initialized");
+//            return;
+//        }
+//        if (connectedDevice == null) {
+//            Log.e(TAG, "Unable to send notification. Connected device is not initialized.");
+//            return;
+//        }
+//
+//        Log.d(TAG, "Attempting to send data to AugmentOS_Manager:\n" + jsonData);
+//
+//        // Convert the JSON string to bytes
+//        byte[] dataBytes = jsonData.getBytes(StandardCharsets.UTF_8);
+//
+//        // Calculate maximum chunk size
+//        int maxChunkSize = currentMtuSize - 3; // Subtract 3 bytes for ATT protocol overhead
+//
+//        // Calculate total chunks
+//        int totalChunks = (int) Math.ceil((double) dataBytes.length / maxChunkSize);
+//
+//        // Send each chunk
+//        for (int i = 0; i < totalChunks; i++) {
+//            int start = i * maxChunkSize;
+//            int end = Math.min(start + maxChunkSize, dataBytes.length);
+//            byte[] chunk = Arrays.copyOfRange(dataBytes, start, end);
+//
+//            // Add metadata (e.g., sequence number, total chunks)
+//            ByteBuffer buffer = ByteBuffer.allocate(chunk.length + 2);
+//            buffer.put((byte) i); // Sequence number
+//            buffer.put((byte) totalChunks); // Total chunks
+//            buffer.put(chunk);
+//
+//            // Send the chunk via notification
+//            sendNotificationWithDelay(buffer.array(), 50 * i);
+//        }
     }
 
     private void sendNotificationWithDelay(byte[] data, int delayMillis) {

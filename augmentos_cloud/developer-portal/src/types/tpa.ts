@@ -1,5 +1,19 @@
 import { TpaType } from '@augmentos/sdk';
 
+// Define permission types
+export enum PermissionType {
+  MICROPHONE = 'MICROPHONE',
+  LOCATION = 'LOCATION',
+  CALENDAR = 'CALENDAR',
+  NOTIFICATIONS = 'NOTIFICATIONS',
+  ALL = 'ALL'
+}
+
+export interface Permission {
+  type: PermissionType;
+  description?: string;
+}
+
 export interface TPA {
   id: string;
   packageName: string;
@@ -16,4 +30,5 @@ export interface TPA {
   reviewNotes?: string; // Review notes from app review
   reviewedBy?: string; // Admin who reviewed the app
   reviewedAt?: string; // When the app was reviewed
+  permissions?: Permission[]; // Permissions required by the app
 }
