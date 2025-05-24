@@ -469,7 +469,55 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
               }
             />
           </TouchableOpacity>
+              
+              {/* Check OTA Glasses */}
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => {
+              // Trigger OTA check for connected glasses
+              if (status.glasses_info) {
+                navigation.navigate('GlassesOtaCheckScreen', {
+                  deviceModel: status.glasses_info?.model_name || 'Glasses'
+                });
+              } else {
+                showAlert(
+                  'Not Available',
+                  'No connected glasses found to check for updates.',
+                  [{ text: 'OK' }],
+                  {
+                    isDarkTheme,
+                    iconName: 'download',
+                    iconColor: '#4CAF50'
+                  }
+                );
+              }
+            }}>
+            <View style={styles.settingTextContainer}>
+              <Text
+                style={[
+                  styles.label,
+                  isDarkTheme ? styles.lightText : styles.darkText,
+                  !status.glasses_info && styles.disabledItem,
+                ]}>
+                Glasses OTA Check
+              </Text>
+              <Text
+                style={[
+                  styles.value,
+                  isDarkTheme ? styles.lightSubtext : styles.darkSubtext,
+                  !status.glasses_info && styles.disabledItem,
+                ]}>
+                Check for software updates on your smart glasses.
+              </Text>
+            </View>
+            <Icon
+              name="angle-right"
+              size={20}
+              color={isDarkTheme ? styles.lightIcon.color : styles.darkIcon.color}
+            />
+          </TouchableOpacity>
 
+          
           {/* Developer Settings */}
           <TouchableOpacity
             style={styles.settingItem}
@@ -502,7 +550,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
             <Text style={[styles.label, styles.redText]}>Report an Issue</Text>
           </View>
         </TouchableOpacity> */}
-
+            
           {/* Forget Glasses */}
           <TouchableOpacity
             style={styles.settingItem}

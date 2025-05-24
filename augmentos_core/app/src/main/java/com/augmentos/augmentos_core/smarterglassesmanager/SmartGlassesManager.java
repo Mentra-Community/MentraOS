@@ -919,4 +919,8 @@ public class SmartGlassesManager extends Service {
 
         return null;
     }
+
+    public void sendInstallNewReleaseCommand(){
+        smartGlassesRepresentative.sendInstallNewReleaseCommandToMentraLive();
+    }
 }

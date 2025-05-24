@@ -186,6 +186,10 @@ public class AugmentOsManagerMessageParser {
                     callback.setPreferredMic(mic);
                     break;
 
+                case "install_new_release":
+                    callback.startOtaUpdate();
+                    break;
+
                 default:
                     Log.w(TAG, "Unknown command: " + command);
             }

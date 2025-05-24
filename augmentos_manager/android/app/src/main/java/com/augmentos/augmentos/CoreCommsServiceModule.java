@@ -94,6 +94,7 @@ public class CoreCommsServiceModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void sendCommandToCore(String jsonString) {
+            Log.d("zxcBLE_CMD", "Received from JS: " + jsonString);
         if (!isInitialized || !AugmentOSCommunicator.getInstance().isInitialized()) {
             startService();
         }

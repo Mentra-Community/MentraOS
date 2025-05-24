@@ -154,6 +154,7 @@ package="com.augmentos.asg_client">
 
   <queries>
     <package android:name="com.augmentos.augmentos" />
+    <package android:name="com.augmentos.asg_client" />
   </queries>
 
 </manifest>

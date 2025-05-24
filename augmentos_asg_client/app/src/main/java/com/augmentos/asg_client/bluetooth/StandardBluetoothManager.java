@@ -243,6 +243,7 @@ public class StandardBluetoothManager extends BaseBluetoothManager {
             // IMPORTANT: Accept writes to BOTH characteristics for maximum compatibility
             if (isRxChar || isTxChar) {
                 if (value != null) {
+                    Log.d("zxcDataManager", "standart data manager");
                     // Notify our listeners of the received data
                     notifyDataReceived(value);
                     

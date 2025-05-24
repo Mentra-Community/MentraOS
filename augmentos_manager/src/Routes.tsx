@@ -29,6 +29,7 @@ import { ModalProvider } from './utils/AlertUtils';
 import SelectGlassesModelScreen from './screens/SelectGlassesModelScreen';
 import GlassesPairingGuideScreen from './screens/GlassesPairingGuideScreen';
 import SelectGlassesBluetoothScreen from './screens/SelectGlassesBluetoothScreen';
+import GlassesOtaCheckScreen from './screens/GlassesOtaCheckScreen';
 import PhoneNotificationSettings from './screens/PhoneNotificationSettings';
 import { SearchResultsProvider } from './providers/SearchResultsContext';
 import AppSettings from './screens/AppSettings';
@@ -520,6 +521,17 @@ const Routes: React.FC<{ isDarkTheme: boolean, toggleTheme: () => void }> = ({ i
               options={{ title: 'Finding Glasses' }}>
               {props => (
                 <SelectGlassesBluetoothScreen
+                  {...props}
+                  toggleTheme={toggleTheme}
+                  isDarkTheme={isDarkTheme}
+                />
+              )}
+            </Stack.Screen>
+            <Stack.Screen
+              name="GlassesOtaCheckScreen"
+              options={{ title: 'Glasses OTA Check' }}>
+              {props => (
+                <GlassesOtaCheckScreen
                   {...props}
                   toggleTheme={toggleTheme}
                   isDarkTheme={isDarkTheme}

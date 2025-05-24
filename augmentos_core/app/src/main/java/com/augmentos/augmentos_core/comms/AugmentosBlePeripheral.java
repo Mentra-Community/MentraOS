@@ -98,7 +98,6 @@ public class AugmentosBlePeripheral {
     @Subscribe
     public void onManagerToCoreRequestEvent(ManagerToCoreRequestEvent event) {
         try {
-//            Log.d(TAG,"Received ManagerToCoreRequestEvent: " + event.jsonData);
             this.parser.parseMessage(event.jsonData);
 
             if (!isSimulatedPuck) {

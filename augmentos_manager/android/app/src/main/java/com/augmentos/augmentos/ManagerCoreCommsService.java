@@ -39,6 +39,7 @@ public class ManagerCoreCommsService extends Service {
     }
 
     public void sendCommandToCore(String jsonString) {
+        Log.d("zxczxc","asdadad asd  " +jsonString);
         // Forward to new implementation
         AugmentOSCommunicator.getInstance().sendCommandToCore(jsonString);
     }

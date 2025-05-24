@@ -87,6 +87,7 @@ public class ManagerCoreCommsServiceModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void sendCommandToCore(String jsonString) {
+        Log.d("zxc" , "magaerCoreCommServiceModule "+jsonString);
         if (!AugmentOSCommunicator.getInstance().isInitialized()) {
             startService();
         }

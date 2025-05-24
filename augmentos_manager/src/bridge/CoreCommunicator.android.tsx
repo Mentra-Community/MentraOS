@@ -673,6 +673,21 @@ export class CoreCommunicator extends EventEmitter {
       },
     });
   }
+
+  async sendVersionUpdateRequest() {
+    await this.sendData({
+      command: 'install_new_release'
+    });
+    var res = await this.validateResponseFromCore();
+    if(res){
+      console.log("core is alive");
+    }else{
+      console.log("core is deaf");
+    }
+    
+    //await this.sendData({ C: "install_new_release" });
+    //await this.sendData({"C":"{\"type\":\"set_mic_state\",\"enabled\":false}","W":1});
+}
 }
 
 // Create and export the singleton instance

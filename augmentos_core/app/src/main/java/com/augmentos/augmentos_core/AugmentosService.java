@@ -2247,4 +2247,9 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             ServerComms.getInstance().connectWebSocket(authHandler.getCoreToken());
         }
     }
+
+    @Override
+    public void startOtaUpdate() {
+        smartGlassesManager.sendInstallNewReleaseCommand();
+    }
 }

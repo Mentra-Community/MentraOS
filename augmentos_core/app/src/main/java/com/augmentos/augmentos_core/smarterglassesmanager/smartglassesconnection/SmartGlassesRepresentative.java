@@ -549,4 +549,8 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
             Log.e(TAG, "Error handling permission error", e);
         }
     }
+
+    public void sendInstallNewReleaseCommandToMentraLive(){
+            ((MentraLiveSGC) smartGlassesCommunicator).installNewRelease();
+    }
 }

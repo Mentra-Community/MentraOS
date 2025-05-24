@@ -882,6 +882,7 @@ public class MentraLiveSGC extends SmartGlassesCommunicator {
         if (data != null) {
             sendQueue.add(data);
             
+            
             // Trigger queue processing if not already running
             handler.removeCallbacks(processSendQueueRunnable);
             handler.post(processSendQueueRunnable);
@@ -1808,8 +1809,10 @@ public class MentraLiveSGC extends SmartGlassesCommunicator {
             // Format with start/end codes using the same packing function
             byte[] packedData = packCommand(jsonStr);
             
+            Log.d("zxcMentraLiveSGC", "added to queue");
             // Queue the data for sending
             queueData(packedData);
+
             
         } catch (JSONException e) {
             Log.e(TAG, "Error creating data JSON", e);
@@ -1852,6 +1855,18 @@ public class MentraLiveSGC extends SmartGlassesCommunicator {
             command.put("type", "stop_video_stream");
             sendJson(command);
         } catch (JSONException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void installNewRelease(){
+        try {
+                        Log.d(TAG, "zxc this Current MTU size before installNewRelease command: " + currentMtu);
+            JSONObject command = new JSONObject();
+            command.put("type", "install_new_release");
+            sendJson(command);
+        } catch (JSONException e) {
+            Log.d("zxcErr", "cannot send installNewRelease command on MentraLiveSGC");
             throw new RuntimeException(e);
         }
     }
