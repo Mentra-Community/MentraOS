@@ -185,9 +185,10 @@ const DeveloperSettingsScreen: React.FC<DeveloperSettingsScreenProps> = ({isDark
               <Text style={styles.warningText}>Warning: These settings may break the app. Use at your own risk.</Text>
             </View>
 
+            {/* Custom Backend URL - only show in TestFlight or dev builds */}
             <View style={styles.settingItem}>
-              <View style={styles.settingTextContainer}>
-                <Text style={[styles.label, isDarkTheme ? styles.lightText : styles.darkText]}>Custom Backend URL</Text>
+                <View style={styles.settingTextContainer}>
+                  <Text style={[styles.label, isDarkTheme ? styles.lightText : styles.darkText]}>Custom Backend URL</Text>
                 <Text style={[styles.value, isDarkTheme ? styles.lightSubtext : styles.darkSubtext]}>
                   Override the default backend server URL. Leave blank to use default.
                   {savedCustomUrl && `\nCurrently using: ${savedCustomUrl}`}

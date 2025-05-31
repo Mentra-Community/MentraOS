@@ -68,21 +68,15 @@
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>external-accessory</string>
 		<string>audio</string>
 		<string>fetch</string>
 		<string>bluetooth-central</string>
-		<string>location</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>arm64</string>
-	</array>
-	<key>UISupportedExternalAccessoryProtocols</key>
-	<array>
-		<string>com.augmentos</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

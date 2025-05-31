@@ -229,7 +229,7 @@ const Routes: React.FC<{ isDarkTheme: boolean, toggleTheme: () => void }> = ({ i
             </Stack.Screen>
             <Stack.Screen
               name="DeveloperSettingsScreen"
-              options={{ title: 'Developer Settings' }}>
+              options={{ title: 'Experimental Settings' }}>
               {props => (
                 <DeveloperSettingsScreen
                   {...props}

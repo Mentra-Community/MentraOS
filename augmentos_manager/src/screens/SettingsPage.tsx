@@ -470,7 +470,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
             />
           </TouchableOpacity>
 
-          {/* Developer Settings */}
+          {/* Experimental Settings */}
           <TouchableOpacity
             style={styles.settingItem}
             onPress={() => {
@@ -482,7 +482,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                   styles.label,
                   isDarkTheme ? styles.lightText : styles.darkText,
                 ]}>
-                Developer Settings
+                Experimental Settings
               </Text>
             </View>
             <Icon
