@@ -75,6 +75,13 @@ public class MediaCaptureService {
     }
 
     /**
+     * Interface for sending coordinates via BLE
+     */
+    public interface VpsCoordinateCallback {
+        void onVpsCoordinates(String requestId, float x, float y, float z, float qx, float qy, float qz, float qw, float confidence);
+    }
+
+    /**
      * Constructor
      *
      * @param context           Application context
@@ -567,7 +574,7 @@ public class MediaCaptureService {
      * Take a photo for VPS and upload it directly to VPS server
      * This is for debugging purposes only
      */
-    public void takeDebugVpsPhotoAndUpload() {
+    public void takeDebugVpsPhotoAndUpload(VpsCoordinateCallback vpsCallback) {
         Log.d(TAG, "DEBUG: Taking photo for VPS debug upload");
 
         // Generate a timestamp for the photo filename
@@ -597,7 +604,7 @@ public class MediaCaptureService {
                             }
 
                             // Upload the photo to VPS debug server
-                            uploadPhotoToVpsServer(filePath, requestId);
+                            uploadPhotoToVpsServer(filePath, requestId, vpsCallback);
                         }
 
                         @Override
@@ -666,7 +673,7 @@ public class MediaCaptureService {
      * DEBUG FUNCTION: Upload photo to VPS server at the specified debug URL
      * This is for debugging purposes only.
      */
-    private void uploadPhotoToVpsServer(String photoFilePath, String requestId) {
+    private void uploadPhotoToVpsServer(String photoFilePath, String requestId, VpsCoordinateCallback vpsCallback) {
         // Upload the photo to the VPS server
         new Thread(() -> {
             try {
@@ -778,6 +785,10 @@ public class MediaCaptureService {
 
                     // TODO: You could do something with this pose information here
                     // For example, display it on the glasses or send it to another application
+
+                    if (vpsCallback != null) {
+                        vpsCallback.onVpsCoordinates(requestId, x, y, z, qx, qy, qz, qw, confidence);
+                    }
 
                 } catch (JSONException e) {
                     Log.e(TAG, "DEBUG: Error parsing VPS pose data: " + e.getMessage());

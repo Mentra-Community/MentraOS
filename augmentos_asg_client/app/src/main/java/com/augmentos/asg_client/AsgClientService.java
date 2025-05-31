@@ -109,6 +109,16 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // Media capture service
     private MediaCaptureService mMediaCaptureService;
 
+    // 1. Add enum for photo capture mode at the top of the class
+    private enum PhotoCaptureMode {
+        SAVE_LOCALLY,
+        VPS,
+        BOTH
+    }
+
+    // 2. Add a field to store the current mode
+    private PhotoCaptureMode currentPhotoMode = PhotoCaptureMode.SAVE_LOCALLY;
+
     // ---------------------------------------------
     // ServiceConnection for the AugmentosService
     // ---------------------------------------------
@@ -449,7 +459,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 stopForeground(true);
                 stopSelf();
 
-                // If we’re bound to AugmentosService, unbind
+                // If we're bound to AugmentosService, unbind
                 if (isAugmentosBound) {
                     unbindService(augmentosConnection);
                     isAugmentosBound = false;
@@ -489,7 +499,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) {
-            // Fallback - if manager is null, we can’t create a channel, but we can build a basic notification
+            // Fallback - if manager is null, we can't create a channel, but we can build a basic notification
             return new NotificationCompat.Builder(this, myChannelId)
                     .setContentTitle(notificationAppName)
                     .setContentText(notificationDescription)
@@ -523,7 +533,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
 
     /**
-     * Called when we’re destroyed. Good place to unbind from services if needed.
+     * Called when we're destroyed. Good place to unbind from services if needed.
      */
     @Override
     public void onDestroy() {
@@ -606,7 +616,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     }
 
     /**
-     * If needed, you can check whether we’re bound to AugmentosService,
+     * If needed, you can check whether we're bound to AugmentosService,
      * or retrieve the instance (e.g. for Activity usage).
      */
     public AugmentosService getAugmentosService() {
@@ -1327,6 +1337,28 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 case "":
                     Log.d(TAG, "Received data with no type field: " + dataToProcess);
                     break;
+                case "set_photo_mode": {
+                    String mode = dataToProcess.optString("mode", "save_locally");
+                    switch (mode) {
+                        case "save_locally":
+                            currentPhotoMode = PhotoCaptureMode.SAVE_LOCALLY;
+                            break;
+                        case "vps":
+                            currentPhotoMode = PhotoCaptureMode.VPS;
+                            break;
+                        case "both":
+                            currentPhotoMode = PhotoCaptureMode.BOTH;
+                            break;
+                    }
+                    // Optionally send an ACK back to the phone
+                    JSONObject ack = new JSONObject();
+                    ack.put("type", "set_photo_mode_ack");
+                    ack.put("mode", mode);
+                    if (bluetoothManager != null && bluetoothManager.isConnected()) {
+                        bluetoothManager.sendData(ack.toString().getBytes());
+                    }
+                    break;
+                }
 
                 default:
                     Log.w(TAG, "Unknown message type: " + type);
@@ -1349,8 +1381,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     getMediaCaptureService().stopVideoRecording();
                 } else {
                     // Otherwise handle as normal photo capture
-                    getMediaCaptureService().handlePhotoButtonPress();
-                    //handleButtonPressForVpsDemo();
+                    handlePhotoCaptureWithMode();
                 }
                 break;
 
@@ -2150,4 +2181,68 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // Use existing RTMP implementation in the service
     // Our StreamPackLite-based implementation (RTMPStreamingExample) can be used
     // if the existing RTMP implementation needs to be enhanced in the future
+
+    // ... existing code ...
+    // In the method that handles photo capture (e.g., handlePhotoButtonPress or similar):
+    private void handlePhotoCaptureWithMode() {
+        switch (currentPhotoMode) {
+            case SAVE_LOCALLY:
+                if (mMediaCaptureService != null) {
+                    mMediaCaptureService.takePhotoLocally();
+                }
+                break;
+            case VPS:
+                if (mMediaCaptureService != null) {
+                    mMediaCaptureService.takeDebugVpsPhotoAndUpload((requestId, x, y, z, qx, qy, qz, qw, confidence) -> {
+                        try {
+                            org.json.JSONObject coordMsg = new org.json.JSONObject();
+                            coordMsg.put("type", "vps_coordinates");
+                            coordMsg.put("requestId", requestId);
+                            coordMsg.put("x", x);
+                            coordMsg.put("y", y);
+                            coordMsg.put("z", z);
+                            coordMsg.put("qx", qx);
+                            coordMsg.put("qy", qy);
+                            coordMsg.put("qz", qz);
+                            coordMsg.put("qw", qw);
+                            coordMsg.put("confidence", confidence);
+                            if (bluetoothManager != null && bluetoothManager.isConnected()) {
+                                bluetoothManager.sendData(coordMsg.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Failed to send VPS coordinates via BLE", e);
+                        }
+                    });
+                }
+                break;
+            case BOTH:
+                if (mMediaCaptureService != null) {
+                    mMediaCaptureService.takePhotoLocally();
+                    mMediaCaptureService.takeDebugVpsPhotoAndUpload((requestId, x, y, z, qx, qy, qz, qw, confidence) -> {
+                        try {
+                            org.json.JSONObject coordMsg = new org.json.JSONObject();
+                            coordMsg.put("type", "vps_coordinates");
+                            coordMsg.put("requestId", requestId);
+                            coordMsg.put("x", x);
+                            coordMsg.put("y", y);
+                            coordMsg.put("z", z);
+                            coordMsg.put("qx", qx);
+                            coordMsg.put("qy", qy);
+                            coordMsg.put("qz", qz);
+                            coordMsg.put("qw", qw);
+                            coordMsg.put("confidence", confidence);
+                            if (bluetoothManager != null && bluetoothManager.isConnected()) {
+                                bluetoothManager.sendData(coordMsg.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Failed to send VPS coordinates via BLE", e);
+                        }
+                    });
+                }
+                break;
+        }
+    }
+    // ... existing code ...
+    // Replace any direct photo capture calls (e.g., in parseK900Command or button handlers) with handlePhotoCaptureWithMode();
+    // ... existing code ...
 }
