@@ -1,3 +1,4 @@
+import { BackHandler } from "react-native";
 import React from 'react';
 import { Alert, AlertButton } from 'react-native';
 import BasicDialog from "@/components/ignite/BasicDialog"
@@ -73,6 +74,19 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
     iconColor?: string;
     icon?: React.ReactNode;
   }>({});
+
+  React.useEffect(() => {
+    const backHandler = () => {
+      if (visible) {
+        return true; // prevent default back behavior
+      }
+      return false;
+    };
+
+    const subscription = BackHandler.addEventListener("hardwareBackPress", backHandler);
+
+    return () => subscription.remove();
+  }, [visible]);
 
   React.useEffect(() => {
     // Register the modal functions for global access
