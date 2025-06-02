@@ -1,4 +1,4 @@
-import React, {useMemo, useState, useRef} from "react"
+import React, {useMemo, useState, useRef, useEffect} from "react"
 import {View, ScrollView, ViewStyle, TextStyle} from "react-native"
 import {useAppStatus} from "@/contexts/AppStatusProvider"
 import {useNavigation} from "@react-navigation/native"
@@ -12,6 +12,7 @@ import {useAppTheme} from "@/utils/useAppTheme"
 import {router} from "expo-router"
 import TempActivateAppWindow from "./TempActivateAppWindow"
 import {AppListItem} from "./AppListItem"
+import { loadBoolean, saveBoolean } from "@/utils/storage/storage"
 
 export default function AppsActiveList() {
   const {appStatus, refreshAppStatus, optimisticallyStopApp, clearPendingOperation} = useAppStatus()
@@ -19,6 +20,17 @@ export default function AppsActiveList() {
   const [_isLoading, setIsLoading] = useState(false)
   const navigation = useNavigation<NavigationProps>()
   const scrollViewRef = useRef<ScrollView>(null)
+  const [showTempActivate, setShowTempActivate] = useState(false)
+
+  useEffect(() => {
+    const hasSeen = loadBoolean("hasSeenTempActivate")
+    console.log("zxc hasseen", hasSeen);
+
+    if (!hasSeen) {
+      setShowTempActivate(true)
+      saveBoolean("hasSeenTempActivate", true)
+    }
+  }, [])
 
   const stopApp = async (packageName: string) => {
     console.log("STOP APP")
@@ -77,7 +89,8 @@ export default function AppsActiveList() {
           </>
         ) : (
           <>
-            <TempActivateAppWindow />
+          
+            {showTempActivate && <TempActivateAppWindow />}
             <EmptyAppsView
               statusMessageKey={"home:noActiveApps"}
               activeAppsMessageKey={"home:emptyActiveAppListInfo"}

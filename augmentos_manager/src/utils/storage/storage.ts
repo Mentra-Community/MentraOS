@@ -31,6 +31,34 @@ export function saveString(key: string, value: string): boolean {
 }
 
 /**
+ * Saves a boolean to storage.
+ *
+ * @param key The key to store.
+ * @param value The boolean value to store.
+ */
+export function saveBoolean(key: string, value: boolean): boolean {
+  try {
+    storage.set(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Loads a boolean from storage.
+ *
+ * @param key The key to fetch.
+ */
+export function loadBoolean(key: string): boolean | null {
+  try {
+    return storage.getBoolean(key) ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Loads something from storage and runs it thru JSON.parse.
  *
  * @param key The key to fetch.
