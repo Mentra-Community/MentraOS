@@ -112,6 +112,7 @@ const en = {
       confirmNewPassword: "Confirm your new password",
       updatePassword: "Update Password",
       requestDataExport: "Request Data Export",
+      requestDataExportMessage: "Would you like to receive a copy of your data via email?",
       deleteAccount: "Delete Account",
       errorGettingUserInfo: "Error getting user info.",
       dataExportTitle: "Data Export Requested",
