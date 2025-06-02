@@ -18,6 +18,7 @@ import {getBatteryColor} from "@/utils/getBatteryIcon"
 import SunIcon from "assets/icons/component/SunIcon"
 // import {} from "assets/icons/"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
+import { BatteryChargingIcon } from "assets/icons/component/BatteryChargingIcon"
 
 export const ConnectDeviceButton = () => {
   const {status} = useStatus()
@@ -237,7 +238,7 @@ export function DeviceToolbar() {
       <View style={{flexDirection: "row", alignItems: "center", gap: 6}}>
         {status.glasses_info?.battery_life != -1 ? (
           <>
-            <Icon icon="battery" size={18} color={theme.colors.text} />
+            <BatteryChargingIcon size={18} color={theme.colors.text}/>
             <Text style={{color: theme.colors.text}}>{status.glasses_info?.battery_life}%</Text>
           </>
         ) : (

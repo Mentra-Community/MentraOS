@@ -280,16 +280,17 @@ export default function InactiveAppList() {
         // neededPermissions.map(permission => ({text: permission})),
         [
           {
-            text: translate("common:ok"),
+            text: translate("common:cancel"),
+            style: "cancel",
+          },
+          {
+            text: translate("common:continue"),
             onPress: async () => {
               await requestPermissions(neededPermissions)
               startApp(packageName)
             },
           },
-          {
-            text: translate("common:cancel"),
-            style: "cancel",
-          },
+          
         ],
         {
           iconName: "information-outline",
