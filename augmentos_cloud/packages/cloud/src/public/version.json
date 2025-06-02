@@ -1,0 +1,5 @@
+{
+  "versionCode": 2,
+  "apkUrl": "https://your-server-domain/update.apk",
+  "sha256": "d41d8cd98f00b204e9800998ecf8427e"
+} 

@@ -44,6 +44,14 @@
                 <action android:name="com.augmentos.asg_client.ACTION_INSTALL_OTA" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".receiver.WifiConnectedReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
+            </intent-filter>
+        </receiver>
     </application>
     <queries>
         <package android:name="com.augmentos.asg_client" />

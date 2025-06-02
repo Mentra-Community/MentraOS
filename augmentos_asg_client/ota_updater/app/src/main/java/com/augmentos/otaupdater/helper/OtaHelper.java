@@ -56,8 +56,21 @@ public class OtaHelper {
                 int serverVersion = json.getInt("versionCode");
                 String apkUrl = json.getString("apkUrl");
 
-
                 long metaDataVer = getMetadataVersion();
+
+                // Check if APK exists and is older than 3 hours
+                File apkFile = new File(Constants.APK_FULL_PATH);
+                if (apkFile.exists()) {
+                    long lastModified = apkFile.lastModified();
+                    long now = System.currentTimeMillis();
+                    long ageMs = now - lastModified;
+                    long threeHoursMs = 3 * 60 * 60 * 1000L;
+                    if (ageMs > threeHoursMs) {
+                        Log.d(TAG, "Existing APK is older than 3 hours. Deleting and forcing new download.");
+                        boolean deleted = apkFile.delete();
+                        Log.d(TAG, "Old APK deleted: " + deleted);
+                    }
+                }
 
                 if (serverVersion > currentVersion && metaDataVer < serverVersion) {
                     Log.d(TAG, "new version found.");
@@ -111,9 +124,12 @@ public class OtaHelper {
             in.close();
 
             Log.d(TAG, "APK downloaded to: " + apkFile.getAbsolutePath());
-            if(verifyApkFile(apkFile.getAbsolutePath(), json)){
+            // Immediately check hash after download
+            boolean hashOk = verifyApkFile(apkFile.getAbsolutePath(), json);
+            if(hashOk){
                 createMetaDataJson(json, context);
             }else{
+                Log.e(TAG, "Downloaded APK hash does not match expected value! Deleting APK.");
                 if (apkFile.exists()) {
                     boolean deleted = apkFile.delete();
                     Log.d(TAG, "SHA256 mismatch – APK deleted: " + deleted);
