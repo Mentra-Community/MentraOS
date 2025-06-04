@@ -4,6 +4,7 @@
     package="com.augmentos.otaupdater">
 
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
@@ -42,14 +43,6 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.augmentos.asg_client.ACTION_INSTALL_OTA" />
-            </intent-filter>
-        </receiver>
-        <receiver
-            android:name=".receiver.WifiConnectedReceiver"
-            android:exported="true"
-            android:enabled="true">
-            <intent-filter>
-                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
             </intent-filter>
         </receiver>
     </application>

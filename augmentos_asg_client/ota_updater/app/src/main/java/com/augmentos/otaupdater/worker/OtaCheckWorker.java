@@ -5,6 +5,8 @@ package com.augmentos.otaupdater.worker;
  */
 
 import android.content.Context;
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
@@ -22,6 +24,7 @@ public class OtaCheckWorker extends Worker {
     @Override
     public Result doWork() {
         OtaHelper helper = new OtaHelper();
+        Log.d(TAG, "OtaCheckWorker is running");
         helper.startVersionCheck(getApplicationContext());
         return Result.success();
     }

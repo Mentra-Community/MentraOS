@@ -1,6 +1,7 @@
 package com.augmentos.otaupdater;
 
 import com.augmentos.otaupdater.helper.Constants;
+import com.augmentos.otaupdater.helper.OtaHelper;
 
 import android.os.Bundle;
 import androidx.activity.EdgeToEdge;
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = MainActivity.TAG;
+    private OtaHelper otaHelper;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -32,6 +34,23 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
+        // Initialize OtaHelper
+        otaHelper = new OtaHelper();
+
+        // Set up periodic work request
+        setupPeriodicOtaCheck();
+
+        // Register for WiFi connectivity changes
+        otaHelper.registerNetworkCallback(this);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        otaHelper.unregisterNetworkCallback();
+    }
+
+    private void setupPeriodicOtaCheck() {
         Constraints constraints = new Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build();
@@ -47,5 +66,4 @@ public class MainActivity extends AppCompatActivity {
         androidx.work.OneTimeWorkRequest testOtaWork = new androidx.work.OneTimeWorkRequest.Builder(OtaCheckWorker.class).build();
         WorkManager.getInstance(this).enqueue(testOtaWork);
     }
-
 }

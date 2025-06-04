@@ -54,6 +54,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 
 /**
  * This is the FULL AsgClientService code that:
@@ -184,6 +186,10 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
         // DEBUG: Start the debug photo upload timer for VPS
         //startDebugVpsPhotoUploadTimer();
+
+        // Register OTA download complete receiver
+        IntentFilter filter = new IntentFilter("com.augmentos.otaupdater.ACTION_OTA_DOWNLOAD_COMPLETE");
+        registerReceiver(otaDownloadReceiver, filter);
     }
 
     /**
@@ -449,7 +455,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 stopForeground(true);
                 stopSelf();
 
-                // If we’re bound to AugmentosService, unbind
+                // If we're bound to AugmentosService, unbind
                 if (isAugmentosBound) {
                     unbindService(augmentosConnection);
                     isAugmentosBound = false;
@@ -489,7 +495,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) {
-            // Fallback - if manager is null, we can’t create a channel, but we can build a basic notification
+            // Fallback - if manager is null, we can't create a channel, but we can build a basic notification
             return new NotificationCompat.Builder(this, myChannelId)
                     .setContentTitle(notificationAppName)
                     .setContentText(notificationDescription)
@@ -523,7 +529,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
 
     /**
-     * Called when we’re destroyed. Good place to unbind from services if needed.
+     * Called when we're destroyed. Good place to unbind from services if needed.
      */
     @Override
     public void onDestroy() {
@@ -581,6 +587,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         // No need to clean up MediaQueueManager as it's stateless and file-based
 
         super.onDestroy();
+        unregisterReceiver(otaDownloadReceiver);
     }
 
     // ---------------------------------------------
@@ -606,7 +613,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     }
 
     /**
-     * If needed, you can check whether we’re bound to AugmentosService,
+     * If needed, you can check whether we're bound to AugmentosService,
      * or retrieve the instance (e.g. for Activity usage).
      */
     public AugmentosService getAugmentosService() {
@@ -1337,6 +1344,15 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     break;
                 case "":
                     Log.d(TAG, "Received data with no type field: " + dataToProcess);
+                    break;
+                case "ota_update_response":
+                    boolean accepted = dataToProcess.optBoolean("accepted", false);
+                    if (accepted) {
+                        Log.d(TAG, "Received ota_update_response: accepted, proceeding with OTA installation");
+                        // TODO: Trigger OTA installation here
+                    } else {
+                        Log.d(TAG, "Received ota_update_response: rejected by user");
+                    }
                     break;
 
                 default:
@@ -2148,4 +2164,26 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // Use existing RTMP implementation in the service
     // Our StreamPackLite-based implementation (RTMPStreamingExample) can be used
     // if the existing RTMP implementation needs to be enhanced in the future
+
+    private BroadcastReceiver otaDownloadReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.d(TAG, "Received OTA download complete broadcast");
+            if ("com.augmentos.otaupdater.ACTION_OTA_DOWNLOAD_COMPLETE".equals(intent.getAction())) {
+                Log.d(TAG, "Received OTA download complete broadcast");
+                // Send BLE message to phone/controller
+                if (bluetoothManager != null && bluetoothManager.isConnected()) {
+                    try {
+                        org.json.JSONObject otaMsg = new org.json.JSONObject();
+                        otaMsg.put("type", "ota_update_available");
+                        // TODO: Optionally add version or details if available
+                        bluetoothManager.sendData(otaMsg.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        Log.d(TAG, "Sent ota_update_available BLE message to phone/controller");
+                    } catch (org.json.JSONException e) {
+                        Log.e(TAG, "Error creating ota_update_available JSON", e);
+                    }
+                }
+            }
+        }
+    };
 }

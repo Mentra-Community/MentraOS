@@ -4,7 +4,7 @@ public class Constants {
     public static final String TAG = "OTAUpdater";
 
     // URLs
-    public static final String VERSION_JSON_URL = "https://dev.augmentos.org:443/version.json";//change with real server ip address
+    public static final String VERSION_JSON_URL = "https://dev.augmentos.org/version.json";//change with real server ip address
 
     // File paths
     public static final String OTA_FOLDER = "/storage/emulated/0/asg";

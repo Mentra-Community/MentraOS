@@ -52,6 +52,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import io.reactivex.rxjava3.subjects.PublishSubject;
+import android.app.AlertDialog;
+import android.app.Activity;
 
 /**
  * Smart Glasses Communicator for Mentra Live (K900) glasses
@@ -1286,7 +1288,35 @@ public class MentraLiveSGC extends SmartGlassesCommunicator {
                 // Forward via EventBus for cloud communication (consistent with other message types)
                 EventBus.getDefault().post(new KeepAliveAckEvent(json));
                 break;
-                
+            case "ota_update_available":
+                // Handle OTA update available notification from ASG client
+                Log.d(TAG, "Received OTA update available message via BLE");
+                // Show prompt to user
+                Handler mainHandler = new Handler(Looper.getMainLooper());
+                mainHandler.post(() -> {
+                    try {
+                        AlertDialog.Builder builder;
+                        if (context instanceof Activity) {
+                            builder = new AlertDialog.Builder(context);
+                        } else {
+                            Log.w(TAG, "Context is not an Activity. Cannot show OTA prompt dialog.");
+                            // Fallback: auto-accept for now
+                            sendOtaUpdateResponse(true);
+                            return;
+                        }
+                        builder.setTitle("OTA Update Available")
+                            .setMessage("A new update is available for your glasses. Do you want to install it now?")
+                            .setPositiveButton("Yes", (dialog, which) -> sendOtaUpdateResponse(true))
+                            .setNegativeButton("No", (dialog, which) -> sendOtaUpdateResponse(false))
+                            .setCancelable(true)
+                            .show();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to show OTA update prompt dialog", e);
+                        // Fallback: auto-accept
+                        sendOtaUpdateResponse(true);
+                    }
+                });
+                break;
             default:
                 // Pass the data to the subscriber for custom processing
                 if (dataObservable != null) {
@@ -1987,6 +2017,19 @@ public class MentraLiveSGC extends SmartGlassesCommunicator {
             }
         } catch (JSONException e) {
             Log.e(TAG, "Error parsing custom command JSON", e);
+        }
+    }
+
+    // Helper method to send OTA update response
+    private void sendOtaUpdateResponse(boolean accepted) {
+        try {
+            org.json.JSONObject response = new org.json.JSONObject();
+            response.put("type", "ota_update_response");
+            response.put("accepted", accepted);
+            sendJson(response);
+            Log.d(TAG, "Sent ota_update_response (accepted: " + accepted + ") via BLE");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send ota_update_response", e);
         }
     }
 }
