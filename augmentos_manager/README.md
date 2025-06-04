@@ -40,6 +40,7 @@ Due to the UI refresh there will be some weird cache issues. Do this to fix them
 pnpm install
 pnpm expo prebuild
 rm -rf android/build android/.gradle node_modules .expo .bundle android/app/build android/app/src/main/assets
+pnpm install
 ./fix-react-native-symlinks.sh 
 pnpm android
 pnpm run start
