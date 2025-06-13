@@ -662,13 +662,27 @@ public class CameraNeo extends LifecycleService {
             }
             captureRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
             if (isK900Device) {
-                captureRequestBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 0);
-                captureRequestBuilder.set(CaptureRequest.CONTROL_AE_REGIONS, new MeteringRectangle[]{
-                        new MeteringRectangle(0, 0, 4208, 3120, MeteringRectangle.METERING_WEIGHT_MAX)
-                });
-                captureRequestBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
-                captureRequestBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
-                captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) 95);
+                // captureRequestBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 0);
+                // captureRequestBuilder.set(CaptureRequest.CONTROL_AE_REGIONS, new MeteringRectangle[]{
+                //         new MeteringRectangle(0, 0, 4208, 3120, MeteringRectangle.METERING_WEIGHT_MAX)
+                // });
+                // captureRequestBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
+                // captureRequestBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
+                // captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) 95);
+
+                // Turn off auto exposure
+                // AUTO mode with AE (auto-exposure) enabled
+                captureRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+                captureRequestBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, 12500000L); // 50ms
+                captureRequestBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, 600);
+                captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION, 270);
+
+                // Let ISO and shutter be managed by AE
+                // DO NOT set SENSOR_SENSITIVITY or SENSOR_EXPOSURE_TIME manually here
+                // Set JPEG orientation
+                captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION, 270);
+
+
             } else {
                 captureRequestBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 1);
                 captureRequestBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
