@@ -1,0 +1,45 @@
+default_platform(:android)
+
+platform :android do
+  desc "Build AAB and upload to Google Play (internal track)"
+  lane :google_play do
+    # Clean previous builds
+    gradle(
+      task: "clean",
+      project_dir: "."
+    )
+    
+    # Build AAB for release
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "."
+    )
+    
+    # Upload to Google Play
+    upload_to_play_store(
+      aab: "app/build/outputs/bundle/release/app-release.aab",
+      json_key: "credentials/service-account.json",
+      track: "internal",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+  
+  desc "Build signed AAB for Google Play (no upload)"
+  lane :build_aab do
+    gradle(
+      task: "clean",
+      project_dir: "."
+    )
+    
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "."
+    )
+    
+    UI.success "AAB built successfully at: app/build/outputs/bundle/release/app-release.aab"
+  end
+end

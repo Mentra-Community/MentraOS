@@ -95,4 +95,8 @@ Webview authentication enables:
 - Integration with your existing user database
 - Seamless experiences without additional login steps
 
-For detailed implementation options, including manual implementation without the SDK, see the [Webview Authentication Reference](/reference/webview-auth).
+## React Webviews
+
+If you want to build your frontend webview using React, see the [React Webviews](/react-webviews) guide.
+
+

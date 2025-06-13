@@ -78,6 +78,14 @@ import axios from 'axios';
 import { SessionService } from './session.service';
 import { getSessionService } from './session.service';
 import { DisconnectInfo } from './HeartbeatManager';
+import multiUserTpaService from './multi-user-tpa.service';
+import { 
+  TpaBroadcastMessage, 
+  TpaDirectMessage, 
+  TpaUserDiscovery,
+  TpaRoomJoin,
+  TpaRoomLeave
+} from '@augmentos/sdk/src/types/messages/tpa-to-cloud';
 
 const SERVICE_NAME = 'websocket.service';
 const logger = rootLogger.child({ service: SERVICE_NAME });
@@ -288,7 +296,7 @@ export class WebSocketService {
 
   //             // If we have processed audio data, broadcast it to TPAs
   //             if (processedData) {
-  //               this.broadcastToTpaAudio(userSession, processedData);
+  //               this.broadcastToTpaAudio(userSession, _arrayBuffer);
   //             }
   //           } else {
   //             // Wait for the next chunk in sequence
@@ -1316,6 +1324,18 @@ export class WebSocketService {
           break;
         }
 
+        // Cache VPS coordinates for dashboard and TPAs
+        case GlassesToCloudMessageType.VPS_COORDINATES: {
+          try {
+            console.log("🔥🔥🔥: Received VPS coordinates from glasses:", message);
+            subscriptionService.cacheVpsCoordinates(userSession.sessionId, message);
+          } catch (error) {
+            userSession.logger.error(error, `[websocket.service]: Error caching VPS coordinates`);
+          }
+          this.broadcastToTpa(userSession.sessionId, message.type as any, message as any);
+          break;
+        }
+
         case GlassesToCloudMessageType.CALENDAR_EVENT: {
           const calendarEvent = message as CalendarEvent;
           userSession.logger.info('Calendar event:', calendarEvent);
@@ -1723,6 +1743,11 @@ export class WebSocketService {
                 !subscriptionService.hasSubscription(userSessionId, message.packageName, StreamType.LOCATION_UPDATE) &&
                 subMessage.subscriptions.includes(StreamType.LOCATION_UPDATE);
 
+              // Check if the app is newly subscribing to VPS coordinates
+              const isNewVpsCoordinatesSubscription =
+                !subscriptionService.hasSubscription(userSessionId, message.packageName, StreamType.VPS_COORDINATES) &&
+                subMessage.subscriptions.includes(StreamType.VPS_COORDINATES);
+
               // Update subscriptions (async)
               await subscriptionService.updateSubscriptions(
                 userSessionId,
@@ -1812,6 +1837,36 @@ export class WebSocketService {
                       sessionId: tpaSessionId,
                       streamType: StreamType.LOCATION_UPDATE,
                       data: locationUpdate,
+                      timestamp: new Date()
+                    };
+                    tpaWs.send(JSON.stringify(dataStream));
+                  }
+                }
+              }
+
+              // Send cached VPS coordinates if app just subscribed to VPS_COORDINATES
+              if (isNewVpsCoordinatesSubscription) {
+                console.log("🔥🔥🔥: isNewVpsCoordinatesSubscription:", isNewVpsCoordinatesSubscription);
+                // TODO: Implement getLastVpsCoordinates in subscriptionService if not present
+                const lastVpsCoordinates = subscriptionService.getLastVpsCoordinates?.(userSessionId);
+                if (lastVpsCoordinates) {
+                  userSession.logger.info(`Sending cached VPS coordinates to newly subscribed app ${message.packageName}`);
+                  const tpaSessionId = `${userSessionId}-${message.packageName}`;
+                  const tpaWs = userSession.appConnections.get(message.packageName);
+
+                  if (tpaWs && tpaWs.readyState === WebSocket.OPEN) {
+                    const vpsCoordinatesUpdate = {
+                      ...lastVpsCoordinates,
+                      type: GlassesToCloudMessageType.VPS_COORDINATES,
+                      sessionId: tpaSessionId,
+                      timestamp: new Date()
+                    };
+
+                    const dataStream: DataStream = {
+                      type: CloudToTpaMessageType.DATA_STREAM,
+                      sessionId: tpaSessionId,
+                      streamType: StreamType.VPS_COORDINATES,
+                      data: vpsCoordinatesUpdate,
                       timestamp: new Date()
                     };
                     tpaWs.send(JSON.stringify(dataStream));
@@ -2071,6 +2126,122 @@ export class WebSocketService {
 
               userSession.logger.info(`[websocket.service]: RTMP stream stop request sent to glasses for app ${appId}`);
 
+              break;
+            }
+
+            // TPA-to-TPA Communication message handling
+            case 'tpa_broadcast_message': {
+              console.log("tpa_broadcast_message", message)
+              if (!userSession) {
+                ws.close(1008, 'No active session');
+                return;
+              }
+
+              console.log("432432userSession")
+
+              try {
+                const broadcastMessage = message as TpaBroadcastMessage;
+                await multiUserTpaService.broadcastToTpaUsers(userSession, broadcastMessage);
+                userSession.logger.info({
+                  packageName: broadcastMessage.packageName,
+                  messageId: broadcastMessage.messageId,
+                }, 'TPA broadcast message processed');
+              } catch (error) {
+                userSession.logger.error(error, 'Error handling TPA broadcast message');
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'Failed to broadcast message'
+                });
+              }
+              break;
+            }
+
+            case 'tpa_direct_message': {
+              if (!userSession) {
+                ws.close(1008, 'No active session');
+                return;
+              }
+
+              try {
+                const directMessage = message as TpaDirectMessage;
+                const success = await multiUserTpaService.sendDirectMessage(userSession, directMessage);
+                
+                // Send response back to sender
+                const response = {
+                  type: 'tpa_direct_message_response',
+                  messageId: directMessage.messageId,
+                  success,
+                  targetUserId: directMessage.targetUserId,
+                  timestamp: new Date()
+                };
+                ws.send(JSON.stringify(response));
+
+                userSession.logger.info({
+                  packageName: directMessage.packageName,
+                  messageId: directMessage.messageId,
+                  targetUserId: directMessage.targetUserId,
+                  success
+                }, 'TPA direct message processed');
+              } catch (error) {
+                userSession.logger.error(error, 'Error handling TPA direct message');
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'Failed to send direct message'
+                });
+              }
+              break;
+            }
+
+            case 'tpa_user_discovery': {
+              // This functionality is now only available via the HTTP API endpoint
+              this.sendError(ws, {
+                type: CloudToTpaMessageType.CONNECTION_ERROR,
+                message: 'User discovery is now only available via the HTTP API endpoint /api/tpa-communication/discover-users.'
+              });
+              break;
+            }
+
+            case 'tpa_room_join': {
+              if (!userSession) {
+                ws.close(1008, 'No active session');
+                return;
+              }
+
+              try {
+                const roomJoinMessage = message as TpaRoomJoin;
+                await multiUserTpaService.handleRoomJoin(userSession, roomJoinMessage);
+                userSession.logger.info({
+                  packageName: roomJoinMessage.packageName,
+                }, 'TPA room join processed');
+              } catch (error) {
+                userSession.logger.error(error, 'Error handling TPA room join');
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'Failed to join room'
+                });
+              }
+              break;
+            }
+
+            case 'tpa_room_leave': {
+              if (!userSession) {
+                ws.close(1008, 'No active session');
+                return;
+              }
+
+              try {
+                const roomLeaveMessage = message as TpaRoomLeave;
+                await multiUserTpaService.handleRoomLeave(userSession, roomLeaveMessage);
+                userSession.logger.info({
+                  packageName: roomLeaveMessage.packageName,
+                }, 'TPA room leave processed');
+              } catch (error) {
+                userSession.logger.error(error, 'Error handling TPA room leave');
+                this.sendError(ws, {
+                  type: CloudToTpaMessageType.CONNECTION_ERROR,
+                  message: 'Failed to leave room'
+                });
+              }
               break;
             }
           }

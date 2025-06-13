@@ -58,8 +58,8 @@ const STREAM_TO_PERMISSION_MAP = new Map<string, PermissionType>([
   ['calendar_event', PermissionType.CALENDAR],
   
   // Notification streams
-  ['phone_notification', PermissionType.NOTIFICATIONS],
-  ['notification_dismissed', PermissionType.NOTIFICATIONS],
+  ['phone_notification', PermissionType.READ_NOTIFICATIONS],
+  ['notification_dismissed', PermissionType.READ_NOTIFICATIONS],
 ]);
 ```
 
@@ -113,8 +113,8 @@ export class SimplePermissionChecker {
     ['calendar_event', PermissionType.CALENDAR],
     
     // Notification streams
-    ['phone_notification', PermissionType.NOTIFICATIONS],
-    ['notification_dismissed', PermissionType.NOTIFICATIONS],
+    ['phone_notification', PermissionType.READ_NOTIFICATIONS],
+    ['notification_dismissed', PermissionType.READ_NOTIFICATIONS],
   ]);
 
   /**

@@ -620,15 +620,15 @@ public class SmartGlassesManager extends Service {
         }
     }
 
-    public void updateGlassesDashboardHeight(int height) {
+    public void sendExitCommand() {
         if (smartGlassesRepresentative != null) {
-            smartGlassesRepresentative.updateGlassesDashboardHeight(height);
+            smartGlassesRepresentative.sendExitCommand();
         }
     }
 
-    public void updateGlassesDepth(int depth) {
+    public void updateGlassesDepthHeight(int depth, int height) {
         if (smartGlassesRepresentative != null) {
-            smartGlassesRepresentative.updateGlassesDepth(depth);
+            smartGlassesRepresentative.updateGlassesDepthHeight(depth, height);
         }
     }
 

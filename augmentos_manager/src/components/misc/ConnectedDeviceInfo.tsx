@@ -8,7 +8,7 @@ import {getGlassesClosedImage, getGlassesImage, getGlassesOpenImage} from "@/uti
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {router} from "expo-router"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {spacing, ThemedStyle} from "@/theme"
+import {colors, spacing, ThemedStyle} from "@/theme"
 import ConnectedSimulatedGlassesInfo from "./ConnectedSimulatedGlassesInfo"
 import SolarLineIconsSet4 from "assets/icons/component/SolarLineIconsSet4"
 import ChevronRight from "assets/icons/component/ChevronRight"
@@ -16,11 +16,13 @@ import {Circle} from "react-native-svg"
 import {AnimatedCircularProgress} from "react-native-circular-progress"
 import {getBatteryColor} from "@/utils/getBatteryIcon"
 import SunIcon from "assets/icons/component/SunIcon"
+import { theme } from "assets/icons/component/SunIcon"
 // import {} from "assets/icons/"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 
 export const ConnectDeviceButton = () => {
   const {status} = useStatus()
+  const {themed, theme} = useAppTheme()
 
   const connectGlasses = async () => {
     if (!status.core_info.default_wearable) {
@@ -83,8 +85,8 @@ export const ConnectDeviceButton = () => {
       <Button
         textStyle={[{marginLeft: spacing.xxl}]}
         textAlignment="left"
-        LeftAccessory={() => <SolarLineIconsSet4 />}
-        RightAccessory={() => <ChevronRight />}
+        LeftAccessory={() => <SolarLineIconsSet4  color={ theme.isDark ? "white" : "black"}/>}
+        RightAccessory={() => <ChevronRight   color={ theme.isDark ? "white" : "black"}/>}
         onPress={() => {
           router.push("/pairing/select-glasses-model")
         }}
@@ -98,7 +100,7 @@ export const ConnectDeviceButton = () => {
       <Button
         textStyle={[{marginLeft: spacing.xxl}]}
         textAlignment="left"
-        LeftAccessory={() => <ActivityIndicator size="small" color="#fff" style={{marginLeft: 5}} />}
+        LeftAccessory={() => <ActivityIndicator size="small" color={theme.colors.text} style={{marginLeft: 5}} />}
         onPress={handleConnectOrDisconnect}
         tx="home:connectingGlasses"
       />
@@ -110,8 +112,8 @@ export const ConnectDeviceButton = () => {
       <Button
         textStyle={[{marginLeft: spacing.xxl}]}
         textAlignment="left"
-        LeftAccessory={() => <SolarLineIconsSet4 />}
-        RightAccessory={() => <ChevronRight />}
+        LeftAccessory={() => <SolarLineIconsSet4 color={theme.colors.text} />}
+        RightAccessory={() => <ChevronRight color={theme.colors.text} />}
         onPress={handleConnectOrDisconnect}
         tx="home:connectGlasses"
       />
@@ -193,14 +195,18 @@ export function SplitDeviceInfo() {
   const {status} = useStatus()
   const {themed, theme} = useAppTheme()
 
-  if (!status.glasses_info?.model_name) {
+  // Show image if we have either connected glasses or a default wearable
+  const wearable = status.glasses_info?.model_name || status.core_info.default_wearable
+  
+  if (!wearable) {
     return null
   }
 
-  let wearable = status.core_info.default_wearable
   let glassesImage = getGlassesImage(wearable)
   let caseImage = null
-  if (!status.glasses_info?.case_removed) {
+  
+  // Only show case image if glasses are actually connected (not just paired)
+  if (status.glasses_info?.model_name && !status.glasses_info?.case_removed) {
     if (status.glasses_info?.case_open) {
       caseImage = getGlassesOpenImage(wearable)
     } else {
@@ -209,9 +215,11 @@ export function SplitDeviceInfo() {
   }
 
   return (
-    <View style={{flexDirection: "row", alignItems: "center", gap: 10}}>
-      <Animated.Image source={glassesImage} style={[styles.glassesImage, {width: caseImage ? "50%" : "100%"}]} />
-      {caseImage && <Animated.Image source={caseImage} style={[styles.glassesImage, {width: "50%"}]} />}
+    <View style={styles.connectedContent}>
+      <View style={{flexDirection: "row", alignItems: "center", gap: 10}}>
+        <Animated.Image source={glassesImage} style={[styles.glassesImage, {width: caseImage ? "50%" : "80%"}]} />
+        {caseImage && <Animated.Image source={caseImage} style={[styles.glassesImage, {width: "50%"}]} />}
+      </View>
     </View>
   )
 }
@@ -235,10 +243,10 @@ export function DeviceToolbar() {
     <View style={themed($deviceToolbar)}>
       {/* battery */}
       <View style={{flexDirection: "row", alignItems: "center", gap: 6}}>
-        {status.glasses_info?.battery_life != -1 ? (
+        {status.glasses_info?.battery_level != -1 ? (
           <>
             <Icon icon="battery" size={18} color={theme.colors.text} />
-            <Text style={{color: theme.colors.text}}>{status.glasses_info?.battery_life}%</Text>
+            <Text style={{color: theme.colors.text}}>{status.glasses_info?.battery_level}%</Text>
           </>
         ) : (
           // <Text style={{color: theme.colors.text}}>No battery</Text>
@@ -343,19 +351,19 @@ export function ConnectedDeviceInfo() {
   return (
     <View style={themed($statusBar)}>
       {/* <View style={styles.statusInfo}>
-            {status.glasses_info?.battery_life != null && typeof status.glasses_info?.battery_life === "number" && (
+            {status.glasses_info?.battery_level != null && typeof status.glasses_info?.battery_level === "number" && (
               <>
                 <Text style={themed($statusLabel)}>Battery</Text>
                 <View style={styles.batteryContainer}>
-                  {status.glasses_info?.battery_life >= 0 && (
+                  {status.glasses_info?.battery_level >= 0 && (
                     <Icon
-                      name={getBatteryIcon(status.glasses_info?.battery_life ?? 0)}
+                      name={getBatteryIcon(status.glasses_info?.battery_level ?? 0)}
                       size={16}
-                      color={getBatteryColor(status.glasses_info?.battery_life ?? 0)}
+                      color={getBatteryColor(status.glasses_info?.battery_level ?? 0)}
                     />
                   )}
                   <Text style={themed($batteryValue)}>
-                    {status.glasses_info.battery_life == -1 ? "-" : `${status.glasses_info.battery_life}%`}
+                    {status.glasses_info.battery_level == -1 ? "-" : `${status.glasses_info.battery_level}%`}
                   </Text>
                 </View>
               </>
@@ -363,17 +371,17 @@ export function ConnectedDeviceInfo() {
           </View> */}
 
       {/* battery circular progress bar */}
-      {status.glasses_info?.battery_life != -1 ? (
+      {status.glasses_info?.battery_level != -1 ? (
         <AnimatedCircularProgress
           size={36}
           width={3}
           lineCap="round"
           fillLineCap="round"
-          fill={status.glasses_info?.battery_life}
-          // tintColor={getBatteryColor(status.glasses_info?.battery_life ?? 0)}
+          fill={status.glasses_info?.battery_level}
+          // tintColor={getBatteryColor(status.glasses_info?.battery_level ?? 0)}
           tintColor={theme.colors.palette.primary500}
           backgroundColor={theme.colors.palette.neutral300}
-          children={() => <Text style={themed($batteryValue)}>{status.glasses_info?.battery_life}</Text>}
+          children={() => <Text style={themed($batteryValue)}>{status.glasses_info?.battery_level}</Text>}
           rotation={0}
         />
       ) : (

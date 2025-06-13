@@ -53,7 +53,7 @@ import { parsePlaceholders } from "./utils";
     STOP_APP = "stop_app",
     UPDATE_GLASSES_HEAD_UP_ANGLE = "update_glasses_head_up_angle",
     UPDATE_GLASSES_BRIGHTNESS = "update_glasses_brightness",
-    UPDATE_GLASSES_DASHBOARD_HEIGHT = "update_glasses_dashboard_height",
+    UPDATE_GLASSES_HEIGHT = "update_glasses_height",
     UPDATE_GLASSES_DEPTH = "update_glasses_depth",
     ENABLE_SENSING = "enable_sensing",
     ENABLE_ALWAYS_ON_STATUS_BAR = "enable_always_on_status_bar",
@@ -774,9 +774,9 @@ class AOSManager {
             this.handleRequestStatus(); // to update the UI
             break;
             
-          case CommandType.UPDATE_GLASSES_DASHBOARD_HEIGHT:
+          case CommandType.UPDATE_GLASSES_HEIGHT:
             if (!params || params.height === undefined) {
-              console.log("update_glasses_dashboard_height invalid params");
+              console.log("update_glasses_height invalid params");
               break;
             }
             this.dashboardHeight = params.height;

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -16,11 +17,12 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
-import java.util.UUID;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -454,7 +456,7 @@ public class MediaCaptureService {
     /**
      * Takes a photo locally when offline or when server communication fails
      */
-    private void takePhotoLocally() {
+    public void takePhotoLocally() {
         // Check storage availability before taking photo
         if (!isExternalStorageAvailable()) {
             Log.e(TAG, "External storage is not available for photo capture");
@@ -466,6 +468,8 @@ public class MediaCaptureService {
 
         // Generate a temporary requestId
         String requestId = "local_" + timeStamp;
+
+        // Log.d(TAG, "Taking photo locally in offline mode");
 
         // For offline mode, take photo and queue it for later upload
         CameraNeo.takePictureWithCallback(
@@ -564,66 +568,12 @@ public class MediaCaptureService {
     }
 
     /**
-     * Take a photo for VPS and upload it directly to VPS server
-     * This is for debugging purposes only
-     */
-    public void takeDebugVpsPhotoAndUpload() {
-        Log.d(TAG, "DEBUG: Taking photo for VPS debug upload");
-
-        // Generate a timestamp for the photo filename
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        String photoFilePath = mContext.getExternalFilesDir(null) + File.separator + "DEBUG_VPS_" + timeStamp + ".jpg";
-        String requestId = "debug_vps_" + timeStamp;
-
-        // Notify that we're about to take a photo (if there's a listener)
-        if (mMediaCaptureListener != null) {
-            mMediaCaptureListener.onPhotoCapturing(requestId);
-        }
-
-        try {
-            // Use CameraNeo for high quality photos
-            CameraNeo.takePictureWithCallback(
-                    mContext,
-                    photoFilePath,
-                    new CameraNeo.PhotoCaptureCallback() {
-                        @Override
-                        public void onPhotoCaptured(String filePath) {
-                            Log.d(TAG, "DEBUG: VPS photo captured successfully at: " + filePath);
-
-                            // Notify that we've captured the photo
-                            if (mMediaCaptureListener != null) {
-                                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
-                                mMediaCaptureListener.onPhotoUploading(requestId);
-                            }
-
-                            // Upload the photo to VPS debug server
-                            uploadPhotoToVpsServer(filePath, requestId);
-                        }
-
-                        @Override
-                        public void onPhotoError(String errorMessage) {
-                            Log.e(TAG, "DEBUG: Failed to capture VPS photo: " + errorMessage);
-
-                            if (mMediaCaptureListener != null) {
-                                mMediaCaptureListener.onMediaError(requestId, errorMessage, MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
-                            }
-                        }
-                    }
-            );
-        } catch (Exception e) {
-            Log.e(TAG, "DEBUG: Error taking VPS photo", e);
-
-            if (mMediaCaptureListener != null) {
-                mMediaCaptureListener.onMediaError(requestId, "Error taking VPS photo: " + e.getMessage(),
-                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
-            }
-        }
-    }
-
-    /**
      * Upload media to AugmentOS Cloud
      */
     private void uploadMediaToCloud(String mediaFilePath, String requestId, int mediaType) {
+        // First save the media to device gallery
+        saveMediaToGallery(mediaFilePath, mediaType);
+
         // Upload the media to AugmentOS Cloud
         MediaUploadService.uploadMedia(
                 mContext,
@@ -663,147 +613,42 @@ public class MediaCaptureService {
     }
 
     /**
-     * DEBUG FUNCTION: Upload photo to VPS server at the specified debug URL
-     * This is for debugging purposes only.
+     * Save media to local app directory
      */
-    private void uploadPhotoToVpsServer(String photoFilePath, String requestId) {
-        // Upload the photo to the VPS server
-        new Thread(() -> {
-            try {
-                Log.d(TAG, "DEBUG: Uploading photo to VPS server");
+    private void saveMediaToGallery(String mediaFilePath, int mediaType) {
+        try {
+            // Create a File object from the path
+            File mediaFile = new File(mediaFilePath);
+            if (!mediaFile.exists()) {
+                Log.e(TAG, "Media file does not exist: " + mediaFilePath);
+                return;
+            }
 
-                // Set up OkHttpClient with timeouts
-                OkHttpClient client = new OkHttpClient.Builder()
-                        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                        .build();
+            // Get this class's directory
+            String classDirectory = mContext.getExternalFilesDir(null) + File.separator + "MediaCaptureService";
+            File directory = new File(classDirectory);
+            if (!directory.exists()) {
+                directory.mkdirs();
+            }
 
-                // Create the file object
-                File photoFile = new File(photoFilePath);
-                if (!photoFile.exists()) {
-                    Log.e(TAG, "DEBUG: VPS photo file does not exist: " + photoFilePath);
-                    return;
-                }
+            // Create destination file in the same directory as this class
+            String fileName = mediaFile.getName();
+            File destinationFile = new File(directory, fileName);
 
-                // Get device information
-                String deviceId = android.os.Build.MODEL + "_" + android.os.Build.SERIAL;
-                String deviceName = android.os.Build.MODEL;
-
-                // Get the timestamp in nanoseconds
-                long timestamp = System.nanoTime();
-
-                // Get image dimensions from the image file
-                int imageWidth = 1440; // Default width
-                int imageHeight = 1080; // Default height
-
-                // Try to get actual dimensions from the image file
-                try {
-                    android.graphics.BitmapFactory.Options options = new android.graphics.BitmapFactory.Options();
-                    options.inJustDecodeBounds = true;
-                    android.graphics.BitmapFactory.decodeFile(photoFilePath, options);
-                    if (options.outWidth > 0 && options.outHeight > 0) {
-                        imageWidth = options.outWidth;
-                        imageHeight = options.outHeight;
-                        Log.d(TAG, "Detected image dimensions: " + imageWidth + "x" + imageHeight);
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error getting image dimensions, using defaults", e);
-                }
-
-                // VPS server URL
-                String uploadUrl = "http://54.67.15.233:5555/vps";
-
-                // Create JSON object with metadata
-                JSONObject metadata = new JSONObject();
-                try {
-                    metadata.put("device_id", deviceId);
-                    metadata.put("mac_address", deviceId); // Same as device_id
-                    metadata.put("name", "Mentra");
-                    metadata.put("device_type", "glasses");
-                    metadata.put("timestamp", timestamp);
-                    metadata.put("image_width", imageWidth);
-                    metadata.put("image_height", imageHeight);
-                } catch (JSONException e) {
-                    Log.e(TAG, "Error creating metadata JSON", e);
-                }
-
-                Log.d(TAG, "VPS metadata: " + metadata.toString());
-
-                // Create multipart request with file and metadata
-                RequestBody requestBody = new MultipartBody.Builder()
-                        .setType(MultipartBody.FORM)
-                        .addFormDataPart("file", photoFile.getName(),
-                                RequestBody.create(MediaType.parse("image/jpeg"), photoFile))
-                        .addFormDataPart("metadata", metadata.toString())
-                        .build();
-
-                // Build the request
-                Request request = new Request.Builder()
-                        .url(uploadUrl)
-                        .post(requestBody)
-                        .build();
-
-                // Execute the request
-                Response response = client.newCall(request).execute();
-
-                // Process the response
-                if (!response.isSuccessful()) {
-                    Log.e(TAG, "DEBUG: VPS upload failed with status: " + response.code());
-                    return;
-                }
-
-                // Get response body - this will be the pose information
-                String responseBody = response.body().string();
-                Log.d(TAG, "DEBUG: VPS upload successful. Response (pose): " + responseBody);
-
-                // Parse the pose information from the response (JSON format)
-                try {
-                    JSONObject poseData = new JSONObject(responseBody);
-
-                    // Extract position and orientation
-                    float x = (float) poseData.getDouble("x");
-                    float y = (float) poseData.getDouble("y");
-                    float z = (float) poseData.getDouble("z");
-                    float qx = (float) poseData.getDouble("qx");
-                    float qy = (float) poseData.getDouble("qy");
-                    float qz = (float) poseData.getDouble("qz");
-                    float qw = (float) poseData.getDouble("qw");
-                    float confidence = (float) poseData.getDouble("confidence");
-
-                    // Log pose information
-                    Log.d(TAG, String.format("DEBUG: VPS pose - Position: (%.2f, %.2f, %.2f)", x, y, z));
-                    Log.d(TAG, String.format("DEBUG: VPS pose - Orientation (quat): (%.2f, %.2f, %.2f, %.2f)", qx, qy, qz, qw));
-                    Log.d(TAG, String.format("DEBUG: VPS pose - Confidence: %.2f", confidence));
-
-                    // TODO: You could do something with this pose information here
-                    // For example, display it on the glasses or send it to another application
-
-                } catch (JSONException e) {
-                    Log.e(TAG, "DEBUG: Error parsing VPS pose data: " + e.getMessage());
-                }
-
-                // Notify through listener
-                if (mMediaCaptureListener != null) {
-                    new Handler(Looper.getMainLooper()).post(() -> {
-                        mMediaCaptureListener.onPhotoUploaded(requestId, uploadUrl);
-                    });
-                }
-
-                // Clean up - delete the temporary file
-                photoFile.delete();
-
-            } catch (Exception e) {
-                Log.e(TAG, "DEBUG: Error uploading photo to VPS server", e);
-                // Notify through listener
-                if (mMediaCaptureListener != null) {
-                    new Handler(Looper.getMainLooper()).post(() -> {
-                        mMediaCaptureListener.onMediaError(requestId, "DEBUG VPS upload failed: " + e.getMessage(),
-                                MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
-                    });
+            // Copy the file
+            try (FileInputStream in = new FileInputStream(mediaFile);
+                 java.io.FileOutputStream out = new FileOutputStream(destinationFile)) {
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = in.read(buf)) > 0) {
+                    out.write(buf, 0, len);
                 }
             }
-        }).start();
+
+            Log.d(TAG, "Media saved locally: " + destinationFile.getAbsolutePath());
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving media locally", e);
+        }
     }
 
     /**

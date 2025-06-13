@@ -296,6 +296,9 @@ cython_debug/
 # pyenv
 .python-version
 
+# Ensure authCore.ts is not ignored despite lib/ pattern
+!augmentos_cloud/packages/augmentos-react/src/lib/
+
 # macos garbage
 .DS_Store
 

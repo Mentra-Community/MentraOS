@@ -1,12 +1,12 @@
 ---
-sidebar_position: 4
+sidebar_position: 2
 ---
 
 # Deploy to Railway
 
 This guide will walk you through deploying your AugmentOS app to Railway, a cloud hosting platform that makes deployment simple and reliable. Instead of running your app locally with ngrok, you'll have a production-ready hosted solution.
 
-## Why Use Railway Instead of ngrok?
+## Why Use Railway?
 
 **Benefits of Railway hosting:**
 - **Always Online**: Your app runs 24/7 without needing your computer
@@ -177,10 +177,10 @@ Congratulations! Your AugmentOS app is now running in the cloud. Here's what you
 
 ### Explore Advanced Features
 
-- **[Events](events)**: Handle user interactions and sensor data
-- **[Settings](settings)**: Add configurable options for users
-- **[AI Tools](tools)**: Integrate with Mira AI for natural language interactions
-- **[Webview Authentication](webview-auth-overview)**: Build rich web interfaces
+- **[Events](/events)**: Handle user interactions and sensor data
+- **[Settings](/settings)**: Add configurable options for users
+- **[AI Tools](/tools)**: Integrate with Mira AI for natural language interactions
+- **[Webview Authentication](/webview-auth-overview)**: Build rich web interfaces
 
 ### Get Help
 

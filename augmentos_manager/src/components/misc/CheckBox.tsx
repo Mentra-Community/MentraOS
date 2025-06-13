@@ -1,8 +1,9 @@
 // CheckBox.tsx
 
 import React from 'react';
-import { Pressable, View, Text, StyleSheet } from 'react-native';
+import { Pressable, View, StyleSheet } from 'react-native';
 import { useAppTheme } from '@/utils/useAppTheme';
+import { Text } from '@/components/ignite';
 
 interface CheckBoxProps {
   checked: boolean;
@@ -40,9 +41,9 @@ const CheckBox: React.FC<CheckBoxProps> = ({
           borderColor: theme.colors.buttonPrimary 
         }]
       ]}>
-        {checked && <Text style={[styles.checkMark, { color: theme.colors.palette.neutral100 }]}>✓</Text>}
+        {checked && <Text text="✓" style={[styles.checkMark, { color: theme.colors.palette.neutral100 }]} />}
       </View>
-      {label ? <Text style={[styles.label, { color: theme.colors.text }, labelStyle]}>{label}</Text> : null}
+      {label ? <Text text={label} style={[styles.label, { color: theme.colors.text }, labelStyle]} /> : null}
     </Pressable>
   );
 };

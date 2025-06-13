@@ -2,12 +2,13 @@
 
 import {useAppTheme} from "@/utils/useAppTheme"
 import React from "react"
-import {View, Text, StyleSheet, Image, TouchableOpacity, Linking} from "react-native"
+import {View, StyleSheet, Image, TouchableOpacity, Linking} from "react-native"
 import FontAwesome from "react-native-vector-icons/FontAwesome"
-import {Button} from "@/components/ignite"
+import {Button, Text} from "@/components/ignite"
 import {translate} from "@/i18n"
-import showAlert from "@/utils/AlertUtils"
+import {showAlert} from "@/utils/AlertUtils"
 import {Spacer} from "./Spacer"
+import {GlassesFeatureList} from "@/components/glasses/GlassesFeatureList"
 
 // 2) Declare each guide component with the correct prop type
 export function EvenRealitiesG1PairingGuide() {
@@ -16,13 +17,13 @@ export function EvenRealitiesG1PairingGuide() {
 
   return (
     <View style={styles.guideContainer}>
-      <Text style={[styles.guideTitle, {color: textColor}]}>Even Realities G1</Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        1. Disconnect your G1 from within the Even Realities app, or uninstall the Even Realities app
-      </Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        2. Place your G1 in the charging case with the lid open.
-      </Text>
+      <Text text="Even Realities G1" style={[styles.guideTitle, {color: textColor}]} />
+      <Text 
+        text="1. Disconnect your G1 from within the Even Realities app, or uninstall the Even Realities app"
+        style={[styles.guideStep, {color: textColor}]} />
+      <Text 
+        text="2. Place your G1 in the charging case with the lid open."
+        style={[styles.guideStep, {color: textColor}]} />
 
       <Image
         source={require("../../../assets/glasses/g1.png")}
@@ -42,11 +43,11 @@ export function VuzixZ100PairingGuide() {
 
   return (
     <View style={styles.guideContainer}>
-      <Text style={[styles.guideTitle, {color: textColor}]}>Vuzix Z100</Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>1. Make sure your Z100 is fully charged and turned on.</Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        2. Pair your Z100 with your device using the Vuzix Connect app.
-      </Text>
+      <Text text="Vuzix Z100" style={[styles.guideTitle, {color: textColor}]} />
+      <Text text="1. Make sure your Z100 is fully charged and turned on." style={[styles.guideStep, {color: textColor}]} />
+      <Text 
+        text="2. Pair your Z100 with your device using the Vuzix Connect app."
+        style={[styles.guideStep, {color: textColor}]} />
     </View>
   )
 }
@@ -57,33 +58,30 @@ export function MentraMach1PairingGuide() {
 
   return (
     <View style={styles.guideContainer}>
-      <Text style={[styles.guideTitle, {color: textColor}]}>Mentra Mach1</Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        1. Make sure your Mach1 is fully charged and turned on.
-      </Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        2. Pair your Mach1 with your device using the Vuzix Connect app.
-      </Text>
+      <Text text="Mentra Mach1" style={[styles.guideTitle, {color: textColor}]} />
+      <Text 
+        text="1. Make sure your Mach1 is fully charged and turned on."
+        style={[styles.guideStep, {color: textColor}]} />
+      <Text 
+        text="2. Pair your Mach1 with your device using the Vuzix Connect app."
+        style={[styles.guideStep, {color: textColor}]} />
     </View>
   )
 }
 
 export function MentraLivePairingGuide() {
   const {theme} = useAppTheme()
-  const textColor = theme.isDark ? "white" : "black"
-  const primaryColor = "#5E17EB" // Purple brand color based on website
-  const secondaryColor = "#FF4F00" // Orange accent color
 
   return (
     <View style={styles.guideContainer}>
       <View style={{flex: 1, justifyContent: "space-between", flexDirection: "column"}}>
         {/* <ScrollView style={{}} nestedScrollEnabled={true}> */}
-        <Text style={[styles.guideTitle, {color: textColor}]}>Mentra Live [Beta]</Text>
+        <Text text="Mentra Live Beta" style={[styles.guideTitle, {color: theme.colors.text}]} />
 
-        {/* <Text style={[styles.guideStep, {color: textColor}]}>
+        {/* <Text style={[styles.guideStep, {color: theme.colors.text}]}>
         1. Make sure your Mentra Live is fully charged and turned on.
         </Text>
-        <Text style={[styles.guideStep, {color: textColor}]}>
+        <Text style={[styles.guideStep, {color: theme.colors.text}]}>
         2. Make sure your Mentra Live is not already paired to a different device.
         </Text> */}
 
@@ -94,45 +92,19 @@ export function MentraLivePairingGuide() {
           // Fallback if image doesn't exist
           onError={e => console.log("Image failed to load")}
         />
-        {/* Feature highlights */}
-        <View style={[styles.featuresContainer]}>
-          <View style={[styles.featuresRow]}>
-            <View style={styles.featureItem}>
-              <FontAwesome name="camera" size={24} color={primaryColor} />
-              <Text style={[styles.featureText, {color: textColor}]}>Camera</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <FontAwesome name="microphone" size={24} color={primaryColor} />
-              <Text style={[styles.featureText, {color: textColor}]}>Microphone</Text>
-            </View>
-          </View>
-          <View style={[styles.featuresRow]}>
-            <View style={styles.featureItem}>
-              <FontAwesome name="volume-up" size={24} color={primaryColor} />
-              <Text style={[styles.featureText, {color: textColor}]}>Speakers</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <FontAwesome name="bluetooth" size={24} color={primaryColor} />
-              <Text style={[styles.featureText, {color: textColor}]}>Bluetooth</Text>
-            </View>
-          </View>
-        </View>
+        
+        {/* Feature list */}
+        <GlassesFeatureList glassesModel="Mentra Live" />
 
         {/* Marketing description */}
-        <Text style={[styles.guideDescription, {color: textColor}]}>
-          Mentra Live brings the power of computer vision to your everyday life. With a camera that sees what you see,
-          you can build and run AI apps that recognize objects, translate text, remember faces, and more. Perfect for
-          developers creating the next generation of augmented reality experiences.
-        </Text>
+        <Text 
+          text="Mentra Live brings the power of computer vision to your everyday life. With a camera that sees what you see, you can build and run AI apps that recognize objects, translate text, remember faces, and more. Perfect for developers creating the next generation of augmented reality experiences."
+          style={[styles.guideDescription, {color: theme.colors.text}]} />
         {/* </ScrollView> */}
 
         <View style={styles.buySection}>
-          <View style={styles.pricingContainer}>
-            <Text style={[styles.originalPrice, {color: textColor}]}>$269</Text>
-            <Text style={styles.currentPrice}>$219</Text>
-          </View>
-
-          <Button
+          <TouchableOpacity
+            style={[styles.preorderButton, {backgroundColor: theme.colors.tint}]}
             onPress={() => {
               // Linking.openURL("https://mentra.glass/live")
               showAlert("Open External Website", "This will open mentra.glass in your web browser. Continue?", [
@@ -146,13 +118,10 @@ export function MentraLivePairingGuide() {
                 },
               ])
             }}
-            children={
-              <View>
-                <Text style={styles.buyButtonText}>{translate("pairing:preorderNow")}</Text>
-                <Text style={styles.shippingText}>{translate("pairing:preorderNowShipMessage")}</Text>
-              </View>
-            }
-          />
+          >
+            <Text text={`${translate("pairing:preorderNow")} · $219`} style={[styles.buyButtonText, {color: theme.colors.background}]} />
+            <Text tx="pairing:preorderNowShipMessage" style={[styles.shippingText, {color: theme.colors.background, opacity: 0.8}]} />
+          </TouchableOpacity>
           <Spacer height={theme.spacing.md} />
         </View>
       </View>
@@ -166,21 +135,19 @@ export function AudioWearablePairingGuide() {
 
   return (
     <View style={styles.guideContainer}>
-      <Text style={[styles.guideTitle, {color: textColor}]}>Audio Wearable</Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        1. Make sure your Audio Wearable is fully charged and turned on.
-      </Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        2. Enable Bluetooth pairing mode on your Audio Wearable.
-      </Text>
-      <Text style={[styles.guideStep, {color: textColor}]}>
-        3. Note: Audio Wearables don't have displays. All visual information will be converted to speech.
-      </Text>
-      <Text style={[styles.guideDescription, {color: textColor}]}>
-        Audio Wearables are smart glasses without displays. They use text-to-speech to provide information that would
-        normally be shown visually. This makes them ideal for audio-only applications or for users who prefer auditory
-        feedback.
-      </Text>
+      <Text text="Audio Wearable" style={[styles.guideTitle, {color: textColor}]} />
+      <Text 
+        text="1. Make sure your Audio Wearable is fully charged and turned on."
+        style={[styles.guideStep, {color: textColor}]} />
+      <Text 
+        text="2. Enable Bluetooth pairing mode on your Audio Wearable."
+        style={[styles.guideStep, {color: textColor}]} />
+      <Text 
+        text="3. Note: Audio Wearables don't have displays. All visual information will be converted to speech."
+        style={[styles.guideStep, {color: textColor}]} />
+      <Text 
+        text="Audio Wearables are smart glasses without displays. They use text-to-speech to provide information that would normally be shown visually. This makes them ideal for audio-only applications or for users who prefer auditory feedback."
+        style={[styles.guideDescription, {color: textColor}]} />
     </View>
   )
 }
@@ -189,10 +156,10 @@ export function VirtualWearablePairingGuide() {
   const {theme} = useAppTheme()
   return (
     <View style={styles.guideContainer}>
-      <Text style={[styles.guideTitle, {color: theme.colors.text}]}>Simulated Glasses</Text>
-      <Text style={[styles.guideStep, {color: theme.colors.text}]}>
-        The Simulated Glasses allows you to run AugmentOS without physical smart glasses.
-      </Text>
+      <Text text="Simulated Glasses" style={[styles.guideTitle, {color: theme.colors.text}]} />
+      <Text 
+        text="The Simulated Glasses allows you to run AugmentOS without physical smart glasses."
+        style={[styles.guideStep, {color: theme.colors.text}]} />
     </View>
   )
 }
@@ -264,7 +231,6 @@ const styles = StyleSheet.create({
     marginVertical: 15,
   },
   featuresContainer: {
-    backgroundColor: "rgba(204, 204, 204, 0.25)", // equals to '#ccc'  with opacity
     flexDirection: "column",
     alignItems: "center",
     borderRadius: 16,
@@ -289,43 +255,22 @@ const styles = StyleSheet.create({
   },
   buySection: {
     marginTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: "#ddd",
   },
-  pricingContainer: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    marginBottom: 15,
-  },
-  originalPrice: {
-    fontSize: 16,
-    textDecorationLine: "line-through",
-    marginRight: 10,
-  },
-  currentPrice: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#5E17EB",
-    marginRight: 10,
-  },
-  discount: {
-    fontSize: 14,
-    color: "#FF4F00",
-    fontWeight: "500",
-  },
-  buyButton: {
-    paddingVertical: 15,
-    borderRadius: 8,
+  preorderButton: {
+    minHeight: 44,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 30,
     alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
   },
   buyButtonText: {
-    color: "white",
     fontSize: 16,
     fontWeight: "bold",
   },
   shippingText: {
-    color: "rgba(255, 255, 255, 0.8)",
     fontSize: 12,
-    marginTop: 5,
+    marginTop: 4,
   },
 })

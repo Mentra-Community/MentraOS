@@ -1,0 +1,43 @@
+{
+  "name": "@augmentos/react",
+  "version": "0.1.0",
+  "description": "React hooks and providers for AugmentOS webviews, allowing you to create frontends for smartglasses apps.",
+  "author": "Mentra Team",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.cjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && bun x tsc -p tsconfig.json",
+    "dev": "bun x tsc -p tsconfig.json --watch",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@types/jsrsasign": "^10.5.15",
+    "@types/react": "^19.1.6",
+    "jsrsasign": "^11.1.0",
+    "react": "^19.1.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "augmentos",
+    "react",
+    "mentra"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -20,7 +20,7 @@ public class WakeLockManager {
     
     // Default timeouts
     private static final long DEFAULT_CPU_TIMEOUT_MS = 60000; // 60 seconds
-    private static final long DEFAULT_SCREEN_TIMEOUT_MS = 5000; // 5 seconds
+    private static final long DEFAULT_SCREEN_TIMEOUT_MS = 15000; // 15 seconds
     
     // Static wake lock instances for sharing across the app
     private static PowerManager.WakeLock sCpuWakeLock;

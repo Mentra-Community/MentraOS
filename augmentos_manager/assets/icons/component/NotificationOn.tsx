@@ -26,8 +26,8 @@ const NotificationOn = ({ color = '#565E8C', size = 24 }: NotificationOnProps) =
       />
       <Path
         d="M19.4152 8.23804C21.1524 8.23804 22.5607 6.82968 22.5607 5.09241C22.5607 3.35514 21.1524 1.94678 19.4152 1.94678C17.6779 1.94678 16.2695 3.35514 16.2695 5.09241C16.2695 6.82968 17.6778 8.23804 19.4152 8.23804Z"
-        fill="#FE98EB"
-        stroke="#FE98EB"
+        fill="#FF3B30"
+        stroke="#FF3B30"
         strokeLinecap="round"
         strokeLinejoin="round"
       />

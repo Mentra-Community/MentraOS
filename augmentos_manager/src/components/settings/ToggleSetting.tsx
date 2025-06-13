@@ -1,8 +1,8 @@
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
 import React from "react"
-import {View, Text, StyleSheet, Platform, ViewStyle, TextStyle} from "react-native"
-import {Switch} from "@/components/ignite/Toggle"
+import {View, StyleSheet, Platform, ViewStyle, TextStyle} from "react-native"
+import {Switch, Text} from "@/components/ignite"
 
 type ToggleSettingProps = {
   label: string
@@ -18,8 +18,8 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({label, subtitle, value, on
   return (
     <View style={[themed($container), containerStyle]}>
       <View style={themed($textContainer)}>
-        <Text style={themed($label)}>{label}</Text>
-        {subtitle && <Text style={themed($subtitle)}>{subtitle}</Text>}
+        <Text text={label} style={themed($label)} />
+        {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
       <Switch
         value={value}
@@ -37,7 +37,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.background,
   paddingVertical: spacing.md,
   paddingHorizontal: spacing.lg,
-  borderRadius: spacing.lg,
+  borderRadius: spacing.sm,
 })
 
 const $textContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
@@ -45,7 +45,8 @@ const $textContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
   alignItems: "flex-start",
   justifyContent: "flex-start",
   gap: 4,
-  maxWidth: "85%",
+  flex: 1,
+  marginRight: 16, // Add spacing between text and toggle
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors}) => ({

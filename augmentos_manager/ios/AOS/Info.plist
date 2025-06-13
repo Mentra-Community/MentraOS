@@ -49,7 +49,11 @@
     <string>This app needs access to your Bluetooth to connect to your glasses.</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
     <string>This app needs access to your Bluetooth to connect to your glasses.</string>
+    <key>NSCalendarUsageDescription</key>
+    <string>This app needs access to your calendar to provide you with calendar based information on your glasses.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>This app needs access to your calendar to provide you with calendar based information.</string>
+    <key>NSCalendarsUsageDescription</key>
     <string>This app needs access to your calendar to provide you with calendar based information.</string>
     <key>NSCameraUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your camera</string>
@@ -57,10 +61,14 @@
     <string>This app needs access to your location to provide you with locatioin based information.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your microphone</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>This app needs access to your photo library to provide you with photo based information on your glasses.</string>
     <key>NSUserActivityTypes</key>
     <array>
       <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>
     </array>
+    <key>NSUserNotificationUsageDescription</key>
+    <string>This app needs access to your notifications to provide you with notifications.</string>
     <key>UIBackgroundModes</key>
     <array>
       <string>bluetooth-central</string>
@@ -74,7 +82,7 @@
     <key>UIRequiresFullScreen</key>
     <false/>
     <key>UIStatusBarStyle</key>
-    <string>UIStatusBarStyleDefault</string>
+    <string/>
     <key>UISupportedInterfaceOrientations</key>
     <array>
       <string>UIInterfaceOrientationPortrait</string>

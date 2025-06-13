@@ -46,23 +46,8 @@ public class DebugNotificationManager {
      * @param message The notification message
      */
     public void showDebugNotification(String title, String message) {
-        PendingIntent contentIntent = PendingIntent.getActivity(
-                context, 
-                0, 
-                new Intent(context, MainActivity.class), 
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(title)
-                .setContentText(message)
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(message))
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setContentIntent(contentIntent)
-                .setAutoCancel(true);
-        
-        // Use a different notification ID for each notification
-        notificationManager.notify(NOTIFICATION_ID_BASE + notificationCount++, builder.build());
+        // Disabled to prevent notification spam
+        // Only connection events are important enough for notifications
     }
     
     /**

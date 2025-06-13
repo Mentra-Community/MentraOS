@@ -22,6 +22,8 @@ Download AugmentOS from [AugmentOS.org/install](https://AugmentOS.org/install)
 
 ### Set up ngrok
 
+We are going to use ngrok to expose your local app to the internet.  This is useful for development, but when you're ready to go live, you'll want to deploy to a cloud service like [Railway](railway-deployment) or [an Ubuntu server](ubuntu-deployment).
+
 1. [Install ngrok](https://ngrok.com/docs/getting-started/)
 2. Create an ngrok account
 3. [Set up a static address/URL in the ngrok dashboard](https://dashboard.ngrok.com/)
@@ -95,8 +97,8 @@ For more information, visit the [AugmentOS-Cloud-Example-App repository](https:/
 
 ## Next Steps
 
-- Explore the [Build From Scratch](getting-started) guide for a more detailed walkthrough
+- Explore the [Build From Scratch](/getting-started) guide for a more detailed walkthrough
 - For a more in-depth example with app settings support, see the [Extended Example](https://github.com/AugmentOS-Community/AugmentOS-Extended-Example-App)
-- Learn about [Core Concepts](core-concepts) to understand how AugmentOS apps work
-- Read about [Permissions](permissions) to access device capabilities like microphone and location
+- Learn about [Core Concepts](/core-concepts) to understand how AugmentOS apps work
+- Read about [Permissions](/permissions) to access device capabilities like microphone and location
 - Join our [Discord community](https://discord.gg/5ukNvkEAqT) for help and support

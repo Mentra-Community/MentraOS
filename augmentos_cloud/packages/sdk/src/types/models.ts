@@ -31,14 +31,26 @@ export interface DeveloperProfile {
   logo?: string;
 }
 
-// Define PermissionType enum until it's added to the SDK
+// Define PermissionType enum with legacy support
 export enum PermissionType {
   MICROPHONE = 'MICROPHONE',
   LOCATION = 'LOCATION',
   CALENDAR = 'CALENDAR',
+  
+  // Legacy notification permission (backward compatibility)
   NOTIFICATIONS = 'NOTIFICATIONS',
+  
+  // New granular notification permissions
+  READ_NOTIFICATIONS = 'READ_NOTIFICATIONS',
+  POST_NOTIFICATIONS = 'POST_NOTIFICATIONS',
+  
   ALL = 'ALL'
 }
+
+// Legacy permission mapping for backward compatibility
+export const LEGACY_PERMISSION_MAP = new Map<PermissionType, PermissionType[]>([
+  [PermissionType.NOTIFICATIONS, [PermissionType.READ_NOTIFICATIONS]]
+]);
 
 // Permission interface
 export interface Permission {

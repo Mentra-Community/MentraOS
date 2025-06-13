@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from "react-native";
+import { View, StyleSheet, TouchableOpacity, Animated } from "react-native";
+import { Text } from "@/components/ignite";
 import { MOCK_CONNECTION } from "../consts";
 import GlobalEventEmitter from "../logic/GlobalEventEmitter";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -71,9 +72,9 @@ export default function MessageBanner() {
           marginTop: top,
         },
       ]}>
-      <Text style={styles.text}>{message}</Text>
+      <Text text={message} style={styles.text} />
       <TouchableOpacity onPress={() => setMessage(null)}>
-        <Text style={styles.dismiss}>Dismiss</Text>
+        <Text text="Dismiss" style={styles.dismiss} />
       </TouchableOpacity>
     </Animated.View>
     // </SafeAreaView>
@@ -100,12 +101,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginRight: 10,
     flexWrap: 'wrap',
-    fontFamily: 'Montserrat-Regular',
   },
   dismiss: {
     color: 'white',
     fontWeight: 'bold',
-    fontFamily: 'Montserrat-Bold',
   },
 });
 

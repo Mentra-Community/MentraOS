@@ -1,12 +1,21 @@
 import React, {useState, useEffect} from "react"
-import {View, Text, StyleSheet, TouchableOpacity, Platform, ScrollView, Image, ViewStyle} from "react-native"
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Platform,
+  ScrollView,
+  Image,
+  ViewStyle,
+  BackHandler,
+} from "react-native"
 import {useFocusEffect} from "@react-navigation/native"
 import Icon from "react-native-vector-icons/FontAwesome"
 import {useStatus} from "@/contexts/AugmentOSStatusProvider"
 import {loadSetting} from "@/utils/SettingsHelper"
 import {SETTINGS_KEYS} from "@/consts"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-import TestFlightDetector from "@/bridge/TestFlightDetector"
 import {useAppTheme} from "@/utils/useAppTheme"
 import {router} from "expo-router"
 import {Screen} from "@/components/ignite/Screen"
@@ -18,39 +27,22 @@ export default function SelectGlassesModelScreen() {
   const {status} = useStatus()
   const [glassesModelNameToPair, setGlassesModelNameToPair] = useState<string | null>(null)
   const [isOnboarding, setIsOnboarding] = useState(false)
-  // Track whether we're running on TestFlight (iOS) or in development mode
-  const [isTestFlightOrDev, setIsTestFlightOrDev] = useState<boolean>(true)
   const {theme, themed} = useAppTheme()
   const isDarkTheme = theme.isDark
   const {goBack, push} = useNavigationHistory()
-  // Check if running on TestFlight (iOS) or development mode
-  useEffect(() => {
-    async function checkTestFlightOrDev() {
-      setIsTestFlightOrDev(await TestFlightDetector.isTestFlightOrDev())
-    }
-    checkTestFlightOrDev()
-  }, [])
 
   // Platform-specific glasses options
   // For iOS, conditionally include Simulated Glasses based on TestFlight status
   let glassesOptions =
     Platform.OS === "ios"
-      ? // iOS: Show Simulated Glasses only in TestFlight or development
-        isTestFlightOrDev
-        ? [
-            // iOS TestFlight or development - include Simulated Glasses
-            {modelName: "Simulated Glasses", key: "Simulated Glasses"}, // Moved to first position
-            {modelName: "Even Realities G1", key: "evenrealities_g1"},
-            {modelName: "Mentra Live", key: "mentra_live"},
-          ]
-        : [
-            // iOS App Store production build - hide Simulated Glasses
-            {modelName: "Even Realities G1", key: "evenrealities_g1"},
-            {modelName: "Mentra Live", key: "mentra_live"},
-          ]
+      ? [
+          {modelName: "Simulated Glasses", key: "Simulated Glasses"},
+          {modelName: "Even Realities G1", key: "evenrealities_g1"},
+          {modelName: "Mentra Live", key: "mentra_live"},
+        ]
       : [
           // Android supports all options (unchanged)
-          {modelName: "Simulated Glasses", key: "Simulated Glasses"}, // Moved to first position
+          {modelName: "Simulated Glasses", key: "Simulated Glasses"},
           {modelName: "Vuzix Z100", key: "vuzix-z100"},
           {modelName: "Mentra Mach1", key: "mentra_mach1"},
           {modelName: "Mentra Live", key: "mentra_live"},
@@ -68,7 +60,18 @@ export default function SelectGlassesModelScreen() {
       }
 
       checkOnboardingStatus()
-    }, []),
+
+      // Handle Android back button
+      const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
+        // If in onboarding, prevent going back
+        if (isOnboarding) {
+          return true // This prevents the default back action
+        }
+        return false // Allow default back action
+      })
+
+      return () => backHandler.remove()
+    }, [isOnboarding]),
   )
 
   useEffect(() => {}, [status])
@@ -81,26 +84,37 @@ export default function SelectGlassesModelScreen() {
     router.push({pathname: "/pairing/prep", params: {glassesModelName: glassesModelName}})
   }
 
-
   return (
     <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}} safeAreaEdges={["bottom"]}>
-      <Header titleTx="pairing:selectModel" leftIcon="caretLeft" onLeftPress={goBack} />
+      <Header
+        titleTx="pairing:selectModel"
+        leftIcon={isOnboarding ? undefined : "caretLeft"}
+        onLeftPress={
+          isOnboarding
+            ? undefined
+            : () => {
+                router.replace({pathname: "/home"})
+              }
+        }
+      />
       <ScrollView style={{marginRight: -theme.spacing.md, paddingRight: theme.spacing.md}}>
         {isOnboarding && (
-          <View style={[styles.onboardingBanner, {backgroundColor: theme.colors.statusInfo, borderColor: theme.colors.buttonPrimary}]}>
+          <View
+            style={[
+              styles.onboardingBanner,
+              {backgroundColor: theme.colors.statusInfo, borderColor: theme.colors.buttonPrimary},
+            ]}>
             <Icon name="info-circle" size={20} color={theme.colors.icon} style={{marginRight: 8}} />
 
             <Text
               style={{
-                color: theme.colors.icon,
+                color: "white",
                 fontWeight: "bold",
                 textAlign: "center",
                 fontSize: 16,
                 flex: 1,
               }}>
-              {Platform.OS === "ios" && !isTestFlightOrDev
-                ? "Please connect your smart glasses to continue."
-                : 'If you don\'t have smart glasses yet, you can select "Simulated Glasses".'}
+              {"If you don't have smart glasses yet, you can select 'Simulated Glasses'."}
             </Text>
           </View>
         )}
@@ -118,7 +132,10 @@ export default function SelectGlassesModelScreen() {
                 style={[
                   styles.label,
                   {
-                    color: isOnboarding && glasses.modelName === "Simulated Glasses" ? theme.colors.buttonPrimary : theme.colors.text,
+                    color:
+                      isOnboarding && glasses.modelName === "Simulated Glasses"
+                        ? theme.colors.buttonPrimary
+                        : theme.colors.text,
                     fontWeight: isOnboarding && glasses.modelName === "Simulated Glasses" ? "800" : "600",
                   },
                 ]}>

@@ -35,7 +35,11 @@
         "NSBluetoothAlwaysUsageDescription": "This app needs access to your Bluetooth to connect to your glasses.",
         "NSLocationWhenInUseUsageDescription": "This app needs access to your location to provide you with locatioin based information.",
         "NSBluetoothPeripheralUsageDescription": "This app needs access to your Bluetooth to connect to your glasses.",
+        "NSCalendarsUsageDescription": "This app needs access to your calendar to provide you with calendar based information.",
         "NSCalendarsFullAccessUsageDescription": "This app needs access to your calendar to provide you with calendar based information.",
+        "NSCalendarUsageDescription": "This app needs access to your calendar to provide you with calendar based information on your glasses.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to provide you with photo based information on your glasses.",
+        "NSUserNotificationUsageDescription": "This app needs access to your notifications to provide you with notifications.",
         "UIBackgroundModes": ["bluetooth-central"]
       }
     },

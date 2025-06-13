@@ -134,7 +134,7 @@ export function Button(props: ButtonProps) {
   const {themed, theme} = useAppTheme()
 
   const preset: Presets = props.preset ?? "default"
-  const gradientColors = [theme.colors.buttonGradientStart, theme.colors.buttonGradientEnd]
+  const gradientColors = theme.isDark ? [theme.colors.buttonGradientEnd, theme.colors.buttonGradientEnd] : [theme.colors.transparent, theme.colors.transparent]
   /**
    * @param {PressableStateCallbackType} root0 - The root object containing the pressed state.
    * @param {boolean} root0.pressed - The pressed state.
@@ -163,7 +163,7 @@ export function Button(props: ButtonProps) {
   }
 
   return (
-    <LinearGradient colors={gradientColors} start={{x: 1, y: 0}} end={{x: 0, y: 0}} style={gradientBorderStyle}>
+    <LinearGradient colors={gradientColors} start={{x: 1, y: 0}} end={{x: 0, y: 0}} style={theme.isDark ? gradientBorderStyle : {}}>
       <Pressable
         style={$viewStyle}
         accessibilityRole="button"
@@ -198,7 +198,7 @@ export function Button(props: ButtonProps) {
   )
 }
 
-const $baseViewStyle: ThemedStyle<ViewStyle> = ({spacing, colors}) => ({
+const $baseViewStyle: ThemedStyle<ViewStyle> = ({spacing, colors, isDark}) => ({
   minHeight: 44,
   borderRadius: 30,
   justifyContent: "center",
@@ -207,12 +207,14 @@ const $baseViewStyle: ThemedStyle<ViewStyle> = ({spacing, colors}) => ({
   paddingHorizontal: spacing.sm,
   overflow: "hidden",
   backgroundColor: colors.palette.primary200,
+  // Add subtle border for light theme
+  borderWidth: isDark ? 0 : 1,
+  borderColor: isDark ? undefined : colors.border,
 })
 
 const $baseTextStyle: ThemedStyle<TextStyle> = ({typography}) => ({
   fontSize: 16,
   lineHeight: 20,
-  fontFamily: "SF Pro Rounded",
   textAlign: "center",
   flexShrink: 1,
   flexGrow: 0,
@@ -251,7 +253,7 @@ const $textPresets: Record<Presets, ThemedStyleArray<TextStyle>> = {
 }
 
 const $pressedViewPresets: Record<Presets, ThemedStyle<ViewStyle>> = {
-  default: ({colors}) => ({backgroundColor: colors.palette.neutral200}),
+  default: ({colors, isDark}) => ({backgroundColor: isDark ? colors.palette.neutral200 : colors.palette.primary100}),
   filled: ({colors}) => ({backgroundColor: colors.palette.neutral400}),
   reversed: ({colors}) => ({backgroundColor: colors.palette.neutral700}),
 }

@@ -49,25 +49,36 @@ function SwitchInput(props: SwitchInputProps) {
   } = props
 
   const {
-    theme: {colors},
+    theme: {colors, isDark},
     themed,
   } = useAppTheme()
 
   const animate = useRef(new Animated.Value(on ? 1 : 0)) // Initial value is set based on isActive
   const opacity = useRef(new Animated.Value(0))
+  const trackColorAnim = useRef(new Animated.Value(on ? 1 : 0))
 
   useEffect(() => {
+    // Start knob animation
     Animated.timing(animate.current, {
       toValue: on ? 1 : 0,
-      duration: 300,
+      duration: 200, // Faster animation
       useNativeDriver: true, // Enable native driver for smoother animations
     }).start()
+    
+    // Delay track color animation to start near the end of knob animation
+    setTimeout(() => {
+      Animated.timing(trackColorAnim.current, {
+        toValue: on ? 1 : 0,
+        duration: 100, // Quick color transition at the end
+        useNativeDriver: false,
+      }).start()
+    }, 150) // Start color change 150ms into the 200ms animation
   }, [on])
 
   useEffect(() => {
     Animated.timing(opacity.current, {
       toValue: on ? 1 : 0,
-      duration: 300,
+      duration: 200, // Match the faster animation speed
       useNativeDriver: true,
     }).start()
   }, [on])
@@ -85,31 +96,29 @@ function SwitchInput(props: SwitchInputProps) {
   const offBackgroundColor = [
     disabled && colors.palette.neutral400,
     status === "error" && colors.errorBackground,
-    colors.palette.primary400,
+    colors.switchTrackOff,
   ].filter(Boolean)[0]
 
   const onBackgroundColor = [
     disabled && colors.transparent,
     status === "error" && colors.errorBackground,
-    colors.palette.primary300,
+    colors.switchTrackOn,
   ].filter(Boolean)[0]
 
   const knobBackgroundColor = (function () {
     if (on) {
       return [
         // $detailStyleOverride?.backgroundColor,
-        colors.tint,
+        colors.switchThumb, // White when on
         status === "error" && colors.error,
         disabled && colors.palette.neutral600,
-        colors.palette.neutral100,
       ].filter(Boolean)[0]
     } else {
       return [
         // $innerStyleOverride?.backgroundColor,
-        colors.tint,
+        colors.switchThumbOff || "#E0E0E0", // More noticeable gray when off
         disabled && colors.palette.neutral600,
         status === "error" && colors.error,
-        colors.palette.neutral200,
       ].filter(Boolean)[0]
     }
   })()
@@ -144,13 +153,19 @@ function SwitchInput(props: SwitchInputProps) {
     // outputRange,
     outputRange: [-12, 12],
   })
+  
+  // Interpolate track background color
+  const animatedTrackColor = trackColorAnim.current.interpolate({
+    inputRange: [0, 1],
+    outputRange: [offBackgroundColor, onBackgroundColor],
+  })
 
   return (
     <View style={{alignItems: "center", justifyContent: "center", marginRight: 12}}>
-      <View
+      <Animated.View
         style={[
           $inputOuter,
-          {backgroundColor: offBackgroundColor},
+          {backgroundColor: animatedTrackColor},
           $outerStyleOverride,
           // {transform: [{translateX: -12}]},
         ]}>
@@ -166,7 +181,7 @@ function SwitchInput(props: SwitchInputProps) {
 
         {/* <SwitchAccessibilityLabel {...props} role="on" /> */}
         {/* <SwitchAccessibilityLabel {...props} role="off" /> */}
-      </View>
+      </Animated.View>
       <Animated.View
         style={[
           $switchDetail,

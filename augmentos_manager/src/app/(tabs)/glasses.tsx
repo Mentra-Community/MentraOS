@@ -64,7 +64,7 @@ export default function Homepage() {
   // Get local version from env file
   const getLocalVersion = () => {
     try {
-      const version = Constants.expoConfig?.extra?.EXPO_PUBLIC_AUGMENTOS_VERSION
+      const version = Constants.expoConfig?.version
       console.log("Local version from env:", version)
       return version || null
     } catch (error) {
@@ -164,9 +164,10 @@ export default function Homepage() {
   }
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}}>
-      <Header title={pageTitle} />
-
+    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.lg}}>
+      <Header
+        leftText={pageTitle}
+      />
       <ScrollView style={{marginRight: -theme.spacing.md, paddingRight: theme.spacing.md}}>
         {status.core_info.cloud_connection_status !== "CONNECTED" && <CloudConnection />}
 

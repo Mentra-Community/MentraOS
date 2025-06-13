@@ -5,6 +5,10 @@ import GlobalEventEmitter from '@/utils/GlobalEventEmitter';
 import {loadSetting} from '@/utils/SettingsHelper';
 import {SETTINGS_KEYS} from '@/consts';
 import {AppInterface} from '@/contexts/AppStatusProvider';
+import Toast from 'react-native-toast-message';
+import { translate } from '@/i18n';
+import { colors } from '@/theme';
+import { TruckIcon } from 'assets/icons/component/TruckIcon';
 
 interface Callback {
   onSuccess: (data: any) => void;
@@ -120,7 +124,13 @@ export default class BackendServerComms {
 
   public setCoreToken(token: string | null): void {
     this.coreToken = token;
-    console.log(`${this.TAG}: Core token ${token ? 'set' : 'cleared'}`);
+    console.log(`${this.TAG}: Core token ${token ? 'set' : 'cleared'} - Length: ${token?.length || 0} - First 20 chars: ${token?.substring(0, 20) || 'null'}`);
+    
+    // When a core token is set, trigger app refresh via global event
+    if (token) {
+      console.log(`${this.TAG}: Core token set, emitting CORE_TOKEN_SET event`);
+      GlobalEventEmitter.emit('CORE_TOKEN_SET');
+    }
   }
 
   public getCoreToken(): string | null {
@@ -315,6 +325,7 @@ export default class BackendServerComms {
       const response = await axios(config);
       if (response.status === 200 && response.data) {
         console.log('App started successfully:', packageName);
+        showToast();
         return response.data;
       } else {
         throw new Error(`Bad response: ${response.statusText}`);
@@ -409,12 +420,14 @@ export default class BackendServerComms {
    * @returns Promise with the apps data
    */
   public async getApps(): Promise<AppInterface[]> {
+    console.log(`${this.TAG}: getApps() called`);
     if (!this.coreToken) {
       throw new Error('No core token available for authentication');
     }
 
     const baseUrl = await this.getServerUrl();
     const url = `${baseUrl}/api/apps/`;
+    console.log(`${this.TAG}: Fetching apps from URL: ${url}`);
 
     const config: AxiosRequestConfig = {
       method: 'GET',
@@ -424,21 +437,29 @@ export default class BackendServerComms {
         'Authorization': `Bearer ${this.coreToken}`,
       },
     };
+    
+    // console.log(`${this.TAG}: Authorization header: Bearer ${this.coreToken?.substring(0, 20)}...`);
 
     try {
+      // console.log(`${this.TAG}: Making axios request to ${url}`);
       const response = await axios(config);
+      console.log(`${this.TAG}: Received response with status: ${response.status}`);
 
       if (response.status === 200 && response.data) {
+        // console.log(`${this.TAG}: Response data:`, response.data);
         if (response.data.success && response.data.data) {
+          // console.log(`${this.TAG}: Successfully fetched ${response.data.data.length} apps`);
           return response.data.data;
         } else {
+          // console.error(`${this.TAG}: Invalid response format:`, response.data);
           throw new Error('Invalid response format');
         }
       } else {
+        // console.error(`${this.TAG}: Bad response status: ${response.status} - ${response.statusText}`);
         throw new Error(`Bad response: ${response.statusText}`);
       }
     } catch (error: any) {
-      // console.error('Error fetching apps:', error.message || error);
+      // console.error(`${this.TAG}: Error fetching apps:`, error.message || error);
       throw error;
     }
   }
@@ -449,13 +470,13 @@ export default class BackendServerComms {
    * @returns Promise resolving to the temporary token string.
    * @throws Error if the request fails or no core token is available.
    */
-  public async generateWebviewToken(packageName: string): Promise<string> {
+  public async generateWebviewToken(packageName: string, endpoint: string = "generate-webview-token"): Promise<string> {
     if (!this.coreToken) {
       throw new Error('Authentication required: No core token available.');
     }
 
     const baseUrl = await this.getServerUrl();
-    const url = `${baseUrl}/api/auth/generate-webview-token`;
+    const url = `${baseUrl}/api/auth/${endpoint}`;
     console.log('Requesting webview token for:', packageName, 'at URL:', url);
 
     const config: AxiosRequestConfig = {
@@ -594,10 +615,10 @@ export default class BackendServerComms {
       throw error;
     }
   }
-  
 
-    
-    
+
+
+
 
 //   1. Request Data Export:
 //   - Endpoint: /api/account/request-export
@@ -708,3 +729,14 @@ export default class BackendServerComms {
   }
 
 }
+function showToast() {
+  Toast.show({
+    type: "baseToast",
+    text1: translate("home:movedToActive"),
+    position: "bottom",
+    props: {
+      icon: <TruckIcon  color={colors.icon}/>,
+    },
+  })
+}
+

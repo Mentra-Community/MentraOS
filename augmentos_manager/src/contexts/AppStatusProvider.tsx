@@ -9,9 +9,10 @@ import { loadSetting } from "@/utils/SettingsHelper"
 import { SETTINGS_KEYS } from "@/consts"
 import coreCommunicator from "@/bridge/CoreCommunicator"
 
+export type TPAPermissionType = "ALL" | "MICROPHONE" | "CAMERA" | "CALENDAR" | "LOCATION" | "READ_NOTIFICATIONS" | "POST_NOTIFICATIONS"
 export interface TPAPermission {
   description: string
-  type: "MICROPHONE" | "CAMERA" | "CALENDAR" | "NOTIFICATIONS" | "LOCATION" | "ALL"
+  type: TPAPermissionType
   required?: boolean
 }
 
@@ -73,17 +74,22 @@ export const AppStatusProvider = ({children}: {children: ReactNode}) => {
   const lastRefreshTime = useRef<number>(0)
 
   const refreshAppStatus = useCallback(async () => {
+    console.log("AppStatusProvider: refreshAppStatus called - user exists:", !!user, "user email:", user?.email)
     if (!user) {
+      console.log("AppStatusProvider: No user, clearing app status")
       setAppStatus([])
       return
     }
 
-    // Check if we have a core token in the status
-    if (!status.core_info.core_token) {
+    // Check if we have a core token from BackendServerComms
+    const coreToken = BackendServerComms.getInstance().getCoreToken()
+    console.log("AppStatusProvider: Core token check - token exists:", !!coreToken, "token length:", coreToken?.length || 0)
+    if (!coreToken) {
       console.log("Waiting for core token before fetching apps")
       return
     }
 
+    console.log("AppStatusProvider: Token check passed, starting app fetch...")
     setIsLoading(true)
     setError(null)
 
@@ -100,7 +106,9 @@ export const AppStatusProvider = ({children}: {children: ReactNode}) => {
         }
       })
 
+      console.log("AppStatusProvider: Calling BackendServerComms.getApps()...")
       const appsData = await BackendServerComms.getInstance().getApps()
+      console.log("AppStatusProvider: getApps() returned", appsData?.length || 0, "apps")
 
       // Only process this update if it's the most recent one
       if (refreshStartTime === lastRefreshTime.current) {
@@ -132,7 +140,7 @@ export const AppStatusProvider = ({children}: {children: ReactNode}) => {
         setAppStatus(updatedAppsData)
       }
     } catch (err) {
-      // console.error("Error fetching apps:", err)
+      console.error("AppStatusProvider: Error fetching apps:", err)
       // if (("" + err).includes("401")) {
       //   // log out the user
       //   await logout()
@@ -207,17 +215,39 @@ export const AppStatusProvider = ({children}: {children: ReactNode}) => {
       console.log("APP_STOPPED_EVENT", packageName)
       optimisticallyStopApp(packageName)
     }
+    const onResetAppStatus = () => {
+      console.log("RESET_APP_STATUS event received, clearing app status")
+      setAppStatus([])
+      setError(null)
+      setIsLoading(false)
+    }
+    const onCoreTokenSet = () => {
+      console.log("CORE_TOKEN_SET event received, forcing app refresh with 1.5 second delay")
+      // Add a delay to let the token become valid on the server side
+      setTimeout(() => {
+        console.log("CORE_TOKEN_SET: Delayed refresh executing now")
+        refreshAppStatus()
+      }, 1500)
+    }
     // @ts-ignore
     GlobalEventEmitter.on("APP_STARTED_EVENT", onAppStarted)
     // @ts-ignore
     GlobalEventEmitter.on("APP_STOPPED_EVENT", onAppStopped)
+    // @ts-ignore
+    GlobalEventEmitter.on("RESET_APP_STATUS", onResetAppStatus)
+    // @ts-ignore
+    GlobalEventEmitter.on("CORE_TOKEN_SET", onCoreTokenSet)
     return () => {
       // @ts-ignore
       GlobalEventEmitter.off("APP_STARTED_EVENT", onAppStarted)
       // @ts-ignore
       GlobalEventEmitter.off("APP_STOPPED_EVENT", onAppStopped)
+      // @ts-ignore
+      GlobalEventEmitter.off("RESET_APP_STATUS", onResetAppStatus)
+      // @ts-ignore
+      GlobalEventEmitter.off("CORE_TOKEN_SET", onCoreTokenSet)
     }
-  }, [optimisticallyStartApp, optimisticallyStopApp])
+  }, [optimisticallyStartApp, optimisticallyStopApp, refreshAppStatus])
 
   // Add a listener for app state changes to detect when the app comes back from background
   useEffect(() => {

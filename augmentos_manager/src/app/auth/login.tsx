@@ -18,7 +18,7 @@ import LinearGradient from "react-native-linear-gradient"
 import {supabase} from "@/supabase/supabaseClient"
 import {Linking} from "react-native"
 import {Screen, Text, Button, Icon} from "@/components/ignite"
-import {translate} from "@/i18n"
+import {translate, TxKeyPath} from "@/i18n"
 import {spacing, ThemedStyle} from "@/theme"
 import {useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
 import {useAppTheme} from "@/utils/useAppTheme"
@@ -31,6 +31,7 @@ import { Pressable } from "react-native-gesture-handler"
 import { Spacer } from "@/components/misc/Spacer"
 import { useNavigationHistory } from "@/contexts/NavigationHistoryContext"
 import * as WebBrowser from 'expo-web-browser';
+import Toast from "react-native-toast-message"
 
 export default function LoginScreen() {
   const [isSigningUp, setIsSigningUp] = useState(false)
@@ -232,6 +233,13 @@ export default function LoginScreen() {
     console.log("signInWithOAuth call finished")
   }
 
+  const showToastMessage = (txPath: TxKeyPath) => {
+    Toast.show({
+      type: "error",
+      text1: translate(txPath),
+      position: "bottom",
+    })
+  }
   const handleAppleSignIn = async () => {
     try {
       setIsAuthLoading(true)
@@ -269,6 +277,9 @@ export default function LoginScreen() {
       // After returning from the browser, check the session
       const {data: sessionData} = await supabase.auth.getSession()
       console.log("Current session after Apple sign-in:", sessionData.session)
+      if(sessionData.session == null){
+       showToastMessage("login:userCanceledAppleLogin");
+      }
 
       // Note: The actual navigation to SplashScreen will be handled by
       // the onAuthStateChange listener you already have in place
@@ -395,10 +406,7 @@ export default function LoginScreen() {
       preset="fixed"
       safeAreaEdges={["top"]}
       contentContainerStyle={themed($container)}>
-      <LinearGradient
-        colors={[theme.colors.loginGradientStart, theme.colors.loginGradientEnd]}
-        style={themed($gradientContainer)}>
-          <ScrollView contentContainerStyle={themed($scrollContent)} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={themed($scrollContent)} showsVerticalScrollIndicator={false}>
             <View style={themed($card)}>
               {/* Auth Loading Overlay */}
               {isAuthLoading && (
@@ -520,7 +528,7 @@ export default function LoginScreen() {
                     <TouchableOpacity
                       style={[themed($socialButton), themed($googleButton)]}
                       onPress={handleGoogleSignIn}>
-                      <View style={themed($socialIconContainer)}>
+                      <View style={[themed($socialIconContainer), {position: 'absolute', left: 12}]}>
                         <GoogleIcon />
                       </View>
                       <Text style={themed($socialButtonText)} tx="login:continueWithGoogle" />
@@ -530,7 +538,7 @@ export default function LoginScreen() {
                       <TouchableOpacity
                         style={[themed($socialButton), themed($appleButton)]}
                         onPress={handleAppleSignIn}>
-                        <View style={themed($socialIconContainer)}>
+                        <View style={[themed($socialIconContainer), {position: 'absolute', left: 12}]}>
                           <AppleIcon />
                         </View>
                         <Text
@@ -550,13 +558,13 @@ export default function LoginScreen() {
                       tx="login:continueWithEmail"
                       style={themed($primaryButton)}
                       pressedStyle={themed($pressedButton)}
-                      textStyle={themed($buttonText)}
+                      textStyle={themed($emailButtonText)}
                       onPress={() => setIsSigningUp(true)}
                       LeftAccessory={() => (
                         <FontAwesome
                           name="envelope"
                           size={16}
-                          color={theme.colors.icon}
+                          color={theme.colors.text}
                           // style={themed($emailIcon)}
                         />
                       )}
@@ -570,15 +578,13 @@ export default function LoginScreen() {
               </Animated.View>
             </View>
           </ScrollView>
-      </LinearGradient>
     </Screen>
   )
 }
 
 // Themed Styles
-const $container: ThemedStyle<ViewStyle> = ({colors}) => ({
+const $container: ThemedStyle<ViewStyle> = () => ({
   flex: 1,
-  backgroundColor: colors.background,
 })
 
 const $gradientContainer: ThemedStyle<ViewStyle> = () => ({
@@ -667,7 +673,7 @@ const $inputLabel: ThemedStyle<TextStyle> = ({colors}) => ({
   marginBottom: 8,
 })
 
-const $enhancedInputContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+const $enhancedInputContainer: ThemedStyle<ViewStyle> = ({colors, spacing, isDark}) => ({
   flexDirection: "row",
   alignItems: "center",
   height: 48,
@@ -675,15 +681,17 @@ const $enhancedInputContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => (
   borderColor: colors.border,
   borderRadius: 8,
   paddingHorizontal: spacing.sm,
-  // backgroundColor: colors.card,
-  // shadowColor: colors.shadowColor,
-  shadowOffset: {
-    width: 0,
-    height: 1,
-  },
-  shadowOpacity: 0.1,
-  shadowRadius: 2,
-  elevation: 2,
+  backgroundColor: isDark ? colors.transparent : colors.background,
+  // Remove shadows for light theme
+  ...(isDark ? {
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  } : {}),
 })
 
 const $inputIcon: ThemedStyle<ViewStyle> = ({spacing}) => ({
@@ -700,7 +708,7 @@ const $signInOptions: ThemedStyle<ViewStyle> = ({spacing}) => ({
   gap: spacing.xs,
 })
 
-const $socialButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+const $socialButton: ThemedStyle<ViewStyle> = ({colors, spacing, isDark}) => ({
   flexDirection: "row",
   alignItems: "center",
   height: 44,
@@ -709,17 +717,21 @@ const $socialButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   borderRadius: 8,
   paddingHorizontal: spacing.sm,
   marginBottom: spacing.xs,
-  shadowOffset: {
-    width: 0,
-    height: 1,
-  },
-  shadowOpacity: 0.1,
-  shadowRadius: 1,
-  elevation: 1,
+  backgroundColor: isDark ? colors.transparent : colors.background,
+  // Remove shadows for light theme to avoid thick border appearance
+  ...(isDark ? {
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 1,
+  } : {}),
 })
 
-const $googleButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  // backgroundColor: colors.,
+const $googleButton: ThemedStyle<ViewStyle> = ({colors, isDark}) => ({
+  backgroundColor: isDark ? colors.transparent : colors.background,
 })
 
 const $appleButton: ThemedStyle<ViewStyle> = ({colors}) => ({
@@ -727,12 +739,11 @@ const $appleButton: ThemedStyle<ViewStyle> = ({colors}) => ({
   borderColor: colors.text,
 })
 
-const $socialIconContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $socialIconContainer: ThemedStyle<ViewStyle> = () => ({
   width: 24,
   height: 24,
   justifyContent: "center",
   alignItems: "center",
-  marginRight: spacing.xs,
 })
 
 const $socialButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
@@ -760,9 +771,14 @@ const $pressedButton: ThemedStyle<ViewStyle> = ({colors}) => ({
 })
 
 const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.icon, // White text for buttons
+  color: colors.text,
   fontSize: 16,
   fontWeight: "bold",
+})
+
+const $emailButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
+  fontSize: 16,
 })
 
 const $ghostButton: ThemedStyle<ViewStyle> = ({spacing, colors}) => ({

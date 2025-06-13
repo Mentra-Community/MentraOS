@@ -1,5 +1,5 @@
 import React, {useRef, useState, useCallback, useEffect} from "react"
-import {View, StyleSheet, Text, ActivityIndicator, BackHandler} from "react-native"
+import {View, StyleSheet, ActivityIndicator, BackHandler} from "react-native"
 import {WebView} from "react-native-webview"
 import Config from "react-native-config"
 import InternetConnectionFallbackComponent from "@/components/misc/InternetConnectionFallbackComponent"
@@ -10,6 +10,7 @@ import {useAppStatus} from "@/contexts/AppStatusProvider"
 import {useAppStoreWebviewPrefetch} from "@/contexts/AppStoreWebviewPrefetchProvider"
 import {useAppTheme} from "@/utils/useAppTheme"
 import {useLocalSearchParams} from "expo-router"
+import {Text} from "@/components/ignite"
 
 // Define package name for the store webview
 const STORE_PACKAGE_NAME = "org.augmentos.store"
@@ -80,7 +81,7 @@ export default function AppStoreWeb() {
     return (
       <View style={[styles.loadingOverlay, {backgroundColor: theme.colors.background}]}>
         <ActivityIndicator size="large" color={theme2.primaryColor} />
-        <Text style={[styles.loadingText, {color: theme2.textColor}]}>Preparing App Store...</Text>
+        <Text text="Preparing App Store..." style={[styles.loadingText, {color: theme2.textColor}]} />
       </View>
     )
   }
@@ -107,7 +108,7 @@ export default function AppStoreWeb() {
             renderLoading={() => (
               <View style={[styles.loadingOverlay, {backgroundColor: theme.colors.background}]}>
                 <ActivityIndicator size="large" color={theme2.primaryColor} />
-                <Text style={[styles.loadingText, {color: theme2.textColor}]}>Loading App Store...</Text>
+                <Text text="Loading App Store..." style={[styles.loadingText, {color: theme2.textColor}]} />
               </View>
             )}
           />
@@ -140,6 +141,5 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    fontFamily: "Montserrat-Regular",
   },
 })

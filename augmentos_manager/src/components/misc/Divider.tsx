@@ -27,13 +27,13 @@ const Divider = ({variant = 'full', color, thickness = 1}: DividerProps) => {
 
 const $dividerFull: ThemedStyle<ViewStyle> = ({colors}) => ({
   height: 1,
-  backgroundColor: '#141434',
+  backgroundColor: colors.separator,
   width: '100%',
 })
 
 const $dividerInset: ThemedStyle<ViewStyle> = ({colors}) => ({
   height: 1,
-  backgroundColor: '#1D1D45',
+  backgroundColor: colors.separator,
   width: '90%',
   alignSelf: 'center',
 })

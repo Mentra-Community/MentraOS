@@ -16,16 +16,30 @@ const sidebars: SidebarsConfig = {
   // Manually defined sidebar structure
   tutorialSidebar: [
     'index',
-    'quickstart',
     {
-      type: 'doc',
-      id: 'getting-started',
-      label: 'Build From Scratch',
-    },
-    {
-      type: 'doc',
-      id: 'railway-deployment',
-      label: 'Deploy to Railway',
+      type: 'category',
+      label: 'Getting Started',
+      link: {
+        type: 'doc',
+        id: 'quickstart',
+      },
+      items: [
+        {
+          type: 'doc',
+          id: 'getting-started',
+          label: 'Build From Scratch',
+        },
+        {
+          type: 'doc',
+          id: 'railway-deployment',
+          label: 'Deploy to Railway',
+        },
+        {
+          type: 'doc',
+          id: 'ubuntu-deployment',
+          label: 'Deploy to Ubuntu Server',
+        },
+      ],
     },
     {
       type: 'category',
@@ -82,7 +96,6 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'reference/utilities',
-        'reference/webview-auth',
       ],
     },
     {

@@ -50,9 +50,6 @@ export default function PrivacySettingsScreen() {
       if (Platform.OS === "android") {
         const hasNotificationAccess = await checkNotificationAccessSpecialPermission()
         setNotificationsEnabled(hasNotificationAccess)
-      } else {
-        const hasNotifications = await checkFeaturePermissions(PermissionFeatures.NOTIFICATIONS)
-        setNotificationsEnabled(hasNotifications)
       }
 
       // Check calendar permissions
@@ -90,7 +87,7 @@ export default function PrivacySettingsScreen() {
               }
             }
           } else {
-            const hasNotifications = await checkFeaturePermissions(PermissionFeatures.NOTIFICATIONS)
+            const hasNotifications = await checkFeaturePermissions(PermissionFeatures.READ_NOTIFICATIONS)
             if (hasNotifications && !notificationsEnabled) {
               setNotificationsEnabled(true)
             }
@@ -132,60 +129,38 @@ export default function PrivacySettingsScreen() {
   }
 
   const handleToggleNotifications = async () => {
-    if (!notificationsEnabled) {
-      if (Platform.OS === "android") {
-        // Try to request notification access
-        await checkAndRequestNotificationAccessSpecialPermission()
+    if (Platform.OS !== "android") {
+      return
+    }
 
-        // Re-check permissions after the request
-        const hasAccess = await checkNotificationAccessSpecialPermission()
-        if (hasAccess) {
-          // Start notification listener service if permission granted
-          //   await NotificationService.startNotificationListenerService();
-          setNotificationsEnabled(true)
-        }
-      } else {
-        // iOS notification permissions
-        const granted = await requestFeaturePermissions(PermissionFeatures.NOTIFICATIONS)
-        if (granted) {
-          setNotificationsEnabled(true)
-        }
+    if (!notificationsEnabled) {
+      // Try to request notification access
+      await checkAndRequestNotificationAccessSpecialPermission()
+
+      // Re-check permissions after the request
+      const hasAccess = await checkNotificationAccessSpecialPermission()
+      if (hasAccess) {
+        // Start notification listener service if permission granted
+        //   await NotificationService.startNotificationListenerService();
+        setNotificationsEnabled(true)
       }
     } else {
       // If turning off, show alert and navigate to settings instead of just toggling off
-      if (Platform.OS === "android") {
-        showAlert(
-          "Revoke Notification Access",
-          "To revoke notification access, please go to your device settings and disable notification access for AugmentOS Manager.",
-          [
-            {text: "Cancel", style: "cancel"},
-            {
-              text: "Go to Settings",
-              onPress: () => {
-                if (NativeModules.NotificationAccess && NativeModules.NotificationAccess.requestNotificationAccess) {
-                  NativeModules.NotificationAccess.requestNotificationAccess()
-                }
-              },
+      showAlert(
+        "Revoke Notification Access",
+        "To revoke notification access, please go to your device settings and disable notification access for AugmentOS Manager.",
+        [
+          {text: "Cancel", style: "cancel"},
+          {
+            text: "Go to Settings",
+            onPress: () => {
+              if (NativeModules.NotificationAccess && NativeModules.NotificationAccess.requestNotificationAccess) {
+                NativeModules.NotificationAccess.requestNotificationAccess()
+              }
             },
-          ],
-        )
-      } else {
-        // iOS: open app settings
-        showAlert(
-          "Revoke Notification Access",
-          "To revoke notification access, please go to your device settings and disable notifications for AugmentOS Manager.",
-          [
-            {text: "Cancel", style: "cancel"},
-            {
-              text: "Go to Settings",
-              onPress: () => {
-                Linking.openSettings()
-              },
-            },
-          ],
-        )
-      }
-      // Do not immediately setNotificationsEnabled(false) or stop the service
+          },
+        ],
+      )
     }
   }
 

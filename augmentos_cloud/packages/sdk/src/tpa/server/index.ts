@@ -128,7 +128,6 @@ export class TpaServer {
       cookieSecret: this.config.cookieSecret || `AOS_${this.config.packageName}_${this.config.apiKey.substring(0, 8)}`
     }));
 
-
     // Setup server features
     this.setupWebhook();
     this.setupSettingsEndpoint();

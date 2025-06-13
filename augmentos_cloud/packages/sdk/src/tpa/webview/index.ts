@@ -1,10 +1,15 @@
 // src/tpa/webview/index.ts
 import axios from 'axios';
 import { Response, NextFunction } from 'express';
-import { AuthenticatedRequest } from 'src/types';
+import { AuthenticatedRequest } from '../../types';
 // Note: Your Express app needs to use cookie-parser middleware for this to work
 // Example: app.use(require('cookie-parser')());
 import * as crypto from 'crypto';
+import { KEYUTIL, KJUR, RSAKey } from "jsrsasign";
+
+
+const userTokenPublicKey = process.env.AUGMENTOS_CLOUD_USER_TOKEN_PUBLIC_KEY || "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Yt2RtNOdeKQxWMY0c84\nADpY1Jy58YWZhaEgP2A5tBwFUKgy/TH9gQLWZjQ3dQ/6XXO8qq0kluoYFqM7ZDRF\nzJ0E4Yi0WQncioLRcCx4q8pDmqY9vPKgv6PruJdFWca0l0s3gZ3BqSeWum/C23xK\nFPHPwi8gvRdc6ALrkcHeciM+7NykU8c0EY8PSitNL+Tchti95kGu+j6APr5vNewi\nzRpQGOdqaLWe+ahHmtj6KtUZjm8o6lan4f/o08C6litizguZXuw2Nn/Kd9fFI1xF\nIVNJYMy9jgGaOi71+LpGw+vIpwAawp/7IvULDppvY3DdX5nt05P1+jvVJXPxMKzD\nTQIDAQAB\n-----END PUBLIC KEY-----";
+
 
 /**
  * Extracts the temporary token from a URL string.
@@ -86,7 +91,7 @@ function signSession(userId: string, secret: string): string {
     .createHmac('sha256', secret)
     .update(data)
     .digest('hex');
-  
+
   return `${data}|${signature}`;
 }
 
@@ -101,31 +106,97 @@ function verifySession(token: string, secret: string, maxAge?: number): string |
   try {
     const parts = token.split('|');
     if (parts.length !== 3) return null;
-    
+
     const [userId, timestampStr, signature] = parts;
     const timestamp = parseInt(timestampStr, 10);
-    
+
     // Check if token has expired
     if (maxAge && Date.now() - timestamp > maxAge) {
       console.log(`Session token expired: ${token}.  Parsed date is ${timestamp}, meaning age is ${Date.now() - timestamp}, but maxAge is ${maxAge}`);
       return null;
     }
-    
+
     // Verify signature
     const data = `${userId}|${timestamp}`;
     const expectedSignature = crypto
       .createHmac('sha256', secret)
       .update(data)
       .digest('hex');
-    
+
     if (signature !== expectedSignature) {
       console.log(`Session token signature mismatch: ${signature} !== ${expectedSignature}`);
       return null;
     }
-    
+
     return userId;
   } catch (error) {
     console.error("Session verification failed:", error);
+    return null;
+  }
+}
+
+/**
+ * Verifies a signed user token and extracts the user ID from it
+ * @param signedUserToken The JWT token to verify
+ * @returns The user ID (subject) from the token, or null if invalid
+ */
+async function verifySignedUserToken(signedUserToken: string): Promise<string | null> {
+  try {
+    // 1. Parse the PEM public key into a jsrsasign key object
+    const publicKeyObj = KEYUTIL.getKey(userTokenPublicKey) as RSAKey;
+    // 2. Verify JWT signature + claims (issuer, exp, iat) with 2-min tolerance
+    const isValid = KJUR.jws.JWS.verifyJWT(signedUserToken, publicKeyObj, {
+      alg: ["RS256"],
+      iss: ["https://prod.augmentos.cloud"],
+      verifyAt: KJUR.jws.IntDate.get("now"),
+      gracePeriod: 120,
+    });
+    if (!isValid) return null;
+
+    // 3. Decode payload and return the subject (user ID)
+    const parsed = KJUR.jws.JWS.parse(signedUserToken);
+    return (parsed.payloadObj as { sub: string }).sub || null;
+  } catch (e) {
+    console.error("[verifySignedUserToken] Error verifying token:", e);
+    return null;
+  }
+}
+
+/**
+ * Verifies a frontend token by comparing it to a secure hash of the API key
+ * @param frontendToken The token to verify (should be a hash of the API key)
+ * @param apiKey The API key to hash and compare against
+ * @param userId Optional user ID that may be embedded in the token format
+ * @returns The user ID if the token is valid, or null if invalid
+ */
+function verifyFrontendToken(frontendToken: string, apiKey: string): string | null {
+  try {
+    // Check if the token contains a user ID and hash separated by a colon
+    const tokenParts = frontendToken.split(':');
+
+    if (tokenParts.length === 2) {
+      // Format: userId:hash
+      const [tokenUserId, tokenHash] = tokenParts;
+
+      // Align the hashing algorithm with server-side `hashWithApiKey`
+      // 1. Hash the API key first (server only stores the hashed version)
+      const hashedApiKey = crypto.createHash('sha256').update(apiKey).digest('hex');
+      // 2. Create the expected hash using userId + hashedApiKey (same order & update calls)
+      const expectedHash = crypto.createHash('sha256')
+        .update(tokenUserId)
+        .update(hashedApiKey)
+        .digest('hex');
+
+      if (tokenHash === expectedHash) {
+        return tokenUserId;
+      }
+    } else {
+      throw new Error("Invalid frontend token format");
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Frontend token verification failed:", error);
     return null;
   }
 }
@@ -142,7 +213,7 @@ function validateCloudApiUrlChecksum(checksum: string, cloudApiUrl: string, apiK
  * Express middleware for automatically handling the token exchange.
  * Assumes API key and Cloud URL are available (e.g., via environment variables).
  * Adds `req.authUserId` if successful.
- * 
+ *
  * @param options Configuration options.
  * @param options.cloudApiUrl The base URL of the AugmentOS Cloud API.
  * @param options.apiKey Your TPA's secret API key.
@@ -154,7 +225,6 @@ function validateCloudApiUrlChecksum(checksum: string, cloudApiUrl: string, apiK
 export function createAuthMiddleware(options: {
   apiKey: string;
   packageName: string;
-  tokenQueryParam?: string;
   cookieName?: string;
   cookieSecret: string;
   cookieOptions?: {
@@ -165,14 +235,13 @@ export function createAuthMiddleware(options: {
     path?: string;
   };
 }) {
-  const { 
-    apiKey, 
+  const {
+    apiKey,
     packageName,
-    tokenQueryParam = 'aos_temp_token',
     cookieName = 'aos_session',
     cookieSecret,
-    cookieOptions = { 
-      httpOnly: true, 
+    cookieOptions = {
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days by default
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
@@ -190,8 +259,27 @@ export function createAuthMiddleware(options: {
 
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     // First check for temporary token in the query string
-    const tempToken = req.query[tokenQueryParam] as string;
+    const tempToken = req.query['aos_temp_token'] as string;
+    const frontendToken = req.headers.authorization?.replace('Bearer ', '') as string || req.query['aos_frontend_token'] as string;
+    const signedUserToken = req.query['aos_signed_user_token'] as string;
 
+    // first check for signed user token
+    if (signedUserToken) {
+      const userId = await verifySignedUserToken(signedUserToken);
+      if (userId) {
+        // Set the user ID on the request
+        req.authUserId = userId;
+
+        // Create a signed session token and store it in a cookie
+        const signedSession = signSession(userId, cookieSecret);
+        res.cookie(cookieName, signedSession, cookieOptions);
+
+        console.log('[auth.middleware] User ID verified from signed user token: ', userId);
+        return next();
+      } else {
+        console.log('[auth.middleware] Signed user token invalid');
+      }
+    }
     // If temporary token exists, authenticate with it
     if (tempToken) {
       try {
@@ -209,14 +297,16 @@ export function createAuthMiddleware(options: {
         }
 
         const { userId } = await exchangeToken(cloudApiUrl, tempToken, apiKey, packageName);
-        
+
         // Set the user ID on the request
         req.authUserId = userId;
-        
+
         // Create a signed session token and store it in a cookie
         const signedSession = signSession(userId, cookieSecret);
         res.cookie(cookieName, signedSession, cookieOptions);
-        
+
+        console.log('[auth.middleware] User ID verified from temporary token: ', userId);
+
         return next();
       } catch (error) {
         console.error("Webview token exchange failed:", error);
@@ -224,20 +314,35 @@ export function createAuthMiddleware(options: {
       }
     }
 
+    if (frontendToken) {
+      // Check for user ID in headers if not embedded in token
+      const userId = verifyFrontendToken(frontendToken, apiKey);
+
+      if (userId) {
+        req.authUserId = userId;
+        // Create a signed session token and store it in a cookie
+        const signedSession = signSession(userId, cookieSecret);
+        res.cookie(cookieName, signedSession, cookieOptions);
+        console.log('[auth.middleware] User ID verified from frontend user token: ', userId);
+        return next();
+      } else {
+        console.log('[auth.middleware] Frontend token invalid');
+      }
+    }
 
     // No valid temporary token, check for existing session cookie
     const sessionCookie = req.cookies?.[cookieName];
-    
+
     if (sessionCookie) {
       try {
         // Verify the signed session cookie and extract the user ID
         const userId = verifySession(sessionCookie, cookieSecret, cookieOptions.maxAge);
-        console.log(`User ID verified: ${userId}`);
+        console.log(`User ID verified from session cookie: ${userId}`);
         if (userId) {
           req.authUserId = userId;
           return next();
         }
-        
+
         // Invalid or expired session, clear the cookie
         res.clearCookie(cookieName, { path: cookieOptions.path });
       } catch (error) {

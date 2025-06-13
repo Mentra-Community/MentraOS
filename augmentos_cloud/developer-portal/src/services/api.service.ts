@@ -361,6 +361,60 @@ const api = {
     },
   },
 
+  // Image upload endpoints for Cloudflare Images
+  images: {
+    /**
+     * Upload an image to Cloudflare Images
+     * @param file - The image file to upload
+     * @param metadata - Optional metadata for the image
+     * @returns The Cloudflare image URL
+     */
+    upload: async (file: File, metadata?: { appPackageName?: string }): Promise<{ url: string; imageId: string }> => {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      if (metadata?.appPackageName) {
+        formData.append('metadata', JSON.stringify({ appPackageName: metadata.appPackageName }));
+      }
+
+      const response = await axios.post('/api/dev/images/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      return response.data;
+    },
+
+    /**
+     * Replace an existing image
+     * @param imageId - The ID of the image to replace
+     * @param file - The new image file
+     * @returns The new Cloudflare image URL
+     */
+    replace: async (imageId: string, file: File): Promise<{ url: string; imageId: string }> => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('replaceImageId', imageId);
+
+      const response = await axios.post('/api/dev/images/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      return response.data;
+    },
+
+    /**
+     * Delete an image from Cloudflare Images
+     * @param imageId - The ID of the image to delete
+     */
+    delete: async (imageId: string): Promise<void> => {
+      await axios.delete(`/api/dev/images/${imageId}`);
+    },
+  },
+
   // Installation sharing endpoints
   sharing: {
     // Get a shareable installation link for a TPA

@@ -34,11 +34,12 @@ export default function RouteButton({label, subtitle, onPress}: RouteButtonProps
   )
 }
 
-const $settingsGroup: ThemedStyle<ViewStyle> = ({colors}) => ({
+const $settingsGroup: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.background,
-  paddingVertical: 12,
-  paddingHorizontal: 16,
-  borderRadius: 12,
+  paddingVertical: spacing.sm,
+  paddingHorizontal: spacing.md,
+  borderRadius: spacing.md,
+  marginHorizontal: spacing.xxxs
 })
 
 const $subtitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({

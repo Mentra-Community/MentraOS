@@ -8,9 +8,29 @@ import { OrganizationService } from '../services/core/organization.service';
 import App from '../models/app.model';
 import sessionService from '../services/core/session.service';
 import { logger as rootLogger } from '../services/logging/pino-logger';
+import multer from 'multer';
+import FormData from 'form-data';
+import axios from 'axios';
 
 const logger = rootLogger.child({ service: 'developer.routes' });
 // TODO(isaiah): refactor this code to use this logger instead of console.log, console.error, etc.
+
+// Configure multer for memory storage (files stored in memory as Buffer)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept only image files
+    const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PNG, JPEG, GIF, and WebP images are allowed.'));
+    }
+  }
+});
 
 // Define request with user and organization info
 interface DevPortalRequest extends Request {
@@ -30,7 +50,7 @@ const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
 
 // TODO(isaiah): This is called validateSupabaseToken, but i'm pretty sure this is using an AugmentOS JWT(coreToken), not a Supabase token.
 // TODO(isaiah): Investigate how currentOrgId is used, the DevPortalRequest claims it's optional yet this middleware fails if it's not provided.
-// Also the middleware doesn't validate the currentOrgId, only injects it into the request object, maybe it should just be a query param instead of a header?  
+// Also the middleware doesn't validate the currentOrgId, only injects it into the request object, maybe it should just be a query param instead of a header?
 const validateSupabaseToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   // Extract token from Authorization header
   const authHeader = req.headers.authorization;
@@ -518,6 +538,170 @@ const moveToOrg = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Upload an image to Cloudflare Images
+ */
+const uploadImage = async (req: Request, res: Response) => {
+  try {
+    const email = (req as DevPortalRequest).developerEmail;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Get Cloudflare credentials from environment
+    const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN;
+
+    if (!cloudflareAccountId || !cloudflareApiToken) {
+      logger.error('Cloudflare credentials not configured');
+      return res.status(500).json({ error: 'Image upload service not configured' });
+    }
+
+    // Parse metadata if provided
+    let metadata: any = {};
+    if (req.body.metadata) {
+      try {
+        metadata = JSON.parse(req.body.metadata);
+      } catch (e) {
+        logger.warn('Failed to parse metadata:', e);
+      }
+    }
+
+    // Check if we're replacing an existing image
+    const replaceImageId = req.body.replaceImageId;
+
+    // Create form data for Cloudflare API
+    const formData = new FormData();
+    formData.append('file', req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+    });
+
+    // Add metadata to help identify the image
+    const cfMetadata = {
+      uploadedBy: email,
+      uploadedAt: new Date().toISOString(),
+      ...(metadata.appPackageName && { appPackageName: metadata.appPackageName }),
+      ...(replaceImageId && { replacedImageId: replaceImageId }),
+    };
+
+    formData.append('metadata', JSON.stringify(cfMetadata));
+
+    // Make request to Cloudflare Images API
+    const cloudflareUrl = `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/images/v1`;
+
+    try {
+      const response = await axios.post(cloudflareUrl, formData, {
+        headers: {
+          'Authorization': `Bearer ${cloudflareApiToken}`,
+          ...formData.getHeaders(),
+        },
+      });
+
+      if (!response.data.success) {
+        logger.error('Cloudflare API error:', response.data.errors);
+        return res.status(500).json({ error: 'Failed to upload image to Cloudflare' });
+      }
+
+      const imageData = response.data.result;
+
+      // Construct the delivery URL
+      // Cloudflare Images uses the format: https://imagedelivery.net/{account_hash}/{image_id}/{variant_name}
+      // The 'public' variant is typically available by default
+      const deliveryUrl = imageData.variants?.[0] || `https://imagedelivery.net/${cloudflareAccountId}/${imageData.id}/public`;
+
+      // If we were replacing an image, delete the old one
+      if (replaceImageId) {
+        try {
+          await axios.delete(
+            `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/images/v1/${replaceImageId}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${cloudflareApiToken}`,
+              },
+            }
+          );
+          logger.info(`Deleted old image: ${replaceImageId}`);
+        } catch (deleteError) {
+          // Log but don't fail the request if delete fails
+          logger.warn(`Failed to delete old image ${replaceImageId}:`, deleteError);
+        }
+      }
+
+      // Return the image URL and ID
+      res.json({
+        url: deliveryUrl,
+        imageId: imageData.id,
+      });
+
+    } catch (cfError: any) {
+      logger.error('Cloudflare API request failed:', cfError.response?.data || cfError.message);
+      return res.status(500).json({
+        error: 'Failed to upload image',
+        details: cfError.response?.data?.errors?.[0]?.message || 'Unknown error'
+      });
+    }
+
+  } catch (error) {
+    logger.error('Error in image upload handler:', error);
+    return res.status(500).json({ error: 'Internal server error during image upload' });
+  }
+};
+
+/**
+ * Delete an image from Cloudflare Images
+ */
+const deleteImage = async (req: Request, res: Response) => {
+  try {
+    const email = (req as DevPortalRequest).developerEmail;
+    const { imageId } = req.params;
+
+    if (!imageId) {
+      return res.status(400).json({ error: 'Image ID is required' });
+    }
+
+    // Get Cloudflare credentials from environment
+    const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN;
+
+    if (!cloudflareAccountId || !cloudflareApiToken) {
+      logger.error('Cloudflare credentials not configured');
+      return res.status(500).json({ error: 'Image delete service not configured' });
+    }
+
+    // Delete from Cloudflare
+    try {
+      await axios.delete(
+        `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/images/v1/${imageId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${cloudflareApiToken}`,
+          },
+        }
+      );
+
+      logger.info(`Image ${imageId} deleted by ${email}`);
+      res.json({ success: true, message: 'Image deleted successfully' });
+
+    } catch (cfError: any) {
+      if (cfError.response?.status === 404) {
+        return res.status(404).json({ error: 'Image not found' });
+      }
+
+      logger.error('Cloudflare API delete request failed:', cfError.response?.data || cfError.message);
+      return res.status(500).json({
+        error: 'Failed to delete image',
+        details: cfError.response?.data?.errors?.[0]?.message || 'Unknown error'
+      });
+    }
+
+  } catch (error) {
+    logger.error('Error in image delete handler:', error);
+    return res.status(500).json({ error: 'Internal server error during image deletion' });
+  }
+};
+
 // ------------- ROUTES REGISTRATION -------------
 
 // Auth routes
@@ -551,5 +735,9 @@ router.post('/apps/:packageName/publish', validateSupabaseToken, publishApp);
 router.patch('/apps/:packageName/visibility', validateSupabaseToken, updateAppVisibility);
 router.patch('/apps/:packageName/share-emails', validateSupabaseToken, updateSharedEmails);
 router.post('/apps/:packageName/move-org', validateSupabaseToken, moveToOrg);
+
+// Image upload routes
+router.post('/images/upload', validateSupabaseToken, upload.single('file'), uploadImage);
+router.delete('/images/:imageId', validateSupabaseToken, deleteImage);
 
 export default router;

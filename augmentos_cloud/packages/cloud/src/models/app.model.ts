@@ -1,23 +1,8 @@
 // cloud/server/src/models/app.model.ts
 import mongoose, { Schema, Document, Types } from 'mongoose';
-import { AppI as _AppI, TpaType, ToolSchema, ToolParameterSchema, AppSetting, AppSettingType } from '@augmentos/sdk';
+import { AppI as _AppI, TpaType, ToolSchema, ToolParameterSchema, AppSetting, AppSettingType, PermissionType, Permission } from '@augmentos/sdk';
 
 export type AppStoreStatus = 'DEVELOPMENT' | 'SUBMITTED' | 'REJECTED' | 'PUBLISHED';
-
-// Define PermissionType enum until it's added to the SDK
-export enum PermissionType {
-  MICROPHONE = 'MICROPHONE',
-  LOCATION = 'LOCATION',
-  CALENDAR = 'CALENDAR',
-  NOTIFICATIONS = 'NOTIFICATIONS',
-  ALL = 'ALL'
-}
-
-// Permission interface
-export interface Permission {
-  type: PermissionType;
-  description?: string;
-}
 
 // Extend the AppI interface for our MongoDB document
 export interface AppI extends _AppI, Document {

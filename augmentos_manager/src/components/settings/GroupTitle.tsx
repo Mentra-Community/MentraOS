@@ -1,6 +1,7 @@
 import {useAppTheme} from "@/utils/useAppTheme"
 import React from "react"
-import {View, Text, StyleSheet} from "react-native"
+import {View, StyleSheet} from "react-native"
+import { Text } from "@/components/ignite"
 
 type GroupTitleProps = {
   title: string
@@ -9,21 +10,26 @@ type GroupTitleProps = {
 const GroupTitle: React.FC<GroupTitleProps> = ({title}) => {
   const {theme, themed} = useAppTheme()
   return (
-    <View style={[styles.container, {borderBottomColor: theme.colors.border}]}>
-      <Text style={[styles.title, {color: theme.colors.text}]}>{title}</Text>
+    <View style={[
+      styles.container, 
+      {
+        marginTop: theme.spacing.md,
+        marginBottom: theme.spacing.xs,
+        paddingHorizontal: theme.spacing.md,
+      }
+    ]}>
+      <Text text={title} style={[styles.title, {color: theme.colors.textDim}]} />
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: 15,
     width: "100%",
-    borderBottomWidth: 1,
   },
   title: {
-    fontSize: 18,
-    fontWeight: "600",
+    fontSize: 16,
+    fontWeight: "normal",
   },
 })
 

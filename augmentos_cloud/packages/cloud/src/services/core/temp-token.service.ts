@@ -2,18 +2,43 @@
 import crypto from 'crypto';
 import { TempToken, ITempToken } from '../../models/temp-token.model';
 import { logger as rootLogger } from "../logging";
+import { SignJWT, importPKCS8 } from 'jose';
+import { appService } from './app.service';
+
 const logger = rootLogger.child({ service: 'temp-token.service' });
 
+// Environment variable for JWT signing
+export const TPA_AUTH_JWT_PRIVATE_KEY: string | null = process.env.TPA_AUTH_JWT_PRIVATE_KEY || null;
+if (!TPA_AUTH_JWT_PRIVATE_KEY) {
+  console.warn('[token.service] TPA_AUTH_JWT_PRIVATE_KEY is not set');
+}
+
+/**
+ * Interface for the result of exchanging a temporary token
+ */
+interface ExchangeTokenResult {
+  userId: string;
+}
+
+/**
+ * Service for managing temporary tokens and user authentication tokens.
+ * Handles token generation, exchange, and JWT signing operations.
+ */
 export class TokenService {
   /**
-   * Generates a secure temporary token and stores it.
-   * @param userId The user ID associated with the token.
-   * @param packageName The package name of the TPA this token is intended for.
-   * @returns The generated temporary token string.
+   * Generates a secure temporary token and stores it in the database.
+   * The token expires after 60 seconds and can only be used once.
+   *
+   * @param userId - The user ID associated with the token
+   * @param packageName - The package name of the TPA this token is intended for
+   * @returns Promise resolving to the generated temporary token string
+   * @throws Error if token generation or storage fails
    */
   async generateTemporaryToken(userId: string, packageName: string): Promise<string> {
     const logger = rootLogger.child({ service: 'temp-token.service', userId, packageName });
-    const token = crypto.randomBytes(32).toString('hex');
+
+    // Generate a cryptographically secure random token
+    const token: string = crypto.randomBytes(32).toString('hex');
 
     const tempTokenDoc = new TempToken({
       token,
@@ -35,14 +60,20 @@ export class TokenService {
 
   /**
    * Exchanges a temporary token for the associated user ID, validating the requesting TPA.
-   * @param tempToken The temporary token string.
-   * @param requestingPackageName The package name of the TPA making the exchange request.
-   * @returns An object containing the userId if the token is valid and unused, otherwise null.
+   * Performs multiple security checks:
+   * - Token existence and validity
+   * - Single-use enforcement (marks token as used)
+   * - Expiration check (60-second TTL)
+   * - Package name validation (prevents cross-TPA token usage)
+   *
+   * @param tempToken - The temporary token string to exchange
+   * @param requestingPackageName - The package name of the TPA making the exchange request
+   * @returns Promise resolving to an object containing the userId if valid, null otherwise
    */
-  async exchangeTemporaryToken(tempToken: string, requestingPackageName: string): Promise<{ userId: string } | null> {
+  async exchangeTemporaryToken(tempToken: string, requestingPackageName: string): Promise<ExchangeTokenResult | null> {
     const logger = rootLogger.child({ service: 'temp-token.service', requestingPackageName, tempToken });
     try {
-      const tokenDoc = await TempToken.findOne({ token: tempToken });
+      const tokenDoc: ITempToken | null = await TempToken.findOne({ token: tempToken });
 
       if (!tokenDoc) {
         logger.warn(`Temporary token not found: ${tempToken}`);
@@ -55,9 +86,11 @@ export class TokenService {
       }
 
       // Check if the token has expired (TTL index should handle this, but double-check)
-      const now = new Date();
-      const createdAt = new Date(tokenDoc.createdAt);
-      if (now.getTime() - createdAt.getTime() > 60000) { // 60 seconds TTL
+      const now: Date = new Date();
+      const createdAt: Date = new Date(tokenDoc.createdAt);
+      const tokenAgeInMs: number = now.getTime() - createdAt.getTime();
+
+      if (tokenAgeInMs > 60000) { // 60 seconds TTL
         logger.warn(`Temporary token expired: ${tempToken}`);
         // Optionally delete the expired token here if TTL isn't reliable enough
         // await TempToken.deleteOne({ token: tempToken });
@@ -80,6 +113,53 @@ export class TokenService {
     } catch (error) {
       logger.error(`Error exchanging temporary token ${tempToken}:`, { error, requestingPackageName, tempToken });
       return null; // Return null on any error during exchange
+    }
+  }
+
+  /**
+   * Issues a signed JWT token for AugmentOS users to be used in TPA webviews.
+   * The token contains:
+   * - User ID in the 'sub' claim
+   * - Frontend token in the format 'userId:hash' where hash is created using the app's API key
+   *
+   * The frontend token can be verified by the TPA using their API key to ensure authenticity.
+   *
+   * @param aosUserId - The AugmentOS user ID to include in the token
+   * @param packageName - The package name of the TPA to generate the frontend token for
+   * @returns Promise resolving to a signed JWT token string
+   * @throws Error if private key is not configured or token generation fails
+   */
+  async issueUserToken(aosUserId: string, packageName: string): Promise<string> {
+    // Algorithm used for signing - RS256 (RSA with SHA-256)
+    const alg: string = 'RS256';
+
+    try {
+      // Import the private key from the environment
+      if (!TPA_AUTH_JWT_PRIVATE_KEY) {
+        throw new Error('[token.service] TPA_AUTH_JWT_PRIVATE_KEY is not set');
+      }
+
+      // Import the PKCS8 private key for JWT signing
+      const privateKey = await importPKCS8(TPA_AUTH_JWT_PRIVATE_KEY, alg);
+
+      // Generate a frontend token using the app's API key hash instead of a shared secret
+      // This allows the TPA to verify the token using their own API key
+      const frontendTokenHash: string = await appService.hashWithApiKey(aosUserId, packageName);
+
+      // Create and sign the JWT token with both user ID and frontend token
+      const token: string = await new SignJWT({
+        sub: aosUserId, // Subject: the user ID
+        frontendToken: `${aosUserId}:${frontendTokenHash}` // Format: userId:hash for verification
+      })
+        .setProtectedHeader({ alg, kid: 'v1' }) // Key ID for potential key rotation
+        .setIssuer('https://prod.augmentos.cloud') // Token issuer
+        .setIssuedAt() // Current timestamp
+        .setExpirationTime('10m') // 10 minute expiration
+        .sign(privateKey);
+      return token;
+    } catch (error) {
+      logger.error({ error, aosUserId, packageName }, '[token.service] Failed to issue user token');
+      throw new Error('[token.service] Failed to generate signed user token');
     }
   }
 }

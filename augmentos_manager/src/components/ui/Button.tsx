@@ -2,7 +2,8 @@ import { translate } from "@/i18n";
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
 import * as React from "react";
-import {Text, View, Image, TouchableOpacity, ViewStyle, TextStyle} from "react-native";
+import {View, Image, TouchableOpacity, ViewStyle, TextStyle} from "react-native";
+import {Text} from "@/components/ignite";
 import { LinearGradient } from "expo-linear-gradient";
 import {SafeAreaView} from "react-native-safe-area-context";
 import ChevronRight from "assets/icons/component/ChevronRight"
@@ -22,7 +23,7 @@ const Button = ({ title, onPress, icon }: ButtonProps) => {
           <View style={[themed($inside), themed($insideFlexBox)]}>
             {icon}
             <View style={[themed($miraWrapper), themed($insideFlexBox)]}>
-              <Text style={themed($mira)} numberOfLines={1}>{title}</Text>
+              <Text text={title} style={themed($mira)} numberOfLines={1} />
             </View>
           </View>
           <ChevronRight/>
@@ -43,7 +44,6 @@ const $mira: ThemedStyle<TextStyle> = () => ({
   letterSpacing: 0.3,
   lineHeight: 23,
   fontWeight: "500",
-  fontFamily: "JosefinSans-Medium",
   color: "#fff",
   textAlign: "center",
   overflow: "hidden"

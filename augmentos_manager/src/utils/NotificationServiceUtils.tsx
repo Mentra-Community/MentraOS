@@ -19,7 +19,7 @@ export async function checkAndRequestNotificationAccessSpecialPermission() {
   try {
     const hasAccess = await NotificationAccess.hasNotificationAccess();
     if (!hasAccess) {
-      showAlert(
+      await showAlert(
         'Enable Notification Access',
         'AugmentOS needs permission to read your phone notifications to display them on your smart glasses.\n\n' +
         'On the next screen:\n' +

@@ -444,7 +444,7 @@ export default function GlassesMirror() {
   }
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}}>
+    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.lg}}>
       <Header
         leftTx="mirror:title"
         RightActionComponent={
@@ -489,9 +489,7 @@ export default function GlassesMirror() {
 
         {/* Gallery Section */}
         <View style={themed($gallerySection)}>
-          <Text preset="heading" style={themed($sectionTitle)}>
-            Gallery
-          </Text>
+          <Header leftText="Gallery" />
 
           {/* Gallery Content */}
           <View style={themed($galleryContent)}>
@@ -617,8 +615,13 @@ const $gallerySection: ThemedStyle<ViewStyle> = ({spacing}) => ({
   paddingBottom: spacing.lg,
 })
 
-const $sectionTitle: ThemedStyle<TextStyle> = ({spacing}) => ({
+const $sectionTitle: ThemedStyle<TextStyle> = ({spacing, colors}) => ({
   marginBottom: spacing.md,
+  fontSize: 16,
+  fontWeight: "500",
+  color: colors.text,
+  fontFamily: undefined, // Ensure it uses the default system font
+  marginLeft: 0, // Align with header text
 })
 
 const $galleryContent: ThemedStyle<ViewStyle> = () => ({

@@ -101,15 +101,20 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     private com.augmentos.asg_client.audio.GlassesMicrophoneManager glassesMicrophoneManager;
     private boolean isK900Device = false;
 
-    // DEBUG: Timer and handler for VPS photo uploads
-    private Handler debugVpsPhotoHandler;
-    private Runnable debugVpsPhotoRunnable;
-
     // Photo queue manager for handling offline media uploads
     private MediaUploadQueueManager mMediaQueueManager;
 
     // Media capture service
     private MediaCaptureService mMediaCaptureService;
+
+    // 1. Add enum for photo capture mode at the top of the class
+    private enum PhotoCaptureMode {
+        SAVE_LOCALLY,
+        CLOUD
+    }
+
+    // 2. Add a field to store the current mode
+    private PhotoCaptureMode currentPhotoMode = PhotoCaptureMode.CLOUD;
 
     // ---------------------------------------------
     // ServiceConnection for the AugmentosService
@@ -190,6 +195,11 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         // Register OTA download complete receiver
         IntentFilter filter = new IntentFilter("com.augmentos.otaupdater.ACTION_OTA_DOWNLOAD_COMPLETE");
         registerReceiver(otaDownloadReceiver, filter);
+
+        SysControl.disablePackageViaAdb(getApplicationContext(), "com.xy.fakelauncher");
+        SysControl.disablePackage(getApplicationContext(), "com.xy.fakelauncher");
+        SysControl.uninstallPackage(getApplicationContext(), "com.lhs.btserver");
+        SysControl.uninstallPackageViaAdb(getApplicationContext(), "com.lhs.btserver");
     }
 
     /**
@@ -539,11 +549,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             unbindService(augmentosConnection);
             isAugmentosBound = false;
         }
-
-        // No web server to stop
-
-        // Stop debug VPS photo timer
-        stopDebugVpsPhotoUploadTimer();
 
         // Unregister streaming callback
         com.augmentos.asg_client.streaming.RtmpStreamingService.setStreamingStatusCallback(null);
@@ -1004,6 +1009,17 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                         if (bluetoothManager != null && bluetoothManager.isConnected()) {
                             bluetoothManager.sendData(jsonResponse.getBytes());
                             Log.d(TAG, "✅ Sent glasses_ready response to phone");
+                            
+                            // Automatically send WiFi status after glasses_ready
+                            Log.d(TAG, "📶 Auto-sending WiFi status after glasses_ready");
+                            if (networkManager != null) {
+                                // Add a small delay to ensure glasses_ready is processed first
+                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                    boolean wifiConnected = networkManager.isConnectedToWifi();
+                                    sendWifiStatusOverBle(wifiConnected);
+                                    Log.d(TAG, "✅ Auto-sent WiFi status: " + (wifiConnected ? "CONNECTED" : "DISCONNECTED"));
+                                }, 500); // 500ms delay to ensure glasses_ready is processed
+                            }
                         }
                     } catch (JSONException e) {
                         Log.e(TAG, "Error creating glasses_ready response", e);
@@ -1202,15 +1218,11 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                         // Extract streamId if provided
                         String streamId = dataToProcess.optString("streamId", "");
 
-                        com.augmentos.asg_client.streaming.RtmpStreamingService.startStreaming(this, rtmpUrl);
+                        // Pass streamId to the service
+                        com.augmentos.asg_client.streaming.RtmpStreamingService.startStreaming(this, rtmpUrl, streamId);
 
-                        // Start timeout tracking if streamId is provided
-                        if (!streamId.isEmpty()) {
-                            com.augmentos.asg_client.streaming.RtmpStreamingService.startStreamTimeout(streamId);
-                            Log.d(TAG, "Started timeout tracking for stream: " + streamId);
-                        }
-
-                        Log.d(TAG, "RTMP streaming started with URL: " + rtmpUrl);
+                        Log.d(TAG, "RTMP streaming started with URL: " + rtmpUrl + 
+                               (streamId.isEmpty() ? "" : " and streamId: " + streamId));
                     } catch (Exception e) {
                         Log.e(TAG, "Error starting RTMP streaming", e);
                         sendRtmpStatusResponse(false, "exception", e.getMessage());
@@ -1258,13 +1270,32 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     String ackId = dataToProcess.optString("ackId", "");
 
                     if (!streamId.isEmpty() && !ackId.isEmpty()) {
-                        // Reset the timeout for this stream
-                        com.augmentos.asg_client.streaming.RtmpStreamingService.resetStreamTimeout(streamId);
-
-                        // Send ACK response back to cloud
-                        sendKeepAliveAck(streamId, ackId);
-
-                        Log.d(TAG, "Processed keep-alive for stream: " + streamId + ", ackId: " + ackId);
+                        // Try to reset the timeout for this stream
+                        boolean streamIdValid = com.augmentos.asg_client.streaming.RtmpStreamingService.resetStreamTimeout(streamId);
+                        
+                        if (streamIdValid) {
+                            // Send ACK response back to cloud
+                            sendKeepAliveAck(streamId, ackId);
+                            Log.d(TAG, "Processed keep-alive for stream: " + streamId + ", ackId: " + ackId);
+                        } else {
+                            // Unknown stream ID - kill current stream and request restart
+                            Log.e(TAG, "Received keep-alive for unknown stream ID: " + streamId + " - terminating current stream");
+                            com.augmentos.asg_client.streaming.RtmpStreamingService.stopStreaming(this);
+                            
+                            // Send error status to cloud to request proper restart
+                            try {
+                                JSONObject errorStatus = new JSONObject();
+                                errorStatus.put("type", "rtmp_stream_status");
+                                errorStatus.put("status", "error");
+                                errorStatus.put("error", "Unknown stream ID - please send start_rtmp_stream command");
+                                errorStatus.put("receivedStreamId", streamId);
+                                String statusString = errorStatus.toString();
+                                sendBluetoothData(statusString.getBytes(StandardCharsets.UTF_8));
+                                Log.d(TAG, "Sent stream error status for unknown stream ID");
+                            } catch (JSONException e) {
+                                Log.e(TAG, "Error creating stream error status", e);
+                            }
+                        }
                     } else {
                         Log.w(TAG, "Keep-alive message missing streamId or ackId");
                     }
@@ -1354,6 +1385,25 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                         Log.d(TAG, "Received ota_update_response: rejected by user");
                     }
                     break;
+                case "set_photo_mode": {
+                    String mode = dataToProcess.optString("mode", "save_locally");
+                    switch (mode) {
+                        case "save_locally":
+                            currentPhotoMode = PhotoCaptureMode.SAVE_LOCALLY;
+                            break;
+                        case "cloud":
+                            currentPhotoMode = PhotoCaptureMode.CLOUD;
+                            break;
+                    }
+                    // Optionally send an ACK back to the phone
+                    JSONObject ack = new JSONObject();
+                    ack.put("type", "set_photo_mode_ack");
+                    ack.put("mode", mode);
+                    if (bluetoothManager != null && bluetoothManager.isConnected()) {
+                        bluetoothManager.sendData(ack.toString().getBytes());
+                    }
+                    break;
+                }
 
                 default:
                     Log.w(TAG, "Unknown message type: " + type);
@@ -1368,7 +1418,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     public void parseK900Command(String command){
         switch (command) {
             case "cs_pho":
-                Log.d(TAG, "📦 Payload is cs_pho (short press)");
+                Log.d(TAG, "\uD83D\uDCE6 Payload is cs_pho (short press)");
 
                 // If recording video, treat any button press as stop command
                 if (getMediaCaptureService() != null && getMediaCaptureService().isRecordingVideo()) {
@@ -1376,8 +1426,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     getMediaCaptureService().stopVideoRecording();
                 } else {
                     // Otherwise handle as normal photo capture
-                    getMediaCaptureService().handlePhotoButtonPress();
-                    //handleButtonPressForVpsDemo();
+                    handlePhotoCaptureWithMode();
                 }
                 break;
 
@@ -1481,19 +1530,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         } catch (JSONException e) {
             Log.e(TAG, "Error creating version info", e);
         }
-    }
-
-    public void handleButtonPressForVpsDemo() {
-        Log.d(TAG, "Handling button press for VPS demo");
-
-        // Initialize MediaCaptureService if needed
-        if (mMediaCaptureService == null) {
-            initializeMediaCaptureService();
-        }
-
-        // Call the VPS photo upload method directly
-        // This bypasses the backend communication and directly calls the VPS service
-        mMediaCaptureService.takeDebugVpsPhotoAndUpload();
     }
 
     /**
@@ -1977,50 +2013,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     }
 
     /**
-     * DEBUG FUNCTION: Starts a timer to take photos and upload them to the VPS server every 10 seconds.
-     * This is only for debugging purposes and should not be enabled in production.
-     */
-    private void startDebugVpsPhotoUploadTimer() {
-        Log.d(TAG, "DEBUG: Starting VPS photo upload debug timer");
-
-        // Create a new Handler associated with the main thread
-        debugVpsPhotoHandler = new Handler(Looper.getMainLooper());
-
-        // Create a Runnable that will take and upload a photo
-        debugVpsPhotoRunnable = new Runnable() {
-            @Override
-            public void run() {
-                // Take a photo and upload it to the VPS server
-                if (mMediaCaptureService != null && networkManager != null && networkManager.isConnectedToWifi()) {
-                    mMediaCaptureService.takeDebugVpsPhotoAndUpload();
-                } else {
-                    Log.d(TAG, "Skipping VPS photo upload - no WiFi connection or capture service unavailable");
-                }
-
-                // Schedule the next execution
-                debugVpsPhotoHandler.postDelayed(this, 10000); // 10 seconds
-            }
-        };
-
-        // Start the timer
-        debugVpsPhotoHandler.post(debugVpsPhotoRunnable);
-    }
-
-    /**
-     * Stop the debug VPS photo upload timer
-     */
-    private void stopDebugVpsPhotoUploadTimer() {
-        Log.d(TAG, "DEBUG: Stopping VPS photo upload debug timer");
-        if (debugVpsPhotoHandler != null && debugVpsPhotoRunnable != null) {
-            debugVpsPhotoHandler.removeCallbacks(debugVpsPhotoRunnable);
-            debugVpsPhotoRunnable = null;
-            debugVpsPhotoHandler = null;
-        }
-    }
-
-    // RTMP streaming functionality moved to startRtmpStreaming() method
-
-    /**
      * Track whether we've been initialized to avoid duplicate initialization
      */
     private boolean mIsInitialized = false;
@@ -2186,4 +2178,27 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             }
         }
     };
+
+    // In the method that handles photo capture (e.g., handlePhotoButtonPress or similar):
+    private void handlePhotoCaptureWithMode() {
+        Log.d(TAG, "Handling photo capture with current mode: " + currentPhotoMode);
+        switch (currentPhotoMode) {
+            case SAVE_LOCALLY:
+                if (mMediaCaptureService != null) {
+                    mMediaCaptureService.takePhotoLocally();
+                }
+                break;
+            case CLOUD:
+                if (mMediaCaptureService != null) {
+                    // Generate a temporary requestId and file path for the photo
+                    String timeStamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
+                    String requestId = "cloud_" + timeStamp;
+                    String photoFilePath = getExternalFilesDir(null) + java.io.File.separator + "IMG_" + timeStamp + ".jpg";
+
+                    // Take photo and upload to cloud
+                    mMediaCaptureService.takePhotoAndUpload(photoFilePath, requestId);
+                }
+                break;
+        }
+    }
 }

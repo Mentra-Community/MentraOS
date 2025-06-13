@@ -55,6 +55,7 @@ buck-out/
 **/fastlane/Preview.html
 **/fastlane/screenshots
 **/fastlane/test_output
+android/credentials/*
 
 # Bundle artifact
 *.jsbundle

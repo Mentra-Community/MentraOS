@@ -1,10 +1,13 @@
 import AppleIcon from "assets/icons/component/AppleIcon";
 import * as React from "react";
-import {StyleSheet, Text, View} from "react-native";
+import {StyleSheet, View} from "react-native";
 import {SafeAreaView} from "react-native-safe-area-context";
 import { Spacer } from "../misc/Spacer";
 import { spacing } from "@/theme";
 import { PillButton } from "./PillButton";
+import { useAppTheme } from "@/utils/useAppTheme";
+import { color } from "react-native-elements/dist/helpers";
+import { Text } from "./Text";
 interface BasicDialogProps {
   title: string;
   description?: string | React.ReactNode;
@@ -13,6 +16,7 @@ interface BasicDialogProps {
   rightButtonText: string;
   onLeftPress?: () => void;
   onRightPress: () => void;
+  
 }
 
 const BasicDialog = ({
@@ -24,14 +28,15 @@ const BasicDialog = ({
   onLeftPress,
   onRightPress
 }: BasicDialogProps) => {
+	const { theme: { isDark }, } = useAppTheme();
   return (
-    <View style={[styles.basicDialog, styles.basicDialogFlexBox]}>
+    <View style={[styles.basicDialog, styles.basicDialogFlexBox, { backgroundColor: isDark ? "#141834" : "white" }]}>
       <View style={[styles.titleDescription, styles.basicDialogFlexBox]}>
         {icon}
-        {title && <Text style={[styles.headline, styles.labelTypo1]}>{title}</Text>}
+        {title && <Text text={title} style={[styles.headline, styles.labelTypo1, {color: isDark ? "#d5d8f5": "black"}]} />}
         {description && (
-          <Text style={[styles.defaulttext, styles.labelTypo]}>
-            {description}
+          <Text text={typeof description === 'string' ? description : undefined} style={[styles.labelTypo, {color: isDark ? "#d5d8f5": "black"} ]}>
+            {typeof description !== 'string' ? description : undefined}
           </Text>
         )}
       </View>
@@ -71,8 +76,7 @@ const styles = StyleSheet.create({
     		fontSize: 17
   	},
   	labelTypo: {
-    		textAlign: "left",
-    		fontFamily: "SF Pro Rounded"
+    		textAlign: "left"
   	},
   	actions1FlexBox: {
     		flexDirection: "row",
@@ -81,12 +85,8 @@ const styles = StyleSheet.create({
   
   	headline: {
     		textAlign: "center",
-    		fontFamily: "SF Pro Rounded",
     		color: "#f9f8fe",
     		alignSelf: "stretch"
-  	},
-  	defaulttext: {
-    		color: "#d5d8f5"
   	},
   	oneForeground: {
     		color: "#abaaff"
@@ -133,7 +133,6 @@ const styles = StyleSheet.create({
     		elevation: 4,
     		shadowOpacity: 1,
     		borderRadius: 28,
-    		backgroundColor: "#141834",
     		width: "100%",
     		minWidth: "50%",
     		maxWidth: "100%",

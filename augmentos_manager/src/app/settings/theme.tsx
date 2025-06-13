@@ -1,6 +1,6 @@
 import React, {useState, useEffect} from "react"
-import {View, Text, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
-import {Screen, Header} from "@/components/ignite"
+import {View, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
+import {Screen, Header, Text} from "@/components/ignite"
 import {useAppTheme} from "@/utils/useAppTheme"
 import {ThemedStyle} from "@/theme"
 import {MaterialCommunityIcons} from "@expo/vector-icons"
@@ -8,19 +8,20 @@ import {translate} from "@/i18n"
 import {saveSetting, loadSetting} from "@/utils/SettingsHelper"
 import {SETTINGS_KEYS} from "@/consts"
 import {router} from "expo-router"
+import { type ThemeType } from "@/utils/useAppTheme"
 
 export default function ThemeSettingsPage() {
   const {theme, themed, setThemeContextOverride} = useAppTheme()
-  const [selectedTheme, setSelectedTheme] = useState<"light" | "dark" | "system">("system")
+  const [selectedTheme, setSelectedTheme] = useState<ThemeType>("light")
 
   useEffect(() => {
     // Load saved theme preference
-    loadSetting(SETTINGS_KEYS.THEME_PREFERENCE, "system").then(savedTheme => {
-      setSelectedTheme(savedTheme as "light" | "dark" | "system")
+    loadSetting(SETTINGS_KEYS.THEME_PREFERENCE, "light").then(savedTheme => {
+      setSelectedTheme(savedTheme as ThemeType)
     })
   }, [])
 
-  const handleThemeChange = async (newTheme: "light" | "dark" | "system") => {
+  const handleThemeChange = async (newTheme: ThemeType) => {
     setSelectedTheme(newTheme)
     await saveSetting(SETTINGS_KEYS.THEME_PREFERENCE, newTheme)
 
@@ -33,7 +34,7 @@ export default function ThemeSettingsPage() {
   }
 
   const renderThemeOption = (
-    themeKey: "light" | "dark" | "system",
+    themeKey: ThemeType,
     label: string,
     subtitle?: string,
     isLast: boolean = false,
@@ -43,13 +44,13 @@ export default function ThemeSettingsPage() {
         style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 8}}
         onPress={() => handleThemeChange(themeKey)}>
         <View style={{flexDirection: "column", gap: 4}}>
-          <Text style={{color: theme.colors.text}}>{label}</Text>
-          {subtitle && <Text style={themed($subtitle)}>{subtitle}</Text>}
+          <Text text={label} style={{color: theme.colors.text}} />
+          {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
         </View>
         <MaterialCommunityIcons
           name="check"
           size={24}
-          color={selectedTheme === themeKey ? theme.colors.palette.primary300 : "transparent"}
+          color={selectedTheme === themeKey ? (theme.colors.checkmark || theme.colors.palette.primary300) : "transparent"}
         />
       </TouchableOpacity>
       {!isLast && <View style={{height: 1, backgroundColor: theme.colors.palette.neutral300, marginVertical: 4}} />}

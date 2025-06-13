@@ -19,7 +19,8 @@ export default function Layout() {
   const {theme, themed} = useAppTheme()
 
   const showLabel = false
-
+  const iconFocusedColor = theme.isDark ? "white": theme.colors.palette.primary300;
+  const whiteColor = "#fff"
   return (
     <Tabs
       screenOptions={{
@@ -29,10 +30,13 @@ export default function Layout() {
         tabBarStyle: [
           themed($tabBar),
           {
-            paddingBottom: bottom + 48,
+            paddingBottom: bottom + 16,
+            // borderTopColor moved to View wrapping LinearGradient
+            borderTopWidth: 0,
+            backgroundColor: 'transparent',
           },
         ],
-        tabBarActiveTintColor: theme.isDark ? "#FFFFFF" : theme.colors.text,
+        tabBarActiveTintColor: theme.isDark ? whiteColor : theme.colors.text,
         tabBarInactiveTintColor: theme.colors.textDim,
         tabBarLabelStyle: themed($tabBarLabel),
         tabBarItemStyle: themed($tabBarItem),
@@ -41,26 +45,39 @@ export default function Layout() {
         // animation: 'shift',
         // tabBarBackground: () => <View />,
         tabBarBackground: () => (
-          <LinearGradient
-            colors={[theme.colors.tabBarBackground1, theme.colors.tabBarBackground2]}
+          <View
             style={{
               position: "absolute",
               left: 0,
               right: 0,
               top: 0,
               bottom: 0,
+              borderTopColor: theme.colors.separator,
+              borderTopWidth: 2,
+              overflow: "hidden",
             }}
-            start={{x: 0, y: 0}}
-            end={{x: 0, y: 2}}
-          />
+          >
+            <LinearGradient
+              colors={ theme.isDark ? [theme.colors.tabBarBackground1, theme.colors.tabBarBackground2] : [whiteColor, whiteColor]}
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 0,
+              }}
+              start={{x: 0, y: 0}}
+              end={{x: 0, y: 2}}
+            />
+          </View>
         ),
       }}>
       <Tabs.Screen
         name="home"
         options={{
-          href: "/home",
+          href: "/home",  
           headerShown: false,
-          tabBarIcon: ({focused, color}) => <HomeIcon size={28} color={focused ? (theme.isDark ? "#FFFFFF" : color) : colors.textDim} />,
+          tabBarIcon: ({focused, color}) => <HomeIcon size={28} color={focused ? (iconFocusedColor) : colors.textDim} />,
           tabBarLabel: translate("navigation:home"),
         }}
       />
@@ -69,7 +86,7 @@ export default function Layout() {
         options={{
           href: "/glasses",
           headerShown: false,
-          tabBarIcon: ({focused, color}) => <SolarLineIconsSet4 size={28} color={focused ? (theme.isDark ? "#FFFFFF" : color) : colors.textDim} />,
+          tabBarIcon: ({focused, color}) => <SolarLineIconsSet4 size={28} color={focused ? (iconFocusedColor ) : colors.textDim} />,
           tabBarLabel: translate("navigation:glasses"),
         }}
       />
@@ -78,7 +95,7 @@ export default function Layout() {
         options={{
           href: "/mirror",
           headerShown: false,
-          tabBarIcon: ({focused, color}) => <MirrorIcon size={28} color={focused ? (theme.isDark ? "#FFFFFF" : color) : colors.textDim} />,
+          tabBarIcon: ({focused, color}) => <MirrorIcon size={28} color={focused ? (iconFocusedColor ) : colors.textDim} />,
           tabBarLabel: translate("navigation:mirror"),
         }}
       />
@@ -87,7 +104,7 @@ export default function Layout() {
         options={{
           href: "/store",
           headerShown: false,
-          tabBarIcon: ({focused, color}) => <StoreIcon size={28} color={focused ? (theme.isDark ? "#FFFFFF" : color) : colors.textDim} />,
+          tabBarIcon: ({focused, color}) => <StoreIcon size={28} color={focused ? (iconFocusedColor ) : colors.textDim} />,
           tabBarLabel: translate("navigation:store"),
         }}
       />
@@ -96,7 +113,7 @@ export default function Layout() {
         options={{
           href: "/settings",
           headerShown: false,
-          tabBarIcon: ({focused, color}) => <UserIcon size={28} color={focused ? (theme.isDark ? "#FFFFFF" : color) : colors.textDim} />,
+          tabBarIcon: ({focused, color}) => <UserIcon size={28} color={focused ? (iconFocusedColor ) : colors.textDim} />,
           tabBarLabel: translate("navigation:account"),
         }}
       />
@@ -106,14 +123,15 @@ export default function Layout() {
 
 const $tabBar: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.background,
-  borderTopColor: "#3C3836",
+  borderTopColor: colors.separator,
   borderTopWidth: 1,
   paddingTop: 8,
-  height: 64,
+  height: 80,
 })
 
 const $tabBarItem: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  paddingTop: spacing.xl, // More padding above icons
+  paddingTop: spacing.md, // Center icons vertically
+  paddingBottom: spacing.md,
 })
 
 const $tabBarLabel: ThemedStyle<TextStyle> = ({colors, typography}) => ({

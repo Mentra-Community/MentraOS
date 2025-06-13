@@ -14,30 +14,30 @@ const Header: React.FC = () => {
   };
 
   return (
-    <header className="sticky top-0 z-10 bg-white border-b border-gray-200 shadow-sm">
-      <div className="mx-auto px-10 py-4">
-        <div className="flex items-center justify-between">
+    <header className="sticky top-0 z-10 bg-[#242454] border-b border-gray-200 shadow-sm">
+      <div className="mx-auto px-4 py-4">
+        <div className="flex items-end justify-between">
 
           {/* Logo and Site Name */}
           <div className="flex flex-col items-start select-none">
-            <Link to="/" className="flex items-end ">
-              <h1 className="font-cuprum font-bold text-3xl">.\</h1>
-              <h1 className="font-light text-xl pb-0.5 pl-1">ugment</h1>
-              <h1 className="font-bold text-xl pb-0.5">OS</h1>
-            </Link>
-            <span className="font-light text-sm text-gray-800">AugmentOS Store</span>
+            <span
+              className="text-2xl  tracking-wide text-[#F1F1F1]"
+              style={{ fontFamily: '"SF Pro Rounded", sans-serif' }}
+            >
+              App Store
+            </span>
           </div>
-
+          
           {/* Authentication */}
-          <div className="flex items-center">
-            {isAuthenticated ? (
-              <div className="flex flex-col items-end">
-                {!isWebViewAuth && user?.email && (
-                  <span className="text-sm text-gray-600 px-3">
-                    {user.email}
-                  </span>
-                )}
-                {!isWebViewAuth && (
+          {!isWebViewAuth && (
+            <div className="flex items-center">
+              {isAuthenticated ? (
+                <div className="flex flex-col items-end">
+                  {user?.email && (
+                    <span className="text-sm text-gray-600 px-3">
+                      {user.email}
+                    </span>
+                  )}
                   <Button
                     onClick={handleSignOut}
                     variant="ghost"
@@ -45,18 +45,18 @@ const Header: React.FC = () => {
                   >
                     Sign Out
                   </Button>
-                )}
-              </div>
-            ) : (
-              <Button
-                onClick={() => navigate('/login')}
-                variant="default"
-              // className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm"
-              >
-                Sign In
-              </Button>
-            )}
-          </div>
+                </div>
+              ) : (
+                <Button
+                  onClick={() => navigate('/login')}
+                  variant="default"
+                >
+                  Sign In
+                </Button>
+              )}
+            </div>
+          )}
+          
         </div>
       </div>
     </header>

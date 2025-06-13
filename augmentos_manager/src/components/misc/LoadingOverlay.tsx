@@ -1,6 +1,7 @@
 import { useAppTheme } from '@/utils/useAppTheme';
 import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { Text } from '@/components/ignite';
 
 interface LoadingOverlayProps {
   message?: string;
@@ -30,9 +31,9 @@ const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
           color={theme2.primaryColor} 
           style={styles.spinner}
         />
-        <Text style={[styles.message, { color: theme2.textColor }]}>
-          {message}
-        </Text>
+        <Text 
+          text={message}
+          style={[styles.message, { color: theme2.textColor }]} />
       </View>
     </View>
   );
@@ -61,7 +62,6 @@ const styles = StyleSheet.create({
   message: {
     fontSize: 16,
     fontWeight: '500',
-    fontFamily: 'Montserrat-Regular',
     textAlign: 'center',
   }
 });

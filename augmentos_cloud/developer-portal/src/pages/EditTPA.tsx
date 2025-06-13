@@ -25,6 +25,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useOrganization } from '@/context/OrganizationContext';
 // import publicEmailDomains from 'email-providers/all.json';
 import MoveOrgDialog from '../components/dialogs/MoveOrgDialog';
+import ImageUpload from '../components/forms/ImageUpload';
 
 // Extend TPA type locally to include sharedWithOrganization
 interface EditableTPA extends TPA {
@@ -296,7 +297,7 @@ const EditTPA: React.FC = () => {
       name: formData.name,
       description: formData.description,
       publicUrl: formData.publicUrl || '',
-      logoURL: formData.logoURL || '',
+      logoURL: formData.logoURL || '', // Cloudflare Images URL
       permissions: removeIdFields(formData.permissions || []),
       settings: removeIdFields(formData.settings || [], true),
       tools: removeIdFields(formData.tools || [])
@@ -855,6 +856,7 @@ const EditTPA: React.FC = () => {
           publicUrl: (importConfigData.publicUrl !== undefined && importConfigData.publicUrl.trim() !== '')
             ? importConfigData.publicUrl.trim()
             : prev.publicUrl,
+          // Note: logoURL from import will be a Cloudflare Images URL or other hosted URL
           logoURL: (importConfigData.logoURL !== undefined && importConfigData.logoURL.trim() !== '')
             ? importConfigData.logoURL.trim()
             : prev.logoURL,
@@ -1013,17 +1015,20 @@ const EditTPA: React.FC = () => {
 
                 <div className="space-y-2">
                   <Label htmlFor="logoURL">Logo URL</Label>
-                  <Input
-                    id="logoURL"
-                    name="logoURL"
-                    value={formData.logoURL}
-                    onChange={handleChange}
-                    onBlur={handleUrlBlur}
-                    placeholder="yourserver.com/logo.png"
+                  <ImageUpload
+                    currentImageUrl={formData.logoURL}
+                    onImageUploaded={(url) => {
+                      setFormData(prev => ({
+                        ...prev,
+                        logoURL: url
+                      }));
+                    }}
+                    packageName={formData.packageName}
+                    disabled={isSaving}
                   />
+                  {/* Note: The actual Cloudflare URL is stored in logoURL but not displayed to the user */}
                   <p className="text-xs text-gray-500">
-                    URL to an image that will be used as your app's icon (recommended: 512x512 PNG).
-                    HTTPS is required and will be added automatically if not specified.
+                    Upload an image that will be used as your app's icon (recommended: 512x512 PNG).
                   </p>
                 </div>
 

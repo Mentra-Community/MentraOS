@@ -694,6 +694,9 @@ enum GlassesError: Error {
       case .CASE_REMOVED:
         print("REMOVED FROM CASE")
         self.caseRemoved = true
+      case .CASE_REMOVED2:
+        print("REMOVED FROM CASE2")
+        self.caseRemoved = true
       case .CASE_OPEN:
         self.caseOpen = true
         self.caseRemoved = false
@@ -850,6 +853,12 @@ extension ERG1Manager {
     let initData = Data([Commands.BLE_REQ_INIT.rawValue, 0x01])
     let initDataArray = initData.map { UInt8($0) }
     queueChunks([initDataArray])
+  }
+
+  func RN_exit() {
+    let exitData = Data([Commands.BLE_EXIT_ALL_FUNCTIONS.rawValue])
+    let exitDataArray = exitData.map { UInt8($0) }
+    queueChunks([exitDataArray])
   }
   
   // don't call semaphore signals here as it's handled elswhere:

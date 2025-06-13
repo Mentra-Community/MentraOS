@@ -16,6 +16,11 @@ public abstract class StreamingEvent {
     public static class PreviewAttached extends StreamingEvent {}
     
     /**
+     * Emitted when stream is initializing (before RTMP connection)
+     */
+    public static class Initializing extends StreamingEvent {}
+    
+    /**
      * Emitted when streaming starts
      */
     public static class Started extends StreamingEvent {}

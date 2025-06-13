@@ -70,7 +70,13 @@ export type TpaToCloudMessage =
   | RtmpStreamStopRequest
   | DashboardContentUpdate
   | DashboardModeChange
-  | DashboardSystemUpdate;
+  | DashboardSystemUpdate
+  // New TPA-to-TPA communication messages
+  | TpaBroadcastMessage
+  | TpaDirectMessage
+  | TpaUserDiscovery
+  | TpaRoomJoin
+  | TpaRoomLeave;
 
 /**
  * Type guard to check if a message is a TPA connection init
@@ -120,6 +126,70 @@ export function isDashboardModeChange(message: TpaToCloudMessage): message is Da
  */
 export function isDashboardSystemUpdate(message: TpaToCloudMessage): message is DashboardSystemUpdate {
   return message.type === TpaToCloudMessageType.DASHBOARD_SYSTEM_UPDATE;
+}
+
+//===========================================================
+// TPA-to-TPA Communication Messages
+//===========================================================
+
+/**
+ * Broadcast message to all users with the same TPA active
+ */
+export interface TpaBroadcastMessage extends BaseMessage {
+  type: TpaToCloudMessageType.TPA_BROADCAST_MESSAGE;
+  packageName: string;
+  sessionId: string;
+  payload: any;
+  messageId: string;
+  senderUserId: string;
+}
+
+/**
+ * Direct message to a specific user with the same TPA active
+ */
+export interface TpaDirectMessage extends BaseMessage {
+  type: TpaToCloudMessageType.TPA_DIRECT_MESSAGE;
+  packageName: string;
+  sessionId: string;
+  targetUserId: string;
+  payload: any;
+  messageId: string;
+  senderUserId: string;
+}
+
+/**
+ * Request to discover other users with the same TPA active
+ */
+export interface TpaUserDiscovery extends BaseMessage {
+  type: TpaToCloudMessageType.TPA_USER_DISCOVERY;
+  packageName: string;
+  sessionId: string;
+  includeUserProfiles?: boolean;
+}
+
+/**
+ * Join a communication room for group messaging
+ */
+export interface TpaRoomJoin extends BaseMessage {
+  type: TpaToCloudMessageType.TPA_ROOM_JOIN;
+  packageName: string;
+  sessionId: string;
+  roomId: string;
+  roomConfig?: {
+    maxUsers?: number;
+    isPrivate?: boolean;
+    metadata?: any;
+  };
+}
+
+/**
+ * Leave a communication room
+ */
+export interface TpaRoomLeave extends BaseMessage {
+  type: TpaToCloudMessageType.TPA_ROOM_LEAVE;
+  packageName: string;
+  sessionId: string;
+  roomId: string;
 }
 
 /**

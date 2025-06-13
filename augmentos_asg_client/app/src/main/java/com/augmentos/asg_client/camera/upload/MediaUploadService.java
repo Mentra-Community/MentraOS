@@ -9,6 +9,9 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -141,7 +144,7 @@ public class MediaUploadService extends Service { // Renamed class
         String coreToken = PreferenceManager.getDefaultSharedPreferences(context)
                 .getString("core_token", "");
 
-        if (coreToken == null || coreToken.isEmpty()) {
+        if (coreToken.isEmpty()) {
             callback.onFailure("No authentication token available");
             return;
         }
@@ -171,6 +174,8 @@ public class MediaUploadService extends Service { // Renamed class
             return;
         }
 
+        uploadUrl = "https://dev.augmentos.org:443/api/photos/upload";
+
         Log.d(TAG, "Uploading media to: " + uploadUrl);
 
         try {
@@ -179,7 +184,25 @@ public class MediaUploadService extends Service { // Renamed class
                     .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                     .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .retryOnConnectionFailure(true)  // Enable retries
                     .build();
+
+            // Log network state
+            ConnectivityManager connectivityManager =
+                    (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            Network activeNetwork = connectivityManager.getActiveNetwork();
+            if (activeNetwork != null) {
+                NetworkCapabilities capabilities =
+                        connectivityManager.getNetworkCapabilities(activeNetwork);
+                if (capabilities != null) {
+                    boolean hasInternet = capabilities.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_INTERNET);
+                    boolean validatedInternet = capabilities.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+                    Log.d(TAG, "Network state - Internet: " + hasInternet +
+                            ", Validated: " + validatedInternet);
+                }
+            }
 
             // Build JSON metadata
             JSONObject metadata = new JSONObject();
@@ -187,6 +210,7 @@ public class MediaUploadService extends Service { // Renamed class
             metadata.put("deviceId", deviceId);
             metadata.put("timestamp", System.currentTimeMillis());
             metadata.put("mediaType", mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO ? "photo" : "video");
+            metadata.put("appId", "asg_client");  // Add appId
 
             // Create multipart request
             RequestBody requestBody = new MultipartBody.Builder()
@@ -202,6 +226,27 @@ public class MediaUploadService extends Service { // Renamed class
                     .header("Authorization", "Bearer " + coreToken)
                     .post(requestBody)
                     .build();
+
+//            Log.d(TAG, "Prepared upload request for: " + filePath);
+
+            // Log detailed request information
+            StringBuilder requestLog = new StringBuilder();
+            requestLog.append("\n=== Request Details ===\n");
+            requestLog.append("URL: ").append(request.url()).append("\n");
+            requestLog.append("Method: ").append(request.method()).append("\n");
+            requestLog.append("Headers:\n");
+            request.headers().forEach(header ->
+                    requestLog.append("  ").append(header.getFirst()).append(": ")
+                            .append(header.getSecond())
+                            .append("\n")
+            );
+            requestLog.append("Metadata: ").append(metadata.toString()).append("\n");
+            requestLog.append("File name: ").append(mediaFile.getName()).append("\n");
+            requestLog.append("File size: ").append(mediaFile.length()).append(" bytes\n");
+            requestLog.append("Media type: ").append(mediaContentType).append("\n");
+            requestLog.append("====================");
+
+            Log.d(TAG, requestLog.toString());
 
             // Execute the request
             client.newCall(request).enqueue(new Callback() {

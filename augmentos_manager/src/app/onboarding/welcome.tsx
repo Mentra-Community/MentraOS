@@ -1,6 +1,5 @@
 import React from 'react';
 import {View, Text, StyleSheet} from 'react-native';
-import Button from '@/components/misc/Button';
 import {saveSetting} from '@/utils/SettingsHelper';
 import {SETTINGS_KEYS} from '@/consts';
 import {useAppStatus} from '@/contexts/AppStatusProvider';
@@ -8,6 +7,9 @@ import BackendServerComms from '@/backend_comms/BackendServerComms';
 import { router } from 'expo-router';
 import { useAppTheme } from '@/utils/useAppTheme';
 import { useNavigationHistory } from '@/contexts/NavigationHistoryContext';
+import { Button } from '@/components/ignite/Button';
+import {FontAwesome} from "@expo/vector-icons"
+import { Spacer } from '@/components/misc/Spacer';
 
 export default function OnboardingWelcome() {
   const {appStatus, optimisticallyStopApp, clearPendingOperation, refreshAppStatus} = useAppStatus();
@@ -62,22 +64,36 @@ export default function OnboardingWelcome() {
         <View style={styles.infoContainer}>
           <Text style={[styles.title, { color: theme.colors.text }]}>Welcome to AugmentOS</Text>
 
-          <Text style={[styles.description, { color: theme.colors.textDim }]}>
+          <Text style={[styles.description, { color: theme.colors.text }]}>
             Let's go through a quick tutorial to get you started with AugmentOS.
           </Text>
         </View>
 
-        <View style={styles.buttonContainer}>
-          <Button onPress={handleContinue} isDarkTheme={isDarkTheme} iconName="arrow-right" disabled={false}>
-            Continue
-          </Button>
-
-          <View style={styles.skipButtonContainer}>
-            <Button onPress={handleSkip} isDarkTheme={isDarkTheme} iconName="skip-next" disabled={false}>
-              Skip Onboarding
-            </Button>
-          </View>
-        </View>
+        <Button
+          onPress={handleContinue}
+          tx="common:continue"
+          textAlignment='center'
+          LeftAccessory={() => (
+                        <FontAwesome
+                          name="chevron-right"
+                          size={16}
+                          color={theme.colors.text}
+                        />
+                      )}
+        />
+        
+        <Spacer height={10}/>
+        <Button 
+        onPress={handleSkip} 
+          tx='welcomeScreen:skipOnboarding'
+          LeftAccessory={() => (
+                        <FontAwesome
+                          name="step-forward"
+                          size={16}
+                          color={theme.colors.text}
+                        />
+                      )}
+        />
       </View>
     </View>
   );

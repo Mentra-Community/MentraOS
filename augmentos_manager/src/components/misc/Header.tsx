@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, Alert, AppState } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Platform, Alert, AppState } from 'react-native';
+import { Text } from '@/components/ignite';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { checkNotificationAccessSpecialPermission } from '../utils/NotificationServiceUtils';
-import { checkFeaturePermissions, PermissionFeatures } from '../logic/PermissionsUtils';
-import { showAlert } from '../utils/AlertUtils';
+import { checkNotificationAccessSpecialPermission } from '@/utils/NotificationServiceUtils';
+import { checkFeaturePermissions, PermissionFeatures } from '@/utils/PermissionsUtils';
+import { showAlert } from '@/utils/AlertUtils';
 import { useRoute } from '@react-navigation/native';
 import { router } from 'expo-router';
 
@@ -29,8 +30,6 @@ const Header: React.FC<HeaderProps> = ({ isDarkTheme, navigation }) => {
         const hasNotificationPermission = await checkNotificationAccessSpecialPermission();
         setHasNotificationListenerPermission(hasNotificationPermission);
       } else {
-        // const hasNotificationPermission = await checkFeaturePermissions(PermissionFeatures.NOTIFICATIONS);
-        // setHasNotificationListenerPermission(hasNotificationPermission);
         // TODO: ios (there's no way to get the notification permission on ios so just set to true to disable the warning)
         setHasNotificationListenerPermission(true);
       }
@@ -85,9 +84,10 @@ const Header: React.FC<HeaderProps> = ({ isDarkTheme, navigation }) => {
 
   return (
     <View style={styles.headerContainer}>
-      <Text style={[styles.title, { color: textColor }]} numberOfLines={1}>
-        AugmentOS
-      </Text>
+      <Text 
+        text="AugmentOS" 
+        style={[styles.title, { color: textColor }]} 
+        numberOfLines={1} />
       
       {(!hasNotificationListenerPermission || !hasCalendarPermission) && (
         <TouchableOpacity
@@ -128,7 +128,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    fontFamily: 'Montserrat-Bold',
   },
   dropdown: {
     position: 'absolute',
@@ -148,7 +147,6 @@ const styles = StyleSheet.create({
   },
   dropdownItemText: {
     fontSize: 16,
-    fontFamily: 'Montserrat-Regular',
   },
   alertIconContainer: {
     position: 'relative',

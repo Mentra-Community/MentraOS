@@ -27,6 +27,14 @@ const fonts = {
     semiBold: "spaceGroteskSemiBold",
     bold: "spaceGroteskBold",
   },
+  sfProRounded: {
+    // SF Pro Rounded - the cool robot font
+    light: Platform.select({ ios: "SF Pro Rounded", android: "sans-serif-light" }),
+    normal: Platform.select({ ios: "SF Pro Rounded", android: "sans-serif" }),
+    medium: Platform.select({ ios: "SF Pro Rounded", android: "sans-serif-medium" }),
+    semiBold: Platform.select({ ios: "SF Pro Rounded", android: "sans-serif-medium" }),
+    bold: Platform.select({ ios: "SF Pro Rounded", android: "sans-serif" }),
+  },
   helveticaNeue: {
     // iOS only font.
     thin: "HelveticaNeue-Thin",
@@ -59,11 +67,11 @@ export const typography = {
   /**
    * The primary font. Used in most places.
    */
-  primary: fonts.spaceGrotesk,
+  primary: fonts.sfProRounded,
   /**
    * An alternate font used for perhaps titles and stuff.
    */
-  secondary: Platform.select({ ios: fonts.helveticaNeue, android: fonts.sansSerif }),
+  secondary: fonts.spaceGrotesk,
   /**
    * Lets get fancy with a monospace font!
    */

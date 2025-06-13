@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from "react"
+import React, {useState, useEffect, useCallback} from "react"
 import {
   View,
   Text,
@@ -18,9 +18,10 @@ import {Slider} from "react-native-elements"
 import {Header, Screen} from "@/components/ignite"
 import {spacing, ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {router} from "expo-router"
+import {router, useFocusEffect} from "expo-router"
 import {Spacer} from "@/components/misc/Spacer"
 import ToggleSetting from "@/components/settings/ToggleSetting"
+import SliderSetting from "@/components/settings/SliderSetting"
 import {translate} from "@/i18n"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 
@@ -62,6 +63,16 @@ export default function ScreenSettingsScreen() {
     setHeight(status.glasses_settings.dashboard_height)
   }, [status.glasses_settings.dashboard_height])
 
+
+  useFocusEffect(
+    useCallback(() => {
+      coreCommunicator.toggleUpdatingScreen(true)
+      return () => {
+        coreCommunicator.toggleUpdatingScreen(false)
+      }
+    }, [])
+  )
+
   // -- Handlers --
   const changeBrightness = async (newBrightness: number) => {
     // if (!status.glasses_info) {
@@ -84,7 +95,7 @@ export default function ScreenSettingsScreen() {
   }
 
   const changeHeight = async (newHeight: number) => {
-    await coreCommunicator.setGlassesDashboardHeight(newHeight)
+    await coreCommunicator.setGlassesHeight(newHeight)
     setHeight(newHeight)
   }
 
@@ -158,43 +169,27 @@ export default function ScreenSettingsScreen() {
       <Header titleTx="screenSettings:title" leftIcon="caretLeft" onLeftPress={goBack} />
 
       <ScrollView>
-        <ToggleSetting
-          label={translate("settings:autoBrightnessLabel")}
-          subtitle={translate("settings:autoBrightnessSubtitle")}
-          value={isAutoBrightnessEnabled}
-          onValueChange={toggleAutoBrightness}
+        <SliderSetting
+          label="Display Depth"
+          subtitle="Adjust how far the content appears from you."
+          value={depth ?? 5}
+          min={1}
+          max={5}
+          onValueChange={(value) => setDepth(value)}
+          onValueSet={changeDepth}
         />
 
         <Spacer height={theme.spacing.md} />
 
-        {/* Brightness Slider */}
-        {!isAutoBrightnessEnabled && (
-          <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
-            <View style={styles.settingTextContainer}>
-              <Text style={themed($label)}>Brightness</Text>
-              <Text style={[styles.value, { color: theme.colors.textDim }]}>
-                {"Adjust the brightness level of your smart glasses."}
-              </Text>
-              <Slider {...sliderProps} />
-            </View>
-          </View>
-        )}
-
-        <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
-          <View style={styles.settingTextContainer}>
-            <Text style={themed($label)}>Depth</Text>
-            <Text style={[styles.value, { color: theme.colors.textDim }]}>{"Adjust the depth of the contextual dashboard."}</Text>
-            <Slider {...depthSliderProps} />
-          </View>
-        </View>
-
-        <View style={[styles.settingItem, { borderBottomColor: theme.colors.border }]}>
-          <View style={styles.settingTextContainer}>
-            <Text style={themed($label)}>Dashboard Height</Text>
-            <Text style={[styles.value, { color: theme.colors.textDim }]}>{"Adjust the height of the contextual dashboard."}</Text>
-            <Slider {...heightSliderProps} />
-          </View>
-        </View>
+        <SliderSetting
+          label="Display Height"
+          subtitle="Adjust the vertical position of the content."
+          value={height ?? 4}
+          min={1}
+          max={8}
+          onValueChange={(value) => setHeight(value)}
+          onValueSet={changeHeight}
+        />
       </ScrollView>
     </Screen>
   )

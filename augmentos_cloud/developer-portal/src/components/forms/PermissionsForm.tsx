@@ -1,26 +1,63 @@
 import React from 'react';
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Shield, Plus, Trash2 } from "lucide-react";
+import { PermissionType, Permission } from '../../types/tpa';
 
-// Define our permission types
-enum PermissionType {
-  MICROPHONE = 'MICROPHONE',
-  LOCATION = 'LOCATION',
-  CALENDAR = 'CALENDAR',
-  NOTIFICATIONS = 'NOTIFICATIONS',
-  ALL = 'ALL'
-}
-
-// Permission interface matching our backend
-export interface Permission {
-  type: PermissionType;
-  description?: string;
-}
+// Permission display metadata
+const PERMISSION_DISPLAY_INFO: Record<PermissionType, {
+  label: string;
+  description: string;
+  isLegacy: boolean;
+  category: string;
+  replacedBy?: PermissionType[];
+}> = {
+  [PermissionType.NOTIFICATIONS]: {
+    label: 'Notifications (Legacy)',
+    description: 'Read phone notifications (deprecated - use READ_NOTIFICATIONS)',
+    isLegacy: true,
+    replacedBy: [PermissionType.READ_NOTIFICATIONS],
+    category: 'phone'
+  },
+  [PermissionType.READ_NOTIFICATIONS]: {
+    label: 'Read Notifications',
+    description: 'Access incoming phone notifications',
+    isLegacy: false,
+    category: 'phone'
+  },
+  [PermissionType.POST_NOTIFICATIONS]: {
+    label: 'Send Notifications',
+    description: 'Send notifications to the phone',
+    isLegacy: false,
+    category: 'phone'
+  },
+  [PermissionType.MICROPHONE]: {
+    label: 'Microphone',
+    description: 'Access to microphone for voice input and audio processing',
+    isLegacy: false,
+    category: 'audio'
+  },
+  [PermissionType.LOCATION]: {
+    label: 'Location',
+    description: 'Access to device location information',
+    isLegacy: false,
+    category: 'location'
+  },
+  [PermissionType.CALENDAR]: {
+    label: 'Calendar',
+    description: 'Access to calendar events',
+    isLegacy: false,
+    category: 'calendar'
+  },
+  [PermissionType.ALL]: {
+    label: 'All Permissions',
+    description: 'Access to all available permissions',
+    isLegacy: false,
+    category: 'system'
+  }
+};
 
 interface PermissionsFormProps {
   permissions: Permission[];
@@ -36,7 +73,7 @@ interface PermissionItemProps {
   isEditing: boolean;
   onEditToggle: (index: number | null) => void;
   removePermission: (index: number) => void;
-  updatePermission: (index: number, field: keyof Permission, value: any) => void;
+  updatePermission: (index: number, field: keyof Permission, value: string) => void;
   availableTypes: PermissionType[];
 }
 
@@ -51,6 +88,14 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
 }) => {
   // Get a human-readable description for permissions
   const getPermissionDescription = (type: PermissionType): string => {
+    const info = PERMISSION_DISPLAY_INFO[type];
+    if (info) {
+      return info.isLegacy 
+        ? `${info.description} ⚠️` 
+        : info.description;
+    }
+    
+    // Fallback for any unmapped permissions
     switch (type) {
       case PermissionType.MICROPHONE:
         return 'Access to microphone for voice input and audio processing';
@@ -59,7 +104,11 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
       case PermissionType.CALENDAR:
         return 'Access to calendar events';
       case PermissionType.NOTIFICATIONS:
-        return 'Access to phone notifications';
+        return 'Read phone notifications (legacy - consider READ_NOTIFICATIONS)';
+      case PermissionType.READ_NOTIFICATIONS:
+        return 'Read incoming phone notifications';
+      case PermissionType.POST_NOTIFICATIONS:
+        return 'Send notifications to the phone';
       case PermissionType.ALL:
         return 'Access to all available permissions';
       default:
@@ -93,10 +142,20 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                   {permission.type}
                 </span>
+                {PERMISSION_DISPLAY_INFO[permission.type]?.isLegacy && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                    Legacy
+                  </span>
+                )}
               </div>
               <div className="text-xs text-gray-500 truncate">
                 {getDescriptionPreview()}
               </div>
+              {PERMISSION_DISPLAY_INFO[permission.type]?.isLegacy && (
+                <div className="text-xs text-orange-600 mt-1">
+                  💡 Consider migrating to: {PERMISSION_DISPLAY_INFO[permission.type]?.replacedBy?.join(', ')}
+                </div>
+              )}
             </div>
 
             {/* Delete button */}
@@ -158,19 +217,30 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
                   <SelectValue placeholder="Select permission type" />
                 </SelectTrigger>
                 <SelectContent>
+                  {/* Available types for new/existing permissions */}
                   {availableTypes.map((type) => (
                     <SelectItem key={type} value={type}>
                       {type}
                     </SelectItem>
                   ))}
-                  {/* Always show the current type even if it would be "unavailable" */}
-                  {!availableTypes.includes(permission.type) && (
+                  
+                  {/* Current legacy type (only if editing existing legacy permission) */}
+                  {PERMISSION_DISPLAY_INFO[permission.type]?.isLegacy && (
                     <SelectItem value={permission.type}>
-                      {permission.type} (current)
+                      {permission.type} (Legacy - Consider migrating)
                     </SelectItem>
                   )}
                 </SelectContent>
               </Select>
+              
+              {PERMISSION_DISPLAY_INFO[permission.type]?.isLegacy && (
+                <div className="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-md">
+                  <div className="text-sm text-orange-800">
+                    ⚠️ This is a legacy permission. Consider migrating to {PERMISSION_DISPLAY_INFO[permission.type]?.replacedBy?.join(', ')} for better clarity.
+                  </div>
+                </div>
+              )}
+              
               <p className="text-xs text-gray-500 mt-1">
                 {getPermissionDescription(permission.type as PermissionType)}
               </p>
@@ -209,11 +279,15 @@ export function PermissionsForm({ permissions, onChange }: PermissionsFormProps)
     description: ''
   });
 
-  // Get available permission types (not already used)
+  // Get available permission types for NEW permission selection (excludes legacy)
   const getAvailablePermissionTypes = (excludeIndex?: number): PermissionType[] => {
-    return Object.values(PermissionType).filter(
-      type => !permissions.some((p, i) => p.type === type && i !== excludeIndex)
-    );
+    return Object.values(PermissionType).filter(type => {
+      // Exclude legacy permissions from new selections
+      if (PERMISSION_DISPLAY_INFO[type]?.isLegacy) return false;
+      
+      // Exclude already used permissions
+      return !permissions.some((p, i) => p.type === type && i !== excludeIndex);
+    });
   };
 
   // Add a new permission
@@ -246,7 +320,7 @@ export function PermissionsForm({ permissions, onChange }: PermissionsFormProps)
   };
 
   // Update a permission
-  const updatePermission = (index: number, field: keyof Permission, value: any) => {
+  const updatePermission = (index: number, field: keyof Permission, value: string) => {
     const updatedPermissions = [...permissions];
     updatedPermissions[index] = {
       ...updatedPermissions[index],

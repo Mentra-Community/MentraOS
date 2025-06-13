@@ -2,7 +2,7 @@ import { MOCK_CONNECTION } from '@/consts';
 
 interface Glasses {
   model_name: string;
-  battery_life: number;
+  battery_level: number;
   glasses_use_wifi?: boolean; // Flag to indicate if glasses model supports WiFi
   glasses_wifi_connected?: boolean;
   glasses_wifi_ssid?: string;
@@ -129,7 +129,7 @@ export class AugmentOSParser {
     },
     glasses_info: {
       model_name: 'Even Realities G1',
-      battery_life: 60,
+      battery_level: 60,
       glasses_use_wifi: false,
       glasses_wifi_connected: false,
       glasses_wifi_ssid: '',
@@ -191,7 +191,7 @@ export class AugmentOSParser {
         glasses_info: status.connected_glasses
           ? {
             model_name: glassesInfo.model_name,
-            battery_life: glassesInfo.battery_life,
+            battery_level: glassesInfo.battery_level,
             glasses_use_wifi: glassesInfo.glasses_use_wifi || false,
             glasses_wifi_connected: glassesInfo.glasses_wifi_connected || false,
             glasses_wifi_ssid: glassesInfo.glasses_wifi_ssid || '',

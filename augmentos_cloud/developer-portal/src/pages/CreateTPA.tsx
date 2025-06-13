@@ -21,6 +21,7 @@ import PermissionsForm from '../components/forms/PermissionsForm';
 import { Permission } from '@/types/tpa';
 import { useAuth } from '../hooks/useAuth';
 import { useOrganization } from '@/context/OrganizationContext';
+import ImageUpload from '../components/forms/ImageUpload';
 // import { TPA } from '@/types/tpa';
 // Import the public email provider list
 // import publicEmailDomains from 'email-providers/all.json';
@@ -164,22 +165,7 @@ const CreateTPA: React.FC = () => {
 
     // Logo URL validation
     if (!formData.logoURL) {
-      newErrors.logoURL = 'Logo URL is required';
-    } else {
-      try {
-        // Apply normalizeUrl to handle missing protocols before validation
-        const normalizedUrl = normalizeUrl(formData.logoURL);
-        new URL(normalizedUrl);
-
-        // Update the form data with the normalized URL
-        setFormData(prev => ({
-          ...prev,
-          logoURL: normalizedUrl
-        }));
-      } catch (e) {
-        console.error(e);
-        newErrors.logoURL = 'Please enter a valid URL';
-      }
+      newErrors.logoURL = 'Logo is required';
     }
 
     // Webview URL validation (optional)
@@ -432,21 +418,30 @@ const CreateTPA: React.FC = () => {
                 <Label htmlFor="logoURL">
                   Logo URL <span className="text-red-500">*</span>
                 </Label>
-                <Input
-                  id="logoURL"
-                  name="logoURL"
-                  value={formData.logoURL}
-                  onChange={handleChange}
-                  onBlur={handleUrlBlur}
-                  placeholder="yourserver.com/logo.png"
-                  className={errors.logoURL ? "border-red-500" : ""}
+                <ImageUpload
+                  currentImageUrl={formData.logoURL}
+                  onImageUploaded={(url) => {
+                    setFormData(prev => ({
+                      ...prev,
+                      logoURL: url
+                    }));
+                    // Clear error when image is uploaded
+                    if (errors.logoURL) {
+                      setErrors(prev => {
+                        const newErrors = { ...prev };
+                        delete newErrors.logoURL;
+                        return newErrors;
+                      });
+                    }
+                  }}
+                  packageName={formData.packageName}
+                  disabled={isLoading}
+                  hasError={!!errors.logoURL}
+                  errorMessage={errors.logoURL}
                 />
-                {errors.logoURL && (
-                  <p className="text-xs text-red-500 mt-1">{errors.logoURL}</p>
-                )}
+                {/* Note: The actual Cloudflare URL is stored in logoURL but not displayed to the user */}
                 <p className="text-xs text-gray-500">
-                  URL to an image that will be used as your app's icon (recommended: 512x512 PNG).
-                  HTTPS is required and will be added automatically if not specified.
+                  Upload an image that will be used as your app's icon (recommended: 512x512 PNG).
                 </p>
               </div>
 

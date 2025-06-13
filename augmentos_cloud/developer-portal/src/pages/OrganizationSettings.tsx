@@ -12,6 +12,7 @@ import api from '@/services/api.service';
 import { toast } from 'sonner';
 import { useOrganization } from '@/context/OrganizationContext';
 import { useOrgPermissions } from '@/hooks/useOrgPermissions';
+import ImageUpload from '@/components/forms/ImageUpload';
 import CreateOrgDialog from '@/components/dialogs/CreateOrgDialog';
 import { useSearchParams } from 'react-router-dom';
 
@@ -509,17 +510,25 @@ const OrganizationSettings: React.FC = () => {
                     <Image className="h-4 w-4" />
                     Logo URL
                   </Label>
-                  <Input
-                    id="logo"
-                    name="logo"
-                    value={formData.profile.logo}
-                    onChange={handleChange}
-                    placeholder="https://example.com/logo.png"
-                    readOnly={!isAdmin}
-                    className={!isAdmin ? "bg-gray-50 text-gray-500" : ""}
+                  <ImageUpload
+                    currentImageUrl={formData.profile.logo}
+                    onImageUploaded={(url) => {
+                      setFormData(prev => ({
+                        ...prev,
+                        profile: {
+                          ...prev.profile,
+                          logo: url
+                        }
+                      }));
+                    }}
+                    packageName={`org-${currentOrg?.id}`} // Use org ID as identifier for metadata
+                    disabled={!isAdmin || isSaving}
                   />
+                  {/* Note: The actual Cloudflare URL is stored in logo but not displayed to the user */}
                   <p className="text-xs text-gray-500">
-                    A URL to your organization logo (recommended: square format, 512x512 PNG).
+                    {isAdmin
+                      ? "Upload your organization logo (recommended: square format, 512x512 PNG)."
+                      : "Organization logo"}
                   </p>
                 </div>
 

@@ -11,12 +11,14 @@ import {
   isLanguageStream,
   parseLanguageStream,
   createTranscriptionStream,
-  UserSession // Keep UserSession for type checking if needed
+  UserSession, // Keep UserSession for type checking if needed
 } from '@augmentos/sdk';
 import { ExtendedUserSession } from './session.service'; // Import ExtendedUserSession
 import { Logger } from 'pino'; // Import Logger type
 // import { logger as rootLogger } from "../logging";
 // const logger = rootLogger.child({ service: 'subscription.manager' });
+
+const ALLOWED_VPS_COORDINATES_PACKAGE = "com.mentra.cactusai"; // <-- Set your allowed package name here
 
 /**
  * Record of a subscription change for a specific app within this session
@@ -73,6 +75,13 @@ export class SubscriptionManager {
     packageName: string,
     subscriptions: ExtendedStreamType[]
   ): void {
+    // Restrict VPS_COORDINATES subscription to the allowed package
+    for (const sub of subscriptions) {
+      if (sub === StreamType.VPS_COORDINATES && packageName !== ALLOWED_VPS_COORDINATES_PACKAGE) {
+        throw new Error(`Permission denied: Only Cactus AI can subscribe to VPS coordinates.`);
+      }
+    }
+
     const currentSubs = this.subscriptions.get(packageName) || new Set();
     const action: SubscriptionHistory['action'] = currentSubs.size === 0 ? 'add' : 'update';
 

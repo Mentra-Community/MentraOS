@@ -24,8 +24,8 @@ You'll need [compatible smart glasses](https://augmentos.org/glasses/) to build 
 
 ## Getting Started
 
-- [Quickstart](quickstart) - Build your first app in minutes
-- [Complete Setup](getting-started) - Detailed step-by-step guide
+- [Quickstart](/quickstart) - Build your first app in minutes
+- [Complete Setup](/getting-started) - Detailed step-by-step guide
 
 ## Deployment
 
@@ -39,4 +39,4 @@ Developers can deploy finished apps to the [AugmentOS Store](https://store.augme
 - [Live-Captions Repo](https://github.com/AugmentOS-Community/LiveCaptionsOnSmartGlasses) - A more in-depth example with app settings support
 - [Discord Community](https://discord.gg/5ukNvkEAqT) - Get help from the team and community
 
-Ready to dive deeper? Follow our [Quickstart guide](quickstart) to build your first app!
+Ready to dive deeper? Follow our [Quickstart guide](/quickstart) to build your first app!

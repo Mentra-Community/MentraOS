@@ -252,18 +252,17 @@ public class SmartGlassesRepresentative implements PhoneMicListener {
         }
     }
 
-    public void updateGlassesDashboardHeight(int height) {
+    public void updateGlassesDepthHeight(int depth, int height) {
         if (smartGlassesCommunicator != null) {
-            smartGlassesCommunicator.updateGlassesDashboardHeight(height);
+            smartGlassesCommunicator.updateGlassesDepthHeight(depth, height);
         }
     }
 
-    public void updateGlassesDepth(int depth) {
+    public void sendExitCommand() {
         if (smartGlassesCommunicator != null) {
-            smartGlassesCommunicator.updateGlassesDepth(depth);
+            smartGlassesCommunicator.sendExitCommand();
         }
     }
-    
 
     @Subscribe
     public void onDisableBleScoEvent(DisableBleScoAudioEvent receivedEvent) {

@@ -71,6 +71,12 @@ export class SubscriptionService {
   private lastLocationCache = new Map<string, Location>();
 
   /**
+   * Cache for the last VPS coordinates per session
+   * @private
+   */
+  private lastVpsCoordinatesCache = new Map<string, any>();
+
+  /**
    * Caches a calendar event for a session (appends to the list)
    * @param sessionId - User session identifier
    * @param event - Calendar event to cache
@@ -126,6 +132,25 @@ export class SubscriptionService {
    */
   getLastLocation(sessionId: string): Location | undefined {
     return this.lastLocationCache.get(sessionId);
+  }
+
+  /**
+   * Caches the last VPS coordinates for a session
+   * @param sessionId - User session identifier
+   * @param vpsCoordinates - VPS coordinates to cache
+   */
+  cacheVpsCoordinates(sessionId: string, vpsCoordinates: any): void {
+    this.lastVpsCoordinatesCache.set(sessionId, vpsCoordinates);
+    logger.info({ sessionId, vpsCoordinates }, 'Cached VPS coordinates');
+  }
+
+  /**
+   * Gets the last cached VPS coordinates for a session
+   * @param sessionId - User session identifier
+   * @returns The last VPS coordinates or undefined if none exists
+   */
+  getLastVpsCoordinates(sessionId: string): any | undefined {
+    return this.lastVpsCoordinatesCache.get(sessionId);
   }
 
   /**

@@ -7,14 +7,14 @@ import {saveSetting, loadSetting} from "@/utils/SettingsHelper"
 import {SETTINGS_KEYS} from "@/consts"
 import axios from "axios"
 import showAlert from "@/utils/AlertUtils"
-import TestFlightDetector from "@/bridge/TestFlightDetector"
 import {useAppTheme} from "@/utils/useAppTheme"
 import {Header, Screen, PillButton} from "@/components/ignite"
 import {router} from "expo-router"
 import {Spacer} from "@/components/misc/Spacer"
 import ToggleSetting from "@/components/settings/ToggleSetting"
-import { translate } from "@/i18n"
-import { useNavigationHistory } from "@/contexts/NavigationHistoryContext"
+import {translate} from "@/i18n"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {spacing} from "@/theme"
 
 export default function DeveloperSettingsScreen() {
   const {status} = useStatus()
@@ -50,14 +50,6 @@ export default function DeveloperSettingsScreen() {
   useEffect(() => {
     setIsBypassVADForDebuggingEnabled(status.core_info.bypass_vad_for_debugging)
   }, [status.core_info.bypass_vad_for_debugging])
-
-  // Check if running on TestFlight (iOS) or development mode
-  useEffect(() => {
-    async function checkTestFlightOrDev() {
-      setIsTestFlightOrDev(await TestFlightDetector.isTestFlightOrDev())
-    }
-    checkTestFlightOrDev()
-  }, [])
 
   const toggleBypassVadForDebugging = async () => {
     let newSetting = !isBypassVADForDebuggingEnabled
@@ -168,12 +160,14 @@ export default function DeveloperSettingsScreen() {
     <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}}>
       <Header title="Developer Settings" leftIcon="caretLeft" onLeftPress={() => goBack()} />
 
-      <View style={[styles.warningContainer, { backgroundColor: theme.colors.warningBackground }]}>
+      <View style={[styles.warningContainer, {backgroundColor: theme.colors.warningBackgroundDestructive}]}>
         <View style={styles.warningContent}>
           <Icon name="alert" size={16} color={theme.colors.text} />
-          <Text style={[styles.warningTitle, { color: theme.colors.text }]}>Warning</Text>
+          <Text style={[styles.warningTitle, {color: theme.colors.text}]}>Warning</Text>
         </View>
-        <Text style={[styles.warningSubtitle, { color: theme.colors.text }]}>These may break the app. Use at your own risk.</Text>
+        <Text style={[styles.warningSubtitle, {color: theme.colors.text}]}>
+          These may break the app. Use at your own risk.
+        </Text>
       </View>
 
       <Spacer height={theme.spacing.md} />
@@ -197,12 +191,10 @@ export default function DeveloperSettingsScreen() {
 
         <Spacer height={theme.spacing.md} />
 
-        <View style={[styles.settingContainer, { backgroundColor: theme.colors.background }]}>
+        <View style={[styles.settingContainer, {backgroundColor: theme.colors.background}]}>
           <View style={styles.settingTextContainer}>
-            <Text style={[styles.label, { color: theme.colors.text }]}>
-              Custom Backend URL
-            </Text>
-            <Text style={[styles.value, { color: theme.colors.textDim }]}>
+            <Text style={[styles.label, {color: theme.colors.text}]}>Custom Backend URL</Text>
+            <Text style={[styles.value, {color: theme.colors.textDim}]}>
               Override the default backend server URL. Leave blank to use default.
               {savedCustomUrl && `\nCurrently using: ${savedCustomUrl}`}
             </Text>
@@ -260,6 +252,20 @@ export default function DeveloperSettingsScreen() {
                 buttonStyle={styles.button}
               />
             </View>
+            <View style={styles.buttonColumnCentered}>
+              <PillButton
+                text="Dev"
+                variant="secondary"
+                onPress={() => setCustomUrlInput("https://dev.augmentos.org:443")}
+                buttonStyle={styles.button}
+              />
+              <PillButton
+                text="Dev Cloud"
+                variant="secondary"
+                onPress={() => setCustomUrlInput("https://dev.augmentos.cloud:443")}
+                buttonStyle={styles.button}
+              />
+            </View>
           </View>
         </View>
 
@@ -298,9 +304,9 @@ export default function DeveloperSettingsScreen() {
 
 const styles = StyleSheet.create({
   warningContainer: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 24, // Match ToggleSetting borderRadius (spacing.lg)
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: spacing.sm,
   },
   warningContent: {
     flexDirection: "row",
@@ -317,9 +323,9 @@ const styles = StyleSheet.create({
     marginLeft: 22,
   },
   settingContainer: {
-    paddingVertical: 16,
-    paddingHorizontal: 24, // Match ToggleSetting padding (spacing.lg)
-    borderRadius: 24, // Match ToggleSetting borderRadius (spacing.lg)
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: spacing.sm,
   },
   button: {
     flexShrink: 1,
@@ -329,6 +335,12 @@ const styles = StyleSheet.create({
     gap: 12,
     flexDirection: "row",
     justifyContent: "space-between",
+  },
+  buttonColumnCentered: {
+    marginTop: 12,
+    gap: 12,
+    flexDirection: "row",
+    justifyContent: "center",
   },
   settingTextContainer: {
     flex: 1,

@@ -1,42 +1,29 @@
 import * as React from "react"
-import {Text, View, ViewStyle, TextStyle, TouchableOpacity} from "react-native"
-import {SafeAreaView} from "react-native-safe-area-context"
-import {spacing, ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {Icon} from "../ignite"
+import {View, ViewStyle, TextStyle, TouchableOpacity} from "react-native"
+import {ThemedStyle} from "@/theme"
+import {Icon, Text} from "../ignite"
 import {translate} from "@/i18n"
-import {loadSetting} from "@/utils/SettingsHelper"
-import {SETTINGS_KEYS} from "@/consts"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 const TempActivateAppWindow = () => {
-  const {themed} = useAppTheme()
+  const {themed, theme} = useAppTheme()
+
   const [visible, setVisible] = React.useState(true)
-  const [shouldShow, setShouldShow] = React.useState(false)
 
-  React.useEffect(() => {
-    const checkIfShouldShow = async () => {
-      const hasEverActivatedApp = await loadSetting(SETTINGS_KEYS.HAS_EVER_ACTIVATED_APP, false)
-      // Only update state if we should actually show the window
-      if (!hasEverActivatedApp) {
-        setShouldShow(true)
-      }
-    }
-
-    checkIfShouldShow()
-  }, [])
-
-  if (!visible || !shouldShow) return null
+  if (!visible) return null
 
   return (
-    <View style={{marginTop: 16}}>
+    <View>
       <View style={themed($tempWindow)}>
         <View style={themed($appNameParent)}>
-          <Text style={[themed($appName), themed($appFlexBox)]} numberOfLines={1}>
-            {translate("home:activateAnApp")}
-          </Text>
-          <Text style={[themed($appName1), themed($appFlexBox)]} numberOfLines={2}>
-            {translate("home:activateAnAppMessage")}
-          </Text>
+          <Text 
+            tx="home:activateAnApp"
+            style={[themed($appName), themed($appFlexBox)]} 
+            numberOfLines={1} />
+          <Text 
+            tx="home:activateAnAppMessage"
+            style={[themed($appName1), themed($appFlexBox)]} 
+            numberOfLines={2} />
         </View>
         <View style={themed($animatedToggle)}>
           <View style={[themed($toggleBarIcon), themed($toggleIconLayout)]} />
@@ -46,16 +33,16 @@ const TempActivateAppWindow = () => {
         </View>
       </View>
       <TouchableOpacity onPress={() => setVisible(false)} style={[themed($xIcon), {display: "none"}]}>
-        <Icon icon={"x"} size={spacing.md} />
+        <Icon icon={"x"} size={theme.spacing.md} />
       </TouchableOpacity>
     </View>
   )
 }
 
-const $appFlexBox: ThemedStyle<TextStyle> = () => ({
+const $appFlexBox: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
   overflow: "hidden",
   textAlign: "left",
-  fontFamily: "SF Pro Rounded",
   alignSelf: "stretch",
 })
 
@@ -65,28 +52,31 @@ const $toggleIconLayout: ThemedStyle<ViewStyle> = () => ({
   overflow: "hidden",
 })
 
-const $appName: ThemedStyle<TextStyle> = () => ({
+const $appName: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 15,
   letterSpacing: 0.6,
   lineHeight: 20,
   fontWeight: "500",
-  color: "#f9f8fe",
+  // color: "#f9f8fe",
 })
 
-const $appName1: ThemedStyle<TextStyle> = () => ({
+const $appName1: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 13,
   letterSpacing: 0.5,
   lineHeight: 18,
-  color: "#fffbfb",
+  // color: "#fffbfb",
 })
 
 const $appNameParent: ThemedStyle<ViewStyle> = () => ({
-  width: 210,
-  gap: 12,
-  zIndex: 0,
+  // width: 210,
+  // gap: 12,
+  // zIndex: 0,
+  flexDirection: "column",
+  // height: 100,
+  flex: 1,
 })
 
-const $toggleBarIcon: ThemedStyle<ViewStyle> = () => ({
+const $toggleBarIcon: ThemedStyle<ViewStyle> = ({colors}) => ({
   height: "70%",
   width: "94.53%",
   top: "15%",
@@ -95,7 +85,7 @@ const $toggleBarIcon: ThemedStyle<ViewStyle> = () => ({
   left: "0%",
   borderRadius: 8,
   maxHeight: "100%",
-  backgroundColor: "blue",
+  backgroundColor: colors.palette.primary400,
 })
 
 const $toggleCircleIcon: ThemedStyle<ViewStyle> = () => ({
@@ -120,11 +110,12 @@ const $xIcon: ThemedStyle<ViewStyle> = () => ({
   zIndex: 2,
 })
 
-const $tempWindow: ThemedStyle<ViewStyle> = () => ({
+const $tempWindow: ThemedStyle<ViewStyle> = ({colors}) => ({
   borderRadius: 16,
-  backgroundColor: "#141434",
-  flex: 1,
-  width: "100%",
+  // backgroundColor: colors.background + "E6",
+  backgroundColor: colors.background,
+  // flex: 1,
+  // width: "100%",
   flexDirection: "row",
   alignItems: "center",
   paddingHorizontal: 30,

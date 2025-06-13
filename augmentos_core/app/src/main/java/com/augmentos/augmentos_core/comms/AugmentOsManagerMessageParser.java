@@ -160,14 +160,19 @@ public class AugmentOsManagerMessageParser {
                     callback.updateGlassesHeadUpAngle(headUpAngle);
                     break;
 
-                case "update_glasses_dashboard_height":
-                    int dashboardHeight = commandObject.getJSONObject("params").getInt("height");
-                    callback.updateGlassesDashboardHeight(dashboardHeight);
+                case "update_glasses_height":
+                    int height = commandObject.getJSONObject("params").getInt("height");
+                    callback.updateGlassesHeight(height);
                     break;
 
                 case "update_glasses_depth":
                     int depth = commandObject.getJSONObject("params").getInt("depth");
                     callback.updateGlassesDepth(depth);
+                    break;
+
+                case "toggle_updating_screen":
+                    boolean updatingScreen = commandObject.getJSONObject("params").getBoolean("enabled");
+                    callback.setUpdatingScreen(updatingScreen);
                     break;
                     
                     

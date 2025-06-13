@@ -25,6 +25,8 @@ const setImperativeTheming = (theme: Theme) => {
   SystemUI.setBackgroundColorAsync(theme.colors.background)
 }
 
+export type ThemeType = "light" | "dark" | "system"
+
 export const useThemeProvider = (initialTheme: ThemeContexts = undefined) => {
   const colorScheme = useColorScheme()
   const [overrideTheme, setTheme] = useState<ThemeContexts>(initialTheme)
@@ -38,7 +40,7 @@ export const useThemeProvider = (initialTheme: ThemeContexts = undefined) => {
   useEffect(() => {
     const loadThemePreference = async () => {
       try {
-        const savedTheme = (await loadSetting(SETTINGS_KEYS.THEME_PREFERENCE, "system")) as "light" | "dark" | "system"
+        const savedTheme = (await loadSetting(SETTINGS_KEYS.THEME_PREFERENCE, "light")) as ThemeType
         if (savedTheme === "system") {
           setTheme(undefined)
         } else {

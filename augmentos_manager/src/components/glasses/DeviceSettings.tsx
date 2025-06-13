@@ -30,7 +30,9 @@ import SunIcon from "assets/icons/component/SunIcon"
 import ChevronRight from "assets/icons/component/ChevronRight"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import RouteButton from "../ui/RouteButton"
+import ActionButton from "../ui/ActionButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {glassesFeatures} from "@/config/glassesFeatures"
 
 export default function DeviceSettings() {
   const fadeAnim = useRef(new Animated.Value(0)).current
@@ -166,8 +168,32 @@ export default function DeviceSettings() {
     hasBrightness = false
   }
 
+  // Check if we need to show any helper text
+  const needsGlassesPaired = !status.core_info.default_wearable
+  const hasDisplay = status.core_info.default_wearable && glassesFeatures[status.core_info.default_wearable]?.display
+
+  // Check if no glasses are paired at all
+  if (!status.core_info.default_wearable) {
+    return (
+      <View style={themed($container)}>
+        <View style={themed($emptyStateContainer)}>
+          <Text style={themed($emptyStateText)}>
+            Glasses settings will appear here.{'\n'}Pair glasses to adjust settings.
+          </Text>
+        </View>
+      </View>
+    )
+  }
+
   return (
     <View style={themed($container)}>
+      {/* Show helper text if glasses are paired but not connected */}
+      {!status.glasses_info?.model_name && status.core_info.default_wearable && (
+        <View style={themed($infoContainer)}>
+          <Text style={themed($infoText)}>Changes to glasses settings will take effect when glasses are connected.</Text>
+        </View>
+      )}
+
       {hasBrightness && (
         <View style={themed($settingsGroup)}>
           <ToggleSetting
@@ -182,36 +208,18 @@ export default function DeviceSettings() {
 
           {!autoBrightness && (
             <>
-              <View style={{height: 1, backgroundColor: theme.colors.palette.neutral300}} />
-              <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between"}}>
-                <View style={{flexGrow: 1, marginTop: 8}}>
-                  <SliderSetting
-                    label="Brightness"
-                    value={brightness}
-                    onValueChange={setBrightness}
-                    min={0}
-                    max={100}
-                    onValueSet={value => {
-                      coreCommunicator.setGlassesBrightnessMode(value, autoBrightness)
-                    }}
-                  />
-                </View>
-                <View
-                  style={{
-                    alignItems: "center",
-                    alignSelf: "flex-end",
-                    marginBottom: -4,
-                    paddingBottom: 12,
-                    flexDirection: "row",
-                    alignContent: "center",
-                    marginLeft: 12,
-                  }}>
-                  <SunIcon size={24} color={theme.colors.text} />
-                  <Text style={{color: theme.colors.text, fontSize: 16, marginLeft: 4, fontFamily: "Inter-Regular"}}>
-                    {brightness}%
-                  </Text>
-                </View>
-              </View>
+              <View style={{height: 1, backgroundColor: theme.colors.separator, marginBottom: theme.spacing.xs}} />
+              <SliderSetting
+                label="Brightness"
+                value={brightness}
+                onValueChange={setBrightness}
+                min={0}
+                max={100}
+                onValueSet={value => {
+                  coreCommunicator.setGlassesBrightnessMode(value, autoBrightness)
+                }}
+                containerStyle={{paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0}}
+              />
             </>
           )}
         </View>
@@ -225,11 +233,11 @@ export default function DeviceSettings() {
           <MaterialCommunityIcons
             name="check"
             size={24}
-            color={preferredMic === "phone" ? theme.colors.palette.primary300 : "transparent"}
+            color={preferredMic === "phone" ? theme.colors.checkmark : "transparent"}
           />
         </TouchableOpacity>
         {/* divider */}
-        <View style={{height: 1, backgroundColor: theme.colors.palette.neutral300, marginVertical: 4}} />
+        <View style={{height: 1, backgroundColor: theme.colors.separator, marginVertical: 4}} />
         <TouchableOpacity
           style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 8}}
           onPress={() => setMic("glasses")}>
@@ -242,10 +250,25 @@ export default function DeviceSettings() {
           <MaterialCommunityIcons
             name="check"
             size={24}
-            color={preferredMic === "glasses" ? theme.colors.palette.primary300 : "transparent"}
+            color={preferredMic === "glasses" ? theme.colors.checkmark : "transparent"}
           />
         </TouchableOpacity>
       </View>
+
+      {/* Only show WiFi settings if connected glasses support WiFi */}
+      {status.glasses_info?.model_name && glassesFeatures[status.glasses_info.model_name]?.wifi && (
+        <RouteButton
+          label={translate("settings:glassesWifiSettings")}
+          subtitle={translate("settings:glassesWifiDescription")}
+          onPress={() => {
+            push({
+              pathname: "/pairing/glasseswifisetup",
+              params: {deviceModel: status.glasses_info?.model_name || "Glasses"},
+            })
+          }}
+        />
+      )}
+
 
       <RouteButton
         label={translate("settings:dashboardSettings")}
@@ -253,24 +276,28 @@ export default function DeviceSettings() {
         onPress={() => push("/settings/dashboard")}
       />
 
+      <RouteButton
+        label={translate("settings:screenSettings")}
+        subtitle={translate("settings:screenDescription")}
+        onPress={() => push("/settings/screen")}
+      />
+
       {status.glasses_info?.model_name && (
-        <View style={themed($settingsGroup)}>
-          <TouchableOpacity
-            style={{backgroundColor: "transparent", paddingVertical: 8}}
-            onPress={() => {
-              coreCommunicator.sendDisconnectWearable()
-            }}>
-            <Text style={{color: theme.colors.palette.accent100}}>{translate("settings:disconnectGlasses")}</Text>
-          </TouchableOpacity>
-        </View>
+        <ActionButton
+          label={translate("settings:disconnectGlasses")}
+          variant="destructive"
+          onPress={() => {
+            coreCommunicator.sendDisconnectWearable()
+          }}
+        />
       )}
 
       {status.core_info.default_wearable && (
-        <View style={themed($settingsGroup)}>
-          <TouchableOpacity style={{backgroundColor: "transparent", paddingVertical: 8}} onPress={confirmForgetGlasses}>
-            <Text style={{color: theme.colors.palette.angry500}}>{translate("settings:forgetGlasses")}</Text>
-          </TouchableOpacity>
-        </View>
+        <ActionButton
+          label={translate("settings:forgetGlasses")}
+          variant="destructive"
+          onPress={confirmForgetGlasses}
+        />
       )}
 
       <View style={{height: 30}}>{/* this just gives the user a bit more space to scroll */}</View>
@@ -289,16 +316,43 @@ const $container: ThemedStyle<ViewStyle> = () => ({
   gap: 16,
 })
 
-const $settingsGroup: ThemedStyle<ViewStyle> = ({colors}) => ({
+const $settingsGroup: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.background,
   paddingVertical: 12,
   paddingHorizontal: 16,
-  borderRadius: 12,
+  borderRadius: spacing.md,
 })
 
 const $subtitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   color: colors.textDim,
   fontSize: spacing.sm,
+})
+
+const $infoContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  padding: spacing.sm,
+  marginBottom: spacing.sm,
+})
+
+const $infoText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
+  fontSize: 14,
+  textAlign: "center",
+})
+
+const $emptyStateContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flex: 1,
+  justifyContent: "center",
+  alignItems: "center",
+  paddingVertical: spacing.xxl,
+  minHeight: 300,
+})
+
+const $emptyStateText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  color: colors.text,
+  fontSize: 20,
+  textAlign: "center",
+  lineHeight: 28,
+  fontWeight: "500",
 })
 
 const styles = StyleSheet.create({

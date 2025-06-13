@@ -161,4 +161,41 @@ router.post('/hash-with-api-key', validateCoreToken, async (req: Request, res: R
   }
 });
 
+/**
+ * Generate a signed JWT token for webview authentication in TPAs.
+ * This token is designed to be verified client-side in TPAs using the public key.
+ * The token contains a frontend token that can be verified using the TPA's API key.
+ *
+ * @route POST /api/auth/generate-webview-signed-user-token
+ * @middleware validateCoreToken - Validates the AugmentOS core token
+ * @body {string} packageName - The package name of the TPA requesting the token
+ * @returns {Object} Response containing the signed JWT token and expiration info
+ * @throws {400} If packageName is missing
+ * @throws {500} If token generation fails
+ */
+router.post('/generate-webview-signed-user-token', validateCoreToken, async (req: Request, res: Response) => {
+  const userId: string = (req as any).email; // Use the email property set by validateCoreToken
+  const { packageName }: { packageName?: string } = req.body;
+
+  if (!packageName) {
+    return res.status(400).json({ success: false, error: 'packageName is required' });
+  }
+
+  try {
+    // Use the issueUserToken from tokenService with the package name
+    // This generates a token with a frontend token specific to the requesting TPA
+    const signedToken: string = await tokenService.issueUserToken(userId, packageName);
+    console.log('[auth.service] Signed user token generated:', signedToken);
+
+    res.json({
+      success: true,
+      token: signedToken,
+      expiresIn: '10m'  // Matching the expiration time set in the token
+    });
+  } catch (error) {
+    logger.error({ error, userId, packageName }, '[auth.service] Failed to generate signed webview user token');
+    res.status(500).json({ success: false, error: 'Failed to generate token: ' + error });
+  }
+});
+
 export default router;

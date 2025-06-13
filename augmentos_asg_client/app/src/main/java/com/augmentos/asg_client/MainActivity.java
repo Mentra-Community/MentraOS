@@ -72,6 +72,10 @@ public class MainActivity extends AppCompatActivity {
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    
+    // Stop factory test app before starting our services to avoid serial port conflicts
+    stopFactoryTest();
+    
     startAsgClientService();
     mBound = false;
 
@@ -351,5 +355,37 @@ public class MainActivity extends AppCompatActivity {
                       | View.SYSTEM_UI_FLAG_FULLSCREEN
                       | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
+  }
+
+  private void stopFactoryTest() {
+    SysControl.stopApp(this, "com.android.factorytest");
+  }
+
+  public void launchOdmLauncher(View view) {
+    Log.d(TAG, "=== TESTING SysControl Commands ===");
+    
+    // Test 1: Try a simple command first
+    try {
+      Log.d(TAG, "Testing simple brightness command first...");
+      SysControl.setBrightValue(this, 100);
+      Log.d(TAG, "Brightness command completed");
+    } catch (Exception e) {
+      Log.e(TAG, "Error with brightness command: " + e.getMessage(), e);
+    }
+    
+    // Test 2: Try the ADB injection
+    try {
+      Log.d(TAG, "About to call SysControl.disablePackageViaAdb with context: " + this);
+      SysControl.disablePackageViaAdb(this, "com.xy.fakelauncher");
+      Log.d(TAG, "SysControl.disablePackageViaAdb call completed successfully");
+    } catch (Exception e) {
+      Log.e(TAG, "Error calling SysControl.disablePackageViaAdb: " + e.getMessage(), e);
+    }
+    
+    // Still launch the ODM launcher for comparison
+    Intent n = new Intent();
+    n.setComponent(new ComponentName("com.xy.fakelauncher", "com.xy.fakelauncher.Launcher"));
+    n.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    startActivity(n);
   }
 }

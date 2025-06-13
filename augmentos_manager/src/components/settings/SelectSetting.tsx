@@ -2,7 +2,6 @@
 import React, {useState} from "react"
 import {
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   Modal,
@@ -13,6 +12,8 @@ import {
   TouchableWithoutFeedback,
 } from "react-native"
 import {useAppTheme} from "@/utils/useAppTheme"
+import {Icon, Text} from "@/components/ignite"
+import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 
 type Option = {
   label: string
@@ -40,14 +41,25 @@ const SelectSetting: React.FC<SelectSettingProps> = ({label, value, options, onV
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.label, {color: theme.colors.text}]}>{label}</Text>
-      {description && <Text style={[styles.description, {color: theme.colors.text}]}>{description}</Text>}
       <TouchableOpacity
-        style={[styles.selectField, {borderColor: theme.colors.border, backgroundColor: theme.colors.background}]}
+        style={[
+          styles.selectRow, 
+          {
+            backgroundColor: theme.colors.background, 
+            borderRadius: theme.spacing.sm,
+            paddingVertical: theme.spacing.md,
+            paddingHorizontal: theme.spacing.lg - theme.spacing.xxs, // 20px
+          }
+        ]}
         onPress={() => setModalVisible(true)}
         activeOpacity={0.7}>
-        <Text style={[styles.selectText, {color: theme.colors.text}]}>{selectedLabel}</Text>
+        <Text text={label} style={[styles.label, {color: theme.colors.text}]} />
+        <View style={styles.valueContainer}>
+          <Text text={selectedLabel} style={[styles.selectText, {color: theme.colors.textDim}]} />
+          <Icon icon="caretRight" size={16} color={theme.colors.textDim} style={styles.chevron} />
+        </View>
       </TouchableOpacity>
+      {description && <Text text={description} style={[styles.description, {color: theme.colors.textDim}]} />}
       <Modal
         visible={modalVisible}
         animationType="fade"
@@ -57,32 +69,51 @@ const SelectSetting: React.FC<SelectSettingProps> = ({label, value, options, onV
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex: 1}}>
           <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
             <View style={styles.modalOverlay}>
-              <View style={[styles.modalContent, {backgroundColor: theme.colors.background}]}>
-                <TouchableWithoutFeedback>
-                  <View style={styles.modalHeader}>
-                    <Text style={[styles.modalLabel, {color: theme.colors.text}]}>{label}</Text>
-                    <TouchableOpacity hitSlop={10} onPress={() => setModalVisible(false)}>
-                      <Text style={[styles.closeButton, {color: theme.colors.text, marginRight: -8}]}>✕</Text>
-                    </TouchableOpacity>
+              <TouchableWithoutFeedback>
+                <View style={[
+                  styles.modalContent, 
+                  {
+                    backgroundColor: theme.colors.background, 
+                    borderColor: theme.colors.border, 
+                    borderWidth: 1,
+                    padding: theme.spacing.md,
+                    borderRadius: theme.spacing.sm,
+                    shadowRadius: theme.spacing.xs,
+                  }
+                ]}>
+                  <View style={[styles.modalHeader, {marginBottom: theme.spacing.sm}]}>
+                    <Text text={label} style={[styles.modalLabel, {color: theme.colors.textDim}]} />
                   </View>
-                </TouchableWithoutFeedback>
                 <FlatList
                   data={options}
                   keyExtractor={item => item.value}
                   keyboardShouldPersistTaps="always"
-                  style={styles.optionsList}
+                  style={[styles.optionsList, {backgroundColor: theme.colors.background}]}
+                  contentContainerStyle={{backgroundColor: theme.colors.background}}
                   renderItem={({item}) => (
                     <Pressable
-                      style={[styles.optionItem, item.value === value && {backgroundColor: theme.colors.text + "22"}]}
+                      style={[
+                        styles.optionItem,
+                        {
+                          paddingVertical: theme.spacing.sm,
+                          paddingRight: theme.spacing.md,
+                        }
+                      ]}
                       onPress={() => {
                         onValueChange(item.value)
                         setModalVisible(false)
                       }}>
-                      <Text style={[styles.optionText, {color: theme.colors.text}]}>{item.label}</Text>
+                      <MaterialCommunityIcons
+                        name="check"
+                        size={24}
+                        color={item.value === value ? (theme.colors.checkmark || theme.colors.palette.primary300) : "transparent"}
+                      />
+                      <Text text={item.label} style={[styles.optionText, {color: theme.colors.text, flex: 1, marginLeft: theme.spacing.xs}]} />
                     </Pressable>
                   )}
                 />
-              </View>
+                </View>
+              </TouchableWithoutFeedback>
             </View>
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
@@ -93,28 +124,32 @@ const SelectSetting: React.FC<SelectSettingProps> = ({label, value, options, onV
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: 10,
     width: "100%",
   },
-  label: {
-    fontSize: 16,
-    marginBottom: 5,
+  selectRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  selectField: {
-    borderWidth: 1,
-    borderRadius: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    justifyContent: "center",
-    marginBottom: 2,
+  label: {
+    fontSize: 15,
+    flex: 1,
+  },
+  valueContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
   selectText: {
-    fontSize: 16,
-    opacity: 0.9,
+    fontSize: 15,
+  },
+  chevron: {
+    marginLeft: 2,
   },
   description: {
     fontSize: 12,
-    marginBottom: 8,
+    paddingHorizontal: 20,
+    marginTop: 4,
     flexWrap: "wrap",
   },
   modalOverlay: {
@@ -126,23 +161,19 @@ const styles = StyleSheet.create({
   modalContent: {
     width: "90%",
     maxHeight: "70%",
-    borderRadius: 10,
-    padding: 16,
     shadowColor: "#000",
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.2,
-    shadowRadius: 8,
     elevation: 5,
   },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
   },
   modalLabel: {
-    fontSize: 18,
-    fontWeight: "bold",
+    fontSize: 16,
+    fontWeight: "normal",
   },
   closeButton: {
     fontSize: 22,
@@ -154,10 +185,9 @@ const styles = StyleSheet.create({
     maxHeight: 250,
   },
   optionItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 5,
-    marginBottom: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 0,
   },
   optionText: {
     fontSize: 16,

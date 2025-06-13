@@ -185,6 +185,12 @@ const AppStore: React.FC = () => {
     setOrgName('');
   };
 
+  const handleOpen = async (packageName: string) => {
+    if (!isAuthenticated) {
+      console.log("TODO not impleneted: Open App");
+      return;
+    }
+  }
   // Handle app installation
   const handleInstall = async (packageName: string) => {
     if (!isAuthenticated) {
@@ -255,34 +261,36 @@ const AppStore: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-[#030514] text-white">      
       {/* Header */}
       <Header />
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-6">
+      <main className="container mx-auto px-4 py-6 ">
         {/* Search bar */}
-        <form onSubmit={handleSearch} className="relative mt-4 max-w-2xl mx-auto">
-          <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-            <Search className="h-5 w-5 text-gray-400" />
+        <form onSubmit={handleSearch} className="mt-4 max-w-2xl mx-auto flex items-center space-x-3">
+          <div className="relative flex-1">
+            <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+              <Search className="h-5 w-5 text-white" />
+            </div>
+            <input
+              type="text"
+              className="bg-[#141834] w-full pl-10 pr-4 py-2 rounded-3xl text-white placeholder-[#B3B3B3] focus:outline-none focus:ring-2 focus:ring-[#47478E]"
+              placeholder="Search"
+              value={searchQuery}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+            />
           </div>
-          <input
-            type="text"
-            className="bg-gray-100 w-full pl-10 pr-4 py-2 rounded-lg text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Search apps..."
-            value={searchQuery}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
-          />
           {searchQuery && (
             <button
               type="button"
-              className="absolute inset-y-0 right-0 flex items-center pr-3"
+              className="text-[#ABAAFF] text-[15px] font-normal tracking-[0.1em]"
               onClick={() => {
                 setSearchQuery('');
                 fetchApps(); // Reset to all apps
               }}
             >
-              <X className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+              Cancel
             </button>
           )}
         </form>
@@ -338,90 +346,72 @@ const AppStore: React.FC = () => {
 
         {/* App grid */}
         {!isLoading && !error && (
-          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-3">
             {filteredApps.map(app => (
               <div
                 key={app.packageName}
-                className="bg-white rounded-lg border border-gray-200 overflow-hidden h-full flex flex-col"
+                className=" shadow-sm overflow-hidden h-full flex flex-col"
               >
-                <div className="p-4 flex flex-col flex-1">
-                  <div
-                    className="flex items-start cursor-pointer"
-                    onClick={() => navigate(`/package/${app.packageName}`)}
-                  >
-                    <img
-                      src={app.logoURL}
-                      alt={`${app.name} logo`}
-                      className="w-12 h-12 object-cover rounded-lg"
-                      onError={(e) => {
-                        // Fallback for broken images
-                        (e.target as HTMLImageElement).src = "https://placehold.co/48x48/gray/white?text=App";
-                      }}
-                    />
-                    <div className="ml-3 flex-1">
-                      <h3 className="font-medium text-gray-900">{app.name}</h3>
-                      <p className="text-xs text-gray-500">
-                        {app.orgName || app.developerProfile?.company || app.developerId || ''}
-                      </p>
+                <div className="p-3 flex flex-col flex-1">
+                  <div className="flex items-start">
+                    <div
+                      className="flex-1 cursor-pointer flex items-center"
+                      onClick={() => navigate(`/package/${app.packageName}`)}
+                    >
+                      <img
+                        src={app.logoURL}
+                        alt={`${app.name} logo`}
+                        className="w-14 h-14 object-cover rounded-full border border-[#3C3C5C]"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = "https://placehold.co/48x48/gray/white?text=App";
+                        }}
+                      />
+                      <div className="ml-3">
+                        <h3 className="text-white font-semibold text-[16px]">{app.name}</h3>
+                        <p className="text-[13px] text-[#8E8EA0] mt-[2px]">
+                          {app.orgName || app.developerProfile?.company || app.developerId || ''}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <p
-                    className="mt-3 text-sm text-gray-600 line-clamp-3 cursor-pointer flex-grow"
-                    onClick={() => navigate(`/package/${app.packageName}`)}
-                  >
-                    {app.description || 'No description available.'}
-                  </p>
-                  <div className="mt-4">
-                    {isAuthenticated ? (
-                      app.isInstalled ? (
-                        <Button
-                          onClick={() => handleUninstall(app.packageName)}
-                          variant="destructive"
-                          disabled={installingApp === app.packageName}
-                          className="w-full bg-[#E24A24] hover:bg-[#E24A24]/90"
-                        >
-                          {installingApp === app.packageName ? (
-                            <>
-                              <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                              Uninstalling...
-                            </>
-                          ) : (
-                            <>
-                              <X className="h-4 w-4 mr-1" />
-                              Uninstall
-                            </>
-                          )}
-                        </Button>
+                    <div className="ml-3 mt-1">
+                      {isAuthenticated ? (
+                        app.isInstalled ? (
+                          <Button
+                            onClick={() => handleOpen(app.packageName)}
+                            disabled={installingApp === app.packageName}
+                            className="bg-[#242454] text-white text-[15px] font-normal tracking-[0.1em] px-4 py-[6px] rounded-full w-fit h-fit self-center"
+                          >
+                            <>Open</>
+                          </Button>
+                        ) : (
+                          <Button
+                            onClick={() => handleInstall(app.packageName)}
+                            disabled={installingApp === app.packageName}
+                            className="bg-[#242454] text-white text-[15px] font-normal tracking-[0.1em] px-4 py-[6px] rounded-full w-fit h-fit self-center"
+                          >
+                            {installingApp === app.packageName ? (
+                              <>
+                                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
+                                Installing
+                              </>
+                            ) : (
+                              <>Get</>
+                            )}
+                          </Button>
+                        )
                       ) : (
                         <Button
-                          onClick={() => handleInstall(app.packageName)}
-                          disabled={installingApp === app.packageName}
-                          className="w-full"
+                          onClick={() => navigate('/login')}
+                          className="w-full bg-[#2E2E5E] text-white hover:bg-[#3A3A70]"
                         >
-                          {installingApp === app.packageName ? (
-                            <>
-                              <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                              Installing...
-                            </>
-                          ) : (
-                            <>
-                              <Download className="h-4 w-4 mr-1" />
-                              Install
-                            </>
-                          )}
+                          <Lock className="h-4 w-4 mr-1" />
+                          Sign in
                         </Button>
-                      )
-                    ) : (
-                      <Button
-                        onClick={() => navigate('/login')}
-                        className="w-full"
-                      >
-                        <Lock className="h-4 w-4 mr-1" />
-                        Sign in to install
-                      </Button>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
+                <div className="border-b border-[#2D2D46] mt-2" />
               </div>
             ))}
           </div>

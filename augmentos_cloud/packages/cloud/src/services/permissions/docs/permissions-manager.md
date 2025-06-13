@@ -218,8 +218,8 @@ export class PermissionManager {
     this.streamToPermissionMap.set('calendar_event', PermissionType.CALENDAR);
     
     // Notification streams
-    this.streamToPermissionMap.set('phone_notification', PermissionType.NOTIFICATIONS);
-    this.streamToPermissionMap.set('notification_dismissed', PermissionType.NOTIFICATIONS);
+    this.streamToPermissionMap.set('phone_notification', PermissionType.READ_NOTIFICATIONS);
+    this.streamToPermissionMap.set('notification_dismissed', PermissionType.READ_NOTIFICATIONS);
     
     // Language-specific streams
     // Handle dynamically during permission checks
@@ -539,7 +539,7 @@ The iOS/Android client apps will need to:
        "LOCATION": true,
        "MICROPHONE": false,
        "CALENDAR": true,
-       "NOTIFICATIONS": true
+       "READ_NOTIFICATIONS": true
      },
      "timestamp": "2023-04-15T14:30:00Z"
    }

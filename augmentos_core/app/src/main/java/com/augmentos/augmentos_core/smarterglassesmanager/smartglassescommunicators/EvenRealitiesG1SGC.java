@@ -47,6 +47,7 @@ import com.augmentos.augmentos_core.smarterglassesmanager.utils.SmartGlassesConn
 import com.google.gson.Gson;
 import com.augmentos.smartglassesmanager.cpp.L3cCpp;
 import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.BatteryLevelEvent;
+import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.CaseEvent;
 import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.BrightnessLevelEvent;
 import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.GlassesBluetoothSearchDiscoverEvent;
 import com.augmentos.augmentos_core.smarterglassesmanager.eventbusmessages.GlassesBluetoothSearchStopEvent;
@@ -113,6 +114,10 @@ public class EvenRealitiesG1SGC extends SmartGlassesCommunicator {
     private static final long DELAY_BETWEEN_ACTIONS_SEND = 250; //not using now
     private static final long HEARTBEAT_INTERVAL_MS = 15000;
     private static final long MICBEAT_INTERVAL_MS = (1000 * 60) * 30; //micbeat every 30 minutes
+    private int caseBatteryLevel = -1;
+    private boolean caseCharging = false;
+    private boolean caseOpen = false;
+    private boolean caseRemoved = true;
     private int batteryLeft = -1;
     private int batteryRight = -1;
     private int leftReconnectAttempts = 0;
@@ -553,6 +558,60 @@ public class EvenRealitiesG1SGC extends SmartGlassesCommunicator {
                                 EventBus.getDefault().post(new BatteryLevelEvent(minBatt, false));
                             }
                         }
+                        //CASE REMOVED
+                        else if (data.length > 1 && (data[0] & 0xFF) == 0xF5 && ((data[1] & 0xFF) == 0x07 || (data[1] & 0xFF) == 0x06)) {
+                            caseRemoved = true;
+                            Log.d("AugmentOsService", "CASE REMOVED");
+                            EventBus.getDefault().post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
+                        }
+                        //CASE OPEN
+                        else if (data.length > 1 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x08) {
+                            caseOpen = true;
+                            caseRemoved = false;
+                            EventBus.getDefault().post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
+                        }
+                        //CASE CLOSED
+                        else if (data.length > 1 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x0B) {
+                            caseOpen = false;
+                            caseRemoved = false;
+                            EventBus.getDefault().post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
+                        }
+                        //CASE CHARGING STATUS
+                        else if (data.length > 3 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x0E) {
+                            caseCharging = (data[2] & 0xFF) == 0x01;// TODO: verify this is correct
+                            EventBus.getDefault().post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
+                        }
+                        //CASE CHARGING INFO
+                        else if (data.length > 3 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x0F) {
+                            caseBatteryLevel = (data[2] & 0xFF);// TODO: verify this is correct
+                            EventBus.getDefault().post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
+                        }
+    //   case .CASE_REMOVED:
+    //     print("REMOVED FROM CASE")
+    //     self.caseRemoved = true
+    //   case .CASE_OPEN:
+    //     self.caseOpen = true
+    //     self.caseRemoved = false
+    //     print("CASE OPEN");
+    //   case .CASE_CLOSED:
+    //     self.caseOpen = false
+    //     self.caseRemoved = false
+    //     print("CASE CLOSED");
+    //   case .CASE_CHARGING_STATUS:
+    //     guard data.count >= 3 else { break }
+    //     let status = data[2]
+    //     if status == 0x01 {
+    //       self.caseCharging = true
+    //       print("CASE CHARGING")
+    //     } else {
+    //       self.caseCharging = false
+    //       print("CASE NOT CHARGING")
+    //     }
+    //   case .CASE_CHARGE_INFO:
+    //     print("CASE CHARGE INFO")
+    //     guard data.count >= 3 else { break }
+    //     caseBatteryLevel = Int(data[2])
+    //     print("Case battery level: \(caseBatteryLevel)%")
                         //HEARTBEAT RESPONSE
                         else if (data.length > 0 && data[0] == 0x25) {
                             Log.d(TAG, "Heartbeat response received");
@@ -2137,15 +2196,13 @@ public class EvenRealitiesG1SGC extends SmartGlassesCommunicator {
     }
 
     @Override
-    public void updateGlassesDashboardHeight(int height) {
-        // TODO: get depth from settings!
-        sendDashboardPositionCommand(height, 0);
+    public void updateGlassesDepthHeight(int depth, int height) {
+        sendDashboardPositionCommand(height, depth);
     }
 
     @Override
-    public void updateGlassesDepth(int depth) {
-        // TODO: get height from settings!
-        sendDashboardPositionCommand(0, depth);
+    public void sendExitCommand() {
+        sendDataSequentially(new byte[]{(byte) 0x18}, false, 100);
     }
     
 

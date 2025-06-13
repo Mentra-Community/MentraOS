@@ -78,7 +78,7 @@ const GrantPermissionsScreen: React.FC = () => {
           {
             text: "Grant Access",
             onPress: async () => {
-              await requestFeaturePermissions(PermissionFeatures.NOTIFICATIONS)
+              await requestFeaturePermissions(PermissionFeatures.READ_NOTIFICATIONS)
               requestCalendarAccess()
             },
           },
@@ -121,7 +121,7 @@ const GrantPermissionsScreen: React.FC = () => {
     // Mark that we've shown all permission requests, even if some were skipped
     // This will prevent the permissions screen from showing again
     await markPermissionRequested(PermissionFeatures.BASIC)
-    await markPermissionRequested(PermissionFeatures.NOTIFICATIONS)
+    await markPermissionRequested(PermissionFeatures.READ_NOTIFICATIONS)
     await markPermissionRequested(PermissionFeatures.CALENDAR)
 
     console.log("Proceeding to next screen regardless of optional permissions")

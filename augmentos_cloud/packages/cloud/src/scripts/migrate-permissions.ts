@@ -11,7 +11,8 @@
 
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import App, { PermissionType } from '../models/app.model';
+import App from '../models/app.model';
+import { PermissionType } from '@augmentos/sdk';
 import { logger } from '@augmentos/utils';
 import * as mongoConnection from '../connections/mongodb.connection';
 

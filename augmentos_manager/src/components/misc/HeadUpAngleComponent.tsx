@@ -6,8 +6,13 @@ import {
   Modal,
   TouchableOpacity,
   PanResponder,
+  TouchableWithoutFeedback,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import Svg, { Path, Circle } from 'react-native-svg';
+import { useAppTheme } from '@/utils/useAppTheme';
+import { PillButton } from '@/components/ignite/PillButton';
 
 interface HeadUpAngleArcModalProps {
   visible: boolean;
@@ -56,6 +61,7 @@ const HeadUpAngleArcModal: React.FC<HeadUpAngleArcModalProps> = ({
   onCancel,
   onSave,
 }) => {
+  const { theme } = useAppTheme();
   const [angle, setAngle] = useState<number>(initialAngle);
   const svgSize = 500;
   const radius = 300;
@@ -104,33 +110,49 @@ const HeadUpAngleArcModal: React.FC<HeadUpAngleArcModalProps> = ({
       transparent={true}
       onRequestClose={onCancel}
     >
-      <View style={styles.overlay}>
-        <View style={styles.container}>
-          <Text style={styles.title}>Drag the slider to adjust your HeadUp angle.</Text>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <TouchableWithoutFeedback onPress={onCancel}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: theme.colors.background }]}>
+              <TouchableWithoutFeedback>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalLabel, { color: theme.colors.text }]}>Adjust Head-Up Angle</Text>
+                  <TouchableOpacity hitSlop={10} onPress={onCancel}>
+                    <Text style={[styles.closeButton, { color: theme.colors.text, marginRight: -8 }]}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
 
-          <View style={styles.svgWrapper} {...panResponder.panHandlers}>
-            <Svg width={svgSize} height={svgSize}>
-              <Path d={backgroundArcPath} stroke="#ddd" strokeWidth={7} fill="none" />
-              <Path d={currentArcPath} stroke="#007AFF" strokeWidth={7} fill="none" />
-              <Circle cx={knobPos.x} cy={knobPos.y} r={15} fill="#007AFF" />
-            </Svg>
+              <Text style={[styles.subtitle, { color: theme.colors.text }]}>Drag the slider to adjust your HeadUp angle.</Text>
+
+              <View style={styles.svgWrapper} {...panResponder.panHandlers}>
+                <Svg width={svgSize} height={svgSize}>
+                  <Path d={backgroundArcPath} stroke={theme.colors.border} strokeWidth={7} fill="none" />
+                  <Path d={currentArcPath} stroke={"#007AFF"} strokeWidth={7} fill="none" />
+                  <Circle cx={knobPos.x} cy={knobPos.y} r={15} fill={"#007AFF"} />
+                </Svg>
+              </View>
+
+              <Text style={[styles.angleLabel, { color: theme.colors.text }]}>{Math.round(angle)}°</Text>
+
+              <View style={styles.buttonRow}>
+                <PillButton
+                  text="Cancel"
+                  variant="secondary"
+                  onPress={onCancel}
+                  buttonStyle={styles.buttonFlex}
+                />
+                <PillButton
+                  text="Save"
+                  variant="primary"
+                  onPress={() => onSave(Math.round(angle))}
+                  buttonStyle={styles.buttonFlex}
+                />
+              </View>
+            </View>
           </View>
-
-          <Text style={styles.angleLabel}>{Math.round(angle)}°</Text>
-
-          <View style={styles.buttonRow}>
-            <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
-              <Text style={styles.buttonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.saveButton}
-              onPress={() => onSave(Math.round(angle))}
-            >
-              <Text style={styles.buttonText}>Save</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -138,29 +160,42 @@ const HeadUpAngleArcModal: React.FC<HeadUpAngleArcModalProps> = ({
 export default HeadUpAngleArcModal;
 
 const styles = StyleSheet.create({
-  overlay: {
+  modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.25)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  container: {
-    width: 380,
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 20,
-    alignItems: 'center',
+  modalContent: {
+    width: '90%',
+    maxHeight: '80%',
+    borderRadius: 10,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
     elevation: 5,
+    alignItems: 'center',
   },
-  title: {
-    fontSize: 20,
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    width: '100%',
+  },
+  modalLabel: {
+    fontSize: 18,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 5,
+  },
+  closeButton: {
+    fontSize: 22,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
   subtitle: {
     fontSize: 14,
-    color: '#666',
     marginBottom: 20,
     textAlign: 'center',
   },
@@ -174,28 +209,14 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: 'bold',
     marginVertical: 20,
-    color: '#333',
   },
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '80%',
+    gap: 16,
   },
-  cancelButton: {
-    backgroundColor: '#888',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-  },
-  saveButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+  buttonFlex: {
+    flex: 1,
   },
 });

@@ -16,6 +16,7 @@ public interface AugmentOsActionsCallback {
     void setForceCoreOnboardMic(boolean forceCoreOnboardMic);
     void setContextualDashboardEnabled(boolean contextualDashboardEnabled);
     void setMetricSystemEnabled(boolean metricSystemEnabled);
+    void setUpdatingScreen(boolean updatingScreen);
     void setBypassVadForDebugging(boolean bypassVadForDebugging);
     void setBypassAudioEncodingForDebugging(boolean bypassAudioEncodingForDebugging);
     void setAlwaysOnStatusBarEnabled(boolean alwaysOnStatusBarEnabled);
@@ -30,7 +31,7 @@ public interface AugmentOsActionsCallback {
     void updateGlassesBrightness(int brightness);
     void updateGlassesAutoBrightness(boolean autoBrightness);
     void updateGlassesHeadUpAngle(int headUpAngle);
-    void updateGlassesDashboardHeight(int height);
+    void updateGlassesHeight(int height);
     void updateGlassesDepth(int depth);
     void setGlassesWifiCredentials(String ssid, String password);
     void requestWifiScan();

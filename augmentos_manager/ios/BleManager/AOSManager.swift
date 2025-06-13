@@ -769,14 +769,15 @@ struct ViewState {
       case stopApp = "stop_app"
       case updateGlassesHeadUpAngle = "update_glasses_head_up_angle"
       case updateGlassesBrightness = "update_glasses_brightness"
-      case updateGlassesDashboardHeight = "update_glasses_dashboard_height"
       case updateGlassesDepth = "update_glasses_depth"
+      case updateGlassesHeight = "update_glasses_height"
       case enableSensing = "enable_sensing"
       case enableAlwaysOnStatusBar = "enable_always_on_status_bar"
       case bypassVad = "bypass_vad_for_debugging"
       case bypassAudioEncoding = "bypass_audio_encoding_for_debugging"
       case setServerUrl = "set_server_url"
       case setMetricSystemEnabled = "set_metric_system_enabled"
+      case toggleUpdatingScreen = "toggle_updating_screen"
       case showDashboard = "show_dashboard"
       case unknown
     }
@@ -922,9 +923,9 @@ struct ViewState {
           saveSettings()
           handleRequestStatus()// to update the UI
           break
-        case .updateGlassesDashboardHeight:
+        case .updateGlassesHeight:
           guard let params = params, let value = params["height"] as? Int else {
-            print("update_glasses_brightness invalid params")
+            print("update_glasses_height invalid params")
             break
           }
           self.dashboardHeight = value
@@ -1005,6 +1006,16 @@ struct ViewState {
           handleRequestStatus()
           serverComms.sendCoreStatus(status: self.lastStatusObj)
           break
+        case .toggleUpdatingScreen:
+          guard let params = params, let enabled = params["enabled"] as? Bool else {
+            print("toggle_updating_screen invalid params")
+            break
+          }
+          if enabled {
+            self.g1Manager?.RN_exit()
+            // TODO: more / prevent additional messages from being sent
+          }
+          break
         case .unknown:
           print("Unknown command type: \(commandString)")
           handleRequestStatus()
@@ -1065,11 +1076,11 @@ struct ViewState {
     if isGlassesConnected {
       connectedGlasses = [
         "model_name": self.defaultWearable,
-        "battery_life": self.batteryLevel,
+        "battery_level": self.batteryLevel,
         "case_removed": self.g1Manager?.caseRemoved ?? true,
         "case_open": self.g1Manager?.caseOpen ?? true,
         "case_charging": self.g1Manager?.caseCharging ?? false,
-        "case_battery_level": self.g1Manager?.caseBatteryLevel ?? 0,
+        "case_battery_level": self.g1Manager?.caseBatteryLevel ?? -1,
       ]
       self.somethingConnected = true
     }

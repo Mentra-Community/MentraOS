@@ -950,4 +950,16 @@ public class ServerComms {
             Log.e(TAG, "Exception while sending datetime to backend: " + e.getMessage());
         }
     }
+
+    /**
+     * Sends VPS coordinates as a JSON message to the backend via WebSocket.
+     */
+    public void sendVpsCoordinates(JSONObject vpsJson) {
+        try {
+            wsManager.sendText(vpsJson.toString());
+            Log.d(TAG, "Sent VPS coordinates: " + vpsJson.toString());
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending VPS coordinates JSON", e);
+        }
+    }
 }

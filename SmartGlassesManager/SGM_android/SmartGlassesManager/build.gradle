@@ -44,6 +44,7 @@ android {
 
     externalNativeBuild {
         cmake {
+            '-DCMAKE_OBJECT_PATH_MAX=600'
             '-DANDROID_STL=c++_static'
         }
     }
@@ -72,6 +73,7 @@ android {
 //
     externalNativeBuild {
         cmake {
+            '-DCMAKE_OBJECT_PATH_MAX=600'
             path file('src/main/cpp/liblc3/CMakeLists.txt')
             version '3.22.1'
         }

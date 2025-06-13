@@ -1,4 +1,4 @@
-import { AppI } from "@augmentos/sdk";
+import { AppI, PermissionType } from "@augmentos/sdk";
 
 const systemApps = {
   dashboard: {
@@ -7,6 +7,20 @@ const systemApps = {
     name: 'Dashboard',
     description: "Dashboard",
     isSystemApp: true,
+    permissions: [
+      {
+        type: PermissionType.READ_NOTIFICATIONS,
+        description: 'Access phone notifications for dashboard display'
+      },
+      {
+        type: PermissionType.LOCATION,
+        description: 'Access location for weather and location-based dashboard information'
+      },
+      {
+        type: PermissionType.CALENDAR,
+        description: 'Access calendar events for dashboard display'
+      }
+    ]
   },
   // notify: {
   //   host: "notify",
@@ -14,6 +28,12 @@ const systemApps = {
   //   name: 'Notify',
   //   description: "See your phone notifications on your smart glasses",
   //   isSystemApp: true,
+  //   permissions: [
+  //     {
+  //       type: PermissionType.READ_NOTIFICATIONS,
+  //       description: 'Send notifications to your phone'
+  //     }
+  //   ]
   // },
   // mira: {
   //   host: "mira",

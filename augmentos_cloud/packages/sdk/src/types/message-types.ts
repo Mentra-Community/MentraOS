@@ -42,12 +42,14 @@ export enum GlassesToCloudMessageType {
   PHONE_BATTERY_UPDATE = StreamType.PHONE_BATTERY_UPDATE,
   GLASSES_CONNECTION_STATE = StreamType.GLASSES_CONNECTION_STATE,
   LOCATION_UPDATE = StreamType.LOCATION_UPDATE,
+  VPS_COORDINATES = StreamType.VPS_COORDINATES,
   VAD = StreamType.VAD,
   PHONE_NOTIFICATION = StreamType.PHONE_NOTIFICATION,
   NOTIFICATION_DISMISSED = StreamType.NOTIFICATION_DISMISSED,
   CALENDAR_EVENT = StreamType.CALENDAR_EVENT,
   AUGMENTOS_SETTINGS_UPDATE_REQUEST = StreamType.AUGMENTOS_SETTINGS_UPDATE_REQUEST,
-  CORE_STATUS_UPDATE = StreamType.CORE_STATUS_UPDATE
+  CORE_STATUS_UPDATE = StreamType.CORE_STATUS_UPDATE,
+  PHOTO_TAKEN = StreamType.PHOTO_TAKEN
 }
 
 /**
@@ -97,7 +99,14 @@ export enum TpaToCloudMessageType {
   // Dashboard requests
   DASHBOARD_CONTENT_UPDATE = 'dashboard_content_update',
   DASHBOARD_MODE_CHANGE = 'dashboard_mode_change',
-  DASHBOARD_SYSTEM_UPDATE = 'dashboard_system_update'
+  DASHBOARD_SYSTEM_UPDATE = 'dashboard_system_update',
+  
+  // TPA-to-TPA Communication
+  TPA_BROADCAST_MESSAGE = 'tpa_broadcast_message',
+  TPA_DIRECT_MESSAGE = 'tpa_direct_message',
+  TPA_USER_DISCOVERY = 'tpa_user_discovery',
+  TPA_ROOM_JOIN = 'tpa_room_join',
+  TPA_ROOM_LEAVE = 'tpa_room_leave'
 }
 
 /**
@@ -129,7 +138,14 @@ export enum CloudToTpaMessageType {
   PERMISSION_ERROR = 'permission_error',
 
   // General purpose messaging
-  CUSTOM_MESSAGE = 'custom_message'
+  CUSTOM_MESSAGE = 'custom_message',
+  
+  // TPA-to-TPA Communication Responses
+  TPA_MESSAGE_RECEIVED = 'tpa_message_received',
+  TPA_USER_JOINED = 'tpa_user_joined',
+  TPA_USER_LEFT = 'tpa_user_left',
+  TPA_ROOM_UPDATED = 'tpa_room_updated',
+  TPA_DIRECT_MESSAGE_RESPONSE = 'tpa_direct_message_response'
 }
 
 /**
@@ -153,6 +169,7 @@ export const EventTypes = [
   GlassesToCloudMessageType.PHONE_BATTERY_UPDATE,
   GlassesToCloudMessageType.GLASSES_CONNECTION_STATE,
   GlassesToCloudMessageType.LOCATION_UPDATE,
+  GlassesToCloudMessageType.VPS_COORDINATES,
   GlassesToCloudMessageType.VAD,
   GlassesToCloudMessageType.PHONE_NOTIFICATION,
   GlassesToCloudMessageType.NOTIFICATION_DISMISSED,

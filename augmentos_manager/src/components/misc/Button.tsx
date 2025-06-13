@@ -1,5 +1,6 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, GestureResponderEvent, ViewStyle } from 'react-native';
+import { TouchableOpacity, StyleSheet, GestureResponderEvent, ViewStyle } from 'react-native';
+import { Text } from '@/components/ignite';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useAppTheme } from '@/utils/useAppTheme';
 
@@ -49,15 +50,13 @@ const Button: React.FC<ButtonProps> = ({
         />
       )}
       <Text 
+        text={title || (typeof children === 'string' ? children : '')}
         style={[
           styles.buttonText, 
           { color: theme.colors.palette.neutral100 },
           disabled && [styles.buttonTextDisabled, { color: theme.colors.palette.mediumGray }],
           type === 'secondary' && [styles.buttonTextSecondary, { color: theme.colors.buttonPrimary }]
-        ]}
-      >
-        {title || children}
-      </Text>
+        ]} />
     </TouchableOpacity>
   );
 };
@@ -89,7 +88,6 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: 'bold',
-    fontFamily: 'Montserrat-Bold',
   },
   buttonTextSecondary: {
     // Color handled inline with theme

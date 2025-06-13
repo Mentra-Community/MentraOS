@@ -6,9 +6,69 @@ export enum PermissionType {
   MICROPHONE = 'MICROPHONE',
   LOCATION = 'LOCATION',
   CALENDAR = 'CALENDAR',
+  
+  // Legacy permission (backward compatibility)
   NOTIFICATIONS = 'NOTIFICATIONS',
+  
+  // New granular notification permissions
+  READ_NOTIFICATIONS = 'READ_NOTIFICATIONS',
+  POST_NOTIFICATIONS = 'POST_NOTIFICATIONS',
+  
   ALL = 'ALL'
 }
+
+// Permission display metadata
+const PERMISSION_DISPLAY_INFO: Record<string, {
+  label: string;
+  description: string;
+  isLegacy: boolean;
+  category: string;
+  replacedBy?: string[];
+}> = {
+  [PermissionType.NOTIFICATIONS]: {
+    label: 'Notifications',
+    description: 'Access to your phone notifications',
+    isLegacy: true,
+    replacedBy: ['READ_NOTIFICATIONS'],
+    category: 'phone'
+  },
+  [PermissionType.READ_NOTIFICATIONS]: {
+    label: 'Read Notifications',
+    description: 'Access incoming phone notifications',
+    isLegacy: false,
+    category: 'phone'
+  },
+  [PermissionType.POST_NOTIFICATIONS]: {
+    label: 'Send Notifications',
+    description: 'Send notifications to your phone',
+    isLegacy: false,
+    category: 'phone'
+  },
+  [PermissionType.MICROPHONE]: {
+    label: 'Microphone',
+    description: 'Access to microphone for voice input and audio processing',
+    isLegacy: false,
+    category: 'audio'
+  },
+  [PermissionType.LOCATION]: {
+    label: 'Location',
+    description: 'Access to device location information',
+    isLegacy: false,
+    category: 'location'
+  },
+  [PermissionType.CALENDAR]: {
+    label: 'Calendar',
+    description: 'Access to calendar events',
+    isLegacy: false,
+    category: 'calendar'
+  },
+  [PermissionType.ALL]: {
+    label: 'All Permissions',
+    description: 'Access to all available permissions',
+    isLegacy: false,
+    category: 'system'
+  }
+};
 
 // Permission interface matching our backend
 export interface Permission {
@@ -25,6 +85,12 @@ interface AppPermissionsProps {
 
 // Get a human-readable description for permissions
 const getPermissionDescription = (type: string): string => {
+  const info = PERMISSION_DISPLAY_INFO[type];
+  if (info) {
+    return info.description;
+  }
+  
+  // Fallback for any unmapped permissions
   switch (type) {
     case 'MICROPHONE':
       return 'Access to microphone for voice input and audio processing';
@@ -33,12 +99,27 @@ const getPermissionDescription = (type: string): string => {
     case 'CALENDAR':
       return 'Access to calendar events';
     case 'NOTIFICATIONS':
-      return 'Access to phone notifications';
+      return 'Access to your phone notifications';
+    case 'READ_NOTIFICATIONS':
+      return 'Access incoming phone notifications';
+    case 'POST_NOTIFICATIONS':
+      return 'Send notifications to your phone';
     case 'ALL':
       return 'Access to all available permissions';
     default:
       return 'Permission access';
   }
+};
+
+// Get a user-friendly label for permissions
+const getPermissionLabel = (type: string): string => {
+  const info = PERMISSION_DISPLAY_INFO[type];
+  if (info) {
+    return info.label;
+  }
+  
+  // Fallback to just the type name
+  return type.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
 };
 
 export function AppPermissions({ permissions }: AppPermissionsProps) {
@@ -64,8 +145,15 @@ export function AppPermissions({ permissions }: AppPermissionsProps) {
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {permissions.map((permission, index) => (
-          <div key={index} className="border border-gray-200 rounded-md p-4 bg-gray-50 hover:bg-gray-100 transition-colors">
-            <p className="text-base font-semibold text-gray-800 mb-1">{permission.type}</p>
+          <div 
+            key={index} 
+            className="border border-gray-200 rounded-md p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <p className="text-base font-semibold text-gray-800">
+                {getPermissionLabel(permission.type)}
+              </p>
+            </div>
             <p className="text-sm text-gray-600">
               {permission.description || getPermissionDescription(permission.type)}
             </p>
