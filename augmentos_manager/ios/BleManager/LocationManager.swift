@@ -30,6 +30,22 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     
     // Start location updates (will only work if permission is already granted)
     locationManager.startUpdatingLocation()
+
+  }
+  
+  // enables highest-accuracy gps mode (higher battery consumption so we'll need to
+  // disclose that in the SDK docs)
+  // The distanceFilter can be changed for kCLLocationAccuracyBestForNavigation as well
+  public func setHighAccuracyMode(enabled: Bool) {
+    if enabled {
+      print("LocationManager: enabling high accuracy mode")
+      locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+      locationManager.distanceFilter = kCLDistanceFilterNone
+    } else {
+      print("LocationManager: disabling high accuracy mode")
+      locationManager.desiredAccuracy = kCLLocationAccuracyBest
+      locationManager.distanceFilter = 2 // back to the default 2 meters
+    }
   }
   
   func setLocationChangedCallback(_ callback: @escaping () -> Void) {
