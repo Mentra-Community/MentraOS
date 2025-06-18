@@ -161,21 +161,21 @@ tracker.dispose();
 ```typescript
 class ResourceManager {
   private tracker = createResourceTracker();
-  
+
   registerListener(element: HTMLElement, event: string, handler: EventListener) {
     element.addEventListener(event, handler);
-    
+
     // Track the cleanup
     this.tracker.track(() => {
       element.removeEventListener(event, handler);
     });
   }
-  
+
   startPolling(callback: () => void, intervalMs: number) {
     // Creates and tracks the interval automatically
     this.tracker.setInterval(callback, intervalMs);
   }
-  
+
   cleanup() {
     // Dispose all tracked resources at once
     this.tracker.dispose();
@@ -262,7 +262,7 @@ Creates a language-specific stream identifier string for translation.
 
 ```typescript
 function createTranslationStream(
-  sourceLanguage: string, 
+  sourceLanguage: string,
   targetLanguage: string
 ): ExtendedStreamType
 ```
@@ -370,22 +370,22 @@ function getLanguageInfo(
 ### Managing Language-Specific Streams
 
 ```typescript
-class MyTpaServer extends TpaServer {
-  protected async onSession(session: TpaSession, sessionId: string, userId: string) {
+class MyAppServer extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
     // Subscribe to English transcription
     const enTranscription = createTranscriptionStream("en-US");
     session.subscribe(enTranscription);
-    
+
     // Subscribe to Spanish-to-English translation
     const esEnTranslation = createTranslationStream("es-ES", "en-US");
     session.subscribe(esEnTranslation);
-    
+
     // Process the incoming streams
     session.on(StreamType.TRANSCRIPTION, (data) => {
       // Handle all transcription data
       console.log(`Transcription: ${data.text}`);
     });
-    
+
     session.on(StreamType.TRANSLATION, (data) => {
       // Handle all translation data
       console.log(`Translation: ${data.text}`);
@@ -397,30 +397,30 @@ class MyTpaServer extends TpaServer {
 ### Resource Management in TPA Sessions
 
 ```typescript
-class MyTpaServer extends TpaServer {
+class MyAppServer extends AppServer {
   // Store active sessions with their resource trackers
   private activeSessions = new Map<string, ResourceTracker>();
-  
-  protected async onSession(session: TpaSession, sessionId: string, userId: string) {
+
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
     // Create a resource tracker for this session
     const tracker = createResourceTracker();
     this.activeSessions.set(sessionId, tracker);
-    
+
     // Set up timers that will be automatically cleaned up
     tracker.setInterval(() => {
       // Periodic task
       console.log(`Session ${sessionId} is active`);
     }, 60000); // Every minute
-    
+
     // Track the event handlers
     const unsubscribeBtn = session.onButtonPress((data) => {
       console.log(`Button pressed: ${data.buttonId}`);
     });
-    
+
     // Make sure the unsubscribe function gets called when we clean up
     tracker.track(unsubscribeBtn);
   }
-  
+
   protected async onStop(sessionId: string, userId: string, reason: string) {
     // Clean up all resources for this session
     const tracker = this.activeSessions.get(sessionId);
@@ -429,4 +429,4 @@ class MyTpaServer extends TpaServer {
       this.activeSessions.delete(sessionId);
     }
   }
-} 
+}

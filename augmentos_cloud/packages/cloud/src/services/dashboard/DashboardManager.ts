@@ -13,13 +13,13 @@ import {
   DashboardContentUpdate,
   DashboardModeChange,
   DashboardSystemUpdate,
-  TpaToCloudMessageType,
+  AppToCloudMessageType,
   CloudToGlassesMessageType,
-  CloudToTpaMessageType,
+  CloudToAppMessageType,
   LayoutType,
   ViewType,
   DisplayRequest,
-  TpaToCloudMessage,
+  AppToCloudMessage,
   // UserSession
 } from '@augmentos/sdk';
 import { logger as rootLogger } from '../logging/pino-logger';
@@ -147,18 +147,18 @@ export class DashboardManager {
    * @param message TPA message
    * @returns True if the message was handled, false otherwise
    */
-  public handleTpaMessage(message: TpaToCloudMessage): boolean {
+  public handleTpaMessage(message: AppToCloudMessage): boolean {
     try {
       switch (message.type) {
-        case TpaToCloudMessageType.DASHBOARD_CONTENT_UPDATE:
+        case AppToCloudMessageType.DASHBOARD_CONTENT_UPDATE:
           this.handleDashboardContentUpdate(message as DashboardContentUpdate);
           return true;
 
-        case TpaToCloudMessageType.DASHBOARD_MODE_CHANGE:
+        case AppToCloudMessageType.DASHBOARD_MODE_CHANGE:
           this.handleDashboardModeChange(message as DashboardModeChange);
           return true;
 
-        case TpaToCloudMessageType.DASHBOARD_SYSTEM_UPDATE:
+        case AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE:
           this.handleDashboardSystemUpdate(message as DashboardSystemUpdate);
           return true;
 
@@ -303,7 +303,7 @@ export class DashboardManager {
 
       // Create a display request for regular dashboard
       const displayRequest: DisplayRequest = {
-        type: TpaToCloudMessageType.DISPLAY_REQUEST,
+        type: AppToCloudMessageType.DISPLAY_REQUEST,
         packageName: systemApps.dashboard.packageName,
         view: ViewType.DASHBOARD,
         layout,
@@ -350,7 +350,7 @@ export class DashboardManager {
 
       // Create a display request specifically for always-on with the new view type
       const displayRequest: DisplayRequest = {
-        type: TpaToCloudMessageType.DISPLAY_REQUEST,
+        type: AppToCloudMessageType.DISPLAY_REQUEST,
         packageName: systemApps.dashboard.packageName,
         view: ViewType.ALWAYS_ON,  // Use the new view type
         layout,
@@ -654,7 +654,7 @@ export class DashboardManager {
 
     // Notify TPAs of mode change
     const modeChangeMessage = {
-      type: CloudToTpaMessageType.DASHBOARD_MODE_CHANGED,
+      type: CloudToAppMessageType.DASHBOARD_MODE_CHANGED,
       mode,
       timestamp: new Date()
     };
@@ -678,7 +678,7 @@ export class DashboardManager {
 
     // Notify TPAs of state change
     const alwaysOnMessage = {
-      type: CloudToTpaMessageType.DASHBOARD_ALWAYS_ON_CHANGED,
+      type: CloudToAppMessageType.DASHBOARD_ALWAYS_ON_CHANGED,
       enabled,
       timestamp: new Date()
     };
@@ -699,7 +699,7 @@ export class DashboardManager {
 
       // Send an empty layout to clear the always-on view
       const clearRequest: DisplayRequest = {
-        type: TpaToCloudMessageType.DISPLAY_REQUEST,
+        type: AppToCloudMessageType.DISPLAY_REQUEST,
         packageName: systemApps.dashboard.packageName,
         view: ViewType.ALWAYS_ON,
         layout: {

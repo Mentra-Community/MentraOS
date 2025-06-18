@@ -31,7 +31,7 @@ import {
   PhotoTaken
 } from '../../types';
 import { DashboardMode } from '../../types/dashboard';
-import { PermissionError, PermissionErrorDetail } from '../../types/messages/cloud-to-tpa';
+import { PermissionError, PermissionErrorDetail } from '../../types/messages/cloud-to-app';
 
 /** 🎯 Type-safe event handler function */
 type Handler<T> = (data: T) => void;

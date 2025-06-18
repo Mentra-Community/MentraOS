@@ -7,13 +7,13 @@ import WebSocket from 'ws';
 import { IncomingMessage } from 'http';
 import jwt from 'jsonwebtoken';
 import {
-  TpaConnectionInit,
-  TpaConnectionAck,
-  TpaConnectionError,
-  TpaToCloudMessage,
-  TpaToCloudMessageType,
-  CloudToTpaMessageType,
-  TpaSubscriptionUpdate,
+  AppConnectionInit,
+  AppConnectionAck,
+  AppConnectionError,
+  AppToCloudMessage,
+  AppToCloudMessageType,
+  CloudToAppMessageType,
+  AppSubscriptionUpdate,
   AppStateChange,
   StreamType,
   DataStream,
@@ -66,24 +66,24 @@ interface TpaIncomingMessage extends IncomingMessage {
 /**
  * Service that handles TPA WebSocket connections
  */
-export class TpaWebSocketService {
-  private static instance: TpaWebSocketService;
+export class AppWebSocketService {
+  private static instance: AppWebSocketService;
   private logger = rootLogger.child({ service: SERVICE_NAME });
   constructor() { }
 
   /**
    * Get the singleton instance of TpaWebSocketService
    */
-  static getInstance(): TpaWebSocketService {
-    if (!TpaWebSocketService.instance) {
-      TpaWebSocketService.instance = new TpaWebSocketService();
+  static getInstance(): AppWebSocketService {
+    if (!AppWebSocketService.instance) {
+      AppWebSocketService.instance = new AppWebSocketService();
     }
-    return TpaWebSocketService.instance;
+    return AppWebSocketService.instance;
   }
 
   /**
    * Handle a new TPA WebSocket connection
-   * 
+   *
    * @param ws WebSocket connection
    * @param request HTTP request object
    */
@@ -112,8 +112,8 @@ export class TpaWebSocketService {
         }
 
         // Create ConnectionInit message, and sent to the app manager to handle it.
-        const initMessage: TpaConnectionInit = {
-          type: TpaToCloudMessageType.CONNECTION_INIT,
+        const initMessage: AppConnectionInit = {
+          type: AppToCloudMessageType.CONNECTION_INIT,
           packageName: tpaJwtPayload.packageName,
           sessionId: sessionId,
           apiKey: tpaJwtPayload.apiKey
@@ -130,11 +130,11 @@ export class TpaWebSocketService {
     ws.on('message', async (data: WebSocket.Data) => {
       try {
         // Parse the incoming message
-        const message = JSON.parse(data.toString()) as TpaToCloudMessage;
+        const message = JSON.parse(data.toString()) as AppToCloudMessage;
 
         // Check if it's old auth via TPA Init message.
-        if (message.type === TpaToCloudMessageType.CONNECTION_INIT) {
-          const initMessage = message as TpaConnectionInit;
+        if (message.type === AppToCloudMessageType.CONNECTION_INIT) {
+          const initMessage = message as AppConnectionInit;
           // Parse session ID to get user session ID
           const sessionParts = initMessage.sessionId.split('-');
           const userId = sessionParts[0];
@@ -175,34 +175,34 @@ export class TpaWebSocketService {
 
   /**
    * Handle TPA message
-   * 
+   *
    * @param userSession UserSession
-   * @param message TpaToCloudMessage
+   * @param message AppToCloudMessage
    */
-  private async handleTpaMessage(tpaWebsocket: WebSocket, userSession: UserSession, message: TpaToCloudMessage): Promise<void> {
+  private async handleTpaMessage(tpaWebsocket: WebSocket, userSession: UserSession, message: AppToCloudMessage): Promise<void> {
     try {
       // Process based on message type
       switch (message.type) {
-        case TpaToCloudMessageType.SUBSCRIPTION_UPDATE:
+        case AppToCloudMessageType.SUBSCRIPTION_UPDATE:
           this.handleSubscriptionUpdate(tpaWebsocket, userSession, message);
           break;
 
-        case TpaToCloudMessageType.DISPLAY_REQUEST:
+        case AppToCloudMessageType.DISPLAY_REQUEST:
           userSession.logger.debug({ service: SERVICE_NAME, message, packageName: message.packageName }, `Received display request from TPA: ${message.packageName}`);
           userSession.displayManager.handleDisplayRequest(message);
           // Handle display request
           break;
 
         // Dashboard message handling
-        case TpaToCloudMessageType.DASHBOARD_CONTENT_UPDATE:
-        case TpaToCloudMessageType.DASHBOARD_MODE_CHANGE:
-        case TpaToCloudMessageType.DASHBOARD_SYSTEM_UPDATE: {
+        case AppToCloudMessageType.DASHBOARD_CONTENT_UPDATE:
+        case AppToCloudMessageType.DASHBOARD_MODE_CHANGE:
+        case AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE: {
           userSession.dashboardManager.handleTpaMessage(message);
           break;
         }
 
         // Mentra Live Photo / Video Stream Request message handling.
-        case TpaToCloudMessageType.RTMP_STREAM_REQUEST:
+        case AppToCloudMessageType.RTMP_STREAM_REQUEST:
           // Delegate to VideoManager
           // The RtmpStreamRequest SDK type should be used by the TPA
           try {
@@ -216,7 +216,7 @@ export class TpaWebSocketService {
           }
           break;
 
-        case TpaToCloudMessageType.RTMP_STREAM_STOP:
+        case AppToCloudMessageType.RTMP_STREAM_STOP:
           // Delegate to VideoManager
           try {
             await userSession.videoManager.stopRtmpStream(message as RtmpStreamStopRequest);
@@ -227,7 +227,7 @@ export class TpaWebSocketService {
           }
           break;
 
-        case TpaToCloudMessageType.PHOTO_REQUEST:
+        case AppToCloudMessageType.PHOTO_REQUEST:
           // Delegate to PhotoManager
           // The TpaPhotoRequestSDK type should be used by the TPA
           // PhotoManager's requestPhoto now takes the TpaPhotoRequestSDK object
@@ -260,11 +260,11 @@ export class TpaWebSocketService {
   }
 
   // Handle Subscription updates.
-  private async handleSubscriptionUpdate(tpaWebsocket: WebSocket, userSession: UserSession, message: TpaSubscriptionUpdate): Promise<void> {
+  private async handleSubscriptionUpdate(tpaWebsocket: WebSocket, userSession: UserSession, message: AppSubscriptionUpdate): Promise<void> {
     const packageName = message.packageName;
     userSession.logger.debug(
       { service: SERVICE_NAME, message, packageName },
-      `Received subscription update from TPA: ${packageName}`
+      `Received subscription update from app: ${packageName}`
     );
 
     // Get the minimal language subscriptions before update
@@ -315,7 +315,7 @@ export class TpaWebSocketService {
         if (tpaWebsocket && tpaWebsocket.readyState === WebSocket.OPEN) {
           for (const event of allCalendarEvents) {
             const dataStream: DataStream = {
-              type: CloudToTpaMessageType.DATA_STREAM,
+              type: CloudToAppMessageType.DATA_STREAM,
               streamType: StreamType.CALENDAR_EVENT,
               sessionId: `${userSession.userId}-${message.packageName}`,
               data: event,
@@ -345,7 +345,7 @@ export class TpaWebSocketService {
           };
 
           const dataStream: DataStream = {
-            type: CloudToTpaMessageType.DATA_STREAM,
+            type: CloudToAppMessageType.DATA_STREAM,
             sessionId: tpaSessionId,
             streamType: StreamType.LOCATION_UPDATE,
             data: locationUpdate,
@@ -363,7 +363,7 @@ export class TpaWebSocketService {
       userSession.logger.info(`Sending cached userDatetime to app ${message.packageName} on custom_message subscription`);
       if (tpaWebsocket && tpaWebsocket.readyState === WebSocket.OPEN) {
         const customMessage = {
-          type: CloudToTpaMessageType.CUSTOM_MESSAGE,
+          type: CloudToAppMessageType.CUSTOM_MESSAGE,
           action: 'update_datetime',
           payload: {
             datetime: userSession.userDatetime,
@@ -387,15 +387,15 @@ export class TpaWebSocketService {
 
   /**
    * Send an error response to the TPA client
-   * 
+   *
    * @param ws WebSocket connection
    * @param code Error code
    * @param message Error message
    */
   private sendError(ws: WebSocket, code: TpaErrorCode, message: string): void {
     try {
-      const errorResponse: TpaConnectionError = {
-        type: CloudToTpaMessageType.CONNECTION_ERROR,
+      const errorResponse: AppConnectionError = {
+        type: CloudToAppMessageType.CONNECTION_ERROR,
         code: code,
         message: message,
         timestamp: new Date()
@@ -416,4 +416,4 @@ export class TpaWebSocketService {
 
 }
 
-export default TpaWebSocketService;
+export default AppWebSocketService;

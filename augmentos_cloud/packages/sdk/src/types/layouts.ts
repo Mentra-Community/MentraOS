@@ -1,7 +1,7 @@
 // src/layout.ts
 
 import { LayoutType, ViewType } from './enums';
-import { TpaToCloudMessageType } from './message-types';
+import { AppToCloudMessageType } from './message-types';
 import { BaseMessage } from './messages/base';
 
 /**
@@ -50,7 +50,7 @@ export interface BitmapView {
 export type Layout = TextWall | DoubleTextWall | DashboardCard | ReferenceCard | BitmapView;
 
 export interface DisplayRequest extends BaseMessage {
-    type: TpaToCloudMessageType.DISPLAY_REQUEST;
+    type: AppToCloudMessageType.DISPLAY_REQUEST;
     packageName: string;
     view: ViewType;
     layout: Layout;

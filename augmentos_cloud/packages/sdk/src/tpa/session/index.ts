@@ -12,13 +12,13 @@ import { StreamingModule } from './modules/streaming';
 import { ResourceTracker } from '../../utils/resource-tracker';
 import {
   // Message types
-  TpaToCloudMessage,
-  CloudToTpaMessage,
-  TpaConnectionInit,
-  TpaSubscriptionUpdate,
+  AppToCloudMessage,
+  CloudToAppMessage,
+  AppConnectionInit,
+  AppSubscriptionUpdate,
   PhotoRequest,
-  TpaToCloudMessageType,
-  CloudToTpaMessageType,
+  AppToCloudMessageType,
+  CloudToAppMessageType,
 
   // Event data types
   StreamType,
@@ -30,8 +30,8 @@ import {
   TranslationData,
 
   // Type guards
-  isTpaConnectionAck,
-  isTpaConnectionError,
+  isAppConnectionAck,
+  isAppConnectionError,
   isDataStream,
   isAppStopped,
   isSettingsUpdate,
@@ -41,8 +41,8 @@ import {
   // Other types
   AppSettings,
   AppSetting,
-  TpaConfig,
-  validateTpaConfig,
+  AppConfig,
+  validateAppConfig,
   AudioChunk,
   isAudioChunk,
   createTranscriptionStream,
@@ -53,20 +53,20 @@ import {
   PhotoTaken
 } from '../../types';
 import { DashboardAPI } from '../../types/dashboard';
-import { AugmentosSettingsUpdate } from '../../types/messages/cloud-to-tpa';
+import { AugmentosSettingsUpdate } from '../../types/messages/cloud-to-app';
 import { Logger } from 'pino';
-import { TpaServer } from '../server';
+import { AppServer } from '../server';
 import EventEmitter from 'events';
 
-// Import the cloud-to-tpa specific type guards
-import { isPhotoResponse, isRtmpStreamStatus } from '../../types/messages/cloud-to-tpa';
+// Import the cloud-to-app specific type guards
+import { isPhotoResponse, isRtmpStreamStatus } from '../../types/messages/cloud-to-app';
 
 /**
  * ⚙️ Configuration options for TPA Session
  *
  * @example
  * ```typescript
- * const config: TpaSessionConfig = {
+ * const config: AppSessionConfig = {
  *   packageName: 'org.example.myapp',
  *   apiKey: 'your_api_key',
  *   // Auto-reconnection is enabled by default
@@ -74,7 +74,7 @@ import { isPhotoResponse, isRtmpStreamStatus } from '../../types/messages/cloud-
  * };
  * ```
  */
-export interface TpaSessionConfig {
+export interface AppSessionConfig {
   /** 📦 Unique identifier for your TPA (e.g., 'org.company.appname') */
   packageName: string;
   /** 🔑 API key for authentication with AugmentOS Cloud */
@@ -89,7 +89,7 @@ export interface TpaSessionConfig {
   reconnectDelay?: number;
 
   userId: string; // user ID for tracking sessions (email of the user).
-  tpaServer: TpaServer; // Optional TPA server instance for advanced features
+  appServer: AppServer; // Optional TPA server instance for advanced features
 }
 
 // List of event types that should never be subscribed to as streams
@@ -113,7 +113,7 @@ const TPA_TO_TPA_EVENT_TYPES = [
  *
  * @example
  * ```typescript
- * const session = new TpaSession({
+ * const session = new AppSession({
  *   packageName: 'org.example.myapp',
  *   apiKey: 'your_api_key'
  * });
@@ -127,7 +127,8 @@ const TPA_TO_TPA_EVENT_TYPES = [
  * await session.connect('session_123');
  * ```
  */
-export class TpaSession {
+
+export class AppSession {
   /** WebSocket connection to AugmentOS Cloud */
   private ws: WebSocket | null = null;
   /** Current session identifier */
@@ -141,7 +142,7 @@ export class TpaSession {
   /** Internal settings storage - use public settings API instead */
   private settingsData: AppSettings = [];
   /** TPA configuration loaded from tpa_config.json */
-  private tpaConfig: TpaConfig | null = null;
+  private tpaConfig: AppConfig | null = null;
   /** Whether to update subscriptions when settings change */
   private shouldUpdateSubscriptionsOnSettingsChange = false;
   /** Custom subscription handler for settings-based subscriptions */
@@ -175,14 +176,14 @@ export class TpaSession {
   /** 📹 RTMP streaming interface */
   public readonly streaming: StreamingModule;
 
-  public readonly tpaServer: TpaServer;
+  public readonly appServer: AppServer;
   public readonly logger: Logger;
   public readonly userId: string;
 
   /** Dedicated emitter for TPA-to-TPA events */
   private tpaEvents = new EventEmitter();
 
-  constructor(private config: TpaSessionConfig) {
+  constructor(private config: AppSessionConfig) {
     // Set defaults and merge with provided config
     this.config = {
       augmentOSWebsocketUrl: `ws://localhost:8002/tpa-ws`, // Use localhost as default
@@ -192,8 +193,8 @@ export class TpaSession {
       ...config
     };
 
-    this.tpaServer = this.config.tpaServer;
-    this.logger = this.tpaServer.logger.child({ userId: this.config.userId, service: 'tpa-session' });
+    this.appServer = this.config.appServer;
+    this.logger = this.appServer.logger.child({ userId: this.config.userId, service: 'tpa-session' });
     this.userId = this.config.userId;
 
     // Make sure the URL is correctly formatted to prevent double protocol issues
@@ -241,21 +242,21 @@ export class TpaSession {
       this.config.augmentOSWebsocketUrl,
       this.sessionId ?? undefined,
       async (streams: string[]) => {
-        this.logger.debug(`[TpaSession] subscribeFn called for streams:`, streams);
+        this.logger.debug(`[AppSession] subscribeFn called for streams:`, streams);
         streams.forEach((stream) => {
           if (!this.subscriptions.has(stream as ExtendedStreamType)) {
             this.subscriptions.add(stream as ExtendedStreamType);
-            this.logger.debug(`[TpaSession] Auto-subscribed to stream '${stream}' for AugmentOS setting.`);
+            this.logger.debug(`[AppSession] Auto-subscribed to stream '${stream}' for AugmentOS setting.`);
           } else {
-            this.logger.debug(`[TpaSession] Already subscribed to stream '${stream}'.`);
+            this.logger.debug(`[AppSession] Already subscribed to stream '${stream}'.`);
           }
         });
-        this.logger.debug(`[TpaSession] Current subscriptions after subscribeFn:`, Array.from(this.subscriptions));
+        this.logger.debug(`[AppSession] Current subscriptions after subscribeFn:`, Array.from(this.subscriptions));
         if (this.ws?.readyState === 1) {
           this.updateSubscriptions();
-          this.logger.debug(`[TpaSession] Sent updated subscriptions to cloud after auto-subscribing to AugmentOS setting.`);
+          this.logger.debug(`[AppSession] Sent updated subscriptions to cloud after auto-subscribing to AugmentOS setting.`);
         } else {
-          this.logger.debug(`[TpaSession] WebSocket not open, will send subscriptions when connected.`);
+          this.logger.debug(`[AppSession] WebSocket not open, will send subscriptions when connected.`);
         }
       }
     );
@@ -383,7 +384,7 @@ export class TpaSession {
    */
   subscribe(type: ExtendedStreamType): void {
     if (TPA_TO_TPA_EVENT_TYPES.includes(type as string)) {
-      this.logger.warn(`[TpaSession] Attempted to subscribe to TPA-to-TPA event type '${type}', which is not a valid stream. Use the event handler (e.g., onTpaMessage) instead.`);
+      this.logger.warn(`[AppSession] Attempted to subscribe to TPA-to-TPA event type '${type}', which is not a valid stream. Use the event handler (e.g., onTpaMessage) instead.`);
       return;
     }
     this.subscriptions.add(type);
@@ -398,7 +399,7 @@ export class TpaSession {
    */
   unsubscribe(type: ExtendedStreamType): void {
     if (TPA_TO_TPA_EVENT_TYPES.includes(type as string)) {
-      this.logger.warn(`[TpaSession] Attempted to unsubscribe from TPA-to-TPA event type '${type}', which is not a valid stream.`);
+      this.logger.warn(`[AppSession] Attempted to unsubscribe from TPA-to-TPA event type '${type}', which is not a valid stream.`);
       return;
     }
     this.subscriptions.delete(type);
@@ -542,7 +543,7 @@ export class TpaSession {
               }
 
               // Parse JSON with error handling
-              const message = JSON.parse(jsonData) as CloudToTpaMessage;
+              const message = JSON.parse(jsonData) as CloudToAppMessage;
 
               // Basic schema validation
               if (!message || typeof message !== 'object' || !('type' in message)) {
@@ -711,7 +712,7 @@ export class TpaSession {
 
         // Create photo request message
         const message: PhotoRequest = {
-          type: TpaToCloudMessageType.PHOTO_REQUEST,
+          type: AppToCloudMessageType.PHOTO_REQUEST,
           packageName: this.config.packageName,
           sessionId: this.sessionId!,
           timestamp: new Date(),
@@ -828,11 +829,11 @@ export class TpaSession {
    * @returns The loaded configuration
    * @throws Error if the configuration is invalid
    */
-  loadConfigFromJson(jsonData: string): TpaConfig {
+  loadConfigFromJson(jsonData: string): AppConfig {
     try {
       const parsedConfig = JSON.parse(jsonData);
 
-      if (validateTpaConfig(parsedConfig)) {
+      if (validateAppConfig(parsedConfig)) {
         this.tpaConfig = parsedConfig;
         return parsedConfig;
       } else {
@@ -848,7 +849,7 @@ export class TpaSession {
    * 📋 Get the loaded TPA configuration
    * @returns The current TPA configuration or null if not loaded
    */
-  getConfig(): TpaConfig | null {
+  getConfig(): AppConfig | null {
     return this.tpaConfig;
   }
 
@@ -864,7 +865,7 @@ export class TpaSession {
     if (!this.config.augmentOSWebsocketUrl) {
       return undefined;
     }
-    return TpaSession.convertToHttps(this.config.augmentOSWebsocketUrl);
+    return AppSession.convertToHttps(this.config.augmentOSWebsocketUrl);
   }
 
   private static convertToHttps(rawUrl: string | undefined): string {
@@ -917,7 +918,7 @@ export class TpaSession {
   /**
    * 📨 Handle incoming messages from cloud
    */
-  private handleMessage(message: CloudToTpaMessage): void {
+  private handleMessage(message: CloudToAppMessage): void {
     try {
       // Validate message before processing
       if (!this.validateMessage(message)) {
@@ -933,13 +934,13 @@ export class TpaSession {
 
       // Using type guards to determine message type and safely handle each case
       try {
-        if (isTpaConnectionAck(message)) {
+        if (isAppConnectionAck(message)) {
           // Get settings from connection acknowledgment
           const receivedSettings = message.settings || [];
           this.settingsData = receivedSettings;
 
           // Store config if provided
-          if (message.config && validateTpaConfig(message.config)) {
+          if (message.config && validateAppConfig(message.config)) {
             this.tpaConfig = message.config;
           }
 
@@ -966,7 +967,7 @@ export class TpaSession {
             this.updateSubscriptionsFromSettings();
           }
         }
-        else if (isTpaConnectionError(message) || message.type === 'connection_error') {
+        else if (isAppConnectionError(message) || message.type === 'connection_error') {
           // Handle both TPA-specific connection_error and standard connection_error
           const errorMessage = message.message || 'Unknown connection error';
           this.events.emit('error', new Error(errorMessage));
@@ -1089,7 +1090,7 @@ export class TpaSession {
           }
         }
         // Handle custom messages
-        else if (message.type === CloudToTpaMessageType.CUSTOM_MESSAGE) {
+        else if (message.type === CloudToAppMessageType.CUSTOM_MESSAGE) {
           this.events.emit('custom_message', message);
           return;
         }
@@ -1190,7 +1191,7 @@ export class TpaSession {
    * @param message - Message to validate
    * @returns boolean indicating if the message is valid
    */
-  private validateMessage(message: CloudToTpaMessage): boolean {
+  private validateMessage(message: CloudToAppMessage): boolean {
     // Handle ArrayBuffer case separately
     if (message instanceof ArrayBuffer) {
       return true; // ArrayBuffers are always considered valid at this level
@@ -1301,8 +1302,8 @@ export class TpaSession {
    * 🔐 Send connection initialization message
    */
   private sendConnectionInit(): void {
-    const message: TpaConnectionInit = {
-      type: TpaToCloudMessageType.CONNECTION_INIT,
+    const message: AppConnectionInit = {
+      type: AppToCloudMessageType.CONNECTION_INIT,
       sessionId: this.sessionId!,
       packageName: this.config.packageName,
       apiKey: this.config.apiKey,
@@ -1315,9 +1316,9 @@ export class TpaSession {
    * 📝 Update subscription list with cloud
    */
   private updateSubscriptions(): void {
-    this.logger.info(`[TpaSession] updateSubscriptions: sending subscriptions to cloud:`, Array.from(this.subscriptions));
-    const message: TpaSubscriptionUpdate = {
-      type: TpaToCloudMessageType.SUBSCRIPTION_UPDATE,
+    this.logger.info(`[AppSession] updateSubscriptions: sending subscriptions to cloud:`, Array.from(this.subscriptions));
+    const message: AppSubscriptionUpdate = {
+      type: AppToCloudMessageType.SUBSCRIPTION_UPDATE,
       packageName: this.config.packageName,
       subscriptions: Array.from(this.subscriptions),
       sessionId: this.sessionId!,
@@ -1395,7 +1396,7 @@ export class TpaSession {
    * 📤 Send message to cloud with validation and error handling
    * @throws {Error} If WebSocket is not connected
    */
-  private send(message: TpaToCloudMessage): void {
+  private send(message: AppToCloudMessage): void {
     try {
       // Verify WebSocket connection is valid
       if (!this.ws) {
@@ -1530,7 +1531,7 @@ export class TpaSession {
   async broadcastToTpaUsers(payload: any, roomId?: string): Promise<void> {
     try {
       const messageId = this.generateMessageId();
-      
+
       const message = {
         type: 'tpa_broadcast_message',
         packageName: this.config.packageName,
@@ -1540,7 +1541,7 @@ export class TpaSession {
         senderUserId: this.userId,
         timestamp: new Date()
       };
-      
+
       this.send(message as any);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1558,10 +1559,10 @@ export class TpaSession {
     return new Promise((resolve, reject) => {
       try {
         const messageId = this.generateMessageId();
-        
+
         // Store promise resolver
         this.pendingDirectMessages.set(messageId, { resolve, reject });
-        
+
         const message = {
           type: 'tpa_direct_message',
           packageName: this.config.packageName,
@@ -1572,7 +1573,7 @@ export class TpaSession {
           senderUserId: this.userId,
           timestamp: new Date()
         };
-        
+
         this.send(message as any);
 
         // Set timeout to avoid hanging promises
@@ -1610,7 +1611,7 @@ export class TpaSession {
         roomConfig,
         timestamp: new Date()
       };
-      
+
       this.send(message as any);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1632,7 +1633,7 @@ export class TpaSession {
         roomId,
         timestamp: new Date()
       };
-      
+
       this.send(message as any);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1686,5 +1687,15 @@ export class TpaSession {
    */
   private generateMessageId(): string {
     return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }
+}
+
+/**
+ * @deprecated TpaSession has been renamed to AppSession
+ */
+export class TpaSession extends AppSession {
+  constructor(config: AppSessionConfig) {
+    super(config);
+    this.logger.warn('TpaSession is deprecated.  Use AppSession instead.  TpaSession will be removed in a future version.');
   }
 }

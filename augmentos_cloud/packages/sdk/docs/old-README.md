@@ -426,8 +426,8 @@ The `src/types` directory is structured logically:
     *   **`./messages/base.ts`**: Base `BaseMessage` interface.
     *   **`./messages/cloud-to-glasses.ts`**: Cloud to glasses messages.
     *   **`./messages/glasses-to-cloud.ts`**: Glasses to cloud messages.
-    *   **`./messages/cloud-to-tpa.ts`**: Cloud to TPA messages.
-    *   **`./messages/tpa-to-cloud.ts`**: TPA to cloud messages.
+    *   **`./messages/cloud-to-app.ts`**: Cloud to TPA messages.
+    *   **`./messages/app-to-cloud.ts`**: TPA to cloud messages.
 *   **`./layouts.ts`**: Interfaces for layout types (`TextWall`, `ReferenceCard`, `DisplayRequest`).
 *   **`./streams.ts`**: `StreamType` enum and utilities for data streams.
 *   **`./models.ts`**: Core data models (`AppI`, `AppSettings`, `TranscriptI`).
@@ -441,14 +441,14 @@ The `src/types` directory is structured logically:
 
 Define data structures for WebSocket and webhook communication.
 
-*   `GlassesToCloudMessageType`, `CloudToGlassesMessageType`, `TpaToCloudMessageType`, `CloudToTpaMessageType`: Message type enums.
+*   `GlassesToCloudMessageType`, `CloudToGlassesMessageType`, `AppToCloudMessageType`, `CloudToAppMessageType`: Message type enums.
 *   Specific Message Interfaces (e.g., `ConnectionInit`, `DisplayEvent`, `TpaConnectionAck`) in `./messages/`.
 
 **Example: `DisplayRequest` Interface (`./layouts.ts`)**
 
 ```typescript
 export interface DisplayRequest extends BaseMessage {
-    type: TpaToCloudMessageType.DISPLAY_REQUEST;
+    type: AppToCloudMessageType.DISPLAY_REQUEST;
     packageName: string;
     view: ViewType;
     layout: Layout;
@@ -464,7 +464,7 @@ Represent data streams and entities in AugmentOS.
 *   Data Stream Interfaces: Data structure for each `StreamType` (e.g., `TranscriptionData`).
 *   Model Interfaces (`./models.ts`): Core entities like `AppI`, `AppSettings`, `TranscriptI`.
 
-**Example: `TranscriptionData` Interface (`./messages/cloud-to-tpa.ts`)**
+**Example: `TranscriptionData` Interface (`./messages/cloud-to-app.ts`)**
 
 ```typescript
 export interface TranscriptionData extends BaseMessage {

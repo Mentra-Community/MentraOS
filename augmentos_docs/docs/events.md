@@ -4,10 +4,10 @@ AugmentOS Cloud uses an event-driven architecture to communicate real-time data 
 
 ## Subscribing to Events
 
-The [`TpaSession`](/reference/tpa-session) class in the `@augmentos/sdk` provides several ways to subscribe to events.  You'll typically do this within the [`onSession`](/reference/tpa-server#onsession-protected) method of your [`TpaServer`](/reference/tpa-server):
+The [`AppSession`](/reference/app-session) class in the `@augmentos/sdk` provides several ways to subscribe to events.  You'll typically do this within the [`onSession`](/reference/app-server#onsession-protected) method of your [`AppServer`](/reference/app-server):
 
 ```typescript
-protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
   // ... your session setup ...
 
   // Subscribe to transcription events
@@ -49,7 +49,7 @@ You can subscribe to events using these methods:
     });
     ```
 
-3. **[Subscribe method](/reference/tpa-session#subscribe):** Use this to manually signal to the backend which streams your app wants to subscripbe to.
+3. **[Subscribe method](/reference/app-session#subscribe):** Use this to manually signal to the backend which streams your app wants to subscripbe to.
     ```typescript
     session.subscribe(StreamType.TRANSCRIPTION);
     ```
@@ -80,7 +80,7 @@ cleanupHandlers.push(session.events.onHeadPosition((data) => { ... }));
 
 // ...
 
-// Add a cleanup handler to your TpaServer
+// Add a cleanup handler to your AppServer
 cleanupHandlers.forEach(handler => this.addCleanupHandler(handler));
 ```
 
@@ -139,7 +139,7 @@ interface TranscriptionData {
 ```
 
 ```typescript
-// In packages/sdk/types/src/messages/cloud-to-tpa.ts
+// In packages/sdk/types/src/messages/cloud-to-app.ts
 interface TranslationData {
   type: StreamType.TRANSLATION;
   text: string;
@@ -261,7 +261,7 @@ interface NotificationDismissed {
 ```
 
 ```typescript
-// In packages/sdk/types/src/messages/cloud-to-tpa.ts
+// In packages/sdk/types/src/messages/cloud-to-app.ts
 interface AudioChunk {
   type: StreamType.AUDIO_CHUNK,
   sessionId: string,

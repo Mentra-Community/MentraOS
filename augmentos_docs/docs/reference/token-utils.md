@@ -19,7 +19,7 @@ Creates a signed JWT token for TPA authentication.
 
 ```typescript
 function createToken(
-  payload: Omit<TpaTokenPayload, 'iat' | 'exp'>, 
+  payload: Omit<AppTokenPayload, 'iat' | 'exp'>,
   config: TokenConfig
 ): string
 ```
@@ -39,7 +39,7 @@ const token = TokenUtils.createToken(
     sessionId: 'session456'
   },
   {
-    secretKey: 'my-tpa-secret-key', // Should match your secret key in AugmentOS Cloud
+    secretKey: 'my-app-secret-key', // Should match your secret key in AugmentOS Cloud
     expiresIn: 3600 // 1 hour in seconds
   }
 );
@@ -51,7 +51,7 @@ Validates a JWT token using the provided secret key.
 
 ```typescript
 function validateToken(
-  token: string, 
+  token: string,
   secretKey: string
 ): TokenValidationResult
 ```
@@ -66,7 +66,7 @@ function validateToken(
 ```typescript
 const validationResult = TokenUtils.validateToken(
   receivedToken,
-  'my-tpa-secret-key'
+  'my-app-secret-key'
 );
 
 if (validationResult.valid) {
@@ -82,7 +82,7 @@ Appends a JWT token as a query parameter to a base URL, making it easy to create
 
 ```typescript
 function generateWebviewUrl(
-  baseUrl: string, 
+  baseUrl: string,
   token: string
 ): string
 ```
@@ -96,10 +96,10 @@ function generateWebviewUrl(
 **Example:**
 ```typescript
 const webviewUrl = TokenUtils.generateWebviewUrl(
-  'https://my-tpa.example.com/webview',
+  'https://my-app.example.com/webview',
   token
 );
-// Result: https://my-tpa.example.com/webview?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+// Result: https://my-app.example.com/webview?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 ### extractTokenFromUrl()
@@ -120,7 +120,7 @@ function extractTokenFromUrl(
 **Example:**
 ```typescript
 // In a webview handling incoming requests
-const incomingUrl = "https://my-tpa.example.com/webview?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+const incomingUrl = "https://my-app.example.com/webview?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
 const token = TokenUtils.extractTokenFromUrl(incomingUrl);
 if (token) {
   // Validate the token and process the webview request
@@ -129,12 +129,12 @@ if (token) {
 
 ## Token-Related Interfaces
 
-### TpaTokenPayload
+### AppTokenPayload
 
 The data structure embedded within a TPA JWT token.
 
 ```typescript
-interface TpaTokenPayload {
+interface AppTokenPayload {
   userId: string;        // User identifier
   packageName: string;   // Package name of the TPA
   sessionId: string;     // Session identifier
@@ -150,7 +150,7 @@ The result returned by the [`validateToken`](#validatetoken) utility function.
 ```typescript
 interface TokenValidationResult {
   valid: boolean;          // Indicates if the token is valid
-  payload?: TpaTokenPayload; // The decoded payload if valid
+  payload?: AppTokenPayload; // The decoded payload if valid
   error?: string;          // Error message if invalid
 }
 ```
@@ -166,43 +166,43 @@ interface TokenConfig {
 }
 ```
 
-## Token Usage in TpaServer
+## Token Usage in AppServer
 
-The [`TpaServer`](/reference/tpa-server) class includes a protected method for generating tokens:
+The [`AppServer`](/reference/app-server) class includes a protected method for generating tokens:
 
 ```typescript
 protected generateToken(
-  userId: string, 
-  sessionId: string, 
+  userId: string,
+  sessionId: string,
   secretKey: string
 ): string
 ```
 
-This method is available when you extend the [`TpaServer`](/reference/tpa-server) class and is useful for generating tokens within webhook handlers.
+This method is available when you extend the [`AppServer`](/reference/app-server) class and is useful for generating tokens within webhook handlers.
 
 ## Common Token Usage Patterns
 
 ### Creating a Secure Webview
 
 ```typescript
-class MyTpaServer extends TpaServer {
+class MyAppServer extends AppServer {
   private secretKey = process.env.TPA_SECRET_KEY;
-  
+
   protected async onSession(session, sessionId, userId) {
     // Set up event handlers, etc.
-    
+
     // Register a route for handling webview requests
     const app = this.getExpressApp();
     app.get('/webview', (req, res) => {
       // Generate a token for this session
       const token = this.generateToken(userId, sessionId, this.secretKey);
-      
+
       // Redirect to the actual webview with the token
       const webviewUrl = TokenUtils.generateWebviewUrl(
-        'https://my-tpa.example.com/dashboard',
+        'https://my-app.example.com/dashboard',
         token
       );
-      
+
       res.redirect(webviewUrl);
     });
   }
@@ -218,16 +218,16 @@ app.get('/dashboard', (req, res) => {
   if (!token) {
     return res.status(401).send('No authentication token provided');
   }
-  
+
   const validationResult = TokenUtils.validateToken(
     token,
     process.env.TPA_SECRET_KEY
   );
-  
+
   if (!validationResult.valid) {
     return res.status(401).send('Invalid token');
   }
-  
+
   // Token is valid, render the dashboard for this user
   const { userId, sessionId, packageName } = validationResult.payload;
   // Continue with rendering the appropriate content...
@@ -244,4 +244,4 @@ app.get('/dashboard', (req, res) => {
 
 4. **Validation**: Always validate tokens on your server before granting access to protected resources.
 
-5. **Payload Size**: Keep token payloads minimal to reduce overhead and improve performance. 
+5. **Payload Size**: Keep token payloads minimal to reduce overhead and improve performance.

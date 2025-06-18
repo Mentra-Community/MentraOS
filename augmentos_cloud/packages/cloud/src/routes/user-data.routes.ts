@@ -2,7 +2,7 @@ import express from 'express';
 import sessionService from '../services/session/session.service';
 import { StreamType } from '@augmentos/sdk';
 import subscriptionService from '../services/session/subscription.service';
-import { CloudToTpaMessageType } from '@augmentos/sdk';
+import { CloudToAppMessageType } from '@augmentos/sdk';
 
 const router = express.Router();
 
@@ -27,7 +27,7 @@ router.post('/set-datetime', (req, res) => {
 
   console.log('4343 Subscribed apps', subscribedApps);
   const customMessage = {
-    type: CloudToTpaMessageType.CUSTOM_MESSAGE,
+    type: CloudToAppMessageType.CUSTOM_MESSAGE,
     action: 'update_datetime',
     payload: {
       datetime: datetime,
@@ -45,4 +45,4 @@ router.post('/set-datetime', (req, res) => {
   res.json({ success: true, userId, datetime });
 });
 
-export default router; 
+export default router;

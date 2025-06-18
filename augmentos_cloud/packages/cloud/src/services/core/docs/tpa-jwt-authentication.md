@@ -18,7 +18,7 @@ The current TPA authentication system has several issues that impact developer e
 
 - `/packages/cloud/src/services/core/websocket.service.ts`: Handles WebSocket connections and authentication
 - `/packages/cloud/src/services/core/app.service.ts`: Validates API keys
-- `/packages/sdk/src/types/messages/tpa-to-cloud.ts`: Defines TPA connection message format
+- `/packages/sdk/src/types/messages/app-to-cloud.ts`: Defines TPA connection message format
 - `/packages/sdk/src/tpa/session/index.ts`: Client-side TPA session management
 
 ### Current Authentication Flow
@@ -39,7 +39,7 @@ The current TPA authentication system has several issues that impact developer e
    ```typescript
    // Get client IP address for system app validation
    const clientIp = (ws as any)._socket?.remoteAddress || '';
-   
+
    // Validate API key with IP check for system apps
    const isValidKey = await appService.validateApiKey(
      initMessage.packageName,

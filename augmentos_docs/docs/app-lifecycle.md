@@ -7,7 +7,7 @@ This document describes the lifecycle of an AugmentOS app within the AugmentOS e
 
 An AugmentOS app goes through the following stages:
 
-1.  **Registration (One-time):**  This happens outside of the normal runtime flow. You register your app with [AugmentOS Developer Portal](https://console.augmentos.org/tpas), providing:
+1.  **Registration (One-time):**  This happens outside of the normal runtime flow. You register your app with [AugmentOS Developer Portal](https://console.augmentos.org/apps), providing:
     *   `packageName`: A unique identifier (e.g., `com.example.myapp`).
     *   `name`: A human-readable name.
     *   `description`: A description of your app.
@@ -27,28 +27,28 @@ An AugmentOS app goes through the following stages:
 
     Your app server should listen for these POST requests on the configured `webhookPath` (default: `/webhook`).
 
-3.  **WebSocket Connection:**  Upon receiving the `session_request`, your app establishes a WebSocket connection to AugmentOS Cloud. The [`TpaServer`](/reference/tpa-server) class in the SDK handles this for you automatically. You provide the cloud's WebSocket URL in the [`TpaServerConfig`](/reference/tpa-server#configuration):
+3.  **WebSocket Connection:**  Upon receiving the `session_request`, your app establishes a WebSocket connection to AugmentOS Cloud. The [`AppServer`](/reference/app-server) class in the SDK handles this for you automatically. You provide the cloud's WebSocket URL in the [`AppServerConfig`](/reference/app-server#configuration):
 
     ```typescript
-    const server = new TpaServer({
+    const server = new AppServer({
       packageName: PACKAGE_NAME,
       apiKey: API_KEY,
       port: PORT,
-      augmentOSWebsocketUrl: `ws://localhost:${CLOUD_PORT}/tpa-ws`, // Or your cloud URL
+      augmentOSWebsocketUrl: `ws://localhost:${CLOUD_PORT}/app-ws`, // Or your cloud URL
       webhookPath: '/webhook',
     });
     ```
 
-4.  **Connection Initialization:**  After connecting, your app sends a [`tpa_connection_init`](/reference/interfaces/message-types#tpaconnectioninit) message to the cloud. This message includes:
+4.  **Connection Initialization:**  After connecting, your app sends a [`app_connection_init`](/reference/interfaces/message-types#appconnectioninit) message to the cloud. This message includes:
 
-    *   `type`: `"tpa_connection_init"`
+    *   `type`: `"app_connection_init"`
     *   `sessionId`:  The session ID from the webhook request.
     *   `packageName`:  Your app's package name.
     *   `apiKey`:  Your app's API key.
 
-    The [`TpaSession`](/reference/tpa-session) class handles sending this message automatically.
+    The [`AppSession`](/reference/app-session) class handles sending this message automatically.
 
-5.  **Subscription:**  Your app subscribes to the data streams it needs (e.g., [transcription](/reference/interfaces/event-types#transcriptiondata), [head position](/reference/interfaces/event-types#headposition)) using the [`subscribe()`](/reference/tpa-session#subscribe) method or the [`events`](/reference/managers/event-manager) object (see [Events](./events) for details). This informs AugmentOS Cloud which data to send to your app.
+5.  **Subscription:**  Your app subscribes to the data streams it needs (e.g., [transcription](/reference/interfaces/event-types#transcriptiondata), [head position](/reference/interfaces/event-types#headposition)) using the [`subscribe()`](/reference/app-session#subscribe) method or the [`events`](/reference/managers/event-manager) object (see [Events](./events) for details). This informs AugmentOS Cloud which data to send to your app.
 
 6.  **Event Handling:**  Your app receives real-time events from AugmentOS Cloud via the WebSocket connection. You handle these events using event listeners (e.g., [`session.events.onTranscription()`](/reference/managers/event-manager#ontranscription)).
 
@@ -61,7 +61,7 @@ An AugmentOS app goes through the following stages:
     *   Your app explicitly disconnects.
     *   An error occurs that terminates the session.
 
-    AugmentOS Cloud will send a [`stop_request`](/reference/interfaces/webhook-types#stopwebhookrequest) webhook to your app when a session ends. You can override the [`onStop`](/reference/tpa-server#onstop-protected) method in your [`TpaServer`](/reference/tpa-server) to handle any necessary cleanup. The [`TpaSession`](/reference/tpa-session) also emits a [`disconnected`](/reference/managers/event-manager#ondisconnected) event.
+    AugmentOS Cloud will send a [`stop_request`](/reference/interfaces/webhook-types#stopwebhookrequest) webhook to your app when a session ends. You can override the [`onStop`](/reference/app-server#onstop-protected) method in your [`AppServer`](/reference/app-server) to handle any necessary cleanup. The [`AppSession`](/reference/app-session) also emits a [`disconnected`](/reference/managers/event-manager#ondisconnected) event.
 
 ## Important Implementation Details
 
@@ -85,8 +85,8 @@ sequenceDiagram
     Cloud->>App: Webhook: session_request
     activate App
     App->>Cloud: WebSocket Connection
-    App->>Cloud: tpa_connection_init
-    Cloud->>App: tpa_connection_ack
+    App->>Cloud: app_connection_init
+    Cloud->>App: app_connection_ack
     App->>Cloud: subscription_update
     loop Real-time Interaction
         Glasses->>Cloud: Sensor data, voice, etc.

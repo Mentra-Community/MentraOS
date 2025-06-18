@@ -1,20 +1,20 @@
 /**
  * Dash - Unified Content TPA
- * 
+ *
  * A consolidated TPA that provides different types of content to the AugmentOS dashboard
  * based on user settings. This replaces the separate content TPAs with a single
  * configurable application.
  */
 import express from 'express';
-import { 
-  TpaSession,
+import {
+  AppSession,
   DashboardMode,
   StreamType
 } from '@augmentos/sdk';
 import { logger } from '@augmentos/utils';
-import { 
-  FunFactAgent, 
-  FamousQuotesAgent, 
+import {
+  FunFactAgent,
+  FamousQuotesAgent,
   GratitudePingAgent,
   NewsAgent,
   TrashTalkAgent,
@@ -40,7 +40,7 @@ app.use(express.json());
 // Session management
 interface SessionInfo {
   userId: string;
-  session: TpaSession;
+  session: AppSession;
   contentHistory: {
     [contentType: string]: string[]
   };
@@ -83,7 +83,7 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
     cleanupSession(sessionId);
 
     // Create new TPA session
-    const session = new TpaSession({
+    const session = new AppSession({
       packageName: PACKAGE_NAME,
       apiKey: AUGMENTOS_API_KEY,
       augmentOSWebsocketUrl: `ws://${CLOUD_HOST_NAME}/tpa-ws`
@@ -109,24 +109,24 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
     // Get settings and initialize content
     const contentType = session.settings.get('content_type', ContentType.NONE);
     const contentFrequency = session.settings.get('content_frequency', 10);
-    
+
     const sessionInfo = activeSessions.get(sessionId);
     if (sessionInfo) {
       sessionInfo.contentType = contentType;
       sessionInfo.contentFrequency = contentFrequency * 60 * 1000; // Convert minutes to ms
-      
+
       logger.info(`Session ${sessionId} settings: contentType=${contentType}, contentFrequency=${contentFrequency}min`);
-      
+
       // Generate the first content after a short delay
       setTimeout(() => {
         generateAndSendContent(sessionId);
       }, 2000);
-      
+
       // Start periodic content generation
       const updateInterval = setInterval(() => {
         generateAndSendContent(sessionId);
       }, sessionInfo.contentFrequency);
-      
+
       sessionInfo.updateInterval = updateInterval;
     }
 
@@ -141,7 +141,7 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
 // ==================================
 // Event Handlers
 // ==================================
-function setupEventHandlers(sessionId: string, session: TpaSession): void {
+function setupEventHandlers(sessionId: string, session: AppSession): void {
   // Handle head position using the proper SDK event handler
   session.onHeadPosition((data) => {
     if (data.position === 'up') {
@@ -161,18 +161,18 @@ function setupEventHandlers(sessionId: string, session: TpaSession): void {
   // Listen for dashboard mode changes to adjust content
   session.dashboard.content.onModeChange((mode) => {
     logger.info(`Dashboard mode changed to ${mode} for session ${sessionId}`);
-    
+
     if (mode === DashboardMode.EXPANDED) {
       const sessionInfo = activeSessions.get(sessionId);
       if (sessionInfo && sessionInfo.currentContent) {
         // For expanded mode, adapt the content as needed
         let expandedContent = sessionInfo.currentContent.content;
-        
+
         // Prefix with content type if not already included
         if (!expandedContent.includes(sessionInfo.currentContent.type)) {
           expandedContent = `${sessionInfo.currentContent.type}: ${expandedContent}`;
         }
-        
+
         session.dashboard.content.writeToExpanded(expandedContent);
       }
     }
@@ -181,34 +181,34 @@ function setupEventHandlers(sessionId: string, session: TpaSession): void {
   // Handle settings changes
   session.settings.onValueChange('content_type', (newValue, oldValue) => {
     logger.info(`Content type changed from ${oldValue} to ${newValue} for session ${sessionId}`);
-    
+
     const sessionInfo = activeSessions.get(sessionId);
     if (sessionInfo) {
       sessionInfo.contentType = newValue;
-      
+
       // Generate new content immediately when setting changes
       generateAndSendContent(sessionId);
     }
   });
-  
+
   session.settings.onValueChange('content_frequency', (newValue, oldValue) => {
     logger.info(`Content frequency changed from ${oldValue} to ${newValue} for session ${sessionId}`);
-    
+
     const sessionInfo = activeSessions.get(sessionId);
     if (sessionInfo) {
       // Convert minutes to milliseconds
       const newFrequency = parseInt(newValue) * 60 * 1000;
       sessionInfo.contentFrequency = newFrequency;
-      
+
       // Reset update interval with new frequency
       if (sessionInfo.updateInterval) {
         clearInterval(sessionInfo.updateInterval);
       }
-      
+
       const updateInterval = setInterval(() => {
         generateAndSendContent(sessionId);
       }, newFrequency);
-      
+
       sessionInfo.updateInterval = updateInterval;
     }
   });
@@ -226,7 +226,7 @@ function setupEventHandlers(sessionId: string, session: TpaSession): void {
 async function generateAndSendContent(sessionId: string): Promise<void> {
   const sessionInfo = activeSessions.get(sessionId);
   if (!sessionInfo || !sessionInfo.isActive) return;
-  
+
   // Skip content generation if type is none
   if (sessionInfo.contentType === ContentType.NONE) {
     logger.info(`Content type is set to 'none' for session ${sessionId}`);
@@ -239,83 +239,83 @@ async function generateAndSendContent(sessionId: string): Promise<void> {
       logger.warn(`Content type is undefined for session ${sessionId}`);
       return;
     }
-    
-    // Get history for this content type (or initialize if not exists)    
+
+    // Get history for this content type (or initialize if not exists)
     if (!sessionInfo.contentHistory[sessionInfo.contentType]) {
       sessionInfo.contentHistory[sessionInfo.contentType] = [];
     }
-    
+
     const history = sessionInfo.contentHistory[sessionInfo.contentType];
-    
+
     // Generate content based on type
     let content: string | undefined;
     let contentTitle: string;
-    
+
     switch (sessionInfo.contentType) {
       case ContentType.FUN_FACTS:
         contentTitle = "Fun Fact";
         content = await generateFunFact(history);
         break;
-        
+
       case ContentType.QUOTES:
         contentTitle = "Quote";
         content = await generateQuote(history);
         break;
-        
+
       case ContentType.GRATITUDE:
         contentTitle = "Gratitude";
         content = await generateGratitude(history);
         break;
-        
+
       case ContentType.NEWS:
         contentTitle = "News";
         content = await generateNews(history);
         break;
-        
+
       case ContentType.TRASH_TALK:
         contentTitle = "Trash Talk";
         content = await generateTrashTalk(history);
         break;
-        
+
       case ContentType.CHINESE_WORDS:
         contentTitle = "Chinese Word";
         content = await generateChineseWord(history);
         break;
-        
+
       default:
         logger.warn(`Unknown content type: ${sessionInfo.contentType}`);
         return;
     }
-    
+
     if (content) {
       // Update history with new content
       if (history.length >= 10) {
         history.shift(); // Remove oldest item if we have 10+ items
       }
       history.push(content);
-      
+
       // Cache the current content
       sessionInfo.currentContent = {
         type: contentTitle,
         content
       };
-      
+
       // Send content to dashboard for all modes
       logger.info(`Sending ${contentTitle} to dashboard: ${content.substring(0, 30)}...`);
-      
+
       // Main mode - just the content
       sessionInfo.session.dashboard.content.writeToMain(content);
-      
+
       // Expanded mode - with title
       const expandedContent = `${contentTitle}: ${content}`;
       sessionInfo.session.dashboard.content.writeToExpanded(expandedContent);
-      
+
       // Always-on mode - shortened version
-      const alwaysOnContent = content.length > 35 
-        ? content.substring(0, 35) + '...' 
+      const alwaysOnContent = content.length > 35
+        ? content.substring(0, 35) + '...'
         : content;
       sessionInfo.session.dashboard.content.writeToAlwaysOn(alwaysOnContent);
-      
+
       // Update timestamp
       sessionInfo.lastUpdateTime = Date.now();
     }
@@ -367,22 +367,22 @@ async function generateChineseWord(history: string[]): Promise<string> {
 function cleanupSession(sessionId: string): void {
   const sessionInfo = activeSessions.get(sessionId);
   if (!sessionInfo) return;
-  
+
   // Clear interval
   if (sessionInfo.updateInterval) {
     clearInterval(sessionInfo.updateInterval);
   }
-  
+
   // Mark as inactive
   sessionInfo.isActive = false;
-  
+
   // Disconnect session
   try {
     sessionInfo.session.disconnect();
   } catch (error) {
     logger.error(`Error disconnecting session ${sessionId}:`, error);
   }
-  
+
   // Remove from active sessions
   activeSessions.delete(sessionId);
   logger.info(`Cleaned up session ${sessionId}`);
@@ -396,15 +396,15 @@ function cleanupSession(sessionId: string): void {
 app.post('/admin/generate-content', async (req: express.Request, res: express.Response) => {
   try {
     const { sessionId } = req.body;
-    
+
     if (!sessionId) {
       return res.status(400).json({ error: 'Missing sessionId' });
     }
-    
+
     if (!activeSessions.has(sessionId)) {
       return res.status(404).json({ error: 'Session not found' });
     }
-    
+
     await generateAndSendContent(sessionId);
     res.status(200).json({ status: 'content generated' });
   } catch (error) {
@@ -425,7 +425,7 @@ app.get('/admin/sessions', (req: express.Request, res: express.Response) => {
       lastUpdate: session?.lastUpdateTime ? new Date(session.lastUpdateTime).toISOString() : null
     };
   });
-  
+
   res.status(200).json({ sessions, count: sessions.length });
 });
 
@@ -433,8 +433,8 @@ app.get('/admin/sessions', (req: express.Request, res: express.Response) => {
 // Health Check
 // ==================================
 app.get('/health', (req: express.Request, res: express.Response) => {
-  res.json({ 
-    status: 'healthy', 
+  res.json({
+    status: 'healthy',
     app: PACKAGE_NAME,
     sessions: activeSessions.size
   });

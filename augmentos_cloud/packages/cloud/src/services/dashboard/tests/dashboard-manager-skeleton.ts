@@ -1,16 +1,16 @@
 /**
  * Dashboard Manager TPA Implementation
- * 
+ *
  * This is a complete implementation of the dashboard-manager TPA
  * using the new Dashboard API. It maintains backward compatibility
  * with the existing system.
  */
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { 
-  TpaSession, 
-  TpaConnectionInit, 
-  TpaToCloudMessageType,
+import {
+  TpaSession,
+  TpaConnectionInit,
+  AppToCloudMessageType,
   StreamType,
   ViewType,
   DashboardMode,
@@ -103,7 +103,7 @@ function setupEventHandlers(sessionId: string, session: TpaSession): void {
   // Handle connection events
   session.events.on('connected', () => {
     logger.info(`Session ${sessionId} connected`);
-    
+
     // Subscribe to necessary streams
     session.subscribe(StreamType.PHONE_NOTIFICATION);
     session.subscribe(StreamType.LOCATION_UPDATE);
@@ -151,12 +151,12 @@ function setupEventHandlers(sessionId: string, session: TpaSession): void {
   session.events.on('disconnected', (reason) => {
     logger.info(`Session ${sessionId} disconnected: ${reason}`);
     const sessionInfo = activeSessions.get(sessionId);
-    
+
     // Clean up any intervals for this session
     if (sessionInfo) {
       // Clean up resources
     }
-    
+
     activeSessions.delete(sessionId);
   });
 }
@@ -242,14 +242,14 @@ function formatBatterySection(sessionInfo: SessionInfo): string {
 
 function formatNotificationSection(sessionInfo: SessionInfo): string {
   // Use ranked notifications if available, otherwise use the raw cache
-  const notifications = sessionInfo.phoneNotificationRanking || 
+  const notifications = sessionInfo.phoneNotificationRanking ||
                         sessionInfo.phoneNotificationCache || [];
-  
+
   if (notifications.length === 0) return "";
 
   // Take the latest 2 notifications
   const topNotifications = notifications.slice(0, 2);
-  
+
   // Format differently based on whether we're using ranked or raw notifications
   if (sessionInfo.phoneNotificationRanking) {
     return topNotifications
@@ -267,12 +267,12 @@ function formatStatusSection(sessionInfo: SessionInfo): string {
   if (sessionInfo.calendarEvent) {
     return formatCalendarEvent(sessionInfo.calendarEvent);
   }
-  
+
   // Then weather if available
   if (sessionInfo.weatherCache) {
     return sessionInfo.weatherCache.data;
   }
-  
+
   // Default status
   return "Status: Connected";
 }
@@ -280,16 +280,16 @@ function formatStatusSection(sessionInfo: SessionInfo): string {
 function formatCalendarEvent(event: any): string {
   try {
     const eventDate = new Date(event.dtStart);
-    const formattedTime = eventDate.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      hour12: true 
+    const formattedTime = eventDate.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
     }).replace(" ", "");
-    
-    const title = event.title.length > 10 
-      ? event.title.substring(0, 10).trim() + '...' 
+
+    const title = event.title.length > 10
+      ? event.title.substring(0, 10).trim() + '...'
       : event.title;
-    
+
     return `${title} @ ${formattedTime}`;
   } catch (error) {
     logger.error('Error formatting calendar event', error);
@@ -311,7 +311,7 @@ function handlePhoneNotification(sessionId: string, data: any): void {
   }
 
   // Check if the app name is blacklisted
-  if (data.app && notificationAppBlackList.some(app => 
+  if (data.app && notificationAppBlackList.some(app =>
     data.app.toLowerCase().includes(app))) {
     logger.debug(`Notification from ${data.app} is blacklisted.`);
     return;
@@ -338,7 +338,7 @@ function handlePhoneNotification(sessionId: string, data: any): void {
 
   // Add to cache
   sessionInfo.phoneNotificationCache.push(newNotification);
-  
+
   // Process notifications
   processNotifications(sessionId);
 }
@@ -346,7 +346,7 @@ function handlePhoneNotification(sessionId: string, data: any): void {
 function processNotifications(sessionId: string): void {
   const sessionInfo = activeSessions.get(sessionId);
   if (!sessionInfo || !sessionInfo.phoneNotificationCache) return;
-  
+
   // For now, we'll just use a simple ranking algorithm
   // In a full implementation, we would use the NotificationSummaryAgent
   sessionInfo.phoneNotificationRanking = sessionInfo.phoneNotificationCache
@@ -355,7 +355,7 @@ function processNotifications(sessionId: string): void {
       summary: `${notification.title}: ${notification.content}`,
       timestamp: notification.timestamp
     }));
-  
+
   updateDashboardSections(sessionId);
 }
 
@@ -365,16 +365,16 @@ function handleLocationUpdate(sessionId: string, data: any): void {
 
   // Extract lat, lng from location data
   const { lat, lng } = data;
-  
+
   // Skip if invalid coordinates
   if (typeof lat !== "number" || typeof lng !== "number") {
     logger.error(`Invalid location data:`, data);
     return;
   }
-  
+
   // Update location in session
-  sessionInfo.latestLocation = { 
-    latitude: lat, 
+  sessionInfo.latestLocation = {
+    latitude: lat,
     longitude: lng,
     timezone: determineTimezone(lat, lng) || sessionInfo.latestLocation?.timezone
   };
@@ -427,7 +427,7 @@ app.post('/settings', async (req: express.Request, res: express.Response) => {
   try {
     const { userIdForSettings } = req.body;
     logger.info('Received settings update for dashboard:', req.body);
-    
+
     // Find all sessions for this user and update settings
     for (const [sessionId, session] of activeSessions.entries()) {
       if (session.userId === userIdForSettings) {
@@ -435,7 +435,7 @@ app.post('/settings', async (req: express.Request, res: express.Response) => {
         updateDashboardSections(sessionId);
       }
     }
-    
+
     res.status(200).json({ status: 'settings updated' });
   } catch (error) {
     logger.error('Error updating settings:', error);
@@ -464,10 +464,10 @@ function determineTimezone(lat: number, lng: number): string | undefined {
 function handleDashboardModeChange(sessionId: string, mode: DashboardMode): void {
   const sessionInfo = activeSessions.get(sessionId);
   if (!sessionInfo) return;
-  
+
   sessionInfo.dashboardMode = mode;
   sessionInfo.session.dashboard.system?.setViewMode(mode);
-  
+
   // Update the dashboard sections for the new mode
   updateDashboardSections(sessionId);
 }
@@ -478,8 +478,8 @@ function handleDashboardModeChange(sessionId: string, mode: DashboardMode): void
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+  res.json({
+    status: 'healthy',
     app: PACKAGE_NAME,
     sessions: activeSessions.size
   });

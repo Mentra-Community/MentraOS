@@ -5,8 +5,8 @@
  * Handles stream lifecycle, status monitoring, and cleanup.
  */
 import {
-  TpaToCloudMessageType,
-  CloudToTpaMessageType,
+  AppToCloudMessageType,
+  CloudToAppMessageType,
   RtmpStreamRequest,
   RtmpStreamStopRequest,
   RtmpStreamStatus,
@@ -59,7 +59,7 @@ export class StreamingModule {
   private send: (message: any) => void;
   private packageName: string;
   private sessionId: string;
-  private session?: any; // Reference to TpaSession
+  private session?: any; // Reference to AppSession
   private isStreaming: boolean = false;
   private currentStreamUrl?: string;
   private currentStreamState?: RtmpStreamStatus;
@@ -70,7 +70,7 @@ export class StreamingModule {
    * @param packageName - The TPA package name
    * @param sessionId - The current session ID
    * @param send - Function to send messages to the cloud
-   * @param session - Reference to the parent TpaSession (optional)
+   * @param session - Reference to the parent AppSession (optional)
    */
   constructor(packageName: string, sessionId: string, send: (message: any) => void, session?: any) {
     this.packageName = packageName;
@@ -95,7 +95,7 @@ export class StreamingModule {
       currentStreamUrl: this.currentStreamUrl,
       currentStreamState: this.currentStreamState
     });
-    
+
     if (!options.rtmpUrl) {
       throw new Error('rtmpUrl is required');
     }
@@ -115,7 +115,7 @@ export class StreamingModule {
 
     // Create stream request message
     const message: RtmpStreamRequest = {
-      type: TpaToCloudMessageType.RTMP_STREAM_REQUEST,
+      type: AppToCloudMessageType.RTMP_STREAM_REQUEST,
       packageName: this.packageName,
       sessionId: this.sessionId,
       rtmpUrl: options.rtmpUrl,
@@ -137,10 +137,10 @@ export class StreamingModule {
         rtmpUrl: options.rtmpUrl,
         messageType: message.type
       });
-      
+
       this.send(message);
       this.isStreaming = true;
-      
+
       console.log(`[RTMP_STREAM_REQUEST_SENT] RTMP stream request sent successfully`, {
         debugKey: 'RTMP_STREAM_REQUEST_SENT',
         packageName: this.packageName,
@@ -148,7 +148,7 @@ export class StreamingModule {
         isStreaming: this.isStreaming,
         currentStreamUrl: this.currentStreamUrl
       });
-      
+
       return Promise.resolve();
     } catch (error) {
       console.error(`[RTMP_STREAM_REQUEST_FAIL] Failed to send RTMP stream request`, {
@@ -177,7 +177,7 @@ export class StreamingModule {
       currentStreamUrl: this.currentStreamUrl,
       currentStreamState: this.currentStreamState
     });
-    
+
     if (!this.isStreaming) {
       console.log(`[RTMP_STREAM_STOP_NOOP] Not streaming - no-op`, {
         debugKey: 'RTMP_STREAM_STOP_NOOP',
@@ -190,7 +190,7 @@ export class StreamingModule {
 
     // Create stop request message
     const message: RtmpStreamStopRequest = {
-      type: TpaToCloudMessageType.RTMP_STREAM_STOP,
+      type: AppToCloudMessageType.RTMP_STREAM_STOP,
       packageName: this.packageName,
       sessionId: this.sessionId,
       streamId: this.currentStreamState?.streamId,  // Include streamId if available
@@ -272,7 +272,7 @@ export class StreamingModule {
 
   /**
    * Update internal stream state based on a status message
-   * For internal use by TpaSession
+   * For internal use by AppSession
    * @param message - The status message from the cloud
    */
   updateStreamState(message: any): void {
@@ -284,7 +284,7 @@ export class StreamingModule {
       messageStatus: message?.status,
       currentIsStreaming: this.isStreaming
     });
-    
+
     // Verify this is a valid stream response
     if (!isRtmpStreamStatus(message)) {
       console.warn('[RTMP_STREAM_INVALID_STATUS] Received invalid stream status message', {

@@ -3,11 +3,11 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
-AugmentOS is an open source operating system, app store, and development framework for smart glasses. 
+AugmentOS is an open source operating system, app store, and development framework for smart glasses.
 
 - Architecture: Smart glasses connect to user's phone via BLE; phone connects to backend; backend connects to third-party app servers running the AugmentOS SDK
 - Mobile app: `augmentos_manager` (React Native with native modules)
-- Android logic: `augmentos_core` 
+- Android logic: `augmentos_core`
 - iOS native module: `augmentos_manager/ios`
 - Backend & web portals: `augmentos_cloud` (includes developer portal & app store)
 - Android-based smart glasses client: `augmentos_asg_client` (uses `augmentos_core` as a library)
@@ -18,7 +18,7 @@ AugmentOS is an open source operating system, app store, and development framewo
 
 ### React Native (augmentos_manager)
 - Start dev server: `npm start`
-- Run on platforms: `npm run android`, `npm run ios`  
+- Run on platforms: `npm run android`, `npm run ios`
 - Build Android: `npm run build-android`, `npm run build-android-release`
 - Run tests: `npm test`, `npm test -- -t "test name"` (single test)
 - Lint code: `npm run lint`
@@ -32,7 +32,7 @@ AugmentOS is an open source operating system, app store, and development framewo
 ## Prerequisites
 - Node.js and npm/yarn/bun
 - Android Studio (for Android development)
-- Xcode (for iOS development)  
+- Xcode (for iOS development)
 - Docker and Docker Compose (for cloud development)
 - Java SDK 17 (for Android components)
 
@@ -104,8 +104,8 @@ This document outlines the design for enabling Third Party Apps (TPAs) to commun
 
 ### Current Message Flow
 ```
-TPA → Cloud (TpaToCloudMessage)
-Cloud → TPA (CloudToTpaMessage)
+TPA → Cloud (AppToCloudMessage)
+Cloud → TPA (CloudToAppMessage)
 ```
 
 ## Proposed Multi-User TPA Communication
@@ -115,7 +115,7 @@ Cloud → TPA (CloudToTpaMessage)
 #### TPA-to-Cloud Messages
 ```typescript
 // New message types for TPA-to-TPA communication
-export enum TpaToCloudMessageType {
+export enum AppToCloudMessageType {
   // ... existing types
   TPA_BROADCAST_MESSAGE = 'tpa_broadcast_message',
   TPA_DIRECT_MESSAGE = 'tpa_direct_message',
@@ -126,7 +126,7 @@ export enum TpaToCloudMessageType {
 
 // Broadcast message to all users with same TPA
 interface TpaBroadcastMessage extends BaseMessage {
-  type: TpaToCloudMessageType.TPA_BROADCAST_MESSAGE;
+  type: AppToCloudMessageType.TPA_BROADCAST_MESSAGE;
   packageName: string;
   sessionId: string;
   payload: any;
@@ -138,7 +138,7 @@ interface TpaBroadcastMessage extends BaseMessage {
 
 // Direct message to specific user with same TPA
 interface TpaDirectMessage extends BaseMessage {
-  type: TpaToCloudMessageType.TPA_DIRECT_MESSAGE;
+  type: AppToCloudMessageType.TPA_DIRECT_MESSAGE;
   packageName: string;
   sessionId: string;
   targetUserId: string;
@@ -150,7 +150,7 @@ interface TpaDirectMessage extends BaseMessage {
 
 // Discover other users with same TPA active
 interface TpaUserDiscovery extends BaseMessage {
-  type: TpaToCloudMessageType.TPA_USER_DISCOVERY;
+  type: AppToCloudMessageType.TPA_USER_DISCOVERY;
   packageName: string;
   sessionId: string;
   includeUserProfiles?: boolean;
@@ -158,7 +158,7 @@ interface TpaUserDiscovery extends BaseMessage {
 
 // Join a communication room
 interface TpaRoomJoin extends BaseMessage {
-  type: TpaToCloudMessageType.TPA_ROOM_JOIN;
+  type: AppToCloudMessageType.TPA_ROOM_JOIN;
   packageName: string;
   sessionId: string;
   roomId: string;
@@ -172,7 +172,7 @@ interface TpaRoomJoin extends BaseMessage {
 
 #### Cloud-to-TPA Messages
 ```typescript
-export enum CloudToTpaMessageType {
+export enum CloudToAppMessageType {
   // ... existing types
   TPA_MESSAGE_RECEIVED = 'tpa_message_received',
   TPA_USER_JOINED = 'tpa_user_joined',
@@ -182,7 +182,7 @@ export enum CloudToTpaMessageType {
 
 // Message received from another TPA user
 interface TpaMessageReceived extends BaseMessage {
-  type: CloudToTpaMessageType.TPA_MESSAGE_RECEIVED;
+  type: CloudToAppMessageType.TPA_MESSAGE_RECEIVED;
   payload: any;
   messageId: string;
   senderUserId: string;
@@ -200,10 +200,10 @@ interface TpaMessageReceived extends BaseMessage {
 export class MultiUserTpaService {
   // Map of packageName -> Set of active user sessions
   private activeTpaSessions = new Map<string, Set<string>>();
-  
+
   // Map of packageName -> Map of roomId -> Set of userIds
   private tpaRooms = new Map<string, Map<string, Set<string>>>();
-  
+
   // Message history for debugging/replay
   private messageHistory = new Map<string, TpaMessage[]>();
 
@@ -218,26 +218,26 @@ export class MultiUserTpaService {
    * Broadcast message to all users with the same TPA active
    */
   async broadcastToTpaUsers(
-    senderSession: UserSession, 
+    senderSession: UserSession,
     message: TpaBroadcastMessage
   ): Promise<void> {
     const packageName = message.packageName;
     const activeUsers = this.getActiveTpaUsers(packageName);
-    
+
     for (const userId of activeUsers) {
       // Skip sender
       if (userId === senderSession.userId) continue;
-      
+
       const targetSession = this.sessionService.getSessionByUserId(userId);
       if (!targetSession) continue;
-      
+
       const targetTpaConnection = targetSession.appConnections.get(packageName);
       if (!targetTpaConnection || targetTpaConnection.readyState !== WebSocket.OPEN) {
         continue;
       }
 
       const receivedMessage: TpaMessageReceived = {
-        type: CloudToTpaMessageType.TPA_MESSAGE_RECEIVED,
+        type: CloudToAppMessageType.TPA_MESSAGE_RECEIVED,
         payload: message.payload,
         messageId: message.messageId,
         senderUserId: message.senderUserId,
@@ -267,7 +267,7 @@ export class MultiUserTpaService {
     }
 
     const receivedMessage: TpaMessageReceived = {
-      type: CloudToTpaMessageType.TPA_MESSAGE_RECEIVED,
+      type: CloudToAppMessageType.TPA_MESSAGE_RECEIVED,
       payload: message.payload,
       messageId: message.messageId,
       senderUserId: message.senderUserId,
@@ -287,7 +287,7 @@ export class MultiUserTpaService {
     if (!this.activeTpaSessions.has(packageName)) {
       this.activeTpaSessions.set(packageName, new Set());
     }
-    
+
     this.activeTpaSessions.get(packageName)!.add(userId);
     this.notifyUserJoined(packageName, userId);
   }
@@ -320,7 +320,7 @@ export class TpaSession {
    */
   broadcastToTpaUsers(payload: any, roomId?: string): Promise<void> {
     const message: TpaBroadcastMessage = {
-      type: TpaToCloudMessageType.TPA_BROADCAST_MESSAGE,
+      type: AppToCloudMessageType.TPA_BROADCAST_MESSAGE,
       packageName: this.config.packageName,
       sessionId: this.sessionId!,
       payload,
@@ -329,7 +329,7 @@ export class TpaSession {
       senderUserId: this.userId,
       roomId
     };
-    
+
     this.send(message);
     return Promise.resolve();
   }
@@ -340,12 +340,12 @@ export class TpaSession {
   sendDirectMessage(targetUserId: string, payload: any): Promise<boolean> {
     return new Promise((resolve, reject) => {
       const messageId = this.generateMessageId();
-      
+
       // Store promise resolver
       this.pendingDirectMessages.set(messageId, { resolve, reject });
-      
+
       const message: TpaDirectMessage = {
-        type: TpaToCloudMessageType.TPA_DIRECT_MESSAGE,
+        type: AppToCloudMessageType.TPA_DIRECT_MESSAGE,
         packageName: this.config.packageName,
         sessionId: this.sessionId!,
         targetUserId,
@@ -354,7 +354,7 @@ export class TpaSession {
         timestamp: new Date(),
         senderUserId: this.userId
       };
-      
+
       this.send(message);
     });
   }
@@ -365,12 +365,12 @@ export class TpaSession {
   discoverTpaUsers(includeProfiles = false): Promise<TpaUserList> {
     return new Promise((resolve, reject) => {
       const message: TpaUserDiscovery = {
-        type: TpaToCloudMessageType.TPA_USER_DISCOVERY,
+        type: AppToCloudMessageType.TPA_USER_DISCOVERY,
         packageName: this.config.packageName,
         sessionId: this.sessionId!,
         includeUserProfiles: includeProfiles
       };
-      
+
       // Store resolver for response
       this.pendingDiscoveryRequests.set(this.sessionId!, resolve);
       this.send(message);
@@ -405,7 +405,7 @@ export class TpaSession {
 3. **Integrate with WebSocketService** to handle new message types
 4. **Add user tracking** when TPAs connect/disconnect
 
-#### Phase 2: SDK Enhancements  
+#### Phase 2: SDK Enhancements
 1. **Extend TpaSession** with multi-user methods
 2. **Add event handlers** for TPA messages
 3. **Create helper utilities** for message formatting

@@ -1,10 +1,10 @@
 /**
  * test-displays.ts
- * 
+ *
  * Utility functions for creating test display requests.
  */
 
-import { DisplayRequest, TpaToCloudMessageType, ViewType, LayoutType } from '@augmentos/sdk';
+import { DisplayRequest, AppToCloudMessageType, ViewType, LayoutType } from '@augmentos/sdk';
 
 /**
  * Create a simple text display request
@@ -19,7 +19,7 @@ export function createTextDisplay(
   } = {}
 ): DisplayRequest {
   return {
-    type: TpaToCloudMessageType.DISPLAY_REQUEST,
+    type: AppToCloudMessageType.DISPLAY_REQUEST,
     packageName,
     view: options.view || ViewType.MAIN,
     layout: {
@@ -46,7 +46,7 @@ export function createReferenceCard(
   } = {}
 ): DisplayRequest {
   return {
-    type: TpaToCloudMessageType.DISPLAY_REQUEST,
+    type: AppToCloudMessageType.DISPLAY_REQUEST,
     packageName,
     view: options.view || ViewType.MAIN,
     layout: {

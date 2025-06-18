@@ -5,10 +5,10 @@ The `SettingsManager` class provides a type-safe interface for accessing and mon
 ## Import
 
 ```typescript
-import { TpaServer, TpaSession } from '@augmentos/sdk';
+import { AppServer, AppSession } from '@augmentos/sdk';
 
-export class MyTpaServer extends TpaServer {
-  protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
+export class MyAppServer extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
     // get the settings manager object
     const settingsManager = session.settings;
 
@@ -28,7 +28,7 @@ export class MyTpaServer extends TpaServer {
 
 ### Constructor
 
-The SettingsManager is automatically instantiated by the TpaSession. You should not create instances directly.
+The SettingsManager is automatically instantiated by the AppSession. You should not create instances directly.
 
 ```typescript
 class SettingsManager {
@@ -306,12 +306,12 @@ const value = session.settings.get('some_setting');
 ### 3. Clean Up Listeners
 
 ```typescript
-import { TpaServer, TpaSession } from '@augmentos/sdk';
+import { AppServer, AppSession } from '@augmentos/sdk';
 
-export class MyTpaServer extends TpaServer {
+export class MyAppServer extends AppServer {
   private cleanupFunctions: Array<() => void> = [];
 
-  protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
     // Store cleanup functions
     this.cleanupFunctions.push(
       session.settings.onValueChange('setting1', this.handler1),
@@ -332,4 +332,4 @@ export class MyTpaServer extends TpaServer {
 
 * [Settings Overview](/settings) - Guide to using settings in TPAs
 * [Setting Types Reference](/reference/interfaces/setting-types) - Detailed type definitions
-* [TPA Session](/reference/tpa-session) - TpaSession class reference
+* [TPA Session](/reference/app-session) - AppSession class reference

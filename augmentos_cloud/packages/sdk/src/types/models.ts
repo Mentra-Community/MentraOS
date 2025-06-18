@@ -36,14 +36,14 @@ export enum PermissionType {
   MICROPHONE = 'MICROPHONE',
   LOCATION = 'LOCATION',
   CALENDAR = 'CALENDAR',
-  
+
   // Legacy notification permission (backward compatibility)
   NOTIFICATIONS = 'NOTIFICATIONS',
-  
+
   // New granular notification permissions
   READ_NOTIFICATIONS = 'READ_NOTIFICATIONS',
   POST_NOTIFICATIONS = 'POST_NOTIFICATIONS',
-  
+
   ALL = 'ALL'
 }
 
@@ -153,7 +153,7 @@ export type AppSettings = AppSetting[];
  * TPA configuration file structure
  * Represents the schema in tpa_config.json
  */
-export interface TpaConfig {
+export interface AppConfig {
   name: string;
   description: string;
   version: string;
@@ -166,7 +166,7 @@ export interface TpaConfig {
  * @param config Object to validate
  * @returns True if the config is valid
  */
-export function validateTpaConfig(config: any): config is TpaConfig {
+export function validateAppConfig(config: any): config is AppConfig {
   if (!config || typeof config !== 'object') return false;
 
   // Check required string properties

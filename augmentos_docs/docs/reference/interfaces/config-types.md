@@ -7,12 +7,12 @@ title: Configuration Types
 
 This page documents the interfaces and types used for configuring apps in the AugmentOS SDK.
 
-## TpaConfig
+## AppConfig
 
 Represents the structure of the `app_config.json` file, defining metadata and settings for an app.
 
 ```typescript
-interface TpaConfig {
+interface AppConfig {
   /** The human-readable name of the app. */
   name: string;
 
@@ -26,7 +26,7 @@ interface TpaConfig {
 
 **Example:**
 ```typescript
-const tpaConfig: TpaConfig = {
+const appConfig: AppConfig = {
   name: "Weather App",
   description: "Displays real-time weather information for your current location",
   settings: [
@@ -57,7 +57,7 @@ const tpaConfig: TpaConfig = {
 
 ## AppSetting
 
-Union type representing a specific, configurable application setting. Used in [`TpaConfig`](#tpaconfig) and [`AppSettings`](#appsettings).
+Union type representing a specific, configurable application setting. Used in [`AppConfig`](#appconfig) and [`AppSettings`](#appsettings).
 
 ```typescript
 type AppSetting =
@@ -139,7 +139,7 @@ const selectSetting: AppSetting = {
 
 ## GroupSetting
 
-A pseudo-setting used in [`TpaConfig`](#tpaconfig) to group related settings visually in the UI. It doesn't hold a value.
+A pseudo-setting used in [`AppConfig`](#appconfig) to group related settings visually in the UI. It doesn't hold a value.
 
 ```typescript
 interface GroupSetting {
@@ -198,41 +198,41 @@ const settings: AppSettings = [
 To access a specific setting's value:
 
 ```typescript
-// Using TpaSession.getSetting()
-const enableNotifications = tpaSession.getSetting<boolean>("enableNotifications");
+// Using AppSession.getSetting()
+const enableNotifications = appSession.getSetting<boolean>("enableNotifications");
 if (enableNotifications) {
   // Notifications are enabled
 }
 
-// Using TpaSession.getSettings() with manual lookup
-const allSettings = tpaSession.getSettings();
+// Using AppSession.getSettings() with manual lookup
+const allSettings = appSession.getSettings();
 const refreshInterval = allSettings.find(s => s.key === "refreshInterval")?.value;
 ```
 
-The [`getSetting()`](/reference/tpa-session#getsetting) and [`getSettings()`](/reference/tpa-session#getsettings) methods are available on the [`TpaSession`](/reference/tpa-session) class.
+The [`getSetting()`](/reference/app-session#getsetting) and [`getSettings()`](/reference/app-session#getsettings) methods are available on the [`AppSession`](/reference/app-session) class.
 
 ### Reacting to Setting Changes
 
 ```typescript
 // Listen for changes to all settings
-tpaSession.events.onSettingsUpdate((settings) => {
+appSession.events.onSettingsUpdate((settings) => {
   // Handle updated settings
   console.log("Settings updated:", settings);
 });
 
 // Listen for changes to a specific setting
-tpaSession.events.onSettingChange<number>("refreshInterval", (newValue, oldValue) => {
+appSession.events.onSettingChange<number>("refreshInterval", (newValue, oldValue) => {
   console.log(`Refresh interval changed from ${oldValue} to ${newValue}`);
   // Update refresh logic based on new interval
 });
 ```
 
-The [`onSettingsUpdate()`](/reference/managers/event-manager#onsettingsupdate) and [`onSettingChange()`](/reference/managers/event-manager#onsettingchange) methods are available on the [`EventManager`](/reference/managers/event-manager) class, accessed via `tpaSession.events`.
+The [`onSettingsUpdate()`](/reference/managers/event-manager#onsettingsupdate) and [`onSettingChange()`](/reference/managers/event-manager#onsettingchange) methods are available on the [`EventManager`](/reference/managers/event-manager) class, accessed via `appSession.events`.
 
 ### Automatic Subscription Management Based on Settings
 
 ```typescript
-tpaSession.setSubscriptionSettings({
+appSession.setSubscriptionSettings({
   // Update subscriptions when these settings change
   updateOnChange: ["enableTranscription", "enableHeadTracking"],
 
@@ -258,4 +258,4 @@ tpaSession.setSubscriptionSettings({
 });
 ```
 
-The [`setSubscriptionSettings()`](/reference/tpa-session#setsubscriptionsettings) method is available on the [`TpaSession`](/reference/tpa-session) class. It allows automatic management of [`StreamType`](/reference/enums#streamtype) subscriptions based on setting changes.
+The [`setSubscriptionSettings()`](/reference/app-session#setsubscriptionsettings) method is available on the [`AppSession`](/reference/app-session) class. It allows automatic management of [`StreamType`](/reference/enums#streamtype) subscriptions based on setting changes.

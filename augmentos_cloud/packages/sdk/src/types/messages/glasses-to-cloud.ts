@@ -3,7 +3,7 @@
 import { BaseMessage } from './base';
 import { GlassesToCloudMessageType, ControlActionTypes, EventTypes } from '../message-types';
 import { StreamType } from '../streams';
-import { PhotoRequest } from './tpa-to-cloud';
+import { PhotoRequest } from './app-to-cloud';
 
 //===========================================================
 // Control actions

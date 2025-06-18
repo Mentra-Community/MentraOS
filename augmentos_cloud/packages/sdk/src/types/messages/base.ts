@@ -1,8 +1,8 @@
 // src/messages/base.ts
 
-import { TpaToCloudMessageType } from "../message-types";
-import { TpaToCloudMessage } from "./tpa-to-cloud";
-import { CloudToTpaMessage,  } from "./cloud-to-tpa";
+import { AppToCloudMessageType } from "../message-types";
+import { AppToCloudMessage } from "./app-to-cloud";
+import { CloudToAppMessage,  } from "./cloud-to-app";
 
 /**
  * Base interface for all messages in the system

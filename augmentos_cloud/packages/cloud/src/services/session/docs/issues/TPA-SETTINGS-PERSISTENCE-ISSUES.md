@@ -9,7 +9,7 @@
 ```typescript
 // Send connection acknowledgment
 const ackMessage = {
-  type: CloudToTpaMessageType.CONNECTION_ACK,
+  type: CloudToAppMessageType.CONNECTION_ACK,
   sessionId: sessionId,
   settings: app?.settings || [],  // ❌ BUG: Sends configuration schema, not user's values!
   timestamp: new Date()
@@ -24,16 +24,16 @@ const ackMessage = {
 ```javascript
 // What app.settings actually contains:
 [
-  { 
-    key: "targetLanguage", 
-    type: "select", 
-    defaultValue: "English", 
+  {
+    key: "targetLanguage",
+    type: "select",
+    defaultValue: "English",
     label: "Target Language",
     options: ["English", "Spanish", "French"]  // Available options
   },
   {
     key: "voiceType",
-    type: "select", 
+    type: "select",
     defaultValue: "neutral",
     label: "Voice Type",
     options: ["neutral", "male", "female"]
@@ -60,7 +60,7 @@ const ackMessage = {
 const app = await appService.getApp(tpaName);
 const appSettings = app?.settings || [];
 
-// 2. Get user's saved values  
+// 2. Get user's saved values
 const user = await User.findOrCreateUser(userId);
 const userSettings = user.getAppSettings(tpaName) || [];
 
@@ -90,7 +90,7 @@ await user.updateAppSettings(packageName, updatedSettings);
 
 #### **✅ Settings Updates Work Correctly**
 1. User changes settings via developer console or TPA UI
-2. Settings sent to `/tpasettings/:tpaName` POST endpoint  
+2. Settings sent to `/tpasettings/:tpaName` POST endpoint
 3. `User.updateAppSettings()` saves to MongoDB correctly
 4. WebSocket update sent to running TPA immediately
 5. **User's changes are properly stored**
@@ -104,7 +104,7 @@ await user.updateAppSettings(packageName, updatedSettings);
 
 ### **Why Current Logs Don't Help Debug This**
 
-**Current Log**: 
+**Current Log**:
 ```
 "TPA dev.augmentos.livetranslation successfully connected and authenticated in 1250ms"
 ```
@@ -134,7 +134,7 @@ const ackMessage = {
 const app = this.userSession.installedApps.get(packageName);
 const appSettings = app?.settings || [];
 
-// 2. Get user's saved values (like settings API does)  
+// 2. Get user's saved values (like settings API does)
 const user = await User.findOrCreateUser(this.userSession.userId);
 const userSettings = user.getAppSettings(packageName) || [];
 
@@ -142,7 +142,7 @@ const userSettings = user.getAppSettings(packageName) || [];
 const mergedSettings = appSettings.map(setting => {
   const stored = userSettings.find(s => s.key === setting.key);
   return {
-    ...setting,                                    // Schema structure  
+    ...setting,                                    // Schema structure
     selected: stored?.value || setting.defaultValue  // User's value OR default
   };
 });
@@ -183,7 +183,7 @@ for (const app of apps) {
 ```typescript
 function mergeUserSettingsWithSchema(userSettings: any[], appSchema: any[]): any[] {
   const merged = [...appSchema]; // Start with app's setting definitions
-  
+
   // Apply user's values where they exist
   userSettings?.forEach(userSetting => {
     const schemaIndex = merged.findIndex(s => s.key === userSetting.key);
@@ -191,7 +191,7 @@ function mergeUserSettingsWithSchema(userSettings: any[], appSchema: any[]): any
       merged[schemaIndex] = { ...merged[schemaIndex], ...userSetting };
     }
   });
-  
+
   return merged;
 }
 ```
@@ -200,19 +200,19 @@ function mergeUserSettingsWithSchema(userSettings: any[], appSchema: any[]): any
 
 #### **Current Insufficient Logs**
 ```typescript
-this.logger.info({ 
-  userId: this.userSession.userId, 
-  packageName, 
-  duration 
+this.logger.info({
+  userId: this.userSession.userId,
+  packageName,
+  duration
 }, `TPA ${packageName} successfully connected and authenticated in ${duration}ms`);
 ```
 
 #### **Enhanced Settings-Aware Logs**
 ```typescript
 // Log settings details in CONNECTION_ACK
-this.logger.info({ 
-  userId: this.userSession.userId, 
-  packageName, 
+this.logger.info({
+  userId: this.userSession.userId,
+  packageName,
   sessionId: this.userSession.sessionId,
   service: 'AppManager',
   duration,
@@ -249,7 +249,7 @@ this.logger.info({
 **Before**: `"TPA dev.augmentos.livetranslation successfully connected"`
 **After**: `"TPA dev.augmentos.livetranslation connected - sent 5 settings (personalized: language=Spanish, voice=female)"`
 
-#### **Settings Updates**  
+#### **Settings Updates**
 **Before**: `"Settings updated for dev.augmentos.livetranslation"`
 **After**: `"Updated 3 settings for dev.augmentos.livetranslation: language, voice, autoDetect"`
 
@@ -262,7 +262,7 @@ this.logger.info({
 1. Open TPA (e.g., live translation)
 2. Change settings (e.g., target language to Spanish)
 3. Verify settings work (translation shows Spanish)
-4. Stop the TPA  
+4. Stop the TPA
 5. Restart the TPA
 6. **BUG**: Settings reset to defaults (English)
 
@@ -290,7 +290,7 @@ this.logger.info({
 
 #### **App Settings Schema** (Used as defaults):
 ```javascript
-// In apps collection  
+// In apps collection
 {
   packageName: "dev.augmentos.livetranslation",
   settings: [
@@ -317,7 +317,7 @@ this.logger.info({
 #### **User Experience**:
 
 1. ✅ User changes settings via UI → **Saved correctly**
-2. ✅ Settings appear to work → **While TPA stays connected**  
+2. ✅ Settings appear to work → **While TPA stays connected**
 3. ❌ TPA restarts/reconnects → **Gets defaults instead of user values**
 4. ❌ **User's customizations lost** → Appears settings "don't save"
 
@@ -325,7 +325,7 @@ this.logger.info({
 
 #### **Current User Experience**:
 - ❌ Settings reset on every TPA restart/reconnection
-- ❌ Users have to reconfigure settings frequently  
+- ❌ Users have to reconfigure settings frequently
 - ❌ Settings appear to "not save" from user perspective
 - ❌ Inconsistent behavior between settings UI and TPA connections
 - ❌ Poor user experience with customizations lost

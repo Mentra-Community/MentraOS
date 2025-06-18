@@ -44,7 +44,7 @@ Copy the basic project structure from the [Quickstart](/quickstart) if you haven
 The full source code is shown first, followed by a step-by-step explanation.
 
 ```typescript title="src/index.ts"
-import { TpaServer, TpaSession } from "@augmentos/sdk";
+import { AppServer, AppSession } from "@augmentos/sdk";
 
 /**
  * A custom keyword that triggers our action once detected in speech
@@ -55,7 +55,7 @@ const ACTIVATION_PHRASE = "computer";
  * VoiceActivationServer – an App that listens for final transcriptions and
  * reacts when the user utters the ACTIVATION_PHRASE.
  */
-class VoiceActivationServer extends TpaServer {
+class VoiceActivationServer extends AppServer {
   /**
    * onSession is called automatically whenever a user connects.
    *
@@ -64,7 +64,7 @@ class VoiceActivationServer extends TpaServer {
    * @param userId    – AugmentOS user identifier
    */
   protected async onSession(
-    session: TpaSession,
+    session: AppSession,
     sessionId: string,
     userId: string,
   ): Promise<void> {

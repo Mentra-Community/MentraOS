@@ -36,18 +36,18 @@ import { DashboardManager } from './dashboard';
 
 class TpaSession {
   private _dashboard: DashboardManager;
-  
+
   constructor(config: TpaSessionConfig) {
     // Other initialization...
-    
+
     // Create a dashboard instance specific to this session with the bound send function
     this._dashboard = new DashboardManager(this, this.send.bind(this));
   }
-  
+
   get dashboard(): DashboardManager {
     return this._dashboard;
   }
-  
+
   // Rest of class...
 }
 ```
@@ -56,11 +56,11 @@ class TpaSession {
 // In packages/sdk/src/tpa/session/dashboard.ts
 export class DashboardManager {
   private session: TpaSession;
-  
-  constructor(session: TpaSession, send: (message: TpaToCloudMessage) => void) {
+
+  constructor(session: TpaSession, send: (message: AppToCloudMessage) => void) {
     this.session = session;
   }
-  
+
   // Implement dashboard APIs using the parent session for context
   // ...
 }

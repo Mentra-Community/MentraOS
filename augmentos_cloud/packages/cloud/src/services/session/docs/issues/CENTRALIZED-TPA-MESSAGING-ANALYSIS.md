@@ -6,12 +6,12 @@ All of these locations currently use the scattered `userSession.appWebsockets.ge
 
 ### **High Priority - Replace Immediately**
 
-#### **1. Transcription Service** 
+#### **1. Transcription Service**
 **File**: `packages/cloud/src/services/processing/transcription.service.ts:488-501`
 - **Data**: Transcription/Translation results (JSON)
 - **Current Pattern**: `userSession.appWebsockets.get(packageName)` + `readyState === 1` check
 - **Error Handling**: Logs "TPA not connected" if websocket unavailable
-- **Message Type**: `CloudToTpaMessageType.DATA_STREAM`
+- **Message Type**: `CloudToAppMessageType.DATA_STREAM`
 - **Frequency**: Medium (per speech segment)
 
 #### **2. Video Manager**
@@ -59,12 +59,12 @@ All of these locations currently use the scattered `userSession.appWebsockets.ge
 - **Data**: App stopped notifications (JSON)
 - **Current Pattern**: `userSession.appWebsockets` iteration + `readyState === WebSocket.OPEN` check
 - **Error Handling**: Logs error on send failure
-- **Message Type**: `CloudToTpaMessageType.APP_STOPPED`
+- **Message Type**: `CloudToAppMessageType.APP_STOPPED`
 - **Frequency**: Very low (session cleanup only)
 
 ### **Special Case - Keep Direct Access for Performance**
 
-#### **8. Audio Manager** 
+#### **8. Audio Manager**
 **File**: `packages/cloud/src/services/session/AudioManager.ts:369-376`
 - **Data**: Raw audio data (binary chunks)
 - **Current Pattern**: `userSession.appWebsockets.get(packageName)` + `readyState === WebSocket.OPEN` check
@@ -135,7 +135,7 @@ async sendMessageToTpa(packageName: string, message: any): Promise<{
 
 ### **Phase 2: Replace JSON Message Sending**
 1. Replace TranscriptionService TPA messaging
-2. Replace VideoManager TPA messaging  
+2. Replace VideoManager TPA messaging
 3. Replace PhotoManager TPA messaging
 4. Replace SubscriptionService TPA messaging
 5. Replace route-based TPA messaging

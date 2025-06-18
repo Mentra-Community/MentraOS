@@ -7,7 +7,7 @@ import WebSocket from 'ws';
 import crypto from 'crypto';
 import {
   CloudToGlassesMessageType,
-  CloudToTpaMessageType,
+  CloudToAppMessageType,
   RtmpStreamStatus,      // SDK type for status from glasses
   KeepAliveAck,          // SDK type for ACK from glasses
   StartRtmpStream,       // SDK type for command to glasses
@@ -66,12 +66,12 @@ export class VideoManager {
    */
   async startRtmpStream(request: RtmpStreamRequest): Promise<string> {
     const { packageName, rtmpUrl, video, audio, stream: streamOptions } = request;
-    this.logger.info({ 
+    this.logger.info({
       debugKey: 'RTMP_STREAM_START_REQUEST',
-      packageName, 
-      rtmpUrl, 
-      hasVideo: !!video, 
-      hasAudio: !!audio, 
+      packageName,
+      rtmpUrl,
+      hasVideo: !!video,
+      hasAudio: !!audio,
       hasStreamOptions: !!streamOptions,
       currentActiveStreams: this.activeSessionStreams.size,
       sessionId: this.userSession.sessionId,
@@ -90,10 +90,10 @@ export class VideoManager {
     }
 
     const streamId = crypto.randomUUID();
-    
+
     // Stop any existing stream for this app (simple policy)
     this.stopStreamsByPackageName(packageName);
-    
+
     const now = new Date();
     const streamInfo: SessionStreamInfo = {
       streamId,
@@ -106,10 +106,10 @@ export class VideoManager {
       missedAcks: 0,
       options: { video, audio, stream: streamOptions },
     };
-    
+
     this.activeSessionStreams.set(streamId, streamInfo);
     this.scheduleKeepAlive(streamId);
-    
+
     // Send start command to glasses
     const startMessage: StartRtmpStream = {
       type: CloudToGlassesMessageType.START_RTMP_STREAM,
@@ -125,47 +125,47 @@ export class VideoManager {
 
     try {
       const messageSize = JSON.stringify(startMessage).length;
-      this.logger.debug({ 
+      this.logger.debug({
         debugKey: 'RTMP_STREAM_SEND_START_CMD',
-        streamId, 
-        messageSize, 
+        streamId,
+        messageSize,
         packageName,
         rtmpUrl,
         sessionId: this.userSession.sessionId
       }, 'RTMP_STREAM_SEND_START_CMD: VideoManager sending START_RTMP_STREAM message to glasses');
-      
+
       this.userSession.websocket.send(JSON.stringify(startMessage));
-      this.logger.info({ 
+      this.logger.info({
         debugKey: 'RTMP_STREAM_START_CMD_SENT',
-        streamId, 
-        packageName, 
+        streamId,
+        packageName,
         rtmpUrl,
         sessionId: this.userSession.sessionId
       }, 'RTMP_STREAM_START_CMD_SENT: VideoManager ✅ START_RTMP_STREAM successfully sent to glasses');
-      
+
       // Tell TPA we're starting (but not active yet)
-      this.logger.debug({ 
+      this.logger.debug({
         debugKey: 'RTMP_STREAM_NOTIFY_TPA_INIT',
         streamId,
         sessionId: this.userSession.sessionId
       }, 'RTMP_STREAM_NOTIFY_TPA_INIT: VideoManager notifying TPA that stream is initializing');
       await this.sendStreamStatusToTpa(streamId, 'initializing');
     } catch (error) {
-      this.logger.error({ 
+      this.logger.error({
         debugKey: 'RTMP_STREAM_START_CMD_FAIL',
-        error, 
-        streamId, 
+        error,
+        streamId,
         packageName,
         sessionId: this.userSession.sessionId
       }, 'RTMP_STREAM_START_CMD_FAIL: VideoManager ❌ Failed to send START_RTMP_STREAM to glasses');
       this.stopTracking(streamId);
       throw error;
     }
-    
-    this.logger.info({ 
+
+    this.logger.info({
       debugKey: 'RTMP_STREAM_TRACKING_STARTED',
-      streamId, 
-      packageName, 
+      streamId,
+      packageName,
       rtmpUrl,
       sessionId: this.userSession.sessionId
     }, 'RTMP_STREAM_TRACKING_STARTED: VideoManager 🎬 RTMP stream tracking started successfully');
@@ -181,15 +181,15 @@ export class VideoManager {
       this.logger.info({ streamId, oldStatus: stream.status, newStatus: status }, 'Updating stream status');
       stream.status = status;
       stream.lastKeepAlive = new Date();
-      
+
       // Tell TPA about status change
       await this.sendStreamStatusToTpa(streamId, status);
-      
+
       // If stream becomes active, ensure keep-alive is running
       if (status === 'active' && !stream.keepAliveTimer) {
         this.scheduleKeepAlive(streamId);
       }
-      
+
       // If stream is stopped or timed out, stop tracking
       if (status === 'stopped' || status === 'timeout') {
         this.stopTracking(streamId);
@@ -206,18 +206,18 @@ export class VideoManager {
     const stream = this.activeSessionStreams.get(streamId);
     if (stream) {
       this.logger.info({ streamId }, 'Stopping stream tracking');
-      
+
       // Cancel keep-alive timer
       if (stream.keepAliveTimer) {
         clearInterval(stream.keepAliveTimer);
       }
-      
+
       // Cancel all pending ACK timeouts
       for (const [, ackInfo] of stream.pendingAcks) {
         clearTimeout(ackInfo.timeout);
       }
       stream.pendingAcks.clear();
-      
+
       this.activeSessionStreams.delete(streamId);
     }
   }
@@ -384,12 +384,12 @@ export class VideoManager {
   handleRtmpStreamStatus(statusMessage: RtmpStreamStatus): void {
     const { streamId, status } = statusMessage;
     this.logger.debug({ streamId, status, debugKey: "RTMP_STREAM_STATUS" }, 'RTMP_STREAM_STATUS Handling RTMP stream status update');
-    
+
     if (!streamId) {
       this.logger.warn({ statusMessage }, 'Received status message without streamId');
       return;
     }
-    
+
     const stream = this.activeSessionStreams.get(streamId);
     if (!stream) {
       this.logger.warn({ streamId, status }, 'Received status for unknown stream');
@@ -398,14 +398,14 @@ export class VideoManager {
 
     // Update last activity time
     stream.lastKeepAlive = new Date();
-    
+
     // Map glasses status to our status types
     let mappedStatus: SessionStreamInfo['status'];
     if (!status) {
       this.logger.warn({ streamId }, 'Received status message without status value');
       return;
     }
-    
+
     switch (status) {
       case 'initializing':
       case 'connecting':
@@ -433,7 +433,7 @@ export class VideoManager {
         break;
         // mappedStatus = 'timeout';
     }
-    
+
     // Update status based on glasses feedback
     this.updateStatus(streamId, mappedStatus);
   }
@@ -494,7 +494,7 @@ export class VideoManager {
 
     // Direct message to the TPA that owns the stream
     const tpaOwnerMessage = {
-      type: CloudToTpaMessageType.RTMP_STREAM_STATUS,
+      type: CloudToAppMessageType.RTMP_STREAM_STATUS,
       sessionId: `${this.userSession.sessionId}-${packageName}`,
       streamId,
       status, // The SDK status string
@@ -507,28 +507,28 @@ export class VideoManager {
     // Send status to owning TPA using centralized messaging
     try {
       const result = await this.userSession.appManager.sendMessageToTpa(packageName, tpaOwnerMessage);
-      
+
       if (result.sent) {
-        this.logger.debug({ 
-          streamId, 
-          status, 
+        this.logger.debug({
+          streamId,
+          status,
           target: packageName,
           resurrectionTriggered: result.resurrectionTriggered
         }, `Sent RTMP status to owning TPA ${packageName}${result.resurrectionTriggered ? ' after resurrection' : ''}`);
       } else {
-        this.logger.warn({ 
-          streamId, 
-          status, 
+        this.logger.warn({
+          streamId,
+          status,
           target: packageName,
           resurrectionTriggered: result.resurrectionTriggered,
           error: result.error
         }, `Failed to send RTMP status to owning TPA ${packageName}`);
       }
     } catch (error) {
-      this.logger.error({ 
+      this.logger.error({
         error: error instanceof Error ? error.message : String(error),
-        streamId, 
-        target: packageName 
+        streamId,
+        target: packageName
       }, `Error sending RTMP status to owning TPA ${packageName}`);
     }
 

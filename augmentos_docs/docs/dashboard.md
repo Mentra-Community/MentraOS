@@ -8,7 +8,7 @@ title: Dashboard
 
 The **dashboard** is a persistent UI surface that AugmentOS renders on the smart-glasses when the user looks up.  It can show system information (time, battery, status) and content contributed by apps.  Your app can treat the dashboard as an additional, lightweight display surface that remains visible even when other apps are in the foreground.
 
-AugmentOS exposes a high-level *Dashboard API* through `TpaSession`.  You do **not** need to manage WebSocket messages or layouts manually—the SDK takes care of that.  All you have to do is call a few convenience methods on `session.dashboard.content`.
+AugmentOS exposes a high-level *Dashboard API* through `AppSession`.  You do **not** need to manage WebSocket messages or layouts manually—the SDK takes care of that.  All you have to do is call a few convenience methods on `session.dashboard.content`.
 
 ## Dashboard Modes
 
@@ -28,10 +28,10 @@ When you write to the dashboard you can choose which mode(s) the content targets
 ## Hello-Dashboard in 3 Steps
 
 ```typescript title="packages/apps/hello-dashboard/src/index.ts"
-import { TpaServer, TpaSession, DashboardMode } from '@augmentos/sdk';
+import { AppServer, AppSession, DashboardMode } from '@augmentos/sdk';
 
-class HelloDashboardServer extends TpaServer {
-  protected async onSession(session: TpaSession, sessionId: string, userId: string) {
+class HelloDashboardServer extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
     // 1️⃣  Write a welcome message to the *main* dashboard
     session.dashboard.content.writeToMain('👋 Hello from my app!');
 

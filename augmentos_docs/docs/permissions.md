@@ -8,7 +8,7 @@ When you build an AugmentOS app, you must declare which permissions your app req
 
 ```typescript
 // Example: Your app automatically receives permission information in session
-protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
   // Subscribe to transcription events (requires MICROPHONE permission)
   session.events.onTranscription((data) => {
     console.log('User said:', data.text);

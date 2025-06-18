@@ -62,7 +62,7 @@ const sidebars: SidebarsConfig = {
         'webview-auth-overview',
         {
           type: 'doc',
-          id: 'tpa-lifecycle',
+          id: 'app-lifecycle',
           label: 'App Lifecycle',
         },
         'dashboard'
@@ -76,8 +76,8 @@ const sidebars: SidebarsConfig = {
         id: 'reference/index',
       },
       items: [
-        'reference/tpa-server',
-        'reference/tpa-session',
+        'reference/app-server',
+        'reference/app-session',
         {
           type: 'category',
           label: 'Managers',

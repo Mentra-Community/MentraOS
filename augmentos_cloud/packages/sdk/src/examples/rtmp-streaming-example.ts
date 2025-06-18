@@ -1,19 +1,19 @@
 /**
  * RTMP Streaming Example
- * 
+ *
  * This example demonstrates how to use the AugmentOS SDK to request
  * and manage RTMP streaming from smart glasses.
  */
 import { RtmpStreamStatus } from 'src/types';
-import { TpaSession } from '../tpa/session';
+import { AppSession } from '../tpa/session';
 // import type { StreamStatus } from '../tpa/session/modules/streaming';
 
 // Initialize TPA session
-const session = new TpaSession({
+const session = new AppSession({
   packageName: 'com.example.streaming-demo',
   apiKey: 'your-api-key',
   userId: 'example-user@example.com',
-  tpaServer: {} as any, // In a real app, this would be a TpaServer instance
+  appServer: {} as any, // In a real app, this would be a AppServer instance
   // In a real app, this would be the production server URL
   augmentOSWebsocketUrl: 'ws://localhost:8002/tpa-ws'
 });
@@ -24,13 +24,13 @@ async function startApp() {
     // Connect with a session ID
     await session.connect('streaming-demo-session');
     console.log('Connected to AugmentOS Cloud');
-    
+
     // Set up status handler
     setupStreamStatusHandler();
-    
+
     // Request a stream
     await requestStream();
-    
+
     // After some time, stop the stream
     setTimeout(stopStream, 60000); // 1 minute
   } catch (error) {
@@ -43,7 +43,7 @@ function setupStreamStatusHandler() {
   // Register a handler for stream status updates
   const cleanup = session.streaming.onStatus((status: RtmpStreamStatus) => {
     console.log(`Stream status: ${status.status}`);
-    
+
     // Log detailed information if available
     if (status.stats) {
       console.log(`Stream stats:
@@ -53,7 +53,7 @@ function setupStreamStatusHandler() {
         Duration: ${status.stats.duration} seconds
       `);
     }
-    
+
     // Handle different status types
     switch (status.status) {
       case 'initializing':
@@ -74,7 +74,7 @@ function setupStreamStatusHandler() {
         break;
     }
   });
-  
+
   // Store the cleanup function somewhere if you need to unregister later
   // For this example, we'll just let it run for the lifetime of the app
 }
@@ -92,7 +92,7 @@ async function requestStream() {
         frameRate: 30
       }
     });
-    
+
     console.log('Stream request sent successfully');
   } catch (error) {
     console.error('Error requesting stream:', error);

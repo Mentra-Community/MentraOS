@@ -1,11 +1,11 @@
-// TODO: 
+// TODO:
 /**
  * Dashboard API Types
- * 
+ *
  * Type definitions for the dashboard functionality in the SDK.
  */
 import { Layout } from '../layouts';
-import { TpaToCloudMessageType } from '../message-types';
+import { AppToCloudMessageType } from '../message-types';
 
 /**
  * Dashboard modes supported by the system
@@ -25,25 +25,25 @@ export interface DashboardSystemAPI {
    * @param content Content to display
    */
   setTopLeft(content: string): void;
-  
+
   /**
    * Set content for the top right section of the dashboard
    * @param content Content to display
    */
   setTopRight(content: string): void;
-  
+
   /**
    * Set content for the bottom left section of the dashboard
    * @param content Content to display
    */
   setBottomLeft(content: string): void;
-  
+
   /**
    * Set content for the bottom right section of the dashboard
    * @param content Content to display
    */
   setBottomRight(content: string): void;
-  
+
   /**
    * Set the current dashboard mode
    * @param mode Dashboard mode to set
@@ -61,44 +61,44 @@ export interface DashboardContentAPI {
    * @param targets Optional list of dashboard modes to target
    */
   write(content: string, targets?: DashboardMode[]): void;
-  
+
   /**
    * Write content to main dashboard mode
    * @param content Content to display
    */
   writeToMain(content: string): void;
-  
+
   /**
    * Write content to expanded dashboard mode
    * @param content Text content to display
    */
   writeToExpanded(content: string): void;
-  
+
   /**
    * Write content to always-on dashboard mode
    * @param content Content to display
    */
   // writeToAlwaysOn(content: string): void;
-  
+
   /**
    * Get current active dashboard mode
    * @returns Promise resolving to current mode or 'none'
    */
   getCurrentMode(): Promise<DashboardMode | 'none'>;
-  
+
   /**
    * Check if always-on dashboard is enabled
    * @returns Promise resolving to boolean
    */
   // isAlwaysOnEnabled(): Promise<boolean>;
-  
+
   /**
    * Register for mode change notifications
    * @param callback Function to call when mode changes
    * @returns Cleanup function to unregister callback
    */
   onModeChange(callback: (mode: DashboardMode | 'none') => void): () => void;
-  
+
   /**
    * Register for always-on mode change notifications
    * @param callback Function to call when always-on mode changes
@@ -108,14 +108,14 @@ export interface DashboardContentAPI {
 }
 
 /**
- * Dashboard API exposed on TpaSession
+ * Dashboard API exposed on AppSession
  */
 export interface DashboardAPI {
   /**
    * System dashboard API (only available for system dashboard TPA)
    */
   system?: DashboardSystemAPI;
-  
+
   /**
    * Content API (available to all TPAs)
    */
@@ -126,7 +126,7 @@ export interface DashboardAPI {
  * Message to update dashboard content
  */
 export interface DashboardContentUpdate {
-  type: TpaToCloudMessageType.DASHBOARD_CONTENT_UPDATE;
+  type: AppToCloudMessageType.DASHBOARD_CONTENT_UPDATE;
   packageName: string;
   sessionId: string;
   content: string;
@@ -138,7 +138,7 @@ export interface DashboardContentUpdate {
  * Message for dashboard mode change
  */
 export interface DashboardModeChange {
-  type: TpaToCloudMessageType.DASHBOARD_MODE_CHANGE;
+  type: AppToCloudMessageType.DASHBOARD_MODE_CHANGE;
   packageName: string;
   sessionId: string;
   mode: DashboardMode;
@@ -149,7 +149,7 @@ export interface DashboardModeChange {
  * Message to update system dashboard content
  */
 export interface DashboardSystemUpdate {
-  type: TpaToCloudMessageType.DASHBOARD_SYSTEM_UPDATE;
+  type: AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE;
   packageName: string;
   sessionId: string;
   section: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
@@ -160,7 +160,7 @@ export interface DashboardSystemUpdate {
 /**
  * Union type of all dashboard message types
  */
-export type DashboardMessage = 
-  | DashboardContentUpdate 
+export type DashboardMessage =
+  | DashboardContentUpdate
   | DashboardModeChange
   | DashboardSystemUpdate;

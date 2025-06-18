@@ -1,20 +1,20 @@
 ---
 sidebar_position: 2
-title: TpaServer
+title: AppServer
 ---
 
-# TpaServer
+# AppServer
 
-`TpaServer` is the base class for creating Third Party Application (app) servers that handle webhook requests from AugmentOS Cloud to manage app sessions.
+`AppServer` is the base class for creating Third Party Application (app) servers that handle webhook requests from AugmentOS Cloud to manage app sessions.
 
 ```typescript
-import { TpaServer } from '@augmentos/sdk';
+import { AppServer } from '@augmentos/sdk';
 ```
 
 ## Constructor
 
 ```typescript
-constructor(config: TpaServerConfig)
+constructor(config: AppServerConfig)
 ```
 
 **Parameters:**
@@ -38,14 +38,14 @@ Override this method to handle the initiation of a new app session when a user s
 
 ```typescript
 protected onSession(
-  session: TpaSession,
+  session: AppSession,
   sessionId: string,
   userId: string
 ): Promise<void>
 ```
 
 **Parameters:**
-- `session`: The [`TpaSession`](/reference/tpa-session) instance for this specific user session
+- `session`: The [`AppSession`](/reference/app-session) instance for this specific user session
 - `sessionId`: The unique identifier for this session
 - `userId`: The unique identifier for the user
 
@@ -162,7 +162,7 @@ protected addCleanupHandler(handler: () => void): void
 ## Configuration
 
 ```typescript
-interface TpaServerConfig {
+interface AppServerConfig {
   /** Your unique app identifier (e.g., 'org.company.appname'). Must match console.augmentos.org. */
   packageName: string;
 

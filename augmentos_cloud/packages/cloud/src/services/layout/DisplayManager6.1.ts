@@ -1,5 +1,5 @@
 import { systemApps } from '../core/system-apps';
-import { ActiveDisplay, Layout, DisplayRequest, TpaToCloudMessageType, ViewType, LayoutType } from '@augmentos/sdk';
+import { ActiveDisplay, Layout, DisplayRequest, AppToCloudMessageType, ViewType, LayoutType } from '@augmentos/sdk';
 import { logger as rootLogger } from '../logging/pino-logger';
 import { Logger } from 'pino';
 import { WebSocket } from 'ws';
@@ -80,9 +80,9 @@ class DisplayManager {
     const app = this.userSession.installedApps.get(packageName);
 
     if (app && app.tpaType === 'standard') {
-      this.mainApp = packageName; 
+      this.mainApp = packageName;
       this.logger.info({ mainApp: this.mainApp }, `[${this.userSession.userId}] Setting main app to ${this.mainApp}`);
-    } 
+    }
 
     // Don't show boot screen for dashboard
     if (packageName === systemApps.dashboard.packageName) {
@@ -186,7 +186,7 @@ class DisplayManager {
       const savedAppName = this.displayState.savedDisplayBeforeBoot.displayRequest.packageName;
       // const isAppStillRunning = this.userSession.activeAppSessions.includes(savedAppName);
       const isAppStillRunning = this.userSession.runningApps.has(savedAppName);
-      
+
       // Check if the saved display is still valid using our enhanced check
       const isSavedDisplayValid = this.hasRemainingDuration(this.displayState.savedDisplayBeforeBoot);
 
@@ -325,7 +325,7 @@ class DisplayManager {
         this.logger.info({ packageName: displayRequest.packageName }, `[${this.userSession.userId}] ✅ Background not displaying or core app has the lock, showing core app`);
         return this.showDisplay(activeDisplay);
       }
-      
+
       this.logger.info({ packageName: displayRequest.packageName, blockingApp: this.displayState.backgroundLock?.packageName }, `[${this.userSession.userId}] ❌ Background app is displaying, core app blocked by ${this.displayState.backgroundLock?.packageName}`);
       return false;
     }
@@ -512,7 +512,7 @@ class DisplayManager {
       // Check if the app with the lock is still active/running
       // const isLockHolderStillRunning = this.userSession?.activeAppSessions.includes(packageName);
       const isLockHolderStillRunning = this.userSession.runningApps.has(packageName);
-      
+
       // Check if lock should be released due to inactivity or app being stopped
       if (!isLockHolderStillRunning) {
         this.logger.info({ packageName }, `[${this.getUserId()}] 🔓 Releasing lock because app is no longer running: ${packageName}`);
@@ -637,7 +637,7 @@ class DisplayManager {
     });
 
     const bootRequest: DisplayRequest = {
-      type: TpaToCloudMessageType.DISPLAY_REQUEST,
+      type: AppToCloudMessageType.DISPLAY_REQUEST,
       view: ViewType.MAIN,
       packageName: systemApps.dashboard.packageName,
       layout: {
@@ -662,7 +662,7 @@ class DisplayManager {
     }
 
     const clearRequest: DisplayRequest = {
-      type: TpaToCloudMessageType.DISPLAY_REQUEST,
+      type: AppToCloudMessageType.DISPLAY_REQUEST,
       view: viewName as ViewType,
       packageName: systemApps.dashboard.packageName,
       layout: {

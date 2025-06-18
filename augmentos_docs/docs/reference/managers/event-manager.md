@@ -5,12 +5,12 @@ title: EventManager
 
 # EventManager
 
-The `EventManager` handles event subscriptions and dispatching within a [`TpaSession`](/reference/tpa-session). It provides methods for subscribing to various event types from the AugmentOS platform.
+The `EventManager` handles event subscriptions and dispatching within a [`AppSession`](/reference/app-session). It provides methods for subscribing to various event types from the AugmentOS platform.
 
-You access the EventManager through the `events` property of a [`TpaSession`](/reference/tpa-session) instance:
+You access the EventManager through the `events` property of a [`AppSession`](/reference/app-session) instance:
 
 ```typescript
-const eventManager = tpaSession.events;
+const eventManager = appSession.events;
 ```
 
 ## Event Handler Methods
@@ -30,7 +30,7 @@ onTranscription(handler: (data: TranscriptionData) => void): () => void
 
 **Example:**
 ```typescript
-const unsubscribe = tpaSession.events.onTranscription((data) => {
+const unsubscribe = appSession.events.onTranscription((data) => {
   console.log(`Transcription: ${data.text}, Final: ${data.isFinal}`);
   if (data.isFinal) {
     // Process the final transcription
@@ -56,7 +56,7 @@ onHeadPosition(handler: (data: HeadPosition) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onHeadPosition((data) => {
+appSession.events.onHeadPosition((data) => {
   if (data.position === 'up') {
     console.log('User looked up');
   } else if (data.position === 'down') {
@@ -80,7 +80,7 @@ onButtonPress(handler: (data: ButtonPress) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onButtonPress((data) => {
+appSession.events.onButtonPress((data) => {
   console.log(`Button ${data.buttonId} was ${data.pressType} pressed`);
 });
 ```
@@ -100,7 +100,7 @@ onPhoneNotifications(handler: (data: PhoneNotification) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onPhoneNotifications((data) => {
+appSession.events.onPhoneNotifications((data) => {
   console.log(`Notification from ${data.app}: ${data.title} - ${data.content}`);
 });
 ```
@@ -120,7 +120,7 @@ onGlassesBattery(handler: (data: GlassesBatteryUpdate) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onGlassesBattery((data) => {
+appSession.events.onGlassesBattery((data) => {
   console.log(`Glasses battery: ${data.level}%, Charging: ${data.charging}`);
 });
 ```
@@ -153,7 +153,7 @@ onVoiceActivity(handler: (data: Vad) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onVoiceActivity((data) => {
+appSession.events.onVoiceActivity((data) => {
   if (data.status === true || data.status === "true") {
     console.log('User is speaking');
   } else {
@@ -177,7 +177,7 @@ onLocation(handler: (data: LocationUpdate) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onLocation((data) => {
+appSession.events.onLocation((data) => {
   console.log(`Location updated: Lat ${data.lat}, Lng ${data.lng}`);
 });
 ```
@@ -208,7 +208,7 @@ onAudioChunk(handler: (data: AudioChunk) => void): () => void
 
 **Returns:** An unsubscribe function to remove the handler
 
-**Note:** Audio chunks require an explicit subscription using `tpaSession.subscribe([`StreamType.AUDIO_CHUNK`](/reference/enums#streamtype))`.
+**Note:** Audio chunks require an explicit subscription using `appSession.subscribe([`StreamType.AUDIO_CHUNK`](/reference/enums#streamtype))`.
 
 ## System Event Handlers
 
@@ -227,7 +227,7 @@ onConnected(handler: (data: AppSettings | undefined) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onConnected((settings) => {
+appSession.events.onConnected((settings) => {
   console.log('Connected to AugmentOS Cloud');
   if (settings) {
     console.log('Initial settings received:', settings);
@@ -250,7 +250,7 @@ onDisconnected(handler: (reason: string) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onDisconnected((reason) => {
+appSession.events.onDisconnected((reason) => {
   console.log(`Disconnected from AugmentOS Cloud. Reason: ${reason}`);
 });
 ```
@@ -270,7 +270,7 @@ onError(handler: (error: WebSocketError | Error) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onError((error) => {
+appSession.events.onError((error) => {
   console.error('Error in TPA session:', error);
 });
 ```
@@ -290,7 +290,7 @@ onSettingsUpdate(handler: (settings: AppSettings) => void): () => void
 
 **Example:**
 ```typescript
-tpaSession.events.onSettingsUpdate((settings) => {
+appSession.events.onSettingsUpdate((settings) => {
   console.log('Settings updated:', settings);
 });
 ```
@@ -301,7 +301,7 @@ Registers a handler that triggers only when a specific setting's value changes.
 
 ```typescript
 onSettingChange<T>(
-  key: string, 
+  key: string,
   handler: (value: T, previousValue: T | undefined) => void
 ): () => void
 ```
@@ -314,7 +314,7 @@ onSettingChange<T>(
 
 **Example:**
 ```typescript
-tpaSession.events.onSettingChange<boolean>('enableNotifications', (newValue, oldValue) => {
+appSession.events.onSettingChange<boolean>('enableNotifications', (newValue, oldValue) => {
   console.log(`enableNotifications changed from ${oldValue} to ${newValue}`);
   if (newValue) {
     // Enable notification features
@@ -332,7 +332,7 @@ Generic event handler for any StreamType. Use specific methods above where possi
 
 ```typescript
 on<T extends StreamType>(
-  type: T, 
+  type: T,
   handler: (data: StreamDataTypes[T]) => void
 ): () => void
 ```
@@ -348,13 +348,13 @@ on<T extends StreamType>(
 import { StreamType } from '@augmentos/sdk';
 
 // Subscribe to a specific stream type
-tpaSession.events.on(StreamType.LOCATION_UPDATE, (data) => {
+appSession.events.on(StreamType.LOCATION_UPDATE, (data) => {
   console.log(`Location update: ${data.lat}, ${data.lng}`);
 });
 
 // Using a language-specific stream
 const transcriptionStream = createTranscriptionStream('en-US');
-tpaSession.events.on(transcriptionStream, (data) => {
+appSession.events.on(transcriptionStream, (data) => {
   console.log(`English transcription: ${data.text}`);
 });
-``` 
+```

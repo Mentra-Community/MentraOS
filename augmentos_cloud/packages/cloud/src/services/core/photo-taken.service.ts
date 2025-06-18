@@ -4,7 +4,7 @@ import { logger as rootLogger } from "../logging";
 // import { ExtendedUserSession } from "./session.service";
 import { UserSession } from "../session/UserSession";
 import { subscriptionService } from "../session/subscription.service";
-import { StreamType, CloudToTpaMessageType } from "@augmentos/sdk";
+import { StreamType, CloudToAppMessageType } from "@augmentos/sdk";
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -74,7 +74,7 @@ class PhotoTakenService {
 
     // Create the photo taken message
     const message = {
-      type: CloudToTpaMessageType.DATA_STREAM,
+      type: CloudToAppMessageType.DATA_STREAM,
       streamType: StreamType.PHOTO_TAKEN,
       data: {
         photoData: base64Data,

@@ -1,21 +1,21 @@
 ---
 sidebar_position: 3
-title: TpaSession
+title: AppSession
 ---
 
 
-# TpaSession
+# AppSession
 
-`TpaSession` (also known as `TpaClient` in older documentation) manages an active WebSocket connection (session) between an app instance and AugmentOS Cloud. It handles event subscriptions, layout display, and connection management for a single user session.
+`AppSession` (also known as `AppClient` in older documentation) manages an active WebSocket connection (session) between an app instance and AugmentOS Cloud. It handles event subscriptions, layout display, and connection management for a single user session.
 
 ```typescript
-import { TpaSession } from '@augmentos/sdk';
+import { AppSession } from '@augmentos/sdk';
 ```
 
 ## Constructor
 
 ```typescript
-constructor(config: TpaSessionConfig)
+constructor(config: AppSessionConfig)
 ```
 
 **Parameters:**
@@ -69,11 +69,11 @@ The logger is automatically configured with session context including:
 - `userId`: The current user's identifier
 - `packageName`: Your app's package name
 - `sessionId`: The current session identifier
-- `service`: Set to 'tpa-session'
+- `service`: Set to 'app-session'
 
 **Example:**
 ```typescript
-protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
   // The logger automatically includes session context
   session.logger.info('Session started successfully');
   session.logger.debug('Detailed debug information', { additionalData: 'value' });
@@ -263,14 +263,14 @@ setSubscriptionSettings(options: {
 ## Configuration
 
 ```typescript
-interface TpaSessionConfig {
+interface AppSessionConfig {
   /** Your unique app identifier (e.g., 'org.company.appname'). */
   packageName: string;
 
   /** Your API key for authentication. */
   apiKey: string;
 
-  /** The WebSocket URL provided by AugmentOS Cloud. Defaults to 'ws://localhost:8002/tpa-ws'. */
+  /** The WebSocket URL provided by AugmentOS Cloud. Defaults to 'ws://localhost:8002/app-ws'. */
   augmentOSWebsocketUrl?: string;
 
   /** Whether the session should automatically attempt to reconnect if the connection drops. Defaults to `false`. */

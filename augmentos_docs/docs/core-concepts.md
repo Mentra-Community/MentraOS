@@ -20,7 +20,7 @@ A *session* represents the active connection between a user's smart glasses and 
 *   **App Association:** When a user starts your app, a new session is created specifically for that user and your app.
 *   **Lifecycle:** Sessions are created when a user starts your app and are terminated when the user stops the app, the glasses disconnect, or an error occurs.
 
-The [`TpaSession`](/reference/tpa-session) class in the SDK provides methods for interacting with a session.
+The [`AppSession`](/reference/app-session) class in the SDK provides methods for interacting with a session.
 
 ## 3. WebSockets
 
@@ -29,7 +29,7 @@ WebSockets are the primary communication mechanism between:
 *   Your app and AugmentOS Cloud.
 *   AugmentOS Cloud and the smart glasses.
 
-The SDK handles the complexities of WebSocket connections for you. You primarily interact with the [`TpaSession`](/reference/tpa-session) object, which provides methods for sending and receiving messages.
+The SDK handles the complexities of WebSocket connections for you. You primarily interact with the [`AppSession`](/reference/app-session) object, which provides methods for sending and receiving messages.
 
 ## 4. Events and Data Streams
 
@@ -54,7 +54,7 @@ A typical AugmentOS app lifecycle looks like this:
 4.  **Event Handling:**  Your app receives events from AugmentOS Cloud and processes them. This often involves updating the display using the [`LayoutManager`](/reference/managers/layout-manager).
 5.  **Session Termination:** The session ends when the user stops the app, the glasses disconnect, or an error occurs.
 
-See [App Lifecycle](./tpa-lifecycle) for a more detailed explanation.
+See [App Lifecycle](./app-lifecycle) for a more detailed explanation.
 
 ## 6. Permissions
 
@@ -104,7 +104,7 @@ See the [Webview Authentication](/webview-auth-overview) section for more detail
 
 Your app can provide tools to the Mira AI assistant:
 
-Your app defines tools in the [AugmentOS Developer Console](https://console.augmentos.org/tpas) under the "AI Tools" section.  When a user asks the AI to perform a task related to your app, the AI calls your tools via the `onToolCall` event.  Your app executes the requested action and returns results to the AI.
+Your app defines tools in the [AugmentOS Developer Console](https://console.augmentos.org/apps) under the "AI Tools" section.  When a user asks the AI to perform a task related to your app, the AI calls your tools via the `onToolCall` event.  Your app executes the requested action and returns results to the AI.
 
 This allows users to interact with your app through natural language via the AI assistant. Tool calls don't happen in the context of a session, and your app does not need to be running to respond to a tool call.
 
@@ -132,14 +132,14 @@ Your app interacts with the cloud, but you don't need to worry about the interna
 
 ## 13. Logging
 
-AugmentOS provides structured logging capabilities using [Pino](https://getpino.io/), a fast and low-overhead logging library. Every [`TpaSession`](/reference/tpa-session) includes a pre-configured logger that automatically includes session context.
+AugmentOS provides structured logging capabilities using [Pino](https://getpino.io/), a fast and low-overhead logging library. Every [`AppSession`](/reference/app-session) includes a pre-configured logger that automatically includes session context.
 
 ### Session Logger
 
 Each session has a dedicated logger accessible via `session.logger`:
 
 ```typescript
-protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
   // Logger automatically includes session context
   session.logger.info('Session started', { timestamp: new Date() });
 
@@ -167,7 +167,7 @@ session.logger.warn('Transcription quality low', { confidence: 0.3 });
 session.logger.error(error, 'Failed to save user preferences');
 ```
 
-See the [TPA Session Logger documentation](/reference/tpa-session#logger) for complete API details.
+See the [TPA Session Logger documentation](/reference/app-session#logger) for complete API details.
 
 ---
 

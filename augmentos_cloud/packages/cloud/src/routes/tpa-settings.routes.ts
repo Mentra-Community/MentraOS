@@ -9,7 +9,7 @@ export const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET |
 import appService, { isUninstallable } from '../services/core/app.service';
 import { sessionService } from '../services/session/session.service';
 import { logger as rootLogger } from '../services/logging/pino-logger';
-import { CloudToTpaMessageType, UserSession, AppSetting } from '@augmentos/sdk';
+import { CloudToAppMessageType, UserSession, AppSetting } from '@augmentos/sdk';
 import { Permission } from '@augmentos/sdk';
 
 const router = express.Router();
@@ -280,7 +280,7 @@ router.post('/:tpaName', async (req, res) => {
     // If user has active sessions, send them settings updates via WebSocket
     if (userSession && tpaName !== systemApps.dashboard.packageName && tpaName !== "com.augmentos.dashboard") {
       const settingsUpdate = {
-        type: CloudToTpaMessageType.SETTINGS_UPDATE,
+        type: CloudToAppMessageType.SETTINGS_UPDATE,
         packageName: tpaName,
         sessionId: `${userSession.sessionId}-${tpaName}`,
         settings: updatedSettings,

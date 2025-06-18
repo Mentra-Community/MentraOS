@@ -71,7 +71,7 @@ interface ToolCall {
 
 ## Tool Configuration
 
-Tools are defined in the devloper console.  Go to [console.augmentos.com/tpas](https://console.augmentos.com/tpas) and edit your TPA, then look for the "AI Tools" section.
+Tools are defined in the devloper console.  Go to [console.augmentos.com/apps](https://console.augmentos.com/apps) and edit your TPA, then look for the "AI Tools" section.
 
 ![AI Tools Section](/img/tool-editor.png)
 

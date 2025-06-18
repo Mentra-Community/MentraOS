@@ -25,7 +25,7 @@ A simple layout for displaying a single block of text.
 interface TextWall {
   /** Must be LayoutType.TEXT_WALL. */
   layoutType: LayoutType.TEXT_WALL;
-  
+
   /** The text content to display. */
   text: string;
 }
@@ -40,7 +40,7 @@ const textWall: TextWall = {
 };
 
 // Using the LayoutManager
-tpaSession.layouts.showTextWall("This is a simple text wall with a single message.");
+appSession.layouts.showTextWall("This is a simple text wall with a single message.");
 ```
 
 ## DoubleTextWall
@@ -51,10 +51,10 @@ A layout for displaying two blocks of text vertically.
 interface DoubleTextWall {
   /** Must be LayoutType.DOUBLE_TEXT_WALL. */
   layoutType: LayoutType.DOUBLE_TEXT_WALL;
-  
+
   /** Text for the upper section. */
   topText: string;
-  
+
   /** Text for the lower section. */
   bottomText: string;
 }
@@ -63,7 +63,7 @@ interface DoubleTextWall {
 **Example:**
 ```typescript
 // Using the LayoutManager
-tpaSession.layouts.showDoubleTextWall(
+appSession.layouts.showDoubleTextWall(
   "This is the top section",
   "This is the bottom section"
 );
@@ -77,10 +77,10 @@ A card-style layout with a title and main content text.
 interface ReferenceCard {
   /** Must be LayoutType.REFERENCE_CARD. */
   layoutType: LayoutType.REFERENCE_CARD;
-  
+
   /** The title text for the card. */
   title: string;
-  
+
   /** The main body text for the card. */
   text: string;
 }
@@ -89,7 +89,7 @@ interface ReferenceCard {
 **Example:**
 ```typescript
 // Using the LayoutManager
-tpaSession.layouts.showReferenceCard(
+appSession.layouts.showReferenceCard(
   "Recipe: Chocolate Chip Cookies",
   "Ingredients:\n- 2 cups flour\n- 1 cup sugar\n- 1/2 cup butter\n..."
 );
@@ -103,10 +103,10 @@ A card-style layout designed for displaying key-value pairs, typically used in d
 interface DashboardCard {
   /** Must be LayoutType.DASHBOARD_CARD. */
   layoutType: LayoutType.DASHBOARD_CARD;
-  
+
   /** Text for the left side (usually a label). */
   leftText: string;
-  
+
   /** Text for the right side (usually a value). */
   rightText: string;
 }
@@ -115,7 +115,7 @@ interface DashboardCard {
 **Example:**
 ```typescript
 // Using the LayoutManager
-tpaSession.layouts.showDashboardCard("Temperature", "72°F");
+appSession.layouts.showDashboardCard("Temperature", "72°F");
 ```
 
 ## BitmapView
@@ -126,7 +126,7 @@ A layout for displaying bitmap images.
 interface BitmapView {
   /** Must be LayoutType.BITMAP_VIEW. */
   layoutType: LayoutType.BITMAP_VIEW;
-  
+
   /** Base64 encoded string of the bitmap data. */
   data: string;
 }
@@ -136,7 +136,7 @@ interface BitmapView {
 ```typescript
 // Using the LayoutManager with a base64-encoded image
 const base64Image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...";
-tpaSession.layouts.showBitmapView(base64Image);
+appSession.layouts.showBitmapView(base64Image);
 ```
 
 ## DisplayRequest
@@ -145,21 +145,21 @@ The `DisplayRequest` interface is the message structure sent to AugmentOS Cloud 
 
 ```typescript
 interface DisplayRequest extends BaseMessage {
-  /** Must be TpaToCloudMessageType.DISPLAY_REQUEST. */
-  type: TpaToCloudMessageType.DISPLAY_REQUEST;
-  
+  /** Must be AppToCloudMessageType.DISPLAY_REQUEST. */
+  type: AppToCloudMessageType.DISPLAY_REQUEST;
+
   /** The package name of the TPA making the request. */
   packageName: string;
-  
+
   /** The target display area (MAIN or DASHBOARD). */
   view: ViewType;
-  
+
   /** The specific layout configuration object to display. */
   layout: Layout;
-  
+
   /** Optional time (in ms) to display the layout before automatically clearing it. */
   durationMs?: number;
-  
+
   /** Optional flag to attempt to force display even if another app is active (use with caution). */
   forceDisplay?: boolean;
 }
@@ -196,4 +196,4 @@ interface DisplayRequest extends BaseMessage {
 - Use for visual content like icons, simple diagrams, or charts
 - Keep images simple and high-contrast for readability in AR
 - Consider size and memory impact - optimize images when possible
-- Test on actual hardware to ensure visibility and clarity 
+- Test on actual hardware to ensure visibility and clarity

@@ -34,7 +34,7 @@ export class SessionService {
   getSessionsForUser(userId: string): ExtendedUserSession[];
   markSessionDisconnected(userSession: ExtendedUserSession): void;
   getAudioServiceInfo(sessionId: string): object | null;
-  
+
   // New functionality from WebSocket service
   async handleTranscriptionStart(userSession: ExtendedUserSession): Promise<void>;
   async handleTranscriptionStop(userSession: ExtendedUserSession): Promise<void>;
@@ -77,12 +77,12 @@ export interface ExtendedUserSession extends UserSession {
   loadingApps: Set<string>;
   appConnections: Map<string, WebSocket | any>;
   installedApps: AppI[];
-  
+
   // Manager instances
   subscriptionManager: SubscriptionManager;
   heartbeatManager: HeartbeatManager;
   microphoneManager: MicrophoneManager;
-  
+
   // Timers and additional state
   _reconnectionTimers?: Map<string, NodeJS.Timeout>;
   recentAudioBuffer: { data: ArrayBufferLike; timestamp: number }[];
@@ -97,7 +97,7 @@ The MicrophoneManager encapsulates all microphone-related functionality:
 ```typescript
 export class MicrophoneManager {
   constructor(session: ExtendedUserSession);
-  
+
   // Core functionality
   updateState(isEnabled: boolean, delay?: number): void;
   isEnabled(): boolean;
@@ -105,7 +105,7 @@ export class MicrophoneManager {
   handleSubscriptionChange(): void;
   updateOnboardMicSetting(useOnboardMic: boolean): void;
   dispose(): void;
-  
+
   // Private helpers
   private sendStateChangeToGlasses(isEnabled: boolean): void;
   private updateTranscriptionState(): void;
@@ -120,7 +120,7 @@ export class MicrophoneManager {
 ```typescript
 /**
  * Start transcription for a user session
- * 
+ *
  * @param userSession The user session to start transcription for
  */
 async handleTranscriptionStart(userSession: ExtendedUserSession): Promise<void> {
@@ -141,7 +141,7 @@ async handleTranscriptionStart(userSession: ExtendedUserSession): Promise<void> 
 
 /**
  * Stop transcription for a user session
- * 
+ *
  * @param userSession The user session to stop transcription for
  */
 async handleTranscriptionStop(userSession: ExtendedUserSession): Promise<void> {
@@ -166,7 +166,7 @@ async handleTranscriptionStop(userSession: ExtendedUserSession): Promise<void> {
 ```typescript
 /**
  * Get user settings for a given user ID
- * 
+ *
  * @param userId User ID to get settings for
  * @returns User settings object
  */
@@ -174,34 +174,34 @@ async getUserSettings(userId: string): Promise<Record<string, any>> {
   try {
     // Look up user in database
     const user = await User.findOne({ email: userId });
-    
+
     if (!user) {
       this.logger.warn(`No user found for ID: ${userId}, using default settings`);
       return DEFAULT_AUGMENTOS_SETTINGS;
     }
-    
+
     // Get augmentos settings
     const augmentosSettings = user.getAugmentosSettings();
-    
+
     // Create a settings object combining both augmentOS settings and app settings
     const allSettings: Record<string, any> = {
       ...augmentosSettings
     };
-    
+
     // Get app settings and add them to the response
     if (user.appSettings && user.appSettings.size > 0) {
       // Convert Map to object
       const appSettingsObj: Record<string, any> = {};
-      
+
       for (const [appName, settings] of user.appSettings.entries()) {
         appSettingsObj[appName] = settings;
       }
-      
+
       allSettings.appSettings = appSettingsObj;
     } else {
       allSettings.appSettings = {};
     }
-    
+
     return allSettings;
   } catch (error) {
     this.logger.error(`Error fetching settings for user ${userId}:`, error);
@@ -216,7 +216,7 @@ async getUserSettings(userId: string): Promise<Record<string, any>> {
 ```typescript
 /**
  * Relay a message to all TPAs subscribed to the given stream type
- * 
+ *
  * @param userSession User session containing subscription information
  * @param streamType Type of stream to relay to
  * @param data Data to relay
@@ -225,30 +225,30 @@ relayMessageToTpas(userSession: ExtendedUserSession, streamType: StreamType, dat
   try {
     const sessionId = userSession.sessionId;
     const subscriptionManager = userSession.subscriptionManager;
-    
+
     // Get all TPAs subscribed to this stream type
     const subscribedPackageNames = subscriptionManager.getSubscribers(streamType);
-    
+
     if (subscribedPackageNames.length === 0) {
       return; // No subscribers, nothing to do
     }
-    
+
     userSession.logger.debug(`Relaying ${streamType} to ${subscribedPackageNames.length} TPAs`);
-    
+
     // Create the message to send
     const message = {
-      type: CloudToTpaMessageType.DATA_STREAM,
+      type: CloudToAppMessageType.DATA_STREAM,
       streamType,
       data,
       timestamp: new Date()
     };
-    
+
     const messageStr = JSON.stringify(message);
-    
+
     // Send to each subscribed TPA
     for (const packageName of subscribedPackageNames) {
       const connection = userSession.appConnections.get(packageName);
-      
+
       if (connection && connection.readyState === WebSocket.OPEN) {
         try {
           connection.send(messageStr);
@@ -264,7 +264,7 @@ relayMessageToTpas(userSession: ExtendedUserSession, streamType: StreamType, dat
 
 /**
  * Relay audio data to all TPAs subscribed to audio streams
- * 
+ *
  * @param userSession User session containing subscription information
  * @param audioData Audio data to relay
  */
@@ -272,18 +272,18 @@ relayAudioToTpas(userSession: ExtendedUserSession, audioData: ArrayBuffer): void
   try {
     const sessionId = userSession.sessionId;
     const subscriptionManager = userSession.subscriptionManager;
-    
+
     // Get all TPAs subscribed to audio
     const subscribedPackageNames = subscriptionManager.getSubscribers(StreamType.AUDIO_CHUNK);
-    
+
     if (subscribedPackageNames.length === 0) {
       return; // No subscribers, nothing to do
     }
-    
+
     // Send binary data to each subscribed TPA
     for (const packageName of subscribedPackageNames) {
       const connection = userSession.appConnections.get(packageName);
-      
+
       if (connection && connection.readyState === WebSocket.OPEN) {
         try {
           connection.send(audioData);
@@ -303,7 +303,7 @@ relayAudioToTpas(userSession: ExtendedUserSession, audioData: ArrayBuffer): void
 ```typescript
 /**
  * Start an app session
- * 
+ *
  * @param userSession User session
  * @param packageName Package name of the app to start
  */
@@ -313,30 +313,30 @@ async startAppSession(userSession: ExtendedUserSession, packageName: string): Pr
       userSession.logger.info(`App ${packageName} already running, ignoring start request`);
       return;
     }
-    
+
     userSession.logger.info(`Starting app ${packageName}`);
-    
+
     // Add to loading apps
     userSession.loadingApps.add(packageName);
-    
+
     // Trigger app start webhook
     try {
       await appService.triggerStartByPackageName(packageName, userSession.userId);
     } catch (webhookError) {
       userSession.logger.error(`Error triggering start webhook for ${packageName}:`, webhookError);
     }
-    
+
     // Add to active app sessions if not already present
     if (!userSession.activeAppSessions.includes(packageName)) {
       userSession.activeAppSessions.push(packageName);
     }
-    
+
     // Remove from loading apps
     userSession.loadingApps.delete(packageName);
-    
+
     // Broadcast app state change
     await this.triggerAppStateChange(userSession.userId);
-    
+
   } catch (error) {
     userSession.logger.error(`Error starting app ${packageName}:`, error);
     // Remove from loading apps in case of error
@@ -346,7 +346,7 @@ async startAppSession(userSession: ExtendedUserSession, packageName: string): Pr
 
 /**
  * Stop an app session
- * 
+ *
  * @param userSession User session
  * @param packageName Package name of the app to stop
  */
@@ -356,45 +356,45 @@ async stopAppSession(userSession: ExtendedUserSession, packageName: string): Pro
       userSession.logger.info(`App ${packageName} not running, ignoring stop request`);
       return;
     }
-    
+
     userSession.logger.info(`Stopping app ${packageName}`);
-    
+
     // Remove from active app sessions
     userSession.activeAppSessions = userSession.activeAppSessions.filter(
       app => app !== packageName
     );
-    
+
     // Trigger app stop webhook
     try {
       await appService.triggerStopByPackageName(packageName, userSession.userId);
     } catch (webhookError) {
       userSession.logger.error(`Error triggering stop webhook for ${packageName}:`, webhookError);
     }
-    
+
     // Broadcast app state change
     await this.triggerAppStateChange(userSession.userId);
-    
+
     // Close WebSocket connection if exists
     const connection = userSession.appConnections.get(packageName);
     if (connection && connection.readyState === WebSocket.OPEN) {
       try {
         // Send app stopped message
         const message = {
-          type: CloudToTpaMessageType.APP_STOPPED,
+          type: CloudToAppMessageType.APP_STOPPED,
           timestamp: new Date()
         };
         connection.send(JSON.stringify(message));
-        
+
         // Close the connection
         connection.close(1000, 'App stopped');
       } catch (closeError) {
         userSession.logger.error(`Error closing connection for ${packageName}:`, closeError);
       }
     }
-    
+
     // Remove from app connections
     userSession.appConnections.delete(packageName);
-    
+
   } catch (error) {
     userSession.logger.error(`Error stopping app ${packageName}:`, error);
   }
@@ -402,7 +402,7 @@ async stopAppSession(userSession: ExtendedUserSession, packageName: string): Pro
 
 /**
  * Check if an app is running in a session
- * 
+ *
  * @param userSession User session
  * @param packageName Package name to check
  * @returns Whether the app is running
@@ -476,7 +476,7 @@ The WebSocket service will use the session service for:
 private async handleVad(userSession: ExtendedUserSession, message: Vad): Promise<void> {
   const userId = userSession.userId;
   const isSpeaking = message.status === true || message.status === 'true';
-  
+
   if (isSpeaking) {
     userSession.logger.info(`🎙️ VAD detected speech - starting transcription for user: ${userId}`);
     userSession.isTranscribing = true;

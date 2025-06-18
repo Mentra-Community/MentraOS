@@ -36,7 +36,7 @@ For detailed reference on the interfaces involved, see [Tool Types](/reference/i
 
 ## Defining Your Tools
 
-Tools are defined in the devloper console.  Go to [console.augmentos.org/tpas](https://console.augmentos.org/tpas) and edit your app, then look for the "AI Tools" section.
+Tools are defined in the devloper console.  Go to [console.augmentos.org/apps](https://console.augmentos.org/apps) and edit your app, then look for the "AI Tools" section.
 
 ![AI Tools Section](/img/tool-editor.png)
 
@@ -64,12 +64,12 @@ For the full interface definition, see [ToolParameterSchema](/reference/interfac
 
 ### 1. Override onToolCall
 
-In your app server, override the [`onToolCall`](/reference/tpa-server#ontoolcall-protected) method to handle incoming [tool calls](/reference/interfaces/tool-types#toolcall):
+In your app server, override the [`onToolCall`](/reference/app-server#ontoolcall-protected) method to handle incoming [tool calls](/reference/interfaces/tool-types#toolcall):
 
 ```typescript
-import { TpaServer, ToolCall } from '@augmentos/sdk';
+import { AppServer, ToolCall } from '@augmentos/sdk';
 
-export class MyTpaServer extends TpaServer {
+export class MyAppServer extends AppServer {
   protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
     console.log(`Tool called: ${toolCall.toolId}`);
     console.log(`User: ${toolCall.userId}`);
@@ -221,7 +221,7 @@ Your `onToolCall` method should return a string that will be passed to Mira's AI
 Here's how to implement a complete todo list app with Mira integration:
 
 ```typescript
-import { TpaServer, ToolCall } from '@augmentos/sdk';
+import { AppServer, ToolCall } from '@augmentos/sdk';
 
 // Simple in-memory todo storage
 const todos = new Map<string, Map<string, Todo>>();
@@ -234,7 +234,7 @@ interface Todo {
   createdAt: Date;
 }
 
-export class TodoTpaServer extends TpaServer {
+export class TodoAppServer extends AppServer {
   protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
     const { toolId, userId, toolParameters } = toolCall;
 
@@ -351,5 +351,5 @@ export class TodoTpaServer extends TpaServer {
 ## Related Documentation
 
 * [Tool Types Reference](/reference/interfaces/tool-types) - Detailed type definitions for tools
-* [TPA Server - onToolCall](/reference/tpa-server#ontoolcall-protected) - API reference for the onToolCall method
+* [TPA Server - onToolCall](/reference/app-server#ontoolcall-protected) - API reference for the onToolCall method
 * [Getting Started with Apps](/getting-started) - Complete guide to building an app

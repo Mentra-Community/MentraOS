@@ -7,12 +7,12 @@ title: Enums
 
 This page documents all the enumeration types available in the AugmentOS SDK. Enums are used to define sets of named constants that represent distinct values throughout the SDK.
 
-## TpaType
+## AppType
 
 Defines the different types or roles an app can have within the AugmentOS system.
 
 ```typescript
-enum TpaType {
+enum AppType {
   SYSTEM_DASHBOARD = 'system_dashboard', // Special UI placement, system functionality
   SYSTEM_APPSTORE = 'system_appstore',   // System app store functionality
   BACKGROUND = 'background',             // Runs without primary UI, can temporarily display content
@@ -92,7 +92,7 @@ enum DashboardMode {
 
 ## AppSettingType
 
-Defines the types of interactive settings that can be configured for an app in the AugmentOS settings UI. Used within the `TpaConfig` interface.
+Defines the types of interactive settings that can be configured for an app in the AugmentOS settings UI. Used within the `AppConfig` interface.
 
 ```typescript
 enum AppSettingType {
@@ -198,27 +198,27 @@ enum CloudToGlassesMessageType {
 }
 ```
 
-### TpaToCloudMessageType
+### AppToCloudMessageType
 
 Message types sent FROM TPA TO cloud.
 
 ```typescript
-enum TpaToCloudMessageType {
-  CONNECTION_INIT = 'tpa_connection_init',
+enum AppToCloudMessageType {
+  CONNECTION_INIT = 'app_connection_init',
   SUBSCRIPTION_UPDATE = 'subscription_update',
   DISPLAY_REQUEST = 'display_event', // Note: Reuses 'display_event' type string
   DASHBOARD_CONTENT_UPDATE = 'dashboard_content_update'
 }
 ```
 
-### CloudToTpaMessageType
+### CloudToAppMessageType
 
 Message types sent FROM cloud TO TPA.
 
 ```typescript
-enum CloudToTpaMessageType {
-  CONNECTION_ACK = 'tpa_connection_ack',
-  CONNECTION_ERROR = 'tpa_connection_error',
+enum CloudToAppMessageType {
+  CONNECTION_ACK = 'app_connection_ack',
+  CONNECTION_ERROR = 'app_connection_error',
   APP_STOPPED = 'app_stopped',
   SETTINGS_UPDATE = 'settings_update',
   DATA_STREAM = 'data_stream', // Wrapper for stream data

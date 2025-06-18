@@ -4,9 +4,9 @@ AugmentOS provides a simple and secure way for apps to identify users within web
 
 ```typescript
 // Example of using webview authentication in your app
-import { TpaServer, AuthenticatedRequest } from '@augmentos/sdk';
+import { AppServer, AuthenticatedRequest } from '@augmentos/sdk';
 
-const server = new TpaServer({
+const server = new AppServer({
   packageName: 'org.example.myapp',
   apiKey: process.env.API_KEY // Load from environment variables
 });
@@ -40,7 +40,7 @@ Webview authentication lets your web application identify AugmentOS users withou
 
 First, specify a webview URL in your app's configuration through the AugmentOS Developer Console:
 
-1. Log in to the [AugmentOS Developer Console](https://console.augmentos.org/tpas/)
+1. Log in to the [AugmentOS Developer Console](https://console.augmentos.org/apps/)
 2. Navigate to your app's settings
 3. Add your `Webview URL`
 4. Save your changes
@@ -50,10 +50,10 @@ First, specify a webview URL in your app's configuration through the AugmentOS D
 The AugmentOS SDK provides built-in middleware that handles the token exchange process automatically:
 
 ```typescript
-import { TpaServer, AuthenticatedRequest } from '@augmentos/sdk';
+import { AppServer, AuthenticatedRequest } from '@augmentos/sdk';
 
 // Create an app server instance
-const server = new TpaServer({
+const server = new AppServer({
   packageName: 'org.example.myapp',
   apiKey: process.env.API_KEY // Load from environment variables, never check it into source control
 });

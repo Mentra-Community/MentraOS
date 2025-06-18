@@ -1,8 +1,8 @@
 # AugmentOS Platform Limitations
 
-**Author:** Isaiah Ballah (github: isaiahb)  
-**Date:** March 25, 2025  
-**Version:** 1.0  
+**Author:** Isaiah Ballah (github: isaiahb)
+**Date:** March 25, 2025
+**Version:** 1.0
 
 ## 1. Overview
 
@@ -130,7 +130,7 @@ The event subscription model has limitations:
 ```typescript
 // Example of subscription handling
 const subMessage: TpaSubscriptionUpdate = {
-  type: TpaToCloudMessageType.SUBSCRIPTION_UPDATE,
+  type: AppToCloudMessageType.SUBSCRIPTION_UPDATE,
   packageName: "com.example.myapp",
   sessionId,
   subscriptions: [StreamType.TRANSCRIPTION, StreamType.HEAD_POSITION]
@@ -163,7 +163,7 @@ Multiple TPAs compete for display space:
 ```typescript
 // Example of forced display (will only work in certain cases)
 const displayRequest: DisplayRequest = {
-  type: TpaToCloudMessageType.DISPLAY_REQUEST,
+  type: AppToCloudMessageType.DISPLAY_REQUEST,
   view: ViewType.MAIN,
   packageName: "com.example.myapp",
   sessionId,
@@ -218,7 +218,7 @@ Despite these limitations, TPAs can work effectively by following these patterns
 // Break up long text into multiple displays
 function showLongMessage(session, longText) {
   const chunks = splitIntoChunks(longText, 200); // Split by character count
-  
+
   // Show chunks sequentially with increasing durations
   chunks.forEach((chunk, index) => {
     const wrappedText = wrapText(chunk, 30);
@@ -237,12 +237,12 @@ function showLongMessage(session, longText) {
 // Debouncing pattern for frequent updates (e.g., transcription)
 function debounceDisplay(sessionId, text) {
   const debounceDelay = 400; // ms
-  
+
   // Clear previous timer
   if (displayTimers[sessionId]) {
     clearTimeout(displayTimers[sessionId]);
   }
-  
+
   // Set new timer
   displayTimers[sessionId] = setTimeout(() => {
     session.layouts.showTextWall(text);
@@ -260,7 +260,7 @@ ws.on('close', () => {
   // Clean up all resources
   clearAllTimers();
   removeAllListeners();
-  
+
   // Attempt reconnection if appropriate
   if (shouldReconnect) {
     setTimeout(() => {

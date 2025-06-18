@@ -2,15 +2,15 @@
  * @fileoverview AppManager manages app lifecycle and TPA connections within a user session.
  * It encapsulates all app-related functionality that was previously
  * scattered throughout the session and WebSocket services.
- * 
+ *
  * This follows the pattern used by other managers like MicrophoneManager and DisplayManager.
  */
 
 import WebSocket from 'ws';
 import {
-  CloudToTpaMessageType,
+  CloudToAppMessageType,
   CloudToGlassesMessageType,
-  TpaConnectionInit,
+  AppConnectionInit,
   AppStateChange,
   AppI,
   WebhookRequestType,
@@ -309,7 +309,7 @@ export class AppManager {
     startTime: number
   ): Promise<void> {
     try {
-      // Trigger TPA webhook 
+      // Trigger TPA webhook
       const { packageName, name, publicUrl } = app;
       this.logger.debug({ packageName, name, publicUrl }, `Triggering TPA webhook for ${packageName} for user ${this.userSession.userId}`);
 
@@ -481,7 +481,7 @@ export class AppManager {
 
   /**
    * Stop an app by package name
-   * 
+   *
    * @param packageName Package name of the app to stop
    */
   async stopApp(packageName: string, restart?: boolean): Promise<void> {
@@ -530,7 +530,7 @@ export class AppManager {
         try {
           // Send app stopped message
           const message = {
-            type: CloudToTpaMessageType.APP_STOPPED,
+            type: CloudToAppMessageType.APP_STOPPED,
             timestamp: new Date()
           };
           appWebsocket.send(JSON.stringify(message));
@@ -565,7 +565,7 @@ export class AppManager {
 
   /**
    * Check if an app is currently running
-   * 
+   *
    * @param packageName Package name to check
    * @returns Whether the app is running
    */
@@ -575,11 +575,11 @@ export class AppManager {
 
   /**
    * Handle TPA initialization
-   * 
+   *
    * @param ws WebSocket connection
    * @param initMessage TPA initialization message
    */
-  async handleTpaInit(ws: WebSocket, initMessage: TpaConnectionInit): Promise<void> {
+  async handleTpaInit(ws: WebSocket, initMessage: AppConnectionInit): Promise<void> {
     try {
       const { packageName, apiKey, sessionId } = initMessage;
 
@@ -595,7 +595,7 @@ export class AppManager {
 
         try {
           ws.send(JSON.stringify({
-            type: CloudToTpaMessageType.CONNECTION_ERROR,
+            type: CloudToAppMessageType.CONNECTION_ERROR,
             code: 'INVALID_API_KEY',
             message: 'Invalid API key',
             timestamp: new Date()
@@ -619,7 +619,7 @@ export class AppManager {
 
         try {
           ws.send(JSON.stringify({
-            type: CloudToTpaMessageType.CONNECTION_ERROR,
+            type: CloudToAppMessageType.CONNECTION_ERROR,
             code: 'APP_NOT_STARTED',
             message: 'App not started for this session',
             timestamp: new Date()
@@ -660,7 +660,7 @@ export class AppManager {
 
       // Send connection acknowledgment
       const ackMessage = {
-        type: CloudToTpaMessageType.CONNECTION_ACK,
+        type: CloudToAppMessageType.CONNECTION_ACK,
         sessionId: sessionId,
         settings: userSettings,
         timestamp: new Date()
@@ -729,7 +729,7 @@ export class AppManager {
 
       try {
         ws.send(JSON.stringify({
-          type: CloudToTpaMessageType.CONNECTION_ERROR,
+          type: CloudToAppMessageType.CONNECTION_ERROR,
           code: 'INTERNAL_ERROR',
           message: 'Internal server error',
           timestamp: new Date()
@@ -844,7 +844,7 @@ export class AppManager {
 
   /**
    * Handle app connection close
-   * 
+   *
    * @param packageName Package name
    * @param code Close code
    * @param reason Close reason
@@ -1047,7 +1047,7 @@ export class AppManager {
           try {
             // Send app stopped message using direct connection (no resurrection needed during dispose)
             const message = {
-              type: CloudToTpaMessageType.APP_STOPPED,
+              type: CloudToAppMessageType.APP_STOPPED,
               timestamp: new Date()
             };
             connection.send(JSON.stringify(message));

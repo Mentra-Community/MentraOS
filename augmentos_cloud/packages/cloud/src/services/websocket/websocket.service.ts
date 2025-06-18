@@ -11,7 +11,7 @@ import jwt from 'jsonwebtoken';
 import { JwtPayload } from 'jsonwebtoken';
 import { CloudToGlassesMessageType, ConnectionError } from '@augmentos/sdk';
 import { GlassesWebSocketService } from './websocket-glasses.service';
-import { TpaWebSocketService } from './websocket-tpa.service';
+import { AppWebSocketService } from './websocket-tpa.service';
 import { logger as rootLogger } from '../logging/pino-logger';
 
 const logger = rootLogger.child({ service: 'websocket.service' });
@@ -27,7 +27,7 @@ export class WebSocketService {
   private glassesWss: WebSocket.Server;
   private tpaWss: WebSocket.Server;
   private glassesHandler: GlassesWebSocketService;
-  private tpaHandler: TpaWebSocketService;
+  private tpaHandler: AppWebSocketService;
   private static instance: WebSocketService;
 
   /**
@@ -38,7 +38,7 @@ export class WebSocketService {
     this.tpaWss = new WebSocket.Server({ noServer: true });
 
     this.glassesHandler = GlassesWebSocketService.getInstance();
-    this.tpaHandler = TpaWebSocketService.getInstance();
+    this.tpaHandler = AppWebSocketService.getInstance();
 
     // Set up connection handlers
     this.glassesWss.on('connection', (ws, request) => {
@@ -74,7 +74,7 @@ export class WebSocketService {
 
   /**
    * Set up WebSocket servers and attach them to the HTTP server
-   * 
+   *
    * @param server HTTP/HTTPS server instance
    */
   setupWebSocketServers(server: Server): void {

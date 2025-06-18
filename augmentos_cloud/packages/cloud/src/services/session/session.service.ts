@@ -10,9 +10,9 @@ import {
   CloudToGlassesMessageType,
   DisplayRequest,
   TranscriptSegment,
-  TpaConnectionInit,
+  AppConnectionInit,
   DataStream,
-  CloudToTpaMessageType,
+  CloudToAppMessageType,
   GlassesToCloudMessage
 } from '@augmentos/sdk';
 import { Logger } from 'pino';
@@ -53,7 +53,7 @@ export class SessionService {
 
   /**
    * Creates or retrieves a user session
-   * 
+   *
    * @param ws WebSocket connection
    * @param userId User ID
    * @returns User session
@@ -113,7 +113,7 @@ export class SessionService {
 
   /**
    * Get a session by ID
-   * 
+   *
    * @param sessionId Session ID
    * @returns User session or null if not found
    */
@@ -123,7 +123,7 @@ export class SessionService {
 
   /**
    * Transforms a user session for client consumption
-   * 
+   *
    * @param userSession User session to transform
    * @returns Transformed session data
    */
@@ -175,7 +175,7 @@ export class SessionService {
 
   /**
    * Add a transcript segment to a user session
-   * 
+   *
    * @param userSession User session
    * @param segment Transcript segment
    * @param language Language code
@@ -223,7 +223,7 @@ export class SessionService {
 
   /**
    * Get all active sessions
-   * 
+   *
    * @returns Array of active user sessions
    */
   getAllSessions(): UserSession[] {
@@ -232,7 +232,7 @@ export class SessionService {
 
   /**
    * Get a session by user ID
-   * 
+   *
    * @param userId User ID
    * @returns User session or null if not found
    */
@@ -243,7 +243,7 @@ export class SessionService {
 
   /**
    * Handle transcription start
-   * 
+   *
    * @param userSession User session
    */
   async handleTranscriptionStart(userSession: UserSession): Promise<void> {
@@ -264,7 +264,7 @@ export class SessionService {
 
   /**
    * Handle transcription stop
-   * 
+   *
    * @param userSession User session
    */
   async handleTranscriptionStop(userSession: UserSession): Promise<void> {
@@ -285,7 +285,7 @@ export class SessionService {
 
   /**
    * Get user settings
-   * 
+   *
    * @param userId User ID
    * @returns User settings
    */
@@ -331,7 +331,7 @@ export class SessionService {
 
   /**
    * Get app-specific settings
-   * 
+   *
    * @param userId User ID
    * @param packageName App package name
    * @returns App settings
@@ -348,7 +348,7 @@ export class SessionService {
 
   /**
    * Relay a message to TPAs
-   * 
+   *
    * @param userSession User session
    * @param streamType Stream type
    * @param data Message data
@@ -371,7 +371,7 @@ export class SessionService {
         if (connection && connection.readyState === WebSocket.OPEN) {
           const tpaSessionId = `${userSession.sessionId}-${packageName}`;
           const dataStream: DataStream = {
-            type: CloudToTpaMessageType.DATA_STREAM,
+            type: CloudToAppMessageType.DATA_STREAM,
             sessionId: tpaSessionId,
             streamType: data.type as StreamType, // Base type remains the same in the message.
             data,      // The data now may contain language info.
@@ -392,7 +392,7 @@ export class SessionService {
 
   /**
    * Relay audio to TPAs
-   * 
+   *
    * @param userSession User session
    * @param audioData Audio data
    */
@@ -412,7 +412,7 @@ let _sessionService: SessionService | null = null;
 
 /**
  * Initialize the session service
- * 
+ *
  * @param debugService Debug service
  * @returns Session service instance
  */
@@ -426,7 +426,7 @@ export function initializeSessionService(): SessionService {
 
 /**
  * Get the session service
- * 
+ *
  * @returns Session service instance
  */
 export function getSessionService(): SessionService {

@@ -64,20 +64,20 @@ const subscribedPackageNames = subscriptionService.getSubscribedApps(this.userSe
 export class AppManager {
   private userSession: ExtendedUserSession;
   private logger: Logger;
-  
+
   // Cache of installed apps
   private installedApps: AppI[] = [];
-  
+
   constructor(userSession: ExtendedUserSession) {
     this.userSession = userSession;
     this.logger = userSession.logger.child({ component: 'AppManager' });
     this.installedApps = userSession.installedApps || [];
     this.logger.info('AppManager initialized');
   }
-  
+
   /**
    * Start an app by package name
-   * 
+   *
    * @param packageName Package name of the app to start
    */
   async startApp(packageName: string): Promise<void> {
@@ -86,40 +86,40 @@ export class AppManager {
         this.logger.info(`App ${packageName} already running, ignoring start request`);
         return;
       }
-      
+
       this.logger.info(`Starting app ${packageName}`);
-      
+
       // Add to loading apps
       this.userSession.loadingApps.add(packageName);
-      
+
       // Trigger app start webhook
       try {
         await appService.triggerStartByPackageName(packageName, this.userSession.userId);
       } catch (webhookError) {
         this.logger.error(`Error triggering start webhook for ${packageName}:`, webhookError);
       }
-      
+
       // Add to active app sessions if not already present
       if (!this.userSession.activeAppSessions.includes(packageName)) {
         this.userSession.activeAppSessions.push(packageName);
       }
-      
+
       // Remove from loading apps
       this.userSession.loadingApps.delete(packageName);
-      
+
       // Broadcast app state change
       await this.broadcastAppState();
-      
+
     } catch (error) {
       this.logger.error(`Error starting app ${packageName}:`, error);
       // Remove from loading apps in case of error
       this.userSession.loadingApps.delete(packageName);
     }
   }
-  
+
   /**
    * Stop an app by package name
-   * 
+   *
    * @param packageName Package name of the app to stop
    */
   async stopApp(packageName: string): Promise<void> {
@@ -128,144 +128,144 @@ export class AppManager {
         this.logger.info(`App ${packageName} not running, ignoring stop request`);
         return;
       }
-      
+
       this.logger.info(`Stopping app ${packageName}`);
-      
+
       // Remove from active app sessions
       this.userSession.activeAppSessions = this.userSession.activeAppSessions.filter(
         app => app !== packageName
       );
-      
+
       // Trigger app stop webhook
       try {
         await appService.triggerStopByPackageName(packageName, this.userSession.userId);
       } catch (webhookError) {
         this.logger.error(`Error triggering stop webhook for ${packageName}:`, webhookError);
       }
-      
+
       // Broadcast app state change
       await this.broadcastAppState();
-      
+
       // Close WebSocket connection if exists
       const connection = this.userSession.appConnections.get(packageName);
       if (connection && connection.readyState === WebSocket.OPEN) {
         try {
           // Send app stopped message
           const message = {
-            type: CloudToTpaMessageType.APP_STOPPED,
+            type: CloudToAppMessageType.APP_STOPPED,
             timestamp: new Date()
           };
           connection.send(JSON.stringify(message));
-          
+
           // Close the connection
           connection.close(1000, 'App stopped');
         } catch (closeError) {
           this.logger.error(`Error closing connection for ${packageName}:`, closeError);
         }
       }
-      
+
       // Remove from app connections
       this.userSession.appConnections.delete(packageName);
-      
+
     } catch (error) {
       this.logger.error(`Error stopping app ${packageName}:`, error);
     }
   }
-  
+
   /**
    * Check if an app is currently running
-   * 
+   *
    * @param packageName Package name to check
    * @returns Whether the app is running
    */
   isAppRunning(packageName: string): boolean {
     return this.userSession.activeAppSessions.includes(packageName);
   }
-  
+
   /**
    * Handle TPA initialization
-   * 
+   *
    * @param ws WebSocket connection
    * @param initMessage TPA initialization message
    */
   async handleTpaInit(ws: WebSocket, initMessage: TpaConnectionInit): Promise<void> {
     try {
       const { packageName, apiKey, sessionId } = initMessage;
-      
+
       // Validate the API key
       const isValidApiKey = await developerService.validateApiKey(packageName, apiKey);
-      
+
       if (!isValidApiKey) {
         this.logger.error(`Invalid API key for TPA ${packageName}`);
-        
+
         try {
           ws.send(JSON.stringify({
-            type: CloudToTpaMessageType.CONNECTION_ERROR,
+            type: CloudToAppMessageType.CONNECTION_ERROR,
             code: 'INVALID_API_KEY',
             message: 'Invalid API key',
             timestamp: new Date()
           }));
-          
+
           ws.close(1008, 'Invalid API key');
         } catch (sendError) {
           this.logger.error(`Error sending auth error to TPA ${packageName}:`, sendError);
         }
-        
+
         return;
       }
-      
+
       // Store the WebSocket connection
       this.userSession.appConnections.set(packageName, ws);
-      
+
       // Add to active app sessions if not already present
       if (!this.userSession.activeAppSessions.includes(packageName)) {
         this.userSession.activeAppSessions.push(packageName);
       }
-      
+
       // Get app settings
       const app = this.userSession.installedApps.find(app => app.packageName === packageName);
-      
+
       // Send connection acknowledgment
       const ackMessage = {
-        type: CloudToTpaMessageType.CONNECTION_ACK,
+        type: CloudToAppMessageType.CONNECTION_ACK,
         sessionId: sessionId,
         settings: app?.settings || [],
         timestamp: new Date()
       };
-      
+
       ws.send(JSON.stringify(ackMessage));
-      
+
       // Log successful connection
       this.logger.info(`TPA ${packageName} connected to session ${this.userSession.sessionId}`);
-      
+
       // Track connection in analytics
       PosthogService.trackEvent('tpa_connection', this.userSession.userId, {
         packageName,
         sessionId: this.userSession.sessionId,
         timestamp: new Date().toISOString()
       });
-      
+
       // Broadcast app state change
       await this.broadcastAppState();
-      
+
     } catch (error) {
       this.logger.error(`Error handling TPA init:`, error);
-      
+
       try {
         ws.send(JSON.stringify({
-          type: CloudToTpaMessageType.CONNECTION_ERROR,
+          type: CloudToAppMessageType.CONNECTION_ERROR,
           code: 'INTERNAL_ERROR',
           message: 'Internal server error',
           timestamp: new Date()
         }));
-        
+
         ws.close(1011, 'Internal server error');
       } catch (sendError) {
         this.logger.error(`Error sending internal error to TPA:`, sendError);
       }
     }
   }
-  
+
   /**
    * Broadcast app state to connected clients
    */
@@ -275,14 +275,14 @@ export class AppManager {
         this.logger.error(`WebSocket is not open for client app state change`);
         return;
       }
-      
+
       // Refresh installed apps
       await this.refreshInstalledApps();
-      
+
       // Transform session for client
       const sessionService = getSessionService();
       const clientSessionData = await sessionService.transformUserSessionForClient(this.userSession);
-      
+
       // Create app state change message
       const appStateChange: AppStateChange = {
         type: CloudToGlassesMessageType.APP_STATE_CHANGE,
@@ -290,16 +290,16 @@ export class AppManager {
         userSession: clientSessionData,
         timestamp: new Date()
       };
-      
+
       // Send to client
       this.userSession.websocket.send(JSON.stringify(appStateChange));
       this.logger.info(`Sent APP_STATE_CHANGE to ${this.userSession.userId}`);
-      
+
     } catch (error) {
       this.logger.error(`Error broadcasting app state:`, error);
     }
   }
-  
+
   /**
    * Refresh the installed apps list
    */
@@ -307,19 +307,19 @@ export class AppManager {
     try {
       // Fetch installed apps
       const installedApps = await appService.getAllApps(this.userSession.userId);
-      
+
       // Update session's installed apps
       this.userSession.installedApps = installedApps;
-      
+
       // Update local cache
       this.installedApps = installedApps;
-      
+
       this.logger.info(`Updated installed apps for ${this.userSession.userId}`);
     } catch (error) {
       this.logger.error(`Error refreshing installed apps:`, error);
     }
   }
-  
+
   /**
    * Start all previously running apps
    */
@@ -327,14 +327,14 @@ export class AppManager {
     try {
       // Fetch previously running apps from database
       const previouslyRunningApps = await appService.getPreviouslyRunningApps(this.userSession.userId);
-      
+
       if (previouslyRunningApps.length === 0) {
         this.logger.info(`No previously running apps for ${this.userSession.userId}`);
         return;
       }
-      
+
       this.logger.info(`Starting ${previouslyRunningApps.length} previously running apps for ${this.userSession.userId}`);
-      
+
       // Start each app
       for (const packageName of previouslyRunningApps) {
         try {
@@ -348,10 +348,10 @@ export class AppManager {
       this.logger.error(`Error starting previously running apps:`, error);
     }
   }
-  
+
   /**
    * Handle app connection close
-   * 
+   *
    * @param packageName Package name
    * @param code Close code
    * @param reason Close reason
@@ -359,59 +359,59 @@ export class AppManager {
   async handleAppConnectionClosed(packageName: string, code: number, reason: string): Promise<void> {
     try {
       this.logger.info(`App connection closed for ${packageName}: ${code} - ${reason}`);
-      
+
       // Remove from app connections
       this.userSession.appConnections.delete(packageName);
-      
+
       // Don't automatically remove from active app sessions
       // The app can reconnect without losing its active status
-      
+
       // Set up reconnection timer
       if (!this.userSession._reconnectionTimers) {
         this.userSession._reconnectionTimers = new Map();
       }
-      
+
       // Clear any existing timer
       const existingTimer = this.userSession._reconnectionTimers.get(packageName);
       if (existingTimer) {
         clearTimeout(existingTimer);
       }
-      
+
       // Set new timer
       const reconnectionTimer = setTimeout(() => {
         this.logger.info(`Reconnection grace period expired for ${packageName}`);
-        
+
         // If not reconnected, remove from active app sessions
         if (!this.userSession.appConnections.has(packageName)) {
           this.userSession.activeAppSessions = this.userSession.activeAppSessions.filter(
             app => app !== packageName
           );
-          
+
           // Broadcast app state change
           this.broadcastAppState().catch(error => {
             this.logger.error(`Error broadcasting app state after reconnection timeout:`, error);
           });
         }
-        
+
         // Remove the timer from the map
         this.userSession._reconnectionTimers?.delete(packageName);
       }, 60000); // 1 minute reconnection grace period
-      
+
       // Store the timer
       this.userSession._reconnectionTimers.set(packageName, reconnectionTimer);
-      
+
     } catch (error) {
       this.logger.error(`Error handling app connection close for ${packageName}:`, error);
     }
   }
-  
+
   /**
    * Clean up all resources
    */
   dispose(): void {
     try {
       this.logger.info('Disposing AppManager');
-      
+
       // Clear reconnection timers
       if (this.userSession._reconnectionTimers) {
         for (const [packageName, timer] of this.userSession._reconnectionTimers.entries()) {
@@ -419,18 +419,18 @@ export class AppManager {
         }
         this.userSession._reconnectionTimers.clear();
       }
-      
+
       // Close all app connections
       for (const [packageName, connection] of this.userSession.appConnections.entries()) {
         if (connection && connection.readyState === WebSocket.OPEN) {
           try {
             // Send app stopped message
             const message = {
-              type: CloudToTpaMessageType.APP_STOPPED,
+              type: CloudToAppMessageType.APP_STOPPED,
               timestamp: new Date()
             };
             connection.send(JSON.stringify(message));
-            
+
             // Close the connection
             connection.close(1000, 'User session ended');
           } catch (error) {
@@ -438,16 +438,16 @@ export class AppManager {
           }
         }
       }
-      
+
       // Clear connections
       this.userSession.appConnections.clear();
-      
+
       // Clear active app sessions
       this.userSession.activeAppSessions = [];
-      
+
       // Clear loading apps
       this.userSession.loadingApps.clear();
-      
+
     } catch (error) {
       this.logger.error(`Error disposing AppManager:`, error);
     }
@@ -460,7 +460,7 @@ export class AppManager {
 ```typescript
 export interface ExtendedUserSession extends UserSession {
   // Existing properties...
-  
+
   // Add AppManager
   appManager: AppManager;
 }
@@ -492,13 +492,13 @@ isAppRunning(userSession: ExtendedUserSession, packageName: string): boolean {
 async handleTpaInit(ws: WebSocket, initMessage: TpaConnectionInit, setCurrentSessionId: Function): Promise<void> {
   // Set current session ID
   setCurrentSessionId(initMessage.sessionId);
-  
+
   // Get user session
   const userSession = this.getSession(initMessage.sessionId);
   if (!userSession) {
     throw new Error(`Session ${initMessage.sessionId} not found`);
   }
-  
+
   // Delegate to AppManager
   return userSession.appManager.handleTpaInit(ws, initMessage);
 }
@@ -509,7 +509,7 @@ async triggerAppStateChange(userId: string): Promise<void> {
     logger.error(`No userSession found for client app state change: ${userId}`);
     return;
   }
-  
+
   return userSession.appManager.broadcastAppState();
 }
 ```
@@ -519,13 +519,13 @@ async triggerAppStateChange(userId: string): Promise<void> {
 ```typescript
 endSession(userSession: ExtendedUserSession): void {
   // ...existing cleanup
-  
+
   // Clean up app manager
   if (userSession.appManager) {
     userSession.logger.info(`🧹 Cleaning up app manager for session ${userSession.sessionId}`);
     userSession.appManager.dispose();
   }
-  
+
   // ...rest of cleanup
 }
 ```

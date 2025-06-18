@@ -10,10 +10,10 @@ The Dashboard API provides an interface for displaying real-time information and
 ## Import
 
 ```typescript
-import { TpaServer, TpaSession, DashboardMode } from '@augmentos/sdk';
+import { AppServer, AppSession, DashboardMode } from '@augmentos/sdk';
 
-export class MyTpaServer extends TpaServer {
-  protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
+export class MyAppServer extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
     // Access the dashboard API
     const dashboard = session.dashboard;
 
@@ -42,7 +42,7 @@ export class MyTpaServer extends TpaServer {
 
 ## Overview
 
-Every [`TpaSession`](/reference/tpa-session) exposes a `dashboard` property that provides access to the Dashboard API:
+Every [`AppSession`](/reference/app-session) exposes a `dashboard` property that provides access to the Dashboard API:
 
 | Property | Type | Purpose |
 | :------- | :--- | :------ |
@@ -71,11 +71,11 @@ Use these values whenever a method accepts a `mode` parameter or when checking t
 
 ## Class: DashboardContentAPI
 
-The `DashboardContentAPI` class provides methods for sending content to the dashboard and monitoring dashboard state changes. It is automatically instantiated by the `TpaSession` and available at `session.dashboard.content`.
+The `DashboardContentAPI` class provides methods for sending content to the dashboard and monitoring dashboard state changes. It is automatically instantiated by the `AppSession` and available at `session.dashboard.content`.
 
 ### Constructor
 
-The DashboardContentAPI is automatically instantiated by the TpaSession. You should not create instances directly.
+The DashboardContentAPI is automatically instantiated by the AppSession. You should not create instances directly.
 
 ```typescript
 class DashboardContentAPI {
@@ -222,13 +222,13 @@ onModeChange(handler: (mode: DashboardMode | 'none') => void): () => void
 // Register mode change handler
 const unsubscribe = session.dashboard.content.onModeChange((mode) => {
   console.log(`Dashboard mode changed to: ${mode}`);
-  
+
   switch (mode) {
     case DashboardMode.MAIN:
       // User collapsed to main view - show compact info
       session.dashboard.content.writeToMain('📊 Status: OK');
       break;
-      
+
     case DashboardMode.EXPANDED:
       // User expanded dashboard - show detailed info
       session.dashboard.content.writeToExpanded(`
@@ -240,7 +240,7 @@ const unsubscribe = session.dashboard.content.onModeChange((mode) => {
 📅 Next check: Tomorrow 9:00 AM
       `);
       break;
-      
+
     case 'none':
       // Dashboard was closed
       console.log('Dashboard closed by user');
@@ -262,7 +262,7 @@ interface DashboardAPI {
 }
 ```
 
-Every `TpaSession` constructs this object and assigns it to `session.dashboard`. Currently, it only contains the `content` API, but future versions may include additional dashboard capabilities.
+Every `AppSession` constructs this object and assigns it to `session.dashboard`. Currently, it only contains the `content` API, but future versions may include additional dashboard capabilities.
 
 ## Content Guidelines
 
@@ -312,7 +312,7 @@ const quickStatus = '✅ 5 tasks done';
 const detailedStatus = `
 Task Summary:
 ✅ Completed: 5
-⏳ In progress: 2  
+⏳ In progress: 2
 📅 Scheduled: 3
 `;
 

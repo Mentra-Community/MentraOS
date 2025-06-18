@@ -1,33 +1,33 @@
 /**
  * Dashboard API Implementation
- * 
+ *
  * Provides dashboard functionality for TPAs, allowing them to write content
  * to the dashboard and respond to dashboard mode changes.
  */
 import { systemApps } from '../../constants';
-import { 
-  DashboardAPI, 
-  DashboardContentAPI, 
-  DashboardMode, 
+import {
+  DashboardAPI,
+  DashboardContentAPI,
+  DashboardMode,
   DashboardSystemAPI,
   DashboardContentUpdate,
   DashboardModeChange,
   DashboardSystemUpdate
 } from '../../types/dashboard';
-import { TpaToCloudMessageType } from '../../types/message-types';
+import { AppToCloudMessageType } from '../../types/message-types';
 import { Layout } from '../../types/layouts';
 import { EventManager } from './events';
 
-// Import TpaSession interface for typing
-import type { TpaSession } from './index';
-import { TpaToCloudMessage } from 'src/types';
+// Import AppSession interface for typing
+import type { AppSession } from './index';
+import { AppToCloudMessage } from 'src/types';
 
 /**
  * Implementation of DashboardSystemAPI interface for system dashboard TPA
  */
 export class DashboardSystemManager implements DashboardSystemAPI {
   constructor(
-    private session: TpaSession,
+    private session: AppSession,
     private packageName: string,
     private send: (message: any) => void
   ) {}
@@ -50,7 +50,7 @@ export class DashboardSystemManager implements DashboardSystemAPI {
 
   setViewMode(mode: DashboardMode): void {
     const message: DashboardModeChange = {
-      type: TpaToCloudMessageType.DASHBOARD_MODE_CHANGE,
+      type: AppToCloudMessageType.DASHBOARD_MODE_CHANGE,
       packageName: this.packageName,
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       mode,
@@ -61,7 +61,7 @@ export class DashboardSystemManager implements DashboardSystemAPI {
 
   private updateSystemSection(section: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight', content: string): void {
     const message: DashboardSystemUpdate = {
-      type: TpaToCloudMessageType.DASHBOARD_SYSTEM_UPDATE,
+      type: AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE,
       packageName: this.packageName,
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       section,
@@ -78,9 +78,9 @@ export class DashboardSystemManager implements DashboardSystemAPI {
 export class DashboardContentManager implements DashboardContentAPI {
   private currentMode: DashboardMode | 'none' = 'none';
   // private alwaysOnEnabled: boolean = false;
-  
+
   constructor(
-    private session: TpaSession,
+    private session: AppSession,
     private packageName: string,
     private send: (message: any) => void,
     private events: EventManager
@@ -88,7 +88,7 @@ export class DashboardContentManager implements DashboardContentAPI {
 
   write(content: string, targets: DashboardMode[] = [DashboardMode.MAIN]): void {
     const message: DashboardContentUpdate = {
-      type: TpaToCloudMessageType.DASHBOARD_CONTENT_UPDATE,
+      type: AppToCloudMessageType.DASHBOARD_CONTENT_UPDATE,
       packageName: this.packageName,
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       content,
@@ -104,7 +104,7 @@ export class DashboardContentManager implements DashboardContentAPI {
 
   writeToExpanded(content: string): void {
     const message: DashboardContentUpdate = {
-      type: TpaToCloudMessageType.DASHBOARD_CONTENT_UPDATE,
+      type: AppToCloudMessageType.DASHBOARD_CONTENT_UPDATE,
       packageName: this.packageName,
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       content,
@@ -132,7 +132,7 @@ export class DashboardContentManager implements DashboardContentAPI {
       callback(data.mode);
     });
   }
-  
+
   // onAlwaysOnChange(callback: (enabled: boolean) => void): () => void {
   //   return this.events.onDashboardAlwaysOnChange((data) => {
   //     this.alwaysOnEnabled = data.enabled;
@@ -154,19 +154,19 @@ export class DashboardContentManager implements DashboardContentAPI {
 
 /**
  * Dashboard Manager - Main class that manages dashboard functionality
- * Each TpaSession instance gets its own DashboardManager instance
+ * Each AppSession instance gets its own DashboardManager instance
  */
 export class DashboardManager implements DashboardAPI {
   public readonly content: DashboardContentAPI;
   public readonly system?: DashboardSystemAPI;
 
-  constructor(session: TpaSession, send: (message: TpaToCloudMessage) => void) {
+  constructor(session: AppSession, send: (message: AppToCloudMessage) => void) {
     const packageName = session.getPackageName();
     const events = session.events;
 
     // Create content API (available to all TPAs)
     this.content = new DashboardContentManager(session, packageName, send, events);
-    
+
     // Add system API if this is the system dashboard TPA
     if (packageName === systemApps.dashboard.packageName) {
       this.system = new DashboardSystemManager(session, packageName, send);

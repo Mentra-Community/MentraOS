@@ -7,10 +7,10 @@ title: LayoutManager
 
 The `LayoutManager` is responsible for sending display requests to AugmentOS Cloud to show layouts in the AR view. It provides methods for displaying different types of content in the user's field of view.
 
-You access the LayoutManager through the `layouts` property of a [`TpaSession`](/reference/tpa-session) instance:
+You access the LayoutManager through the `layouts` property of a [`AppSession`](/reference/app-session) instance:
 
 ```typescript
-const layoutManager = tpaSession.layouts;
+const layoutManager = appSession.layouts;
 ```
 
 ## Layout Methods
@@ -21,10 +21,10 @@ Displays a single, primary block of text.
 
 ```typescript
 showTextWall(
-  text: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  text: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -40,10 +40,10 @@ showTextWall(
 import { ViewType } from '@augmentos/sdk';
 
 // Simple usage
-tpaSession.layouts.showTextWall('Hello, AugmentOS!');
+appSession.layouts.showTextWall('Hello, AugmentOS!');
 
 // With options
-tpaSession.layouts.showTextWall('This is an important message', {
+appSession.layouts.showTextWall('This is an important message', {
   view: ViewType.MAIN,
   durationMs: 5000 // Show for 5 seconds
 });
@@ -55,11 +55,11 @@ Displays two blocks of text, one above the other.
 
 ```typescript
 showDoubleTextWall(
-  topText: string, 
-  bottomText: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  topText: string,
+  bottomText: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -74,7 +74,7 @@ showDoubleTextWall(
 **Example:**
 ```typescript
 // Show a title and content
-tpaSession.layouts.showDoubleTextWall(
+appSession.layouts.showDoubleTextWall(
   'Weather Forecast',
   'Partly cloudy, 72°F, 10% chance of rain',
   { durationMs: 3000 }
@@ -87,11 +87,11 @@ Displays a card with a title and main content text.
 
 ```typescript
 showReferenceCard(
-  title: string, 
-  text: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  title: string,
+  text: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -106,7 +106,7 @@ showReferenceCard(
 **Example:**
 ```typescript
 // Show a reference card with a recipe
-tpaSession.layouts.showReferenceCard(
+appSession.layouts.showReferenceCard(
   'Chocolate Chip Cookies',
   '2 cups flour\n1 cup sugar\n1/2 cup butter\n2 eggs\n1 tsp vanilla\n2 cups chocolate chips\n\nMix ingredients. Bake at 350°F for 10-12 minutes.'
 );
@@ -118,10 +118,10 @@ Displays a bitmap image.
 
 ```typescript
 showBitmapView(
-  data: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  data: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -136,7 +136,7 @@ showBitmapView(
 ```typescript
 // Example with a base64-encoded image
 const base64Image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'; // truncated for brevity
-tpaSession.layouts.showBitmapView(base64Image);
+appSession.layouts.showBitmapView(base64Image);
 ```
 
 ### showDashboardCard()
@@ -145,11 +145,11 @@ Displays a card suitable for dashboards, typically showing a key-value pair.
 
 ```typescript
 showDashboardCard(
-  leftText: string, 
-  rightText: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  leftText: string,
+  rightText: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -164,11 +164,11 @@ showDashboardCard(
 **Example:**
 ```typescript
 // Show current temperature in the dashboard
-tpaSession.layouts.showDashboardCard('Temperature', '72°F');
+appSession.layouts.showDashboardCard('Temperature', '72°F');
 
 // Show stock price in the main view
-tpaSession.layouts.showDashboardCard('AAPL', '$178.72', { 
-  view: ViewType.MAIN 
+appSession.layouts.showDashboardCard('AAPL', '$178.72', {
+  view: ViewType.MAIN
 });
 ```
 
@@ -251,7 +251,7 @@ enum ViewType {
 
 2. **Keep Text Concise**: Screen space in AR glasses is limited. Keep your text brief and to the point.
 
-3. **Use Duration Wisely**: 
+3. **Use Duration Wisely**:
    - For important information, use longer durations or no duration (persistent until replaced)
    - For notifications or transient information, use shorter durations (2-5 seconds)
 
@@ -262,4 +262,4 @@ enum ViewType {
 5. **Bitmap Performance**: When using showBitmapView, optimize your images for performance and readability on AR displays:
    - Keep images small and simple
    - Use high contrast
-   - Prefer PNG format for transparency support 
+   - Prefer PNG format for transparency support

@@ -11,17 +11,17 @@ export * from './messages/base';
 // Messages by direction - export everything except the conflicting type guards
 export * from './messages/glasses-to-cloud';
 export * from './messages/cloud-to-glasses';
-export * from './messages/tpa-to-cloud';
+export * from './messages/app-to-cloud';
 
-// Export cloud-to-tpa but exclude the conflicting type guards
+// Export cloud-to-app but exclude the conflicting type guards
 export {
   // Types
-  TpaConnectionAck,
-  TpaConnectionError,
+  AppConnectionAck,
+  AppConnectionError,
   AppStopped,
-  SettingsUpdate as TpaSettingsUpdate,  // Alias to avoid conflict with cloud-to-glasses SettingsUpdate
+  SettingsUpdate as AppSettingsUpdate,  // Alias to avoid conflict with cloud-to-glasses SettingsUpdate
   DataStream,
-  CloudToTpaMessage,
+  CloudToAppMessage,
   TranslationData,
   ToolCall,
   StandardConnectionError,
@@ -32,19 +32,19 @@ export {
   PermissionError,
   PermissionErrorDetail,
   // Type guards (excluding isPhotoResponse and isRtmpStreamStatus which conflict)
-  isTpaConnectionAck,
-  isTpaConnectionError,
+  isAppConnectionAck,
+  isAppConnectionError,
   isAppStopped,
   isSettingsUpdate,
   isDataStream,
   isAudioChunk,
   isDashboardModeChanged,
   isDashboardAlwaysOnChanged,
-  // Re-export the cloud-to-tpa versions of these type guards since they're the ones
-  // that should be used when dealing with CloudToTpaMessage types
+  // Re-export the cloud-to-app versions of these type guards since they're the ones
+  // that should be used when dealing with CloudToAppMessage types
   isPhotoResponse as isPhotoResponseFromCloud,
   isRtmpStreamStatus as isRtmpStreamStatusFromCloud
-} from './messages/cloud-to-tpa';
+} from './messages/cloud-to-app';
 
 // Stream types
 export * from './streams';
@@ -114,15 +114,15 @@ export {
   KeepRtmpStreamAlive
 } from './messages/cloud-to-glasses';
 
-// From messages/tpa-to-cloud.ts
+// From messages/app-to-cloud.ts
 export {
-  TpaConnectionInit,
-  TpaSubscriptionUpdate,
+  AppConnectionInit,
+  AppSubscriptionUpdate,
   RtmpStreamRequest,
   RtmpStreamStopRequest,
-  TpaToCloudMessage,
+  AppToCloudMessage,
   PhotoRequest
-} from './messages/tpa-to-cloud';
+} from './messages/app-to-cloud';
 
 // From layout.ts
 export {
@@ -158,21 +158,21 @@ export {
 } from './messages/cloud-to-glasses';
 
 export {
-  isTpaConnectionInit,
-  isTpaSubscriptionUpdate,
+  isAppConnectionInit,
+  isAppSubscriptionUpdate,
   isDisplayRequest,
   isRtmpStreamRequest,
   isRtmpStreamStopRequest,
-  isPhotoRequest as isPhotoRequestFromTpa
-} from './messages/tpa-to-cloud';
+  isPhotoRequest as isPhotoRequestFromApp
+} from './messages/app-to-cloud';
 
 // Export setting-related types
 export {
   BaseAppSetting,
   AppSetting,
   AppSettings,
-  TpaConfig,
-  validateTpaConfig,
+  AppConfig,
+  validateAppConfig,
   ToolSchema,
   ToolParameterSchema
 } from './models';
