@@ -435,7 +435,7 @@ public class MainActivity extends AppCompatActivity {
     
     try {
       Intent intent = new Intent();
-      intent.setComponent(new ComponentName("com.xy.fakelauncher", "com.xy.fakelauncher.Launcher"));
+      intent.setComponent(new ComponentName("com.android.factorytest", "com.android.factorytest.MainActivity"));
       intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
       startActivity(intent);
       Log.d(TAG, "Successfully launched ODM launcher");

@@ -299,7 +299,7 @@ public class MentraLiveSGC extends SmartGlassesCommunicator {
             
             // Post the discovered device to the event bus ONLY 
             // Don't automatically connect - wait for explicit connect request from UI
-            if (deviceName.equals("Xy_A") || deviceName.startsWith("XyBLE_")) {
+            if (deviceName.equals("Xy_A") || deviceName.startsWith("XyBLE_") || deviceName.startsWith("MENTRA_LIVE_BLE") || deviceName.startsWith("MENTRA_LIVE_BT")) {
                 String glassType = deviceName.equals("Xy_A") ? "Standard" : "K900";
                 Log.d(TAG, "Found compatible " + glassType + " glasses device: " + deviceName);
                 EventBus.getDefault().post(new GlassesBluetoothSearchDiscoverEvent(
@@ -979,7 +979,7 @@ public class MentraLiveSGC extends SmartGlassesCommunicator {
             int payloadLength;
             if (connectedDevice != null && connectedDevice.getName() != null) {
                 String deviceName = connectedDevice.getName();
-                if (deviceName.startsWith("XyBLE_")) {
+                if (deviceName.startsWith("XyBLE_") || deviceName.startsWith("MENTRA_LIVE_BLE") || deviceName.startsWith("MENTRA_LIVE_BT")) {
                     // K900 device - use big-endian (most significant byte first)
                     payloadLength = ((data[3] & 0xFF) << 8) | (data[4] & 0xFF);
                     Log.d(TAG, "Thread-" + threadId + ": 🔍 Using big-endian for K900 device: " + deviceName);
