@@ -13,8 +13,11 @@ dependencyResolutionManagement {
         maven { url 'https://jitpack.io' }
     }
 }
-rootProject.name = "Smart Glasses Manager"
-include ':SmartGlassesManager'
+rootProject.name = "MentraOS Core"
+include ':app'
 
 include ':MentraOSLib'
-project(':MentraOSLib').projectDir = new File(rootProject.projectDir, '../AugmentOS/mentraos_android_library/MentraOSLib')
+project(':MentraOSLib').projectDir = new File(rootProject.projectDir, '../mentraos_android_library/MentraOSLib')
+
+include ':SmartGlassesManager'
+project(':SmartGlassesManager').projectDir = new File(rootProject.projectDir, '../SmartGlassesManager/SGM_android/SmartGlassesManager')

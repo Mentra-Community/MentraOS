@@ -1,5 +1,6 @@
 K900_server_sdk/*
 AugmentOS-Cloud-Example-App/*
+MentraOS-Cloud-Example-App/*
 server/config.json
 K900_server_sdk/*
 K900Server_open/*
@@ -9,6 +10,8 @@ aar-extract/*
 temp_extract/*
 augmentos_asg_client/temp/*
 augmentos_asg_client/app/libs/temp_check/*
+mentraos_asg_client/temp/*
+mentraos_asg_client/app/libs/temp_check/*
 ### REACT
 .idea/
 .vscode/
@@ -25,6 +28,7 @@ yarn-error.log*
 /.changelog
 .npm/
 augmentos_npm/
+mentraos_npm/
 
 ### PYTHON
 #

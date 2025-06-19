@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- The baked-in provider -->
+        <provider
+            android:name="com.mentra.mentraoslib.provider.AugmentOSConfigProvider"
+            android:authorities="${applicationId}.augmentosconfigprovider"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

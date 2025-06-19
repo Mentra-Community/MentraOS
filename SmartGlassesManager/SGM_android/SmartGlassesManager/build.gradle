@@ -162,7 +162,7 @@ dependencies {
 
     implementation 'io.github.cdimascio:dotenv-java:3.0.0'
 
-    implementation project(path: ':AugmentOSLib')
+    implementation project(path: ':MentraOSLib')
 }
 
 //VOSK ASR prep models - need one for each language
