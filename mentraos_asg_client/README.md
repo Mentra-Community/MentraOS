@@ -26,9 +26,9 @@ We'd appreciate testers for these untested devices - let us know if you get it w
 
 2. By default, the example contains production settings:
    ```
-   AUGMENTOS_HOST=cloud.augmentos.org
-   AUGMENTOS_PORT=443
-   AUGMENTOS_SECURE=true
+   MENTRAOS_HOST=global.mentra.glass
+   MENTRAOS_PORT=443
+   MENTRAOS_SECURE=true
    ```
 
 3. For local development:

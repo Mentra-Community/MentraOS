@@ -518,9 +518,9 @@ class ServerComms {
       let wsUrl = "\(secure ? "wss" : "ws")://\(host):\(port)/glasses-ws"
       return wsUrl
     }
-    let host = RNCConfig.env(for: "AUGMENTOS_HOST")!;
-    let port = RNCConfig.env(for: "AUGMENTOS_PORT")!;
-    let secure = RNCConfig.env(for: "AUGMENTOS_SECURE")!
+    let host = RNCConfig.env(for: "MENTRAOS_HOST")!;
+    let port = RNCConfig.env(for: "MENTRAOS_PORT")!;
+    let secure = RNCConfig.env(for: "MENTRAOS_SECURE")!
     let secureServer = secure.contains("true")
     let url = "\(secureServer ? "wss" : "ws")://\(host):\(port)/glasses-ws"
     print("ServerComms: getServerUrl(): \(url)")
