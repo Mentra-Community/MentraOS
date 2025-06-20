@@ -1,18 +1,16 @@
 import { TpaSession } from '..';
-import { StreamType, TpaToCloudMessageType, LocationUpdate } from '../../../types';
+import { StreamType, TpaToCloudMessageType, LocationUpdate, LocationStreamRequest } from '../../../types';
 
 export class LocationManager {
   constructor(private session: TpaSession, private send: (message: any) => void) {}
 
   public subscribeToStream(options: { accuracy: 'standard' | 'high' | 'realtime' | 'tenMeters' | 'hundredMeters' | 'kilometer' | 'threeKilometers' | 'reduced' }): void {
-    const subscription = { stream: StreamType.LOCATION_STREAM, rate: options.accuracy };
-    // @ts-ignore - I'll fix this when I update the TpaSession subscribe method
+    const subscription: LocationStreamRequest = { stream: 'location_stream', rate: options.accuracy };
     this.session.subscribe(subscription);
   }
 
   public unsubscribeFromStream(): void {
-    // @ts-ignore - This will also be fixed when I update the TpaSession unsubscribe method
-    this.session.unsubscribe({ stream: StreamType.LOCATION_STREAM });
+    this.session.unsubscribe('location_stream');
   }
   
   public async getLatestLocation(options: { accuracy: string }): Promise<LocationUpdate> {

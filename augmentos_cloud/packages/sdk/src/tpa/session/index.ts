@@ -1361,9 +1361,10 @@ export class TpaSession {
     const subscriptionPayload: SubscriptionRequest[] = Array.from(this.subscriptions).map(stream => {
       const rate = this.streamRates.get(stream);
       if (rate && stream === StreamType.LOCATION_STREAM) {
-        return { stream: 'location_stream', rate: rate as any };
+        // We know rate is a valid string from our previous checks but ts needs assurance
+        return { stream: 'location_stream', rate: rate as 'standard' | 'high' | 'realtime' | 'tenMeters' | 'hundredMeters' | 'kilometer' | 'threeKilometers' | 'reduced' };
       }
-      return stream;
+      return stream; // Return the string if no rate is associated
     });
 
     const message: TpaSubscriptionUpdate = {

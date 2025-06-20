@@ -50,6 +50,11 @@ export enum StreamType {
   PHOTO_TAKEN = 'photo_taken',
 }
 
+export interface LocationStreamRequest {
+  stream: 'location_stream';
+  rate: 'standard' | 'high' | 'realtime' | 'tenMeters' | 'hundredMeters' | 'kilometer' | 'threeKilometers' | 'reduced';
+}
+
 /**
  * Extended StreamType to support language-specific streams
  * This allows us to treat language-specific strings as StreamType values
