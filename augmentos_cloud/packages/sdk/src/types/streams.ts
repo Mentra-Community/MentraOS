@@ -14,6 +14,7 @@ export enum StreamType {
   PHONE_BATTERY_UPDATE = 'phone_battery_update',
   GLASSES_CONNECTION_STATE = 'glasses_connection_state',
   LOCATION_UPDATE = 'location_update',
+  LOCATION_STREAM = 'location_stream',
   VPS_COORDINATES = 'vps_coordinates',
   
   // Audio streams
@@ -82,6 +83,7 @@ export const STREAM_CATEGORIES: Record<StreamType, StreamCategory> = {
   [StreamType.PHONE_BATTERY_UPDATE]: StreamCategory.HARDWARE,
   [StreamType.GLASSES_CONNECTION_STATE]: StreamCategory.HARDWARE,
   [StreamType.LOCATION_UPDATE]: StreamCategory.HARDWARE,
+  [StreamType.LOCATION_STREAM]: StreamCategory.HARDWARE,
   [StreamType.VPS_COORDINATES]: StreamCategory.HARDWARE,
   
   [StreamType.TRANSCRIPTION]: StreamCategory.AUDIO,

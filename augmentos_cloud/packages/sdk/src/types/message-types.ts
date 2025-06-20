@@ -87,6 +87,7 @@ export enum TpaToCloudMessageType {
   // Commands
   CONNECTION_INIT = 'tpa_connection_init',
   SUBSCRIPTION_UPDATE = 'subscription_update',
+  LOCATION_POLL_REQUEST = 'location_poll_request',
 
   // Requests
   DISPLAY_REQUEST = 'display_event',
