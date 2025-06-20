@@ -30,6 +30,25 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     
     // Start location updates (will only work if permission is already granted)
     locationManager.startUpdatingLocation()
+
+    // --- TEMPORARY TEST CODE ---
+    // add this line to see the faster updates in your xcode logs.
+    // you MUST remove this line before you create the pull request.
+    self.setHighAccuracyMode(enabled: true)
+    // -------------------------
+  }
+  
+  // this is the new function we're adding. it lets javascript turn on the high-power gps mode
+  public func setHighAccuracyMode(enabled: Bool) {
+    if enabled {
+      print("LocationManager: Enabling high accuracy mode")
+      locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+      locationManager.distanceFilter = kCLDistanceFilterNone
+    } else {
+      print("LocationManager: Disabling high accuracy mode, returning to standard")
+      locationManager.desiredAccuracy = kCLLocationAccuracyBest
+      locationManager.distanceFilter = 2 // back to the default 2 meters
+    }
   }
   
   func setLocationChangedCallback(_ callback: @escaping () -> Void) {

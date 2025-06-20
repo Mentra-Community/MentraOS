@@ -6,12 +6,12 @@ export class LocationManager {
 
   public subscribeToStream(options: { accuracy: 'standard' | 'high' | 'realtime' | 'tenMeters' | 'hundredMeters' | 'kilometer' | 'threeKilometers' | 'reduced' }): void {
     const subscription = { stream: StreamType.LOCATION_STREAM, rate: options.accuracy };
-    // @ts-ignore - This will be fixed when we update the TpaSession subscribe method
+    // @ts-ignore - I'll fix this when I update the TpaSession subscribe method
     this.session.subscribe(subscription);
   }
 
   public unsubscribeFromStream(): void {
-    // @ts-ignore - This will be fixed when we update the TpaSession unsubscribe method
+    // @ts-ignore - This will also be fixed when I update the TpaSession unsubscribe method
     this.session.unsubscribe({ stream: StreamType.LOCATION_STREAM });
   }
   
@@ -23,6 +23,7 @@ export class LocationManager {
       // @ts-ignore
       const unsubscribe = this.session.events.on('location_update', (data: LocationUpdate) => {
         // @ts-ignore - correlationId will be added to the LocationUpdate type later
+        // every time a location update arrives, we check if it has a correlationId that matches the requestId we just created.
         if (data.correlationId === requestId) {
           unsubscribe(); // Stop listening once we get our response
           resolve(data);
