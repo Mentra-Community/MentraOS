@@ -18,7 +18,6 @@ export class LocationManager {
       const requestId = `poll_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       
       // Listen for the specific response
-      // @ts-ignore
       const unsubscribe = this.session.events.on('location_update', (data: LocationUpdate) => {
         // @ts-ignore - correlationId will be added to the LocationUpdate type later
         // every time a location update arrives, we check if it has a correlationId that matches the requestId we just created.
