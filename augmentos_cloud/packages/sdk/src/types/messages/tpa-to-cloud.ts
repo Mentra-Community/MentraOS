@@ -7,6 +7,17 @@ import { DisplayRequest } from '../layouts';
 import { DashboardContentUpdate, DashboardModeChange, DashboardSystemUpdate } from '../dashboard';
 import { VideoConfig, AudioConfig, StreamConfig } from '../rtmp-stream';
 
+// [NEW TYPE DEFINITION]
+// Defines a specific object for our tiered location stream requests.
+export interface LocationStreamRequest {
+  stream: 'location_stream';
+  rate: 'standard' | 'high' | 'realtime' | 'tenMeters' | 'hundredMeters' | 'kilometer' | 'threeKilometers' | 'reduced';
+}
+
+// [UPDATED TYPE DEFINITION]
+// A subscription can now be a generic stream type OR our specific location request object.
+export type SubscriptionRequest = ExtendedStreamType | LocationStreamRequest;
+
 /**
  * Connection initialization from TPA
  */
@@ -23,7 +34,7 @@ export interface TpaConnectionInit extends BaseMessage {
 export interface TpaSubscriptionUpdate extends BaseMessage {
   type: TpaToCloudMessageType.SUBSCRIPTION_UPDATE;
   packageName: string;
-  subscriptions: ExtendedStreamType[];
+  subscriptions: SubscriptionRequest[];
 }
 
 /**
@@ -58,12 +69,21 @@ export interface RtmpStreamStopRequest extends BaseMessage {
   streamId?: string;  // Optional stream ID to specify which stream to stop
 }
 
+// Interface for location poll request from TPA
+export interface TpaLocationPollRequest extends BaseMessage {
+  type: TpaToCloudMessageType.LOCATION_POLL_REQUEST;
+  packageName: string;
+  sessionId: string;
+  accuracy: string;
+}
+
 /**
  * Union type for all messages from TPAs to cloud
  */
 export type TpaToCloudMessage =
   | TpaConnectionInit
   | TpaSubscriptionUpdate
+  | TpaLocationPollRequest
   | DisplayRequest
   | PhotoRequest
   | RtmpStreamRequest
