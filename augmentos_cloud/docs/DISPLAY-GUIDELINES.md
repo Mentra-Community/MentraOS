@@ -1,12 +1,12 @@
-# Display Guidelines for AugmentOS TPAs
+# Display Guidelines for MentraOS TPAs
 
 ## Overview
 
-This guide provides best practices and technical guidelines for showing content on AugmentOS smart glasses from your Third-Party Application (TPA). The display system has specific constraints and behaviors that must be understood for the best user experience.
+This guide provides best practices and technical guidelines for showing content on MentraOS smart glasses from your Third-Party Application (TPA). The display system has specific constraints and behaviors that must be understood for the best user experience.
 
 ## Smart Glasses Display Constraints
 
-AugmentOS smart glasses have significant hardware constraints that affect how content is displayed:
+MentraOS smart glasses have significant hardware constraints that affect how content is displayed:
 
 - **Single Color**: All text appears in green (no color options)
 - **Text Only**: Only plain text can be displayed (no images or rich styling)
@@ -16,7 +16,7 @@ AugmentOS smart glasses have significant hardware constraints that affect how co
 
 ## Display Manager System
 
-AugmentOS Cloud uses a DisplayManager to coordinate what's shown on the glasses. It handles:
+MentraOS Cloud uses a DisplayManager to coordinate what's shown on the glasses. It handles:
 
 1. **Throttling**: Ensures displays don't exceed hardware limits
 2. **Priority**: Determines which TPA's content is shown when multiple TPAs want to display
@@ -25,7 +25,7 @@ AugmentOS Cloud uses a DisplayManager to coordinate what's shown on the glasses.
 
 ## Layout Types
 
-AugmentOS supports several layout types, each optimized for specific use cases:
+MentraOS supports several layout types, each optimized for specific use cases:
 
 ### TextWall
 
@@ -159,7 +159,7 @@ session.layouts.showDashboardCard("CPU", "32%");
 
 ### View Types
 
-AugmentOS supports two view types:
+MentraOS supports two view types:
 
 1. **Main View (`ViewType.MAIN`)**:
    - Primary display area
@@ -173,8 +173,8 @@ AugmentOS supports two view types:
 
 ```typescript
 // Show in dashboard view
-session.layouts.showDashboardCard("Time", "3:42 PM", { 
-  view: ViewType.DASHBOARD 
+session.layouts.showDashboardCard("Time", "3:42 PM", {
+  view: ViewType.DASHBOARD
 });
 ```
 

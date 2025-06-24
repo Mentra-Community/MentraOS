@@ -1,8 +1,8 @@
-# AugmentOS Logging System
+# MentraOS Logging System
 
 ## Overview
 
-This document outlines the improved logging infrastructure for the AugmentOS Cloud system. We use Pino for logging with BetterStack as our log management service and PostHog for error tracking.
+This document outlines the improved logging infrastructure for the MentraOS Cloud system. We use Pino for logging with BetterStack as our log management service and PostHog for error tracking.
 
 ## Design Goals
 
@@ -70,9 +70,9 @@ For user-specific logging, create a child logger with user context:
 
 ```typescript
 // In session service
-const sessionLogger = logger.child({ 
+const sessionLogger = logger.child({
   userId: userSession.userId,
-  service: 'session.service' 
+  service: 'session.service'
 });
 
 // All logs now include user ID
@@ -81,7 +81,7 @@ sessionLogger.info('User session created');
 
 ### Structured Data vs Messages
 
-- Use structured data as the first parameter 
+- Use structured data as the first parameter
 - Keep message strings short and descriptive
 - Don't concatenate values into messages; use structured data
 

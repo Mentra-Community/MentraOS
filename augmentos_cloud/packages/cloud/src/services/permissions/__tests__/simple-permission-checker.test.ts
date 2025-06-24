@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { SimplePermissionChecker } from '../simple-permission-checker';
-import { PermissionType } from '@augmentos/sdk';
-import { StreamType, createTranscriptionStream, createTranslationStream } from '@augmentos/sdk';
+import { PermissionType } from '@mentra/sdk';
+import { StreamType, createTranscriptionStream, createTranslationStream } from '@mentra/sdk';
 import { AppI } from '../../../models/app.model';
 import { expect, test, describe, it } from "bun:test";
 
@@ -52,7 +52,7 @@ describe('SimplePermissionChecker', () => {
       const enTranscription = createTranscriptionStream('en-US');
       const frTranscription = createTranscriptionStream('fr-FR');
       const translation = createTranslationStream('es-ES', 'en-US');
-      
+
       expect(SimplePermissionChecker.getRequiredPermissionForStream(enTranscription)).toBe(PermissionType.MICROPHONE);
       expect(SimplePermissionChecker.getRequiredPermissionForStream(frTranscription)).toBe(PermissionType.MICROPHONE);
       expect(SimplePermissionChecker.getRequiredPermissionForStream(translation)).toBe(PermissionType.MICROPHONE);
@@ -188,7 +188,7 @@ describe('SimplePermissionChecker', () => {
       ];
 
       const normalized = SimplePermissionChecker.normalizePermissions(legacyPermissions);
-      
+
       expect(normalized).toHaveLength(2);
       expect(normalized[0].type).toBe(PermissionType.READ_NOTIFICATIONS);
       expect(normalized[0].description).toBe('Legacy notification access');
@@ -203,7 +203,7 @@ describe('SimplePermissionChecker', () => {
       ];
 
       const normalized = SimplePermissionChecker.normalizePermissions(mixedPermissions);
-      
+
       expect(normalized).toHaveLength(2);
       expect(normalized.map(p => p.type)).toContain(PermissionType.READ_NOTIFICATIONS);
       expect(normalized.map(p => p.type)).toContain(PermissionType.MICROPHONE);
@@ -215,7 +215,7 @@ describe('SimplePermissionChecker', () => {
       ];
 
       const normalized = SimplePermissionChecker.normalizePermissions(legacyPermissions);
-      
+
       expect(normalized[0].description).toBe('Read phone notifications');
     });
   });

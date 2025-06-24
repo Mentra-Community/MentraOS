@@ -5,7 +5,7 @@ The `SettingsManager` class provides a type-safe interface for accessing and mon
 ## Import
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class MyTpaServer extends TpaServer {
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
@@ -306,7 +306,7 @@ const value = session.settings.get('some_setting');
 ### 3. Clean Up Listeners
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class MyTpaServer extends TpaServer {
   private cleanupFunctions: Array<() => void> = [];

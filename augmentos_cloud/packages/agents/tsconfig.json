@@ -12,8 +12,8 @@
     "declarationMap": true,
     "baseUrl": ".",
     "paths": {
-      "@augmentos/sdk": ["../sdk/dist"],
-      "@augmentos/utils": ["../utils/dist"],
+      "@mentra/sdk": ["../sdk/dist"],
+      "@mentra/utils": ["../utils/dist"],
     }
   },
   "include": ["src/**/*"],

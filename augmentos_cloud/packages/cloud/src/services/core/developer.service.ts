@@ -1,14 +1,14 @@
 /**
  * @fileoverview Service for developer console operations.
  * Handles API key management, JWT generation, and app creation.
- * 
+ *
  * This is a stateless collection of functions for developer-specific operations,
  * extracted from app.service.ts to improve separation of concerns.
  */
 
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { AppI } from '@augmentos/sdk';
+import { AppI } from '@mentra/sdk';
 import App from '../../models/app.model';
 import { logger as rootLogger } from '../logging/pino-logger';
 import UserSession from '../session/UserSession';
@@ -40,7 +40,7 @@ export function generateApiKey(): string {
  * Generate a JWT token for TPA authentication
  * This JWT contains both packageName and apiKey, allowing TPAs to authenticate
  * with a single token instead of separate values.
- * 
+ *
  * @param packageName - The package name of the TPA
  * @param apiKey - The API key for the TPA
  * @returns The JWT token
@@ -71,7 +71,7 @@ export async function validateApiKey(packageName: string, apiKey: string, userSe
       return false;
     }
 
-    // Special validation for system apps. 
+    // Special validation for system apps.
     // Currently, only the system dashboard app is considered a system app.
     // const isSystemApp = packageName === 'system.augmentos.dashboard';
 
@@ -114,7 +114,7 @@ export async function validateApiKey(packageName: string, apiKey: string, userSe
 /**
  * Create a new app with JWT generation
  * Enhanced version of app.service.createApp that also generates a JWT
- * 
+ *
  * @param appData - The app data
  * @param developerId - The developer ID
  * @returns The created app, API key, and JWT
@@ -177,7 +177,7 @@ export async function createApp(
 /**
  * Regenerate API key for an app with JWT generation
  * Enhanced version of app.service.regenerateApiKey that also generates a JWT
- * 
+ *
  * @param packageName - The package name
  * @param developerId - The developer ID
  * @returns The new API key and JWT

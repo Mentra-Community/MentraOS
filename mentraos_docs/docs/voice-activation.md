@@ -31,7 +31,7 @@ Create a new project—or reuse an existing one—and install the SDK:
 mkdir voice-activation-app
 cd voice-activation-app
 bun init -y           # or npm init -y / pnpm init -y
-bun add @mentraos/sdk
+bun add @mentra/sdk
 bun add -d typescript tsx @types/node
 ```
 
@@ -44,7 +44,7 @@ Copy the basic project structure from the [Quickstart](/quickstart) if you haven
 The full source code is shown first, followed by a step-by-step explanation.
 
 ```typescript title="src/index.ts"
-import { TpaServer, TpaSession } from "@mentraos/sdk";
+import { TpaServer, TpaSession } from "@mentra/sdk";
 
 /**
  * A custom keyword that triggers our action once detected in speech

@@ -3,8 +3,8 @@ import Head from '@docusaurus/Head';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 
 export default function SEOHead() {
-  const imageUrl = useBaseUrl('img/mentraos-social-card.png', {absolute: true});
-  
+  const imageUrl = useBaseUrl('img/mentra-dev-docs.png', {absolute: true});
+
   return (
     <Head>
       {/* Open Graph / Facebook */}
@@ -16,7 +16,7 @@ export default function SEOHead() {
       {/* Twitter */}
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content="MentraOS Developer Documentation" />
-      <meta name="twitter:description" content="Build applications for the open-source operating system for smart glasses" /> 
+      <meta name="twitter:description" content="Build applications for the open-source operating system for smart glasses" />
       <meta name="twitter:image" content={imageUrl} />
     </Head>
   );

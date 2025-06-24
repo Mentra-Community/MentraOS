@@ -1,13 +1,13 @@
 // src/components/LayoutRenderer.tsx
 
 import React, { useMemo } from 'react';
-import { 
+import {
   Layout,
   TextWall,
   DoubleTextWall,
   ReferenceCard,
   DashboardCard
-} from '@augmentos/types';
+} from '@mentra/types';
 
 interface LayoutRendererProps {
   layout: Layout;

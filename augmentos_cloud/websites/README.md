@@ -1,1 +1,1 @@
-# websites related to AugmentOS Cloud
+# websites related to MentraOS Cloud

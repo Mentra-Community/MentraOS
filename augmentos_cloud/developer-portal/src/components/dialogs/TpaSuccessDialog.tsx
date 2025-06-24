@@ -27,14 +27,14 @@ const TpaSuccessDialog: React.FC<TpaSuccessDialogProps> = ({
 
   const handleCopyApiKey = React.useCallback(() => {
     if (!apiKey) return;
-    
+
     navigator.clipboard.writeText(apiKey).then(() => {
       setIsCopied(true);
       toast.success('API key copied to clipboard');
       setTimeout(() => setIsCopied(false), 2000);
     });
   }, [apiKey]);
-  
+
   // Auto-copy API key when dialog opens
   React.useEffect(() => {
     if (open && apiKey) {
@@ -76,14 +76,14 @@ const TpaSuccessDialog: React.FC<TpaSuccessDialogProps> = ({
                 <div className="flex-1 font-mono text-sm p-3 border-2 border-blue-300 rounded-md bg-blue-50 overflow-x-auto shadow-sm">
                   {apiKey}
                 </div>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   size="sm"
                   onClick={handleCopyApiKey}
                   className="shrink-0 border-blue-300"
                 >
-                  {isCopied ? 
-                    <CheckCircle className="h-4 w-4 text-green-600" /> : 
+                  {isCopied ?
+                    <CheckCircle className="h-4 w-4 text-green-600" /> :
                     <Copy className="h-4 w-4" />
                   }
                 </Button>
@@ -97,7 +97,7 @@ const TpaSuccessDialog: React.FC<TpaSuccessDialogProps> = ({
             <div className="space-y-2">
               <p className="text-sm font-medium flex items-center gap-2">
                 <KeyRound className="h-4 w-4" />
-                API Key 
+                API Key
               </p>
               <Button
                 onClick={onViewApiKey}
@@ -107,7 +107,7 @@ const TpaSuccessDialog: React.FC<TpaSuccessDialogProps> = ({
                 Generate API Key
               </Button>
               <p className="text-xs text-gray-500">
-                Generate an API key to authenticate your app with AugmentOS.
+                Generate an API key to authenticate your app with MentraOS.
               </p>
             </div>
           )}
@@ -115,9 +115,9 @@ const TpaSuccessDialog: React.FC<TpaSuccessDialogProps> = ({
 
         <DialogFooter className="flex items-center justify-between sm:justify-end gap-2">
           {apiKey && (
-            <Button 
-              onClick={handleCopyApiKey} 
-              variant="outline" 
+            <Button
+              onClick={handleCopyApiKey}
+              variant="outline"
               className="mr-auto gap-2"
             >
               {isCopied ? 'Copied!' : 'Copy API Key Again'}

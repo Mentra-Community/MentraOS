@@ -1,8 +1,8 @@
 import { Router, Request } from 'express';
 import { validateCoreToken, UserRequest } from '../middleware/supabaseMiddleware';
 import App from '../models/app.model';
-import { PermissionType } from '@augmentos/sdk';
-import { logger } from '@augmentos/utils';
+import { PermissionType } from '@mentra/sdk';
+import { logger } from '@mentra/utils';
 import { Types } from 'mongoose';
 import { User } from '../models/user.model';
 import { OrganizationService } from '../services/core/organization.service';

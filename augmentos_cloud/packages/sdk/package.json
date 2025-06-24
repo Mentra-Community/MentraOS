@@ -1,6 +1,8 @@
 {
-  "name": "@augmentos/sdk",
-  "version": "1.1.18",
+
+  "name": "@mentra/sdk",
+  "version": "1.1.20",
+  "description": "Build apps for MentraOS smartglasses. This SDK provides everything you need to create real-time smartglasses applications.",
   "source": "src/index.ts",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

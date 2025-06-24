@@ -1,6 +1,6 @@
-# AugmentOS Permissions System
+# MentraOS Permissions System
 
-This document describes the permissions system in AugmentOS, which controls what data Third-Party Applications (TPAs) can access.
+This document describes the permissions system in MentraOS, which controls what data Third-Party Applications (TPAs) can access.
 
 ## Overview
 
@@ -8,7 +8,7 @@ The permissions system ensures that TPAs can only access data streams they have 
 
 ## Permission Types
 
-AugmentOS defines the following permission types:
+MentraOS defines the following permission types:
 
 | Permission | Description | Required For |
 | ---------- | ----------- | ----------- |

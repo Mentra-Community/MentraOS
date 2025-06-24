@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Copy, Share2, LinkIcon, CheckCircle, X, InfoIcon } from "lucide-react";
 import api from "@/services/api.service";
-import { AppI } from '@augmentos/sdk';
+import { AppI } from '@mentra/sdk';
 import { TPA } from '@/types/tpa';
 
 interface SharingDialogProps {
@@ -35,7 +35,7 @@ const SharingDialog: React.FC<SharingDialogProps> = ({ tpa, open, onOpenChange, 
           setShareLink(link);
         } catch (error) {
           console.error('Failed to get share link:', error);
-          setShareLink(`https://app.augmentos.org/install/${tpa.packageName}`); // Fallback
+          setShareLink(`https://apps.mentra.glass/package/${tpa.packageName}`); // Fallback
         } finally {
           setLoadingShareLink(false);
         }

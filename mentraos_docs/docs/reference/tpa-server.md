@@ -8,7 +8,7 @@ title: TpaServer
 `TpaServer` is the base class for creating Third Party Application (app) servers that handle webhook requests from MentraOS Cloud to manage app sessions.
 
 ```typescript
-import { TpaServer } from '@mentraos/sdk';
+import { TpaServer } from '@mentra/sdk';
 ```
 
 ## Constructor

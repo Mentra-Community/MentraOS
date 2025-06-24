@@ -71,15 +71,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         <div className="mx-auto px-5 sm:px-6 lg:px-8 h-full flex items-center justify-between">
           <div className='select-none'>
             <div className="flex items-end gap-0">
-              <h1 className="font-cuprum font-bold text-4xl">.\</h1>
-              <h1 className="font-light text-xl pb-0.5 pl-1">ugment</h1>
-              <h1 className="font-medium text-xl pb-0.5">OS</h1>
+              <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/757b23a3-9ec0-457d-2634-29e28f03fe00/verysmall" alt="Mentra Logo" />
             </div>
             <h2 className="text-xs text-gray-600 pb-1">Developer Portal</h2>
           </div>
 
           <div className="flex items-center gap-2">
-            <Link to="https://docs.augmentos.org" >
+            <Link to="https://docs.mentra.glass" >
               <Button variant="ghost" size="sm" className='hover:bg-gray-200'>
                 Documentation
               </Button>
@@ -147,7 +145,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             </Link>
 
             <Link
-              to="https://docs.augmentos.org"
+              to="https://docs.mentra.glass"
               className={`flex items-center px-3 py-2 text-sm font-medium rounded-md ${isActivePath('/docs')
                 ? 'bg-gray-200 text-gray-900'
                 : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'

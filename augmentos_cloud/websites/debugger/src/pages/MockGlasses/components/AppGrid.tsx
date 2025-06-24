@@ -1,4 +1,4 @@
-import { AppI } from '@augmentos/types';
+import { AppI } from '@mentra/types';
 import React from 'react';
 
 interface AppGridProps {
@@ -50,12 +50,12 @@ export const AppCard: React.FC<AppCardProps> = ({
   onStop,
 }) => {
   const isActive = !!status;
-  
+
   return (
-    <div 
+    <div
       className={`p-3 rounded-lg border ${
-        isActive 
-          ? 'border-green-500 bg-gray-800' 
+        isActive
+          ? 'border-green-500 bg-gray-800'
           : 'border-gray-700 hover:border-gray-500'
       } cursor-pointer transition-colors`}
       onClick={() => {
@@ -67,9 +67,9 @@ export const AppCard: React.FC<AppCardProps> = ({
       }}
     >
       <div className="flex items-start gap-3">
-        <img 
-          src={app.logoURL} 
-          alt={app.name} 
+        <img
+          src={app.logoURL}
+          alt={app.name}
           className="w-8 h-8 rounded"
         />
         <div className="flex-1">

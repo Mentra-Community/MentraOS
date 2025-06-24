@@ -12,7 +12,7 @@ import {
   PhotoRequest, // SDK type for TPA's request
   CloudToTpaMessage,
   // Define TpaPhotoResult in SDK or use a generic message structure
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import { Logger } from 'pino';
 import UserSession from './UserSession';
 
@@ -67,7 +67,7 @@ export class PhotoManager {
 
     this.logger.info({ packageName, saveToGallery }, 'Processing TPA photo request.');
 
-    // Get TPA websocket for storing in pending request (but don't validate connection - 
+    // Get TPA websocket for storing in pending request (but don't validate connection -
     // centralized messaging will handle resurrection when we send the response)
     const tpaWebSocket = this.userSession.appWebsockets.get(packageName);
 
@@ -160,26 +160,26 @@ export class PhotoManager {
     try {
       // Use centralized messaging with automatic resurrection
       const result = await this.userSession.appManager.sendMessageToTpa(packageName, photoResponse);
-      
+
       if (result.sent) {
-        this.logger.info({ 
-          requestId, 
+        this.logger.info({
+          requestId,
           packageName,
-          resurrectionTriggered: result.resurrectionTriggered 
+          resurrectionTriggered: result.resurrectionTriggered
         }, `Sent photo result to TPA ${packageName}${result.resurrectionTriggered ? ' after resurrection' : ''}`);
       } else {
-        this.logger.warn({ 
-          requestId, 
+        this.logger.warn({
+          requestId,
           packageName,
           resurrectionTriggered: result.resurrectionTriggered,
           error: result.error
         }, `Failed to send photo result to TPA ${packageName}`);
       }
     } catch (error) {
-      this.logger.error({ 
+      this.logger.error({
         error: error instanceof Error ? error.message : String(error),
-        requestId, 
-        packageName 
+        requestId,
+        packageName
       }, `Error sending photo result to TPA ${packageName}`);
     }
   }

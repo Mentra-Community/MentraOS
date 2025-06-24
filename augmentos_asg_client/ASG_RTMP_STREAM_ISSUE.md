@@ -4,7 +4,7 @@
 
 **Keep-alives AND heartbeats both failed** after 14:41:09. The glasses stopped receiving **ALL BLE data**.
 
-- ✅ Phone successfully sent 3 keep-alives + 4 heartbeats via BLE  
+- ✅ Phone successfully sent 3 keep-alives + 4 heartbeats via BLE
 - ❌ Glasses received **ZERO BLE data** of any kind after 14:41:09
 - ❌ No "UART read" logs, no ComManager activity, no K900MessageParser activity
 - ❌ **Complete BLE receive shutdown** - not selective message failure
@@ -55,7 +55,7 @@ RTMP streams from ASG client consistently stop after 5-7 minutes due to **comple
 **Phone sends (successfully):**
 ```
 2025-06-08 14:41:24.141 WearableAi_ServerComms: Received KEEP_RTMP_STREAM_ALIVE: {"type":"keep_rtmp_stream_alive","sessionId":"alex1115alex@gmail.com","streamId":"d5edf945-9620-46aa-a4b8-4a3c5bbd3156","ackId":"d6f98e1c-3b32-4b96-9c6a-9d64971d4944","timestamp":"2025-06-08T21:41:24.073Z"}
-2025-06-08 14:41:24.141 AugmentOSService: RTMP stream keep alive received
+2025-06-08 14:41:24.141 MentraOSService: RTMP stream keep alive received
 2025-06-08 14:41:24.141 SGM_Manager: Sending RTMP stream keep alive to glasses
 2025-06-08 14:41:24.142 WearableAi...traLiveSGC: Sending data to glasses: {"C":"{\"type\":\"keep_rtmp_stream_alive\",\"sessionId\":\"alex1115alex@gmail.com\",\"streamId\":\"d5edf945-9620-46aa-a4b8-4a3c5bbd3156\",\"ackId\":\"d6f98e1c-3b32-4b96-9c6a-9d64971d4944\",\"timestamp\":\"2025-06-08T21:41:24.073Z\"}","W":1}
 2025-06-08 14:41:24.163 WearableAi...traLiveSGC: Characteristic write successful
@@ -75,7 +75,7 @@ RTMP streams from ASG client consistently stop after 5-7 minutes due to **comple
 **Phone sends (successfully):**
 ```
 2025-06-08 14:41:39.281 WearableAi_ServerComms: Received KEEP_RTMP_STREAM_ALIVE: {"type":"keep_rtmp_stream_alive","sessionId":"alex1115alex@gmail.com","streamId":"d5edf945-9620-46aa-a4b8-4a3c5bbd3156","ackId":"df60b9a1-ee4f-4cf9-a138-173980d9fec3","timestamp":"2025-06-08T21:41:39.074Z"}
-2025-06-08 14:41:39.282 AugmentOSService: RTMP stream keep alive received
+2025-06-08 14:41:39.282 MentraOSService: RTMP stream keep alive received
 2025-06-08 14:41:39.282 SGM_Manager: Sending RTMP stream keep alive to glasses
 2025-06-08 14:41:39.301 WearableAi...traLiveSGC: Characteristic write successful
 ```
@@ -93,7 +93,7 @@ RTMP streams from ASG client consistently stop after 5-7 minutes due to **comple
 **Phone sends (successfully):**
 ```
 2025-06-08 14:41:54.147 WearableAi_ServerComms: Received KEEP_RTMP_STREAM_ALIVE: {"type":"keep_rtmp_stream_alive","sessionId":"alex1115alex@gmail.com","streamId":"d5edf945-9620-46aa-a4b8-4a3c5bbd3156","ackId":"27fc9f5e-f861-4cca-bf8b-8ae5e7c0ca2e","timestamp":"2025-06-08T21:41:54.074Z"}
-2025-06-08 14:41:54.147 AugmentOSService: RTMP stream keep alive received
+2025-06-08 14:41:54.147 MentraOSService: RTMP stream keep alive received
 2025-06-08 14:41:54.147 SGM_Manager: Sending RTMP stream keep alive to glasses
 2025-06-08 14:41:54.167 WearableAi...traLiveSGC: Characteristic write successful
 ```
@@ -136,7 +136,7 @@ RTMP streams from ASG client consistently stop after 5-7 minutes due to **comple
 **After 14:41:09 - ZERO BLE Data Received:**
 ```
 # NO MORE "UART read" entries in logs
-# NO MORE K900MessageParser activity  
+# NO MORE K900MessageParser activity
 # NO MORE CircleBuffer "Added bytes" entries
 # The ASG client NEVER received the subsequent keep-alive messages from the phone
 ```
@@ -144,7 +144,7 @@ RTMP streams from ASG client consistently stop after 5-7 minutes due to **comple
 **Phone sending activity (confirmed working):**
 ```
 # 14:41:24 - Phone sends keep-alive, BLE write successful
-# 14:41:39 - Phone sends keep-alive, BLE write successful  
+# 14:41:39 - Phone sends keep-alive, BLE write successful
 # 14:41:54 - Phone sends keep-alive, BLE write successful
 ```
 
@@ -185,12 +185,12 @@ RTMP streams from ASG client consistently stop after 5-7 minutes due to **comple
 ## Analysis
 
 ### What's NOT the Problem
-- ❌ ~~Selective message processing failure~~ 
+- ❌ ~~Selective message processing failure~~
 - ❌ ~~Message parsing issues~~
 - ❌ ~~Software-level message filtering~~
 - ❌ Phone-side sending issues
 
-### What IS the Problem  
+### What IS the Problem
 - ✅ **COMPLETE BLE RECEIVE FAILURE** on glasses side after 14:41:09
 - ✅ **Hardware-level issue** - glasses stopped receiving ANY BLE data
 - ✅ **Unidirectional failure** - glasses can still SEND data to phone
@@ -209,14 +209,14 @@ This points to a **hardware-level or low-level BLE driver issue**:
 
 ### Immediate Actions
 1. **Check Android BLE logs** for connection/receive errors around 14:41:09
-2. **Monitor ComManager/UART layer** for low-level receive failures  
+2. **Monitor ComManager/UART layer** for low-level receive failures
 3. **Examine K900 BLE driver** for buffer management issues
 4. **Test BLE receive reliability** under sustained data transmission
 5. **Check power management settings** that might affect BLE receive
 
 ### Code Areas to Investigate
 1. **ComManager.java** - UART/serial port communication layer
-2. **K900BluetoothManager.java** - BLE driver and connection management  
+2. **K900BluetoothManager.java** - BLE driver and connection management
 3. **Android BLE stack configuration** - buffer sizes, connection parameters
 4. **Power management settings** - BLE receiver power states
 

@@ -64,6 +64,7 @@ const sidebars: SidebarsConfig = {
         'layouts',
         'settings',
         'tools',
+        'capabilities',
         'webview-auth-overview',
         'react-webviews',
         'dashboard'
@@ -96,6 +97,7 @@ const sidebars: SidebarsConfig = {
             'reference/interfaces/config-types',
             'reference/interfaces/event-types',
             'reference/interfaces/layout-types',
+            'reference/interfaces/capabilities',
             'reference/interfaces/webhook-types',
             'reference/interfaces/message-types',
             'reference/interfaces/tool-types',

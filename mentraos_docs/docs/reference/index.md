@@ -5,7 +5,7 @@ title: SDK Reference
 
 # MentraOS SDK Reference
 
-Welcome to the reference for the MentraOS SDK. This section provides detailed information about all classes, interfaces, types, and enums available in the `@mentraos/sdk` package.
+Welcome to the reference for the MentraOS SDK. This section provides detailed information about all classes, interfaces, types, and enums available in the `@mentra/sdk` package.
 
 ## Overview
 

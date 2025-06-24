@@ -7,12 +7,12 @@
  * to maintain core functionality regardless of database state.
  */
 
-import { StopWebhookRequest, TpaType, WebhookResponse, AppState, SessionWebhookRequest, ToolCall, PermissionType, WebhookRequestType, AppSetting, AppSettingType } from '@augmentos/sdk';
+import { StopWebhookRequest, TpaType, WebhookResponse, AppState, SessionWebhookRequest, ToolCall, PermissionType, WebhookRequestType, AppSetting, AppSettingType } from '@mentra/sdk';
 // TODO(isaiah): Consider splitting this into multiple services (appstore.service, developer.service, tools.service)
 import axios, { AxiosError } from 'axios';
 // import { systemApps } from './system-apps';
 import App, { AppI } from '../../models/app.model';
-import { ToolSchema, ToolParameterSchema } from '@augmentos/sdk';
+import { ToolSchema, ToolParameterSchema } from '@mentra/sdk';
 import { User } from '../../models/user.model';
 import crypto from 'crypto';
 import { logger as rootLogger } from '../logging/pino-logger';

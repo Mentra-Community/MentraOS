@@ -1,4 +1,4 @@
-# AugmentOS Cloud Development Guide
+# MentraOS Cloud Development Guide
 
 ## Build Commands
 - **Build**: `bun run build` (Builds sdk, utils, and agents packages)
@@ -11,7 +11,7 @@
 - **Quick Setup**: `./scripts/docker-setup.sh` (Sets up network, cleans resources, and starts services)
 - **Setup Dependencies**: `bun run setup-deps` (Install dependencies with optimizations)
 - **Dev Network**: `bun run dev:setup-network` (Create Docker network)
-- **Dev Logs**: 
+- **Dev Logs**:
   - `bun run logs` (View all Docker logs)
   - `bun run logs:cloud` (View cloud service logs)
   - `bun run logs:service <service-name>` (View specific service logs)
@@ -32,7 +32,7 @@
 - **Error Handling**: Use try/catch with appropriate logger.error calls
 - **Formatting**: 2-space indentation, semicolons
 - **Documentation**: JSDoc comments for functions/classes
-- **Logging**: Use logger from @augmentos/utils package
+- **Logging**: Use logger from @mentra/utils package
 - **WebSockets**: Follow the message type patterns from the SDK
 
 ## Communication Architecture
@@ -53,7 +53,7 @@
 The following improvements have been implemented to enhance system reliability:
 
 ### TPA Server Registration System
-- TPAs can register their servers with AugmentOS Cloud
+- TPAs can register their servers with MentraOS Cloud
 - Tracks sessions by TPA server to enable recovery after restarts
 - Provides automatic reconnection when TPA servers restart
 - Documentation in `/docs/TPA-SERVER-REGISTRATION.md`
@@ -91,7 +91,7 @@ The following improvements have been implemented to enhance system reliability:
 ## Working with Smart Glasses Hardware
 
 - **Display Limitations**: Single color (green) text-only displays
-- **Update Frequency**: Must respect 200-300ms minimum delay between updates 
+- **Update Frequency**: Must respect 200-300ms minimum delay between updates
 - **Bandwidth**: Bluetooth connection has limited bandwidth and can drop if overloaded
 - **Verification**: No confirmation mechanism to verify display updates were received
 

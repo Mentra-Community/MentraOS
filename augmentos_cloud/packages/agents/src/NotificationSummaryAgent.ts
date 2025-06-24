@@ -1,7 +1,7 @@
 import { Agent } from "./AgentInterface";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { HumanMessage } from "@langchain/core/messages";
-import { LLMProvider } from "@augmentos/utils";
+import { LLMProvider } from "@mentra/utils";
 
 // Define interfaces for notifications and response
 export interface NotificationRank {
@@ -93,7 +93,7 @@ export class NotificationSummaryAgent implements Agent {
         jsonText = jsonText.substring(0, jsonText.length - 3).trim();
       }
     }
-    
+
     try {
       const parsed: NotificationFilterResponse = JSON.parse(jsonText);
       if (
@@ -113,7 +113,7 @@ export class NotificationSummaryAgent implements Agent {
     }
     // Return an empty ranking if parsing fails.
     return { notification_ranking: [] };
-  }  
+  }
 
   /**
    * Handles the context which is expected to include a "notifications" field (an array).
@@ -152,7 +152,7 @@ export class NotificationSummaryAgent implements Agent {
       });
 
       const finalPrompt = await promptTemplate.format({
-        notifications: notificationsStr 
+        notifications: notificationsStr
       });
       // Initialize LLM with settings.
       const llmOptions: any = {};
@@ -161,7 +161,7 @@ export class NotificationSummaryAgent implements Agent {
 
       // Call the LLM.
       const response = await llm.invoke(finalPrompt);
-      
+
       // Expect the LLM response to have a "content" property.
       if (!response || !response.content) {
         // Fallback: return original notifications with default summary/rank
@@ -176,11 +176,11 @@ export class NotificationSummaryAgent implements Agent {
         }));
       }
 
-      const content = typeof response.content === 'string' 
-        ? response.content 
-        : Array.isArray(response.content) 
-          ? response.content[0].type === 'text' 
-            ? response.content[0].text 
+      const content = typeof response.content === 'string'
+        ? response.content
+        : Array.isArray(response.content)
+          ? response.content[0].type === 'text'
+            ? response.content[0].text
             : ''
           : '';
 

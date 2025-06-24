@@ -1,7 +1,7 @@
 # Developer Portal Improvements
 
 ## Introduction
-This document outlines the current issues with the AugmentOS Developer Portal and proposes solutions to improve the overall user experience, particularly around TPA (Third-Party App) creation and management.
+This document outlines the current issues with the MentraOS Developer Portal and proposes solutions to improve the overall user experience, particularly around TPA (Third-Party App) creation and management.
 
 ## Current Issues
 

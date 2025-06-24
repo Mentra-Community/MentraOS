@@ -1,4 +1,4 @@
-# AugmentOS Developer Portal Guidelines
+# MentraOS Developer Portal Guidelines
 
 ## Build Commands
 - **Build**: `npm run build` (TypeScript compile + Vite build)
@@ -14,7 +14,7 @@
   - React imports first
   - External libraries next
   - Internal components/hooks/utilities last
-- **Naming**: 
+- **Naming**:
   - PascalCase for components and type interfaces
   - camelCase for variables, functions, and instances
   - Use descriptive, semantic names

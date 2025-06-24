@@ -6,7 +6,7 @@ slug: /
 
 import MentraOSArchImage from '@site/src/components/ThemedImage';
 
-# Intro to the MentraOS SDK Beta
+# Intro to the MentraOS SDK
 
 ## What is MentraOS?
 

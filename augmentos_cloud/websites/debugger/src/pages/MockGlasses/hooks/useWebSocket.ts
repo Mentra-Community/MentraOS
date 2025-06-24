@@ -6,7 +6,7 @@ import {
   CloudConnectionAckMessage,
   CloudDisplayEventMessage,
   CloudConnectionErrorMessage
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import { useState, useRef, useCallback, useEffect } from 'react';
 const CLOUD_PORT = 8002;
 const JOE_MAMA_USER_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiZW1haWwiOiJqb2VAbWFtYXMuaG91c2UiLCJpYXQiOjE3Mzk2NjY4MTB9.mJkSEyP7v_jHlzRjc-HzjhCjDopG12aIlOeYxo-kp0M';

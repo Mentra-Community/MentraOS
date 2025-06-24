@@ -1,4 +1,4 @@
-# AugmentOS_Core
+# MentraOS_Core
 
 This is the Android code that runs on the Puck device.
 
@@ -7,7 +7,7 @@ This is the Android code that runs on the Puck device.
 - Must use Java SDK 17
     - To set this, in Android Studio, go to Settings > Build, Execution, Deployment > Build Tools > Gradle, go to Gradle JDK and select version 17
 
-- AugmentOS_Core currently depends on the "SmartGlassesManager" repo being next to it. In the future, it will be fully merged with AugmentOS_Core and deleted.
+- MentraOS_Core currently depends on the "SmartGlassesManager" repo being next to it. In the future, it will be fully merged with MentraOS_Core and deleted.
 
 ##### Building OGG/Orbis C++ for ASP
 

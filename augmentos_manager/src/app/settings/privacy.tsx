@@ -154,6 +154,7 @@ export default function PrivacySettingsScreen() {
       return
     }
 
+    // Only request permission if not already granted
     if (!notificationsEnabled) {
       // Try to request notification access
       await checkAndRequestNotificationAccessSpecialPermission()
@@ -165,45 +166,11 @@ export default function PrivacySettingsScreen() {
         //   await NotificationService.startNotificationListenerService();
         setNotificationsEnabled(true)
       }
-    } else {
-      // If turning off, show alert and navigate to settings instead of just toggling off
-      showAlert(
-        "Revoke Notification Access",
-        "To revoke notification access, please go to your device settings and disable notification access for AugmentOS Manager.",
-        [
-          {text: "Cancel", style: "cancel"},
-          {
-            text: "Go to Settings",
-            onPress: () => {
-              if (NativeModules.NotificationAccess && NativeModules.NotificationAccess.requestNotificationAccess) {
-                NativeModules.NotificationAccess.requestNotificationAccess()
-              }
-            },
-          },
-        ],
-      )
     }
   }
 
   const handleToggleCalendar = async () => {
-    if (calendarEnabled) {
-      // We can't revoke the permission, but we can provide info and a way to open settings
-      showAlert(
-        "Permission Management",
-        "To revoke calendar permission, please go to your device settings and modify app permissions.",
-        [
-          {text: "Cancel", style: "cancel"},
-          {
-            text: "Go to Settings",
-            onPress: () => {
-              Linking.openSettings()
-            },
-          },
-        ],
-      )
-      return
-    }
-
+    // Only request permission if not already granted
     if (!calendarEnabled) {
       // Immediately set pending state to prevent toggle flicker
       setCalendarPermissionPending(true)
@@ -228,24 +195,7 @@ export default function PrivacySettingsScreen() {
   }
 
   const handleToggleLocation = async () => {
-    if (locationEnabled) {
-      // We can't revoke the permission, but we can provide info and a way to open settings
-      showAlert(
-        "Permission Management",
-        "To revoke location permission, please go to your device settings and modify app permissions.",
-        [
-          {text: "Cancel", style: "cancel"},
-          {
-            text: "Go to Settings",
-            onPress: () => {
-              Linking.openSettings()
-            },
-          },
-        ],
-      )
-      return
-    }
-
+    // Only request permission if not already granted
     if (!locationEnabled) {
       // Immediately set pending state to prevent toggle flicker
       setLocationPermissionPending(true)
@@ -274,7 +224,7 @@ export default function PrivacySettingsScreen() {
       <Header titleTx="privacySettings:title" leftIcon="caretLeft" onLeftPress={goBack} />
       <ScrollView>
         {/* Notification Permission - Android Only */}
-        {Platform.OS === "android" && (
+        {Platform.OS === "android" && !notificationsEnabled && (
           <>
             <ToggleSetting
               label={translate("settings:notificationsLabel")}
@@ -286,23 +236,31 @@ export default function PrivacySettingsScreen() {
           </>
         )}
 
-        <ToggleSetting
-          label={translate("settings:calendarLabel")}
-          subtitle={translate("settings:calendarSubtitle")}
-          value={calendarEnabled}
-          onValueChange={handleToggleCalendar}
-        />
+        {/* Calendar Permission - only show if not granted */}
+        {!calendarEnabled && (
+          <>
+            <ToggleSetting
+              label={translate("settings:calendarLabel")}
+              subtitle={translate("settings:calendarSubtitle")}
+              value={calendarEnabled}
+              onValueChange={handleToggleCalendar}
+            />
+            <Spacer height={theme.spacing.md} />
+          </>
+        )}
 
-        <Spacer height={theme.spacing.md} />
-
-        <ToggleSetting
-          label={translate("settings:locationLabel")}
-          subtitle={translate("settings:locationSubtitle")}
-          value={locationEnabled}
-          onValueChange={handleToggleLocation}
-        />
-
-        <Spacer height={theme.spacing.md} />
+        {/* Location Permission - only show if not granted */}
+        {!locationEnabled && (
+          <>
+            <ToggleSetting
+              label={translate("settings:locationLabel")}
+              subtitle={translate("settings:locationSubtitle")}
+              value={locationEnabled}
+              onValueChange={handleToggleLocation}
+            />
+            <Spacer height={theme.spacing.md} />
+          </>
+        )}
 
         <ToggleSetting
           label={translate("settings:sensingLabel")}

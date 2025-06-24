@@ -28,6 +28,21 @@ export default function AppStoreWeb() {
   const {refreshAppStatus} = useAppStatus()
   const {theme, themed} = useAppTheme()
   const isDarkTheme = theme.isDark
+  
+  // Construct the final URL with packageName if provided
+  const finalUrl = React.useMemo(() => {
+    if (!appStoreUrl) return appStoreUrl
+    
+    if (packageName && typeof packageName === 'string') {
+      // If packageName is provided, navigate to the app details page
+      const url = new URL(appStoreUrl)
+      // Update the path to point to the app details page
+      url.pathname = `/app/${packageName}`
+      return url.toString()
+    }
+    
+    return appStoreUrl
+  }, [appStoreUrl, packageName])
 
   // Theme colors - using theme system instead of hardcoded values
   const theme2 = {
@@ -99,7 +114,7 @@ export default function AppStoreWeb() {
           {/* Show the prefetched WebView, but now visible and full size */}
           <WebView
             ref={prefetchedWebviewRef}
-            source={{uri: appStoreUrl}}
+            source={{uri: finalUrl || appStoreUrl}}
             style={[styles.webView, {backgroundColor: theme.colors.background}]}
             onLoadStart={() => setWebviewLoading(true)}
             onLoadEnd={() => setWebviewLoading(false)}

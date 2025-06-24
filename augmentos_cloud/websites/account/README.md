@@ -1,6 +1,6 @@
-# AugmentOS Account Portal
+# MentraOS Account Portal
 
-This is the account management portal for AugmentOS users. It provides users with the ability to:
+This is the account management portal for MentraOS users. It provides users with the ability to:
 
 - View their profile information
 - Delete their account
@@ -10,7 +10,7 @@ This is the account management portal for AugmentOS users. It provides users wit
 
 - **Profile Management**: View and update your profile information.
 - **Account Deletion**: Request deletion of your account and all associated data.
-- **Data Export**: Request and download an export of all your AugmentOS data.
+- **Data Export**: Request and download an export of all your MentraOS data.
 
 ## Development
 
@@ -31,7 +31,7 @@ npm install
 3. Create a `.env` file with the following variables:
 
 ```
-VITE_SUPABASE_URL=https://global.augmentos.org
+VITE_SUPABASE_URL=https://global.mentra.glass
 VITE_SUPABASE_URL=your-supabase-url
 VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
@@ -62,7 +62,7 @@ This application is built with:
 - **Tailwind CSS**: For styling
 - **Axios**: For API requests
 
-Authentication is integrated with the existing AugmentOS authentication system, using Supabase Auth.
+Authentication is integrated with the existing MentraOS authentication system, using Supabase Auth.
 
 ## API Endpoints
 

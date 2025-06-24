@@ -1,12 +1,12 @@
-# AugmentOS Cloud Docker Guide
+# MentraOS Cloud Docker Guide
 
-This guide explains how to use Docker to run AugmentOS Cloud and TPAs (Third-Party Applications) in a consistent development and production environment.
+This guide explains how to use Docker to run MentraOS Cloud and TPAs (Third-Party Applications) in a consistent development and production environment.
 
 ## Overview
 
-AugmentOS uses a microservices architecture with Docker to manage its various components:
+MentraOS uses a microservices architecture with Docker to manage its various components:
 
-1. **Core Services**: 
+1. **Core Services**:
    - `cloud`: Main cloud service (port 8002)
    - `flash`: Flash application (port 8011)
    - `dashboard-manager`: Dashboard management (port 8012)
@@ -23,7 +23,7 @@ AugmentOS uses a microservices architecture with Docker to manage its various co
 
 ```
 Augment/
-├── AugmentOS/
+├── MentraOS/
 │   └── augmentos_cloud/  # Core platform services
 ├── Apps/
 │   ├── AugHog/          # AugHog TPA
@@ -93,7 +93,7 @@ Use the helper scripts to quickly manage services:
 
 ## Adding a New TPA
 
-To integrate a new TPA with AugmentOS Cloud:
+To integrate a new TPA with MentraOS Cloud:
 
 1. **Update Docker Compose**:
    Add your TPA to `docker-compose.dev.yml`:

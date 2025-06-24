@@ -1,5 +1,5 @@
 {
-  "name": "@augmentos/appstore-webview",
+  "name": "@mentra/appstore-webview",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -14,7 +14,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@augmentos/sdk": "^1.0.6",
+    "@mentra/sdk": "^1.1.19",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-dropdown-menu": "^2.1.14",
     "@radix-ui/react-label": "^2.1.2",

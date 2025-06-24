@@ -1,8 +1,8 @@
-# AugmentOS Logging System
+# MentraOS Logging System
 
 ## Overview
 
-This document outlines the logging infrastructure and best practices for the AugmentOS Cloud system. We use Pino for logging with BetterStack as our log management service.
+This document outlines the logging infrastructure and best practices for the MentraOS Cloud system. We use Pino for logging with BetterStack as our log management service.
 
 ## Design Goals
 
@@ -46,7 +46,7 @@ This document outlines the logging infrastructure and best practices for the Aug
 **Service Logger:**
 ```typescript
 // At the top of a service file
-import { createServiceLogger } from '@augmentos/utils';
+import { createServiceLogger } from '@mentra/utils';
 const logger = createServiceLogger('websocket.service');
 ```
 
@@ -73,7 +73,7 @@ logger.info('Processing display request');
 
 ### Structured Data vs Messages
 
-- Use structured data as the first parameter 
+- Use structured data as the first parameter
 - Keep message strings short and descriptive
 - Don't concatenate values into messages; use structured data
 
@@ -127,11 +127,11 @@ try {
 } catch (error) {
   // Log to BetterStack
   logger.error({ error }, 'Critical operation failed');
-  
+
   // Also track in PostHog for analytics/alerting
-  PosthogService.trackException(error, { 
+  PosthogService.trackException(error, {
     service: 'display.manager',
-    operation: 'updateDisplay' 
+    operation: 'updateDisplay'
   });
 }
 ```

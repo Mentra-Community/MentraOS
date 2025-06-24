@@ -1,4 +1,4 @@
-import { GlassesToCloudMessage, AppI } from '@augmentos/sdk';
+import { GlassesToCloudMessage, AppI } from '@mentra/sdk';
 import { useState, useEffect, useCallback } from 'react';
 
 interface ActiveApp {

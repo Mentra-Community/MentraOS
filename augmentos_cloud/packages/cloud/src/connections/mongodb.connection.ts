@@ -1,4 +1,4 @@
-import { logger } from "@augmentos/utils";
+import { logger } from "@mentra/utils";
 import dotenv from "dotenv";
 import mongoose from 'mongoose';
 

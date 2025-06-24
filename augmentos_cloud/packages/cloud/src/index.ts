@@ -44,7 +44,7 @@ import path from 'path';
 
 // Load configuration from environment
 import * as mongoConnection from "./connections/mongodb.connection";
-// import { logger } from "@augmentos/utils";
+// import { logger } from "@mentra/utils";
 import { logger as rootLogger } from './services/logging/pino-logger';
 const logger = rootLogger.child({ service: 'index' });
 
@@ -134,7 +134,7 @@ app.use(cors({
     "https://consoledev.augmentos.org",
     "https://account.augmentos.org",
     "https://accountdev.augmentos.org",
-    "https://docs.augmentos.org",
+    "https://docs.mentra.glass",
     "https://docsdev.augmentos.org",
 
     "https://augmentos.pages.dev",
@@ -153,7 +153,7 @@ app.use(cors({
     "https://account.mentra.glass",
     "https://docs.mentra.glass",
     "https://store.mentra.glass",
-    
+
     "https://appsdev.mentra.glass",
     "https://consoledev.mentra.glass",
     "https://accountdev.mentra.glass",

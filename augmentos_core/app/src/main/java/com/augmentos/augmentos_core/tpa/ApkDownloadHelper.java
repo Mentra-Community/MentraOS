@@ -52,13 +52,13 @@ public class ApkDownloadHelper {
                     if (!downloadLink.isEmpty()) {
                         Log.d(TAG, "Download link received: " + downloadLink);
 
-                        if (downloadLink.startsWith("https://api.augmentos.org/")) {
+                        if (downloadLink.startsWith("https://api.augmentos.org/") || downloadLink.startsWith("https://api.mentra.glass/")) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 downloadApk(downloadLink, packageName, appName, version);
                             }
                         } else {
                             Log.e(TAG, "The download link does not match the required domain.");
-                            throw new UnsupportedOperationException("Download links outside of https://api.augmentos.org/ are not supported.");
+                            throw new UnsupportedOperationException("Download links outside of https://api.augmentos.org/ or https://api.mentra.glass/ are not supported.");
                         }
                     } else {
                         Log.e(TAG, "Download link is missing in the response.");

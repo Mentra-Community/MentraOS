@@ -1,4 +1,4 @@
-// @augmentos/sdk
+// @mentra/sdk
 // packages/sdk/types/src/models.ts - Core models
 
 import { AppSettingType, AppState, Language, TpaType } from './enums';
@@ -36,14 +36,14 @@ export enum PermissionType {
   MICROPHONE = 'MICROPHONE',
   LOCATION = 'LOCATION',
   CALENDAR = 'CALENDAR',
-  
+
   // Legacy notification permission (backward compatibility)
   NOTIFICATIONS = 'NOTIFICATIONS',
-  
+
   // New granular notification permissions
   READ_NOTIFICATIONS = 'READ_NOTIFICATIONS',
   POST_NOTIFICATIONS = 'POST_NOTIFICATIONS',
-  
+
   ALL = 'ALL'
 }
 

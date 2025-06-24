@@ -1,11 +1,11 @@
-AugmentOS Debugger UI Design Document
+MentraOS Debugger UI Design Document
 1. Introduction
 1.1 Purpose
-The AugmentOS Debugger UI is a web-based monitoring and debugging tool that provides real-time visibility into the AugmentOS cloud system. It enables developers and operators to inspect user sessions, monitor TPAs (Third-Party Applications), track system state, and diagnose issues within the system.
+The MentraOS Debugger UI is a web-based monitoring and debugging tool that provides real-time visibility into the MentraOS cloud system. It enables developers and operators to inspect user sessions, monitor TPAs (Third-Party Applications), track system state, and diagnose issues within the system.
 1.2 Scope
-This document outlines the design and implementation of the AugmentOS Debugger UI, focusing on the MVP (Minimum Viable Product) requirements, architecture, and UI components. It serves as a guide for the development team working on the debugger interface.
+This document outlines the design and implementation of the MentraOS Debugger UI, focusing on the MVP (Minimum Viable Product) requirements, architecture, and UI components. It serves as a guide for the development team working on the debugger interface.
 1.3 System Context
-The debugger is a part of the AugmentOS cloud ecosystem and interacts primarily with the following components:
+The debugger is a part of the MentraOS cloud ecosystem and interacts primarily with the following components:
 
 Session Service: Manages user sessions and their state
 WebSocket Service: Handles real-time communication
@@ -88,7 +88,7 @@ Shared sessions
 3.1 Overall Architecture
 +------------------+      +-----------------+      +------------------+
 |                  |      |                 |      |                  |
-|  Debugger UI     |<---->|  Debugger API   |<---->|  AugmentOS Cloud |
+|  Debugger UI     |<---->|  Debugger API   |<---->|  MentraOS Cloud |
 |  (React/Tailwind)|      | (Server Events) |      |  System          |
 |                  |      |                 |      |                  |
 +------------------+      +-----------------+      +------------------+
@@ -114,21 +114,21 @@ typescriptclass DebugService {
   // Session access methods
   getAllSessions(): DebugSessionInfo[];
   getSessionDetails(sessionId: string): ExtendedDebugSessionInfo;
-  
+
   // TPA management
   stopTpa(sessionId: string, tpaName: string): Promise<boolean>;
-  
+
   // System stats
   getSystemStats(): SystemStats;
-  
+
   // Event stream handling
   setupEventStream(res: Response): void;
-  
+
   // Helper methods
   private transformSessionForDebugger(session: ExtendedUserSession): DebugSessionInfo;
   private sanitizeSessionData(session: ExtendedUserSession): DebugSessionInfo;
 }
-The DebugService will interface with the following AugmentOS services:
+The DebugService will interface with the following MentraOS services:
 
 sessionService: To access user session data
 webSocketService: To monitor communication status
@@ -262,14 +262,14 @@ The state tree component is a recursive component that visualizes the nested str
 javascriptconst StateTreeNode = ({ label, path, data, expandedNodes, toggleNode, depth }) => {
   // Is this node expanded?
   const isExpanded = expandedNodes[path];
-  
+
   // Determine data type
   const isObject = data && typeof data === 'object' && !Array.isArray(data);
   const isArray = Array.isArray(data);
   const hasChildren = isObject || isArray;
-  
+
   // Handle special cases (null, undefined, primitive values)
-  
+
   // Render expandable node for objects and arrays
   // Render leaf node for primitive values
 };
@@ -279,19 +279,19 @@ javascriptuseEffect(() => {
   if (liveUpdates) {
     // Connect to SSE endpoint
     const eventSource = new EventSource('/api/sessions/events');
-    
+
     // Handle incoming events
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       updateSessionData(data);
     };
-    
+
     // Clean up on unmount
     return () => eventSource.close();
   }
 }, [liveUpdates]);
 6.3 Session Data Structure
-The session data structure mirrors the actual ExtendedUserSession from the AugmentOS cloud system:
+The session data structure mirrors the actual ExtendedUserSession from the MentraOS cloud system:
 typescriptinterface ExtendedUserSession {
   sessionId: string;
   userId: string;

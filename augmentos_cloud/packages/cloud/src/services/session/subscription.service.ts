@@ -1,7 +1,7 @@
 /**
  * @fileoverview Service for managing TPA subscriptions to data streams.
  * Handles subscription lifecycle, history tracking, and access control.
- * 
+ *
  * Primary responsibilities:
  * - Managing TPA data subscriptions
  * - Tracking subscription history
@@ -10,7 +10,7 @@
  * - Enforcing permission checks on subscriptions
  */
 
-import { StreamType, ExtendedStreamType, isLanguageStream, parseLanguageStream, createTranscriptionStream, CalendarEvent } from '@augmentos/sdk';
+import { StreamType, ExtendedStreamType, isLanguageStream, parseLanguageStream, createTranscriptionStream, CalendarEvent } from '@mentra/sdk';
 import { logger as rootLogger } from '../logging/pino-logger';
 import { SimplePermissionChecker } from '../permissions/simple-permission-checker';
 import App from '../../models/app.model';
@@ -275,10 +275,10 @@ export class SubscriptionService {
         action
       });
 
-      logger.info({ 
+      logger.info({
         packageName,
         userId: userSession.userId,
-        processedSubscriptions, 
+        processedSubscriptions,
         newSubs: Array.from(newSubs),
         serviceSubscriptions: Array.from(this.subscriptions.entries()).map(([k, v]) => [k, Array.from(v)])
       }, 'Updated subscriptions successfully');
@@ -375,7 +375,7 @@ export class SubscriptionService {
       }
     }
 
-    // TODO(isaiah): Wow this is extremly verbose when anything is subscribed to any audio related stream, 
+    // TODO(isaiah): Wow this is extremly verbose when anything is subscribed to any audio related stream,
     // this is a huge issue and points out a big inefficency in the way we're storing subscriptions and calculating what is subscribed to what.
     // 1. we should refactor this to be a subscription manager attached to a user's session instead of a global service.
     // 2. we should be caching what streams are subscribed to what apps, so we can quickly look up the apps for a stream without iterating over all subscriptions.
@@ -566,12 +566,12 @@ export class SubscriptionService {
   private isValidSubscription(subscription: ExtendedStreamType): boolean {
     const validTypes = new Set(Object.values(StreamType));
     const isValid = validTypes.has(subscription as StreamType) || isLanguageStream(subscription);
-    
+
     // Allow augmentos:<key> subscriptions for AugmentOS settings
     if (typeof subscription === 'string' && subscription.startsWith('augmentos:')) {
       return true;
     }
-    
+
     // Enhanced debugging for RTMP stream status
     if (subscription === 'rtmp_stream_status' || subscription === StreamType.RTMP_STREAM_STATUS) {
       logger.info({
@@ -585,10 +585,10 @@ export class SubscriptionService {
         validTypesArray: Array.from(validTypes).slice(0, 10), // First 10 to avoid log spam
         validTypesSize: validTypes.size,
         validTypesHasRtmp: validTypes.has(StreamType.RTMP_STREAM_STATUS),
-        streamTypeImport: '@augmentos/sdk'
+        streamTypeImport: '@mentra/sdk'
       }, 'RTMP_SUB_VALIDATION_CHECK: Validating RTMP stream status subscription in session service');
     }
-    
+
     return isValid;
   }
 

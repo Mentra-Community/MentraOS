@@ -66,7 +66,7 @@ const config: Config = {
       {name: 'twitter:card', content: 'summary_large_image'},
     ],
     navbar: {
-      title: 'MentraOS SDK Docs (Beta)',
+      title: 'MentraOS SDK Docs',
       logo: {
         alt: 'MentraOS Logo',
         src: 'img/logo.svg',

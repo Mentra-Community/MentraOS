@@ -1,10 +1,10 @@
 /**
  * test-displays.ts
- * 
+ *
  * Utility functions for creating test display requests.
  */
 
-import { DisplayRequest, TpaToCloudMessageType, ViewType, LayoutType } from '@augmentos/sdk';
+import { DisplayRequest, TpaToCloudMessageType, ViewType, LayoutType } from '@mentra/sdk';
 
 /**
  * Create a simple text display request

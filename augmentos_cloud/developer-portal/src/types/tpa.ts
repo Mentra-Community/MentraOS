@@ -1,4 +1,4 @@
-import { TpaType, ToolSchema, AppSetting } from '@augmentos/sdk';
+import { TpaType, ToolSchema, AppSetting } from '@mentra/sdk';
 
 // Define permission types
 export enum PermissionType {

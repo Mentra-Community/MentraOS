@@ -27,7 +27,7 @@ interface OrganizationContextType {
 const OrganizationContext = createContext<OrganizationContextType | undefined>(undefined);
 
 // Local storage key for persisting the current organization
-const CURRENT_ORG_STORAGE_KEY = 'augmentos_current_org';
+const CURRENT_ORG_STORAGE_KEY = 'mentraos_current_org';
 
 /**
  * Provider component that wraps the app and makes organization data available

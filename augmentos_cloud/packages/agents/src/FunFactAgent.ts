@@ -1,6 +1,6 @@
 import { Agent } from "./AgentInterface";
 import { PromptTemplate } from "@langchain/core/prompts";
-import { LLMProvider } from "@augmentos/utils";
+import { LLMProvider } from "@mentra/utils";
 import { AgentExecutor, createReactAgent } from "langchain/agents";
 import { CommaSeparatedListOutputParser } from "langchain/output_parsers";
 
@@ -66,19 +66,19 @@ export class FunFactAgent implements Agent {
       });
 
       const randomTopics = [
-        "science", "nature", "history", "space", "ocean", 
+        "science", "nature", "history", "space", "ocean",
         "animals", "human body", "technology", "geography", "culture"
       ];
       const randomTopic = randomTopics[Math.floor(Math.random() * randomTopics.length)];
-      
+
       // Get shared history from userContext
       const agentHistory = userContext.agentHistory || [];
-      
+
       // Add history to the prompt to avoid repetition
-      const historyContext = agentHistory.length > 0 
+      const historyContext = agentHistory.length > 0
         ? `\nPreviously shared content (do not repeat any of these):\n${agentHistory.join('\n')}`
         : '';
-      
+
       const prompt = new PromptTemplate({
         template: this.agentPrompt + `\nConsider focusing on ${randomTopic} for variety.${historyContext}`,
         inputVariables: ["agent_scratchpad", "tools", "tool_names"],
@@ -102,7 +102,7 @@ export class FunFactAgent implements Agent {
       console.log('[FunFactAgent] Result:', result.output);
 
       const parsedResult = this.parseOutput(result.output);
-      
+
       // Return both the fact and updated history
       if (parsedResult.insight && parsedResult.insight !== "null") {
         const updatedHistory = [...agentHistory, parsedResult.insight];
@@ -115,7 +115,7 @@ export class FunFactAgent implements Agent {
           agentHistory: updatedHistory
         };
       }
-      
+
       return {
         insight: "null",
         agentHistory: agentHistory

@@ -1,4 +1,4 @@
-# AugmentOS Web Store Development Guide
+# MentraOS Web Store Development Guide
 
 ## Commands
 - Build: `bun run build` (runs TypeScript build + Vite build)

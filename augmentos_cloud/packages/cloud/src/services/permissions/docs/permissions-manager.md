@@ -4,7 +4,7 @@
 
 ### Problem Statement
 
-The AugmentOS Cloud platform currently lacks a permissions system for Third-Party Applications (TPAs). This creates several issues:
+The MentraOS Cloud platform currently lacks a permissions system for Third-Party Applications (TPAs). This creates several issues:
 
 1. **Lack of Transparency**: Users have no visibility into what data TPAs can access
 2. **Confusing User Experience**: When phone permissions are disabled, TPAs fail without clear error messages
@@ -81,7 +81,7 @@ Path: `/packages/sdk/src/tpa/permission/permission-manager.ts`
 ```typescript
 /**
  * SDK Permission Manager
- * 
+ *
  * Provides permission status checks for TPAs
  */
 import { PermissionType, PermissionStatus } from '../../types/permissions';
@@ -94,7 +94,7 @@ import { TpaToCloudMessage } from '../../types';
 
 export class PermissionManager {
   private permissions: Map<PermissionType, PermissionStatus> = new Map();
-  
+
   constructor(
     private session: TpaSession,
     private packageName: string,
@@ -110,7 +110,7 @@ export class PermissionManager {
     const status = this.permissions.get(permission);
     if (status === PermissionStatus.GRANTED) return true;
     if (status === PermissionStatus.DENIED) return false;
-    
+
     // Request status from server
     try {
       const response = await this.session.sendRequest({
@@ -120,7 +120,7 @@ export class PermissionManager {
         sessionId: this.session.getSessionId(),
         timestamp: new Date()
       });
-      
+
       const granted = response.status === PermissionStatus.GRANTED;
       this.permissions.set(permission, granted ? PermissionStatus.GRANTED : PermissionStatus.DENIED);
       return granted;
@@ -164,14 +164,14 @@ async subscribe(type: ExtendedStreamType): Promise<void> {
   if (permissionType) {
     const hasPermission = await this.permissions.hasPermission(permissionType);
     if (!hasPermission) {
-      this.events.emit('permission_denied', { 
-        stream: type, 
-        permission: permissionType 
+      this.events.emit('permission_denied', {
+        stream: type,
+        permission: permissionType
       });
       return;
     }
   }
-  
+
   // Existing code continues...
   this.subscriptions.add(type);
   if (this.ws?.readyState === 1) {
@@ -187,7 +187,7 @@ async subscribe(type: ExtendedStreamType): Promise<void> {
 Path: `/packages/cloud/src/services/permissions/permission-manager.ts`
 
 ```typescript
-import { PermissionType, PermissionStatus } from '@augmentos/sdk';
+import { PermissionType, PermissionStatus } from '@mentra/sdk';
 import { ExtendedUserSession } from '../core/session.service';
 import { Logger } from 'winston';
 
@@ -195,12 +195,12 @@ export class PermissionManager {
   private phonePermissions: Map<PermissionType, PermissionStatus> = new Map();
   private streamToPermissionMap: Map<string, PermissionType> = new Map();
   private logger: Logger;
-  
+
   constructor(private userSession: ExtendedUserSession) {
     this.logger = userSession.logger;
     this.initStreamToPermissionMap();
   }
-  
+
   /**
    * Initialize mapping from stream types to permissions
    */
@@ -210,21 +210,21 @@ export class PermissionManager {
     this.streamToPermissionMap.set('transcription', PermissionType.MICROPHONE);
     this.streamToPermissionMap.set('translation', PermissionType.MICROPHONE);
     this.streamToPermissionMap.set('vad', PermissionType.MICROPHONE);
-    
+
     // Location stream
     this.streamToPermissionMap.set('location_update', PermissionType.LOCATION);
-    
+
     // Calendar stream
     this.streamToPermissionMap.set('calendar_event', PermissionType.CALENDAR);
-    
+
     // Notification streams
     this.streamToPermissionMap.set('phone_notification', PermissionType.READ_NOTIFICATIONS);
     this.streamToPermissionMap.set('notification_dismissed', PermissionType.READ_NOTIFICATIONS);
-    
+
     // Language-specific streams
     // Handle dynamically during permission checks
   }
-  
+
   /**
    * Get the required permission for a stream type
    */
@@ -236,27 +236,27 @@ export class PermissionManager {
     if (streamType.startsWith('translation:')) {
       return PermissionType.MICROPHONE;
     }
-    
+
     // Check regular stream types
     return this.streamToPermissionMap.get(streamType) || null;
   }
-  
+
   /**
    * Check if a stream type is allowed based on current phone permissions
    */
   isStreamAllowed(streamType: string): boolean {
     const requiredPermission = this.getRequiredPermissionForStream(streamType);
-    
+
     // If no permission is required, allow the stream
     if (!requiredPermission) {
       return true;
     }
-    
+
     // Check if the required permission is granted
     const status = this.phonePermissions.get(requiredPermission);
     return status === PermissionStatus.GRANTED;
   }
-  
+
   /**
    * Check if a TPA is allowed to subscribe to a stream
    */
@@ -265,25 +265,25 @@ export class PermissionManager {
     // as long as the OS-level permission is granted
     return this.isStreamAllowed(streamType);
   }
-  
+
   /**
    * Update phone permission status
    */
   updatePhonePermission(permission: PermissionType, status: PermissionStatus): void {
     const oldStatus = this.phonePermissions.get(permission);
     this.phonePermissions.set(permission, status);
-    
+
     this.logger.info(`Updated phone permission: ${permission} = ${status}`);
-    
+
     // If this is a newly revoked permission, check running TPAs
     if (oldStatus === PermissionStatus.GRANTED && status === PermissionStatus.DENIED) {
       this.handleRevokedPermission(permission);
     }
-    
+
     // Notify all TPAs of permission change
     this.notifyPermissionChange(permission, status);
   }
-  
+
   /**
    * Handle revoked permissions for running TPAs
    */
@@ -291,15 +291,15 @@ export class PermissionManager {
     // Check all running TPAs
     for (const packageName of this.userSession.activeAppSessions) {
       const app = this.userSession.installedApps.find(a => a.packageName === packageName);
-      
+
       // Skip if app not found
       if (!app) continue;
-      
+
       // Check if app requires this permission
       if (app.permissions && app.permissions.some(p => p.type === permission && p.required)) {
         // This is a required permission, stop the app
         this.logger.info(`Stopping TPA ${packageName} due to revoked required permission: ${permission}`);
-        
+
         // Send notification before stopping
         const connection = this.userSession.appConnections.get(packageName);
         if (connection && connection.readyState === 1) {
@@ -311,13 +311,13 @@ export class PermissionManager {
           };
           connection.send(JSON.stringify(message));
         }
-        
+
         // Stop the app
         // TODO: Call appropriate method to stop the TPA
       }
     }
   }
-  
+
   /**
    * Notify TPAs of permission changes
    */
@@ -337,7 +337,7 @@ export class PermissionManager {
       }
     }
   }
-  
+
   /**
    * Check if a TPA can start based on its required permissions
    */
@@ -347,22 +347,22 @@ export class PermissionManager {
       // No declared permissions, allow start
       return { canStart: true, missingPermissions: [] };
     }
-    
+
     // Check required permissions
     const missingPermissions: PermissionType[] = [];
-    
+
     for (const perm of app.permissions) {
       if (perm.required && this.phonePermissions.get(perm.type) !== PermissionStatus.GRANTED) {
         missingPermissions.push(perm.type);
       }
     }
-    
+
     return {
       canStart: missingPermissions.length === 0,
       missingPermissions
     };
   }
-  
+
   /**
    * Cleanup resources
    */
@@ -390,12 +390,12 @@ updateSubscriptions(
   if (!userSession) {
     throw new Error(`User session not found: ${sessionId}`);
   }
-  
+
   // Filter out subscriptions that require disabled permissions
-  const allowedSubscriptions = processedSubscriptions.filter(sub => 
+  const allowedSubscriptions = processedSubscriptions.filter(sub =>
     userSession.permissionManager.canSubscribeToStream(packageName, sub)
   );
-  
+
   // If some subscriptions were filtered out, log it
   if (allowedSubscriptions.length < processedSubscriptions.length) {
     userSession.logger.warn(
@@ -403,7 +403,7 @@ updateSubscriptions(
       `for ${packageName} due to missing permissions`
     );
   }
-  
+
   // Existing code continues with allowed subscriptions
   const key = `${sessionId}:${packageName}`;
   this.subscriptions.set(key, new Set(allowedSubscriptions));
@@ -419,7 +419,7 @@ Path: `/packages/cloud/src/models/app.model.ts`
 // Add to AppSchema
 const AppSchema = new Schema({
   // Existing fields...
-  
+
   // Add permissions array
   permissions: [{
     type: {
@@ -436,9 +436,9 @@ const AppSchema = new Schema({
       required: true
     }
   }]
-}, { 
+}, {
   strict: false,
-  timestamps: true 
+  timestamps: true
 });
 ```
 
@@ -456,22 +456,22 @@ export interface ExtendedUserSession extends UserSession {
 // Add to createSession method
 async createSession(ws: WebSocket, userId: string): Promise<ExtendedUserSession> {
   // Existing code...
-  
+
   // Create permission manager for the session
   partialSession.permissionManager = new PermissionManager(partialSession as ExtendedUserSession);
-  
+
   // Rest of the existing code...
 }
 
 // Add to endSession method
 async endSession(sessionId: string): Promise<void> {
   // Existing code...
-  
+
   // Clean up permission manager
   if (userSession.permissionManager) {
     userSession.permissionManager.dispose();
   }
-  
+
   // Rest of the existing code...
 }
 ```
@@ -485,13 +485,13 @@ Path: `/packages/cloud/src/services/core/websocket.service.ts`
 async startAppSession(userSession: ExtendedUserSession, packageName: string): Promise<void> {
   // Check if the TPA can start based on permissions
   const permissionCheck = userSession.permissionManager.canTpaStart(packageName);
-  
+
   if (!permissionCheck.canStart) {
     // TPA can't start due to missing permissions
     userSession.logger.warn(
       `Cannot start TPA ${packageName}: missing required permissions: ${permissionCheck.missingPermissions.join(', ')}`
     );
-    
+
     // Throw an error with clear message about missing permissions
     throw new Error(
       `This app requires the following permissions which are disabled on your device: ` +
@@ -499,7 +499,7 @@ async startAppSession(userSession: ExtendedUserSession, packageName: string): Pr
       `Please enable these permissions in your device settings to use this app.`
     );
   }
-  
+
   // Continue with normal app start
   // Existing code...
 }
@@ -530,7 +530,7 @@ The iOS/Android client apps will need to:
 
 1. **Track Permission Status**:
    - Monitor system permission changes (microphone, location, etc.)
-   
+
 2. **Send Permission Updates**:
    ```json
    {
@@ -639,7 +639,7 @@ protected async onSession(session: TpaSession, sessionId: string, userId: string
     console.log('Microphone permission is disabled');
     // Show alternative UI or functionality since this is an optional permission
   }
-  
+
   // Listen for permission changes for optional permissions
   const cleanup = session.permission.onChange((changes) => {
     if (changes.location === false) {
@@ -650,10 +650,10 @@ protected async onSession(session: TpaSession, sessionId: string, userId: string
       enableSpeechFeatures();
     }
   });
-  
+
   // Can also use the more explicit API if needed
   const hasCalendarAccess = await session.permission.has(PermissionType.CALENDAR);
-  
+
   // Be notified when a subscription is rejected due to permissions
   session.on('permission_denied', (data) => {
     console.log(`Cannot access ${data.stream} - required permission is disabled`);
@@ -672,10 +672,10 @@ protected onStop(sessionId: string, userId: string, reason?: string): void {
   if (reason === 'permission_disabled') {
     // TPA was stopped because a required permission was disabled
     console.log('TPA stopped due to a required permission being disabled');
-    
+
     // Perform any necessary cleanup
     this.cleanupResources(sessionId);
-    
+
     // Log analytics or notify your backend as needed
     this.logPermissionStopEvent(userId);
   }
@@ -695,7 +695,7 @@ const { canStart, missingPermissions } = userSession.permissionManager.canTpaSta
 
 // Update phone permission status
 userSession.permissionManager.updatePhonePermission(
-  PermissionType.LOCATION, 
+  PermissionType.LOCATION,
   PermissionStatus.GRANTED
 );
 ```

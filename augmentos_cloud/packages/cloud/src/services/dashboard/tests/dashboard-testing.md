@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the testing system for the AugmentOS Dashboard. The testing system provides a way to visualize dashboard behavior in the terminal during development, allowing for quick iteration and debugging without requiring actual smart glasses hardware.
+This document outlines the testing system for the MentraOS Dashboard. The testing system provides a way to visualize dashboard behavior in the terminal during development, allowing for quick iteration and debugging without requiring actual smart glasses hardware.
 
 ## Testing Framework Design
 
@@ -66,7 +66,7 @@ The test harness will be implemented as follows:
 class DashboardTestHarness {
   private dashboardManager: DashboardManager;
   private visualizer: TerminalVisualizer;
-  
+
   constructor(dashboardManager: DashboardManager) {
     this.dashboardManager = dashboardManager;
     this.visualizer = new TerminalVisualizer();
@@ -80,7 +80,7 @@ class DashboardTestHarness {
     const bottomLeft = this.dashboardManager.getBottomLeft();
     const bottomRight = this.dashboardManager.getBottomRight();
     const tpaContent = this.dashboardManager.getTpaContent(mode);
-    
+
     // Display the layout in terminal
     this.visualizer.renderDashboard(mode, {
       topLeft,
@@ -90,17 +90,17 @@ class DashboardTestHarness {
       tpaContent
     });
   }
-  
+
   // Simulate app lifecycle events
   simulateAppStart(tpaId: string): void {
     console.log(`\n[TEST] App started: ${tpaId}`);
     // App start logic
   }
-  
+
   simulateAppStop(tpaId: string): void {
     console.log(`\n[TEST] App stopped: ${tpaId}`);
     this.dashboardManager.removeTpa(tpaId);
-    
+
     // Check for needed updates
     for (const mode of Object.values(DashboardMode)) {
       if (this.dashboardManager.needsImmediateUpdate(mode)) {
@@ -109,23 +109,23 @@ class DashboardTestHarness {
       }
     }
   }
-  
+
   // Simulate content updates
   simulateContentUpdate(tpaId: string, content: string, modes: DashboardMode[]): void {
     console.log(`\n[TEST] Content update from ${tpaId}: "${content}" for modes: ${modes.join(', ')}`);
     this.dashboardManager.addOrUpdateContent(tpaId, content, modes);
-    
+
     // Show updated display for affected modes
     modes.forEach(mode => this.visualizeCurrentState(mode));
   }
-  
+
   // Run test scenarios
   runTestScenario(scenario: TestScenario): void {
     console.log(`\n[TEST] Running scenario: ${scenario.name}`);
     scenario.events.forEach(event => this.processEvent(event));
     this.summarizeResults();
   }
-  
+
   // Process a test event
   private processEvent(event: TestEvent): void {
     switch (event.type) {
@@ -151,7 +151,7 @@ class DashboardTestHarness {
         break;
     }
   }
-  
+
   // Output test summary
   private summarizeResults(): void {
     console.log("\n[TEST] Final dashboard states:");
@@ -173,7 +173,7 @@ interface TestScenario {
   events: TestEvent[];
 }
 
-type TestEvent = 
+type TestEvent =
   | { type: 'app_start'; tpaId: string }
   | { type: 'app_stop'; tpaId: string }
   | { type: 'content_update'; tpaId: string; content: string; modes: DashboardMode[] }

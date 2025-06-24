@@ -1,8 +1,8 @@
 {
-  "name": "@augmentos/react",
-  "version": "0.1.0",
-  "description": "React hooks and providers for AugmentOS webviews, allowing you to create frontends for smartglasses apps.",
-  "author": "Mentra Team",
+  "name": "@mentra/react",
+  "version": "0.1.1",
+  "description": "React hooks and providers for MentraOS webviews, allowing you to create frontends for smartglasses apps.",
+  "author": "Mentra Labs",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

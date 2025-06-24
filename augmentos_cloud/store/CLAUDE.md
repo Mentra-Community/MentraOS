@@ -1,4 +1,4 @@
-# AugmentOS Cloud Store Development Guide
+# MentraOS Cloud Store Development Guide
 
 ## Build Commands
 - **Web**: `cd web && bun run build` (TypeScript + Vite build)
@@ -22,6 +22,6 @@
 
 ## Project Structure
 - **/web**: React/Vite frontend using TypeScript and Tailwind
-- **/server**: TypeScript backend for the AugmentOS Store
+- **/server**: TypeScript backend for the MentraOS Store
 
 This project uses Bun as the package manager throughout the codebase.

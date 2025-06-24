@@ -158,7 +158,7 @@ private async handleConnectionInit(userSession: ExtendedUserSession, message: Co
 - Update database with changes
 
 ### CORE_STATUS_UPDATE
-- Map complex core status to AugmentOS settings
+- Map complex core status to MentraOS settings
 - Detect which specific settings changed
 - Update database selectively
 - Notify only TPAs subscribed to the changed settings
@@ -200,7 +200,7 @@ The improved error handling architecture uses multiple layers:
 private async handleMessageType(userSession: ExtendedUserSession, message: TypedMessage): Promise<void> {
   try {
     // Handler-specific logic with all its complex processing
-    
+
     // Success response if needed
     if (needsResponse) {
       userSession.websocket.send(JSON.stringify({
@@ -219,7 +219,7 @@ private async handleMessageType(userSession: ExtendedUserSession, message: Typed
       },
       messageType: message.type
     });
-    
+
     // Send error response to client
     try {
       userSession.websocket.send(JSON.stringify({
@@ -241,12 +241,12 @@ private async handleMessageType(userSession: ExtendedUserSession, message: Typed
 private async handleMessage(userSession: ExtendedUserSession, rawMessage: string): Promise<void> {
   try {
     const message = JSON.parse(rawMessage);
-    
+
     // Validate message has a type
     if (!message || !message.type) {
       throw new Error('Invalid message format: missing type');
     }
-    
+
     try {
       switch (message.type) {
         case GlassesToCloudMessageType.CONNECTION_INIT:

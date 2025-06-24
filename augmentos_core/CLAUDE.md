@@ -1,4 +1,4 @@
-# AugmentOS Core Development Guide
+# MentraOS Core Development Guide
 
 ## Build Commands
 - `./gradlew build` - Full project build
@@ -8,7 +8,7 @@
 
 ## Environment Setup
 - Java SDK 17 required
-- AugmentOS_Core depends on "SmartGlassesManager" repo being adjacent
+- MentraOS_Core depends on "SmartGlassesManager" repo being adjacent
 
 ## Code Style Guidelines
 - Classes: PascalCase (e.g., `WebSocketManager`)
@@ -33,7 +33,7 @@
 ## Service Consolidation Plan
 - Goal: Run SmartGlassesManager functionality within AugmentosService
 - Implementation approach:
-  1. Keep SmartGlassesManager logic in its own class(es) 
+  1. Keep SmartGlassesManager logic in its own class(es)
   2. Convert SmartGlassesAndroidService from a Service to a helper class
   3. Create a SmartGlassesManager that's initialized by AugmentosService
   4. Replace "kill service" disconnect with state transitions
@@ -59,7 +59,7 @@
    - Remove service dependencies
    - Work with manager class directly
 
-5. Update client references (UI classes, callbacks) 
+5. Update client references (UI classes, callbacks)
    - Service connection remains the same (to AugmentosService)
    - All smart glasses functionality accessed through AugmentosService APIs
 

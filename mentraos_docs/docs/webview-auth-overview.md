@@ -4,7 +4,7 @@ MentraOS provides a simple and secure way for apps to identify users within webv
 
 ```typescript
 // Example of using webview authentication in your app
-import { TpaServer, AuthenticatedRequest } from '@mentraos/sdk';
+import { TpaServer, AuthenticatedRequest } from '@mentra/sdk';
 
 const server = new TpaServer({
   packageName: 'org.example.myapp',
@@ -50,7 +50,7 @@ First, specify a webview URL in your app's configuration through the MentraOS De
 The MentraOS SDK provides built-in middleware that handles the token exchange process automatically:
 
 ```typescript
-import { TpaServer, AuthenticatedRequest } from '@mentraos/sdk';
+import { TpaServer, AuthenticatedRequest } from '@mentra/sdk';
 
 // Create an app server instance
 const server = new TpaServer({

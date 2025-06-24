@@ -14,7 +14,7 @@ import {
   DataStream,
   CloudToTpaMessageType,
   GlassesToCloudMessage
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import { Logger } from 'pino';
 import { logger as rootLogger } from '../logging/pino-logger';
 import { DebugService } from '../debug/debug-service';
@@ -22,6 +22,7 @@ import transcriptionService from '../processing/transcription.service';
 import subscriptionService from './subscription.service';
 import { User } from '../../models/user.model';
 import UserSession from './UserSession';
+import { getCapabilitiesForModel } from '../../config/hardware-capabilities';
 
 // Constants
 const SERVICE_NAME = 'session.service';
@@ -53,7 +54,7 @@ export class SessionService {
 
   /**
    * Creates or retrieves a user session
-   * 
+   *
    * @param ws WebSocket connection
    * @param userId User ID
    * @returns User session
@@ -88,6 +89,19 @@ export class SessionService {
       // Create new session with WebSocket
       const userSession = new UserSession(userId, ws);
 
+      // Determine device capabilities based on model
+      // For now, we'll default to Even Realities G1 if no model info is available
+      // In the future, this will be determined from the glasses connection info
+      const modelName = "Even Realities G1"; // TODO: Get from glasses connection info
+      const capabilities = getCapabilitiesForModel(modelName);
+
+      if (capabilities) {
+        userSession.capabilities = capabilities;
+        logger.info(`Set capabilities for ${modelName} on session ${userId}`);
+      } else {
+        logger.warn(`No capabilities found for model: ${modelName}, session ${userId}`);
+      }
+
       // TODO(isaiah): Create a init method in UserSession to handle initialization logic.
       // Fetch installed apps
       try {
@@ -113,7 +127,7 @@ export class SessionService {
 
   /**
    * Get a session by ID
-   * 
+   *
    * @param sessionId Session ID
    * @returns User session or null if not found
    */
@@ -123,7 +137,7 @@ export class SessionService {
 
   /**
    * Transforms a user session for client consumption
-   * 
+   *
    * @param userSession User session to transform
    * @returns Transformed session data
    */
@@ -175,7 +189,7 @@ export class SessionService {
 
   /**
    * Add a transcript segment to a user session
-   * 
+   *
    * @param userSession User session
    * @param segment Transcript segment
    * @param language Language code
@@ -223,7 +237,7 @@ export class SessionService {
 
   /**
    * Get all active sessions
-   * 
+   *
    * @returns Array of active user sessions
    */
   getAllSessions(): UserSession[] {
@@ -232,7 +246,7 @@ export class SessionService {
 
   /**
    * Get a session by user ID
-   * 
+   *
    * @param userId User ID
    * @returns User session or null if not found
    */
@@ -243,7 +257,7 @@ export class SessionService {
 
   /**
    * Handle transcription start
-   * 
+   *
    * @param userSession User session
    */
   async handleTranscriptionStart(userSession: UserSession): Promise<void> {
@@ -264,7 +278,7 @@ export class SessionService {
 
   /**
    * Handle transcription stop
-   * 
+   *
    * @param userSession User session
    */
   async handleTranscriptionStop(userSession: UserSession): Promise<void> {
@@ -285,7 +299,7 @@ export class SessionService {
 
   /**
    * Get user settings
-   * 
+   *
    * @param userId User ID
    * @returns User settings
    */
@@ -331,7 +345,7 @@ export class SessionService {
 
   /**
    * Get app-specific settings
-   * 
+   *
    * @param userId User ID
    * @param packageName App package name
    * @returns App settings
@@ -348,7 +362,7 @@ export class SessionService {
 
   /**
    * Relay a message to TPAs
-   * 
+   *
    * @param userSession User session
    * @param streamType Stream type
    * @param data Message data
@@ -392,7 +406,7 @@ export class SessionService {
 
   /**
    * Relay audio to TPAs
-   * 
+   *
    * @param userSession User session
    * @param audioData Audio data
    */
@@ -412,7 +426,7 @@ let _sessionService: SessionService | null = null;
 
 /**
  * Initialize the session service
- * 
+ *
  * @param debugService Debug service
  * @returns Session service instance
  */
@@ -426,7 +440,7 @@ export function initializeSessionService(): SessionService {
 
 /**
  * Get the session service
- * 
+ *
  * @returns Session service instance
  */
 export function getSessionService(): SessionService {

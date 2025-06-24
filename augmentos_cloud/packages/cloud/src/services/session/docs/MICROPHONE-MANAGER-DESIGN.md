@@ -12,10 +12,10 @@ Currently, microphone state management is implemented in `websocket.service.ts` 
 
 1. **Type Definition**:
    ```typescript
-   type MicrophoneStateChangeDebouncer = { 
-     timer: ReturnType<typeof setTimeout> | null; 
-     lastState: boolean; 
-     lastSentState: boolean 
+   type MicrophoneStateChangeDebouncer = {
+     timer: ReturnType<typeof setTimeout> | null;
+     lastState: boolean;
+     lastSentState: boolean
    };
    ```
 
@@ -61,13 +61,13 @@ Currently, microphone state management is implemented in `websocket.service.ts` 
    case GlassesToCloudMessageType.GLASSES_CONNECTION_STATE: {
      const glassesConnectionStateMessage = message as GlassesConnectionState;
      userSession.logger.info('Glasses connection state:', glassesConnectionStateMessage);
-     
+
      if (glassesConnectionStateMessage.status === 'CONNECTED') {
        const mediaSubscriptions = subscriptionService.hasMediaSubscriptions(userSession.sessionId);
        userSession.logger.info('Init Media subscriptions:', mediaSubscriptions);
        this.sendDebouncedMicrophoneStateChange(ws, userSession, mediaSubscriptions);
      }
-     
+
      // Rest of the handler...
    }
    ```
@@ -81,7 +81,7 @@ Currently, microphone state management is implemented in `websocket.service.ts` 
    - Clears any active debounce timers when sessions end
    - Ensures microphone state is properly reset
 
-4. **Default AugmentOS Settings** (~line 111):
+4. **Default MentraOS Settings** (~line 111):
    ```typescript
    const DEFAULT_AUGMENTOS_SETTINGS = {
      useOnboardMic: false,
@@ -115,31 +115,31 @@ Currently, microphone state management is implemented in `websocket.service.ts` 
 export class MicrophoneManager {
   private session: ExtendedUserSession;
   private logger: Logger;
-  
+
   // Track the current microphone state
   private enabled: boolean = false;
-  
+
   // Debounce mechanism for state changes
   private debounceTimer: NodeJS.Timeout | null = null;
   private pendingState: boolean | null = null;
   private lastSentState: boolean = false;
-  
+
   constructor(session: ExtendedUserSession) {
     this.session = session;
     this.logger = session.logger.child({ component: 'MicrophoneManager' });
     this.logger.info('MicrophoneManager initialized');
   }
-  
+
   /**
    * Update the microphone state with debouncing
    * Replicates the exact behavior of the original sendDebouncedMicrophoneStateChange
-   * 
+   *
    * @param isEnabled - Whether the microphone should be enabled
    * @param delay - Debounce delay in milliseconds (default: 1000ms)
    */
   updateState(isEnabled: boolean, delay: number = 1000): void {
     this.logger.debug(`Updating microphone state: ${isEnabled}, delay: ${delay}ms`);
-    
+
     if (this.debounceTimer === null) {
       // First call: send immediately and update lastSentState
       this.sendStateChangeToGlasses(isEnabled);
@@ -149,12 +149,12 @@ export class MicrophoneManager {
     } else {
       // For subsequent calls, update pending state
       this.pendingState = isEnabled;
-      
+
       // Clear existing timer
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
-    
+
     // Set or reset the debounce timer
     this.debounceTimer = setTimeout(() => {
       // Only send if the final state differs from the last sent state
@@ -164,16 +164,16 @@ export class MicrophoneManager {
         this.lastSentState = this.pendingState!;
         this.enabled = this.pendingState!;
       }
-      
+
       // Update transcription service state
       this.updateTranscriptionState();
-      
+
       // Cleanup: reset debounce timer
       this.debounceTimer = null;
       this.pendingState = null;
     }, delay);
   }
-  
+
   /**
    * Send microphone state change message to glasses
    * This replicates the exact message format from the original implementation
@@ -183,7 +183,7 @@ export class MicrophoneManager {
       this.logger.warn('Cannot send microphone state change: WebSocket not open');
       return;
     }
-    
+
     try {
       const message: MicrophoneStateChange = {
         type: CloudToGlassesMessageType.MICROPHONE_STATE_CHANGE,
@@ -199,14 +199,14 @@ export class MicrophoneManager {
         isEnabled: isEnabled,
         timestamp: new Date(),
       };
-      
+
       this.session.websocket.send(JSON.stringify(message));
       this.logger.debug('Sent microphone state change message');
     } catch (error) {
       this.logger.error('Error sending microphone state change:', error);
     }
   }
-  
+
   /**
    * Update transcription service state based on current microphone state
    * This replicates the transcription service integration from the original implementation
@@ -224,14 +224,14 @@ export class MicrophoneManager {
       this.logger.error('Error updating transcription state:', error);
     }
   }
-  
+
   /**
    * Get the current microphone state
    */
   isEnabled(): boolean {
     return this.enabled;
   }
-  
+
   /**
    * Handle glasses connection state changes
    * This replicates the behavior in the GLASSES_CONNECTION_STATE case
@@ -243,7 +243,7 @@ export class MicrophoneManager {
       this.updateState(hasMediaSubscriptions);
     }
   }
-  
+
   /**
    * Check if there are any media subscriptions that require microphone
    * This replicates the subscription check in the original implementation
@@ -256,7 +256,7 @@ export class MicrophoneManager {
       return false;
     }
   }
-  
+
   /**
    * Handle subscription changes
    * This should be called when TPAs update their subscriptions
@@ -266,7 +266,7 @@ export class MicrophoneManager {
     this.logger.info(`Subscription changed, media subscriptions: ${hasMediaSubscriptions}`);
     this.updateState(hasMediaSubscriptions);
   }
-  
+
   /**
    * Update microphone settings based on core status
    * This replicates the onboard mic setting update
@@ -276,7 +276,7 @@ export class MicrophoneManager {
     // Update the setting in user preferences or session state
     // Implementation depends on how settings are stored
   }
-  
+
   /**
    * Cleanup resources
    */
@@ -299,10 +299,10 @@ The MicrophoneManager will be added to the ExtendedUserSession interface in the 
 // In services/session/types.ts or similar
 export interface ExtendedUserSession extends UserSession {
   // Existing properties...
-  
+
   // Add the microphone manager
   microphoneManager: MicrophoneManager;
-  
+
   // Other properties...
 }
 ```
@@ -314,12 +314,12 @@ export interface ExtendedUserSession extends UserSession {
 private async handleGlassesConnectionState(userSession: ExtendedUserSession, message: GlassesConnectionState): Promise<void> {
   try {
     userSession.logger.info('Glasses connection state:', message);
-    
+
     // Update the microphone state based on connection status
     userSession.microphoneManager.handleConnectionStateChange(message.status);
-    
+
     // Rest of the handling...
-    
+
   } catch (error) {
     userSession.logger.error('Error handling glasses connection state:', error);
   }
@@ -329,10 +329,10 @@ private async handleGlassesConnectionState(userSession: ExtendedUserSession, mes
 private async handleTpaSubscriptionUpdate(userSession: ExtendedUserSession, message: TpaSubscriptionUpdate): Promise<void> {
   try {
     // Update subscriptions...
-    
+
     // Notify microphone manager about subscription changes
     userSession.microphoneManager.handleSubscriptionChange();
-    
+
   } catch (error) {
     userSession.logger.error('Error handling subscription update:', error);
   }
@@ -345,31 +345,31 @@ private async handleTpaSubscriptionUpdate(userSession: ExtendedUserSession, mess
 // In services/session/session.service.ts
 async createSession(ws: WebSocket, userId: string): Promise<ExtendedUserSession> {
   // Existing session creation code...
-  
+
   // Create the session object
   const userSession: ExtendedUserSession = {
     // Other properties...
   };
-  
+
   // Initialize the MicrophoneManager
   userSession.microphoneManager = new MicrophoneManager(userSession);
-  
+
   // Rest of the method...
-  
+
   return userSession;
 }
 
 // In services/session/session.service.ts - cleanup
 endSession(userSession: ExtendedUserSession): void {
   if (!userSession) return;
-  
+
   userSession.logger.info(`[Ending session] Starting cleanup for ${userSession.sessionId}`);
-  
+
   // Cleanup microphone manager
   if (userSession.microphoneManager) {
     userSession.microphoneManager.dispose();
   }
-  
+
   // Rest of cleanup...
 }
 ```

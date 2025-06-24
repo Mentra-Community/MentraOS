@@ -6,7 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle, Trash2, Loader2 } from "lucide-react";
 // import { TPA } from "@/types/tpa";
 import api from '@/services/api.service';
-import { AppI } from '@augmentos/sdk';
+import { AppI } from '@mentra/sdk';
 
 interface DeleteDialogProps {
   tpa: AppI | null;

@@ -26,7 +26,7 @@ We'd appreciate testers for these untested devices - let us know if you get it w
 
 2. By default, the example contains production settings:
    ```
-   AUGMENTOS_HOST=cloud.augmentos.org
+   AUGMENTOS_HOST=cloud.mentra.glass
    AUGMENTOS_PORT=443
    AUGMENTOS_SECURE=true
    ```

@@ -7,6 +7,7 @@ import { AppI } from '../types';
 import Header from '../components/Header';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { isMobileDevice, openInApp } from '../utils/mobile';
 
 /**
  * AppStore component that displays and manages available applications
@@ -198,6 +199,13 @@ const AppStore: React.FC = () => {
       return;
     }
 
+    // On mobile devices, open in the MentraOS app
+    if (isMobileDevice()) {
+      openInApp(packageName);
+      return;
+    }
+
+    // On desktop, use the web API
     try {
       setInstallingApp(packageName);
 

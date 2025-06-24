@@ -1,6 +1,6 @@
 # Dashboard Message Types
 
-This document explains the dashboard message types used for communication between TPAs and the AugmentOS Cloud.
+This document explains the dashboard message types used for communication between TPAs and the MentraOS Cloud.
 
 ## Message Flow
 
@@ -103,7 +103,7 @@ function handleMessage(message: CloudToTpaMessage): void {
     const mode = message.mode;
     console.log(`Dashboard mode changed to: ${mode}`);
     // Update dashboard state
-  } 
+  }
   else if (isDashboardAlwaysOnChanged(message)) {
     const enabled = message.enabled;
     console.log(`Dashboard always-on mode ${enabled ? 'enabled' : 'disabled'}`);
@@ -112,4 +112,4 @@ function handleMessage(message: CloudToTpaMessage): void {
 }
 ```
 
-This message type system ensures reliable and type-safe communication between TPAs and the AugmentOS Cloud.
+This message type system ensures reliable and type-safe communication between TPAs and the MentraOS Cloud.

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Copy, KeyRound, RefreshCw, CheckCircle, AlertCircle } from "lucide-react";
 import api from '@/services/api.service';
-import { AppI } from '@augmentos/sdk';
+import { AppI } from '@mentra/sdk';
 
 interface ApiKeyDialogProps {
   tpa: AppI | null;
@@ -231,7 +231,7 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
             <>
               <div className="space-y-2 mb-4">
                 <p className="text-sm text-gray-500">
-                  Your API key is used to authenticate your app with AugmentOS cloud services.
+                  Your API key is used to authenticate your app with MentraOS cloud services.
                   Keep it secure and never share it publicly.
                 </p>
                 {_apiKey ? (
@@ -274,7 +274,7 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
                   {tpa?.publicUrl ? `${tpa.publicUrl}/webhook` : 'No server URL defined'}
                 </div>
                 <p className="text-xs text-gray-500">
-                  This is the full webhook URL where AugmentOS will send events to your app.
+                  This is the full webhook URL where MentraOS will send events to your app.
                 </p>
               </div>
             </>

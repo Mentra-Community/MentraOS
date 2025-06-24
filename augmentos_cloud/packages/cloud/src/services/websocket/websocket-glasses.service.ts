@@ -25,7 +25,7 @@ import {
   RtmpStreamStatus,
   SettingsUpdate,
   Vad
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import UserSession from '../session/UserSession';
 // import { SessionService } from '../session/session.service';
 import { logger as rootLogger } from '../logging/pino-logger';
@@ -86,7 +86,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle new glasses WebSocket connection
-   * 
+   *
    * @param ws WebSocket connection
    * @param request HTTP request for the WebSocket upgrade
    */
@@ -164,7 +164,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle binary message (audio data)
-   * 
+   *
    * @param userSession User session
    * @param data Binary audio data
    */
@@ -182,7 +182,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle glasses message
-   * 
+   *
    * @param userSession User session
    * @param message Glasses message
    */
@@ -260,10 +260,10 @@ export class GlassesWebSocketService {
               break;
             }
 ;
-            
+
             let brightness = statusObj.status.glasses_settings.brightness;
             const glassesSettings = statusObj.status.glasses_settings;
-            
+
             // Map core status fields to augmentos settings
             const newSettings = {
               useOnboardMic: coreInfo.force_core_onboard_mic,
@@ -382,7 +382,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle connection init
-   * 
+   *
    * @param userSession User session
    */
   private async handleConnectionInit(userSession: UserSession, reconnection: boolean): Promise<void> {
@@ -440,7 +440,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle VAD (Voice Activity Detection) message
-   * 
+   *
    * @param userSession User session
    * @param message VAD message
    */
@@ -468,7 +468,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle location update message
-   * 
+   *
    */
   private async handleLocationUpdate(userSession: UserSession, message: LocationUpdate): Promise<void> {
     userSession.logger.debug({ message, service: SERVICE_NAME }, 'Location update received from glasses');
@@ -492,7 +492,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle head position event message
-   * 
+   *
    * @param userSession User session
    * @param message Head position message
    */
@@ -531,7 +531,7 @@ export class GlassesWebSocketService {
 
   /**
    * Handle glasses connection state message
-   * 
+   *
    * @param userSession User session
    * @param message Connection state message
    */
@@ -588,7 +588,7 @@ export class GlassesWebSocketService {
   // TODO(isaiah): This also doesn't seem to be implemented correctly. / fully.
   /**
    * Handle settings update message
-   * 
+   *
    * @param userSession User session
    * @param message Settings update message
    */
@@ -630,7 +630,7 @@ export class GlassesWebSocketService {
   // TODO(isaiah): Implement properly with reconnect grace period logic.
   /**
    * Handle glasses connection close
-   * 
+   *
    * @param userSession User session
    * @param code Close code
    * @param reason Close reason
@@ -722,7 +722,7 @@ export class GlassesWebSocketService {
 
   /**
    * Send error message to glasses
-   * 
+   *
    * @param ws WebSocket connection
    * @param code Error code
    * @param message Error message

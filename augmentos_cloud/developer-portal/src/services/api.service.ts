@@ -1,7 +1,7 @@
 // src/services/api.service.ts
 import axios from "axios";
 import { Permission, TPA } from "@/types/tpa";
-import { AppI } from "@augmentos/sdk";
+import { AppI } from "@mentra/sdk";
 
 // Set default config
 axios.defaults.baseURL = import.meta.env.VITE_API_URL || "http://localhost:8002";

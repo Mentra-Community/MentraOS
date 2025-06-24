@@ -50,7 +50,8 @@ import {
   GlassesToCloudMessage,
   PhotoResponse,
   VpsCoordinates,
-  PhotoTaken
+  PhotoTaken,
+  Capabilities
 } from '../../types';
 import { DashboardAPI } from '../../types/dashboard';
 import { AugmentosSettingsUpdate } from '../../types/messages/cloud-to-tpa';
@@ -180,6 +181,9 @@ export class TpaSession {
   public readonly tpaServer: TpaServer;
   public readonly logger: Logger;
   public readonly userId: string;
+
+  /** 🔧 Device capabilities available for this session */
+  public capabilities: Capabilities | null = null;
 
   /** Dedicated emitter for TPA-to-TPA events */
   private tpaEvents = new EventEmitter();
@@ -964,6 +968,14 @@ export class TpaSession {
             this.settings.updateAugmentosSettings(message.augmentosSettings);
           } else {
             this.logger.warn(`[TpaSession] CONNECTION_ACK message missing augmentosSettings field`);
+          }
+
+          // Handle device capabilities if provided
+          if (message.capabilities) {
+            this.capabilities = message.capabilities;
+            this.logger.info(`[TpaSession] Device capabilities loaded for model: ${message.capabilities.modelName}`);
+          } else {
+            this.logger.debug(`[TpaSession] No capabilities provided in CONNECTION_ACK`);
           }
 
           // Emit connected event with settings

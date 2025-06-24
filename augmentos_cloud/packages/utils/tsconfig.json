@@ -12,7 +12,7 @@
     "declarationMap": true,
     "baseUrl": ".",
     "paths": {
-      "@augmentos/sdk": ["../sdk/dist"],
+      "@mentra/sdk": ["../sdk/dist"],
     }
   },
   "include": ["src/**/*"],

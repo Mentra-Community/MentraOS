@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The PermissionType enum definitions are inconsistent across the AugmentOS codebase, causing TypeScript compilation errors and semantic confusion between notification reading and posting permissions. This document outlines a **backward-compatible solution** that resolves the inconsistencies without requiring database migration or breaking existing TPAs.
+The PermissionType enum definitions are inconsistent across the MentraOS codebase, causing TypeScript compilation errors and semantic confusion between notification reading and posting permissions. This document outlines a **backward-compatible solution** that resolves the inconsistencies without requiring database migration or breaking existing TPAs.
 
 **Impact**: TypeScript compilation errors, confused permission semantics
 **Approach**: Enum extension with legacy mapping (no breaking changes)
@@ -46,7 +46,7 @@ The current `NOTIFICATIONS` permission conflates two distinct operations:
 
 #### 🔴 **High Priority - TypeScript Errors**
 - `packages/cloud/src/services/permissions/simple-permission-checker.ts:28,29`
-  - **Current**: Uses `PermissionType.READ_NOTIFICATIONS` 
+  - **Current**: Uses `PermissionType.READ_NOTIFICATIONS`
   - **Status**: ❌ Doesn't exist in imported SDK enum
   - **Fix**: Add READ_NOTIFICATIONS to SDK enum
 
@@ -152,14 +152,14 @@ export enum PermissionType {
   MICROPHONE = 'MICROPHONE',
   LOCATION = 'LOCATION',
   CALENDAR = 'CALENDAR',
-  
+
   // Legacy notification permission (backward compatibility)
   NOTIFICATIONS = 'NOTIFICATIONS',
-  
+
   // New granular notification permissions
   READ_NOTIFICATIONS = 'READ_NOTIFICATIONS',
   POST_NOTIFICATIONS = 'POST_NOTIFICATIONS',
-  
+
   ALL = 'ALL'
 }
 
@@ -181,13 +181,13 @@ export class SimplePermissionChecker {
     [StreamType.TRANSCRIPTION, PermissionType.MICROPHONE],
     [StreamType.TRANSLATION, PermissionType.MICROPHONE],
     [StreamType.VAD, PermissionType.MICROPHONE],
-    
+
     // Location stream
     [StreamType.LOCATION_UPDATE, PermissionType.LOCATION],
-    
+
     // Calendar stream
     [StreamType.CALENDAR_EVENT, PermissionType.CALENDAR],
-    
+
     // Notification streams - now use READ_NOTIFICATIONS
     [StreamType.PHONE_NOTIFICATION, PermissionType.READ_NOTIFICATIONS],
     [StreamType.NOTIFICATION_DISMISSED, PermissionType.READ_NOTIFICATIONS],
@@ -201,12 +201,12 @@ export class SimplePermissionChecker {
     if (app.permissions?.some(p => p.type === PermissionType.ALL)) {
       return true;
     }
-    
+
     // Direct permission match
     if (app.permissions?.some(p => p.type === requiredPermission)) {
       return true;
     }
-    
+
     // Check for legacy permission mapping
     return this.hasLegacyPermission(app, requiredPermission);
   }
@@ -216,7 +216,7 @@ export class SimplePermissionChecker {
    */
   private static hasLegacyPermission(app: AppI, requiredPermission: PermissionType): boolean {
     if (!app.permissions) return false;
-    
+
     // Check if any app permission is a legacy permission that maps to the required one
     for (const appPermission of app.permissions) {
       const mappedPermissions = LEGACY_PERMISSION_MAP.get(appPermission.type);
@@ -224,7 +224,7 @@ export class SimplePermissionChecker {
         return true;
       }
     }
-    
+
     return false;
   }
 
@@ -235,7 +235,7 @@ export class SimplePermissionChecker {
   static normalizePermissions(permissions: Permission[]): Permission[] {
     const normalized: Permission[] = [];
     const seenPermissions = new Set<PermissionType>();
-    
+
     for (const permission of permissions) {
       if (permission.type === PermissionType.NOTIFICATIONS) {
         // Replace legacy NOTIFICATIONS with READ_NOTIFICATIONS
@@ -251,7 +251,7 @@ export class SimplePermissionChecker {
         seenPermissions.add(permission.type);
       }
     }
-    
+
     return normalized;
   }
 }
@@ -293,11 +293,11 @@ const getAvailablePermissionTypes = (excludeIndex?: number): PermissionType[] =>
   const currentPermissions = Object.values(PermissionType).filter(type => {
     // Exclude legacy permissions from new selections
     if (type === PermissionType.NOTIFICATIONS) return false;
-    
+
     // Exclude already used permissions
     return !permissions.some((p, i) => p.type === type && i !== excludeIndex);
   });
-  
+
   return [
     PermissionType.MICROPHONE,
     PermissionType.LOCATION,
@@ -312,11 +312,11 @@ const getAvailablePermissionTypes = (excludeIndex?: number): PermissionType[] =>
 const getPermissionDescription = (type: PermissionType): string => {
   const info = PERMISSION_DISPLAY_INFO[type];
   if (info) {
-    return info.isLegacy 
-      ? `${info.description} ⚠️` 
+    return info.isLegacy
+      ? `${info.description} ⚠️`
       : info.description;
   }
-  
+
   // Fallback for any unmapped permissions
   switch (type) {
     case PermissionType.MICROPHONE:
@@ -342,7 +342,7 @@ const getPermissionDescription = (type: PermissionType): string => {
 const PermissionItem = ({ permission, index, isEditing, onEditToggle, ... }) => {
   const isLegacy = permission.type === PermissionType.NOTIFICATIONS;
   const availableTypes = getAvailablePermissionTypes(index);
-  
+
   return (
     <div className={`permission-item ${isLegacy ? 'legacy-permission' : ''}`}>
       {!isEditing ? (
@@ -379,7 +379,7 @@ const PermissionItem = ({ permission, index, isEditing, onEditToggle, ... }) => 
                   {type}
                 </SelectItem>
               ))}
-              
+
               {/* Current legacy type (only if editing existing legacy permission) */}
               {isLegacy && (
                 <SelectItem value={PermissionType.NOTIFICATIONS}>
@@ -388,13 +388,13 @@ const PermissionItem = ({ permission, index, isEditing, onEditToggle, ... }) => 
               )}
             </SelectContent>
           </Select>
-          
+
           {isLegacy && (
             <div className="migration-warning">
               ⚠️ This is a legacy permission. Consider migrating to READ_NOTIFICATIONS for better clarity.
             </div>
           )}
-          
+
           <p className="text-xs text-gray-500 mt-1">
             {getPermissionDescription(permission.type)}
           </p>
@@ -407,12 +407,12 @@ const PermissionItem = ({ permission, index, isEditing, onEditToggle, ... }) => 
 // Add permission button - only allows current permission types
 const addPermission = () => {
   const availableTypes = getAvailablePermissionTypes();
-  
+
   // If all current permission types are used, don't add a new one
   if (availableTypes.length === 0) {
     return;
   }
-  
+
   // Always default to a current (non-legacy) permission type
   const newPermission = createEmptyPermission(availableTypes[0]);
   const newPermissions = [...permissions, newPermission];
@@ -429,14 +429,14 @@ export enum PermissionType {
   MICROPHONE = 'MICROPHONE',
   LOCATION = 'LOCATION',
   CALENDAR = 'CALENDAR',
-  
+
   // Legacy permission (kept for backward compatibility)
   NOTIFICATIONS = 'NOTIFICATIONS',
-  
+
   // New granular permissions
   READ_NOTIFICATIONS = 'READ_NOTIFICATIONS',
   POST_NOTIFICATIONS = 'POST_NOTIFICATIONS',
-  
+
   ALL = 'ALL'
 }
 
@@ -647,7 +647,7 @@ const bothPermissions = [
 
 #### Developer Portal Changes
 - **No legacy in dropdown**: `NOTIFICATIONS` not available when adding new permissions
-- **Legacy permission display**: Visual "Legacy" badge for existing deprecated permissions  
+- **Legacy permission display**: Visual "Legacy" badge for existing deprecated permissions
 - **Migration suggestions**: Inline hints for upgrading to new permissions when viewing/editing legacy permissions
 - **Smart permission selection**: Only current permission types available for new additions
 - **Edit legacy permissions**: Can edit existing legacy permissions with migration warnings
@@ -666,8 +666,8 @@ export function AppPermissions({ permissions }: AppPermissionsProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {permissions.map((permission, index) => (
-        <div 
-          key={index} 
+        <div
+          key={index}
           className="border border-gray-200 rounded-md p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
         >
           <div className="flex items-center gap-2 mb-2">

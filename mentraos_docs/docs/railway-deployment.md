@@ -44,7 +44,7 @@ Create a new repository from the MentraOS example app template:
 
 **Option B: Using GitHub CLI**
 ```bash
-gh repo create --template MentraOS-Community/MentraOS-Extended-Example-App my-mentraos-app
+gh repo create --template Mentra-Community/MentraOS-Extended-Example-App my-mentraos-app
 ```
 
 ### 2. Clone Your Repository

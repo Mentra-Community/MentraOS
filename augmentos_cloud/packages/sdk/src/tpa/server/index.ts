@@ -36,7 +36,7 @@ import axios from 'axios';
  * ```
  */
 export interface TpaServerConfig {
-  /** 📦 Unique identifier for your TPA (e.g., 'org.company.appname') must match what you specified at https://console.augmentos.org */
+  /** 📦 Unique identifier for your TPA (e.g., 'org.company.appname') must match what you specified at https://console.mentra.glass */
   packageName: string;
   /** 🔑 API key for authentication with AugmentOS Cloud */
   apiKey: string;
@@ -51,8 +51,6 @@ export interface TpaServerConfig {
    */
   publicDir?: string | false;
 
-  /** 🔌 [DEPRECATED] No need to set this value */
-  augmentOSWebsocketUrl?: string;
   /** ❤️ Enable health check endpoint at /health (default: true) */
   healthCheck?: boolean;
   /**
@@ -111,7 +109,6 @@ export class TpaServer {
     this.config = {
       port: 7010,
       webhookPath: '/webhook',
-      augmentOSWebsocketUrl: "wss://staging.augmentos.org/tpa-ws",
       publicDir: false,
       healthCheck: true,
       ...config

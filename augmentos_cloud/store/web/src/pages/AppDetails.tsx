@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import Header from '../components/Header';
 import AppPermissions from '../components/AppPermissions';
+import { isMobileDevice, openInApp } from '../utils/mobile';
 
 const AppDetails: React.FC = () => {
   const { packageName } = useParams<{ packageName: string }>();
@@ -93,6 +94,13 @@ const AppDetails: React.FC = () => {
 
     if (!app) return;
 
+    // On mobile devices, open in the MentraOS app
+    if (isMobileDevice()) {
+      openInApp(app.packageName);
+      return;
+    }
+
+    // On desktop, use the web API
     try {
       setInstallingApp(true);
 

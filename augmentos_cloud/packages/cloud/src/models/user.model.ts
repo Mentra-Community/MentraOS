@@ -1,8 +1,8 @@
 // cloud/src/models/user.model.ts
 import mongoose, { Schema, Document, Model, Types } from 'mongoose';
-import { AppSettingType, type AppSetting } from '@augmentos/sdk';
+import { AppSettingType, type AppSetting } from '@mentra/sdk';
 import { MongoSanitizer } from '../utils/mongoSanitizer';
-import { logger } from '@augmentos/utils';
+import { logger } from '@mentra/utils';
 
 interface Location {
   lat: number;
@@ -332,7 +332,7 @@ UserSchema.methods.removeRunningApp = async function (this: UserI, appName: stri
       return;
     } catch (error: any) {
       lastError = error;
-      
+
       // If it's a version conflict, retry
       if (error.name === 'VersionError') {
         logger.warn(`Version conflict in removeRunningApp for user ${this.email}, app ${appName}, attempt ${attempt + 1}/${maxRetries}`);
@@ -342,12 +342,12 @@ UserSchema.methods.removeRunningApp = async function (this: UserI, appName: stri
           continue;
         }
       }
-      
+
       // For other errors or max retries reached, throw
       throw error;
     }
   }
-  
+
   // If we get here, all retries failed
   throw lastError;
 };
@@ -485,7 +485,7 @@ UserSchema.methods.updateAppLastActive = async function(
       }
 
       let app = freshUser.installedApps.find((app: any) => app.packageName === packageName);
-      
+
       if (app) {
         // App exists in list, update timestamp
         app.lastActiveAt = new Date();
@@ -496,7 +496,7 @@ UserSchema.methods.updateAppLastActive = async function(
         try {
           const { getPreInstalledForThisServer } = require('../services/core/app.service');
           const serverPreInstalled = getPreInstalledForThisServer();
-          
+
           if (serverPreInstalled.includes(packageName)) {
             // Auto-add missing pre-installed app with current timestamp
             freshUser.installedApps.push({
@@ -518,7 +518,7 @@ UserSchema.methods.updateAppLastActive = async function(
       }
     } catch (error: any) {
       lastError = error;
-      
+
       // If it's a version conflict, retry
       if (error.name === 'VersionError') {
         logger.warn(`Version conflict in updateAppLastActive for user ${this.email}, app ${packageName}, attempt ${attempt + 1}/${maxRetries}`);
@@ -528,12 +528,12 @@ UserSchema.methods.updateAppLastActive = async function(
           continue;
         }
       }
-      
+
       // For other errors or max retries reached, throw
       throw error;
     }
   }
-  
+
   // If we get here, all retries failed
   throw lastError;
 };
@@ -558,7 +558,7 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
   email = email.toLowerCase();
   let user = await this.findOne({ email });
   let isNewUser = false;
-  
+
   if (!user) {
     user = await this.create({ email });
     isNewUser = true;
@@ -580,14 +580,14 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
   try {
     const { getPreInstalledForThisServer } = require('../services/core/app.service');
     const serverPreInstalled = getPreInstalledForThisServer();
-    
-    const missingPreInstalled = serverPreInstalled.filter((pkg: string) => 
+
+    const missingPreInstalled = serverPreInstalled.filter((pkg: string) =>
       !user.installedApps?.some((app: any) => app.packageName === pkg)
     );
 
     if (missingPreInstalled.length > 0) {
       if (!user.installedApps) user.installedApps = [];
-      
+
       for (const packageName of missingPreInstalled) {
         user.installedApps.push({
           packageName,
@@ -596,7 +596,7 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
         });
       }
       await user.save();
-      
+
       if (isNewUser) {
         logger.info(`Auto-installed ${missingPreInstalled.length} pre-installed apps for new user: ${email}`);
       } else {

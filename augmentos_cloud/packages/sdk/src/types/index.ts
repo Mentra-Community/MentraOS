@@ -70,6 +70,9 @@ export * from './user-session';
 // Webhook interfaces
 export * from './webhooks';
 
+// Capability Discovery types
+export * from './capabilities';
+
 
 // Re-export common types for convenience
 // This allows developers to import commonly used types directly from the package root

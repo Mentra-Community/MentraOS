@@ -61,7 +61,7 @@ adb -s {GLASSES_IP}:5555 shell svc power stayon true
 
 # Package Info and Permissions
 
-## List Installed Packages Related to AugmentOS
+## List Installed Packages Related to MentraOS
 ```bash
 adb -s {GLASSES_IP} shell pm list packages | grep augmentos
 ```

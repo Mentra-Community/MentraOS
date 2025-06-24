@@ -1,17 +1,17 @@
 // /**
 //  * Verification script to check the permissions status of all apps
-//  * 
+//  *
 //  * This script checks if all apps have permissions defined and
 //  * provides a summary of the current permissions state in the database.
-//  * 
-//  * Usage: 
+//  *
+//  * Usage:
 //  *   bun run src/scripts/verify-permissions.ts
 //  */
 
 // import mongoose from 'mongoose';
 // import dotenv from 'dotenv';
 // import App, { PermissionType } from '../models/app.model';
-// import { logger } from '@augmentos/utils';
+// import { logger } from '@mentra/utils';
 // import * as mongoConnection from '../connections/mongodb.connection';
 
 // // Load environment variables
@@ -33,11 +33,11 @@
 // async function verifyPermissions() {
 //   try {
 //     logger.info('Starting permissions verification...');
-    
+
 //     // Get all apps
 //     const apps = await App.find({});
 //     logger.info(`Found ${apps.length} apps to verify`);
-    
+
 //     // Statistics
 //     const stats = {
 //       total: apps.length,
@@ -46,10 +46,10 @@
 //       withAllPermission: 0,
 //       permissionCounts: {} as Record<string, number>
 //     };
-    
+
 //     // Track apps without permissions
 //     const appsWithoutPermissions: string[] = [];
-    
+
 //     // Verify each app
 //     for (const app of apps) {
 //       if (!app.permissions || app.permissions.length === 0) {
@@ -57,12 +57,12 @@
 //         appsWithoutPermissions.push(app.packageName);
 //       } else {
 //         stats.withPermissions++;
-        
+
 //         // Check if app has ALL permission
 //         if (app.permissions.some(p => p.type === PermissionType.ALL)) {
 //           stats.withAllPermission++;
 //         }
-        
+
 //         // Count each permission type
 //         app.permissions.forEach(permission => {
 //           const permType = permission.type;
@@ -70,7 +70,7 @@
 //         });
 //       }
 //     }
-    
+
 //     // Print results
 //     logger.info(`
 // Permissions Verification Results:
@@ -85,7 +85,7 @@
 //   .map(([type, count]) => `  - ${type}: ${count} apps (${((count / stats.total) * 100).toFixed(2)}%)`)
 //   .join('\n')}
 //     `);
-    
+
 //     // Print apps without permissions if any
 //     if (appsWithoutPermissions.length > 0) {
 //       logger.warn(`
@@ -93,7 +93,7 @@
 // ${appsWithoutPermissions.map(name => `  - ${name}`).join('\n')}
 //       `);
 //     }
-    
+
 //   } catch (error) {
 //     logger.error('Error during verification:', error);
 //     process.exit(1);

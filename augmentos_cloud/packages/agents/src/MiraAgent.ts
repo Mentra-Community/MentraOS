@@ -4,8 +4,8 @@ import { Agent } from "./AgentInterface";
 import { AgentExecutor, createReactAgent } from "langchain/agents";
 import { SearchToolForAgents } from "./tools/SearchToolForAgents";
 import { PromptTemplate } from "@langchain/core/prompts";
-import { LLMProvider } from "@augmentos/utils";
-import { wrapText } from "@augmentos/utils";
+import { LLMProvider } from "@mentra/utils";
+import { wrapText } from "@mentra/utils";
 
 interface QuestionAnswer {
     insight: string;
@@ -16,7 +16,7 @@ const agentPromptBlueprint = `You are an intelligent assistant that is running o
 Utilize available tools when necessary and adhere to the following guidelines:
 1. Invoke the "Search Engine" tool for confirming facts or retrieving extra details. Use the Search Engine tool to search the web for information about the user's query whenever you don't have enough information to answer.
 2. Keep your final answer brief (fewer than 15 words).
-3. When calling a tool, use this precise format:                                                                                             
+3. When calling a tool, use this precise format:
    Action: Search Engine
    Action Input: {{"searchKeyword": "<query>", "includeImage": <true/false>}}
 4. When you have enough information to answer, output your final answer on a new line prefixed by "Final Answer:" followed immediately by a JSON object exactly like:

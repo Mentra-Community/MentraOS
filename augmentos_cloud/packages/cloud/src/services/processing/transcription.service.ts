@@ -21,7 +21,7 @@ import {
   CloudToTpaMessage,
   DataStream,
   CloudToTpaMessageType
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 // import webSocketService from '../websocket/websocket.service';
 import subscriptionService from '../session/subscription.service';
 import { logger as rootLogger } from '../logging/pino-logger';
@@ -49,14 +49,14 @@ export const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY || "";
 export interface ASRStreamInstance {
   recognizer: ConversationTranscriber | azureSpeechSDK.TranslationRecognizer;
   pushStream: AudioInputStream;
-  
+
   // Enhanced state tracking
   isReady: boolean;           // Azure session fully ready for audio
   isInitializing: boolean;    // Stream setup in progress
   startTime: number;          // Creation timestamp
   readyTime?: number;         // When Azure session became ready
   retryCount: number;         // Retry attempt counter
-  
+
   // Diagnostics
   audioChunksReceived: number;    // Total audio chunks attempted
   audioChunksWritten: number;     // Successfully written to Azure
@@ -191,21 +191,21 @@ export class TranscriptionService {
     streamInstance.recognizer.sessionStarted = (_sender: any, event: SessionEventArgs) => {
       streamInstance.isInitializing = false;
       streamInstance.sessionId = event.sessionId;
-      
+
       sessionLogger.info({
         subscription,
         sessionId: event.sessionId,
         operation: 'sessionStarted'
       }, 'Azure Speech session started - adding safety delay before enabling audio flow');
-      
+
       // ✅ NEW: Add delay before marking as ready to prevent error code 7
       // This ensures Azure is truly ready to receive audio after session start
       setTimeout(() => {
         streamInstance.isReady = true;
         streamInstance.readyTime = Date.now();
-        
+
         const initializationTime = streamInstance.readyTime - streamInstance.startTime;
-        
+
         sessionLogger.info({
           subscription,
           sessionId: event.sessionId,
@@ -218,7 +218,7 @@ export class TranscriptionService {
 
     streamInstance.recognizer.sessionStopped = (_sender: any, event: SessionEventArgs) => {
       streamInstance.isReady = false;
-      
+
       sessionLogger.info({
         subscription,
         sessionId: event.sessionId,
@@ -231,10 +231,10 @@ export class TranscriptionService {
     streamInstance.recognizer.canceled = (_sender: any, event: SpeechRecognitionCanceledEventArgs) => {
       streamInstance.isReady = false;
       streamInstance.isInitializing = false;
-      
+
       const sessionAge = Date.now() - streamInstance.startTime;
       const timeSinceReady = streamInstance.readyTime ? Date.now() - streamInstance.readyTime : null;
-      
+
       // Enhanced error diagnostics
       const errorDiagnostics = {
         subscription,
@@ -242,26 +242,26 @@ export class TranscriptionService {
         errorCode: event.errorCode,
         errorDetails: event.errorDetails,
         reason: event.reason,
-        
+
         // Timing diagnostics
         sessionAge,
         timeSinceReady,
         wasEverReady: !!streamInstance.readyTime,
         initializationTime: streamInstance.readyTime ? streamInstance.readyTime - streamInstance.startTime : null,
-        
+
         // Audio flow diagnostics
         audioChunksReceived: streamInstance.audioChunksReceived,
         audioChunksWritten: streamInstance.audioChunksWritten,
-        audioWriteSuccessRate: streamInstance.audioChunksReceived > 0 ? 
+        audioWriteSuccessRate: streamInstance.audioChunksReceived > 0 ?
           (streamInstance.audioChunksWritten / streamInstance.audioChunksReceived * 100).toFixed(1) + '%' : 'N/A',
-        
+
         // Retry context
         retryCount: streamInstance.retryCount,
-        
+
         // Azure context
         azureRegion: AZURE_SPEECH_REGION,
         recognizerType: languageInfo.type === StreamType.TRANSLATION ? 'TranslationRecognizer' : 'ConversationTranscriber',
-        
+
         // Root cause indicators
         likelyRaceCondition: event.errorCode === 7 && !streamInstance.readyTime && streamInstance.audioChunksReceived > 0,
         likelyNetworkIssue: event.errorCode === 4 || event.reason === CancellationReason.Error,
@@ -271,14 +271,14 @@ export class TranscriptionService {
       // Contextual error logging
       if (event.errorCode === 7) {
         if (!streamInstance.readyTime && streamInstance.audioChunksReceived > 0) {
-          sessionLogger.error(errorDiagnostics, 
+          sessionLogger.error(errorDiagnostics,
             '🔥 RACE CONDITION: Audio fed to Azure stream before session ready (Error Code 7)');
         } else {
-          sessionLogger.error(errorDiagnostics, 
+          sessionLogger.error(errorDiagnostics,
             '⚠️ Azure Invalid Operation (Error Code 7) - stream was ready but operation failed');
         }
       } else {
-        sessionLogger.error(errorDiagnostics, 
+        sessionLogger.error(errorDiagnostics,
           `Azure Speech Recognition canceled (Error Code ${event.errorCode})`);
       }
 
@@ -313,7 +313,7 @@ export class TranscriptionService {
               retryCount: streamInstance.retryCount,
               operation: 'startRecognitionFailed'
             }, 'Failed to start Azure Translation Recognition');
-            
+
             // Trigger retry logic through error handling
             this.handleStreamError(streamInstance, subscription, userSession, {
               errorCode: 999, // Custom error code for start failures
@@ -338,7 +338,7 @@ export class TranscriptionService {
               retryCount: streamInstance.retryCount,
               operation: 'startTranscriptionFailed'
             }, 'Failed to start Azure Transcription');
-            
+
             // Trigger retry logic through error handling
             this.handleStreamError(streamInstance, subscription, userSession, {
               errorCode: 999,
@@ -356,11 +356,11 @@ export class TranscriptionService {
       subscription,
       operation: 'delayBeforeStart'
     }, 'Waiting 200ms before starting Azure recognition to prevent InvalidOperation error 7');
-    
+
     setTimeout(() => {
       startRecognition();
     }, 200); // 200ms delay before starting recognition
-    
+
     return streamInstance;
   }
 
@@ -726,7 +726,7 @@ export class TranscriptionService {
     }
 
     // Too verbose to log every audio feed, so we can comment this out.
-    // sessionLogger.debug({ 
+    // sessionLogger.debug({
     //   numStreams: userSession.transcriptionStreams.size,
     //   dataSize: audioData.length,
     //   operation: 'feedAudio'
@@ -736,12 +736,12 @@ export class TranscriptionService {
       try {
         // Increment chunks received counter for diagnostics
         instance.audioChunksReceived++;
-        
+
         // ✅ CRITICAL: Audio gating - only write if Azure session is ready
         if (!instance.isReady) {
           const streamAge = Date.now() - (instance.startTime || 0);
           const sessionLogger = userSession.logger.child({ service: SERVICE_NAME });
-          
+
           // Enhanced logging for race condition detection
           if (instance.isInitializing) {
             // Stream is still initializing - this is normal for first few seconds
@@ -775,7 +775,7 @@ export class TranscriptionService {
         if ((instance.pushStream as any)?._readableState?.destroyed ||
           (instance.pushStream as any)?._readableState?.ended) {
           const sessionLogger = userSession.logger.child({ service: SERVICE_NAME });
-          sessionLogger.warn({ 
+          sessionLogger.warn({
             streamKey: key,
             operation: 'audioGated_destroyed'
           }, 'Skipping write to destroyed/ended stream');
@@ -788,14 +788,14 @@ export class TranscriptionService {
         (instance.pushStream as any).write(arrayBuffer);
         instance.audioChunksWritten++;
         instance.lastAudioTime = Date.now();
-        
+
         // Periodic success logging (every 1000 chunks to avoid spam)
         if (instance.audioChunksWritten % 1000 === 0) {
           const sessionLogger = userSession.logger.child({ service: SERVICE_NAME });
           const sessionAge = Date.now() - instance.startTime;
           const timeSinceReady = instance.readyTime ? Date.now() - instance.readyTime : null;
           const successRate = (instance.audioChunksWritten / instance.audioChunksReceived * 100).toFixed(1);
-          
+
           sessionLogger.debug({
             streamKey: key,
             sessionId: instance.sessionId,
@@ -1014,26 +1014,26 @@ export class TranscriptionService {
    * Handle stream errors with intelligent retry logic and proper error classification
    */
   private handleStreamError(
-    streamInstance: ASRStreamInstance, 
-    subscription: ExtendedStreamType, 
-    userSession: UserSession, 
+    streamInstance: ASRStreamInstance,
+    subscription: ExtendedStreamType,
+    userSession: UserSession,
     event: any
   ): void {
     const sessionLogger = userSession.logger.child({ service: SERVICE_NAME });
-    
+
     const errorCode = event.errorCode;
     const isRetryable = this.isRetryableError(errorCode);
     const maxRetries = this.getMaxRetries(errorCode);
     const baseRetryDelay = this.getBaseRetryDelay(errorCode);
-    
+
     if (isRetryable && streamInstance.retryCount < maxRetries) {
       streamInstance.retryCount++;
-      
+
       // Exponential backoff with jitter
       const jitter = Math.random() * 0.3; // 0-30% jitter
       const backoffMultiplier = Math.pow(2, streamInstance.retryCount - 1);
       const retryDelay = baseRetryDelay * backoffMultiplier * (1 + jitter);
-      
+
       sessionLogger.info({
         subscription,
         errorCode,
@@ -1042,7 +1042,7 @@ export class TranscriptionService {
         retryDelay: Math.round(retryDelay),
         operation: 'scheduleRetry'
       }, `🔄 Scheduling retry ${streamInstance.retryCount}/${maxRetries} in ${Math.round(retryDelay)}ms for error code ${errorCode}`);
-      
+
       // Schedule retry
       setTimeout(() => {
         try {
@@ -1054,7 +1054,7 @@ export class TranscriptionService {
               sessionLogger.warn({ closeError }, 'Error closing recognizer during retry cleanup');
             }
           }
-          
+
           // Reset stream state for retry
           streamInstance.isReady = false;
           streamInstance.isInitializing = true;
@@ -1063,19 +1063,19 @@ export class TranscriptionService {
           streamInstance.sessionId = undefined;
           streamInstance.readyTime = undefined;
           streamInstance.startTime = Date.now();
-          
+
           // Create new stream instance
           sessionLogger.info({
             subscription,
             retryCount: streamInstance.retryCount,
             operation: 'retryCreateStream'
           }, '🔄 Attempting to recreate Azure Speech stream');
-          
+
           const newStreamInstance = this.createASRStreamForSubscription(subscription, userSession);
-          
+
           // Update the existing instance in the map
           userSession.transcriptionStreams!.set(subscription, newStreamInstance);
-          
+
         } catch (retryError) {
           sessionLogger.error({
             subscription,
@@ -1083,7 +1083,7 @@ export class TranscriptionService {
             retryCount: streamInstance.retryCount,
             operation: 'retryFailed'
           }, '❌ Failed to recreate stream during retry');
-          
+
           // If we still have retries left, try again
           if (streamInstance.retryCount < maxRetries) {
             this.handleStreamError(streamInstance, subscription, userSession, event);
@@ -1097,11 +1097,11 @@ export class TranscriptionService {
           }
         }
       }, retryDelay);
-      
+
     } else {
       // Error is not retryable or retries exhausted
       const reason = !isRetryable ? 'non-retryable error' : 'retries exhausted';
-      
+
       sessionLogger.error({
         subscription,
         errorCode,
@@ -1110,7 +1110,7 @@ export class TranscriptionService {
         isRetryable,
         operation: 'giveUpRetry'
       }, `❌ Giving up on subscription ${subscription}: ${reason} (error code ${errorCode})`);
-      
+
       // Clean up the failed stream
       this.stopIndividualTranscriptionStream(streamInstance, subscription, userSession);
       userSession.transcriptionStreams!.delete(subscription);
@@ -1127,11 +1127,11 @@ export class TranscriptionService {
       case 6:   // Timeout issues
       case 999: // Custom error code for start failures
         return true;
-      
+
       case 1:   // Authentication/authorization errors - don't retry
       case 2:   // Invalid argument - don't retry
       case 3:   // Handle not found - don't retry
-      case 5:   // Unexpected/invalid state - don't retry 
+      case 5:   // Unexpected/invalid state - don't retry
       default:
         return false;
     }

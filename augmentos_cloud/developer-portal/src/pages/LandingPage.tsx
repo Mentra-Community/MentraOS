@@ -12,9 +12,7 @@ const LandingPage: React.FC = () => {
         <div className=" mx-auto px-5 py-4 flex items-center justify-between">
           <div className='select-none'>
             <div className="flex items-end gap-0">
-              <h1 className="font-cuprum font-bold text-5xl">.\</h1>
-              <h1 className="font-light text-2xl pb-0.5 pl-1">ugment</h1>
-              <h1 className="font-medium text-2xl pb-0.5">OS</h1>
+            <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/757b23a3-9ec0-457d-2634-29e28f03fe00/verysmall" alt="Mentra Logo" />
             </div>
             <h2 className="text-sm text-gray-600 pb-1 ">Developer Portal</h2>
           </div>
@@ -32,7 +30,7 @@ const LandingPage: React.FC = () => {
             <img src="/g1.webp" alt="Hero" className="w-96" />
           </div>
           <h1 className="text-4xl md:text-6xl font-bold mb-6">
-            AugmentOS is the best way to build apps for smart glasses.
+            MentraOS is the best way to build apps for smart glasses.
           </h1>
           <p className="text-xl md:text-2xl text-gray-600 mb-10 max-w-3xl mx-auto">
             Build and deploy your own apps for smart glasses in minutes, not months.
@@ -48,7 +46,7 @@ const LandingPage: React.FC = () => {
               </svg>
             </a>
             <a
-              href="https://docs.augmentos.org"
+              href="https://docs.mentra.glass"
               className="px-6 py-3 rounded-md border border-gray-300 font-medium hover:bg-gray-100"
             >
               View Documentation
@@ -128,7 +126,7 @@ const LandingPage: React.FC = () => {
               </div>
             </div>
 
-  
+
             <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
               <div className="h-40 bg-gradient-to-r from-red-500 to-orange-500 flex items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -150,7 +148,7 @@ const LandingPage: React.FC = () => {
           <div className="flex flex-col md:flex-row justify-between">
             <div className="mb-6 md:mb-0">
               <div className="flex items-center gap-2">
-                <span className="font-bold">AugmentOS</span>
+                <span className="font-bold">MentraOS</span>
               </div>
               <p className="mt-2 text-sm text-gray-600 max-w-xs">
                 The open source operating system for smart glasses.
@@ -167,8 +165,8 @@ const LandingPage: React.FC = () => {
               <div>
                 <h4 className="font-medium mb-3">Resources</h4>
                 <ul className="space-y-2 text-sm">
-                  <li><a href="https://docs.augmentos.org" className="text-gray-600 hover:text-gray-900">Documentation</a></li>
-                  <li><a href="https://github.com/AugmentOS-Community/AugmentOS-Cloud-Example-App" className="text-gray-600 hover:text-gray-900">Example App</a></li>
+                  <li><a href="https://docs.mentra.glass" className="text-gray-600 hover:text-gray-900">Documentation</a></li>
+                  <li><a href="https://github.com/Mentra-Community/MentraOS-Cloud-Example-App" className="text-gray-600 hover:text-gray-900">Example App</a></li>
                 </ul>
               </div>
               {/* <div>
@@ -181,7 +179,7 @@ const LandingPage: React.FC = () => {
             </div>
           </div>
           <div className="mt-12 pt-8 border-t border-gray-200 text-center text-sm text-gray-600">
-            &copy; {new Date().getFullYear()} AugmentOS. All rights reserved.
+            &copy; {new Date().getFullYear()} MentraOS. All rights reserved.
           </div>
         </div>
       </footer>

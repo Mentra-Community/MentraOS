@@ -6,6 +6,7 @@ import { StreamType } from '../streams';
 import { AppSettings, TpaConfig, PermissionType } from '../models';
 import { LocationUpdate, CalendarEvent, RtmpStreamStatus, PhotoResponse } from './glasses-to-cloud';
 import { DashboardMode } from '../dashboard';
+import { Capabilities } from '../capabilities';
 
 //===========================================================
 // Responses
@@ -19,6 +20,7 @@ export interface TpaConnectionAck extends BaseMessage {
   settings?: AppSettings;
   augmentosSettings?: Record<string, any>; // AugmentOS system settings
   config?: TpaConfig; // TPA config sent from cloud
+  capabilities?: Capabilities; // Device capability profile
 }
 
 /**

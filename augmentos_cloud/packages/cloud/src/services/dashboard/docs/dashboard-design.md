@@ -172,7 +172,7 @@ The overall dashboard content flow follows these steps:
    - Processes always-on dashboard independently from main/expanded
    - Sends dashboard layouts via DisplayManager to the glasses
    - Uses different ViewType for always-on vs regular dashboard
-   
+
 4. **DisplayManager**:
    - Handles the technical aspects of sending display requests
    - No longer contains any dashboard-specific logic
@@ -181,7 +181,7 @@ The overall dashboard content flow follows these steps:
 
 ## SDK Usage Guidelines
 
-The AugmentOS SDK is designed to provide a simple and intuitive interface for TPA developers. Here are some key principles for how to use the SDK correctly:
+The MentraOS SDK is designed to provide a simple and intuitive interface for TPA developers. Here are some key principles for how to use the SDK correctly:
 
 ### Event Subscription Model
 

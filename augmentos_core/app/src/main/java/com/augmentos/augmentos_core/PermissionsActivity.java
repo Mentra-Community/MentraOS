@@ -209,7 +209,7 @@ public class PermissionsActivity extends AppCompatActivity {
     }
 
     private void openHowToInstallWebsite() {
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://augmentos.org/install"));
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://mentra.glass/install"));
         startActivity(intent);
         finish();
     }

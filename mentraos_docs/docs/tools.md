@@ -67,7 +67,7 @@ For the full interface definition, see [ToolParameterSchema](/reference/interfac
 In your app server, override the [`onToolCall`](/reference/tpa-server#ontoolcall-protected) method to handle incoming [tool calls](/reference/interfaces/tool-types#toolcall):
 
 ```typescript
-import { TpaServer, ToolCall } from '@mentraos/sdk';
+import { TpaServer, ToolCall } from '@mentra/sdk';
 
 export class MyTpaServer extends TpaServer {
   protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
@@ -221,7 +221,7 @@ Your `onToolCall` method should return a string that will be passed to Mira's AI
 Here's how to implement a complete todo list app with Mira integration:
 
 ```typescript
-import { TpaServer, ToolCall } from '@mentraos/sdk';
+import { TpaServer, ToolCall } from '@mentra/sdk';
 
 // Simple in-memory todo storage
 const todos = new Map<string, Map<string, Todo>>();

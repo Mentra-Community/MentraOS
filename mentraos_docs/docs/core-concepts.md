@@ -118,7 +118,13 @@ Settings support various types including toggles, text inputs, dropdowns, slider
 
 See the [Settings](/settings) section for more details.
 
-## 12. The MentraOS Cloud
+## 12. Device Capabilities
+
+Different smart glasses models have different hardware features. Some have cameras, others don't. Some have displays, others are audio-only. MentraOS provides a capabilities system that lets your app discover what hardware is available on the connected device and adapt accordingly.
+
+The [`TpaSession`](/reference/tpa-session) exposes device capabilities through `session.capabilities`.  See the [Device Capabilities](/capabilities) guide for detailed usage examples and the [Capabilities Reference](/reference/interfaces/capabilities) for complete type documentation.
+
+## 13. The MentraOS Cloud
 
 The MentraOS Cloud acts as a central hub, managing:
 
@@ -130,7 +136,7 @@ The MentraOS Cloud acts as a central hub, managing:
 
 Your app interacts with the cloud, but you don't need to worry about the internal details of how the cloud operates. The SDK abstracts away these complexities.
 
-## 13. Logging
+## 14. Logging
 
 MentraOS provides structured logging capabilities using [Pino](https://getpino.io/), a fast and low-overhead logging library. Every [`TpaSession`](/reference/tpa-session) includes a pre-configured logger that automatically includes session context.
 

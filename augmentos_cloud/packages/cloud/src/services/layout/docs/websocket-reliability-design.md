@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document details the current WebSocket reliability design and TPA session lifecycle in the AugmentOS cloud system. It covers how TPAs connect, maintain connections, and recover from disconnections.
+This document details the current WebSocket reliability design and TPA session lifecycle in the MentraOS cloud system. It covers how TPAs connect, maintain connections, and recover from disconnections.
 
 ## Current TPA Session Lifecycle
 
@@ -129,14 +129,14 @@ This document details the current WebSocket reliability design and TPA session l
 class HealthMonitorService {
   private glassesLastSeen: Map<WebSocket, number> = new Map();
   private tpaLastSeen: Map<WebSocket, number> = new Map();
-  
+
   registerGlassesConnection(ws: WebSocket): void {
     this.glassesLastSeen.set(ws, Date.now());
     ws.on('pong', () => {
       this.glassesLastSeen.set(ws, Date.now());
     });
   }
-  
+
   registerTpaConnection(ws: WebSocket): void {
     this.tpaLastSeen.set(ws, Date.now());
     ws.on('pong', () => {
@@ -152,17 +152,17 @@ class TpaRegistrationService {
   async handleTpaServerRestart(registrationId: string): Promise<number> {
     const registration = this.getRegistration(registrationId);
     if (!registration) return 0;
-    
+
     let recoveredCount = 0;
     for (const tpaSessionId of registration.activeSessions) {
       try {
         const [userSessionId, packageName] = tpaSessionId.split('-');
         const userSession = sessionService.getSession(userSessionId);
-        
+
         if (!userSession || !userSession.activeAppSessions.includes(packageName)) {
           continue;
         }
-        
+
         // Trigger TPA's webhook to restart session
         await appService.triggerWebhook(registration.webhookUrl, {
           type: WebhookRequestType.SESSION_REQUEST,
@@ -171,13 +171,13 @@ class TpaRegistrationService {
           timestamp: new Date().toISOString(),
           augmentOSWebsocketUrl: this.determineServerUrl(registration, userSession),
         });
-        
+
         recoveredCount++;
       } catch (error) {
         logger.error(`Error recovering session ${tpaSessionId}:`, error);
       }
     }
-    
+
     return recoveredCount;
   }
 }
@@ -191,15 +191,15 @@ ws.on('error', (error) => {
     const userSessionId = currentAppSession.split('-')[0];
     const packageName = currentAppSession.split('-')[1];
     const userSession = sessionService.getSession(userSessionId);
-    
+
     if (userSession) {
       // Clean up connection
       userSession.appConnections.delete(packageName);
       subscriptionService.removeSubscriptions(userSession, packageName);
-      
+
       // Clean up dashboard content
       dashboardService.handleTpaDisconnected(packageName, userSession);
-      
+
       userSession.logger.info(`[websocket.service]: TPA session ${currentAppSession} disconnected`);
     }
   }
@@ -215,40 +215,40 @@ class WebSocketService {
   private glassesWss: WebSocketServer;
   private tpaWss: WebSocketServer;
   private healthMonitor: HealthMonitorService;
-  
+
   constructor() {
     this.glassesWss = new WebSocketServer({ port: GLASSES_WS_PORT });
     this.tpaWss = new WebSocketServer({ port: TPA_WS_PORT });
     this.healthMonitor = new HealthMonitorService();
-    
+
     this.setupGlassesServer();
     this.setupTpaServer();
   }
-  
+
   private setupGlassesServer(): void {
     this.glassesWss.on('connection', (ws: WebSocket) => {
       this.healthMonitor.registerGlassesConnection(ws);
-      
+
       ws.on('message', (data: string) => {
         const message = JSON.parse(data);
         this.handleGlassesMessage(ws, message);
       });
-      
+
       ws.on('close', () => {
         this.handleGlassesDisconnect(ws);
       });
     });
   }
-  
+
   private setupTpaServer(): void {
     this.tpaWss.on('connection', (ws: WebSocket) => {
       this.healthMonitor.registerTpaConnection(ws);
-      
+
       ws.on('message', (data: string) => {
         const message = JSON.parse(data);
         this.handleTpaMessage(ws, message);
       });
-      
+
       ws.on('close', () => {
         this.handleTpaDisconnect(ws);
       });
@@ -261,18 +261,18 @@ class WebSocketService {
 ```typescript
 class SessionService {
   private sessions: Map<string, UserSession> = new Map();
-  
+
   createSession(userId: string): UserSession {
     const sessionId = generateSessionId();
     const session = new UserSession(sessionId, userId);
     this.sessions.set(sessionId, session);
     return session;
   }
-  
+
   getSession(sessionId: string): UserSession | undefined {
     return this.sessions.get(sessionId);
   }
-  
+
   removeSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -281,10 +281,10 @@ class SessionService {
         ws.close();
         session.appConnections.delete(packageName);
       }
-      
+
       // Clean up subscriptions
       subscriptionService.removeAllSubscriptions(session);
-      
+
       // Remove session
       this.sessions.delete(sessionId);
     }
@@ -326,22 +326,22 @@ interface UserSession {
   state: SessionState;
   createdAt: Date;
   lastActive: Date;
-  
+
   // Connection tracking
   glassesConnection?: WebSocket;
   appConnections: Map<string, WebSocket>;
-  
+
   // TPA state tracking
   activeAppSessions: string[];      // List of running TPAs
   loadingApps: Set<string>;         // TPAs in loading state
   tpaStates: Map<string, TpaState>; // Current state of each TPA
-  
+
   // Subscription management
   subscriptions: Map<string, Set<StreamType>>;
-  
+
   // Display management
   displayManager: DisplayManager;
-  
+
   // Logging
   logger: Logger;
 }
@@ -397,12 +397,12 @@ class SessionRecoveryService {
   async recoverSession(sessionId: string): Promise<boolean> {
     const session = sessionService.getSession(sessionId);
     if (!session) return false;
-    
+
     // Recover glasses connection
     if (session.state === SessionState.DISCONNECTED) {
       await this.recoverGlassesConnection(session);
     }
-    
+
     // Recover TPA connections
     for (const packageName of session.activeAppSessions) {
       const tpaState = session.tpaStates.get(packageName);
@@ -410,7 +410,7 @@ class SessionRecoveryService {
         await this.recoverTpaConnection(session, packageName);
       }
     }
-    
+
     return true;
   }
 }
@@ -458,4 +458,4 @@ class SessionRecoveryService {
 4. **Testing**:
    - Add connection reliability tests
    - Test session recovery scenarios
-   - Verify error handling 
+   - Verify error handling

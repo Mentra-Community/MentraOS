@@ -1,8 +1,8 @@
-# AugmentOS Core Microphone System Documentation
+# MentraOS Core Microphone System Documentation
 
 ## Overview
 
-The AugmentOS microphone system is a complex, multi-layered architecture that handles audio input from both phone microphones and smart glasses' onboard microphones. The system is designed to dynamically switch between different microphone sources based on device capabilities, user preferences, and system conflicts.
+The MentraOS microphone system is a complex, multi-layered architecture that handles audio input from both phone microphones and smart glasses' onboard microphones. The system is designed to dynamically switch between different microphone sources based on device capabilities, user preferences, and system conflicts.
 
 ## Key Problems and Issues
 
@@ -244,9 +244,9 @@ Key log tags:
        // ALWAYS create the microphone manager
        if (microphoneManager == null) {
            microphoneManager = new UnifiedMicrophoneManager(
-               context, 
-               audioProcessingCallback, 
-               this, 
+               context,
+               audioProcessingCallback,
+               this,
                this
            );
        }
@@ -283,17 +283,17 @@ Key log tags:
    public class UnifiedMicrophoneManager {
        // Add explicit preference handling
        private MicPreference userPreference;
-       
+
        public enum MicPreference {
            PHONE_MIC,      // User prefers phone mic
            GLASSES_MIC,    // User prefers glasses mic
            AUTO            // System decides based on quality/availability
        }
-       
+
        public void initialize() {
            // Read user preference
            userPreference = readUserPreference();
-           
+
            // Start with preferred mic if available
            if (userPreference == MicPreference.GLASSES_MIC && glassesHaveMic()) {
                switchToGlassesMic();
@@ -310,7 +310,7 @@ Key log tags:
        // Clean up phone mic
        cleanUpCurrentMic();
        stopMicrophoneService();
-       
+
        // Enable glasses mic directly
        if (glassesRep != null && glassesRep.smartGlassesCommunicator != null) {
            glassesRep.smartGlassesCommunicator.changeSmartGlassesMicrophoneState(true);
@@ -331,7 +331,7 @@ Key log tags:
            // 1. User preference
            // 2. System constraints (phone calls, external apps)
            // 3. Device availability
-           
+
            if (shouldUseGlassesMic()) {
                switchToGlassesMic();
            } else if (canUseScoMode()) {
@@ -347,7 +347,7 @@ Key log tags:
            }
        }
    }
-   
+
    private boolean shouldUseGlassesMic() {
        // Use glasses mic if:
        // - User prefers it AND glasses have mic
@@ -369,7 +369,7 @@ Key log tags:
    // Anywhere in the codebase that needs mic control:
    // Old: smartGlassesManager.changeMicrophoneState(true)
    // New: smartGlassesManager.setMicrophoneEnabled(true)
-   
+
    // The manager just passes through to the UnifiedMicrophoneManager
    ```
 
@@ -378,7 +378,7 @@ Key log tags:
    // UnifiedMicrophoneManager notifies speech rec of ALL mic changes
    private void notifyStatusChange() {
        EventBus.getDefault().post(new MicModeChangedEvent(currentStatus));
-       
+
        // Also notify speech rec system
        if (speechRecSystem != null) {
            boolean micEnabled = (currentStatus != MicStatus.PAUSED);
@@ -449,7 +449,7 @@ These come within milliseconds of each other. The current debouncing logic simpl
 ### Log Evidence
 ```
 19:47:19.591 Changing microphone state to false
-19:47:19.722 Changing microphone state to true  
+19:47:19.722 Changing microphone state to true
 19:47:19.722 Ignoring mode change request - too soon after previous change
 ```
 

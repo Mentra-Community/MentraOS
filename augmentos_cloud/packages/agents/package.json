@@ -1,5 +1,5 @@
 {
-  "name": "@augmentos/agents",
+  "name": "@mentra/agents",
   "version": "1.0.0",
   "private": true,
   "main": "dist/index.js",
@@ -13,8 +13,8 @@
     "link-pkg": "bun link"
   },
   "dependencies": {
-    "@augmentos/sdk": "workspace:*",
-    "@augmentos/utils": "workspace:*"
+    "@mentra/sdk": "workspace:*",
+    "@mentra/utils": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

@@ -301,7 +301,7 @@ Registers a handler that triggers only when a specific setting's value changes.
 
 ```typescript
 onSettingChange<T>(
-  key: string, 
+  key: string,
   handler: (value: T, previousValue: T | undefined) => void
 ): () => void
 ```
@@ -332,7 +332,7 @@ Generic event handler for any StreamType. Use specific methods above where possi
 
 ```typescript
 on<T extends StreamType>(
-  type: T, 
+  type: T,
   handler: (data: StreamDataTypes[T]) => void
 ): () => void
 ```
@@ -345,7 +345,7 @@ on<T extends StreamType>(
 
 **Example:**
 ```typescript
-import { StreamType } from '@mentraos/sdk';
+import { StreamType } from '@mentra/sdk';
 
 // Subscribe to a specific stream type
 tpaSession.events.on(StreamType.LOCATION_UPDATE, (data) => {
@@ -357,4 +357,4 @@ const transcriptionStream = createTranscriptionStream('en-US');
 tpaSession.events.on(transcriptionStream, (data) => {
   console.log(`English transcription: ${data.text}`);
 });
-``` 
+```

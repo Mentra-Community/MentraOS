@@ -1,7 +1,7 @@
 //backend/src/routes/apps.ts
 import express from 'express';
 import sessionService from '../services/session/session.service';
-import { TranscriptSegment } from '@augmentos/sdk';
+import { TranscriptSegment } from '@mentra/sdk';
 const router = express.Router();
 
 // GET /api/transcripts/:appSessionId
@@ -24,7 +24,7 @@ router.get('/api/transcripts/:appSessionId', async (req, res) => {
     const language = (req.query.language as string) || 'en-US';
 
     console.log(`🔍 Fetching transcripts for session ${appSessionId}, language: ${language}`);
-    
+
     if (!duration && !startTime && !endTime) {
       return res.status(400).json({ error: 'duration, startTime, or endTime is required' });
     }
@@ -36,13 +36,13 @@ router.get('/api/transcripts/:appSessionId', async (req, res) => {
     }
 
     let transcriptSegments: TranscriptSegment[] = [];
-    
+
     // Check if we have language-specific segments
     if (userSession.transcript.languageSegments?.has(language)) {
       console.log(`✅ Found language-specific segments for ${language}`);
       transcriptSegments = userSession.transcript.languageSegments.get(language) || [];
     } else if (language === 'en-US') {
-      // Fallback to legacy segments for English 
+      // Fallback to legacy segments for English
       console.log('⚠️ Using legacy segments for en-US');
       transcriptSegments = userSession.transcript.segments;
     } else {
@@ -60,13 +60,13 @@ router.get('/api/transcripts/:appSessionId', async (req, res) => {
         const durationSeconds = parseInt(duration as string);
         return secondsSinceNow <= durationSeconds;
       }
-      
+
       // TODO: Add handling for startTime/endTime filters
       return true;
     });
 
     console.log(`💬 Returning ${filteredTranscriptSegments.length} transcript segments for language ${language}`);
-    
+
     res.json({
       language: language,
       segments: filteredTranscriptSegments

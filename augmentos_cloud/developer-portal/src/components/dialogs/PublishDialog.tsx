@@ -101,7 +101,7 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
         <DialogHeader>
           <DialogTitle>Publish App to Store</DialogTitle>
           <DialogDescription>
-            Are you ready to publish "{tpa.name}" to the AugmentOS App Store?
+            Are you ready to publish "{tpa.name}" to the MentraOS App Store?
           </DialogDescription>
         </DialogHeader>
 
@@ -125,7 +125,7 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
           ) : (
             <>
               <p className="text-sm text-gray-600 mb-3">
-                Publishing your app will make it available for review. Once approved, it will be visible to all AugmentOS users.
+                Publishing your app will make it available for review. Once approved, it will be visible to all MentraOS users.
               </p>
               <p className="text-sm text-gray-600">
                 Your app will initially be submitted in a <strong>SUBMITTED</strong> state and will need to undergo review before being published.

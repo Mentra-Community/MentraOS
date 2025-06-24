@@ -12,7 +12,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const currentPath = location.pathname;
-  
+
   // Handle sign out with navigation
   const handleSignOut = async () => {
     await signOut();
@@ -40,8 +40,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex items-center gap-2">
-            <Link to="https://docs.augmentos.org">
-              <Button variant="ghost" size="sm" className='hover:bg-gray-200'>  
+            <Link to="https://docs.mentra.glass">
+              <Button variant="ghost" size="sm" className='hover:bg-gray-200'>
                 Documentation
               </Button>
             </Link>

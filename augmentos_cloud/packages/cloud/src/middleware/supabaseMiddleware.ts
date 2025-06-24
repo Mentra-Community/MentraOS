@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../utils/supabase';
 import jwt from 'jsonwebtoken';
-import { logger } from '@augmentos/utils';
+import { logger } from '@mentra/utils';
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
 
 // Define request with user info

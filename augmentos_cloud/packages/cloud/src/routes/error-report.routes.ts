@@ -1,6 +1,6 @@
 // cloud/src/routes/apps.routes.ts
 import express, { Request, Response } from 'express';
-import { logger } from '@augmentos/utils';
+import { logger } from '@mentra/utils';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import { PosthogService } from '../services/logging/posthog.service';
 
@@ -10,7 +10,7 @@ export const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET |
 const router = express.Router();
 
 /**
- * Stop app for session 
+ * Stop app for session
  */
 async function errorReport(req: Request, res: Response) {
   const reportData = req.body;

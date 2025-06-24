@@ -4,11 +4,11 @@
 ![GitHub Release Version](https://img.shields.io/github/v/release/TeamOpenSmartGlasses/Convoscope)
 ![Last Updated](https://img.shields.io/github/last-commit/TeamOpenSmartGlasses/Convoscope)
 
-# AugmentOS - smart glasses app store and OS.
+# MentraOS - smart glasses app store and OS.
 
 **The open source operating system for your smart glasses. Access the best apps and AI agents on your smart glasses and build new apps and agents:**
 
-![AugmentOS Smart Glasses](./images/glasses_banner_TOSG_AugmentOS_Cayden_low_res.jpg)
+![MentraOS Smart Glasses](./images/glasses_banner_TOSG_MentraOS_Cayden_low_res.jpg)
 
 - AI Assistant
 - Live Captions
@@ -18,25 +18,25 @@
 - ADHD Tools
 - Screen Mirror (Teleprompter, Karaoke/Lyrics, video captions, etc.)
 
-AugmentOS is the *the* way to build apps for smart glasses. The [AugmentOS SDK](https://console.augmentos.org) enables:
+MentraOS is the *the* way to build apps for smart glasses. The [MentraOS SDK](https://console.mentra.glass) enables:
 - Your app to immediately runs on any pair of smart glasses.
 - Simple + fast dev - focus on building a great experience.
 - Continuously access smart glasses I/O.
 - Run always - run your app for days straight, guaranteed.
 - Get seen - get your app in front of everyone using smart glasses.
 
-AugmentOS enables you to run multiple apps *at the same time* so you can truly take advantage of AI-first wearables apps. Apps that run proactively based on context. That's the power of a smart glasses operating system.
+MentraOS enables you to run multiple apps *at the same time* so you can truly take advantage of AI-first wearables apps. Apps that run proactively based on context. That's the power of a smart glasses operating system.
 
 ## Apps
 
-Some of the apps running on AugmentOS...
+Some of the apps running on MentraOS...
 
 <details>
 <summary>
 <strong>"Mira" AI Assistant</strong>
 </summary>
 
-Smart and fast AI assistant with access to Google search. Say "Hey Mira" and then ask a question/say a command. 
+Smart and fast AI assistant with access to Google search. Say "Hey Mira" and then ask a question/say a command.
 
 - "hey Mira, how long is a direct flight from Toronto to Hong Kong?"
 - "hey Mira, what's the weather like this weekend in Cambridge?"
@@ -80,7 +80,7 @@ Learn a new language 10x faster with smart glasses. Partial translation, AI fore
 
 [Mentra Link](https://mentra.glass/)
 
-Artificial Immersion demo video: [https://www.youtube.com/watch?v=UFBEG1s27uU](https://www.youtube.com/watch?v=UFBEG1s27uU)  
+Artificial Immersion demo video: [https://www.youtube.com/watch?v=UFBEG1s27uU](https://www.youtube.com/watch?v=UFBEG1s27uU)
 TEDxMIT Talk on "Can Smart Glasses Revolutionize How We Learn Languages?" by Cayden Pierce: [https://www.youtube.com/watch?v=7XuBVY3nVbA](https://www.youtube.com/watch?v=7XuBVY3nVbA)
 
 <p align="center">
@@ -118,25 +118,25 @@ The community is working on many more apps - fully open source - join us and hel
 
 ## Dev Guide + Documentation
 
-Developer Console: https://console.AugmentOS.org
+Developer Console: https://console.mentra.glass
 
-SDK Documentation: https://docs.AugmentOS.org
+SDK Documentation: https://docs.mentra.glass
 
-AugmentOS Example App: https://github.com/AugmentOS-Community/AugmentOS-Cloud-Example-App
+MentraOS Example App: https://github.com/Mentra-Community/MentraOS-Cloud-Example-App
 
 ## Required Hardware
 
 ### Glasses
 
-[Supported glasses list](https://augmentos.org/glasses)
+[Supported glasses list](https://mentra.glass/os)
 
 ### Smart Phones
 
-[Install Now](https://AugmentOS.org/install)
+[Install Now](https://mentra.glass/install)
 
 ## Authors / Team
 
-AugmentOS is made by a decentralized community of contributors, and managed by [Mentra](https://mentra.glass).
+MentraOS is made by a decentralized community of contributors, and managed by [Mentra](https://mentra.glass).
 
 #### Lead Dev Team
 
@@ -145,16 +145,16 @@ AugmentOS is made by a decentralized community of contributors, and managed by [
 - Nicolo Micheletti
 - Isaiah Ballah
 
-Contributions welcome! Our team is growing and we have a lot to do! See our [Contributing Guide](https://docs.augmentos.org/contributing) for how to get started, or join our [Discord](https://discord.gg/bAKsjh8CtE) and reach out!
+Contributions welcome! Our team is growing and we have a lot to do! See our [Contributing Guide](https://docs.mentra.glass/contributing) for how to get started, or join our [Discord](https://discord.gg/bAKsjh8CtE) and reach out!
 
-## AugmentOS Community
+## MentraOS Community
 
-The AugmentOS Community is a team building open-source smart glasses tech towards an open, self-empowered, intercognitive, augmented future. Our industry partners include companies like Vuzix, Activelook, TCL, and others. To get involved, check out [our website](https://augmentos.org) and join our [Discord server](https://discord.gg/bAKsjh8CtE).
+The MentraOS Community is a team building open-source smart glasses tech towards an open, self-empowered, intercognitive, augmented future. Our industry partners include companies like Vuzix, Activelook, TCL, and others. To get involved, check out [our website](https://augmentos.org) and join our [Discord server](https://discord.gg/bAKsjh8CtE).
 
 ## Contributing
 
-Contributor Guide: https://docs.augmentos.org/contributing
+Contributor Guide: https://docs.mentra.glass/contributing
 
 ## License
 
-MIT License Copyright 2025 AugmentOS Community
+MIT License Copyright 2025 MentraOS Community

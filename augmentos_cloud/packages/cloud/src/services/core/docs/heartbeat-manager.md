@@ -2,7 +2,7 @@ HeartbeatManager: Improved WebSocket Reconnection Design
 
   1. Introduction
 
-  This document outlines the design for an improved WebSocket connection management system in AugmentOS Cloud, focusing on proper disconnect
+  This document outlines the design for an improved WebSocket connection management system in MentraOS Cloud, focusing on proper disconnect
   reason detection and session recovery. The new HeartbeatManager will be a session-scoped component that replaces the global health monitor
   service and eliminates dependencies on the tpa-registration system.
 
@@ -544,9 +544,9 @@ HeartbeatManager: Improved WebSocket Reconnection Design
   when connections have dropped unexpectedly.
 
   8. Conclusion
-  
+
   The redesigned HeartbeatManager provides a cleaner, more effective approach to WebSocket connection health monitoring, with clear disconnect
   reason tracking and without the unnecessary complexity of the TPA registration system. The enhanced app state synchronization
   ensures that the user interface accurately reflects the true state of application connections. By focusing on the actual needs of reliable connections,
   proper error diagnostics, and user interface consistency, we significantly improve the overall reliability and user experience of
-  the AugmentOS Cloud platform.
+  the MentraOS Cloud platform.

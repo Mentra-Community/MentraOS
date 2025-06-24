@@ -7,7 +7,7 @@ import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
-import { logger } from '@augmentos/utils';
+import { logger } from '@mentra/utils';
 import { validateGlassesAuth } from '../middleware/glasses-auth.middleware';
 import photoRequestService from '../services/core/photo-request.service';
 import photoTakenService from '../services/core/photo-taken.service';
@@ -24,7 +24,7 @@ async function cleanupOldPhotos(uploadDir: string) {
     for (const file of files) {
       const filePath = path.join(uploadDir, file);
       const stats = await fs.promises.stat(filePath);
-      
+
       // Check if file is older than 5 minutes
       if (stats.mtimeMs < fiveMinutesAgo) {
         await fs.promises.unlink(filePath);
@@ -85,14 +85,14 @@ const uploadMiddleware = (req: Request, res: Response, next: Function) => {
   upload.single('file')(req, res, (err) => {
     if (err instanceof multer.MulterError) {
       logger.error('Multer error:', err);
-      return res.status(400).json({ 
-        error: 'File upload failed', 
+      return res.status(400).json({
+        error: 'File upload failed',
         details: err.message,
         code: err.code
       });
     } else if (err) {
       logger.error('Upload error:', err);
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: 'Internal server error during upload',
         details: err.message
       });
@@ -163,7 +163,7 @@ router.post('/upload', validateGlassesAuth, uploadMiddleware, async (req: Reques
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${timestamp}_${uuidv4()}${path.extname(file.originalname)}`;
     const filepath = path.join(uploadDir, filename);
-    
+
     try {
       await fs.promises.writeFile(filepath, file.buffer);
       logger.info(`Photo saved to ${filepath}`);

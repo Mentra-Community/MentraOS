@@ -21,10 +21,10 @@ Displays a single, primary block of text.
 
 ```typescript
 showTextWall(
-  text: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  text: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -37,7 +37,7 @@ showTextWall(
 
 **Example:**
 ```typescript
-import { ViewType } from '@mentraos/sdk';
+import { ViewType } from '@mentra/sdk';
 
 // Simple usage
 tpaSession.layouts.showTextWall('Hello, MentraOS!');
@@ -55,11 +55,11 @@ Displays two blocks of text, one above the other.
 
 ```typescript
 showDoubleTextWall(
-  topText: string, 
-  bottomText: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  topText: string,
+  bottomText: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -87,11 +87,11 @@ Displays a card with a title and main content text.
 
 ```typescript
 showReferenceCard(
-  title: string, 
-  text: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  title: string,
+  text: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -118,10 +118,10 @@ Displays a bitmap image.
 
 ```typescript
 showBitmapView(
-  data: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  data: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -145,11 +145,11 @@ Displays a card suitable for dashboards, typically showing a key-value pair.
 
 ```typescript
 showDashboardCard(
-  leftText: string, 
-  rightText: string, 
-  options?: { 
-    view?: ViewType; 
-    durationMs?: number 
+  leftText: string,
+  rightText: string,
+  options?: {
+    view?: ViewType;
+    durationMs?: number
   }
 ): void
 ```
@@ -167,8 +167,8 @@ showDashboardCard(
 tpaSession.layouts.showDashboardCard('Temperature', '72°F');
 
 // Show stock price in the main view
-tpaSession.layouts.showDashboardCard('AAPL', '$178.72', { 
-  view: ViewType.MAIN 
+tpaSession.layouts.showDashboardCard('AAPL', '$178.72', {
+  view: ViewType.MAIN
 });
 ```
 
@@ -251,7 +251,7 @@ enum ViewType {
 
 2. **Keep Text Concise**: Screen space in AR glasses is limited. Keep your text brief and to the point.
 
-3. **Use Duration Wisely**: 
+3. **Use Duration Wisely**:
    - For important information, use longer durations or no duration (persistent until replaced)
    - For notifications or transient information, use shorter durations (2-5 seconds)
 
@@ -262,4 +262,4 @@ enum ViewType {
 5. **Bitmap Performance**: When using showBitmapView, optimize your images for performance and readability on AR displays:
    - Keep images small and simple
    - Use high contrast
-   - Prefer PNG format for transparency support 
+   - Prefer PNG format for transparency support

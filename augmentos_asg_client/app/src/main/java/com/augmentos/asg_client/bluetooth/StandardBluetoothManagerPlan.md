@@ -14,7 +14,7 @@ This document outlines the implementation plan for StandardBluetoothManager to w
 We'll implement a GATT service with the following characteristics:
 
 ```
-Service: "AugmentOS Serial Service" - UUID: "795090c7-420d-4048-a24e-18e60180e23c"
+Service: "MentraOS Serial Service" - UUID: "795090c7-420d-4048-a24e-18e60180e23c"
   ├── Characteristic: "Serial TX" - UUID: "795090c8-420d-4048-a24e-18e60180e23c"
   │   └── Properties: READ, NOTIFY
   └── Characteristic: "Serial RX" - UUID: "795090c9-420d-4048-a24e-18e60180e23c"
@@ -36,14 +36,14 @@ private void setupAdvertising() {
         .setInterval(AdvertisingSetParameters.INTERVAL_HIGH)
         .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_MEDIUM)
         .build();
-    
+
     AdvertiseData data = new AdvertiseData.Builder()
         .setIncludeDeviceName(true)  // Will include "Xy_A"
         .setIncludeTxPowerLevel(false)
         .build();
-    
+
     bluetoothManager.setName("Xy_A");
-    
+
     // Start advertising...
 }
 ```
@@ -54,22 +54,22 @@ private void setupAdvertising() {
 private void setupGattServer() {
     BluetoothGattService service = new BluetoothGattService(
         SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY);
-    
+
     // TX characteristic - for sending data to central
     BluetoothGattCharacteristic txCharacteristic = new BluetoothGattCharacteristic(
         TX_CHAR_UUID,
         BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_NOTIFY,
         BluetoothGattCharacteristic.PERMISSION_READ);
-    
+
     // RX characteristic - for receiving data from central
     BluetoothGattCharacteristic rxCharacteristic = new BluetoothGattCharacteristic(
         RX_CHAR_UUID,
         BluetoothGattCharacteristic.PROPERTY_WRITE | BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
         BluetoothGattCharacteristic.PERMISSION_WRITE);
-    
+
     service.addCharacteristic(txCharacteristic);
     service.addCharacteristic(rxCharacteristic);
-    
+
     gattServer.addService(service);
 }
 ```
@@ -88,21 +88,21 @@ private final BluetoothGattServerCallback gattServerCallback = new BluetoothGatt
             startAdvertising();
         }
     }
-    
+
     @Override
-    public void onCharacteristicReadRequest(BluetoothDevice device, int requestId, 
+    public void onCharacteristicReadRequest(BluetoothDevice device, int requestId,
                                           int offset, BluetoothGattCharacteristic characteristic) {
         // Handle read requests
     }
-    
+
     @Override
     public void onCharacteristicWriteRequest(BluetoothDevice device, int requestId,
-                                          BluetoothGattCharacteristic characteristic, 
+                                          BluetoothGattCharacteristic characteristic,
                                           boolean preparedWrite, boolean responseNeeded,
                                           int offset, byte[] value) {
         // Handle incoming data and notify listeners
         notifyDataReceived(value);
-        
+
         if (responseNeeded) {
             gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null);
         }
@@ -124,7 +124,7 @@ private final BroadcastReceiver bondStateReceiver = new BroadcastReceiver() {
                 // Try to auto-accept (requires system app permissions)
                 Method method = device.getClass().getMethod("setPairingConfirmation", boolean.class);
                 method.invoke(device, true);
-                
+
                 notificationManager.showDebugNotification(
                     "Bluetooth Pairing", "Auto-accepted pairing request");
             } catch (Exception e) {
@@ -147,12 +147,12 @@ public boolean sendData(byte[] data) {
     if (!isConnected() || connectedDevice == null) {
         return false;
     }
-    
+
     try {
         // Find our TX characteristic
         BluetoothGattService service = gattServer.getService(SERVICE_UUID);
         BluetoothGattCharacteristic txChar = service.getCharacteristic(TX_CHAR_UUID);
-        
+
         // Set the data and notify the central
         txChar.setValue(data);
         return gattServer.notifyCharacteristicChanged(connectedDevice, txChar, false);

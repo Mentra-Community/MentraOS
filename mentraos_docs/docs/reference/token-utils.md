@@ -10,7 +10,7 @@ The MentraOS SDK provides utility functions for creating and validating JWT toke
 ## TokenUtils Namespace
 
 ```typescript
-import { TokenUtils } from '@mentraos/sdk';
+import { TokenUtils } from '@mentra/sdk';
 ```
 
 ### createToken()
@@ -19,7 +19,7 @@ Creates a signed JWT token for TPA authentication.
 
 ```typescript
 function createToken(
-  payload: Omit<TpaTokenPayload, 'iat' | 'exp'>, 
+  payload: Omit<TpaTokenPayload, 'iat' | 'exp'>,
   config: TokenConfig
 ): string
 ```
@@ -51,7 +51,7 @@ Validates a JWT token using the provided secret key.
 
 ```typescript
 function validateToken(
-  token: string, 
+  token: string,
   secretKey: string
 ): TokenValidationResult
 ```
@@ -82,7 +82,7 @@ Appends a JWT token as a query parameter to a base URL, making it easy to create
 
 ```typescript
 function generateWebviewUrl(
-  baseUrl: string, 
+  baseUrl: string,
   token: string
 ): string
 ```
@@ -172,8 +172,8 @@ The [`TpaServer`](/reference/tpa-server) class includes a protected method for g
 
 ```typescript
 protected generateToken(
-  userId: string, 
-  sessionId: string, 
+  userId: string,
+  sessionId: string,
   secretKey: string
 ): string
 ```
@@ -187,22 +187,22 @@ This method is available when you extend the [`TpaServer`](/reference/tpa-server
 ```typescript
 class MyTpaServer extends TpaServer {
   private secretKey = process.env.TPA_SECRET_KEY;
-  
+
   protected async onSession(session, sessionId, userId) {
     // Set up event handlers, etc.
-    
+
     // Register a route for handling webview requests
     const app = this.getExpressApp();
     app.get('/webview', (req, res) => {
       // Generate a token for this session
       const token = this.generateToken(userId, sessionId, this.secretKey);
-      
+
       // Redirect to the actual webview with the token
       const webviewUrl = TokenUtils.generateWebviewUrl(
         'https://my-tpa.example.com/dashboard',
         token
       );
-      
+
       res.redirect(webviewUrl);
     });
   }
@@ -218,16 +218,16 @@ app.get('/dashboard', (req, res) => {
   if (!token) {
     return res.status(401).send('No authentication token provided');
   }
-  
+
   const validationResult = TokenUtils.validateToken(
     token,
     process.env.TPA_SECRET_KEY
   );
-  
+
   if (!validationResult.valid) {
     return res.status(401).send('Invalid token');
   }
-  
+
   // Token is valid, render the dashboard for this user
   const { userId, sessionId, packageName } = validationResult.payload;
   // Continue with rendering the appropriate content...
@@ -244,4 +244,4 @@ app.get('/dashboard', (req, res) => {
 
 4. **Validation**: Always validate tokens on your server before granting access to protected resources.
 
-5. **Payload Size**: Keep token payloads minimal to reduce overhead and improve performance. 
+5. **Payload Size**: Keep token payloads minimal to reduce overhead and improve performance.

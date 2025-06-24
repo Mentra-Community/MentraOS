@@ -5,8 +5,9 @@
 
 import { Logger } from 'pino';
 import WebSocket from 'ws';
-import { AppI, CloudToGlassesMessageType, ConnectionError, TranscriptSegment } from '@augmentos/sdk';
+import { AppI, CloudToGlassesMessageType, ConnectionError, TranscriptSegment } from '@mentra/sdk';
 import { logger as rootLogger } from '../logging/pino-logger';
+import { Capabilities } from '@augmentos/sdk';
 import AppManager from './AppManager';
 import AudioManager from './AudioManager';
 import MicrophoneManager from './MicrophoneManager';
@@ -76,6 +77,9 @@ export class UserSession {
 
   // Other state
   public userDatetime?: string;
+
+  // Capability Discovery
+  public capabilities: Capabilities | null = null;
 
   constructor(userId: string, websocket: WebSocket) {
     this.userId = userId;
@@ -194,7 +198,7 @@ export class UserSession {
 
   /**
    * Send error message to glasses
-   * 
+   *
    * @param message Error message
    * @param code Error code
    */

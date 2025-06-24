@@ -2,7 +2,7 @@
  * @fileoverview MicrophoneManager manages microphone state within a user session.
  * It encapsulates all microphone-related functionality that was previously
  * scattered throughout the WebSocket service.
- * 
+ *
  * This follows the pattern used by other managers like DisplayManager and DashboardManager.
  */
 
@@ -10,7 +10,7 @@ import WebSocket from 'ws';
 import {
   CloudToGlassesMessageType,
   MicrophoneStateChange,
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import subscriptionService from './subscription.service';
 import transcriptionService from '../processing/transcription.service';
 import { Logger } from 'pino';
@@ -43,7 +43,7 @@ export class MicrophoneManager {
   /**
    * Update the microphone state with debouncing
    * Replicates the exact behavior of the original sendDebouncedMicrophoneStateChange
-   * 
+   *
    * @param isEnabled - Whether the microphone should be enabled
    * @param delay - Debounce delay in milliseconds (default: 1000ms)
    */

@@ -1,6 +1,6 @@
 import { Agent } from "./AgentInterface";
 import { PromptTemplate } from "@langchain/core/prompts";
-import { LLMProvider } from "@augmentos/utils";
+import { LLMProvider } from "@mentra/utils";
 import { AgentExecutor, createReactAgent } from "langchain/agents";
 import { CommaSeparatedListOutputParser } from "langchain/output_parsers";
 
@@ -70,15 +70,15 @@ export class GratitudePingAgent implements Agent {
         "daily comforts", "nature", "technology", "community", "learning"
       ];
       const randomCategory = randomCategories[Math.floor(Math.random() * randomCategories.length)];
-      
+
       // Get shared history from userContext
       const agentHistory = userContext.agentHistory || [];
-      
+
       // Add history to the prompt to avoid repetition
-      const historyContext = agentHistory.length > 0 
+      const historyContext = agentHistory.length > 0
         ? `\nPreviously shared content (do not repeat any of these):\n${agentHistory.join('\n')}`
         : '';
-      
+
       const prompt = new PromptTemplate({
         template: this.agentPrompt + `\nConsider focusing on ${randomCategory} for variety.${historyContext}`,
         inputVariables: ["agent_scratchpad", "tools", "tool_names"],
@@ -102,7 +102,7 @@ export class GratitudePingAgent implements Agent {
       console.log('[GratitudePingAgent] Result:', result.output);
 
       const parsedResult = this.parseOutput(result.output);
-      
+
       // Return both the prompt and updated history
       if (parsedResult.insight && parsedResult.insight !== "null") {
         const updatedHistory = [...agentHistory, parsedResult.insight];
@@ -115,7 +115,7 @@ export class GratitudePingAgent implements Agent {
           agentHistory: updatedHistory
         };
       }
-      
+
       return {
         insight: "null",
         agentHistory: agentHistory
@@ -128,4 +128,4 @@ export class GratitudePingAgent implements Agent {
       };
     }
   }
-} 
+}

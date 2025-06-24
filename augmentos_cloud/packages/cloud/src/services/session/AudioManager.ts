@@ -2,18 +2,18 @@
  * @fileoverview AudioManager manages audio processing within a user session.
  * It encapsulates all audio-related functionality that was previously
  * handled in the session service.
- * 
+ *
  * This follows the pattern used by other managers like MicrophoneManager and DisplayManager.
  */
 
 import WebSocket from 'ws';
 import {
   StreamType
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import { Logger } from 'pino';
 import subscriptionService from './subscription.service';
 import transcriptionService from '../processing/transcription.service';
-import { createLC3Service } from '@augmentos/utils';
+import { createLC3Service } from '@mentra/utils';
 import { AudioWriter } from '../debug/audio-writer';
 import UserSession from './UserSession';
 
@@ -105,7 +105,7 @@ export class AudioManager {
 
   /**
    * Process incoming audio data
-   * 
+   *
    * @param audioData The audio data to process
    * @param isLC3 Whether the audio is LC3 encoded
    * @returns Processed audio data
@@ -150,7 +150,7 @@ export class AudioManager {
 
   /**
    * Process audio data internally
-   * 
+   *
    * @param audioData The audio data to process
    * @param isLC3 Whether the audio is LC3 encoded
    * @returns Processed audio data
@@ -192,7 +192,7 @@ export class AudioManager {
 
   /**
    * Add audio data to recent buffer
-   * 
+   *
    * @param audioData Audio data to add
    */
   private addToRecentBuffer(audioData: ArrayBufferLike): void {
@@ -248,7 +248,7 @@ export class AudioManager {
 
   /**
    * Add a sequenced audio chunk to the ordered buffer
-   * 
+   *
    * @param chunk Sequenced audio chunk
    */
   addToOrderedBuffer(chunk: SequencedAudioChunk): void {
@@ -319,7 +319,7 @@ export class AudioManager {
 
   /**
    * Start the ordered buffer processing interval
-   * 
+   *
    * @param intervalMs Interval in milliseconds
    */
   startOrderedBufferProcessing(intervalMs: number = 100): void {
@@ -348,7 +348,7 @@ export class AudioManager {
 
   /**
    * Relay audio data to TPAs
-   * 
+   *
    * @param audioData Audio data to relay
    */
   private relayAudioToTpas(audioData: ArrayBuffer): void {
@@ -383,7 +383,7 @@ export class AudioManager {
 
   /**
    * Get recent audio buffer
-   * 
+   *
    * @returns Recent audio buffer
    */
   getRecentAudioBuffer(): { data: ArrayBufferLike; timestamp: number }[] {
@@ -392,7 +392,7 @@ export class AudioManager {
 
   /**
    * Get audio service info for debugging
-   * 
+   *
    * @returns Audio service info
    */
   getAudioServiceInfo(): object | null {

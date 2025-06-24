@@ -4,7 +4,7 @@
     "": {
       "name": "developer-portal",
       "dependencies": {
-        "@augmentos/sdk": "1.1.13-alpha.1",
+        "@mentra/sdk": "1.1.13-alpha.1",
         "@dnd-kit/core": "^6.3.1",
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
@@ -87,7 +87,7 @@
   "packages": {
     "@ampproject/remapping": ["@ampproject/remapping@2.3.0", "", { "dependencies": { "@jridgewell/gen-mapping": "^0.3.5", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw=="],
 
-    "@augmentos/sdk": ["@augmentos/sdk@1.1.13-alpha.1", "", { "dependencies": { "@logtail/pino": "^0.5.4", "axios": "^1.8.1", "cookie-parser": "^1.4.7", "express": "^4.18.2", "jsonwebtoken": "^8.5.1", "jsrsasign": "^11.1.0", "pino": "^9.6.0", "pino-pretty": "^13.0.0", "ws": "^8.18.2" } }, "sha512-ihPqw9E4wQD0W1knqZExvkqDhJD8/I10X0DIm8zj678EpMxVPN/7mSuo7km3SYbRdwbeGmfw/VRfM18Fv5oF9Q=="],
+    "@mentra/sdk": ["@mentra/sdk@1.1.13-alpha.1", "", { "dependencies": { "@logtail/pino": "^0.5.4", "axios": "^1.8.1", "cookie-parser": "^1.4.7", "express": "^4.18.2", "jsonwebtoken": "^8.5.1", "jsrsasign": "^11.1.0", "pino": "^9.6.0", "pino-pretty": "^13.0.0", "ws": "^8.18.2" } }, "sha512-ihPqw9E4wQD0W1knqZExvkqDhJD8/I10X0DIm8zj678EpMxVPN/7mSuo7km3SYbRdwbeGmfw/VRfM18Fv5oF9Q=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.27.1", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.27.1", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg=="],
 

@@ -1,6 +1,6 @@
 // cloud/server/src/models/app.model.ts
 import mongoose, { Schema, Document, Types } from 'mongoose';
-import { AppI as _AppI, TpaType, ToolSchema, ToolParameterSchema, AppSetting, AppSettingType, PermissionType, Permission } from '@augmentos/sdk';
+import { AppI as _AppI, TpaType, ToolSchema, ToolParameterSchema, AppSetting, AppSettingType, PermissionType, Permission } from '@mentra/sdk';
 
 export type AppStoreStatus = 'DEVELOPMENT' | 'SUBMITTED' | 'REJECTED' | 'PUBLISHED';
 

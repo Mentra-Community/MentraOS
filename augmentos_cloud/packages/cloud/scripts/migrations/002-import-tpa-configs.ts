@@ -25,7 +25,7 @@ import http from 'http';
 import { URL } from 'url';
 import App, { AppI, Permission, PermissionType } from '../../src/models/app.model';
 import { logger as rootLogger } from '../../src/services/logging/pino-logger';
-import { AppSetting, AppSettingType, ToolSchema } from '@augmentos/sdk';
+import { AppSetting, AppSettingType, ToolSchema } from '@mentra/sdk';
 
 // Configure environment
 dotenv.config();
@@ -70,9 +70,9 @@ interface TpaConfigFile {
  * @param config - Object to validate
  * @returns Object with validation result, cleaned config, and specific error message
  */
-function validateTpaConfig(config: any): { 
-  isValid: boolean; 
-  error?: string; 
+function validateTpaConfig(config: any): {
+  isValid: boolean;
+  error?: string;
   cleanedConfig?: TpaConfigFile;
   skippedSettings?: Array<{ index: number; type: string; reason: string }>;
 } {
@@ -99,17 +99,17 @@ function validateTpaConfig(config: any): {
 
   // Filter and validate settings
   const validSettings: AppSetting[] = [];
-  
+
   for (let index = 0; index < config.settings.length; index++) {
     const setting = config.settings[index];
 
     // Group settings just need a title
     if (setting.type === 'group') {
       if (typeof setting.title !== 'string') {
-        skippedSettings.push({ 
-          index: index + 1, 
-          type: setting.type, 
-          reason: 'Group type requires a "title" field with a string value.' 
+        skippedSettings.push({
+          index: index + 1,
+          type: setting.type,
+          reason: 'Group type requires a "title" field with a string value.'
         });
         continue;
       }
@@ -120,18 +120,18 @@ function validateTpaConfig(config: any): {
     // TITLE_VALUE settings just need label and value
     if (setting.type === 'titleValue') {
       if (typeof setting.label !== 'string') {
-        skippedSettings.push({ 
-          index: index + 1, 
-          type: setting.type, 
-          reason: 'TitleValue type requires a "label" field with a string value.' 
+        skippedSettings.push({
+          index: index + 1,
+          type: setting.type,
+          reason: 'TitleValue type requires a "label" field with a string value.'
         });
         continue;
       }
       if (!('value' in setting)) {
-        skippedSettings.push({ 
-          index: index + 1, 
-          type: setting.type, 
-          reason: 'TitleValue type requires a "value" field.' 
+        skippedSettings.push({
+          index: index + 1,
+          type: setting.type,
+          reason: 'TitleValue type requires a "value" field.'
         });
         continue;
       }
@@ -141,10 +141,10 @@ function validateTpaConfig(config: any): {
 
     // Regular settings need key and label and type
     if (typeof setting.key !== 'string' || typeof setting.label !== 'string' || typeof setting.type !== 'string') {
-      skippedSettings.push({ 
-        index: index + 1, 
-        type: setting.type || 'unknown', 
-        reason: 'Missing required fields "key", "label", or "type" (all must be strings).' 
+      skippedSettings.push({
+        index: index + 1,
+        type: setting.type || 'unknown',
+        reason: 'Missing required fields "key", "label", or "type" (all must be strings).'
       });
       continue;
     }
@@ -226,24 +226,24 @@ function validateTpaConfig(config: any): {
     if (isValidSetting) {
       validSettings.push(setting);
     } else {
-      skippedSettings.push({ 
-        index: index + 1, 
-        type: setting.type, 
-        reason: skipReason 
+      skippedSettings.push({
+        index: index + 1,
+        type: setting.type,
+        reason: skipReason
       });
     }
   }
 
   // Include valid settings in cleaned config
   cleanedConfig.settings = validSettings;
-  
+
   // Include tools as-is (no validation needed for tools currently)
   if (config.tools) {
     cleanedConfig.tools = config.tools;
   }
 
-  return { 
-    isValid: true, 
+  return {
+    isValid: true,
     cleanedConfig,
     skippedSettings: skippedSettings.length > 0 ? skippedSettings : undefined
   };
@@ -540,7 +540,7 @@ async function migrate() {
 
         // Update app with imported configuration
         const updateResult = await updateAppWithConfig(app, configResult.config);
-        
+
         // Track what was actually updated
         if (updateResult.fieldsUpdated.length > 0) {
           configsImported++;
@@ -551,7 +551,7 @@ async function migrate() {
             toolsUpdated++;
           }
         }
-        
+
         // Track what was skipped
         if (updateResult.fieldsSkipped.some(field => field.includes('settings'))) {
           settingsSkipped++;

@@ -3,22 +3,22 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
-AugmentOS is an open source operating system, app store, and development framework for smart glasses. 
+MentraOS is an open source operating system, app store, and development framework for smart glasses.
 
-- Architecture: Smart glasses connect to user's phone via BLE; phone connects to backend; backend connects to third-party app servers running the AugmentOS SDK
+- Architecture: Smart glasses connect to user's phone via BLE; phone connects to backend; backend connects to third-party app servers running the MentraOS SDK
 - Mobile app: `augmentos_manager` (React Native with native modules)
-- Android logic: `augmentos_core` 
+- Android logic: `augmentos_core`
 - iOS native module: `augmentos_manager/ios`
 - Backend & web portals: `augmentos_cloud` (includes developer portal & app store)
 - Android-based smart glasses client: `augmentos_asg_client` (uses `augmentos_core` as a library)
-- AugmentOS Store: `augmentos_cloud/store/` (web app for app discovery)
+- MentraOS Store: `augmentos_cloud/store/` (web app for app discovery)
 - Developer Console: `augmentos_cloud/developer-portal/` (web app for app management)
 
 ## Build Commands
 
 ### React Native (augmentos_manager)
 - Start dev server: `npm start`
-- Run on platforms: `npm run android`, `npm run ios`  
+- Run on platforms: `npm run android`, `npm run ios`
 - Build Android: `npm run build-android`, `npm run build-android-release`
 - Run tests: `npm test`, `npm test -- -t "test name"` (single test)
 - Lint code: `npm run lint`
@@ -32,7 +32,7 @@ AugmentOS is an open source operating system, app store, and development framewo
 ## Prerequisites
 - Node.js and npm/yarn/bun
 - Android Studio (for Android development)
-- Xcode (for iOS development)  
+- Xcode (for iOS development)
 - Docker and Docker Compose (for cloud development)
 - Java SDK 17 (for Android components)
 
@@ -57,12 +57,12 @@ AugmentOS is an open source operating system, app store, and development framewo
 
 ## Naming Conventions
 - Top-level folders: `augmentos_${component}`
-- User-facing names: CamelCase ("AugmentOS App", "AugmentOS Store", "AugmentOS Manager")
+- User-facing names: CamelCase ("MentraOS App", "MentraOS Store", "MentraOS Manager")
 - Code follows language-specific conventions (Java, TypeScript, Swift)
 
 ## Project Resources
-- [GitHub Project Board - General Tasks](https://github.com/orgs/AugmentOS-Community/projects/2)
-- [GitHub Project Board - iOS Tasks](https://github.com/orgs/AugmentOS-Community/projects/1)
+- [GitHub Project Board - General Tasks](https://github.com/orgs/Mentra-Community/projects/2)
+- [GitHub Project Board - iOS Tasks](https://github.com/orgs/Mentra-Community/projects/1)
 - [Discord Community](https://discord.gg/5ukNvkEAqT)
 
 ## AugmentosService.java Update for WiFi Support
@@ -92,13 +92,13 @@ if (usesWifi) {
 
 ## Overview
 
-This document outlines the design for enabling Third Party Apps (TPAs) to communicate with other TPAs that have active sessions with the same TPA package, creating a multi-user collaborative experience within AugmentOS.
+This document outlines the design for enabling Third Party Apps (TPAs) to communicate with other TPAs that have active sessions with the same TPA package, creating a multi-user collaborative experience within MentraOS.
 
 ## Current Architecture
 
 ### Existing Components
 - **UserSession**: Manages user state with `appConnections: Map<string, WebSocket>`
-- **TpaSession**: Individual TPA connection to AugmentOS Cloud
+- **TpaSession**: Individual TPA connection to MentraOS Cloud
 - **SubscriptionService**: Manages TPA subscriptions to data streams
 - **Custom Messages**: `CUSTOM_MESSAGE` type already exists for flexible messaging
 
@@ -200,10 +200,10 @@ interface TpaMessageReceived extends BaseMessage {
 export class MultiUserTpaService {
   // Map of packageName -> Set of active user sessions
   private activeTpaSessions = new Map<string, Set<string>>();
-  
+
   // Map of packageName -> Map of roomId -> Set of userIds
   private tpaRooms = new Map<string, Map<string, Set<string>>>();
-  
+
   // Message history for debugging/replay
   private messageHistory = new Map<string, TpaMessage[]>();
 
@@ -218,19 +218,19 @@ export class MultiUserTpaService {
    * Broadcast message to all users with the same TPA active
    */
   async broadcastToTpaUsers(
-    senderSession: UserSession, 
+    senderSession: UserSession,
     message: TpaBroadcastMessage
   ): Promise<void> {
     const packageName = message.packageName;
     const activeUsers = this.getActiveTpaUsers(packageName);
-    
+
     for (const userId of activeUsers) {
       // Skip sender
       if (userId === senderSession.userId) continue;
-      
+
       const targetSession = this.sessionService.getSessionByUserId(userId);
       if (!targetSession) continue;
-      
+
       const targetTpaConnection = targetSession.appConnections.get(packageName);
       if (!targetTpaConnection || targetTpaConnection.readyState !== WebSocket.OPEN) {
         continue;
@@ -287,7 +287,7 @@ export class MultiUserTpaService {
     if (!this.activeTpaSessions.has(packageName)) {
       this.activeTpaSessions.set(packageName, new Set());
     }
-    
+
     this.activeTpaSessions.get(packageName)!.add(userId);
     this.notifyUserJoined(packageName, userId);
   }
@@ -329,7 +329,7 @@ export class TpaSession {
       senderUserId: this.userId,
       roomId
     };
-    
+
     this.send(message);
     return Promise.resolve();
   }
@@ -340,10 +340,10 @@ export class TpaSession {
   sendDirectMessage(targetUserId: string, payload: any): Promise<boolean> {
     return new Promise((resolve, reject) => {
       const messageId = this.generateMessageId();
-      
+
       // Store promise resolver
       this.pendingDirectMessages.set(messageId, { resolve, reject });
-      
+
       const message: TpaDirectMessage = {
         type: TpaToCloudMessageType.TPA_DIRECT_MESSAGE,
         packageName: this.config.packageName,
@@ -354,7 +354,7 @@ export class TpaSession {
         timestamp: new Date(),
         senderUserId: this.userId
       };
-      
+
       this.send(message);
     });
   }
@@ -370,7 +370,7 @@ export class TpaSession {
         sessionId: this.sessionId!,
         includeUserProfiles: includeProfiles
       };
-      
+
       // Store resolver for response
       this.pendingDiscoveryRequests.set(this.sessionId!, resolve);
       this.send(message);
@@ -405,7 +405,7 @@ export class TpaSession {
 3. **Integrate with WebSocketService** to handle new message types
 4. **Add user tracking** when TPAs connect/disconnect
 
-#### Phase 2: SDK Enhancements  
+#### Phase 2: SDK Enhancements
 1. **Extend TpaSession** with multi-user methods
 2. **Add event handlers** for TPA messages
 3. **Create helper utilities** for message formatting
@@ -481,4 +481,4 @@ await session.sendDirectMessage('other-user@example.com', {
 5. **Room Support**: Enables group-based communication
 6. **Backward Compatible**: Doesn't affect existing TPA functionality
 
-This design enables rich multi-user experiences while maintaining the security and performance characteristics of the existing AugmentOS platform.
+This design enables rich multi-user experiences while maintaining the security and performance characteristics of the existing MentraOS platform.

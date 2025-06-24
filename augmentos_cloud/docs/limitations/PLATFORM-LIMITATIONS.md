@@ -1,12 +1,12 @@
-# AugmentOS Platform Limitations
+# MentraOS Platform Limitations
 
-**Author:** Isaiah Ballah (github: isaiahb)  
-**Date:** March 25, 2025  
-**Version:** 1.0  
+**Author:** Isaiah Ballah (github: isaiahb)
+**Date:** March 25, 2025
+**Version:** 1.0
 
 ## 1. Overview
 
-This document outlines the key limitations and constraints of the AugmentOS platform that TPA developers need to understand. These limitations stem primarily from the hardware capabilities of the smart glasses, the architecture of the AugmentOS Cloud, and design decisions made to maximize performance and battery life. Understanding these limitations will help you design TPAs that work effectively within the platform's constraints.
+This document outlines the key limitations and constraints of the MentraOS platform that TPA developers need to understand. These limitations stem primarily from the hardware capabilities of the smart glasses, the architecture of the MentraOS Cloud, and design decisions made to maximize performance and battery life. Understanding these limitations will help you design TPAs that work effectively within the platform's constraints.
 
 ## 2. Display and UI Limitations
 
@@ -44,7 +44,7 @@ Text must be manually formatted by TPAs before sending to display:
 
 ```typescript
 // Example of manual text wrapping
-import { wrapText } from '@augmentos/utils';
+import { wrapText } from '@mentra/utils';
 const wrappedText = wrapText("Long text that needs to be wrapped", 30);
 session.layouts.showTextWall(wrappedText);
 ```
@@ -218,7 +218,7 @@ Despite these limitations, TPAs can work effectively by following these patterns
 // Break up long text into multiple displays
 function showLongMessage(session, longText) {
   const chunks = splitIntoChunks(longText, 200); // Split by character count
-  
+
   // Show chunks sequentially with increasing durations
   chunks.forEach((chunk, index) => {
     const wrappedText = wrapText(chunk, 30);
@@ -237,12 +237,12 @@ function showLongMessage(session, longText) {
 // Debouncing pattern for frequent updates (e.g., transcription)
 function debounceDisplay(sessionId, text) {
   const debounceDelay = 400; // ms
-  
+
   // Clear previous timer
   if (displayTimers[sessionId]) {
     clearTimeout(displayTimers[sessionId]);
   }
-  
+
   // Set new timer
   displayTimers[sessionId] = setTimeout(() => {
     session.layouts.showTextWall(text);
@@ -260,7 +260,7 @@ ws.on('close', () => {
   // Clean up all resources
   clearAllTimers();
   removeAllListeners();
-  
+
   // Attempt reconnection if appropriate
   if (shouldReconnect) {
     setTimeout(() => {
@@ -272,7 +272,7 @@ ws.on('close', () => {
 
 ## 8. Future Roadmap
 
-While these limitations currently exist, the AugmentOS platform is actively evolving. Future updates may address:
+While these limitations currently exist, the MentraOS platform is actively evolving. Future updates may address:
 
 1. **Improved Layout System**: More flexible layouts and composition
 2. **Automatic Resource Management**: Eliminating manual cleanup requirements
@@ -283,6 +283,6 @@ While these limitations currently exist, the AugmentOS platform is actively evol
 
 ## 9. Conclusion
 
-Building effective TPAs for AugmentOS requires understanding these limitations and designing accordingly. Focus on simple, clear user experiences that work within the platform constraints rather than trying to overcome them. By embracing these limitations as design parameters, you can create TPAs that provide valuable functionality while offering a consistent, reliable experience for users.
+Building effective TPAs for MentraOS requires understanding these limitations and designing accordingly. Focus on simple, clear user experiences that work within the platform constraints rather than trying to overcome them. By embracing these limitations as design parameters, you can create TPAs that provide valuable functionality while offering a consistent, reliable experience for users.
 
 Remember that many of these limitations exist to protect battery life, ensure performance, and provide a consistent user experience across different glasses hardware. Working within these constraints rather than against them will lead to the most successful TPAs.

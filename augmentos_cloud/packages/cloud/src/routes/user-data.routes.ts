@@ -1,8 +1,8 @@
 import express from 'express';
 import sessionService from '../services/session/session.service';
-import { StreamType } from '@augmentos/sdk';
+import { StreamType } from '@mentra/sdk';
 import subscriptionService from '../services/session/subscription.service';
-import { CloudToTpaMessageType } from '@augmentos/sdk';
+import { CloudToTpaMessageType } from '@mentra/sdk';
 
 const router = express.Router();
 
@@ -45,4 +45,4 @@ router.post('/set-datetime', (req, res) => {
   res.json({ success: true, userId, datetime });
 });
 
-export default router; 
+export default router;

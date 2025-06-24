@@ -1,6 +1,6 @@
-# @augmentos/sdk
+# @mentra/sdk
 
-A TypeScript client library for building Third Party Apps (TPAs) for AugmentOS Cloud. This library provides a flexible, type-safe interface for handling WebSocket connections, managing layouts, and processing real-time data streams.
+A TypeScript client library for building Third Party Apps (TPAs) for MentraOS Cloud. This library provides a flexible, type-safe interface for handling WebSocket connections, managing layouts, and processing real-time data streams.
 
 ## Table of Contents
 
@@ -57,18 +57,18 @@ A TypeScript client library for building Third Party Apps (TPAs) for AugmentOS C
 
 ## Introduction
 
-Welcome to the `@augmentos/sdk` documentation. This SDK simplifies the process of building Third Party Apps (TPAs) for AugmentOS smartglasses. It provides tools for connecting to AugmentOS Cloud, handling real-time data streams, and managing user interfaces in the AR environment.
+Welcome to the `@mentra/sdk` documentation. This SDK simplifies the process of building Third Party Apps (TPAs) for MentraOS smartglasses. It provides tools for connecting to MentraOS Cloud, handling real-time data streams, and managing user interfaces in the AR environment.
 
-**Target Audience:** AugmentOS TPA Developers
+**Target Audience:** MentraOS TPA Developers
 
-**Purpose:** To provide a comprehensive guide for using the `@augmentos/sdk` to develop TPAs.
+**Purpose:** To provide a comprehensive guide for using the `@mentra/sdk` to develop TPAs.
 
 ## Core Concepts
 
-The `@augmentos/sdk` is built upon these core concepts:
+The `@mentra/sdk` is built upon these core concepts:
 
-*   **WebSocket Communication:** Establishes and manages persistent WebSocket connections with AugmentOS Cloud for real-time data exchange.
-*   **Event-Driven Architecture:**  Handles asynchronous data streams and system events from AugmentOS Cloud using an event-driven model.
+*   **WebSocket Communication:** Establishes and manages persistent WebSocket connections with MentraOS Cloud for real-time data exchange.
+*   **Event-Driven Architecture:**  Handles asynchronous data streams and system events from MentraOS Cloud using an event-driven model.
 *   **Type Safety with TypeScript:**  Leverages TypeScript to provide strong type definitions, improving code reliability and developer experience.
 *   **Layout Management:** Offers a type-safe and declarative approach to define and display UI layouts within the AR environment.
 *   **Modular Design:**  Organized into logical modules for clarity, maintainability, and ease of use.
@@ -88,7 +88,7 @@ The SDK is structured into these key directories:
 *   **Multiple Event Handling Patterns:**  Flexibility in event handling (direct methods, pub/sub, organized events).
 *   **Type-Safe Layouts:**  Reduces UI errors with type-safe layout definitions.
 *   **Comprehensive Type Definitions:**  Complete type coverage for data streams, messages, and SDK components.
-*   **Easy Installation and Setup:**  Installation via `bun add @augmentos/sdk`.
+*   **Easy Installation and Setup:**  Installation via `bun add @mentra/sdk`.
 *   **Well-Documented API and Design:**  Clear documentation with examples and design overviews.
 
 ## Getting Started
@@ -98,17 +98,17 @@ The SDK is structured into these key directories:
       ### bun
 
       ```bash
-      bun add @augmentos/sdk
+      bun add @mentra/sdk
       ```
 
       ### npm
       ```bash
-      npm install @augmentos/sdk
+      npm install @mentra/sdk
       ```
 
 2.  **Initialization:** Instantiate `TpaClient` with your package name and API key.
     ```typescript
-    import { TpaClient } from '@augmentos/sdk';
+    import { TpaClient } from '@mentra/sdk';
 
     const tpa = new TpaClient({
       packageName: 'org.example.myapp',
@@ -116,7 +116,7 @@ The SDK is structured into these key directories:
     });
     ```
 
-3.  **Connect to AugmentOS Cloud:** Establish a WebSocket connection.
+3.  **Connect to MentraOS Cloud:** Establish a WebSocket connection.
     ```typescript
     await tpa.connect('session_123');
     ```
@@ -130,7 +130,7 @@ The SDK is structured into these key directories:
 
 5.  **Display Layouts:** Show content on the AR display.
     ```typescript
-    tpa.layouts.showTextWall('Hello AugmentOS!');
+    tpa.layouts.showTextWall('Hello MentraOS!');
     ```
 
 ## Usage Guide
@@ -150,7 +150,7 @@ const tpa = new TpaClient({
 
 ### 2. Event Handling
 
-The SDK provides three patterns for handling real-time events from AugmentOS Cloud.
+The SDK provides three patterns for handling real-time events from MentraOS Cloud.
 
 #### Direct Methods
 
@@ -225,7 +225,7 @@ tpa.layouts.showReferenceCard(
 Control and monitor the WebSocket connection.
 
 ```typescript
-// Connect to AugmentOS Cloud
+// Connect to MentraOS Cloud
 try {
   await tpa.connect('session_123');
   console.log('Connected!');
@@ -352,7 +352,7 @@ Detailed API documentation for key classes and interfaces.
 
 ### TpaClient
 
-Main class for interacting with AugmentOS Cloud.
+Main class for interacting with MentraOS Cloud.
 
 #### Constructor
 
@@ -375,7 +375,7 @@ interface TpaClientConfig {
 
 #### Methods
 
-- `connect(sessionId: string): Promise<void>`: Establishes a WebSocket connection to AugmentOS Cloud for the given session ID. Returns a Promise that resolves on successful connection or rejects on failure.
+- `connect(sessionId: string): Promise<void>`: Establishes a WebSocket connection to MentraOS Cloud for the given session ID. Returns a Promise that resolves on successful connection or rejects on failure.
 - `disconnect(): void`: Closes the WebSocket connection gracefully.
 - `onTranscription(handler: (data: TranscriptionData) => void): () => void`: Registers a handler for transcription events. Returns an unsubscribe function.
 - `onHeadPosition(handler: (data: HeadPosition) => void): () => void`: Registers a handler for head position events. Returns an unsubscribe function.
@@ -414,7 +414,7 @@ Manages event subscriptions and emissions. Accessible via `tpa.events`.
 
 ## Design Overview: Types
 
-This section details the type system of the `@augmentos/sdk`, which uses TypeScript to provide robust interfaces and data structures for building reliable TPAs.
+This section details the type system of the `@mentra/sdk`, which uses TypeScript to provide robust interfaces and data structures for building reliable TPAs.
 
 ### Organization of Types
 
@@ -458,7 +458,7 @@ export interface DisplayRequest extends BaseMessage {
 
 #### 2. Data Types and Models (`./models.ts`, `./streams.ts`)
 
-Represent data streams and entities in AugmentOS.
+Represent data streams and entities in MentraOS.
 
 *   `StreamType` Enum (`./streams.ts`): Available data streams (e.g., `StreamType.TRANSCRIPTION`).
 *   Data Stream Interfaces: Data structure for each `StreamType` (e.g., `TranscriptionData`).
@@ -519,7 +519,7 @@ Type-safe named constants for system states and options.
 
 ## Design Overview: TPA Modules
 
-This section outlines the `src/tpa` directory, which contains modules for building AugmentOS TPAs.
+This section outlines the `src/tpa` directory, which contains modules for building MentraOS TPAs.
 
 ### Module Breakdown
 
@@ -534,7 +534,7 @@ This section outlines the `src/tpa` directory, which contains modules for buildi
 
 #### 1. `TpaClient` Class (`session/index.ts`)
 
-Main class for TPA interaction with AugmentOS Cloud.
+Main class for TPA interaction with MentraOS Cloud.
 
 **Responsibilities:**
 
@@ -542,7 +542,7 @@ Main class for TPA interaction with AugmentOS Cloud.
 *   Authentication using API key and package name.
 *   Event handling via `EventManager`.
 *   Layout management via `LayoutManager`.
-*   Message sending to AugmentOS Cloud.
+*   Message sending to MentraOS Cloud.
 
 **Usage:** See [Getting Started](#getting-started) and [Usage Guide](#usage-guide).
 
@@ -573,7 +573,7 @@ Provides type-safe layout display methods.
 
 *   Methods for layout definition (`showTextWall`, `showReferenceCard`, etc.).
 *   Constructs `DisplayRequest` messages.
-*   Sends messages to AugmentOS Cloud.
+*   Sends messages to MentraOS Cloud.
 *   Manages layout views (`main`, `dashboard`) and durations.
 
 **Usage:**
@@ -597,7 +597,7 @@ Base class for TPA servers responding to webhooks.
 **Usage (Extend `TpaServer` in your application):**
 
 ```typescript
-import { TpaServer, TpaSession } from '@augmentos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 class MyTPAServer extends TpaServer {
   // ... override onSession and onStop ...
@@ -608,7 +608,7 @@ class MyTPAServer extends TpaServer {
 
 1.  Choose TPA type (server-based with `TpaServer` or client-side with `TpaSession`).
 2.  Instantiate `TpaSession` or extend `TpaServer`.
-3.  Connect to AugmentOS Cloud using `tpa.connect(sessionId)`.
+3.  Connect to MentraOS Cloud using `tpa.connect(sessionId)`.
 4.  Register event handlers using `tpa.events` methods.
 5.  Manage layouts using `tpa.layouts` methods.
 6.  Implement webhook handlers (`onSession`, `onStop`) for server-based TPAs.

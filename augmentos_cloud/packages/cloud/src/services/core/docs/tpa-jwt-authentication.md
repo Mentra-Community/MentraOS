@@ -39,7 +39,7 @@ The current TPA authentication system has several issues that impact developer e
    ```typescript
    // Get client IP address for system app validation
    const clientIp = (ws as any)._socket?.remoteAddress || '';
-   
+
    // Validate API key with IP check for system apps
    const isValidKey = await appService.validateApiKey(
      initMessage.packageName,
@@ -101,7 +101,7 @@ Move authentication from the message-based handshake to the WebSocket connection
 TPAs will include the JWT in the WebSocket connection request:
 ```
 GET /tpa-ws HTTP/1.1
-Host: cloud.augmentos.org
+Host: cloud.mentra.glass
 Upgrade: websocket
 Connection: Upgrade
 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
@@ -191,7 +191,7 @@ Maintain support for the existing message-based authentication flow while encour
 - `/packages/sdk/src/tpa/token/index.ts`: Add JWT support
 
 **New Methods**:
-- `connectWithJwt(jwt, sessionId)`: Connect to AugmentOS using JWT token
+- `connectWithJwt(jwt, sessionId)`: Connect to MentraOS using JWT token
 - `parseConnectionError(error)`: Helper to extract meaningful information from connection errors
 
 ### 5. Documentation

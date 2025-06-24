@@ -53,7 +53,7 @@ We are going to use ngrok to expose your local app to the internet.  This is use
 1. [Install bun](https://bun.sh/docs/installation)
 2. Create a new repo from the template using the `Use this template` dropdown in the upper right of [the example app repository](https://github.com/Mentra-Community/MentraOS-Cloud-Example-App) or the following command:
    ```bash
-   gh repo create --template MentraOS-Community/MentraOS-Cloud-Example-App
+   gh repo create --template Mentra-Community/MentraOS-Cloud-Example-App
    ```
 
    ![Create repo from template](https://github.com/user-attachments/assets/c10e14e8-2dc5-4dfa-adac-dd334c1b73a5)

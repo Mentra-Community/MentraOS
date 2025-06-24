@@ -23,7 +23,7 @@ import {
   PhotoRequest,
   RtmpStreamRequest,
   RtmpStreamStopRequest,
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import UserSession from '../session/UserSession';
 import * as developerService from '../core/developer.service';
 import { sessionService } from '../session/session.service';
@@ -83,7 +83,7 @@ export class TpaWebSocketService {
 
   /**
    * Handle a new TPA WebSocket connection
-   * 
+   *
    * @param ws WebSocket connection
    * @param request HTTP request object
    */
@@ -175,7 +175,7 @@ export class TpaWebSocketService {
 
   /**
    * Handle TPA message
-   * 
+   *
    * @param userSession UserSession
    * @param message TpaToCloudMessage
    */
@@ -387,7 +387,7 @@ export class TpaWebSocketService {
 
   /**
    * Send an error response to the TPA client
-   * 
+   *
    * @param ws WebSocket connection
    * @param code Error code
    * @param message Error message

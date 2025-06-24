@@ -115,7 +115,7 @@ const AuthPage: React.FC = () => {
   return (
     <div className="container mx-auto max-w-md py-12">
       <div className="text-center mb-8">
-        <h1 className="text-2xl font-bold mb-2">Welcome to AugmentOS Developer Portal</h1>
+        <h1 className="text-2xl font-bold mb-2">Welcome to the MentraOS Developer Portal</h1>
         <p className="text-gray-600">Sign in or create an account to continue</p>
         {inviteToken && !inviteHandled && (
           <div className="mt-4 p-3 bg-blue-50 rounded-md text-blue-700">

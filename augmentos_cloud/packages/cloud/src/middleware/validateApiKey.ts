@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { logger } from '@augmentos/utils';
+import { logger } from '@mentra/utils';
 import appService from '../services/core/app.service';
 import App, { AppI } from '../models/app.model';
 
@@ -102,7 +102,7 @@ export const hashWithApiKey = async (req: Request, res: Response, next: NextFunc
     // Generate the hash and add it to the request
     const hash = await appService.hashWithApiKey(stringToHash, packageName);
     (req as any).generatedHash = hash;
-    
+
     // Attach the validated app object to the request
     (req as any).app = app;
     logger.info(`TPA API Key Middleware: Generated hash for ${app.packageName}`);

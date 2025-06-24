@@ -4,7 +4,7 @@ import { logger as rootLogger } from "../logging";
 // import { ExtendedUserSession } from "./session.service";
 import { UserSession } from "../session/UserSession";
 import { subscriptionService } from "../session/subscription.service";
-import { StreamType, CloudToTpaMessageType } from "@augmentos/sdk";
+import { StreamType, CloudToTpaMessageType } from "@mentra/sdk";
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';

@@ -18,19 +18,33 @@
     "android": {
       "icon": "./assets/app-icons/ic_launcher.png",
       "package": "com.mentra.mentra",
-      "versionCode": 31,
+      "versionCode": 32,
       "adaptiveIcon": {
         "foregroundImage": "./assets/app-icons/ic_launcher_foreground.png",
         "backgroundImage": "./assets/app-icons/ic_launcher.png"
       },
       "allowBackup": false,
-      "permissions": []
+      "permissions": [],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "https",
+              "host": "apps.mentra.glass",
+              "pathPrefix": "/"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "ios": {
       "icon": "./assets/app-icons/ic_launcher.png",
       "supportsTablet": false,
       "requireFullScreen": true,
       "bundleIdentifier": "com.mentra.mentra",
+      "associatedDomains": ["applinks:apps.mentra.glass"],
       "infoPlist": {
         "NSCameraUsageDescription": "This app needs access to your camera to capture images.",
         "NSMicrophoneUsageDescription": "MentraOS uses your microphone to enable the 'Hey Mira' AI assistant and provide live captions for deaf and hard-of-hearing users on smart glasses. For example, you can say 'Hey Mira, what's on my calendar today?' or the app can caption conversations in real-time on your glasses display.",

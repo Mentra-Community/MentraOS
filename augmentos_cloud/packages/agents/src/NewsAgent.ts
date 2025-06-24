@@ -2,9 +2,9 @@ import { Agent } from './AgentInterface';
 import axios from 'axios';
 import { PromptTemplate } from "@langchain/core/prompts";
 import { JsonOutputFunctionsParser } from 'langchain/output_parsers';
-import { LLMProvider } from '@augmentos/utils'; // Utility to easily swap LLMs
+import { LLMProvider } from '@mentra/utils'; // Utility to easily swap LLMs
 
-/** 
+/**
  * Minimal interface for a news article as returned by NewsAPI.
  */
 interface Article {
@@ -13,8 +13,8 @@ interface Article {
   publishedAt: string;
 }
 
-/** 
- * The JSON structure we expect from the model's output. 
+/**
+ * The JSON structure we expect from the model's output.
  */
 interface NewsSummaries {
   news_summaries: string[];
@@ -78,7 +78,7 @@ export class NewsAgent implements Agent {
       }
 
       // console.log(summariesResult);
-      
+
       // Return all the summaries.
       return summariesResult;
 
@@ -90,12 +90,12 @@ export class NewsAgent implements Agent {
 
   /**
    * Fetch top headlines (tech news, in this example) from the NewsAPI.
-   * Replace the query or category as you wish. 
+   * Replace the query or category as you wish.
    */
   private async fetchNewsArticles(): Promise<Article[]> {
     const apiKey = "9dfaf1c1608d4ae99da8580b212e9f64";
     const url = `https://newsapi.org/v2/top-headlines?country=us&category=technology&apiKey=${apiKey}`;
-    
+
     try {
       const response = await axios.get(url);
       const data = response.data || {};
@@ -140,7 +140,7 @@ export class NewsAgent implements Agent {
       // Run LLM
       const response = await llm.invoke(formattedPrompt);
       const responseText = response.content.toString();
-      
+
       // Parse JSON output and ensure it matches NewsSummaries interface
       const parsed = await outputParser.parse(responseText) as { news_summaries?: string[] };
       return {

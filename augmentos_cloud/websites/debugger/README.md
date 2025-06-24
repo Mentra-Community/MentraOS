@@ -1,6 +1,6 @@
-# AugmentOS Debugger
+# MentraOS Debugger
 
-A web-based debugger for monitoring and debugging AugmentOS sessions and TPAs.
+A web-based debugger for monitoring and debugging MentraOS sessions and TPAs.
 
 ## Features
 
@@ -102,4 +102,4 @@ Response:
 
 ## License
 
-This project is proprietary and confidential. Unauthorized copying, distribution, or use is strictly prohibited. 
+This project is proprietary and confidential. Unauthorized copying, distribution, or use is strictly prohibited.

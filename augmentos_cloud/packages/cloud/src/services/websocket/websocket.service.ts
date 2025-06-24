@@ -9,7 +9,7 @@ import WebSocket from 'ws';
 import { IncomingMessage } from 'http';
 import jwt from 'jsonwebtoken';
 import { JwtPayload } from 'jsonwebtoken';
-import { CloudToGlassesMessageType, ConnectionError } from '@augmentos/sdk';
+import { CloudToGlassesMessageType, ConnectionError } from '@mentra/sdk';
 import { GlassesWebSocketService } from './websocket-glasses.service';
 import { TpaWebSocketService } from './websocket-tpa.service';
 import { logger as rootLogger } from '../logging/pino-logger';
@@ -74,7 +74,7 @@ export class WebSocketService {
 
   /**
    * Set up WebSocket servers and attach them to the HTTP server
-   * 
+   *
    * @param server HTTP/HTTPS server instance
    */
   setupWebSocketServers(server: Server): void {

@@ -21,7 +21,7 @@ import {
   DisplayRequest,
   TpaToCloudMessage,
   // UserSession
-} from '@augmentos/sdk';
+} from '@mentra/sdk';
 import { SYSTEM_DASHBOARD_PACKAGE_NAME } from '../core/app.service';
 import { Logger } from 'pino';
 import UserSession from '../session/UserSession';

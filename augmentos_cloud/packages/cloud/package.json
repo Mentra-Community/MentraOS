@@ -1,5 +1,5 @@
 {
-  "name": "@augmentos/cloud",
+  "name": "@mentra/cloud",
   "version": "1.0.0",
   "private": true,
   "main": "dist/index.js",
@@ -18,7 +18,7 @@
     "test:visual": "bun run ./src/services/layout/tests/run-visual-tests.ts",
     "test:display": "bun run ./src/services/layout/tests/run-visual-tests.ts",
     "sentry:sourcemaps": "sentry-cli sourcemaps inject --org pierce-50 --project augmentos-cloud-dev ./dist && sentry-cli sourcemaps upload --org pierce-50 --project augmentos-cloud-dev ./dist",
-    "use-linked": "bun link @augmentos/utils @augmentos/sdk @augmentos/agents",
+    "use-linked": "bun link @mentra/utils @mentra/sdk @mentra/agents",
     "migrate:permissions": "bun run src/scripts/migrate-permissions.ts",
     "verify:permissions": "bun run src/scripts/verify-permissions.ts"
   },
@@ -48,8 +48,8 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@augmentos/sdk": "workspace:*",
-    "@augmentos/utils": "workspace:*",
+    "@mentra/sdk": "workspace:*",
+    "@mentra/utils": "workspace:*",
     "@logtail/pino": "^0.5.4",
     "@sentry/bun": "^9.1.0",
     "@sentry/cli": "^2.42.1",

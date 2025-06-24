@@ -21,7 +21,7 @@ The SDK currently supports the following layout types:
 *   **Example:**
 
     ```typescript
-    import { TpaSession, LayoutType, ViewType, TpaToCloudMessageType } from '@mentraos/sdk';
+    import { TpaSession, LayoutType, ViewType, TpaToCloudMessageType } from '@mentra/sdk';
 
     // Assuming you have a TpaSession instance called 'session'
     session.layouts.showTextWall("Connected to MentraOS Cloud");
@@ -148,10 +148,10 @@ session.layouts.showTextWall("Dashboard Message", { view: ViewType.DASHBOARD });
 
 ## Layout Interfaces
 
-The `@mentraos/sdk` provides TypeScript interfaces for each layout type.  These interfaces ensure type safety and provide autocompletion in your IDE.  You can import these directly:
+The `@mentra/sdk` provides TypeScript interfaces for each layout type.  These interfaces ensure type safety and provide autocompletion in your IDE.  You can import these directly:
 
 ```typescript
-import { TextWall, DoubleTextWall, ReferenceCard, LayoutType, ViewType } from '@mentraos/sdk';
+import { TextWall, DoubleTextWall, ReferenceCard, LayoutType, ViewType } from '@mentra/sdk';
 
 const textWallLayout: TextWall = {
   layoutType: LayoutType.TEXT_WALL,

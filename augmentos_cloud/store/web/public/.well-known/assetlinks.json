@@ -22,5 +22,17 @@
         "B9:5C:D9:5F:D9:1D:BE:60:2C:99:64:FE:D0:7C:C0:1C:EE:A1:A6:8C:9B:B3:FB:03:AB:BB:E8:34:3B:31:69:FC"
       ]
     }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.mentra.mentra",
+      "sha256_cert_fingerprints": [
+        "B9:5C:D9:5F:D9:1D:BE:60:2C:99:64:FE:D0:7C:C0:1C:EE:A1:A6:8C:9B:B3:FB:03:AB:BB:E8:34:3B:31:69:FC"
+      ]
+    }
   }
 ]

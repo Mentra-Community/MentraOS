@@ -1,5 +1,5 @@
 {
-  "name": "@augmentos/debugger",
+  "name": "@mentra/debugger",
   "private": true,
   "type": "module",
   "scripts": {

@@ -10,7 +10,7 @@ The Dashboard API provides an interface for displaying real-time information and
 ## Import
 
 ```typescript
-import { TpaServer, TpaSession, DashboardMode } from '@mentraos/sdk';
+import { TpaServer, TpaSession, DashboardMode } from '@mentra/sdk';
 
 export class MyTpaServer extends TpaServer {
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
@@ -222,13 +222,13 @@ onModeChange(handler: (mode: DashboardMode | 'none') => void): () => void
 // Register mode change handler
 const unsubscribe = session.dashboard.content.onModeChange((mode) => {
   console.log(`Dashboard mode changed to: ${mode}`);
-  
+
   switch (mode) {
     case DashboardMode.MAIN:
       // User collapsed to main view - show compact info
       session.dashboard.content.writeToMain('📊 Status: OK');
       break;
-      
+
     case DashboardMode.EXPANDED:
       // User expanded dashboard - show detailed info
       session.dashboard.content.writeToExpanded(`
@@ -240,7 +240,7 @@ const unsubscribe = session.dashboard.content.onModeChange((mode) => {
 📅 Next check: Tomorrow 9:00 AM
       `);
       break;
-      
+
     case 'none':
       // Dashboard was closed
       console.log('Dashboard closed by user');
@@ -312,7 +312,7 @@ const quickStatus = '✅ 5 tasks done';
 const detailedStatus = `
 Task Summary:
 ✅ Completed: 5
-⏳ In progress: 2  
+⏳ In progress: 2
 📅 Scheduled: 3
 `;
 
@@ -331,7 +331,7 @@ The SDK handles these WebSocket messages automatically, but they are documented 
 | `DashboardModeChange` | `dashboard_mode_change` | MentraOS | Notify of mode transitions |
 | `DashboardModeQuery` | `dashboard_mode_query` | TPA | Request current mode |
 
-These correspond to TypeScript interfaces in `@mentraos/sdk/src/types/dashboard`.
+These correspond to TypeScript interfaces in `@mentra/sdk/src/types/dashboard`.
 
 ## Frequently Asked Questions
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `session.service.ts` is a critical component of the AugmentOS Cloud system, responsible for managing user sessions, audio processing, transcription integration, and display management. It serves as the central hub connecting glasses clients, TPAs, and various system services.
+The `session.service.ts` is a critical component of the MentraOS Cloud system, responsible for managing user sessions, audio processing, transcription integration, and display management. It serves as the central hub connecting glasses clients, TPAs, and various system services.
 
 ## Core Responsibilities
 
@@ -10,7 +10,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `createSession(ws: WebSocket, userId: string): Promise<ExtendedUserSession>`
 - **Purpose**: Creates or reuses a user session based on userId
 - **Usage**: Called by the WebSocket service when a glasses client connects
-- **Details**: 
+- **Details**:
   - Checks for existing sessions for the user
   - Creates a new session or reuses an existing one
   - Initializes various managers (DisplayManager, DashboardManager)
@@ -27,7 +27,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `transformUserSessionForClient(userSession: ExtendedUserSession): Promise<Partial<UserSession>>`
 - **Purpose**: Prepares session data to be sent to glasses clients
 - **Usage**: Used when sending app state changes to clients
-- **Details**: 
+- **Details**:
   - Collects app subscriptions from all active apps
   - Determines what streams need to be active
   - Creates a streamlined session object for clients
@@ -36,7 +36,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `triggerAppStateChange(userId: string): Promise<void>`
 - **Purpose**: Notifies clients of changes in app state
 - **Usage**: Called when apps are started/stopped or subscriptions change
-- **Details**: 
+- **Details**:
   - Fetches latest installed apps
   - Transforms session data
   - Sends APP_STATE_CHANGE message to clients
@@ -51,7 +51,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `addTranscriptSegment(userSession: ExtendedUserSession, segment: TranscriptSegment, language: string): void`
 - **Purpose**: Adds transcript segments to the session history
 - **Usage**: Called by the transcription service when new transcripts are generated
-- **Details**: 
+- **Details**:
   - Maintains both language-specific and legacy transcript segments
   - Prunes old segments (older than 30 minutes)
 
@@ -59,7 +59,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `handleAudioData(userSession: ExtendedUserSession, audioData: ArrayBuffer | any, isLC3): Promise<ArrayBuffer | void>`
 - **Purpose**: Processes audio data from glasses
 - **Usage**: Called by the WebSocket service when audio data is received
-- **Details**: 
+- **Details**:
   - Updates last audio timestamp
   - Maintains a recent audio buffer
   - Handles LC3 decoding if needed
@@ -69,7 +69,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `endSession(userSession: ExtendedUserSession): void`
 - **Purpose**: Cleans up and terminates a session
 - **Usage**: Called when a session needs to be ended (user disconnected too long)
-- **Details**: 
+- **Details**:
   - Notifies debug service
   - Clears timers and intervals
   - Stops transcription
@@ -88,7 +88,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `getSessionByUserId(userId: string): ExtendedUserSession | null`
 - **Purpose**: Gets a session by user ID
 - **Usage**: Used when operations need to find a user's session
-- **Details**: 
+- **Details**:
   - Searches active sessions first
   - Updates sessionsByUser map
   - Returns null if not found
@@ -103,7 +103,7 @@ The `session.service.ts` is a critical component of the AugmentOS Cloud system, 
 - **Function**: `markSessionDisconnected(userSession: ExtendedUserSession): void`
 - **Purpose**: Marks a session as disconnected
 - **Usage**: Called when a WebSocket connection closes
-- **Details**: 
+- **Details**:
   - Clears cleanup timer
   - Stops transcription
   - Records disconnection time

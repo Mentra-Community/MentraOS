@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/button';
+import { Baseline } from 'lucide-react';
 
 const Header: React.FC = () => {
   const { isAuthenticated, signOut, user, isWebViewAuth } = useAuth();
@@ -23,18 +24,18 @@ const Header: React.FC = () => {
             <span
               className="text-2xl  tracking-wide text-[#F1F1F1]"
               style={{ fontFamily: '"SF Pro Rounded", sans-serif' }}
-            >
+            ><img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/9520c05b-2fd0-4cd0-98c2-303b45df0200/verysmall" style={{ width: '30px', display: 'inline-block', marginRight: '10px', verticalAlign: 'baseline' }} alt="Mentra Logo" />
               App Store
             </span>
           </div>
-          
+
           {/* Authentication */}
           {!isWebViewAuth && (
             <div className="flex items-center">
               {isAuthenticated ? (
                 <div className="flex flex-col items-end">
                   {user?.email && (
-                    <span className="text-sm text-gray-600 px-3">
+                    <span className="text-sm text-white-600 px-3">
                       {user.email}
                     </span>
                   )}
@@ -56,7 +57,7 @@ const Header: React.FC = () => {
               )}
             </div>
           )}
-          
+
         </div>
       </div>
     </header>

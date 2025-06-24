@@ -1,4 +1,4 @@
-// @augmentos/utils/src/audio/AudioProcessor.ts
+// @mentra/utils/src/audio/AudioProcessor.ts
 
 import { Transform, TransformCallback } from 'stream';
 
@@ -16,7 +16,7 @@ export class AudioProcessor extends Transform {
   private config: AudioProcessorConfig;
   private envelope: number = 0.0;
   private lastGain: number = 1.0;
-  
+
   // Pre-calculated coefficients
   private attackCoeff: number = 0;
   private releaseCoeff: number = 0;
@@ -48,7 +48,7 @@ export class AudioProcessor extends Transform {
     // Convert time constants to per-sample coefficients
     this.attackCoeff = Math.exp(-1.0 / (this.config.sampleRate * this.config.attack / 1000));
     this.releaseCoeff = Math.exp(-1.0 / (this.config.sampleRate * this.config.release / 1000));
-    
+
     // Convert dB values to linear
     this.gainMultiplier = Math.pow(10, this.config.gainDb / 20);
     this.thresholdLevel = Math.pow(10, this.config.threshold / 20);
@@ -57,7 +57,7 @@ export class AudioProcessor extends Transform {
   _transform(chunk: Buffer, encoding: string, callback: TransformCallback): void {
     // Convert buffer to Int16Array for processing
     const samples = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2);
-    
+
     // Process each sample
     for (let i = 0; i < samples.length; i += this.config.channels) {
       // Convert to float (-1 to 1)
@@ -104,7 +104,7 @@ export class AudioProcessor extends Transform {
       ...this.config,
       ...newConfig
     };
-    
+
     this.updateCoefficients();
   }
 }

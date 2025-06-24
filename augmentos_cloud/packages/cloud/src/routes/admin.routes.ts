@@ -2,7 +2,7 @@
 import { Router, Request, Response } from 'express';
 import { validateAdminEmail } from '../middleware/admin-auth.middleware';
 import App, { AppI } from '../models/app.model';
-// import { logger } from '@augmentos/utils';
+// import { logger } from '@mentra/utils';
 import { Exception } from '@sentry/node';
 import { logger as rootLogger } from '../services/logging/pino-logger';
 import { Organization } from '../models/organization.model';

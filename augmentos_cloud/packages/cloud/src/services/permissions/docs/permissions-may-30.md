@@ -13,7 +13,7 @@ This implementation focuses on the transparency and declaration aspects of the p
 
 1. Allowing developers to declare required permissions
 2. Displaying these permissions prominently in the app store
-3. Including permission requirements when sending app data to clients 
+3. Including permission requirements when sending app data to clients
 4. Preventing duplicate permission declarations
 
 ## 2. Goals
@@ -66,7 +66,7 @@ Path: `/packages/cloud/src/models/app.model.ts`
 // Add to AppSchema
 const AppSchema = new Schema({
   // Existing fields...
-  
+
   // Add permissions array
   permissions: [{
     type: {
@@ -79,13 +79,13 @@ const AppSchema = new Schema({
       required: false
     }
   }]
-}, { 
+}, {
   strict: false,
-  timestamps: true 
+  timestamps: true
 });
 ```
 
-### SDK Type Extensions 
+### SDK Type Extensions
 
 Path: `/packages/sdk/src/types/models.ts`
 
@@ -119,7 +119,7 @@ Path: `/packages/cloud/src/routes/permissions.routes.ts`
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth.middleware';
 import App from '../models/app.model';
-import { PermissionType } from '@augmentos/sdk';
+import { PermissionType } from '@mentra/sdk';
 
 const router = Router();
 
@@ -128,34 +128,34 @@ router.patch('/:packageName', authMiddleware, async (req, res) => {
   try {
     const { packageName } = req.params;
     const { permissions } = req.body;
-    
+
     // Validate permissions
     if (!Array.isArray(permissions)) {
       return res.status(400).json({ error: 'Permissions must be an array' });
     }
-    
+
     // Validate each permission
     for (const perm of permissions) {
       if (!perm.type || !Object.values(PermissionType).includes(perm.type)) {
         return res.status(400).json({ error: `Invalid permission type: ${perm.type}` });
       }
-      
+
       if (perm.description && typeof perm.description !== 'string') {
         return res.status(400).json({ error: 'Permission description must be a string' });
       }
     }
-    
+
     // Update app permissions
     const updatedApp = await App.findOneAndUpdate(
       { packageName },
       { $set: { permissions } },
       { new: true }
     );
-    
+
     if (!updatedApp) {
       return res.status(404).json({ error: 'App not found' });
     }
-    
+
     return res.json(updatedApp);
   } catch (error) {
     console.error('Error updating app permissions:', error);
@@ -167,13 +167,13 @@ router.patch('/:packageName', authMiddleware, async (req, res) => {
 router.get('/:packageName', async (req, res) => {
   try {
     const { packageName } = req.params;
-    
+
     const app = await App.findOne({ packageName });
-    
+
     if (!app) {
       return res.status(404).json({ error: 'App not found' });
     }
-    
+
     return res.json({ permissions: app.permissions || [] });
   } catch (error) {
     console.error('Error fetching app permissions:', error);
@@ -208,7 +208,7 @@ Key improvements in our implementation:
    - The "Add Permission" function intelligently selects the first available permission type
    - The "Add Permission" button is disabled when all permission types are already added
 
-2. **Improved UX**: 
+2. **Improved UX**:
    - Each permission type has a default description that explains what it's used for
    - Descriptions are optional but strongly encouraged with clear placeholder text
    - Visual cues indicate which permissions are already added
@@ -226,9 +226,9 @@ export function PermissionsForm({ permissions, onChange }: PermissionsFormProps)
     const availablePermissionTypes = Object.values(PermissionType).filter(
       type => !permissions.some(p => p.type === type)
     );
-    
+
     if (availablePermissionTypes.length === 0) return;
-    
+
     onChange([
       ...permissions,
       { type: availablePermissionTypes[0] }
@@ -245,7 +245,7 @@ export function PermissionsForm({ permissions, onChange }: PermissionsFormProps)
           Specify what permissions your app requires to function properly.
         </CardDescription>
       </CardHeader>
-      
+
       <CardContent>
         {permissions.map((permission, index) => (
           <div key={index}>
@@ -256,10 +256,10 @@ export function PermissionsForm({ permissions, onChange }: PermissionsFormProps)
                   const isUsedElsewhere = permissions.some(
                     (p, i) => i !== index && p.type === type
                   );
-                  
+
                   return (
-                    <SelectItem 
-                      value={type} 
+                    <SelectItem
+                      value={type}
                       disabled={isUsedElsewhere}
                     >
                       {type}
@@ -269,18 +269,18 @@ export function PermissionsForm({ permissions, onChange }: PermissionsFormProps)
                 })}
               </SelectContent>
             </Select>
-            
+
             {/* Description field... */}
             {/* Remove button... */}
           </div>
         ))}
-        
-        <Button 
-          onClick={addPermission} 
+
+        <Button
+          onClick={addPermission}
           disabled={permissions.length >= Object.values(PermissionType).length}
         >
-          {permissions.length >= Object.values(PermissionType).length ? 
-            "All permission types added" : 
+          {permissions.length >= Object.values(PermissionType).length ?
+            "All permission types added" :
             "Add Permission"}
         </Button>
       </CardContent>
@@ -344,7 +344,7 @@ export function AppPermissions({ permissions }: AppPermissionsProps) {
           This app requires the following permissions:
         </p>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {permissions.map((permission, index) => (
           <div key={index} className="border border-gray-200 rounded-md p-4 bg-gray-50 hover:bg-gray-100 transition-colors">
@@ -393,20 +393,20 @@ async getApp(packageName: string): Promise<AppI | undefined> {
   const app = await App.findOne({
     packageName: packageName
   }).lean() as AppI;
-  
+
   return app;
 }
 
 // In route handlers, proper conversion if needed
-const plainApp = typeof (app as any).toObject === 'function' 
-  ? (app as any).toObject() 
+const plainApp = typeof (app as any).toObject === 'function'
+  ? (app as any).toObject()
   : app;
 
 // Security checks for API endpoints
 if (app.developerId && app.developerId !== userEmail) {
-  return res.status(403).json({ 
-    error: 'Unauthorized', 
-    message: 'You do not have permission to modify this app' 
+  return res.status(403).json({
+    error: 'Unauthorized',
+    message: 'You do not have permission to modify this app'
   });
 }
 ```
@@ -470,4 +470,4 @@ During our implementation, we encountered and solved several technical challenge
 ## 7. Future Enhancements
 
 While our implementation provides a solid foundation, future enhancements could include the full permissions manager defined in
-[AugmentOS/augmentos_cloud/packages/cloud/src/services/permissions/docs/permissions-manager.md](./permissions-manager.md)
+[MentraOS/augmentos_cloud/packages/cloud/src/services/permissions/docs/permissions-manager.md](./permissions-manager.md)

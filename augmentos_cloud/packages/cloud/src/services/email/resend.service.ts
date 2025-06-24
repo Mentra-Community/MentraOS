@@ -17,7 +17,7 @@ export class ResendEmailService {
       throw new Error('RESEND_API_KEY is not defined in environment variables');
     }
     this.resend = new Resend(apiKey);
-    this.defaultSender = process.env.EMAIL_SENDER || 'AugmentOS <noreply@augmentos.org>';
+    this.defaultSender = process.env.EMAIL_SENDER || 'Mentra <noreply@mentra.glass>';
   }
 
   /**
@@ -36,13 +36,13 @@ export class ResendEmailService {
     inviteToken: string,
     role: string
   ): Promise<{ id?: string; error?: any }> {
-    const inviteUrl = `${process.env.DEV_CONSOLE_FRONTEND_URL || 'https://console.augmentos.org'}/invite/accept?token=${inviteToken}`;
+    const inviteUrl = `${process.env.DEV_CONSOLE_FRONTEND_URL || 'https://console.mentra.glass'}/invite/accept?token=${inviteToken}`;
 
     try {
       const { data, error } = await this.resend.emails.send({
         from: this.defaultSender,
         to: [recipientEmail],
-        subject: `You've been invited to join ${organizationName} on AugmentOS`,
+        subject: `You've been invited to join ${organizationName} on Mentra`,
         html: this.generateInviteEmailHtml(inviterName, organizationName, inviteUrl, role),
       });
 
@@ -183,7 +183,7 @@ export class ResendEmailService {
         <body>
           <div class="container">
             <div class="header">
-              <h1>You've Been Invited to an Organization on AugmentOS!</h1>
+              <h1>You've Been Invited to an Organization on Mentra!</h1>
             </div>
 
             <div class="content">
@@ -192,7 +192,7 @@ export class ResendEmailService {
               <p>
                 <strong>${inviterName}</strong> has invited you to join
                 <strong class="highlight">${organizationName}</strong>
-                as a <strong>${role}</strong> on the AugmentOS Developer Console.
+                as a <strong>${role}</strong> on the Mentra Developer Console.
               </p>
 
               <p>As a member of this organization, you'll have access to all the applications and resources shared by the team.</p>
@@ -229,7 +229,7 @@ export class ResendEmailService {
       const { data, error } = await this.resend.emails.send({
         from: this.defaultSender,
         to: [recipientEmail],
-        subject: 'Confirm Account Deletion - AugmentOS',
+        subject: 'Confirm Account Deletion - Mentra',
         html: this.generateDeletionEmailHtml(verificationCode),
       });
 
@@ -258,7 +258,7 @@ export class ResendEmailService {
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Confirm Account Deletion - AugmentOS</title>
+          <title>Confirm Account Deletion - Mentra</title>
           <style>
             body {
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -341,7 +341,7 @@ export class ResendEmailService {
             </div>
 
             <div class="content">
-              <p><strong>You have requested to delete your AugmentOS account.</strong></p>
+              <p><strong>You have requested to delete your Mentra account.</strong></p>
 
               <div class="warning">
                 <strong>⚠️ Warning:</strong> This action is permanent and cannot be undone. All your data, including photos, settings, and app configurations will be permanently deleted.
@@ -357,7 +357,7 @@ export class ResendEmailService {
 
               <p>If you did not request this account deletion, please ignore this email. Your account will remain safe and no action will be taken.</p>
 
-              <p>If you're having issues with AugmentOS and considering deletion, please reach out to our support team at <a href="mailto:support@augmentos.org">support@augmentos.org</a> - we'd love to help!</p>
+              <p>If you're having issues with Mentra and considering deletion, please reach out to our support team at <a href="mailto:support@mentra.glass">support@mentra.glass</a> - we'd love to help!</p>
             </div>
 
             <div class="footer">

@@ -30,10 +30,10 @@ This will create a package.json file.
 
 ### 2. Install the SDK
 
-Install the @mentraos/sdk package:
+Install the @mentra/sdk package:
 
 ```bash
-bun add @mentraos/sdk
+bun add @mentra/sdk
 ```
 
 ### 3. Install Additional Dependencies
@@ -73,7 +73,7 @@ Edit the `.env` file with your app details (you'll get these values when you reg
 Add the following code to `src/index.ts`:
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 // Load configuration from environment variables
 const PACKAGE_NAME = process.env.PACKAGE_NAME || "com.example.myfirstmentraosapp";
@@ -161,7 +161,7 @@ Update your `package.json` with the following scripts:
     "dev": "bun --watch src/index.ts"
   },
   "dependencies": {
-    "@mentraos/sdk": "^1.1.10"
+    "@mentra/sdk": "^1.1.10"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

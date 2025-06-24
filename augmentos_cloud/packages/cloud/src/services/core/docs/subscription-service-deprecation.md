@@ -66,7 +66,7 @@ private lastLocationCache = new Map<string, Location>();
 
 **Migration Path:**
 - Create `CacheManager.clearCalendarEvents()` method
-- Automatically call in `CacheManager.dispose()` 
+- Automatically call in `CacheManager.dispose()`
 - Update session cleanup to use `userSession.cacheManager.dispose()`
 
 ---
@@ -143,7 +143,7 @@ private lastLocationCache = new Map<string, Location>();
 - WebSocket service calls this when subscription updates are received
 
 **Migration Path:**
-- Create `SubscriptionManager.updateSubscriptions(packageName, subscriptions)` 
+- Create `SubscriptionManager.updateSubscriptions(packageName, subscriptions)`
 - Refactor permission checking logic
 - Update WebSocket service to use `userSession.subscriptionManager.updateSubscriptions()`
 
@@ -278,7 +278,7 @@ private lastLocationCache = new Map<string, Location>();
 ### getSubscribedAppsForAugmentosSetting(userSession: UserSession, settingKey: string): string[]
 
 **Current Usage:**
-- Called to find TPAs subscribed to specific AugmentOS settings
+- Called to find TPAs subscribed to specific MentraOS settings
 - Part of the settings notification system
 
 **Dependencies:**

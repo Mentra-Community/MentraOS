@@ -1,4 +1,4 @@
-AugmentOS Cloud Debug Dashboard Design Document
+MentraOS Cloud Debug Dashboard Design Document
 
   Author: Claude (based on consultation with Isaiah Ballah)Date: March 25, 2025Version: 1.0
 
@@ -6,13 +6,13 @@ AugmentOS Cloud Debug Dashboard Design Document
 
   1.1 Objective
 
-  Design and implement a real-time debugging dashboard that provides "X-ray vision" into the AugmentOS Cloud system, focusing on session state, WebSocket connections, TPA
+  Design and implement a real-time debugging dashboard that provides "X-ray vision" into the MentraOS Cloud system, focusing on session state, WebSocket connections, TPA
   interactions, and log collection/visualization. This tool will help developers identify and resolve issues faster and understand the system's behavior in development and
   production environments.
 
   1.2 Background
 
-  The AugmentOS Cloud platform uses WebSocket connections for real-time communication between smart glasses, cloud services, and third-party applications (TPAs). The complex,
+  The MentraOS Cloud platform uses WebSocket connections for real-time communication between smart glasses, cloud services, and third-party applications (TPAs). The complex,
    stateful nature of these connections makes debugging challenging, especially when issues occur in production. Currently, logs "go into the void," and there's no
   centralized way to observe the system state.
 
@@ -37,7 +37,7 @@ AugmentOS Cloud Debug Dashboard Design Document
   2.1 Architecture Overview
 
   graph TD
-      subgraph "AugmentOS Cloud Core"
+      subgraph "MentraOS Cloud Core"
           WS[WebSocket Service]
           SS[Session Service]
           AS[App Service]
@@ -327,7 +327,7 @@ AugmentOS Cloud Debug Dashboard Design Document
   3.1 Sessions Dashboard
 
   +-----------------------------------------------------------+
-  |                     AugmentOS Debug                       |
+  |                     MentraOS Debug                       |
   +---------------+-------------------------------------------+
   | Sessions (5)  | Session Detail: 1234-5678-90ab-cdef       |
   |               |                                           |
@@ -356,7 +356,7 @@ AugmentOS Cloud Debug Dashboard Design Document
   |      [Glasses]                                            |
   |         │                                                 |
   |         ▼                                                 |
-  |     [AugmentOS Cloud]                                     |
+  |     [MentraOS Cloud]                                     |
   |      ╱     │      ╲                                       |
   |     ▼      ▼       ▼                                      |
   | [dashboard] [mira] [voice-notes] [flash ⌛]               |
@@ -364,7 +364,7 @@ AugmentOS Cloud Debug Dashboard Design Document
   +-----------------------------------------------------------+
   | Connection Details:                                       |
   |                                                           |
-  | [Glasses] → [AugmentOS Cloud]                             |
+  | [Glasses] → [MentraOS Cloud]                             |
   | Status: OPEN                                              |
   | Duration: 1h 23m                                          |
   | Messages Sent: 1,245                                      |

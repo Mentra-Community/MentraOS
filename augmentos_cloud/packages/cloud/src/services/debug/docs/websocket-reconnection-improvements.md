@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document describes a set of improvements made to the AugmentOS WebSocket connection system, focusing on reconnection behavior for TPAs when network interruptions occur. These improvements address issues observed both in development environments (laptop sleep causing disconnection) and in production (unexpected disconnections without proper recovery).
+This document describes a set of improvements made to the MentraOS WebSocket connection system, focusing on reconnection behavior for TPAs when network interruptions occur. These improvements address issues observed both in development environments (laptop sleep causing disconnection) and in production (unexpected disconnections without proper recovery).
 
 ## Problem Statement
 
-The WebSocket connections between TPAs and AugmentOS Cloud were experiencing several issues:
+The WebSocket connections between TPAs and MentraOS Cloud were experiencing several issues:
 
 1. **WebSocket Closure Detection**: When WebSocket connections would close unexpectedly, the TPAs would not attempt to reconnect.
 
@@ -44,7 +44,7 @@ We implemented several improvements to address these issues:
    const closeHandler = (code: number, reason: string) => {
      const isNormalClosure = (code === 1000 || code === 1001);
      const isManualStop = reason && reason.includes('App stopped');
-     
+
      // Only reconnect for abnormal closures, not intentional ones
      if (!isNormalClosure && !isManualStop) {
        this.handleReconnection();

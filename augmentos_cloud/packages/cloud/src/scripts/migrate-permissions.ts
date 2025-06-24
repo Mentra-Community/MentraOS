@@ -1,19 +1,19 @@
 /**
  * Migration script to add ALL permission to existing apps
- * 
+ *
  * This script ensures backward compatibility by adding the ALL permission
  * to all existing apps in the database. New apps created after this migration
  * will need to explicitly define their permissions.
- * 
- * Usage: 
+ *
+ * Usage:
  *   bun run src/scripts/migrate-permissions.ts
  */
 
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import App from '../models/app.model';
-import { PermissionType } from '@augmentos/sdk';
-import { logger } from '@augmentos/utils';
+import { PermissionType } from '@mentra/sdk';
+import { logger } from '@mentra/utils';
 import * as mongoConnection from '../connections/mongodb.connection';
 
 // Load environment variables
@@ -35,14 +35,14 @@ async function connectToDatabase() {
 async function migratePermissions() {
   try {
     logger.info('Starting permissions migration...');
-    
+
     // Get all apps
     const apps = await App.find({});
     logger.info(`Found ${apps.length} apps to process`);
-    
+
     let updatedCount = 0;
     let skippedCount = 0;
-    
+
     // Process each app
     for (const app of apps) {
       try {
@@ -53,13 +53,13 @@ async function migratePermissions() {
           skippedCount++;
           continue;
         }
-        
+
         // Add ALL permission to apps without defined permissions
         app.permissions = [{
           type: PermissionType.ALL,
           description: 'Automatically added for backward compatibility'
         }];
-        
+
         // Save the updated app
         await app.save();
         logger.info(`Updated app ${app.packageName}: Added ALL permission`);
@@ -71,14 +71,14 @@ async function migratePermissions() {
         // continue; // or break;
       }
     }
-    
+
     logger.info(`
 Migration completed:
 - Total apps: ${apps.length}
 - Updated with ALL permission: ${updatedCount}
 - Skipped (already had permissions): ${skippedCount}
     `);
-    
+
   } catch (error) {
     logger.error('Error during migration:', error);
     process.exit(1);

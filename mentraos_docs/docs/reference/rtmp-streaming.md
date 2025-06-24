@@ -34,7 +34,7 @@ The SDK supports advanced configuration options for video and audio parameters:
 // Request an RTMP stream with enhanced configuration
 await client.streaming.requestStream({
   rtmpUrl: 'rtmp://streaming-server.example.com/live/stream-key',
-  
+
   // Video configuration
   video: {
     width: 1280,
@@ -42,7 +42,7 @@ await client.streaming.requestStream({
     bitrate: 2000000,  // 2 Mbps
     frameRate: 30
   },
-  
+
   // Audio configuration
   audio: {
     bitrate: 128000,  // 128 kbps
@@ -50,7 +50,7 @@ await client.streaming.requestStream({
     echoCancellation: true,
     noiseSuppression: true
   },
-  
+
   // Stream configuration
   stream: {
     durationLimit: 1800  // 30 minutes max duration
@@ -92,10 +92,10 @@ You can monitor the status of your RTMP stream by registering a status change ha
 // Register a status change handler
 const unsubscribe = client.streaming.onStatusChange((status) => {
   console.log(`Stream status: ${status.status}`);
-  
+
   if (status.status === 'active') {
     console.log('Stream is now live!');
-    
+
     // You can also access performance statistics
     if (status.stats) {
       console.log(`Current bitrate: ${status.stats.bitrate} bps`);
@@ -145,8 +145,8 @@ Here's a more complete example showing how to implement RTMP streaming in a Reac
 ```typescript
 import React, { useState, useEffect } from 'react';
 import { Button, Text, View } from 'react-native';
-import { useMentraOS } from '@mentraos/sdk-react';
-import type { StreamStatus } from '@mentraos/sdk';
+import { useMentraOS } from '@mentra/sdk-react';
+import type { StreamStatus } from '@mentra/sdk';
 
 export function StreamingComponent() {
   const { client } = useMentraOS();
@@ -157,14 +157,14 @@ export function StreamingComponent() {
     // Set up status monitoring
     const unsubscribe = client.streaming.onStatusChange((status) => {
       setStreamStatus(status);
-      
+
       if (status.status === 'stopped' || status.status === 'error') {
         setIsStreaming(false);
       } else if (status.status === 'active') {
         setIsStreaming(true);
       }
     });
-    
+
     // Clean up on component unmount
     return () => {
       // Stop any active stream when component unmounts
@@ -207,7 +207,7 @@ export function StreamingComponent() {
   return (
     <View>
       <Text>Stream Status: {streamStatus?.status || 'Unknown'}</Text>
-      
+
       {streamStatus?.stats && (
         <View>
           <Text>Bitrate: {streamStatus.stats.bitrate} bps</Text>
@@ -215,7 +215,7 @@ export function StreamingComponent() {
           <Text>Duration: {streamStatus.stats.duration}s</Text>
         </View>
       )}
-      
+
       {isStreaming ? (
         <Button title="Stop Streaming" onPress={stopStream} />
       ) : (

@@ -4,7 +4,7 @@ MentraOS provides a powerful settings system that allows apps to offer customiza
 
 ```typescript
 // Example of accessing settings in your app
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class MyTpaServer extends TpaServer {
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
@@ -176,7 +176,7 @@ For additional information on the types, see [Setting Types Reference](/referenc
 The app session provides a `settings` property with methods to access and monitor settings:
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class MyTpaServer extends TpaServer {
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
@@ -202,7 +202,7 @@ export class MyTpaServer extends TpaServer {
 React to setting changes in real-time:
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class MyTpaServer extends TpaServer {
   private cleanupHandlers: Array<() => void> = [];
@@ -239,7 +239,7 @@ export class MyTpaServer extends TpaServer {
 ### Feature Toggles
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class FeatureToggleServer extends TpaServer {
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
@@ -267,7 +267,7 @@ export class FeatureToggleServer extends TpaServer {
 ### Language Selection
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class MultilingualServer extends TpaServer {
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
@@ -358,7 +358,7 @@ Make settings self-explanatory:
 Remove setting change listeners when your app stops:
 
 ```typescript
-import { TpaServer, TpaSession } from '@mentraos/sdk';
+import { TpaServer, TpaSession } from '@mentra/sdk';
 
 export class CleanupExampleServer extends TpaServer {
   private settingsCleanup: Array<() => void> = [];

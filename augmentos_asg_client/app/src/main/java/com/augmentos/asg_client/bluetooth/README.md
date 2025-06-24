@@ -1,16 +1,16 @@
-# AugmentOS Bluetooth Connectivity
+# MentraOS Bluetooth Connectivity
 
-This directory contains the implementation of the Bluetooth connectivity module for AugmentOS ASG Client, providing a unified API for both standard Android devices and K900 smart glasses.
+This directory contains the implementation of the Bluetooth connectivity module for MentraOS ASG Client, providing a unified API for both standard Android devices and K900 smart glasses.
 
 ## Architecture
 
 The Bluetooth connectivity implementation follows a layered architecture similar to the WiFi module:
 
-1. **Interface Layer**: 
+1. **Interface Layer**:
    - `IBluetoothManager`: Core interface defining BLE operations
    - `BluetoothStateListener`: Interface for receiving BLE events
 
-2. **Base Implementation**: 
+2. **Base Implementation**:
    - `BaseBluetoothManager`: Abstract class with common functionality
 
 3. **Device-Specific Implementations**:

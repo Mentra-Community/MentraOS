@@ -2,14 +2,14 @@
 // import React from 'react';
 
 // // Import shadcn/ui provider components
-// import { 
+// import {
 //   TooltipProvider
 // } from "@/components/ui/tooltip";
 
 
 // // Theme provider if you're using themes
 // // import {
-// //   ThemeProvider 
+// //   ThemeProvider
 // // } from "@/components/ui/theme-provider";
 
 // interface ShadcnProvidersProps {
@@ -24,10 +24,10 @@
 // export function ShadcnProviders({ children }: ShadcnProvidersProps) {
 //   // Note: Some providers might not be needed based on your shadcn/ui implementation
 //   // Comment out any that aren't required or cause errors
-  
+
 //   // You may need to adjust the nesting order based on your specific requirements
 //   return (
-//     // <ThemeProvider defaultTheme="light" storageKey="augmentos-theme">
+//     // <ThemeProvider defaultTheme="light" storageKey="mentraos-theme">
 //       <TooltipProvider>
 //         <ToastProvider>
 //           <DialogProvider>

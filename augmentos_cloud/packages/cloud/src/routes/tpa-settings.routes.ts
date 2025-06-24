@@ -10,8 +10,8 @@ export const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET |
 import appService, { isUninstallable, SYSTEM_DASHBOARD_PACKAGE_NAME } from '../services/core/app.service';
 import { sessionService } from '../services/session/session.service';
 import { logger as rootLogger } from '../services/logging/pino-logger';
-import { CloudToTpaMessageType, UserSession, AppSetting } from '@augmentos/sdk';
-import { Permission } from '@augmentos/sdk';
+import { CloudToTpaMessageType, UserSession, AppSetting } from '@mentra/sdk';
+import { Permission } from '@mentra/sdk';
 
 const router = express.Router();
 

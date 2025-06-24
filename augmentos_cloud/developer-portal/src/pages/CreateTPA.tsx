@@ -15,7 +15,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import ApiKeyDialog from "../components/dialogs/ApiKeyDialog";
 import TpaSuccessDialog from "../components/dialogs/TpaSuccessDialog";
 import api, { AppResponse } from '@/services/api.service';
-import { AppI } from '@augmentos/sdk';
+import { AppI } from '@mentra/sdk';
 import { normalizeUrl } from '@/libs/utils';
 import PermissionsForm from '../components/forms/PermissionsForm';
 import { Permission } from '@/types/tpa';
@@ -25,7 +25,7 @@ import { TPA } from '@/types/tpa';
 import ImageUpload from '../components/forms/ImageUpload';
 
 import TpaTypeTooltip from '../components/forms/TpaTypeTooltip';
-// import type { TpaType } from '@augmentos/sdk';
+// import type { TpaType } from '@mentra/sdk';
 // import { TPA } from '@/types/tpa';
 // Import the public email provider list
 // import publicEmailDomains from 'email-providers/all.json';
@@ -330,7 +330,7 @@ const CreateTPA: React.FC = () => {
             <CardHeader>
               <CardTitle className="text-2xl">Create New TPA</CardTitle>
               <CardDescription>
-                Fill out the form below to register your app for AugmentOS.
+                Fill out the form below to register your app for MentraOS.
               </CardDescription>
               {currentOrg && (
                 <div className="mt-2 text-sm mb-3">
@@ -383,7 +383,7 @@ const CreateTPA: React.FC = () => {
                   <p className="text-xs text-red-500 mt-1">{errors.name}</p>
                 )}
                 <p className="text-xs text-gray-500">
-                  The name that will be displayed to users in the AugmentOS app store.
+                  The name that will be displayed to users in the MentraOS app store.
                 </p>
               </div>
 
@@ -445,7 +445,7 @@ const CreateTPA: React.FC = () => {
                   <p className="text-xs text-red-500 mt-1">{errors.publicUrl}</p>
                 )}
                 <p className="text-xs text-gray-500">
-                  The base URL of your server where AugmentOS will communicate with your app.
+                  The base URL of your server where MentraOS will communicate with your app.
                   We'll automatically append "/webhook" to handle events when your app is activated.
                   HTTPS is required and will be added automatically if not specified.
                   Do not include a trailing slash - it will be automatically removed.
@@ -510,7 +510,7 @@ const CreateTPA: React.FC = () => {
                   <TpaTypeTooltip />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Background apps can run alongside other apps, 
+                  Background apps can run alongside other apps,
                   <br/>Only 1 foreground app can run at a time.
                   <br/>foreground apps yield the display to background apps when displaying content.
                 </p>

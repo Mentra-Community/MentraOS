@@ -1,11 +1,11 @@
-import { PermissionType, LEGACY_PERMISSION_MAP } from '@augmentos/sdk';
-import { ExtendedStreamType, StreamType, isLanguageStream, parseLanguageStream } from '@augmentos/sdk';
+import { PermissionType, LEGACY_PERMISSION_MAP } from '@mentra/sdk';
+import { ExtendedStreamType, StreamType, isLanguageStream, parseLanguageStream } from '@mentra/sdk';
 import { AppI } from '../../models/app.model';
-import { logger } from '@augmentos/utils';
+import { logger } from '@mentra/utils';
 
 /**
  * SimplePermissionChecker
- * 
+ *
  * A lightweight service to check if apps have declared the necessary permissions
  * for the streams they're trying to subscribe to.
  */
@@ -17,13 +17,13 @@ export class SimplePermissionChecker {
     [StreamType.TRANSCRIPTION, PermissionType.MICROPHONE],
     [StreamType.TRANSLATION, PermissionType.MICROPHONE],
     [StreamType.VAD, PermissionType.MICROPHONE],
-    
+
     // Location stream
     [StreamType.LOCATION_UPDATE, PermissionType.LOCATION],
-    
+
     // Calendar stream
     [StreamType.CALENDAR_EVENT, PermissionType.CALENDAR],
-    
+
     // Notification streams
     [StreamType.PHONE_NOTIFICATION, PermissionType.READ_NOTIFICATIONS],
     [StreamType.NOTIFICATION_DISMISSED, PermissionType.READ_NOTIFICATIONS],
@@ -37,13 +37,13 @@ export class SimplePermissionChecker {
     if (isLanguageStream(streamType)) {
       const streamInfo = parseLanguageStream(streamType);
       if (streamInfo) {
-        if (streamInfo.type === StreamType.TRANSCRIPTION || 
+        if (streamInfo.type === StreamType.TRANSCRIPTION ||
             streamInfo.type === StreamType.TRANSLATION) {
           return PermissionType.MICROPHONE;
         }
       }
     }
-    
+
     // Check regular stream types
     return this.STREAM_TO_PERMISSION_MAP.get(streamType as string) || null;
   }
@@ -56,12 +56,12 @@ export class SimplePermissionChecker {
     if (app.permissions?.some(p => p.type === PermissionType.ALL)) {
       return true;
     }
-    
+
     // Direct permission match
     if (app.permissions?.some(p => p.type === requiredPermission)) {
       return true;
     }
-    
+
     // Check for legacy permission mapping
     return this.hasLegacyPermission(app, requiredPermission);
   }
@@ -71,7 +71,7 @@ export class SimplePermissionChecker {
    */
   private static hasLegacyPermission(app: AppI, requiredPermission: PermissionType): boolean {
     if (!app.permissions) return false;
-    
+
     // Check if any app permission is a legacy permission that maps to the required one
     for (const appPermission of app.permissions) {
       const mappedPermissions = LEGACY_PERMISSION_MAP.get(appPermission.type);
@@ -79,7 +79,7 @@ export class SimplePermissionChecker {
         return true;
       }
     }
-    
+
     return false;
   }
 
@@ -96,7 +96,7 @@ export class SimplePermissionChecker {
 
     for (const subscription of subscriptions) {
       const requiredPermission = this.getRequiredPermissionForStream(subscription);
-      
+
       // If no permission required or app has the permission, allow
       if (!requiredPermission || this.hasPermission(app, requiredPermission)) {
         allowed.push(subscription);
@@ -127,7 +127,7 @@ export class SimplePermissionChecker {
   static normalizePermissions(permissions: any[]): any[] {
     const normalized: any[] = [];
     const seenPermissions = new Set<PermissionType>();
-    
+
     for (const permission of permissions) {
       if (permission.type === PermissionType.NOTIFICATIONS) {
         // Replace legacy NOTIFICATIONS with READ_NOTIFICATIONS
@@ -143,7 +143,7 @@ export class SimplePermissionChecker {
         seenPermissions.add(permission.type);
       }
     }
-    
+
     return normalized;
   }
 }

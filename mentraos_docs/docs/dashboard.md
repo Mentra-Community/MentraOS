@@ -28,7 +28,7 @@ When you write to the dashboard you can choose which mode(s) the content targets
 ## Hello-Dashboard in 3 Steps
 
 ```typescript title="packages/apps/hello-dashboard/src/index.ts"
-import { TpaServer, TpaSession, DashboardMode } from '@mentraos/sdk';
+import { TpaServer, TpaSession, DashboardMode } from '@mentra/sdk';
 
 class HelloDashboardServer extends TpaServer {
   protected async onSession(session: TpaSession, sessionId: string, userId: string) {

@@ -1,5 +1,5 @@
 {
-  "name": "@augmentos/utils",
+  "name": "@mentra/utils",
   "version": "1.0.0",
   "private": true,
   "main": "dist/index.js",
@@ -14,7 +14,7 @@
     "link-pkg": "bun link"
   },
   "dependencies": {
-    "@augmentos/sdk": "workspace:*",
+    "@mentra/sdk": "workspace:*",
     "@logtail/pino": "^0.5.4",
     "pino": "^9.6.0",
     "posthog-node": "^4.14.0"

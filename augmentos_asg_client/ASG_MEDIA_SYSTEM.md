@@ -1,13 +1,13 @@
-# AugmentOS Button Press System
+# MentraOS Button Press System
 
-This document outlines how the physical button press system works across the AugmentOS platform, focusing on the interaction between smart glasses, the mobile app, and the cloud services.
+This document outlines how the physical button press system works across the MentraOS platform, focusing on the interaction between smart glasses, the mobile app, and the cloud services.
 
 ## Overview
 
-The AugmentOS button press system provides a flexible mechanism for handling physical button presses on smart glasses. When a user presses a button:
+The MentraOS button press system provides a flexible mechanism for handling physical button presses on smart glasses. When a user presses a button:
 
 1. The smart glasses client detects the button press
-2. The client sends the button press event to the AugmentOS Cloud
+2. The client sends the button press event to the MentraOS Cloud
 3. The cloud checks if any Third-Party Apps (TPAs) are listening for this button event
 4. If no TPA is listening, the system performs default actions (e.g., taking a photo)
 5. If a TPA is listening, the button press is routed to that app
@@ -32,7 +32,7 @@ The smart glasses client detects button presses through two primary mechanisms:
                // Handle photo button press
                getMediaCaptureService().handlePhotoButtonPress();
                break;
-               
+
            case "cs_vdo":
                Log.d(TAG, "📦 Payload is cs_vdo (long press)");
                // Handle video button press
@@ -45,7 +45,7 @@ The smart glasses client detects button presses through two primary mechanisms:
                    }
                }
                break;
-               
+
            // Other commands...
        }
    }
@@ -58,14 +58,14 @@ The smart glasses client detects button presses through two primary mechanisms:
    private void processJsonCommand(JSONObject json) {
        // ...
        String type = dataToProcess.optString("type", "");
-       
+
        switch (type) {
            case "take_photo":
                String requestId = dataToProcess.optString("requestId", "");
                // Handle take photo command
                mMediaCaptureService.takePhotoAndUpload(photoFilePath, requestId);
                break;
-               
+
            // Other message types...
        }
    }
@@ -204,7 +204,7 @@ public void takePhotoAndUpload(String photoFilePath, String requestId) {
                             mMediaCaptureListener.onPhotoUploading(requestId);
                         }
 
-                        // Upload the photo to AugmentOS Cloud
+                        // Upload the photo to MentraOS Cloud
                         uploadMediaToCloud(filePath, requestId, MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                     }
 
@@ -306,19 +306,19 @@ router.post('/button-press', validateGlassesAuth, async (req, res) => {
 
     // Find the user's active session
     const userSession = await sessionService.getSessionByUserId(userId);
-    
+
     // Check if any TPAs are listening for button events
     const subscribedApps = await subscriptionService.getSubscribedApps(
-      userSession, 
+      userSession,
       StreamType.BUTTON_PRESS
     );
-    
+
     if (!subscribedApps || subscribedApps.length === 0) {
       // No TPAs are subscribed, handle with system default behavior
       if (buttonId === 'photo' && pressType === 'short') {
         // Create a photo request
         const requestId = await photoRequestService.createSystemPhotoRequest(userId);
-        
+
         // Tell glasses to take a photo
         return res.status(200).json({
           success: true,
@@ -326,7 +326,7 @@ router.post('/button-press', validateGlassesAuth, async (req, res) => {
           requestId
         });
       }
-      
+
       // For other button types, just acknowledge
       return res.status(200).json({ success: true });
     } else {
@@ -357,13 +357,13 @@ Key functions:
 
 ## TPA SDK Integration
 
-### AugmentOS SDK Files
+### MentraOS SDK Files
 
-TPAs use the AugmentOS SDK to interact with the platform, including requesting photos. The main SDK components for photo requests are:
+TPAs use the MentraOS SDK to interact with the platform, including requesting photos. The main SDK components for photo requests are:
 
-1. **AugmentOS SDK Client Library**
+1. **MentraOS SDK Client Library**
    *File: `/packages/sdk/src/client.ts`* (in augmentos_cloud repository)
-   - Main entry point for TPAs to interact with AugmentOS
+   - Main entry point for TPAs to interact with MentraOS
    - Handles authentication and session management
    - Provides methods for various platform features
 
@@ -374,7 +374,7 @@ TPAs use the AugmentOS SDK to interact with the platform, including requesting p
 
 3. **WebSocket Communication**
    *File: `/packages/sdk/src/websocket.ts`* (in augmentos_cloud repository)
-   - Manages real-time communication between TPAs and the AugmentOS platform
+   - Manages real-time communication between TPAs and the MentraOS platform
    - Used for delivering photo capture results back to the TPA
 
 4. **TPA Helper Module**
@@ -387,11 +387,11 @@ TPAs use the AugmentOS SDK to interact with the platform, including requesting p
 The SDK provides an API for TPAs to request photos. Here's an example of how a TPA would use the SDK to request a photo:
 
 ```typescript
-// Example TPA code using AugmentOS SDK
-import { AugmentOSClient } from 'augmentos-sdk';
+// Example TPA code using MentraOS SDK
+import { MentraOSClient } from 'augmentos-sdk';
 
 // Initialize the client
-const client = new AugmentOSClient({
+const client = new MentraOSClient({
   appId: 'com.example.myapp',
   apiKey: 'your-api-key'
 });
@@ -404,19 +404,19 @@ async function capturePhoto() {
       saveToGallery: true,  // Whether to save to user's gallery
       quality: 'high'       // Photo quality
     });
-    
+
     console.log(`Photo request sent with ID: ${requestId}`);
-    
+
     // Wait for the photo to be captured and processed
     const photoResult = await client.photos.waitForResult(requestId, {
       timeout: 30000  // 30 seconds timeout
     });
-    
+
     console.log(`Photo captured: ${photoResult.url}`);
-    
+
     // Use the photo in your app
     processPhoto(photoResult.url);
-    
+
   } catch (error) {
     console.error('Error capturing photo:', error);
   }
@@ -447,19 +447,19 @@ The cloud server provides these endpoints for TPA photo requests:
 ### TPA Message Handler
 *File: `/packages/cloud/src/handlers/tpaMessage.handler.ts`* (in augmentos_cloud repository)
 
-Handles messages between TPAs and the AugmentOS platform:
+Handles messages between TPAs and the MentraOS platform:
 - Processes incoming requests from TPAs
 - Routes photo requests to the appropriate services
 - Handles permissions and rate limiting
 
 ## TPA Photo Request System
 
-When a third-party app (TPA) needs to take a photo with the AugmentOS platform, it follows a different flow from the physical button press system.
+When a third-party app (TPA) needs to take a photo with the MentraOS platform, it follows a different flow from the physical button press system.
 
 ### TPA-Initiated Photo Request Flow
 
 1. **TPA Makes API Request to Cloud**
-   - TPA sends a request to an AugmentOS Cloud API endpoint to take a photo
+   - TPA sends a request to an MentraOS Cloud API endpoint to take a photo
    - The request includes the TPA's identification and authentication
    - The cloud validates the TPA's permissions to request photos
 
@@ -483,19 +483,19 @@ When a third-party app (TPA) needs to take a photo with the AugmentOS platform, 
    ```java
    case "take_photo":
        String requestId = dataToProcess.optString("requestId", "");
-       
+
        if (requestId.isEmpty()) {
            Log.e(TAG, "Cannot take photo - missing requestId");
            return;
        }
-       
+
        // Generate a temporary file path for the photo
        String timeStamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
        String photoFilePath = getExternalFilesDir(null) + java.io.File.separator + "IMG_" + timeStamp + ".jpg";
-   
+
        Log.d(TAG, "Taking photo with requestId: " + requestId);
        Log.d(TAG, "Photo will be saved to: " + photoFilePath);
-       
+
        // Take the photo using CameraNeo
        mMediaCaptureService.takePhotoAndUpload(photoFilePath, requestId);
        break;
@@ -520,7 +520,7 @@ When a third-party app (TPA) needs to take a photo with the AugmentOS platform, 
      - `appId`: The ID of the TPA that requested the photo
      - `userId`: The ID of the user who captured the photo
      - `timestamp`: When the photo was captured
-   - The photo appears in the user's gallery in the AugmentOS Manager app
+   - The photo appears in the user's gallery in the MentraOS Manager app
    - Users can view, share or delete the photo via the gallery UI
 
 ### Gallery Integration
@@ -572,7 +572,7 @@ The subscription service allows TPAs to register for specific events:
 - When a subscribed event occurs, the server routes it to the TPA
 
 ### TPA Communication
-*Components across AugmentOS platform*
+*Components across MentraOS platform*
 
 For TPAs to handle button presses:
 1. The TPA subscribes to button events via the cloud API
@@ -593,34 +593,34 @@ For TPAs to handle button presses:
    - *File: `MediaCaptureService.java`*
    - Constructs JSON payload with buttonId, pressType, deviceId
    - Sends authenticated POST request to button press URL
-   
+
 3. **Cloud server receives and processes button press**
    - *File: `/packages/cloud/src/routes/hardware.routes.ts`*
    - Validates authentication
    - Identifies the user and their active session
    - Checks if any TPAs are subscribed to this button event
-   
+
 4. **Decision point: TPA handling vs. System handling**
    - If TPAs are subscribed:
      - Returns simple success response
      - TPA handles the button press event
-   
+
    - If no TPAs are subscribed:
      - Creates a system photo request with unique requestId
      - Returns action "take_photo" with the requestId
-   
+
 5. **Smart glasses client receives the response**
    - *File: `MediaCaptureService.java`*
    - Parses response and checks for "take_photo" action
    - Extracts requestId from response
    - Calls `takePhotoAndUpload()` with the requestId
-   
+
 6. **Photo capture and upload**
    - *Files: `MediaCaptureService.java`, `MediaUploadQueueManager.java`*
    - Captures photo using CameraNeo
    - Queues photo for upload with requestId
    - Uploads photo to cloud server
-   
+
 7. **Cloud server processes uploaded photo**
    - Associates the uploaded photo with the original requestId
    - Stores the photo in the user's gallery
@@ -658,7 +658,7 @@ Similar flow to photos but with longer duration:
 
 ## RTMP Streaming System
 
-The AugmentOS platform also provides capabilities for third-party apps (TPAs) to request live video streaming via RTMP (Real-Time Messaging Protocol). This feature allows TPAs to receive live video feeds from the smart glasses for various use cases such as remote assistance, live broadcasting, and real-time analysis.
+The MentraOS platform also provides capabilities for third-party apps (TPAs) to request live video streaming via RTMP (Real-Time Messaging Protocol). This feature allows TPAs to receive live video feeds from the smart glasses for various use cases such as remote assistance, live broadcasting, and real-time analysis.
 
 ### RTMP Streaming Options
 
@@ -667,7 +667,7 @@ TPAs have two main options for RTMP streaming:
 #### Option 1: Direct RTMP Streaming to TPA-provided URL
 
 1. **TPA Initiates Stream Request**:
-   - TPA sends a WebSocket message to AugmentOS Cloud with:
+   - TPA sends a WebSocket message to MentraOS Cloud with:
      ```typescript
      {
        type: "rtmp_stream_request",
@@ -686,7 +686,7 @@ TPAs have two main options for RTMP streaming:
    - Cloud routes request to the connected smart glasses
 
 3. **Smart Glasses Setup Stream**:
-   - Glasses receive command with RTMP destination 
+   - Glasses receive command with RTMP destination
    - Glasses initialize camera and RTMP encoder
    - Glasses begin streaming directly to provided RTMP URL
 
@@ -774,24 +774,24 @@ The smart glasses client will need the following components:
        String streamId = dataToProcess.optString("streamId", "");
        String rtmpUrl = dataToProcess.optString("rtmpUrl", "");
        JSONObject parameters = dataToProcess.optJSONObject("parameters");
-       
+
        if (streamId.isEmpty() || rtmpUrl.isEmpty()) {
            Log.e(TAG, "Cannot start RTMP stream - missing required parameters");
            return;
        }
-       
+
        // Initialize and start streaming
        mMediaCaptureService.startRtmpStream(streamId, rtmpUrl, parameters);
        break;
-       
+
    case "stop_rtmp_stream":
        String streamId = dataToProcess.optString("streamId", "");
-       
+
        if (streamId.isEmpty()) {
            Log.e(TAG, "Cannot stop RTMP stream - missing streamId");
            return;
        }
-       
+
        // Stop the stream
        mMediaCaptureService.stopRtmpStream(streamId);
        break;
@@ -806,19 +806,19 @@ The cloud server requires:
    ```typescript
    class StreamingService {
      private activeStreams = new Map<string, StreamRequest>();
-     
+
      // Create a new streaming request
      createStreamRequest(userId: string, appId: string, options: StreamOptions): string {
        const streamId = uuidv4();
        // Create and track the request...
        return streamId;
      }
-     
+
      // Handle stream status updates
      updateStreamStatus(streamId: string, status: StreamStatus): boolean {
        // Update status and notify TPAs...
      }
-     
+
      // For cloud-mediated streams, provision stream endpoint
      provisionStreamEndpoint(streamId: string): StreamEndpoint {
        // Create temporary RTMP ingest endpoint...
@@ -840,11 +840,11 @@ The cloud server requires:
 The SDK would be enhanced with streaming APIs:
 
 ```typescript
-// Example TPA code using AugmentOS SDK
-import { AugmentOSClient } from 'augmentos-sdk';
+// Example TPA code using MentraOS SDK
+import { MentraOSClient } from 'augmentos-sdk';
 
 // Initialize the client
-const client = new AugmentOSClient({
+const client = new MentraOSClient({
   appId: 'com.example.myapp',
   apiKey: 'your-api-key'
 });
@@ -858,28 +858,28 @@ async function startLiveStream() {
       resolution: '720p',
       bitrate: 1500000
     });
-    
+
     console.log(`RTMP stream started with ID: ${streamId}`);
-    
+
     // Listen for status updates
     client.streaming.onStreamStatusChange(streamId, (status) => {
       console.log(`Stream status: ${status.state}, bitrate: ${status.bitrate}`);
     });
-    
+
     // OR
-    
+
     // Option 2: Let the cloud handle streaming
     const { streamId, accessUrls } = await client.streaming.requestStream({
       resolution: '720p',
       bitrate: 1500000
     });
-    
+
     console.log(`Stream started: ${streamId}`);
     console.log(`HLS URL: ${accessUrls.hls}`);
-    
+
     // Display the stream in your app
     displayStream(accessUrls.hls);
-    
+
   } catch (error) {
     console.error('Error starting stream:', error);
   }
@@ -939,9 +939,9 @@ async function stopLiveStream(streamId) {
 
 ## Conclusion
 
-The AugmentOS platform provides a comprehensive media system that enables both photo capture and video streaming capabilities. The system prioritizes TPA integrations, allowing third-party apps to override default behaviors, but falls back to system-defined actions when no TPA is listening. 
+The MentraOS platform provides a comprehensive media system that enables both photo capture and video streaming capabilities. The system prioritizes TPA integrations, allowing third-party apps to override default behaviors, but falls back to system-defined actions when no TPA is listening.
 
-For photos, TPAs can request captures through the AugmentOS SDK, following a flow that ensures reliable delivery even in challenging network conditions.
+For photos, TPAs can request captures through the MentraOS SDK, following a flow that ensures reliable delivery even in challenging network conditions.
 
 For real-time video, the RTMP streaming system gives TPAs flexibility in how they receive and process live video from smart glasses, either through direct streaming to their own endpoints or by leveraging cloud-mediated streaming that simplifies integration.
 
@@ -957,7 +957,7 @@ A key constraint is that the glasses can only support one active RTMP stream at 
 
 ## Dual RTMP Streaming Systems
 
-AugmentOS will provide two distinct RTMP streaming options to TPAs:
+MentraOS will provide two distinct RTMP streaming options to TPAs:
 
 ### 1. Direct RTMP Streaming (TPA-Controlled)
 
@@ -1028,7 +1028,7 @@ The two streaming systems will use different approaches for status updates:
    - Implement privacy filtering:
      ```typescript
      // Only send to the originating TPA unless it's a "busy" status
-     if (this.subscriptions.has(StreamType.RTMP_STATUS) && 
+     if (this.subscriptions.has(StreamType.RTMP_STATUS) &&
          (message.status === "busy" || message.appId === this.config.packageName)) {
        this.events.emit(StreamType.RTMP_STATUS, message);
      }
@@ -1088,7 +1088,7 @@ The cloud-mediated system will build on subscription patterns already in the cod
   - Developed requestStream and stopStream methods following established SDK patterns
   - Added comprehensive error handling and status management
   - Created example code demonstrating usage of the streaming API
-  
+
 - [x] Clean up legacy VIDEO_STREAM_REQUEST implementation
   - Completely removed VIDEO_STREAM_REQUEST from all TypeScript/JavaScript code in cloud/SDK
   - Removed all interfaces, type guards, and message handlers related to VIDEO_STREAM_REQUEST
@@ -1099,7 +1099,7 @@ The cloud-mediated system will build on subscription patterns already in the cod
 
 ### Overview
 
-We will implement a standardized way for TPAs to receive RTMP streaming status updates through the regular stream subscription mechanism. This will replace the current non-standard event-based approach with a clean, consistent API that follows the same patterns used for other stream types in the AugmentOS platform.
+We will implement a standardized way for TPAs to receive RTMP streaming status updates through the regular stream subscription mechanism. This will replace the current non-standard event-based approach with a clean, consistent API that follows the same patterns used for other stream types in the MentraOS platform.
 
 ### Implementation Plan
 
@@ -1116,7 +1116,7 @@ else if (isRtmpStreamResponse(message)) {
   if (this.subscriptions.has(StreamType.RTMP_STATUS)) {
     this.events.emit(StreamType.RTMP_STATUS, message);
   }
-  
+
   // Update streaming module's internal state
   this.streaming.updateStreamState(message);
 }
@@ -1212,7 +1212,7 @@ onStatus(handler: StreamStatusHandler): () => void {
     console.error('Cannot listen for status updates: session reference not available');
     return () => {};
   }
-  
+
   this.subscribeToStatusUpdates();
   return this.session.on(StreamType.RTMP_STATUS, handler);
 }
@@ -1266,25 +1266,25 @@ Update documentation to explain the standard subscription mechanism:
 ```typescript
 /**
  * RTMP status updates are received through the standard stream subscription mechanism:
- * 
+ *
  * ```typescript
  * // Subscribe to status updates
  * session.subscribe(StreamType.RTMP_STATUS);
- * 
+ *
  * // Listen for updates
  * session.on(StreamType.RTMP_STATUS, (status) => {
  *   console.log('RTMP Status:', status);
  * });
  * ```
- * 
+ *
  * Alternatively, use the StreamingModule's convenience methods:
- * 
+ *
  * ```typescript
  * // This does both subscription and event listening in one call
  * const cleanup = session.streaming.onStatus((status) => {
  *   console.log('RTMP Status:', status);
  * });
- * 
+ *
  * // When done:
  * cleanup();
  * ```
@@ -1309,7 +1309,7 @@ session.subscribe(StreamType.RTMP_STATUS);
 // Listen for status updates
 session.on(StreamType.RTMP_STATUS, (status) => {
   console.log('RTMP stream status:', status.status);
-  
+
   if (status.status === 'active') {
     console.log('Stream is now active!');
   } else if (status.status === 'error') {
@@ -1381,7 +1381,7 @@ Search for and update any code that might be using the old EventEmitter-based ap
 7. Create tests
 8. Update developer guides and examples
 
-This approach standardizes on a single subscription mechanism, following the established patterns used throughout the AugmentOS SDK. By removing the non-standard event handling approach completely, we create a cleaner, more consistent API surface that will be easier for TPA developers to understand and use.
+This approach standardizes on a single subscription mechanism, following the established patterns used throughout the MentraOS SDK. By removing the non-standard event handling approach completely, we create a cleaner, more consistent API surface that will be easier for TPA developers to understand and use.
 
 ## RTMP Streaming Keep-Alive System with ACK Reliability
 
@@ -1456,10 +1456,10 @@ private Handler mTimeoutHandler;
 // Schedule a timeout for the current stream
 private void scheduleStreamTimeout(String streamId) {
     cancelStreamTimeout(); // Cancel any existing timeout
-    
+
     mCurrentStreamId = streamId;
     mIsStreamingActive = true;
-    
+
     mRtmpStreamTimeoutTimer = new Timer("RtmpStreamTimeout-" + streamId);
     mRtmpStreamTimeoutTimer.schedule(new TimerTask() {
         @Override
@@ -1509,15 +1509,15 @@ case "start_rtmp_stream":
     try {
         // Extract streamId if provided
         String streamId = dataToProcess.optString("streamId", "");
-        
+
         com.augmentos.asg_client.streaming.RtmpStreamingService.startStreaming(this, rtmpUrl);
-        
+
         // Start timeout tracking if streamId is provided
         if (!streamId.isEmpty()) {
             com.augmentos.asg_client.streaming.RtmpStreamingService.startStreamTimeout(streamId);
             Log.d(TAG, "Started timeout tracking for stream: " + streamId);
         }
-        
+
         Log.d(TAG, "RTMP streaming started with URL: " + rtmpUrl);
     } catch (Exception e) {
         Log.e(TAG, "Error starting RTMP streaming", e);
@@ -1528,17 +1528,17 @@ case "start_rtmp_stream":
 // NEW: Keep-alive handler with ACK response
 case "keep_rtmp_stream_alive":
     Log.d(TAG, "Received RTMP keep-alive message");
-    
+
     String streamId = dataToProcess.optString("streamId", "");
     String ackId = dataToProcess.optString("ackId", "");
-    
+
     if (!streamId.isEmpty() && !ackId.isEmpty()) {
         // Reset the timeout for this stream
         com.augmentos.asg_client.streaming.RtmpStreamingService.resetStreamTimeout(streamId);
-        
+
         // Send ACK response back to cloud
         sendKeepAliveAck(streamId, ackId);
-        
+
         Log.d(TAG, "Processed keep-alive for stream: " + streamId + ", ackId: " + ackId);
     } else {
         Log.w(TAG, "Keep-alive message missing streamId or ackId");
@@ -1602,7 +1602,7 @@ export class StreamTrackerService {
       pendingAcks: new Map(),
       missedAcks: 0
     };
-    
+
     this.streams.set(streamId, streamInfo);
     this.scheduleKeepAlive(streamId);
   }
@@ -1633,7 +1633,7 @@ export class StreamTrackerService {
     // Clear the timeout and remove from pending
     clearTimeout(ackInfo.timeout);
     stream.pendingAcks.delete(ackId);
-    
+
     // Reset missed ACK counter on successful ACK
     stream.missedAcks = 0;
     stream.lastKeepAlive = new Date();
@@ -1698,9 +1698,9 @@ case GlassesToCloudMessageType.KEEP_ALIVE_ACK: {
   const ackMessage = message as any;
   const streamId = ackMessage.streamId;
   const ackId = ackMessage.ackId;
-  
+
   userSession.logger.debug(`Received keep-alive ACK for stream ${streamId}, ackId: ${ackId}`);
-  
+
   // Process the ACK in stream tracker
   streamTrackerService.processKeepAliveAck(streamId, ackId);
   break;
@@ -1769,7 +1769,7 @@ private sendKeepAliveToGlasses(streamId: string, ackId: string): void {
 ws.on('close', (code: number, reason: string) => {
   // Clean up any active streams for this session
   streamTrackerService.cleanupSession(userSession.sessionId);
-  
+
   // ... existing cleanup logic
 });
 ```
@@ -1779,7 +1779,7 @@ case 'rtmp_stream_request': {
   // Existing validation logic (already implemented)...
   if (!userSession) { ws.close(1008, 'No active session'); return; }
   if (!rtmpUrl) { /* existing error handling */ }
-  
+
   // ADD: Generate streamId and start tracking
   const streamId = generateUniqueId();
   StreamTrackerService.getInstance().startStream(
@@ -1789,7 +1789,7 @@ case 'rtmp_stream_request': {
     packageName,
     rtmpUrl
   );
-  
+
   // MODIFY: Add streamId to existing glasses message
   userSession.websocket.send(JSON.stringify({
     type: CloudToGlassesMessageType.START_RTMP_STREAM,
@@ -1801,7 +1801,7 @@ case 'rtmp_stream_request': {
     stream,
     timestamp: new Date()
   }));
-  
+
   // Existing response logic (already implemented)...
   break;
 }
@@ -1809,7 +1809,7 @@ case 'rtmp_stream_request': {
 // MODIFY existing RTMP_STREAM_STATUS case (currently around line 1346)
 case GlassesToCloudMessageType.RTMP_STREAM_STATUS: {
   const rtmpStatusMessage = message as RtmpStreamStatus;
-  
+
   // ADD: Update stream tracker
   if (rtmpStatusMessage.streamId) {
     StreamTrackerService.getInstance().updateStreamStatus(
@@ -1817,7 +1817,7 @@ case GlassesToCloudMessageType.RTMP_STREAM_STATUS: {
       rtmpStatusMessage.status
     );
   }
-  
+
   // Existing broadcast logic (already implemented)...
   this.broadcastToTpa(userSession.sessionId, rtmpStreamStatus.type as any, rtmpStreamStatus);
   break;
@@ -1826,13 +1826,13 @@ case GlassesToCloudMessageType.RTMP_STREAM_STATUS: {
 // MODIFY existing 'rtmp_stream_stop' case (currently around line 1995)
 case 'rtmp_stream_stop': {
   // Existing validation logic (already implemented)...
-  
+
   // ADD: Stop tracking the stream
   const stopMessage = message as any;
   if (stopMessage.streamId) {
     StreamTrackerService.getInstance().updateStreamStatus(stopMessage.streamId, 'stopped');
   }
-  
+
   // Existing stop command logic (already implemented)...
   userSession.websocket.send(JSON.stringify({
     type: CloudToGlassesMessageType.STOP_RTMP_STREAM,
@@ -1878,14 +1878,14 @@ The RTMP message types follow a directional naming pattern that can be confusing
 - `RTMP_STREAM_REQUEST` (`'rtmp_stream_request'`) - TPA requests stream start
 - `RTMP_STREAM_STOP` (`'rtmp_stream_stop'`) - TPA requests stream stop
 
-**Cloud → Glasses Messages**: `[ACTION]_RTMP_STREAM` format  
+**Cloud → Glasses Messages**: `[ACTION]_RTMP_STREAM` format
 - `START_RTMP_STREAM` (`'start_rtmp_stream'`) - Cloud tells glasses to start
 - `STOP_RTMP_STREAM` (`'stop_rtmp_stream'`) - Cloud tells glasses to stop
 
 **Message Flow Example:**
 ```
 1. TPA sends: RTMP_STREAM_STOP → Cloud
-2. Cloud forwards: STOP_RTMP_STREAM → Glasses  
+2. Cloud forwards: STOP_RTMP_STREAM → Glasses
 3. Glasses responds: RTMP_STREAM_STATUS → Cloud → TPA
 ```
 
@@ -1974,11 +1974,11 @@ This means:
 
 ### ACK System Failure Modes Addressed
 
-**✅ Network Hiccups**: 15s intervals + 5s ACK timeouts provide multiple recovery opportunities  
-**✅ Power Loss Detection**: Rapid detection via missed ACKs (15s detection time)  
-**✅ Keep-Alive Message Loss**: ACK verification ensures delivery confirmation  
-**✅ Connection Quality Issues**: Graduated response (warnings → degraded → timeout)  
-**✅ False Timeouts**: ACK system prevents unnecessary stream termination  
+**✅ Network Hiccups**: 15s intervals + 5s ACK timeouts provide multiple recovery opportunities
+**✅ Power Loss Detection**: Rapid detection via missed ACKs (15s detection time)
+**✅ Keep-Alive Message Loss**: ACK verification ensures delivery confirmation
+**✅ Connection Quality Issues**: Graduated response (warnings → degraded → timeout)
+**✅ False Timeouts**: ACK system prevents unnecessary stream termination
 
 ### Implementation Summary - ✅ COMPLETE
 
