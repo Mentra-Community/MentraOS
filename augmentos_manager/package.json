@@ -53,7 +53,7 @@
     "expo-image": "~2.0.7",
     "expo-linear-gradient": "~14.0.2",
     "expo-linking": "~7.0.5",
-    "expo-localization": "~16.0.1",
+    "expo-localization": "~16.1.5",
     "expo-router": "~4.0.21",
     "expo-splash-screen": "~0.29.24",
     "expo-status-bar": "~2.0.1",

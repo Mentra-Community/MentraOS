@@ -461,11 +461,11 @@ struct ViewState {
       sendStateWorkItem?.cancel()
       
       // Execute immediately
-      executeSendCurrentState(isDashboard)
+      executeSendCurrentState(!isDashboard)
       
       // Schedule a delayed execution that will fire in 1 second if not cancelled
       let workItem = DispatchWorkItem { [weak self] in
-          self?.executeSendCurrentState(isDashboard)
+          self?.executeSendCurrentState(!isDashboard)
       }
       
       sendStateWorkItem = workItem
@@ -504,11 +504,6 @@ struct ViewState {
       switch layoutType {
       case "text_wall":
         let text = currentViewState.text
-        //        let chunks = textHelper.createTextWallChunks(text)
-        //        for chunk in chunks {
-        //          print("Sending chunk: \(chunk)")
-        //          await sendCommand(chunk)
-        //        }
         sendText(text);
         break
       case "double_text_wall":
@@ -719,7 +714,7 @@ struct ViewState {
     if self.defaultWearable.contains("Simulated") || self.defaultWearable.isEmpty {
       return
     }
-    self.g1Manager?.RN_sendText(text)
+    self.g1Manager?.RN_sendTextWall(text)
   }
   
   private func disconnect() {
