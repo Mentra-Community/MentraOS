@@ -1,6 +1,6 @@
 {
   "name": "@mentra/react",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "React hooks and providers for MentraOS webviews, allowing you to create frontends for smartglasses apps.",
   "author": "Mentra Labs",
   "license": "MIT",
@@ -35,7 +35,8 @@
   "keywords": [
     "augmentos",
     "react",
-    "mentra"
+    "mentra",
+    "mentraos"
   ],
   "publishConfig": {
     "access": "public"
