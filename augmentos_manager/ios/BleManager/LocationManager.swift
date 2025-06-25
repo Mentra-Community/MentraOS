@@ -41,13 +41,17 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
   // The distanceFilter can be changed for kCLLocationAccuracyBestForNavigation as well
   public func setHighAccuracyMode(enabled: Bool) {
     if enabled {
-      print("LocationManager: enabling high accuracy mode")
+      print("LocationManager: Enabling high accuracy mode (Best for Navigation)")
+      locationManager.allowsBackgroundLocationUpdates = true
+      locationManager.pausesLocationUpdatesAutomatically = false
       locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
       locationManager.distanceFilter = kCLDistanceFilterNone
     } else {
-      print("LocationManager: disabling high accuracy mode")
+      print("LocationManager: Disabling high accuracy mode, reverting to standard.")
+      locationManager.allowsBackgroundLocationUpdates = false
+      locationManager.pausesLocationUpdatesAutomatically = true
       locationManager.desiredAccuracy = kCLLocationAccuracyBest
-      locationManager.distanceFilter = 2 // back to the default 2 meters
+      locationManager.distanceFilter = 2 // Default 2 meters
     }
   }
   

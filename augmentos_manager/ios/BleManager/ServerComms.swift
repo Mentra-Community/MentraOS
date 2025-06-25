@@ -377,6 +377,15 @@ class ServerComms {
     
     print("Received message of type: \(type)")
     
+    // [NEW] Handle new location command for the MVP
+    if type == "SET_LOCATION_ACCURACY" {
+        if let payload = msg["payload"] as? [String: Any],
+           let rate = payload["rate"] as? String {
+            self.locationManager.setHighAccuracyMode(enabled: rate == "realtime")
+        }
+        return // End processing for this message type
+    }
+
     switch type {
     case "connection_ack":
       startAudioSenderThread()
@@ -509,22 +518,24 @@ class ServerComms {
   // MARK: - Helper methods
   
   private func getServerUrl() -> String {
+    // [FIX] Prioritize the serverUrl set from the app's UI
     if (!self.serverUrl.isEmpty) {
-      // parse the url from the string:
-      let url = URL(string: self.serverUrl)!
-      let host = url.host!
-      let port = url.port!
-      let secure = url.scheme == "https"
-      let wsUrl = "\(secure ? "wss" : "ws")://\(host):\(port)/glasses-ws"
-      return wsUrl
+      // Use the ngrok URL if it has been provided
+      if let url = URL(string: self.serverUrl) {
+          let host = url.host ?? "localhost" // Use nil-coalescing for safety
+          let port = url.port ?? 8002       // Default to 8002 if no port
+          let secure = (url.scheme == "https")
+          let wsUrl = "\(secure ? "wss" : "ws")://\(host):\(port)/glasses-ws"
+          print("ServerComms: Using custom server URL: \(wsUrl)")
+          return wsUrl
+      }
     }
-    let host = RNCConfig.env(for: "AUGMENTOS_HOST")!;
-    let port = RNCConfig.env(for: "AUGMENTOS_PORT")!;
-    let secure = RNCConfig.env(for: "AUGMENTOS_SECURE")!
-    let secureServer = secure.contains("true")
-    let url = "\(secureServer ? "wss" : "ws")://\(host):\(port)/glasses-ws"
-    print("ServerComms: getServerUrl(): \(url)")
-    return url
+    
+    // [FIX] Provide a safe, hardcoded fallback for local development
+    // This prevents the crash when RNCConfig variables are not available.
+    let defaultUrl = "ws://localhost:8002/glasses-ws"
+    print("ServerComms: serverUrl is empty, using default local development URL: \(defaultUrl)")
+    return defaultUrl
   }
   
   func parseWhatToStream(_ msg: [String: Any]) -> [String] {
