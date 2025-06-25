@@ -25,6 +25,7 @@ import UserSession, { LOG_PING_PONG } from './UserSession';
 import { User } from '../../models/user.model';
 import { logger as rootLogger } from '../logging/pino-logger';
 import sessionService from './session.service';
+import { locationService } from '../core/location.service';
 import axios, { AxiosError } from 'axios';
 const logger = rootLogger.child({ service: 'AppManager' });
 
@@ -715,6 +716,9 @@ export class AppManager {
       // Broadcast app state change
       await this.broadcastAppState();
 
+      // Hook into our new location service
+      await locationService.onAppStarted(this.userSession.userId, packageName);
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error({
@@ -852,6 +856,9 @@ export class AppManager {
   async handleAppConnectionClosed(packageName: string, code: number, reason: string): Promise<void> {
     try {
       this.logger.info({ packageName, code, reason }, `[AppManager:handleAppConnectionClosed]: (${packageName}, ${code}, ${reason})`);
+
+      // Hook into our new location service
+      await locationService.onAppStopped(this.userSession.userId, packageName);
 
       // Remove from app connections
       this.userSession.appWebsockets.delete(packageName);
