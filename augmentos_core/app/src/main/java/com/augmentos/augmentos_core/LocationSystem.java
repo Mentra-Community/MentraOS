@@ -52,10 +52,6 @@ public class LocationSystem extends Service {
     // Store last known location
     private Location lastKnownLocation = null;
 
-    private final Handler locationSendingLoopHandler = new Handler(Looper.getMainLooper());
-    private Runnable locationSendingRunnableCode;
-    private final long locationSendTime = 1000 * 60 * 30; // 30 minutes
-
     /**
      * Class for clients to access this service
      */
@@ -265,13 +261,13 @@ public class LocationSystem extends Service {
     }
 
     public void stopLocationUpdates() {
-        if (fusedLocationProviderClient != null && locationCallback != null) {
-            fusedLocationProviderClient.removeLocationUpdates(locationCallback);
-        }
-        
-        // Also remove updates from fast callback to be safe
-        if (fusedLocationProviderClient != null && fastLocationCallback != null) {
-            fusedLocationProviderClient.removeLocationUpdates(fastLocationCallback);
+        if (fusedLocationProviderClient != null) {
+            if (locationCallback != null) {
+                fusedLocationProviderClient.removeLocationUpdates(locationCallback);
+            }
+            if (fastLocationCallback != null) {
+                fusedLocationProviderClient.removeLocationUpdates(fastLocationCallback);
+            }
         }
     }
 
@@ -357,14 +353,10 @@ public class LocationSystem extends Service {
                 lng = location.getLongitude();
                 lastKnownLocation = location;
 
-                Log.d(TAG, "Accurate location fix obtained: " + lat + ", " + lng);
-
+                Log.d(TAG, "LocationSystem: Received location update: " + lat + ", " + lng);
                 sendLocationToServer();
-                stopLocationUpdates();
-
-                if (!firstLockAcquired) {
-                    firstLockAcquired = true;
-                }
+                
+                // We no longer call stopLocationUpdates() here, so the stream is continuous
             }
         };
     }
@@ -385,5 +377,28 @@ public class LocationSystem extends Service {
         
         // Make sure location updates are stopped
         stopLocationUpdates();
+    }
+
+    // [UPDATED] Full implementation of the on/off switch for high accuracy mode
+    public void setHighAccuracyMode(boolean enabled) {
+        stopLocationUpdates(); // Stop any existing requests first
+
+        if (enabled) {
+            Log.d(TAG, "LocationSystem: Enabling high accuracy mode (realtime).");
+            LocationRequest streamRequest = LocationRequest.create();
+            streamRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+            streamRequest.setInterval(1000); // 1 second
+            streamRequest.setFastestInterval(500); // 0.5 seconds
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            fusedLocationProviderClient.requestLocationUpdates(streamRequest, locationCallback, Looper.getMainLooper());
+        } else {
+            Log.d(TAG, "LocationSystem: Disabling high accuracy mode, reverting to standard power-saving logic.");
+            // Re-enable the original power-saving logic when high accuracy is turned off
+            requestFastLocationUpdate();
+            scheduleLocationUpdates();
+        }
     }
 }

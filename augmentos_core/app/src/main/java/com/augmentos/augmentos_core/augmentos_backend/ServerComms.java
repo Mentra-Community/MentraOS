@@ -637,6 +637,17 @@ public class ServerComms {
 //        Log.d(TAG, "Received message of type: " + msg);
 
         switch (type) {
+            case "SET_LOCATION_ACCURACY":
+                try {
+                    String rate = msg.getJSONObject("payload").getString("rate");
+                    // For the MVP, we only care if the rate is 'realtime' or not
+                    boolean enableHigh = "realtime".equals(rate);
+                    LocationSystem.getInstance().setHighAccuracyMode(enableHigh);
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error parsing SET_LOCATION_ACCURACY payload", e);
+                }
+                break;
+
             case "connection_ack":
                 Log.d(TAG, "Received connection_ack. Possibly store sessionId if needed.");
                 startAudioSenderThread();
