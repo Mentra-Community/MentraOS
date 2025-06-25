@@ -75,7 +75,7 @@ public class LocationSystem extends Service {
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
         setupLocationCallbacks();
         getLastKnownLocation();
-        requestFastLocationUpdate(); // Get a quick fix immediately on startup
+        requestFastLocationUpdate();
         scheduleLocationUpdates();
     }
     
@@ -265,13 +265,13 @@ public class LocationSystem extends Service {
     }
 
     public void stopLocationUpdates() {
-        if (fusedLocationProviderClient != null && locationCallback != null) {
-            fusedLocationProviderClient.removeLocationUpdates(locationCallback);
-        }
-        
-        // Also remove updates from fast callback to be safe
-        if (fusedLocationProviderClient != null && fastLocationCallback != null) {
-            fusedLocationProviderClient.removeLocationUpdates(fastLocationCallback);
+        if (fusedLocationProviderClient != null) {
+            if (locationCallback != null) {
+                fusedLocationProviderClient.removeLocationUpdates(locationCallback);
+            }
+            if (fastLocationCallback != null) {
+                fusedLocationProviderClient.removeLocationUpdates(fastLocationCallback);
+            }
         }
     }
 
@@ -357,14 +357,8 @@ public class LocationSystem extends Service {
                 lng = location.getLongitude();
                 lastKnownLocation = location;
 
-                Log.d(TAG, "Accurate location fix obtained: " + lat + ", " + lng);
-
+                Log.d(TAG, "LocationSystem: Received location update: " + lat + ", " + lng);
                 sendLocationToServer();
-                stopLocationUpdates();
-
-                if (!firstLockAcquired) {
-                    firstLockAcquired = true;
-                }
             }
         };
     }
@@ -379,11 +373,35 @@ public class LocationSystem extends Service {
      */
     public void cleanup() {
         // Remove all pending callbacks
-        if (locationSendingLoopHandler != null) {
-            locationSendingLoopHandler.removeCallbacksAndMessages(null);
-        }
+        locationSendingLoopHandler.removeCallbacksAndMessages(null);
         
         // Make sure location updates are stopped
         stopLocationUpdates();
+    }
+
+    // [NEW] On/Off switch for high accuracy mode for the MVP
+    public void setHighAccuracyMode(boolean enabled) {
+        // Always stop previous updates before changing modes
+        stopLocationUpdates();
+        locationSendingLoopHandler.removeCallbacksAndMessages(null); // Also stop the 30-min timer
+
+        if (enabled) {
+            Log.d(TAG, "LocationSystem: Enabling high accuracy mode (realtime).");
+            LocationRequest streamRequest = LocationRequest.create();
+            streamRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+            streamRequest.setInterval(1000); // 1 second
+            streamRequest.setFastestInterval(500); // 0.5 seconds
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            // Use the high-accuracy callback for the stream
+            fusedLocationProviderClient.requestLocationUpdates(streamRequest, locationCallback, Looper.getMainLooper());
+        } else {
+            Log.d(TAG, "LocationSystem: Disabling high accuracy mode, reverting to standard power-saving logic.");
+            // Re-enable the original power-saving logic when high accuracy is turned off
+            requestFastLocationUpdate();
+            scheduleLocationUpdates();
+        }
     }
 }
