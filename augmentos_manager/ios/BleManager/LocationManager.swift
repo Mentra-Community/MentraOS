@@ -30,6 +30,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     
     // Start location updates (will only work if permission is already granted)
     locationManager.startUpdatingLocation()
+    // porter test
 
     // TEMPORARY TEST CODE
     self.setHighAccuracyMode(enabled: true)

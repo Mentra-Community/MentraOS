@@ -1,7 +1,7 @@
 "on":
     push:
         branches:
-            - isaiah/big-refactor-dev
+            - faster-gps
 name: 🚀 [debug] Porter.run Deploy
 jobs:
     porter-deploy:
