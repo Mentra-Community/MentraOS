@@ -64,8 +64,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
   func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
     guard let location = locations.last else { return }
     
-    // Only process significant changes (>10m or first location)
-    if currentLocation == nil || location.distance(from: currentLocation!) > locationManager.distanceFilter {
+    // [MODIFIED FOR TESTING]
+    // When in high accuracy mode, we want to log every single update regardless of distance.
+    let isHighAccuracy = locationManager.desiredAccuracy == kCLLocationAccuracyBestForNavigation
+    
+    if isHighAccuracy || currentLocation == nil || location.distance(from: currentLocation!) > locationManager.distanceFilter {
       currentLocation = location
 
       print("LocationManager: Location updated to \(location.coordinate.latitude), \(location.coordinate.longitude)")
