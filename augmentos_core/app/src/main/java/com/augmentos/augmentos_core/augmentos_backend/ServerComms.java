@@ -646,12 +646,11 @@ public class ServerComms {
             case "SET_LOCATION_ACCURACY":
                 try {
                     String rate = msg.getJSONObject("payload").getString("rate");
-                    // For the MVP, we only care if the rate is 'realtime' or not
                     boolean enableHigh = "realtime".equals(rate);
                     if (locationSystem != null) {
                         locationSystem.setHighAccuracyMode(enableHigh);
                     } else {
-                        Log.w(TAG, "LocationSystem not set - cannot change accuracy mode");
+                        Log.w(TAG, "LocationSystem not available to ServerComms, cannot set accuracy mode.");
                     }
                 } catch (JSONException e) {
                     Log.e(TAG, "Error parsing SET_LOCATION_ACCURACY payload", e);

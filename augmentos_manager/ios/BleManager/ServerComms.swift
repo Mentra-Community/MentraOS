@@ -394,7 +394,7 @@ class ServerComms {
         }
         return // End processing for this message type
     }
-
+    
     switch type {
     case "connection_ack":
       startAudioSenderThread()

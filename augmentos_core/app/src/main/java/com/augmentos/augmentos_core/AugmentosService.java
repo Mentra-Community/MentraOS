@@ -132,6 +132,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
     private final Handler screenCaptureHandler = new Handler();
     private Runnable screenCaptureRunnable;
     private LocationSystem locationSystem;
+    private boolean locationSystemBound = false; // [NEW]
     private long currTime = 0;
     private long lastPressed = 0;
     private final long lastTapped = 0;
@@ -194,6 +195,27 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             }
         }
     };
+    
+    // [NEW] Connection to LocationSystem service
+    private ServiceConnection locationServiceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName className, IBinder service) {
+            LocationSystem.LocationBinder binder = (LocationSystem.LocationBinder) service;
+            locationSystem = binder.getService();
+            locationSystemBound = true;
+            // Provide the valid instance to ServerComms
+            ServerComms.getInstance(AugmentosService.this).setLocationSystem(locationSystem);
+            Log.d(TAG, "LocationSystem service bound");
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName arg0) {
+            locationSystem = null;
+            locationSystemBound = false;
+            Log.d(TAG, "LocationSystem service unbound");
+        }
+    };
+
     private NotificationSystem notificationSystem;
     private CalendarSystem calendarSystem;
 
@@ -516,6 +538,11 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             handleBatteryOptimization(this);
         }
 
+        // [NEW] Start and bind to the LocationSystem service
+        Intent locationIntent = new Intent(this, LocationSystem.class);
+        startService(locationIntent);
+        bindService(locationIntent, locationServiceConnection, Context.BIND_AUTO_CREATE);
+
         // Automatically connect to glasses on service start
         String preferredWearable = SmartGlassesManager.getPreferredWearable(this);
         if(!preferredWearable.isEmpty()) {
@@ -552,9 +579,6 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         //if(authHandler.getCoreToken() != null)
         //    ServerComms.getInstance().connectWebSocket(authHandler.getCoreToken());
         initializeServerCommsCallbacks();
-
-        locationSystem = new LocationSystem(this);
-        ServerComms.getInstance(this).setLocationSystem(locationSystem);
 
         // Start periodic datetime sending
         datetimeRunnable = new Runnable() {
@@ -2362,6 +2386,12 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         
         if(edgeTpaSystem != null) {
             edgeTpaSystem.destroy();
+        }
+
+        // [NEW] Unbind from LocationSystem service
+        if (locationSystemBound) {
+            unbindService(locationServiceConnection);
+            locationSystemBound = false;
         }
     }
 
