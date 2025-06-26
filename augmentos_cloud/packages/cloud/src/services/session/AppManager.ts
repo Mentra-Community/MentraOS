@@ -854,6 +854,7 @@ export class AppManager {
    * @param reason Close reason
    */
   async handleAppConnectionClosed(packageName: string, code: number, reason: string): Promise<void> {
+    this.logger.info("!!!!!!!!!!! HANDLE APP CONNECTION CLOSED WAS CALLED !!!!!!!!!!!");
     try {
       this.logger.info({ packageName, code, reason }, `[AppManager:handleAppConnectionClosed]: (${packageName}, ${code}, ${reason})`);
 
