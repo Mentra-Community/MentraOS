@@ -5,6 +5,7 @@ import android.util.Log;
 
 import com.augmentos.augmentos_core.BuildConfig;
 import com.augmentos.augmentos_core.CalendarItem;
+import com.augmentos.augmentos_core.LocationSystem;
 import com.augmentos.augmentos_core.smarterglassesmanager.speechrecognition.AsrStreamKey;
 import com.augmentos.augmentos_core.smarterglassesmanager.speechrecognition.augmentos.SpeechRecAugmentos;
 import com.augmentos.augmentoslib.enums.AsrStreamType;
@@ -52,6 +53,7 @@ public class ServerComms {
     private static ServerComms instance;
     private String coreToken;
     private Context context;
+    private LocationSystem locationSystem;
 
     // ------------------------------------------------------------------------
     // AUDIO QUEUE SYSTEM (IMPROVED)
@@ -90,6 +92,10 @@ public class ServerComms {
 
     public void setServerCommsCallback(ServerCommsCallback callback) {
         this.serverCommsCallback = callback;
+    }
+
+    public void setLocationSystem(LocationSystem locationSystem) {
+        this.locationSystem = locationSystem;
     }
 
     private ServerComms(Context context) {
@@ -642,7 +648,11 @@ public class ServerComms {
                     String rate = msg.getJSONObject("payload").getString("rate");
                     // For the MVP, we only care if the rate is 'realtime' or not
                     boolean enableHigh = "realtime".equals(rate);
-                    LocationSystem.getInstance().setHighAccuracyMode(enableHigh);
+                    if (locationSystem != null) {
+                        locationSystem.setHighAccuracyMode(enableHigh);
+                    } else {
+                        Log.w(TAG, "LocationSystem not set - cannot change accuracy mode");
+                    }
                 } catch (JSONException e) {
                     Log.e(TAG, "Error parsing SET_LOCATION_ACCURACY payload", e);
                 }

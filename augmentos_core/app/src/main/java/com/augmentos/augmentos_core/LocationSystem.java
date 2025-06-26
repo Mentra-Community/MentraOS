@@ -47,6 +47,7 @@ public class LocationSystem extends Service {
     public double latestAccessedLong = 0;
     private FusedLocationProviderClient fusedLocationProviderClient;
     private LocationCallback locationCallback;
+    private Handler locationSendingLoopHandler;
 
     // Store last known location
     private Location lastKnownLocation = null;
@@ -68,6 +69,7 @@ public class LocationSystem extends Service {
         
         // Initialize location components
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
+        locationSendingLoopHandler = new Handler(Looper.getMainLooper());
         setupLocationCallbacks();
         getLastKnownLocation();
         
@@ -263,6 +265,10 @@ public class LocationSystem extends Service {
     public void stopLocationUpdates() {
         if (fusedLocationProviderClient != null && locationCallback != null) {
             fusedLocationProviderClient.removeLocationUpdates(locationCallback);
+        }
+        // Remove any pending callbacks from the handler
+        if (locationSendingLoopHandler != null) {
+            locationSendingLoopHandler.removeCallbacksAndMessages(null);
         }
     }
 
