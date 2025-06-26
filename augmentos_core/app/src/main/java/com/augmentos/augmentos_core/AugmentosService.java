@@ -554,6 +554,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         initializeServerCommsCallbacks();
 
         locationSystem = new LocationSystem(this);
+        ServerComms.getInstance(this).setLocationSystem(locationSystem);
 
         // Start periodic datetime sending
         datetimeRunnable = new Runnable() {
