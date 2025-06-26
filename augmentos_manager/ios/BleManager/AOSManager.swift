@@ -48,6 +48,7 @@ struct ViewState {
   private var dashboardDepth: Int = 5;
   private var sensingEnabled: Bool = true;
   private var isSearching: Bool = true;
+  private var isUpdatingScreen: Bool = false;
   private var alwaysOnStatusBar: Bool = false;
   private var bypassVad: Bool = false;
   private var bypassAudioEncoding: Bool = false;
@@ -462,6 +463,11 @@ struct ViewState {
   public func sendCurrentState(_ isDashboard: Bool) -> Void {
       // Cancel any pending delayed execution
       sendStateWorkItem?.cancel()
+
+      // don't send the screen state if we're updating the screen:
+      if (self.isUpdatingScreen) {
+        return
+      }
       
       // Execute immediately
       executeSendCurrentState(isDashboard)
@@ -1016,7 +1022,9 @@ struct ViewState {
           }
           if enabled {
             self.g1Manager?.RN_exit()
-            // TODO: more / prevent additional messages from being sent
+            self.isUpdatingScreen = true
+          } else {
+            self.isUpdatingScreen = false
           }
           break
         case .unknown:
