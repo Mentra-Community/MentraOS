@@ -350,11 +350,11 @@ public class LocationSystem extends Service {
             }
             fusedLocationProviderClient.requestLocationUpdates(realtimeRequest, locationCallback, Looper.getMainLooper());
         } else {
-            Log.d(TAG, "LocationSystem: Disabling high accuracy mode, reverting to standard 5-minute updates.");
+            Log.d(TAG, "LocationSystem: Disabling high accuracy mode, reverting to standard 15-minute updates.");
             LocationRequest standardRequest = LocationRequest.create();
             standardRequest.setPriority(LocationRequest.PRIORITY_LOW_POWER);
-            standardRequest.setInterval(300000); // 5 minutes
-            standardRequest.setFastestInterval(60000); // 1 minute
+            standardRequest.setInterval(900000); // 15 minutes (900,000 ms)
+            standardRequest.setFastestInterval(300000); // 5 minutes
 
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 return;
