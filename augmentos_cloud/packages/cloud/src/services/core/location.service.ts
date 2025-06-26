@@ -26,12 +26,15 @@ class LocationService {
     if (NAVIGATION_APP_PACKAGES.includes(packageName)) {
       const user = await User.findOne({ email: userId });
       if (user) {
-        const anyNavAppRunning = user.runningApps.some(app => NAVIGATION_APP_PACKAGES.includes(app));
-        if (!anyNavAppRunning) {
+        const stillRunningApps = user.runningApps.filter(app => app !== packageName);
+        
+        const anotherNavAppIsRunning = stillRunningApps.some(app => NAVIGATION_APP_PACKAGES.includes(app));
+
+        if (!anotherNavAppIsRunning) {
           logger.info({ userId }, "Last navigation app stopped. Commanding device to use STANDARD location.");
           this._sendCommandToDevice(userId, 'SET_LOCATION_ACCURACY', { rate: 'standard' });
         } else {
-          logger.info({ userId }, "A navigation app stopped, but another one is still running. Keeping high-accuracy mode ON.");
+          logger.info({ userId, stillRunning: stillRunningApps }, "A navigation app stopped, but another one is still running. Keeping high-accuracy mode ON.");
         }
       } else {
         logger.warn({ userId }, "User not found on app stop, reverting location to standard as a safeguard.");
