@@ -5,25 +5,38 @@ import WebSocket from 'ws';
 
 const logger = rootLogger.child({ service: 'location.service' });
 
-const NAVIGATION_APP_PACKAGE = "com.nathan.nav";
+const NAVIGATION_APP_PACKAGES = [
+  "com.nathan.nav",
+  "com.mentra.navigation",
+  "com.mentra.navigationdev"
+];
 
 class LocationService {
 
   public async onAppStarted(userId: string, packageName: string): Promise<void> {
     logger.info({ userId, packageName }, "LocationService: App started event received.");
-    if (packageName === NAVIGATION_APP_PACKAGE) {
-      logger.info({ userId }, "Navigation app started. Commanding device to use REALTIME location.");
+    if (NAVIGATION_APP_PACKAGES.includes(packageName)) {
+      logger.info({ userId, packageName }, "Navigation app started. Commanding device to use REALTIME location.");
       this._sendCommandToDevice(userId, 'SET_LOCATION_ACCURACY', { rate: 'realtime' });
     }
   }
 
   public async onAppStopped(userId: string, packageName: string): Promise<void> {
     logger.info({ userId, packageName }, "LocationService: App stopped event received.");
-    if (packageName === NAVIGATION_APP_PACKAGE) {
-      // For this MVP, we can simply revert to standard when the app stops.
-      // A more complex implementation would check if other high-accuracy apps are still running.
-      logger.info({ userId }, "Navigation app stopped. Commanding device to use STANDARD location.");
-      this._sendCommandToDevice(userId, 'SET_LOCATION_ACCURACY', { rate: 'standard' });
+    if (NAVIGATION_APP_PACKAGES.includes(packageName)) {
+      const user = await User.findOne({ email: userId });
+      if (user) {
+        const anyNavAppRunning = user.runningApps.some(app => NAVIGATION_APP_PACKAGES.includes(app));
+        if (!anyNavAppRunning) {
+          logger.info({ userId }, "Last navigation app stopped. Commanding device to use STANDARD location.");
+          this._sendCommandToDevice(userId, 'SET_LOCATION_ACCURACY', { rate: 'standard' });
+        } else {
+          logger.info({ userId }, "A navigation app stopped, but another one is still running. Keeping high-accuracy mode ON.");
+        }
+      } else {
+        logger.warn({ userId }, "User not found on app stop, reverting location to standard as a safeguard.");
+        this._sendCommandToDevice(userId, 'SET_LOCATION_ACCURACY', { rate: 'standard' });
+      }
     }
   }
 
