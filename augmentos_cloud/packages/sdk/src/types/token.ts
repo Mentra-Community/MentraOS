@@ -42,7 +42,7 @@ export interface TokenValidationResult {
  * Configuration for token creation
  */
 export interface TokenConfig {
-  /** Secret key used for signing (should match AugmentOS Cloud) */
+  /** Secret key used for signing (should match MentraOS Cloud) */
   secretKey: string;
 
   /** Token expiration time in seconds (default: 300 - 5 minutes) */

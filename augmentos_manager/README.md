@@ -1,6 +1,19 @@
 ### Quickstart
 
-build and run the app on android from scratch:
+
+### Windows Setup
+
+```bash
+// Clone directly to the C:\ directory to avoid path length limits on windows!
+git clone https://github.com/Mentra-Community/MentraOS
+git checkout dev
+```
+
+
+```
+choco install -y nodejs-lts microsoft-openjdk17
+```
+
 
 ## Android
 ```

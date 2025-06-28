@@ -74,7 +74,7 @@ We are going to use ngrok to expose your local app to the internet. This is usef
      ```
      PORT=3000
      PACKAGE_NAME=com.yourName.yourAppName
-     AUGMENTOS_API_KEY=your_api_key_from_console
+     MENTRAOS_API_KEY=your_api_key_from_console
      ```
    * Make sure the `PACKAGE_NAME` matches what you registered in the MentraOS Console
    * Get your `API_KEY` from the MentraOS Developer Console

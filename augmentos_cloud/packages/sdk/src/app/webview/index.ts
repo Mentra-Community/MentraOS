@@ -8,7 +8,7 @@ import * as crypto from 'crypto';
 import { KEYUTIL, KJUR, RSAKey } from "jsrsasign";
 
 
-const userTokenPublicKey = process.env.AUGMENTOS_CLOUD_USER_TOKEN_PUBLIC_KEY || "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Yt2RtNOdeKQxWMY0c84\nADpY1Jy58YWZhaEgP2A5tBwFUKgy/TH9gQLWZjQ3dQ/6XXO8qq0kluoYFqM7ZDRF\nzJ0E4Yi0WQncioLRcCx4q8pDmqY9vPKgv6PruJdFWca0l0s3gZ3BqSeWum/C23xK\nFPHPwi8gvRdc6ALrkcHeciM+7NykU8c0EY8PSitNL+Tchti95kGu+j6APr5vNewi\nzRpQGOdqaLWe+ahHmtj6KtUZjm8o6lan4f/o08C6litizguZXuw2Nn/Kd9fFI1xF\nIVNJYMy9jgGaOi71+LpGw+vIpwAawp/7IvULDppvY3DdX5nt05P1+jvVJXPxMKzD\nTQIDAQAB\n-----END PUBLIC KEY-----";
+const userTokenPublicKey = process.env.MENTRAOS_CLOUD_USER_TOKEN_PUBLIC_KEY || "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Yt2RtNOdeKQxWMY0c84\nADpY1Jy58YWZhaEgP2A5tBwFUKgy/TH9gQLWZjQ3dQ/6XXO8qq0kluoYFqM7ZDRF\nzJ0E4Yi0WQncioLRcCx4q8pDmqY9vPKgv6PruJdFWca0l0s3gZ3BqSeWum/C23xK\nFPHPwi8gvRdc6ALrkcHeciM+7NykU8c0EY8PSitNL+Tchti95kGu+j6APr5vNewi\nzRpQGOdqaLWe+ahHmtj6KtUZjm8o6lan4f/o08C6litizguZXuw2Nn/Kd9fFI1xF\nIVNJYMy9jgGaOi71+LpGw+vIpwAawp/7IvULDppvY3DdX5nt05P1+jvVJXPxMKzD\nTQIDAQAB\n-----END PUBLIC KEY-----";
 
 
 /**
@@ -27,9 +27,9 @@ export function extractTempToken(url: string): string | null {
 }
 
 /**
- * Exchanges a temporary token for a user ID with the AugmentOS Cloud.
+ * Exchanges a temporary token for a user ID with the MentraOS Cloud.
  * This should be called from the App's backend server.
- * @param cloudApiUrl The base URL of the AugmentOS Cloud API.
+ * @param cloudApiUrl The base URL of the MentraOS Cloud API.
  * @param tempToken The temporary token obtained from the webview URL.
  * @param apiKey Your App's secret API key.
  * @returns A Promise that resolves with an object containing the userId.
@@ -215,7 +215,7 @@ function validateCloudApiUrlChecksum(checksum: string, cloudApiUrl: string, apiK
  * Adds `req.authUserId` if successful.
  *
  * @param options Configuration options.
- * @param options.cloudApiUrl The base URL of the AugmentOS Cloud API.
+ * @param options.cloudApiUrl The base URL of the MentraOS Cloud API.
  * @param options.apiKey Your App's secret API key.
  * @param options.tokenQueryParam The name of the query parameter containing the token (default: 'aos_temp_token').
  * @param options.cookieName The name of the cookie to store the session token (default: 'aos_session').

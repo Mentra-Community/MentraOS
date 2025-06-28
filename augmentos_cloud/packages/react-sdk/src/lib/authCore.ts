@@ -1,8 +1,7 @@
-// augmentos-react/src/lib/authCore.ts
+// react-sdk/src/lib/authCore.ts
 import { KEYUTIL, KJUR, RSAKey } from 'jsrsasign'; // Assuming jsrsasign is available
 
-// This should be the AugmentOS Cloud's public key for verifying aos_signed_user_token
-// It's a public key, so embedding it is generally fine.
+// This should be the MentraOS Cloud's public key for verifying aos_signed_user_token
 const userTokenPublicKeyPEM = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Yt2RtNOdeKQxWMY0c84
 ADpY1Jy58YWZhaEgP2A5tBwFUKgy/TH9gQLWZjQ3dQ/6XXO8qq0kluoYFqM7ZDRF
@@ -13,8 +12,8 @@ IVNJYMy9jgGaOi71+LpGw+vIpwAawp/7IvULDppvY3DdX5nt05P1+jvVJXPxMKzD
 TQIDAQAB
 -----END PUBLIC KEY-----`;
 
-const USER_ID_KEY = 'augmentos_userId';
-const FRONTEND_TOKEN_KEY = 'augmentos_frontendToken';
+const USER_ID_KEY = 'mentraos_userId';
+const FRONTEND_TOKEN_KEY = 'mentraos_frontendToken';
 
 interface SignedUserTokenPayload {
   sub: string; // This is the userId
@@ -39,7 +38,7 @@ export interface AuthState {
 }
 
 /**
- * Verifies and parses a signed user token using the AugmentOS Cloud public key
+ * Verifies and parses a signed user token using the MentraOS Cloud public key
  * @param signedUserToken - The JWT token to verify and parse
  * @returns Promise that resolves to the parsed payload or null if invalid
  */

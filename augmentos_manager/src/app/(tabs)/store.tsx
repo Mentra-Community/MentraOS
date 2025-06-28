@@ -1,4 +1,4 @@
-import React, {useRef, useState, useCallback, useEffect} from "react"
+import React, {useRef, useState, useCallback, useEffect, useMemo} from "react"
 import {View, StyleSheet, ActivityIndicator, BackHandler} from "react-native"
 import {WebView} from "react-native-webview"
 import Config from "react-native-config"
@@ -27,21 +27,21 @@ export default function AppStoreWeb() {
   } = useAppStoreWebviewPrefetch()
   const {refreshAppStatus} = useAppStatus()
   const {theme, themed} = useAppTheme()
-  const isDarkTheme = theme.isDark
 
   // Construct the final URL with packageName if provided
-  const finalUrl = React.useMemo(() => {
+  const finalUrl = useMemo(() => {
     if (!appStoreUrl) return appStoreUrl
 
-    if (packageName && typeof packageName === 'string') {
-      // If packageName is provided, navigate to the app details page
-      const url = new URL(appStoreUrl)
-      // Update the path to point to the app details page
-      url.pathname = `/app/${packageName}`
-      return url.toString()
+    const url = new URL(appStoreUrl)
+    console.log("AppStoreWeb: appStoreUrl", appStoreUrl)
+    console.log("theme.isDark", theme.isDark)
+    if (packageName && typeof packageName === "string") {
+      // If packageName is provided, update the path to point to the app details page
+      url.pathname = `/package/${packageName}`
     }
-
-    return appStoreUrl
+    url.searchParams.set("theme", theme.isDark ? "dark" : "light")
+    console.log("AppStoreWeb: finalUrl", url.toString())
+    return url.toString()
   }, [appStoreUrl, packageName])
 
   // Theme colors - using theme system instead of hardcoded values
@@ -69,15 +69,15 @@ export default function AppStoreWeb() {
     try {
       const data = JSON.parse(event.nativeEvent.data)
 
-      if ((data.type === 'OPEN_APP_SETTINGS' || data.type === 'OPEN_TPA_SETTINGS') && data.packageName) {
+      if ((data.type === "OPEN_APP_SETTINGS" || data.type === "OPEN_TPA_SETTINGS") && data.packageName) {
         // Navigate to TPA settings page
         router.push({
-          pathname: '/app/settings',
-          params: { packageName: data.packageName }
+          pathname: "/app/settings",
+          params: {packageName: data.packageName},
         })
       }
     } catch (error) {
-      console.error('Error handling WebView message:', error)
+      console.error("Error handling WebView message:", error)
     }
   }
 
@@ -127,7 +127,11 @@ export default function AppStoreWeb() {
       {hasError ? (
         <InternetConnectionFallbackComponent retry={() => setHasError(false)} />
       ) : (
-        <View style={[styles.webViewContainer, {backgroundColor: theme.colors.background, marginHorizontal: -theme.spacing.lg}]}>
+        <View
+          style={[
+            styles.webViewContainer,
+            {backgroundColor: theme.colors.background, marginHorizontal: -theme.spacing.lg},
+          ]}>
           {/* Show the prefetched WebView, but now visible and full size */}
           <WebView
             ref={prefetchedWebviewRef}

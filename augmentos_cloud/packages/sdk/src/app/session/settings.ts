@@ -45,7 +45,7 @@ enum SettingsEvents {
  * 🔧 Settings Manager
  *
  * Provides a type-safe interface for accessing and reacting to App settings.
- * Automatically synchronizes with AugmentOS Cloud.
+ * Automatically synchronizes with MentraOS Cloud.
  */
 export class SettingsManager {
   // Current settings values
@@ -57,9 +57,9 @@ export class SettingsManager {
   // API client for fetching settings
   private apiClient?: ApiClient;
 
-  // --- AugmentOS settings event system ---
-  private augmentosSettings: Record<string, any> = {};
-  private augmentosEmitter = new EventEmitter();
+  // --- MentraOS settings event system ---
+  private mentraosSettings: Record<string, any> = {};
+  private mentraosEmitter = new EventEmitter();
   private subscribeFn?: (streams: string[]) => Promise<void>; // Added for auto-subscriptions
 
   /**
@@ -262,20 +262,20 @@ export class SettingsManager {
   }
 
   /**
-   * 🎛️ Get an AugmentOS system setting value with optional default
+   * 🎛️ Get an MentraOS system setting value with optional default
    *
-   * @param key AugmentOS setting key (e.g., 'metricSystemEnabled', 'brightness')
+   * @param key MentraOS setting key (e.g., 'metricSystemEnabled', 'brightness')
    * @param defaultValue Default value to return if the setting is not found
    * @returns The setting value or the default value
    *
    * @example
    * ```typescript
-   * const isMetric = settings.getAugmentOS<boolean>('metricSystemEnabled', false);
-   * const brightness = settings.getAugmentOS<number>('brightness', 50);
+   * const isMetric = settings.getMentraOS<boolean>('metricSystemEnabled', false);
+   * const brightness = settings.getMentraOS<number>('brightness', 50);
    * ```
    */
-  getAugmentOS<T = any>(key: string, defaultValue?: T): T {
-    const value = this.augmentosSettings[key];
+  getMentraOS<T = any>(key: string, defaultValue?: T): T {
+    const value = this.mentraosSettings[key];
 
     if (value !== undefined) {
       return value as T;
@@ -318,73 +318,73 @@ export class SettingsManager {
   }
 
   /**
-   * 🎛️ Listen for changes to a specific AugmentOS setting (e.g., metricSystemEnabled)
+   * 🎛️ Listen for changes to a specific MentraOS setting (e.g., metricSystemEnabled)
    *
-   * @param key The augmentosSettings key to listen for (e.g., 'metricSystemEnabled')
+   * @param key The mentraosSettings key to listen for (e.g., 'metricSystemEnabled')
    * @param handler Function to call when the value changes
    * @returns Function to remove the listener
    *
    * @example
    * ```typescript
-   * settings.onAugmentOSChange('metricSystemEnabled', (isMetric, wasMetric) => {
+   * settings.onMentraosChange('metricSystemEnabled', (isMetric, wasMetric) => {
    *   console.log(`Units changed: ${wasMetric ? 'metric' : 'imperial'} → ${isMetric ? 'metric' : 'imperial'}`);
    * });
    * ```
    */
-  onAugmentOSChange<T = any>(key: string, handler: SettingValueChangeHandler<T>): () => void {
-    return this.onAugmentosSettingChange(key, handler);
+  onMentraosChange<T = any>(key: string, handler: SettingValueChangeHandler<T>): () => void {
+    return this.onMentraosSettingChange(key, handler);
   }
 
   /**
-   * Listen for changes to a specific AugmentOS setting (e.g., metricSystemEnabled)
-   * This is a convenience wrapper for onValueChange for well-known augmentosSettings keys.
-   * @param key The augmentosSettings key to listen for (e.g., 'metricSystemEnabled')
+   * Listen for changes to a specific MentraOS setting (e.g., metricSystemEnabled)
+   * This is a convenience wrapper for onValueChange for well-known mentraosSettings keys.
+   * @param key The mentraosSettings key to listen for (e.g., 'metricSystemEnabled')
    * @param handler Function to call when the value changes
    * @returns Function to remove the listener
-   * @deprecated Use onAugmentOSChange instead
+   * @deprecated Use onMentraosChange instead
    */
-  onAugmentosSettingsChange<T = any>(key: string, handler: SettingValueChangeHandler<T>): () => void {
-    return this.onAugmentosSettingChange(key, handler);
+  onMentraosSettingsChange<T = any>(key: string, handler: SettingValueChangeHandler<T>): () => void {
+    return this.onMentraosSettingChange(key, handler);
   }
 
   /**
-   * Update the current AugmentOS settings
+   * Update the current MentraOS settings
    * Compares new and old values, emits per-key events, and updates stored values.
-   * @param newSettings The new AugmentOS settings object
+   * @param newSettings The new MentraOS settings object
    */
-  updateAugmentosSettings(newSettings: Record<string, any>): void {
-    const oldSettings = this.augmentosSettings;
-    logger.debug(`[SettingsManager] Updating AugmentOS settings. New settings:`, newSettings);
+  updateMentraosSettings(newSettings: Record<string, any>): void {
+    const oldSettings = this.mentraosSettings;
+    logger.debug(`[SettingsManager] Updating MentraOS settings. New settings:`, newSettings);
     for (const key of Object.keys(newSettings)) {
       const oldValue = oldSettings[key];
       const newValue = newSettings[key];
       if (oldValue !== newValue) {
-        logger.info(`[SettingsManager] AugmentOS setting '${key}' changed: ${oldValue} -> ${newValue}. Emitting event.`);
-        this.augmentosEmitter.emit(`augmentos:value:${key}`, newValue, oldValue);
+        logger.info(`[SettingsManager] MentraOS setting '${key}' changed: ${oldValue} -> ${newValue}. Emitting event.`);
+        this.mentraosEmitter.emit(`augmentos:value:${key}`, newValue, oldValue);
       }
     }
     // Also handle keys that might have been removed from newSettings but existed in oldSettings
     for (const key of Object.keys(oldSettings)) {
       if (!(key in newSettings)) {
-        logger.info(`[SettingsManager] AugmentOS setting '${key}' removed. Old value: ${oldSettings[key]}. Emitting event with undefined newValue.`);
-        this.augmentosEmitter.emit(`augmentos:value:${key}`, undefined, oldSettings[key]);
+        logger.info(`[SettingsManager] MentraOS setting '${key}' removed. Old value: ${oldSettings[key]}. Emitting event with undefined newValue.`);
+        this.mentraosEmitter.emit(`augmentos:value:${key}`, undefined, oldSettings[key]);
       }
     }
-    this.augmentosSettings = { ...newSettings };
-    logger.debug(`[SettingsManager] Finished updating AugmentOS settings. Current state:`, this.augmentosSettings);
+    this.mentraosSettings = { ...newSettings };
+    logger.debug(`[SettingsManager] Finished updating MentraOS settings. Current state:`, this.mentraosSettings);
   }
 
   /**
-   * Subscribe to changes for a specific AugmentOS setting (e.g., 'metricSystemEnabled')
-   * @param key The AugmentOS setting key to listen for
+   * Subscribe to changes for a specific MentraOS setting (e.g., 'metricSystemEnabled')
+   * @param key The MentraOS setting key to listen for
    * @param handler Function to call when the value changes (newValue, oldValue)
    * @returns Function to remove the listener
    */
-  onAugmentosSettingChange<T = any>(key: string, handler: (newValue: T, oldValue: T) => void): () => void {
+  onMentraosSettingChange<T = any>(key: string, handler: (newValue: T, oldValue: T) => void): () => void {
     const eventName = `augmentos:value:${key}`;
-    logger.info(`[SettingsManager] Registering handler for AugmentOS setting '${key}' on event '${eventName}'.`);
-    this.augmentosEmitter.on(eventName, (...args) => {
-      logger.info(`[SettingsManager] AugmentOS setting '${key}' event fired. Args:`, args);
+    logger.info(`[SettingsManager] Registering handler for MentraOS setting '${key}' on event '${eventName}'.`);
+    this.mentraosEmitter.on(eventName, (...args) => {
+      logger.info(`[SettingsManager] MentraOS setting '${key}' event fired. Args:`, args);
       handler(...(args as [T, T]));
     });
 
@@ -399,22 +399,22 @@ export class SettingsManager {
           logger.error(`[SettingsManager] subscribeFn failed for stream '${subscriptionKey}':`, err);
         });
     } else {
-      logger.warn(`[SettingsManager] 'subscribeFn' not provided. Cannot auto-subscribe for AugmentOS setting '${key}'. Manual App subscription might be required.`);
+      logger.warn(`[SettingsManager] 'subscribeFn' not provided. Cannot auto-subscribe for MentraOS setting '${key}'. Manual App subscription might be required.`);
     }
 
     return () => {
-      logger.info(`[SettingsManager] Unregistering handler for AugmentOS setting '${key}' from event '${eventName}'.`);
-      this.augmentosEmitter.off(eventName, handler as (newValue: unknown, oldValue: unknown) => void);
+      logger.info(`[SettingsManager] Unregistering handler for MentraOS setting '${key}' from event '${eventName}'.`);
+      this.mentraosEmitter.off(eventName, handler as (newValue: unknown, oldValue: unknown) => void);
     };
   }
 
   /**
-   * Get the current value of an AugmentOS setting
+   * Get the current value of an MentraOS setting
    */
-  getAugmentosSetting<T = any>(key: string, defaultValue?: T): T {
-    console.log(`[SettingsManager] Getting AugmentOS setting '${key}' with settings:`, this.augmentosSettings);
-    if (key in this.augmentosSettings) {
-      return this.augmentosSettings[key] as T;
+  getMentraosSetting<T = any>(key: string, defaultValue?: T): T {
+    console.log(`[SettingsManager] Getting MentraOS setting '${key}' with settings:`, this.mentraosSettings);
+    if (key in this.mentraosSettings) {
+      return this.mentraosSettings[key] as T;
     }
     return defaultValue as T;
   }

@@ -26,7 +26,7 @@ export {
   ToolCall,
   StandardConnectionError,
   CustomMessage,
-  AugmentosSettingsUpdate,
+  MentraosSettingsUpdate,
   TranscriptionData,
   AudioChunk,
   PermissionError,

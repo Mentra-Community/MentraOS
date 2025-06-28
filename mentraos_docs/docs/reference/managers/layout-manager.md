@@ -112,32 +112,6 @@ appSession.layouts.showReferenceCard(
 );
 ```
 
-### showBitmapView()
-
-Displays a bitmap image.
-
-```typescript
-showBitmapView(
-  data: string,
-  options?: {
-    view?: ViewType;
-    durationMs?: number
-  }
-): void
-```
-
-**Parameters:**
-- `data`: A base64 encoded string of the bitmap data
-- `options`: Optional parameters
-  - `view`: Target view ([`ViewType.MAIN`](/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/reference/enums#viewtype)). Defaults to `MAIN`
-  - `durationMs`: Optional duration in milliseconds
-
-**Example:**
-```typescript
-// Example with a base64-encoded image
-const base64Image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'; // truncated for brevity
-appSession.layouts.showBitmapView(base64Image);
-```
 
 ### showDashboardCard()
 
@@ -222,17 +196,6 @@ interface DashboardCard {
 ```
 
 See the full definition in [Layout Types](/reference/interfaces/layout-types#dashboardcard).
-
-### BitmapView
-
-```typescript
-interface BitmapView {
-  layoutType: LayoutType.BITMAP_VIEW;
-  data: string; // Base64 encoded bitmap data
-}
-```
-
-See the full definition in [Layout Types](/reference/interfaces/layout-types#bitmapview).
 
 ## View Types
 

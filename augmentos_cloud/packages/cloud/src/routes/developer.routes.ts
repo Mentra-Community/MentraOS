@@ -184,7 +184,7 @@ const getAuthenticatedUser = async (req: Request, res: Response): Promise<void> 
 };
 
 /**
- * Get developer's Third Party Apps (Apps)
+ * Get developer's Apps
  */
 const getDeveloperApps = async (req: Request, res: Response): Promise<void> => {
   try {

@@ -92,7 +92,7 @@ if (usesWifi) {
 
 ## Overview
 
-This document outlines the design for enabling Third Party Apps (Apps) to communicate with other Apps that have active sessions with the same App package, creating a multi-user collaborative experience within MentraOS.
+This document outlines the design for enabling Apps to communicate with other Apps that have active sessions with the same App package, creating a multi-user collaborative experience within MentraOS.
 
 ## Current Architecture
 

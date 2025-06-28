@@ -62,11 +62,11 @@
         <data android:scheme="com.mentra"/>
         <data android:scheme="com.mentra.mentra"/>
       </intent-filter>
-      <intent-filter data-generated="true">
+      <intent-filter android:autoVerify="true" data-generated="true">
         <action android:name="android.intent.action.VIEW"/>
-        <data android:scheme="https" android:host="apps.mentra.glass" android:pathPrefix="/"/>
-        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="https" android:host="apps.mentra.glass"/>
         <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
       </intent-filter>
     </activity>
   </application>

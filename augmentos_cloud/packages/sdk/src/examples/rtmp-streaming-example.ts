@@ -1,7 +1,7 @@
 /**
  * RTMP Streaming Example
  *
- * This example demonstrates how to use the AugmentOS SDK to request
+ * This example demonstrates how to use the MentraOS SDK to request
  * and manage RTMP streaming from smart glasses.
  */
 import { RtmpStreamStatus } from 'src/types';
@@ -15,15 +15,15 @@ const session = new AppSession({
   userId: 'example-user@example.com',
   appServer: {} as any, // In a real app, this would be a AppServer instance
   // In a real app, this would be the production server URL
-  augmentOSWebsocketUrl: 'ws://localhost:8002/app-ws'
+  mentraOSWebsocketUrl: 'ws://localhost:8002/app-ws'
 });
 
-// Connect to AugmentOS Cloud
+// Connect to MentraOS Cloud
 async function startApp() {
   try {
     // Connect with a session ID
     await session.connect('streaming-demo-session');
-    console.log('Connected to AugmentOS Cloud');
+    console.log('Connected to MentraOS Cloud');
 
     // Set up status handler
     setupStreamStatusHandler();

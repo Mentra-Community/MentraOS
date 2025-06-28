@@ -118,27 +118,6 @@ interface DashboardCard {
 appSession.layouts.showDashboardCard("Temperature", "72°F");
 ```
 
-## BitmapView
-
-A layout for displaying bitmap images.
-
-```typescript
-interface BitmapView {
-  /** Must be LayoutType.BITMAP_VIEW. */
-  layoutType: LayoutType.BITMAP_VIEW;
-
-  /** Base64 encoded string of the bitmap data. */
-  data: string;
-}
-```
-
-**Example:**
-```typescript
-// Using the LayoutManager with a base64-encoded image
-const base64Image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...";
-appSession.layouts.showBitmapView(base64Image);
-```
-
 ## DisplayRequest
 
 The `DisplayRequest` interface is the message structure sent to MentraOS Cloud when a App wants to display a layout.
@@ -191,9 +170,3 @@ interface DisplayRequest extends BaseMessage {
 - Clear label-value pairing helps with quick comprehension
 - Works best with short values (numbers, brief status, etc.)
 - Consider using in the [`DASHBOARD`](/reference/enums#viewtype) view for persistent display
-
-### BitmapView
-- Use for visual content like icons, simple diagrams, or charts
-- Keep images simple and high-contrast for readability in AR
-- Consider size and memory impact - optimize images when possible
-- Test on actual hardware to ensure visibility and clarity

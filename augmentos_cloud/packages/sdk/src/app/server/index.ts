@@ -1,7 +1,7 @@
 /**
  * 🚀 App Server Module
  *
- * Creates and manages a server for Third Party Apps (Apps) in the AugmentOS ecosystem.
+ * Creates and manages a server for Apps in the MentraOS ecosystem.
  * Handles webhook endpoints, session management, and cleanup.
  */
 import express, { type Express } from 'express';
@@ -38,7 +38,7 @@ import axios from 'axios';
 export interface AppServerConfig {
   /** 📦 Unique identifier for your App (e.g., 'org.company.appname') must match what you specified at https://console.mentra.glass */
   packageName: string;
-  /** 🔑 API key for authentication with AugmentOS Cloud */
+  /** 🔑 API key for authentication with MentraOS Cloud */
   apiKey: string;
   /** 🌐 Port number for the server (default: 7010) */
   port?: number;
@@ -67,7 +67,7 @@ export interface AppServerConfig {
  *
  * Base class for creating App servers. Handles:
  * - 🔄 Session lifecycle management
- * - 📡 Webhook endpoints for AugmentOS Cloud
+ * - 📡 Webhook endpoints for MentraOS Cloud
  * - 📂 Static file serving
  * - ❤️ Health checks
  * - 🧹 Cleanup on shutdown
@@ -184,11 +184,11 @@ export class AppServer {
 
   /**
    * 🛠️ Tool Call Handler
-   * Override this method to handle tool calls from AugmentOS Cloud.
+   * Override this method to handle tool calls from MentraOS Cloud.
    * This is where you implement your app's tool functionality.
    *
    * @param toolCall - The tool call request containing tool details and parameters
-   * @returns Optional string response that will be sent back to AugmentOS Cloud
+   * @returns Optional string response that will be sent back to MentraOS Cloud
    */
   protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
     this.logger.debug(`Tool call received: ${toolCall.toolId}`);
@@ -261,7 +261,7 @@ export class AppServer {
 
   /**
    * 🎯 Setup Webhook Endpoint
-   * Creates the webhook endpoint that AugmentOS Cloud calls to start new sessions.
+   * Creates the webhook endpoint that MentraOS Cloud calls to start new sessions.
    */
   private setupWebhook(): void {
     if (!this.config.webhookPath) {
@@ -301,7 +301,7 @@ export class AppServer {
 
   /**
    * 🛠️ Setup Tool Call Endpoint
-   * Creates a /tool endpoint for handling tool calls from AugmentOS Cloud.
+   * Creates a /tool endpoint for handling tool calls from MentraOS Cloud.
    */
   private setupToolCallEndpoint(): void {
     this.app.post('/tool', async (req, res) => {
@@ -334,14 +334,14 @@ export class AppServer {
    * Handle a session request webhook
    */
   private async handleSessionRequest(request: SessionWebhookRequest, res: express.Response): Promise<void> {
-    const { sessionId, userId, augmentOSWebsocketUrl } = request;
+    const { sessionId, userId, mentraOSWebsocketUrl, augmentOSWebsocketUrl } = request;
     this.logger.info({userId}, `🗣️ Received session request for user ${userId}, session ${sessionId}\n\n`);
 
     // Create new App session
     const session = new AppSession({
       packageName: this.config.packageName,
       apiKey: this.config.apiKey,
-      augmentOSWebsocketUrl, // The websocket URL for the specific AugmentOS server that this userSession is connecting to.
+      mentraOSWebsocketUrl: mentraOSWebsocketUrl || augmentOSWebsocketUrl, // The websocket URL for the specific MentraOS server that this userSession is connecting to.
       appServer: this,
       userId,
     });
@@ -431,7 +431,7 @@ export class AppServer {
 
   /**
    * ⚙️ Setup Settings Endpoint
-   * Creates a /settings endpoint that the AugmentOS Cloud can use to update settings.
+   * Creates a /settings endpoint that the MentraOS Cloud can use to update settings.
    */
   private setupSettingsEndpoint(): void {
     this.app.post('/settings', async (req, res) => {
@@ -525,5 +525,46 @@ export class AppServer {
 
     // Run cleanup handlers
     this.cleanupHandlers.forEach(handler => handler());
+  }
+}
+
+
+/**
+ * @deprecated Use `AppServerConfig` instead. `TpaServerConfig` is deprecated and will be removed in a future version.
+ * This is an alias for backward compatibility only.
+ *
+ * @example
+ * ```typescript
+ * // ❌ Deprecated - Don't use this
+ * const config: TpaServerConfig = { ... };
+ *
+ * // ✅ Use this instead
+ * const config: AppServerConfig = { ... };
+ * ```
+ */
+export type TpaServerConfig = AppServerConfig;
+
+/**
+ * @deprecated Use `AppServer` instead. `TpaServer` is deprecated and will be removed in a future version.
+ * This is an alias for backward compatibility only.
+ *
+ * @example
+ * ```typescript
+ * // ❌ Deprecated - Don't use this
+ * class MyServer extends TpaServer { ... }
+ *
+ * // ✅ Use this instead
+ * class MyServer extends AppServer { ... }
+ * ```
+ */
+export class TpaServer extends AppServer {
+  constructor(config: TpaServerConfig) {
+    super(config);
+    // Emit a deprecation warning to help developers migrate
+    console.warn(
+      '⚠️  DEPRECATION WARNING: TpaServer is deprecated and will be removed in a future version. ' +
+      'Please use AppServer instead. ' +
+      'Simply replace "TpaServer" with "AppServer" in your code.'
+    );
   }
 }

@@ -1,6 +1,6 @@
 # @mentra/sdk
 
-A TypeScript client library for building Third Party Apps (Apps) for MentraOS Cloud. This library provides a flexible, type-safe interface for handling WebSocket connections, managing layouts, and processing real-time data streams.
+A TypeScript client library for building Apps for MentraOS Cloud. This library provides a flexible, type-safe interface for handling WebSocket connections, managing layouts, and processing real-time data streams.
 
 ## Table of Contents
 
@@ -57,7 +57,7 @@ A TypeScript client library for building Third Party Apps (Apps) for MentraOS Cl
 
 ## Introduction
 
-Welcome to the `@mentra/sdk` documentation. This SDK simplifies the process of building Third Party Apps (Apps) for MentraOS smartglasses. It provides tools for connecting to MentraOS Cloud, handling real-time data streams, and managing user interfaces in the AR environment.
+Welcome to the `@mentra/sdk` documentation. This SDK simplifies the process of building Apps for MentraOS smartglasses. It provides tools for connecting to MentraOS Cloud, handling real-time data streams, and managing user interfaces in the AR environment.
 
 **Target Audience:** MentraOS App Developers
 

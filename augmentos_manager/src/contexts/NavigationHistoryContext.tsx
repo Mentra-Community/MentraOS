@@ -3,6 +3,16 @@ import {useFocusEffect, usePathname, useSegments} from "expo-router"
 import {router} from "expo-router"
 import {BackHandler} from "react-native"
 
+export type NavigationHistoryPush = (path: string, params?: any) => Promise<void>
+export type NavigationHistoryReplace = (path: string, params?: any) => Promise<void>
+export type NavigationHistoryGoBack = () => void
+
+export type NavObject = {
+  push: NavigationHistoryPush
+  replace: NavigationHistoryReplace
+  goBack: NavigationHistoryGoBack
+}
+
 interface NavigationHistoryContextType {
   goBack: () => void
   getHistory: () => string[]
@@ -84,11 +94,9 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
   }
 
   const replace = (path: string, params?: any): Promise<void> => {
-    console.log("[NAV HISTORY DEBUG] replace called with path:", path, "params:", params)
     historyRef.current.pop()
     historyRef.current.push(path)
     const result = router.replace({pathname: path as any, params: params as any})
-    console.log("[NAV HISTORY DEBUG] router.replace returned:", result, "type:", typeof result)
     return result || Promise.resolve()
   }
 

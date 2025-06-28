@@ -1,17 +1,17 @@
-// augmentos-react/src/AuthProvider.tsx
+// react-sdk/src/AuthProvider.tsx
 import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { initializeAuth, clearStoredAuth, AuthState } from './lib/authCore';
 
-export interface AugmentosAuthContextType extends AuthState {
+export interface MentraAuthContextType extends AuthState {
   isLoading: boolean;
   error: string | null;
   logout: () => void;
   isAuthenticated: boolean;
 }
 
-export const AugmentosAuthContext = createContext<AugmentosAuthContextType | undefined>(undefined);
+export const MentraAuthContext = createContext<MentraAuthContextType | undefined>(undefined);
 
-export const AugmentosAuthProvider = ({ children }: { children: ReactNode }) => {
+export const MentraAuthProvider = ({ children }: { children: ReactNode }) => {
   const [userId, setUserId] = useState<string | null>(null);
   const [frontendToken, setFrontendToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -25,7 +25,7 @@ export const AugmentosAuthProvider = ({ children }: { children: ReactNode }) => 
       setUserId(auth.userId);
       setFrontendToken(auth.frontendToken);
     } catch (e) {
-      console.error("Augmentos Auth Initialization Error:", e);
+      console.error("MentraOS Auth Initialization Error:", e);
       setError((e as Error).message || 'Unknown authentication error');
       clearStoredAuth(); // Clear any potentially bad stored state
       setUserId(null);
@@ -48,8 +48,8 @@ export const AugmentosAuthProvider = ({ children }: { children: ReactNode }) => 
   const isAuthenticated = !!userId && !!frontendToken;
 
   return (
-    <AugmentosAuthContext.Provider value={{ userId, frontendToken, isLoading, error, logout, isAuthenticated }}>
+    <MentraAuthContext.Provider value={{ userId, frontendToken, isLoading, error, logout, isAuthenticated }}>
       {children}
-    </AugmentosAuthContext.Provider>
+    </MentraAuthContext.Provider>
   );
 };

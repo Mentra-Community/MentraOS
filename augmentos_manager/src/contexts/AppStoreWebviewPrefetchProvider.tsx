@@ -36,13 +36,13 @@ export const AppStoreWebviewPrefetchProvider: React.FC<{children: React.ReactNod
     try {
       const baseUrl = Constants.expoConfig?.extra?.MENTRAOS_APPSTORE_URL
       const backendComms = BackendServerComms.getInstance()
+      const url = new URL(baseUrl)
+      url.searchParams.set("theme", theme.isDark ? "dark" : "light")
 
       // Check if core token exists before trying to generate webview tokens
       if (!backendComms.getCoreToken()) {
         console.log("AppStoreWebviewPrefetchProvider: No core token available, skipping token generation")
-        const urlWithTheme = new URL(baseUrl)
-        urlWithTheme.searchParams.append("theme", theme.isDark ? "dark" : "light")
-        setAppStoreUrl(urlWithTheme.toString())
+        setAppStoreUrl(url.toString())
         return
       }
 
@@ -62,22 +62,20 @@ export const AppStoreWebviewPrefetchProvider: React.FC<{children: React.ReactNod
         signedUserToken = undefined
       }
 
-      const urlWithToken = new URL(baseUrl)
-      urlWithToken.searchParams.append("aos_temp_token", tempToken)
+      url.searchParams.set("aos_temp_token", tempToken)
       if (signedUserToken) {
-        urlWithToken.searchParams.append("aos_signed_user_token", signedUserToken)
+        url.searchParams.set("aos_signed_user_token", signedUserToken)
       }
-      urlWithToken.searchParams.append("theme", theme.isDark ? "dark" : "light")
 
       console.log("AppStoreWebviewPrefetchProvider: Final URL ready with tokens")
-      setAppStoreUrl(urlWithToken.toString())
+      setAppStoreUrl(url.toString())
     } catch (error) {
       console.error("AppStoreWebviewPrefetchProvider: Error during prefetch:", error)
       // fallback to base URL
       const baseUrl = Constants.expoConfig?.extra?.MENTRAOS_APPSTORE_URL
-      const urlWithTheme = new URL(baseUrl)
-      urlWithTheme.searchParams.append("theme", theme.isDark ? "dark" : "light")
-      setAppStoreUrl(urlWithTheme.toString())
+      const url = new URL(baseUrl)
+      url.searchParams.set("theme", theme.isDark ? "dark" : "light")
+      setAppStoreUrl(url.toString())
     } finally {
       setWebviewLoading(false)
     }

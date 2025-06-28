@@ -93,20 +93,6 @@ The SDK currently supports the following layout types:
     );
     ```
 
-### 5. `BitmapView`
-
-* **Purpose:** Displays a bitmap image on the glasses. The image data should be a base64 encoded string.
-* **Type:** [`LayoutType.BITMAP_VIEW`](/reference/enums#layouttype)
-* **Properties:**
-  * `data`: A base64 encoded string representing the bitmap data.
-
-* **Example:**
-  ```typescript
-  session.layouts.showBitmapView(
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...", {durationMs: 5000}
-  );
-  ```
-
 ## Display Duration (`durationMs`)
 
 All layout methods accept an optional `options` object, which can include a `durationMs` property. This property controls how long the layout is displayed on the glasses, in milliseconds.

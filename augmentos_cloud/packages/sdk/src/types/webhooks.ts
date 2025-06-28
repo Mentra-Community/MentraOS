@@ -44,7 +44,9 @@ export enum WebhookRequestType {
    */
   export interface SessionWebhookRequest extends BaseWebhookRequest {
     type: WebhookRequestType.SESSION_REQUEST;
+    mentraOSWebsocketUrl?: string;
     augmentOSWebsocketUrl?: string;
+
   }
 
   /**
@@ -76,7 +78,7 @@ export enum WebhookRequestType {
    */
   export interface SessionRecoveryWebhookRequest extends BaseWebhookRequest {
     type: WebhookRequestType.SESSION_RECOVERY;
-    augmentOSWebsocketUrl: string;
+    mentraOSWebsocketUrl: string;
   }
 
   /**

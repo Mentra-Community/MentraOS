@@ -33,7 +33,7 @@ export class LayoutManager {
    * 🎯 Creates a new LayoutManager instance
    *
    * @param packageName - App package identifier
-   * @param sendMessage - Function to send display requests to AugmentOS
+   * @param sendMessage - Function to send display requests to MentraOS
    */
   constructor(
     private packageName: string,

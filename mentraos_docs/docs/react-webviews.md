@@ -39,14 +39,14 @@ bun add @mentraos/react
 
 ### 1. Wrap Your App with the Authentication Provider
 
-The `MentraosAuthProvider` component manages authentication state for your entire React application:
+The `MentraAuthProvider` component manages authentication state for your entire React application:
 
 ```tsx
 // src/main.tsx
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { MentraosAuthProvider } from '@mentraos/react';
+import { MentraAuthProvider } from '@mentraos/react';
 
 /**
  * Application entry point that provides MentraOS authentication context
@@ -54,21 +54,21 @@ import { MentraosAuthProvider } from '@mentraos/react';
  */
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <MentraosAuthProvider>
+    <MentraAuthProvider>
       <App />
-    </MentraosAuthProvider>
+    </MentraAuthProvider>
   </React.StrictMode>
 );
 ```
 
 ### 2. Access Authentication State
 
-Use the `useMentraosAuth` hook to access user information and authentication status:
+Use the `UseMentraAuth` hook to access user information and authentication status:
 
 ```tsx
 // src/components/UserProfile.tsx
 import React from 'react';
-import { useMentraosAuth } from '@mentraos/react';
+import { UseMentraAuth } from '@mentraos/react';
 
 /**
  * Component that displays user authentication status and profile information.
@@ -77,7 +77,7 @@ import { useMentraosAuth } from '@mentraos/react';
  * @returns {React.JSX.Element} User profile component with authentication state
  */
 const UserProfile: React.FC = (): React.JSX.Element => {
-  const { userId, isLoading, error, isAuthenticated, logout } = useMentraosAuth();
+  const { userId, isLoading, error, isAuthenticated, logout } = UseMentraAuth();
 
   // Handle loading state during authentication
   if (isLoading) {
@@ -123,7 +123,7 @@ Here's a comprehensive example that demonstrates authentication, API calls, and 
  */
 
 import React, { useState } from 'react';
-import { MentraosAuthProvider, useMentraosAuth } from '@mentraos/react';
+import { MentraAuthProvider, UseMentraAuth } from '@mentraos/react';
 
 /**
  * Type definition for the API response from the notes endpoint
@@ -134,14 +134,14 @@ interface NotesApiResponse {
 
 /**
  * Content component that displays authentication status and user information.
- * This component consumes the MentraosAuth context to show loading states,
+ * This component consumes the MentraAuth context to show loading states,
  * errors, and authenticated user data. It also provides functionality to make
  * authenticated API calls to the App backend.
  *
  * @returns {React.JSX.Element} The rendered content based on authentication state
  */
 function Content(): React.JSX.Element {
-  const { userId, isLoading, error, isAuthenticated, frontendToken } = useMentraosAuth();
+  const { userId, isLoading, error, isAuthenticated, frontendToken } = UseMentraAuth();
 
   // State for managing API call results and loading state
   const [apiResult, setApiResult] = useState<NotesApiResponse | null>(null);
@@ -264,19 +264,19 @@ function Content(): React.JSX.Element {
 
 /**
  * Root App component that provides authentication context to the entire application.
- * This component wraps the Content component with the MentraosAuthProvider
+ * This component wraps the Content component with the MentraAuthProvider
  * to enable authentication functionality throughout the app.
  *
  * @returns {React.JSX.Element} The main application component
  */
 function App(): React.JSX.Element {
   return (
-    <MentraosAuthProvider>
+    <MentraAuthProvider>
       <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
         <h1>MentraOS React Test App</h1>
         <Content />
       </div>
-    </MentraosAuthProvider>
+    </MentraAuthProvider>
   );
 }
 
@@ -285,7 +285,7 @@ export default App;
 
 ## Making Authenticated API Calls
 
-The `frontendToken` from `useMentraosAuth` is a JWT token that you should include in the `Authorization` header when making requests to your App backend:
+The `frontendToken` from `UseMentraAuth` is a JWT token that you should include in the `Authorization` header when making requests to your App backend:
 
 ```tsx
 /**
@@ -294,7 +294,7 @@ The `frontendToken` from `useMentraosAuth` is a JWT token that you should includ
  * @returns {Object} Functions for making authenticated requests
  */
 const useAuthenticatedApi = () => {
-  const { frontendToken } = useMentraosAuth();
+  const { frontendToken } = UseMentraAuth();
 
   /**
    * Makes an authenticated GET request to the specified endpoint
@@ -357,10 +357,10 @@ const useAuthenticatedApi = () => {
 ```
 ## Authentication Hook API
 
-The `useMentraosAuth` hook returns an object with the following properties:
+The `UseMentraAuth` hook returns an object with the following properties:
 
 ```typescript
-interface MentraosAuthContextType {
+interface MentraAuthContextType {
   /** Unique identifier for the authenticated user */
   userId: string | null;
 
@@ -442,7 +442,7 @@ Enable debug logging to troubleshoot authentication issues:
 ```tsx
 // Add this to see authentication state changes
 const Content = () => {
-  const auth = useMentraosAuth();
+  const auth = UseMentraAuth();
 
   // Log authentication state for debugging
   React.useEffect(() => {

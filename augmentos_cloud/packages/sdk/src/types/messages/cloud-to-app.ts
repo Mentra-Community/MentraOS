@@ -18,7 +18,7 @@ import { Capabilities } from '../capabilities';
 export interface AppConnectionAck extends BaseMessage {
   type: CloudToAppMessageType.CONNECTION_ACK;
   settings?: AppSettings;
-  augmentosSettings?: Record<string, any>; // AugmentOS system settings
+  mentraosSettings?: Record<string, any>; // MentraOS system settings
   config?: AppConfig; // App config sent from cloud
   capabilities?: Capabilities; // Device capability profile
 }
@@ -83,9 +83,9 @@ export interface SettingsUpdate extends BaseMessage {
 }
 
 /**
- * AugmentOS settings update to App
+ * MentraOS settings update to App
  */
-export interface AugmentosSettingsUpdate extends BaseMessage {
+export interface MentraosSettingsUpdate extends BaseMessage {
   type: 'augmentos_settings_update';
   sessionId: string;
   settings: Record<string, any>;
@@ -216,7 +216,7 @@ export type CloudToAppMessage =
   | DashboardModeChanged
   | DashboardAlwaysOnChanged
   | CustomMessage
-  | AugmentosSettingsUpdate
+  | MentraosSettingsUpdate
   // New App-to-App communication response messages
   | AppMessageReceived
   | AppUserJoined

@@ -169,10 +169,10 @@ export interface NotificationDismissed extends BaseMessage {
 }
 
 /**
- * AugmentOS settings update from glasses
+ * MentraOS settings update from glasses
  */
-export interface AugmentosSettingsUpdateRequest extends BaseMessage {
-  type: GlassesToCloudMessageType.AUGMENTOS_SETTINGS_UPDATE_REQUEST;
+export interface MentraosSettingsUpdateRequest extends BaseMessage {
+  type: GlassesToCloudMessageType.MENTRAOS_SETTINGS_UPDATE_REQUEST;
 }
 
 /**
@@ -252,7 +252,7 @@ export type GlassesToCloudMessage =
   | Vad
   | PhoneNotification
   | NotificationDismissed
-  | AugmentosSettingsUpdateRequest
+  | MentraosSettingsUpdateRequest
   | CoreStatusUpdate
   | RtmpStreamStatus
   | KeepAliveAck
