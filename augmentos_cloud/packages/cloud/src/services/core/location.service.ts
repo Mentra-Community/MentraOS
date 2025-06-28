@@ -8,7 +8,8 @@ const logger = rootLogger.child({ service: 'location.service' });
 const NAVIGATION_APP_PACKAGES = [
   "com.nathan.nav",
   "com.mentra.navigation",
-  "com.mentra.navigationdev"
+  "com.mentra.navigationdev",
+  "com.nathan.run"
 ];
 
 class LocationService {
