@@ -5,6 +5,7 @@ import android.util.Log;
 
 import com.augmentos.augmentos_core.BuildConfig;
 import com.augmentos.augmentos_core.CalendarItem;
+import com.augmentos.augmentos_core.LocationSystem;
 import com.augmentos.augmentos_core.smarterglassesmanager.speechrecognition.AsrStreamKey;
 import com.augmentos.augmentos_core.smarterglassesmanager.speechrecognition.augmentos.SpeechRecAugmentos;
 import com.augmentos.augmentoslib.enums.AsrStreamType;
@@ -52,6 +53,7 @@ public class ServerComms {
     private static ServerComms instance;
     private String coreToken;
     private Context context;
+    private LocationSystem locationSystem; // property to hold the managed instance
 
     // ------------------------------------------------------------------------
     // AUDIO QUEUE SYSTEM (IMPROVED)
@@ -90,6 +92,11 @@ public class ServerComms {
 
     public void setServerCommsCallback(ServerCommsCallback callback) {
         this.serverCommsCallback = callback;
+    }
+
+    // setter for AugmentosService to provide the valid LocationSystem instance
+    public void setLocationSystem(LocationSystem locationSystem) {
+        this.locationSystem = locationSystem;
     }
 
     private ServerComms(Context context) {
@@ -637,6 +644,20 @@ public class ServerComms {
 //        Log.d(TAG, "Received message of type: " + msg);
 
         switch (type) {
+            case "SET_LOCATION_ACCURACY":
+                try {
+                    String rate = msg.getJSONObject("payload").getString("rate");
+                    boolean enableHigh = "realtime".equals(rate);
+                    if (locationSystem != null) {
+                        locationSystem.setHighAccuracyMode(enableHigh);
+                    } else {
+                        Log.w(TAG, "LocationSystem not available to ServerComms, cannot set accuracy mode");
+                    }
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error parsing SET_LOCATION_ACCURACY payload", e);
+                }
+                break;
+
             case "connection_ack":
                 Log.d(TAG, "Received connection_ack. Possibly store sessionId if needed.");
                 startAudioSenderThread();

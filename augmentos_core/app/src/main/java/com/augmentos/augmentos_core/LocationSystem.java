@@ -47,14 +47,9 @@ public class LocationSystem extends Service {
     public double latestAccessedLong = 0;
     private FusedLocationProviderClient fusedLocationProviderClient;
     private LocationCallback locationCallback;
-    private LocationCallback fastLocationCallback;
 
     // Store last known location
     private Location lastKnownLocation = null;
-
-    private final Handler locationSendingLoopHandler = new Handler(Looper.getMainLooper());
-    private Runnable locationSendingRunnableCode;
-    private final long locationSendTime = 1000 * 60 * 30; // 30 minutes
 
     /**
      * Class for clients to access this service
@@ -74,9 +69,12 @@ public class LocationSystem extends Service {
         // Initialize location components
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
         setupLocationCallbacks();
-        getLastKnownLocation();
-        requestFastLocationUpdate(); // Get a quick fix immediately on startup
-        scheduleLocationUpdates();
+        
+        // Immediately request a single, fast location fix on startup
+        requestSingleFastUpdate();
+
+        // Set the default mode to our standard, low-power 15-minute updates.
+        setHighAccuracyMode(false); 
     }
     
     @Override
@@ -214,64 +212,37 @@ public class LocationSystem extends Service {
                 });
     }
 
-    public void requestFastLocationUpdate() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
+    public void setHighAccuracyMode(boolean enabled) {
+        stopLocationUpdates(); // always stop previous requests
 
-        LocationRequest fastLocationRequest = LocationRequest.create();
-        fastLocationRequest.setPriority(LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY);
-        fastLocationRequest.setInterval(1000);              // Update every 1 second
-        fastLocationRequest.setFastestInterval(500);        // Fastest update interval 0.5 seconds
-        fastLocationRequest.setMaxWaitTime(3000);           // Wait at most 3 seconds for a fix
+        if (enabled) {
+            Log.d(TAG, "LocationSystem: Enabling high accuracy mode (realtime).");
+            LocationRequest realtimeRequest = LocationRequest.create();
+            realtimeRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+            realtimeRequest.setInterval(1000); // 1 second
+            realtimeRequest.setFastestInterval(500);
 
-        fusedLocationProviderClient.requestLocationUpdates(
-                fastLocationRequest,
-                fastLocationCallback,
-                Looper.getMainLooper()
-        );
-
-        // Set a timeout to cancel this request if it takes too long
-        locationSendingLoopHandler.postDelayed(() -> {
-            fusedLocationProviderClient.removeLocationUpdates(fastLocationCallback);
-            // If we didn't get a fast fix, request a more accurate one
-            if (!firstLockAcquired) {
-                requestLocationUpdate();
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                return;
             }
-        }, 5000); // Give up on fast fix after 5 seconds
-    }
+            fusedLocationProviderClient.requestLocationUpdates(realtimeRequest, locationCallback, Looper.getMainLooper());
+        } else {
+            Log.d(TAG, "LocationSystem: Disabling high accuracy mode, reverting to standard 15-minute updates.");
+            LocationRequest standardRequest = LocationRequest.create();
+            standardRequest.setPriority(LocationRequest.PRIORITY_LOW_POWER);
+            standardRequest.setInterval(900000); // 15 minutes
+            standardRequest.setFastestInterval(300000); // 5 minutes
 
-    public void requestLocationUpdate() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return;
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            fusedLocationProviderClient.requestLocationUpdates(standardRequest, locationCallback, Looper.getMainLooper());
         }
-
-        LocationRequest locationRequest = LocationRequest.create();
-        locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
-        locationRequest.setInterval(10000);              // Keep GPS on for 10 seconds
-        locationRequest.setFastestInterval(5000);        // Fastest update interval 5 seconds
-        locationRequest.setMaxWaitTime(15000);           // Wait up to 15 seconds for a fix (down from 60)
-
-        fusedLocationProviderClient.requestLocationUpdates(
-                locationRequest,
-                locationCallback,
-                Looper.getMainLooper()
-        );
-
-        // Set a timeout to cancel this request if it takes too long
-        locationSendingLoopHandler.postDelayed(() -> {
-            stopLocationUpdates();
-        }, 20000); // Give up after 20 seconds total
     }
 
     public void stopLocationUpdates() {
         if (fusedLocationProviderClient != null && locationCallback != null) {
             fusedLocationProviderClient.removeLocationUpdates(locationCallback);
-        }
-        
-        // Also remove updates from fast callback to be safe
-        if (fusedLocationProviderClient != null && fastLocationCallback != null) {
-            fusedLocationProviderClient.removeLocationUpdates(fastLocationCallback);
         }
     }
 
@@ -299,54 +270,8 @@ public class LocationSystem extends Service {
         return latestAccessedLong;
     }
 
-    // Add a flag and a polling interval for first lock
-    private boolean firstLockAcquired = false;
-    private final long firstLockPollingInterval = 5000; // 5 seconds
-
-    public void scheduleLocationUpdates() {
-        locationSendingRunnableCode = new Runnable() {
-            @Override
-            public void run() {
-                if (!firstLockAcquired) {
-                    // For first lock, try to get a fast fix first
-                    requestFastLocationUpdate();
-                    locationSendingLoopHandler.postDelayed(this, firstLockPollingInterval);
-                } else {
-                    // Once first fix is obtained, request high-accuracy location
-                    requestLocationUpdate();
-                    locationSendingLoopHandler.postDelayed(this, locationSendTime);
-                }
-            }
-        };
-        locationSendingLoopHandler.post(locationSendingRunnableCode);
-    }
-
     private void setupLocationCallbacks() {
-        // Fast, low-accuracy callback for initial fix
-        fastLocationCallback = new LocationCallback() {
-            @Override
-            public void onLocationResult(LocationResult locationResult) {
-                if (locationResult == null || locationResult.getLocations().isEmpty()) return;
-
-                Location location = locationResult.getLastLocation();
-                lat = location.getLatitude();
-                lng = location.getLongitude();
-                lastKnownLocation = location;
-
-                Log.d(TAG, "Fast location fix obtained: " + lat + ", " + lng);
-
-                sendLocationToServer();
-                fusedLocationProviderClient.removeLocationUpdates(fastLocationCallback);
-
-                if (!firstLockAcquired) {
-                    firstLockAcquired = true;
-                    // After getting fast fix, immediately request high accuracy fix
-                    requestLocationUpdate();
-                }
-            }
-        };
-
-        // High-accuracy callback for better location
+        // A single unified callback for all location updates
         locationCallback = new LocationCallback() {
             @Override
             public void onLocationResult(LocationResult locationResult) {
@@ -357,14 +282,8 @@ public class LocationSystem extends Service {
                 lng = location.getLongitude();
                 lastKnownLocation = location;
 
-                Log.d(TAG, "Accurate location fix obtained: " + lat + ", " + lng);
-
+                Log.d(TAG, "LocationSystem: Received location update: " + lat + ", " + lng);
                 sendLocationToServer();
-                stopLocationUpdates();
-
-                if (!firstLockAcquired) {
-                    firstLockAcquired = true;
-                }
             }
         };
     }
@@ -378,12 +297,38 @@ public class LocationSystem extends Service {
      * Call this method to cleanup all resources when the app is being destroyed
      */
     public void cleanup() {
-        // Remove all pending callbacks
-        if (locationSendingLoopHandler != null) {
-            locationSendingLoopHandler.removeCallbacksAndMessages(null);
-        }
-        
         // Make sure location updates are stopped
         stopLocationUpdates();
+    }
+
+    // gets a single fast update on startup
+    public void requestSingleFastUpdate() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        Log.d(TAG, "Requesting single fast location update on startup.");
+        LocationRequest fastUpdateRequest = LocationRequest.create();
+        fastUpdateRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+        fastUpdateRequest.setNumUpdates(1); // Only want one update
+        fastUpdateRequest.setMaxWaitTime(10000); // Wait at most 10 seconds
+
+        fusedLocationProviderClient.requestLocationUpdates(
+                fastUpdateRequest,
+                new LocationCallback() { // Use a one-time callback
+                    @Override
+                    public void onLocationResult(LocationResult locationResult) {
+                        if (locationResult == null || locationResult.getLocations().isEmpty()) return;
+                        Location location = locationResult.getLastLocation();
+                        lat = location.getLatitude();
+                        lng = location.getLongitude();
+                        lastKnownLocation = location;
+                        Log.d(TAG, ">>>> received single fast startup location update: " + lat + ", " + lng);
+                        sendLocationToServer();
+                        // This callback is self-terminating because of setNumUpdates(1)
+                    }
+                },
+                Looper.getMainLooper()
+        );
     }
 }

@@ -36,6 +36,23 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     self.locationChangedCallback = callback
   }
   
+  // on/off switch for high accuracy mode that gets triggered via the cloud for specific apps
+  public func setHighAccuracyMode(enabled: Bool) {
+    if enabled {
+      print("LocationManager: Enabling high accuracy mode (Best for Navigation)")
+      locationManager.allowsBackgroundLocationUpdates = true
+      locationManager.pausesLocationUpdatesAutomatically = false
+      locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+      locationManager.distanceFilter = kCLDistanceFilterNone
+    } else {
+      print("LocationManager: Disabling high accuracy mode, reverting to standard.")
+      locationManager.allowsBackgroundLocationUpdates = false
+      locationManager.pausesLocationUpdatesAutomatically = true
+      locationManager.desiredAccuracy = kCLLocationAccuracyBest
+      locationManager.distanceFilter = 2 // Default 2 meters
+    }
+  }
+  
   // MARK: - CLLocationManagerDelegate Methods
   
   func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
