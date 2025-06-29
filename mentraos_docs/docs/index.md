@@ -12,7 +12,7 @@ import MentraOSArchImage from '@site/src/components/ThemedImage';
 
 MentraOS is a cloud operating system for smart glasses that handles the hard parts: connections, Bluetooth, streaming, and more. This lets you focus on creating great smart glasses apps.
 
-<div style={{maxWidth: '515px', margin: '0 auto'}}>
+<div style={{maxWidth: '490px', margin: '0 auto'}}>
   <MentraOSArchImage width="100%" />
 </div>
 
