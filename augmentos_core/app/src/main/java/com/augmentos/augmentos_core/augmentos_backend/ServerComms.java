@@ -53,7 +53,7 @@ public class ServerComms {
     private static ServerComms instance;
     private String coreToken;
     private Context context;
-    private LocationSystem locationSystem; // [NEW] Property to hold the managed instance
+    private LocationSystem locationSystem; // property to hold the managed instance
 
     // ------------------------------------------------------------------------
     // AUDIO QUEUE SYSTEM (IMPROVED)
@@ -94,7 +94,7 @@ public class ServerComms {
         this.serverCommsCallback = callback;
     }
 
-    // [NEW] Setter for AugmentosService to provide the valid LocationSystem instance
+    // setter for AugmentosService to provide the valid LocationSystem instance
     public void setLocationSystem(LocationSystem locationSystem) {
         this.locationSystem = locationSystem;
     }
@@ -647,9 +647,7 @@ public class ServerComms {
             case "SET_LOCATION_ACCURACY":
                 try {
                     String rate = msg.getJSONObject("payload").getString("rate");
-                    // For the MVP, we only care if the rate is 'realtime' or not
                     boolean enableHigh = "realtime".equals(rate);
-                    // [MODIFIED] Use the managed instance variable with a null check
                     if (locationSystem != null) {
                         locationSystem.setHighAccuracyMode(enableHigh);
                     } else {

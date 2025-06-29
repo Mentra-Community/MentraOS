@@ -132,7 +132,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
     private final Handler screenCaptureHandler = new Handler();
     private Runnable screenCaptureRunnable;
     private LocationSystem locationSystem;
-    private boolean locationSystemBound = false; // [NEW]
+    private boolean locationSystemBound = false;
     private long currTime = 0;
     private long lastPressed = 0;
     private final long lastTapped = 0;
@@ -196,7 +196,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         }
     };
 
-    // [NEW] Connection to LocationSystem service
+    // connection to LocationSystem service
     private ServiceConnection locationServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName className, IBinder service) {
@@ -538,7 +538,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             handleBatteryOptimization(this);
         }
 
-        // [NEW] Start and bind to the LocationSystem service
+        // start and bind to the LocationSystem service
         Intent locationIntent = new Intent(this, LocationSystem.class);
         startService(locationIntent);
         bindService(locationIntent, locationServiceConnection, Context.BIND_AUTO_CREATE);
@@ -580,8 +580,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
         //    ServerComms.getInstance().connectWebSocket(authHandler.getCoreToken());
         initializeServerCommsCallbacks();
 
-        // [REMOVED] The direct instantiation is replaced by the bound service logic
-        // locationSystem = new LocationSystem(this);
+        // the direct instantiation is replaced by the bound service logic
 
         // Start periodic datetime sending
         datetimeRunnable = new Runnable() {
@@ -2396,7 +2395,7 @@ public class AugmentosService extends LifecycleService implements AugmentOsActio
             edgeAppSystem.destroy();
         }
 
-        // [NEW] Unbind from LocationSystem service
+        // unbind from LocationSystem service
         if (locationSystemBound) {
             unbindService(locationServiceConnection);
             locationSystemBound = false;

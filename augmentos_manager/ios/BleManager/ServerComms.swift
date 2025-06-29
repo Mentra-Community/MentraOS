@@ -386,7 +386,7 @@ class ServerComms {
     
     print("Received message of type: \(type)")
     
-    // [NEW] Handle new location command for the MVP
+    // // checks for our new location commands from the cloud before handling any other message type
     if type == "SET_LOCATION_ACCURACY" {
         if let payload = msg["payload"] as? [String: Any],
            let rate = payload["rate"] as? String {
