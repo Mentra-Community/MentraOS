@@ -69,9 +69,11 @@ public class LocationSystem extends Service {
         // Initialize location components
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
         setupLocationCallbacks();
-        getLastKnownLocation();
         
-        // Start with standard mode by default.
+        // Immediately request a single, fast location fix on startup
+        requestSingleFastUpdate();
+
+        // Set the default mode to our standard, low-power 15-minute updates.
         setHighAccuracyMode(false); 
     }
     
@@ -211,7 +213,7 @@ public class LocationSystem extends Service {
     }
 
     public void setHighAccuracyMode(boolean enabled) {
-        stopLocationUpdates(); // Always stop previous requests
+        stopLocationUpdates(); // always stop previous requests
 
         if (enabled) {
             Log.d(TAG, "LocationSystem: Enabling high accuracy mode (realtime).");
@@ -269,7 +271,7 @@ public class LocationSystem extends Service {
     }
 
     private void setupLocationCallbacks() {
-        // A single, unified callback for all location updates.
+        // A single unified callback for all location updates
         locationCallback = new LocationCallback() {
             @Override
             public void onLocationResult(LocationResult locationResult) {
@@ -297,5 +299,36 @@ public class LocationSystem extends Service {
     public void cleanup() {
         // Make sure location updates are stopped
         stopLocationUpdates();
+    }
+
+    // gets a single fast update on startup
+    public void requestSingleFastUpdate() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        Log.d(TAG, "Requesting single fast location update on startup.");
+        LocationRequest fastUpdateRequest = LocationRequest.create();
+        fastUpdateRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+        fastUpdateRequest.setNumUpdates(1); // Only want one update
+        fastUpdateRequest.setMaxWaitTime(10000); // Wait at most 10 seconds
+
+        fusedLocationProviderClient.requestLocationUpdates(
+                fastUpdateRequest,
+                new LocationCallback() { // Use a one-time callback
+                    @Override
+                    public void onLocationResult(LocationResult locationResult) {
+                        if (locationResult == null || locationResult.getLocations().isEmpty()) return;
+                        Location location = locationResult.getLastLocation();
+                        lat = location.getLatitude();
+                        lng = location.getLongitude();
+                        lastKnownLocation = location;
+                        Log.d(TAG, ">>>> received single fast startup location update: " + lat + ", " + lng);
+                        sendLocationToServer();
+                        // This callback is self-terminating because of setNumUpdates(1)
+                    }
+                },
+                Looper.getMainLooper()
+        );
     }
 }
