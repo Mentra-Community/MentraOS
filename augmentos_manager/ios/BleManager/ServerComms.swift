@@ -386,6 +386,15 @@ class ServerComms {
     
     print("Received message of type: \(type)")
     
+    // [NEW] Handle new location command for the MVP
+    if type == "SET_LOCATION_ACCURACY" {
+        if let payload = msg["payload"] as? [String: Any],
+           let rate = payload["rate"] as? String {
+            self.locationManager.setHighAccuracyMode(enabled: rate == "realtime")
+        }
+        return // End processing for this message type
+    }
+
     switch type {
     case "connection_ack":
       startAudioSenderThread()
