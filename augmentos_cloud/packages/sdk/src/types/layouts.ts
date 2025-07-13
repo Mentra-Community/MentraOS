@@ -45,9 +45,26 @@ export interface BitmapView {
 }
 
 /**
+ * Bitmap animation layout - sends batched frames for iOS-controlled timing
+ */
+export interface BitmapAnimation {
+    layoutType: LayoutType.BITMAP_ANIMATION;
+    frames: string[];
+    interval: number;
+    repeat: boolean;
+}
+
+/**
+ * Clear view layout - clears the display
+ */
+export interface ClearView {
+    layoutType: LayoutType.CLEAR_VIEW;
+}
+
+/**
  * Union type for all layouts
  */
-export type Layout = TextWall | DoubleTextWall | DashboardCard | ReferenceCard | BitmapView;
+export type Layout = TextWall | DoubleTextWall | DashboardCard | ReferenceCard | BitmapView | BitmapAnimation | ClearView;
 
 export interface DisplayRequest extends BaseMessage {
     type: AppToCloudMessageType.DISPLAY_REQUEST;

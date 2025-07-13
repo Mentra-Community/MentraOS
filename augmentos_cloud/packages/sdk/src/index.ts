@@ -79,6 +79,10 @@ export * from "./app/index";
 // Logging exports
 export * from "./logging/logger";
 
+// Utility exports
+export * from "./utils/bitmap-utils";
+export * from "./utils/animation-utils";
+
 // Re-export common types for convenience
 // This allows developers to import commonly used types directly from the package root
 // without having to know exactly which file they come from
@@ -138,6 +142,8 @@ export {
   DoubleTextWall,
   DashboardCard,
   ReferenceCard,
+  BitmapView,
+  ClearView,
   Layout,
   DisplayRequest
 } from './types/layouts';

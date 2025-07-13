@@ -32,7 +32,8 @@ export enum LayoutType {
   DOUBLE_TEXT_WALL = 'double_text_wall',
   DASHBOARD_CARD = 'dashboard_card',
   REFERENCE_CARD = 'reference_card',
-  BITMAP_VIEW = 'bitmap_view'
+  BITMAP_VIEW = 'bitmap_view',
+  CLEAR_VIEW = 'clear_view'
 }
 
 export enum ViewType {
@@ -69,7 +70,11 @@ export interface BitmapView {
   data: string;
 }
 
-export type Layout = TextWall | DoubleTextWall | DashboardCard | ReferenceCard | BitmapView;
+export interface ClearView {
+  layoutType: LayoutType.CLEAR_VIEW;
+}
+
+export type Layout = TextWall | DoubleTextWall | DashboardCard | ReferenceCard | BitmapView | ClearView;
 
 // Base message interface
 export interface BaseMessage {

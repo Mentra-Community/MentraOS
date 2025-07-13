@@ -18,6 +18,8 @@ struct ViewState {
   var layoutType: String
   var text: String
   var eventStr: String
+  var data: String?
+  var animationData: [String: Any]?
 }
 
 // This class handles logic for managing devices and connections to AugmentOS servers
@@ -59,8 +61,8 @@ struct ViewState {
   private var connectTask: Task<Void, Never>?
 
   var viewStates: [ViewState] = [
-    ViewState(topText: " ", bottomText: " ", layoutType: "text_wall", text: "", eventStr: ""),
-    ViewState(topText: " ", bottomText: " ", layoutType: "text_wall", text: "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS", eventStr: ""),
+    ViewState(topText: " ", bottomText: " ", layoutType: "text_wall", text: "", eventStr: "", data: nil, animationData: nil),
+    ViewState(topText: " ", bottomText: " ", layoutType: "text_wall", text: "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS", eventStr: "", data: nil, animationData: nil),
   ]
 
   private var sendStateWorkItem: DispatchWorkItem?
@@ -528,6 +530,44 @@ struct ViewState {
       case "reference_card":
         sendText(currentViewState.topText + "\n\n" + currentViewState.bottomText);
         break
+      case "bitmap_view":
+        print("Processing bitmap_view layout")
+        if let hexString = currentViewState.data {
+          print("Processing bitmap_view with hex data, length: \(hexString.count)")
+          
+          // Use hex directly - no conversion needed
+          self.g1Manager?.RN_displayBitmapFromHex(hexString)
+        } else {
+          print("ERROR: bitmap_view missing data field")
+        }
+        break
+      case "bitmap_animation":
+        print("Processing bitmap_animation layout")
+        if let animationData = currentViewState.animationData,
+           let frames = animationData["frames"] as? [String],
+           let interval = animationData["interval"] as? Double {
+          let shouldRepeat = animationData["repeat"] as? Bool ?? true
+          
+          print("🎬 Starting iOS-controlled animation: \(frames.count) frames, \(interval)ms intervals, repeat: \(shouldRepeat)")
+          
+          // Convert frames array to JSON string
+          if let framesJsonData = try? JSONSerialization.data(withJSONObject: frames) {
+              if let framesJson = String(data: framesJsonData, encoding: .utf8) {
+                  self.g1Manager?.RN_displayBitmapAnimation(framesJson, interval: interval, shouldRepeat: shouldRepeat)
+              } else {
+                  print("ERROR: Failed to convert animation frames JSON data to String")
+              }
+          } else {
+              print("ERROR: Failed to serialize animation frames to JSON")
+          }
+        } else {
+          print("ERROR: bitmap_animation missing animation data")
+        }
+        break
+      case "clear_view":
+        print("Processing clear_view layout - clearing display")
+        self.g1Manager?.RN_clearDisplay()
+        break
       default:
         print("UNHANDLED LAYOUT_TYPE \(layoutType)")
         break
@@ -614,6 +654,7 @@ struct ViewState {
     var topText = layout["topText"] as? String ?? " "
     var bottomText = layout["bottomText"] as? String ?? " "
     var title = layout["title"] as? String ?? " "
+    var data = layout["data"] as? String
 
     text = parsePlaceholders(text)
     topText = parsePlaceholders(topText)
@@ -633,6 +674,29 @@ struct ViewState {
     case "reference_card":
       self.viewStates[stateIndex].topText = text
       self.viewStates[stateIndex].bottomText = title
+      break
+    case "bitmap_view":
+      self.viewStates[stateIndex].data = data
+      print("Parsed bitmap_view with data length: \(data?.count ?? 0)")
+      break
+    case "bitmap_animation":
+      // Store animation data with frames and timing
+      if let frames = layout["frames"] as? [String],
+         let interval = layout["interval"] as? Double {
+        let animationData: [String: Any] = [
+          "frames": frames,
+          "interval": interval,
+          "repeat": layout["repeat"] as? Bool ?? true
+        ]
+        self.viewStates[stateIndex].animationData = animationData
+        print("Parsed bitmap_animation with \(frames.count) frames, interval: \(interval)ms")
+      } else {
+        print("ERROR: bitmap_animation missing frames or interval")
+      }
+      break
+    case "clear_view":
+      print("Parsed clear_view layout")
+      break
     default:
       print("UNHANDLED LAYOUT_TYPE \(layoutType)")
       break

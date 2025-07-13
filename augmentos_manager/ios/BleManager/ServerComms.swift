@@ -577,9 +577,9 @@ class ServerComms {
     }
     
     // Fallback to environment configuration
-    let host = RNCConfig.env(for: "MENTRAOS_HOST")!
-    let port = RNCConfig.env(for: "MENTRAOS_PORT")!
-    let secure = RNCConfig.env(for: "MENTRAOS_SECURE")!
+    let host = RNCConfig.env(for: "MENTRAOS_HOST") ?? "localhost"
+    let port = RNCConfig.env(for: "MENTRAOS_PORT") ?? "8002"
+    let secure = RNCConfig.env(for: "MENTRAOS_SECURE") ?? "false"
     let secureServer = secure.contains("true")
     return "\(secureServer ? "https" : "http")://\(host):\(port)"
   }
@@ -594,9 +594,9 @@ class ServerComms {
       let wsUrl = "\(secure ? "wss" : "ws")://\(host):\(port)/glasses-ws"
       return wsUrl
     }
-    let host = RNCConfig.env(for: "MENTRAOS_HOST")!;
-    let port = RNCConfig.env(for: "MENTRAOS_PORT")!;
-    let secure = RNCConfig.env(for: "MENTRAOS_SECURE")!
+    let host = RNCConfig.env(for: "MENTRAOS_HOST") ?? "localhost";
+    let port = RNCConfig.env(for: "MENTRAOS_PORT") ?? "8002";
+    let secure = RNCConfig.env(for: "MENTRAOS_SECURE") ?? "false"
     let secureServer = secure.contains("true")
     let url = "\(secureServer ? "wss" : "ws")://\(host):\(port)/glasses-ws"
     print("ServerComms: getServerUrl(): \(url)")

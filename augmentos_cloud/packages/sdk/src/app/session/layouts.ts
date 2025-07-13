@@ -25,7 +25,9 @@ import {
   LayoutType,
   ViewType,
   AppToCloudMessageType,
-  BitmapView
+  BitmapView,
+  BitmapAnimation,
+  ClearView
 } from '../../types';
 
 export class LayoutManager {
@@ -115,6 +117,10 @@ export class LayoutManager {
           if (bitmapView.data.length > 1000000) { // 1MB limit
             throw new Error("Bitmap data is too large (>1MB), please reduce size");
           }
+          break;
+
+        case LayoutType.CLEAR_VIEW:
+          // ClearView has no additional validation needed
           break;
       }
 
@@ -286,13 +292,17 @@ export class LayoutManager {
     /**
    * 📇 Shows a bitmap
    *
-   * @param data - base64 encoded bitmap data
+   * Uses the proven animation system internally for proper L/R eye synchronization.
+   * This ensures single bitmap displays work consistently with the same
+   * hardware-optimized timing as animations.
+   *
+   * @param data - hex or base64 encoded bitmap data
    * @param options - Optional parameters (view, duration)
    *
    * @example
    * ```typescript
    * layouts.showBitmapView(
-   *   yourBase64EncodedBitmapDataString
+   *   yourHexOrBase64EncodedBitmapDataString
    * );
    * ```
    */
@@ -300,15 +310,29 @@ export class LayoutManager {
     data: string,
     options?: { view?: ViewType; durationMs?: number }
   ) {
-    const layout: BitmapView = {
-      layoutType: LayoutType.BITMAP_VIEW,
-      data
-    };
-    this.sendMessage(this.createDisplayEvent(
-      layout,
-      options?.view,
-      options?.durationMs
-    ));
+    // Use the proven animation system for single frame display
+    // This ensures proper L/R eye synchronization that works with
+    // the optimized iOS BLE transmission system
+    const duration = options?.durationMs || 5000; // Default 5 seconds
+    const frameInterval = 1650; // Use same interval as working animations
+    
+    // Create short multi-frame animation for better L/R sync
+    // Repeat the same frame a few times to mimic continuous animation behavior
+    const frames = [data, data, data]; // Triple the frame for stability
+    
+    const animation = this.showBitmapAnimation(
+      frames,           // Multi-frame array (same image repeated)
+      frameInterval,    // Use proven 1650ms interval
+      false,            // Don't repeat infinitely
+      { view: options?.view }
+    );
+    
+    // Auto-stop after duration
+    setTimeout(() => {
+      animation.stop();
+    }, duration);
+    
+    return animation;
   }
 
   /**
@@ -343,5 +367,97 @@ export class LayoutManager {
       options?.view || ViewType.DASHBOARD,
       options?.durationMs
     ));
+  }
+
+  /**
+   * 🧹 Clears the display
+   *
+   * Best for:
+   * - Clearing previous content
+   * - Resetting display state
+   * - Starting fresh
+   *
+   * @param options - Optional parameters (view)
+   *
+   * @example
+   * ```typescript
+   * layouts.clearView();
+   * layouts.clearView({ view: ViewType.DASHBOARD });
+   * ```
+   */
+  clearView(options?: { view?: ViewType }) {
+    const layout: ClearView = {
+      layoutType: LayoutType.CLEAR_VIEW
+    };
+    this.sendMessage(this.createDisplayEvent(
+      layout,
+      options?.view
+    ));
+  }
+
+  /**
+   * 🎬 Shows an animated sequence of bitmap images (iOS-controlled timing)
+   *
+   * Sends complete animation package to iOS for device-controlled timing.
+   * This provides superior performance and synchronization by letting
+   * the device control the display timing directly.
+   *
+   * Best for:
+   * - Smooth high-performance animations
+   * - Precise timing control
+   * - Synchronized left/right display
+   * - EvenDemo-quality performance
+   *
+   * @param bitmapDataArray - Array of bitmap data strings (hex or base64 encoded)
+   * @param intervalMs - Time between frames in milliseconds (default: 1650ms)
+   * @param repeat - Whether to loop the animation continuously (default: false)
+   * @param options - Optional parameters (view)
+   *
+   * @example
+   * ```typescript
+   * // Device-controlled animation (recommended)
+   * const frames = ['hexdata1', 'hexdata2', 'hexdata3'];
+   * layouts.showBitmapAnimation(frames, 1650, true);
+   *
+   * // Single-cycle animation
+   * layouts.showBitmapAnimation(loadingFrames, 1650, false);
+   * ```
+   *
+   * @returns Animation controller object with stop() method
+   */
+  showBitmapAnimation(
+    bitmapDataArray: string[],
+    intervalMs: number = 1650,
+    repeat: boolean = false,
+    options?: { view?: ViewType }
+  ): { stop: () => void } {
+    // Validation
+    if (!Array.isArray(bitmapDataArray) || bitmapDataArray.length === 0) {
+      throw new Error("showBitmapAnimation requires a non-empty array of bitmap data");
+    }
+
+    // Send complete animation package to iOS for device-controlled timing
+    const layout: BitmapAnimation = {
+      layoutType: LayoutType.BITMAP_ANIMATION,
+      frames: bitmapDataArray,
+      interval: intervalMs,
+      repeat: repeat
+    };
+
+    this.sendMessage(this.createDisplayEvent(
+      layout,
+      options?.view
+    ));
+
+    console.log(`🎬 Sent batched animation to iOS: ${bitmapDataArray.length} frames at ${intervalMs}ms${repeat ? ' (repeating)' : ''}`);
+
+    // Return controller for compatibility
+    return {
+      stop: () => {
+        // Send stop command to iOS
+        this.clearView();
+        console.log('🛑 Animation stop requested');
+      }
+    };
   }
 }

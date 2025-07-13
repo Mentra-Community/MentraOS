@@ -93,6 +93,127 @@ The SDK currently supports the following layout types:
     );
     ```
 
+### 5. `BitmapView`
+
+*   **Purpose:** Displays bitmap images on the AR glasses. Supports monochrome bitmaps at 576×135 pixel resolution.
+*   **Type:** [`LayoutType.BITMAP_VIEW`](/reference/enums#layouttype)
+*   **Properties:**
+    *   `data`: Bitmap data as hex or base64 encoded string.
+
+*   **Example:**
+
+    ```typescript
+    // Display a single bitmap image
+    const bitmapData = "424d461a00000000000036000000..."; // hex encoded BMP data
+    session.layouts.showBitmapView(bitmapData);
+
+    // Display with duration control
+    session.layouts.showBitmapView(bitmapData, { durationMs: 3000 });
+    ```
+
+### 6. `ClearView`
+
+*   **Purpose:** Clears the current display, returning to a blank state. Useful for resetting the view before showing new content.
+*   **Type:** [`LayoutType.CLEAR_VIEW`](/reference/enums#layouttype)
+*   **Properties:** None.
+
+*   **Example:**
+
+    ```typescript
+    // Clear the display
+    session.layouts.clearView();
+
+    // Clear specific view
+    session.layouts.clearView({ view: ViewType.DASHBOARD });
+    ```
+
+## Bitmap Animation
+
+The LayoutManager provides animation support for bitmap sequences:
+
+```typescript
+/**
+ * Shows an animated sequence of bitmap images
+ * @param bitmapDataArray - Array of bitmap data strings (hex encoded)
+ * @param intervalMs - Time between frames in milliseconds
+ * @param repeat - Whether to loop the animation continuously
+ * @param options - Optional parameters (view)
+ * @returns Animation controller object with stop() method
+ */
+session.layouts.showBitmapAnimation(
+  bitmapDataArray: string[],
+  intervalMs?: number,
+  repeat?: boolean,
+  options?: { view?: ViewType }
+): { stop: () => void }
+```
+
+**Example:**
+
+```typescript
+// Simple 3-frame loading animation
+const loadingFrames = [
+  "424d461a000000...", // Frame 1 hex data
+  "424d461a000001...", // Frame 2 hex data  
+  "424d461a000002..."  // Frame 3 hex data
+];
+session.layouts.showBitmapAnimation(loadingFrames, 1650, false);
+
+// Continuous loop animation
+const animation = session.layouts.showBitmapAnimation(frames, 1650, true);
+
+// Stop the animation
+setTimeout(() => animation.stop(), 10000);
+```
+
+## Bitmap Utilities
+
+The SDK provides utility classes for working with bitmap images:
+
+### BitmapUtils
+
+```typescript
+import { BitmapUtils } from '@mentra/sdk';
+
+// Load a single BMP file
+const bmpHex = await BitmapUtils.loadBmpAsHex('./assets/icon.bmp');
+session.layouts.showBitmapView(bmpHex);
+
+// Load multiple animation frames
+const frames = await BitmapUtils.loadBmpFrames('./animations', 10);
+session.layouts.showBitmapAnimation(frames, 1650, true);
+
+// Validate bitmap data
+const validation = BitmapUtils.validateBmpHex(bmpHex);
+if (!validation.isValid) {
+  console.error('Invalid bitmap:', validation.errors);
+}
+```
+
+### AnimationUtils
+
+```typescript
+import { AnimationUtils } from '@mentra/sdk';
+
+// Create animation from files
+const animation = await AnimationUtils.createBitmapAnimation(
+  session,
+  './animations',     // Base path
+  10,                 // Frame count
+  {
+    intervalMs: 1650, // Hardware-optimized timing
+    repeat: true,
+    onFrame: (frame, total) => console.log(`Frame ${frame}/${total}`)
+  }
+);
+
+// Use optimized settings for hardware
+const config = AnimationUtils.getOptimizedConfig('even-realities-g1');
+const optimizedAnimation = await AnimationUtils.createBitmapAnimation(
+  session, './frames', 8, config
+);
+```
+
 ## Display Duration (`durationMs`)
 
 All layout methods accept an optional `options` object, which can include a `durationMs` property. This property controls how long the layout is displayed on the glasses, in milliseconds.
