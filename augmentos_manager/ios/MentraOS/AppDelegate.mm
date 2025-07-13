@@ -13,19 +13,6 @@
   // They will be passed down to the ViewController used by React Native.
   self.initialProps = @{};
 
-  // Disable UI observation tracking warnings in development
-  #if DEBUG
-  if (@available(iOS 17.0, *)) {
-    // This reduces the UI observation feedback loop warnings
-    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"UIEnableObservationTracking"];
-  }
-  
-  // Reduce layout invalidation warnings
-  if (@available(iOS 16.0, *)) {
-    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"UIEnableObservationTrackingFeedbackLoop"];
-  }
-  #endif
-
   return [super application:application didFinishLaunchingWithOptions:launchOptions];
 }
 

@@ -317,3 +317,6 @@ server/auth/serviceAccountKey.json
 .env.production
 .env.staging
 augmentos_asg_client/StreamPackLite/
+
+
+kyle_notes/*

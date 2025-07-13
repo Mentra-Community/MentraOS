@@ -17,13 +17,13 @@ export const evenRealitiesG1: Capabilities = {
   hasCamera: false,
   camera: null,
 
-  // Screen capabilities - G1 has a green monochrome display
+  // Screen capabilities - G1 has a green monochrome display with BMP support
   hasScreen: true,
   screen: {
     count: 2,
     isColor: false,
     color: 'green',
-    canDisplayBitmap: false,
+    canDisplayBitmap: true,
     resolution: { width: 640, height: 200 },
     fieldOfView: { horizontal: 25 },
     maxTextLines: 5,

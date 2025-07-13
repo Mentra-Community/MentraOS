@@ -1,0 +1,34 @@
+diff --git a/node_modules/expo-localization/ios/LocalizationModule.swift b/node_modules/expo-localization/ios/LocalizationModule.swift
+index 1234567..abcdefg 100644
+--- a/node_modules/expo-localization/ios/LocalizationModule.swift
++++ b/node_modules/expo-localization/ios/LocalizationModule.swift
+@@ -122,6 +122,20 @@ public class LocalizationModule: Module {
+       return "roc"
+     case .iso8601:
+       return "iso8601"
++    case .bangla:
++      return "bangla"
++    case .gujarati:
++      return "gujarati"
++    case .kannada:
++      return "kannada"
++    case .malayalam:
++      return "malayalam"
++    case .marathi:
++      return "marathi"
++    case .odia:
++      return "odia"
++    case .tamil:
++      return "tamil"
++    case .telugu:
++      return "telugu"
++    case .vikram:
++      return "vikram"
++    case .dangi:
++      return "dangi"
++    case .vietnamese:
++      return "vietnamese"
++    @unknown default:
++      return "gregorian"
+     }
+   }
