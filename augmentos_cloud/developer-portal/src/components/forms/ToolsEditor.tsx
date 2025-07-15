@@ -5,12 +5,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Trash2, Brain, ChevronDown, ChevronRight, Settings, GripVertical } from "lucide-react";
+import { Plus, Trash2, Brain, ChevronDown, ChevronRight, Settings, GripVertical, Server } from "lucide-react";
 import { Tool } from '@/types/app';
+import { McpConfig } from '@/types/mcp';
 
 interface ToolsEditorProps {
   tools: Tool[];
   onChange: (tools: Tool[]) => void;
+  mcpConfig?: McpConfig;
+  onMcpConfigChange?: (config: McpConfig) => void;
   className?: string;
 }
 
@@ -388,13 +391,21 @@ const ToolItem: React.FC<ToolItemProps> = ({
 /**
  * Compact tools editor component with mobile-friendly design
  */
-const ToolsEditor: React.FC<ToolsEditorProps> = ({ tools, onChange, className }) => {
+const ToolsEditor: React.FC<ToolsEditorProps> = ({ tools, onChange, mcpConfig = {}, onMcpConfigChange, className }) => {
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
 
   // Convert tools to internal format for editing (only initialize once)
   const [internalTools, setInternalTools] = React.useState<InternalTool[]>(() =>
     tools.map(convertToolToInternal)
   );
+
+  // MCP config as JSON string for editing
+  const [mcpConfigJson, setMcpConfigJson] = React.useState<string>(() => 
+    JSON.stringify(mcpConfig, null, 2)
+  );
+
+  // Track JSON validation state
+  const [mcpJsonError, setMcpJsonError] = React.useState<string>('');
 
   // Helper function to create a new empty tool
   const createEmptyTool = (): InternalTool => ({
@@ -483,6 +494,26 @@ const ToolsEditor: React.FC<ToolsEditorProps> = ({ tools, onChange, className })
     updateTool(toolIndex, { parameters: newParameters });
   };
 
+  // MCP JSON configuration handlers
+  const handleMcpJsonChange = (value: string) => {
+    setMcpConfigJson(value);
+    setMcpJsonError('');
+
+    try {
+      const parsed = JSON.parse(value);
+      onMcpConfigChange?.(parsed);
+    } catch (error) {
+      setMcpJsonError(error instanceof Error ? error.message : 'Invalid JSON');
+    }
+  };
+
+  // Update local state when external mcpConfig changes
+  React.useEffect(() => {
+    setMcpConfigJson(JSON.stringify(mcpConfig, null, 2));
+    setMcpJsonError('');
+  }, [mcpConfig]);
+
+
   return (
     <div className={className}>
       <div className="flex items-center justify-between mb-3">
@@ -530,6 +561,55 @@ const ToolsEditor: React.FC<ToolsEditorProps> = ({ tools, onChange, className })
               updateParameter={updateParameter}
             />
           ))}
+        </div>
+      )}
+
+      {/* MCP Configuration Section */}
+      {onMcpConfigChange && (
+        <div className="mt-8 pt-6 border-t border-gray-200">
+          <div className="mb-4">
+            <h3 className="text-lg font-medium flex items-center gap-2 mb-2">
+              <Server className="h-5 w-5" />
+              MCP Configuration
+            </h3>
+            <p className="text-sm text-gray-600">
+              Configure Model Context Protocol servers in JSON format
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <Label className="text-sm font-medium">mcp.json</Label>
+              <Textarea
+                value={mcpConfigJson}
+                onChange={(e) => handleMcpJsonChange(e.target.value)}
+                placeholder={JSON.stringify({
+                  "math_server": {
+                    "transport": "stdio",
+                    "command": "python",
+                    "args": ["/path/to/math_server.py"]
+                  },
+                  "weather_api": {
+                    "transport": "streamable_http",
+                    "url": "http://localhost:8000/mcp",
+                    "headers": {
+                      "Authorization": "Bearer token"
+                    }
+                  }
+                }, null, 2)}
+                rows={12}
+                className={`mt-1 font-mono text-sm ${mcpJsonError ? 'border-red-500' : ''}`}
+              />
+              {mcpJsonError && (
+                <p className="text-xs text-red-600 mt-1">
+                  {mcpJsonError}
+                </p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                Define MCP servers with their connection details. Each server can use "stdio" or "streamable_http" transport.
+              </p>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@ import mongoose, { Schema, Document, Model, Types } from 'mongoose';
 import { AppSettingType, type AppSetting } from '@mentra/sdk';
 import { MongoSanitizer } from '../utils/mongoSanitizer';
 import { logger } from "../services/logging/pino-logger";
+import { McpConfig } from '@mentra/agents';
 
 interface Location {
   lat: number;
@@ -81,6 +82,12 @@ export interface UserI extends Document {
    */
   glassesModels?: string[];
 
+  /**
+   * Model Context Protocol (MCP) server configurations for this user
+   * Maps server names to their connection configurations
+   */
+  mcpConfig?: McpConfig;
+
   setLocation(location: Location): Promise<void>;
   addRunningApp(appName: string): Promise<void>;
   removeRunningApp(appName: string): Promise<void>;
@@ -101,6 +108,10 @@ export interface UserI extends Document {
   // Glasses model tracking methods
   addGlassesModel(modelName: string): Promise<void>;
   getGlassesModels(): string[];
+
+  // MCP configuration methods
+  updateMcpConfig(config: McpConfig): Promise<void>;
+  getMcpConfig(): McpConfig;
 }
 
 const InstalledAppSchema = new Schema({
@@ -291,6 +302,22 @@ const UserSchema = new Schema<UserI>({
       message: 'Glasses models must be unique'
     }
   },
+
+  mcpConfig: {
+    type: Map,
+    of: new Schema({
+      transport: {
+        type: String,
+        enum: ['stdio', 'streamable_http'],
+        required: true
+      },
+      command: { type: String },
+      args: [String],
+      url: { type: String },
+      headers: { type: Map, of: String }
+    }, { _id: false }),
+    default: new Map()
+  },
 }, {
   timestamps: true,
   optimisticConcurrency: true,
@@ -304,6 +331,12 @@ const UserSchema = new Schema<UserI>({
         ret.appSettings = Object.fromEntries(ret.appSettings);
       } else {
         ret.appSettings = {};
+      }
+      // Safely handle mcpConfig transformation
+      if (ret.mcpConfig && ret.mcpConfig instanceof Map) {
+        ret.mcpConfig = Object.fromEntries(ret.mcpConfig);
+      } else {
+        ret.mcpConfig = {};
       }
       return ret;
     }
@@ -611,6 +644,40 @@ UserSchema.methods.addGlassesModel = async function(modelName: string): Promise<
 
 UserSchema.methods.getGlassesModels = function(): string[] {
   return this.glassesModels || [];
+};
+
+// --- MCP Configuration Methods ---
+UserSchema.methods.updateMcpConfig = async function(this: UserI, config: McpConfig): Promise<void> {
+  logger.info({
+    userId: this.email,
+    configKeys: Object.keys(config),
+    serverCount: Object.keys(config).length
+  }, 'Updating user MCP configuration');
+
+  // Convert the plain object to a Map for storage
+  const configMap = new Map(Object.entries(config));
+  this.mcpConfig = configMap;
+  
+  await this.save();
+  
+  logger.info({
+    userId: this.email,
+    savedConfigKeys: Object.keys(config)
+  }, 'MCP configuration saved successfully');
+};
+
+UserSchema.methods.getMcpConfig = function(this: UserI): McpConfig {
+  if (!this.mcpConfig) {
+    return {};
+  }
+  
+  // Convert Map back to plain object
+  if (this.mcpConfig instanceof Map) {
+    return Object.fromEntries(this.mcpConfig);
+  }
+  
+  // If it's already a plain object (shouldn't happen but defensive)
+  return this.mcpConfig as McpConfig;
 };
 
 // --- Middleware ---

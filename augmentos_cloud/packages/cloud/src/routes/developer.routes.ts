@@ -11,6 +11,7 @@ import { logger as rootLogger } from '../services/logging/pino-logger';
 import multer from 'multer';
 import FormData from 'form-data';
 import axios from 'axios';
+import { validateMcpConfig, McpConfig } from '@mentra/agents';
 
 const logger = rootLogger.child({ service: 'developer.routes' });
 // TODO(isaiah): refactor this code to use this logger instead of console.log, console.error, etc.
@@ -934,6 +935,124 @@ const deleteImage = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * Get MCP Configuration
+ */
+const getMcpConfig = async (req: Request, res: Response) => {
+  try {
+    const email = (req as DevPortalRequest).developerEmail;
+    
+    const userLogger = logger.child({ 
+      userId: email, 
+      service: 'developer.routes', 
+      function: 'getMcpConfig' 
+    });
+
+    userLogger.info('Fetching MCP configuration');
+
+    // Find the user and get their MCP config
+    const user = await User.findOne({ email });
+    if (!user) {
+      userLogger.warn('User not found');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const config = user.getMcpConfig();
+    
+    userLogger.debug({
+      configKeys: Object.keys(config),
+      serverCount: Object.keys(config).length
+    }, 'MCP config loaded successfully');
+
+    res.json(config);
+  } catch (error) {
+    const email = (req as DevPortalRequest).developerEmail;
+    const userLogger = logger.child({ 
+      userId: email, 
+      service: 'developer.routes', 
+      function: 'getMcpConfig' 
+    });
+
+    userLogger.error({
+      error: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined
+    }, 'Error fetching MCP config');
+
+    res.status(500).json({ error: 'Failed to fetch MCP configuration' });
+  }
+};
+
+/**
+ * Update MCP Configuration
+ */
+const updateMcpConfig = async (req: Request, res: Response) => {
+  try {
+    const email = (req as DevPortalRequest).developerEmail;
+    const newConfig: McpConfig = req.body;
+
+    const userLogger = logger.child({ 
+      userId: email, 
+      service: 'developer.routes', 
+      function: 'updateMcpConfig' 
+    });
+
+    userLogger.info({
+      configKeys: Object.keys(newConfig),
+      serverCount: Object.keys(newConfig).length
+    }, 'Updating MCP configuration');
+
+    // Validate the configuration
+    const validationErrors = validateMcpConfig(newConfig);
+    if (validationErrors.length > 0) {
+      userLogger.warn({
+        validationErrors,
+        configKeys: Object.keys(newConfig)
+      }, 'MCP config validation failed');
+
+      return res.status(400).json({
+        error: 'Invalid MCP configuration',
+        details: validationErrors
+      });
+    }
+
+    // Find the user and update their MCP config
+    const user = await User.findOne({ email });
+    if (!user) {
+      userLogger.warn('User not found');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Update the user's MCP configuration
+    await user.updateMcpConfig(newConfig);
+
+    userLogger.info({
+      configKeys: Object.keys(newConfig),
+      serverCount: Object.keys(newConfig).length
+    }, 'MCP config updated successfully');
+
+    res.json({
+      success: true,
+      message: 'MCP configuration updated successfully',
+      config: newConfig
+    });
+  } catch (error) {
+    const email = (req as DevPortalRequest).developerEmail;
+    const userLogger = logger.child({ 
+      userId: email, 
+      service: 'developer.routes', 
+      function: 'updateMcpConfig' 
+    });
+
+    userLogger.error({
+      error: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined,
+      requestBody: req.body
+    }, 'Error updating MCP config');
+
+    res.status(500).json({ error: 'Failed to update MCP configuration' });
+  }
+};
+
 // ------------- ROUTES REGISTRATION -------------
 
 // Auth routes
@@ -972,5 +1091,9 @@ router.post('/apps/:packageName/move-org', validateSupabaseToken, moveToOrg);
 // Image upload routes
 router.post('/images/upload', validateSupabaseToken, upload.single('file'), uploadImage);
 router.delete('/images/:imageId', validateSupabaseToken, deleteImage);
+
+// MCP configuration routes
+router.get('/agents/mcp-config', validateSupabaseToken, getMcpConfig);
+router.post('/agents/mcp-config', validateSupabaseToken, updateMcpConfig);
 
 export default router;

@@ -49,6 +49,7 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "langchain": "^0.3.18",
+    "langchain-mcp-adapters": "^0.0.9",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "ts-node": "^10.9.2",

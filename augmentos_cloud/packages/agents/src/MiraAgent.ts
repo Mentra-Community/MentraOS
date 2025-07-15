@@ -6,6 +6,8 @@ import { SearchToolForAgents } from "./tools/SearchToolForAgents";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { LLMProvider } from "@mentra/utils";
 import { wrapText } from "@mentra/utils";
+import { MultiServerMCPClient } from "langchain-mcp-adapters";
+import { McpConfig } from "./utils/mcpConfig";
 
 interface QuestionAnswer {
     insight: string;
@@ -44,6 +46,31 @@ export class MiraAgent implements Agent {
     "Answers user queries from smart glasses using conversation context and history.";
   public agentPrompt = agentPromptBlueprint;
   public agentTools = [new SearchToolForAgents()];
+
+  /**
+   * Get user's MCP configuration from database
+   * @param userEmail The user's email address
+   * @returns Promise<McpConfig> The user's MCP configuration
+   */
+  private async getUserMcpConfig(userEmail: string): Promise<McpConfig> {
+    try {
+      // Dynamic import using relative path to avoid circular dependencies
+      const { User } = await import("../../cloud/src/models/user.model");
+      
+      const user = await User.findOne({ email: userEmail });
+      if (!user) {
+        console.warn(`MiraAgent: User not found: ${userEmail}`);
+        return {};
+      }
+
+      const config = user.getMcpConfig();
+      console.log(`MiraAgent: Loaded MCP config for user ${userEmail}, ${Object.keys(config).length} servers`);
+      return config;
+    } catch (error) {
+      console.error('MiraAgent: Error loading user MCP config:', error);
+      return {};
+    }
+  }
 
   /**
    * Parses the final LLM output.
@@ -97,29 +124,50 @@ export class MiraAgent implements Agent {
         inputVariables: ["transcript_history", "insight_history", "query", "input", "tools", "tool_names", "agent_scratchpad"],
       });
 
+      // Load MCP tools if config exists
+      let allTools = [...this.agentTools];
+      let mcpConfig = userContext.mcpConfig;
+      
+      // If no mcpConfig provided, try to get from user's database record
+      if (!mcpConfig && userContext.userEmail) {
+        mcpConfig = await this.getUserMcpConfig(userContext.userEmail);
+      }
+      
+      
+      if (mcpConfig && Object.keys(mcpConfig).length > 0) {
+        try {
+          const mcpClient = new MultiServerMCPClient(mcpConfig);
+          const mcpTools = await mcpClient.get_tools();
+          allTools = [...allTools, ...mcpTools];
+          console.log(`MiraAgent: Loaded ${mcpTools.length} MCP tools`);
+        } catch (error) {
+          console.warn('MiraAgent: MCP tools failed to load:', error);
+        }
+      }
+
       // console.log("Prompt:", prompt.template);
 
       const agent = await createReactAgent({
         llm,
-        tools: this.agentTools,
+        tools: allTools,
         prompt,
       });
 
       const executor = new AgentExecutor({
         agent,
-        tools: this.agentTools,
+        tools: allTools,
         maxIterations: 5,
         verbose: process.env.NODE_ENV === "development",
       });
 
-      const toolNames = this.agentTools.map((tool) => tool.name || "unknown");
+      const toolNames = allTools.map((tool) => tool.name || "unknown");
       const agentScratchpad = "";
 
       const result = await executor.invoke({
         // transcript_history: transcriptHistory,
         // insight_history: insightHistory,
         query,
-        tools: this.agentTools,
+        tools: allTools,
         tool_names: toolNames,
         agent_scratchpad: agentScratchpad,
       });
