@@ -5,8 +5,7 @@ import { AgentExecutor, createReactAgent } from "langchain/agents";
 import { SearchToolForAgents } from "./tools/SearchToolForAgents";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { LLMProvider } from "@mentra/utils";
-import { wrapText } from "@mentra/utils";
-import { MultiServerMCPClient } from "langchain-mcp-adapters";
+import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import { McpConfig } from "./utils/mcpConfig";
 
 interface QuestionAnswer {
@@ -48,29 +47,41 @@ export class MiraAgent implements Agent {
   public agentTools = [new SearchToolForAgents()];
 
   /**
+   * Transform our McpConfig format to MultiServerMCPClient format
+   */
+  private transformMcpConfig(mcpConfig: McpConfig): any {
+    const mcpServers: any = {};
+    
+    for (const [serverName, serverConfig] of Object.entries(mcpConfig)) {
+      if (serverConfig.transport === 'stdio') {
+        mcpServers[serverName] = {
+          transport: 'stdio',
+          command: serverConfig.command,
+          args: serverConfig.args || [],
+          restart: {
+            enabled: true,
+            maxAttempts: 3,
+            delayMs: 1000
+          }
+        };
+      } else if (serverConfig.transport === 'streamable_http') {
+        mcpServers[serverName] = {
+          transport: 'streamable_http',
+          url: serverConfig.url,
+          headers: serverConfig.headers || {},
+          automaticSSEFallback: true
+        };
+      }
+    }
+    
+    return mcpServers;
+  }
+
+  /**
    * Get user's MCP configuration from database
    * @param userEmail The user's email address
    * @returns Promise<McpConfig> The user's MCP configuration
    */
-  private async getUserMcpConfig(userEmail: string): Promise<McpConfig> {
-    try {
-      // Dynamic import using relative path to avoid circular dependencies
-      const { User } = await import("../../cloud/src/models/user.model");
-      
-      const user = await User.findOne({ email: userEmail });
-      if (!user) {
-        console.warn(`MiraAgent: User not found: ${userEmail}`);
-        return {};
-      }
-
-      const config = user.getMcpConfig();
-      console.log(`MiraAgent: Loaded MCP config for user ${userEmail}, ${Object.keys(config).length} servers`);
-      return config;
-    } catch (error) {
-      console.error('MiraAgent: Error loading user MCP config:', error);
-      return {};
-    }
-  }
 
   /**
    * Parses the final LLM output.
@@ -125,21 +136,22 @@ export class MiraAgent implements Agent {
       });
 
       // Load MCP tools if config exists
-      let allTools = [...this.agentTools];
+      let allTools: any[] = [...this.agentTools];
       let mcpConfig = userContext.mcpConfig;
       
-      // If no mcpConfig provided, try to get from user's database record
-      if (!mcpConfig && userContext.userEmail) {
-        mcpConfig = await this.getUserMcpConfig(userContext.userEmail);
-      }
       
       
       if (mcpConfig && Object.keys(mcpConfig).length > 0) {
         try {
-          const mcpClient = new MultiServerMCPClient(mcpConfig);
-          const mcpTools = await mcpClient.get_tools();
+          // Transform our McpConfig format to MultiServerMCPClient format
+          const mcpClientConfig = {
+            mcpServers: this.transformMcpConfig(mcpConfig)
+          };
+          
+          const mcpClient = new MultiServerMCPClient(mcpClientConfig);
+          const mcpTools = await mcpClient.getTools();
           allTools = [...allTools, ...mcpTools];
-          console.log(`MiraAgent: Loaded ${mcpTools.length} MCP tools`);
+          console.log(`MiraAgent: Loaded ${mcpTools.length} MCP tools from ${Object.keys(mcpConfig).length} servers`);
         } catch (error) {
           console.warn('MiraAgent: MCP tools failed to load:', error);
         }

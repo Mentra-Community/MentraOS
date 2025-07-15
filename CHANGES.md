@@ -9,11 +9,12 @@ Added Model Context Protocol (MCP) support to MiraAgent, enabling users to confi
 ### 1. Added MCP Support to MiraAgent
 - **File**: `packages/agents/src/MiraAgent.ts`
 - **Changes**:
-  - Added `langchain-mcp-adapters` dependency for MCP integration
+  - Added `@langchain/mcp-adapters` dependency for MCP integration
   - Modified `handleContext()` to accept optional `mcpConfig` parameter
+  - Added `transformMcpConfig()` method to convert config format to MultiServerMCPClient format
   - Added dynamic tool loading: when MCP config exists, creates `MultiServerMCPClient` and merges MCP tools with existing tools
-  - Added graceful fallback: uses existing tools if no MCP config provided
-  - Added user-specific MCP config loading from database
+  - Added graceful fallback: uses existing tools if MCP tools fail to load
+  - Maintains backward compatibility with existing tools
 
 ### 2. Database Storage for MCP Configuration
 - **File**: `packages/cloud/src/models/user.model.ts`
@@ -57,5 +58,15 @@ Developers can now:
 1. Edit MCP configuration directly as JSON in the developer console
 2. Configure stdio-based servers (local processes) or HTTP-based servers  
 3. Set authentication headers and other server options in JSON format
-4. MiraAgent automatically loads and uses tools from configured MCP servers
+4. MCP configurations are saved per-user in the database
 5. All existing MiraAgent functionality remains unchanged
+
+## Implementation Status
+
+- ✅ **Database storage**: Per-user MCP configurations stored in MongoDB
+- ✅ **API endpoints**: GET/POST for managing MCP configurations
+- ✅ **Frontend editor**: JSON editor in developer console
+- ✅ **MCP integration**: MiraAgent dynamically loads tools from configured MCP servers
+- ✅ **Tool loading**: Full MCP tool integration using `@langchain/mcp-adapters`
+
+The implementation is complete - MCP configurations can be saved, retrieved, and tools are automatically loaded into MiraAgent.
