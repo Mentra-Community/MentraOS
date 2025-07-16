@@ -29,10 +29,23 @@ const Header: React.FC = () => {
         <div className="flex items-end justify-between">
 
           {/* Logo and Site Name */}
-          <div className="flex flex-col items-start select-none">
+          <div className="flex items-center select-none">
+            <img 
+              src="/logo.svg" 
+              alt="MentraOS Logo" 
+              className="h-8 w-auto mr-3"
+              style={{ 
+                filter: theme === 'dark' ? 'brightness(0) saturate(100%) invert(100%)' : 'none'
+              }}
+            />
             <span
               className="text-[26px] font-light"
-              style={{ fontFamily: '"SF Pro Rounded", sans-serif', letterSpacing: '0.06em', color: 'var(--text-primary)' }}
+              style={{ 
+                fontFamily: '"SF Pro Rounded", sans-serif', 
+                letterSpacing: '0.06em', 
+                color: 'var(--text-primary)',
+                transform: 'translateY(2px)'
+              }}
             >
               MentraOS
             </span>
