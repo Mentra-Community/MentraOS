@@ -12,6 +12,7 @@ import DashboardHome from './pages/DashboardHome';
 
 import LoginOrSignup from './pages/AuthPage';
 import AppList from './pages/AppList';
+import AppUptime from './pages/AppUptime'; 
 import CreateApp from './pages/CreateApp';
 import EditApp from './pages/EditApp';
 import OrganizationSettings from './pages/OrganizationSettings';
@@ -133,6 +134,12 @@ const App: React.FC = () => {
               </ProtectedRoute>
             } />
 
+            <Route path="/app-uptime/:packageName" element={
+              <ProtectedRoute requireAdmin={true}>
+                <AppUptime />
+              </ProtectedRoute>
+            } />
+            
             {/* Catch-all Not Found route */}
             <Route path="*" element={<NotFound />} />
             <Route path="*" element={<LandingPage />} />

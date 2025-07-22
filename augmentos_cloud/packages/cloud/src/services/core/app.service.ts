@@ -6,6 +6,7 @@
  * Design decision: Separate system Apps from user-created Apps
  * to maintain core functionality regardless of database state.
  */
+import "dotenv/config";
 
 import { StopWebhookRequest, AppType, WebhookResponse, AppState, SessionWebhookRequest, ToolCall, PermissionType, WebhookRequestType, AppSetting, AppSettingType } from '@mentra/sdk';
 // TODO(isaiah): Consider splitting this into multiple services (appstore.service, developer.service, tools.service)

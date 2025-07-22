@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useNavigate } from 'react-router-dom';
-import { Loader2, CheckCircle, XCircle, Clock, Package } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, Clock, Package, Wifi, WifiOff } from 'lucide-react';
 import api from '../services/api.service';
 
 interface AdminStat {
@@ -49,6 +49,13 @@ interface AppDetail {
   reviewedAt?: string;
 }
 
+// Health status interface for the monitoring service
+interface HealthStatus {
+  status: string;
+  lastCheck?: Date;
+  data?: any;
+}
+
 const AdminPanel: React.FC = () => {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
@@ -64,6 +71,8 @@ const AdminPanel: React.FC = () => {
     recentSubmissions: []
   });
   const [submittedApps, setSubmittedApps] = useState<any[]>([]);
+  // NEW: Health statuses state
+  const [healthStatuses, setHealthStatuses] = useState<Record<string, HealthStatus>>({});
   /* Admin management removed */
   const [selectedApp, setSelectedApp] = useState<AppDetail | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
@@ -75,6 +84,26 @@ const AdminPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
 
   // Admin panel component
+
+  // NEW: Function to fetch health statuses from the monitoring service
+  const fetchHealthStatuses = async () => {
+    try {
+      const healthMonitorPort = process.env.REACT_APP_HEALTH_MONITOR_PORT || '8003';
+      const healthMonitorUrl = `http://localhost:${healthMonitorPort}`;
+      
+      const response = await fetch(`${healthMonitorUrl}/api/app-health`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setHealthStatuses(data.healthStatuses);
+          console.log('Health statuses loaded:', data.healthStatuses);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching health statuses:', error);
+      // Don't throw error - just log it and continue with empty health statuses
+    }
+  };
 
   // Load admin data when component mounts
   useEffect(() => {
@@ -92,14 +121,21 @@ const AdminPanel: React.FC = () => {
           email: email
         });
 
-        // Load the admin data
+        // Load the admin data and health statuses
         await loadAdminData();
+        await fetchHealthStatuses();
       } catch (err) {
         console.error('Error in admin data initialization:', err);
       }
     };
 
     fetchData();
+
+    // Set up interval to refresh health statuses every minute
+    const healthInterval = setInterval(fetchHealthStatuses, 60000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(healthInterval);
   }, []);
 
   // Check if user is admin and load data
@@ -171,6 +207,20 @@ const AdminPanel: React.FC = () => {
     }
   };
 
+  // UPDATED: Function to get app status from health monitoring service
+  const getAppStatus = (app: any) => {
+    if (!app.packageName || !healthStatuses[app.packageName]) {
+      return 'unknown';
+    }
+    
+    const healthStatus = healthStatuses[app.packageName];
+    return healthStatus.status; // 'online', 'offline', or 'unknown'
+  };
+
+  // NEW: Function to navigate to app uptime page
+  const navigateToUptime = (packageName: string) => {
+    navigate(`/app-uptime/${packageName}`);
+  };
 
   const openAppReview = async (packageName: string) => {
     try {
@@ -225,7 +275,6 @@ const AdminPanel: React.FC = () => {
 
   /* Admin management functions removed */
 
-
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -234,6 +283,35 @@ const AdminPanel: React.FC = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // UPDATED: Function to get status button styling and text
+  const getStatusButton = (app: any) => {
+    const status = getAppStatus(app);
+    
+    switch (status) {
+      case 'online':
+        return {
+          variant: 'default' as const,
+          className: 'bg-green-600 hover:bg-green-700',
+          icon: <Wifi className="h-3 w-3" />,
+          text: 'Online'
+        };
+      case 'offline':
+        return {
+          variant: 'destructive' as const,
+          className: 'bg-red-600 hover:bg-red-700',
+          icon: <WifiOff className="h-3 w-3" />,
+          text: 'Offline'
+        };
+      default:
+        return {
+          variant: 'outline' as const,
+          className: 'bg-gray-500 hover:bg-gray-600 text-white',
+          icon: <Clock className="h-3 w-3" />,
+          text: 'Unknown'
+        };
+    }
   };
 
   // Function to check API connectivity
@@ -376,18 +454,34 @@ const AdminPanel: React.FC = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="divide-y">
-                    {stats.recentSubmissions.map((app) => (
-                      <div key={app._id} className="py-4 flex justify-between items-center">
-                        <div>
-                          <div className="font-medium">{app.name}</div>
-                          <div className="text-sm text-gray-500">{app.packageName}</div>
-                          <div className="text-xs text-gray-400">Submitted: {formatDate(app.updatedAt)}</div>
+                    {stats.recentSubmissions.map((app) => {
+                      const statusButton = getStatusButton(app);
+                      return (
+                        <div key={app._id} className="py-4 flex justify-between items-center">
+                          <div className="flex items-center">
+                            <div>
+                              <div className="font-medium">{app.name}</div>
+                              <div className="text-sm text-gray-500">{app.packageName}</div>
+                              <div className="text-xs text-gray-400">Submitted: {formatDate(app.updatedAt)}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <Button
+                              size="sm"
+                              variant={statusButton.variant}
+                              className={`flex items-center space-x-1 ${statusButton.className}`}
+                              onClick={() => navigateToUptime(app.packageName)}
+                            >
+                              {statusButton.icon}
+                              <span className="text-xs">{statusButton.text}</span>
+                            </Button>
+                            <Button size="sm" onClick={() => openAppReview(app.packageName)}>
+                              Review
+                            </Button>
+                          </div>
                         </div>
-                        <Button size="sm" onClick={() => openAppReview(app.packageName)}>
-                          Review
-                        </Button>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {stats.recentSubmissions.length === 0 && (
                       <div className="py-6 text-center text-gray-500">
@@ -412,28 +506,42 @@ const AdminPanel: React.FC = () => {
                     </div>
                   ) : (
                     <div className="divide-y">
-                      {submittedApps.map((app) => (
-                        <div key={app._id} className="py-4 flex justify-between items-center">
-                          <div className="flex items-center">
-                            <img
-                              src={app.logoURL || 'https://placehold.co/100x100?text=App'}
-                              alt={app.name}
-                              className="w-10 h-10 rounded-md mr-3"
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).src = 'https://placehold.co/100x100?text=App';
-                              }}
-                            />
-                            <div>
-                              <div className="font-medium">{app.name}</div>
-                              <div className="text-sm text-gray-500">{app.packageName}</div>
-                              <div className="text-xs text-gray-400">Submitted: {formatDate(app.updatedAt)}</div>
+                      {submittedApps.map((app) => {
+                        const statusButton = getStatusButton(app);
+                        return (
+                          <div key={app._id} className="py-4 flex justify-between items-center">
+                            <div className="flex items-center">
+                              <img
+                                src={app.logoURL || 'https://placehold.co/100x100?text=App'}
+                                alt={app.name}
+                                className="w-10 h-10 rounded-md mr-3"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = 'https://placehold.co/100x100?text=App';
+                                }}
+                              />
+                              <div>
+                                <div className="font-medium">{app.name}</div>
+                                <div className="text-sm text-gray-500">{app.packageName}</div>
+                                <div className="text-xs text-gray-400">Submitted: {formatDate(app.updatedAt)}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Button
+                                size="sm"
+                                variant={statusButton.variant}
+                                className={`flex items-center space-x-1 ${statusButton.className}`}
+                                onClick={() => navigateToUptime(app.packageName)}
+                              >
+                                {statusButton.icon}
+                                <span className="text-xs">{statusButton.text}</span>
+                              </Button>
+                              <Button size="sm" onClick={() => openAppReview(app.packageName)}>
+                                Review
+                              </Button>
                             </div>
                           </div>
-                          <Button size="sm" onClick={() => openAppReview(app.packageName)}>
-                            Review
-                          </Button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </CardContent>
