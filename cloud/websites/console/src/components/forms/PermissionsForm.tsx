@@ -74,12 +74,12 @@ const PERMISSION_DISPLAY_INFO: Record<
     isLegacy: false,
     category: "camera",
   },
-  [PermissionType.ALL]: {
-    label: "All Permissions",
-    description: "Access to all available permissions",
-    isLegacy: false,
-    category: "system",
-  },
+  // [PermissionType.ALL]: {
+  //   label: "All Permissions",
+  //   description: "Access to all available permissions",
+  //   isLegacy: false,
+  //   category: "system",
+  // },
 };
 
 interface PermissionsFormProps {
@@ -136,8 +136,8 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
         return "Read incoming phone notifications";
       case PermissionType.POST_NOTIFICATIONS:
         return "Send notifications to the phone";
-      case PermissionType.ALL:
-        return "Access to all available permissions";
+      // case PermissionType.ALL:
+      //   return "Access to all available permissions";
       default:
         return "Permission access";
     }

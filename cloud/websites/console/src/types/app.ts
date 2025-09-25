@@ -20,7 +20,7 @@ export enum PermissionType {
   READ_NOTIFICATIONS = "READ_NOTIFICATIONS",
   POST_NOTIFICATIONS = "POST_NOTIFICATIONS",
 
-  ALL = "ALL",
+  // ALL = "ALL",
 }
 
 export interface Permission {
