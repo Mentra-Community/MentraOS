@@ -1,0 +1,38 @@
+name: Cloud package build
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "cloud/packages/cloud/**"
+      - "cloud/bun.lock"
+      - "cloud/package.json"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "cloud/packages/cloud/**"
+      - "cloud/bun.lock"
+      - "cloud/package.json"
+
+concurrency:
+  group: cloud-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-cloud:
+    name: Build cloud/packages/cloud
+    uses: ./.github/workflows/reusable-bun-build.yml
+    with:
+      working_directory: cloud/packages/cloud
+      lockfile: cloud/bun.lock
+      bun_version: latest
+      install_args: ""
+      build_script: build
+      checkout_fetch_depth: 1

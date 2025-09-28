@@ -1,0 +1,72 @@
+name: Reusable Bun build
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: "Directory to run install/build in (relative to repo root)"
+        required: true
+        type: string
+      lockfile:
+        description: "Path or glob to lockfile(s) used for cache key (e.g., cloud/websites/console/bun.lock, **/bun.lock*)"
+        required: false
+        type: string
+        default: "**/bun.lock*"
+      bun_version:
+        description: "Bun version to install"
+        required: false
+        type: string
+        default: "latest"
+      install_args:
+        description: "Arguments passed to 'bun install'"
+        required: false
+        type: string
+        default: "--frozen-lockfile"
+      build_script:
+        description: "Script name to run via 'bun run <build_script>'"
+        required: false
+        type: string
+        default: "build"
+      checkout_fetch_depth:
+        description: "Depth for actions/checkout"
+        required: false
+        type: number
+        default: 1
+
+permissions:
+  contents: read
+
+jobs:
+  bun-build:
+    name: Bun build (${{ inputs.working_directory }})
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.checkout_fetch_depth }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun_version }}
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-${{ inputs.working_directory }}-${{ hashFiles(inputs.lockfile) }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-${{ inputs.working_directory }}-
+
+      - name: Install dependencies
+        run: bun install ${{ inputs.install_args }}
+
+      - name: Build
+        run: bun run ${{ inputs.build_script }}

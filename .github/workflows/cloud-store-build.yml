@@ -1,0 +1,34 @@
+name: Store build
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "cloud/websites/store/**"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "cloud/websites/store/**"
+
+concurrency:
+  group: store-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-store:
+    name: Build cloud/websites/store
+    uses: ./.github/workflows/reusable-bun-build.yml
+    with:
+      working_directory: cloud/websites/store
+      lockfile: cloud/websites/store/bun.lock
+      bun_version: latest
+      install_args: --frozen-lockfile
+      build_script: build
+      checkout_fetch_depth: 1

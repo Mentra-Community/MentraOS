@@ -1,22 +1,22 @@
-@import url('https://fonts.googleapis.com/css2?family=Cuprum:wght@400;500;600;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Cuprum:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
-/* 
+/*
   ---break--- */
 @plugin "tailwindcss-animate";
-/* 
+/*
   ---break--- */
 @custom-variant dark (&:is(.dark *));
 
 .font-cuprum {
-  font-family: 'Cuprum', sans-serif;
+  font-family: "Cuprum", sans-serif;
 }
 
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-/* 
+  /*
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #242424; */
@@ -59,7 +59,7 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.87 0 0);
 }
-/* 
+/*
 a {
   font-weight: 500;
   color: #646cff;
@@ -113,7 +113,7 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 } */
-/* 
+/*
   ---break--- */
 .dark {
   --background: oklch(0.145 0 0);
@@ -149,7 +149,7 @@ button:focus-visible {
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
 }
-/* 
+/*
   ---break--- */
 @theme inline {
   --color-background: var(--background);
@@ -190,7 +190,7 @@ button:focus-visible {
   --color-sidebar-ring: var(--sidebar-ring);
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
-  /* 
+  /*
   ---break--- */
   @keyframes accordion-down {
     from {
@@ -200,7 +200,7 @@ button:focus-visible {
       height: var(--radix-accordion-content-height);
     }
   }
-  /* 
+  /*
   ---break--- */
   @keyframes accordion-up {
     from {
@@ -211,7 +211,7 @@ button:focus-visible {
     }
   }
 }
-/* 
+/*
   ---break--- */
 @layer base {
   * {
