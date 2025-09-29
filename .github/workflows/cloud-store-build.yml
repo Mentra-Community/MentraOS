@@ -23,17 +23,15 @@ permissions:
   issues: write
 
 jobs:
-  changes:
-    name: Detect path changes
+  store:
+    name: Build cloud/websites/store
     runs-on: ubuntu-latest
-    outputs:
-      store: ${{ steps.filter.outputs.store }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Needed so paths-filter can diff against the base of the PR
           fetch-depth: 0
+
       - name: Compute changes
         id: filter
         uses: dorny/paths-filter@v3
@@ -42,51 +40,81 @@ jobs:
             store:
               - 'cloud/websites/store/**'
 
-  build-store:
-    name: Build cloud/websites/store
-    needs: [changes]
-    if: needs.changes.outputs.store == 'true'
-    uses: ./.github/workflows/reusable-bun-build.yml
-    with:
-      working_directory: cloud/websites/store
-      lockfile: cloud/websites/store/bun.lock
-      bun_version: latest
-      install_args: --frozen-lockfile
-      build_script: build
-      checkout_fetch_depth: 1
+      - name: Skip if no store changes
+        if: steps.filter.outputs.store != 'true'
+        run: echo "No changes under cloud/websites/store; skipping build."
 
-  gate-store:
-    name: "Gate: Store build"
-    needs: [changes, build-store]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Evaluate gate
+      - name: Setup Bun
+        if: steps.filter.outputs.store == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        if: steps.filter.outputs.store == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-store-${{ hashFiles('cloud/websites/store/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-store-
+
+      - name: Install dependencies
+        if: steps.filter.outputs.store == 'true'
+        working-directory: cloud/websites/store
+        run: bun install --frozen-lockfile
+
+      - name: Run build (capture log)
+        if: steps.filter.outputs.store == 'true'
+        id: build
+        continue-on-error: true
+        working-directory: cloud/websites/store
+        env:
+          LOG_FILE: ${{ runner.temp }}/bun-build.log
         run: |
-          if [ "${{ needs.changes.outputs.store }}" = "true" ]; then
-            if [ "${{ needs.build-store.result }}" = "success" ]; then
-              echo "Store changed; build passed."
-              exit 0
-            else
-              echo "Store changed; build failed."
-              exit 1
-            fi
+          set +e
+          set -o pipefail
+          bun run build 2>&1 | tee "$LOG_FILE"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No store changes; passing gate."
-            exit 0
+            echo "failed=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "snippet<<'EOF'" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$LOG_FILE" >> "$GITHUB_OUTPUT" || true
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
-  comment-on-failure:
-    name: Comment on failure
-    if: github.event_name == 'pull_request' && needs.build-store.outputs.build_failed == 'true'
-    needs: [build-store]
-    uses: ./.github/workflows/reusable-pr-comment.yml
-    with:
-      message: |
-        Store build failed.
-        Workflow: ${{ github.workflow }}
-        Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        Tail of build log:
-        ```
-        ${{ needs.build-store.outputs.build_snippet }}
-        ```
+      - name: Comment on failure
+        if: github.event_name == 'pull_request' && steps.build.outputs.failed == 'true'
+        uses: actions/github-script@v7
+        env:
+          SNIPPET: ${{ steps.build.outputs.build_snippet }}
+        with:
+          script: |
+            const body = [
+              'Store build failed.',
+              `Workflow: ${context.workflow}`,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              'Tail of build log:',
+              '```',
+              process.env.SNIPPET || '',
+              '```',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            if (pr) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr.number,
+                body,
+              });
+            }
+
+      - name: Fail if build failed
+        if: steps.build.outputs.failed == 'true'
+        run: |
+          echo "Build failed with status ${{ steps.build.outputs.status }}"
+          exit 1

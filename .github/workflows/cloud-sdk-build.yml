@@ -26,17 +26,15 @@ permissions:
   issues: write
 
 jobs:
-  changes:
-    name: Detect path changes
+  sdk:
+    name: Build cloud/packages/sdk
     runs-on: ubuntu-latest
-    outputs:
-      sdk: ${{ steps.filter.outputs.sdk }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Needed so paths-filter can diff against the base of the PR
           fetch-depth: 0
+
       - name: Compute changes
         id: filter
         uses: dorny/paths-filter@v3
@@ -47,51 +45,67 @@ jobs:
               - 'cloud/bun.lock'
               - 'cloud/package.json'
 
-  build-sdk:
-    name: Build cloud/packages/sdk
-    needs: [changes]
-    if: needs.changes.outputs.sdk == 'true'
-    uses: ./.github/workflows/reusable-bun-build.yml
-    with:
-      working_directory: cloud/packages/sdk
-      lockfile: cloud/bun.lock
-      bun_version: latest
-      install_args: ""
-      build_script: build
-      checkout_fetch_depth: 1
+      - name: Skip if no SDK changes
+        if: steps.filter.outputs.sdk != 'true'
+        run: echo "No changes under cloud/packages/sdk; skipping build."
 
-  gate-sdk:
-    name: "Gate: SDK build"
-    needs: [changes, build-sdk]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Evaluate gate
+      - name: Setup Bun
+        if: steps.filter.outputs.sdk == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        if: steps.filter.outputs.sdk == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-sdk-${{ hashFiles('cloud/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-sdk-
+
+      - name: Install dependencies
+        if: steps.filter.outputs.sdk == 'true'
+        working-directory: cloud
+        run: bun install
+
+      - name: Run build (capture log)
+        if: steps.filter.outputs.sdk == 'true'
+        id: build
+        continue-on-error: true
+        working-directory: cloud/packages/sdk
+        env:
+          LOG_FILE: ${{ runner.temp }}/bun-build.log
         run: |
-          if [ "${{ needs.changes.outputs.sdk }}" = "true" ]; then
-            if [ "${{ needs.build-sdk.result }}" = "success" ]; then
-              echo "SDK changed; build passed."
-              exit 0
-            else
-              echo "SDK changed; build failed."
-              exit 1
-            fi
+          set +e
+          set -o pipefail
+          bun run build 2>&1 | tee "$LOG_FILE"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No SDK changes; passing gate."
-            exit 0
+            echo "failed=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "snippet<<'EOF'" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$LOG_FILE" >> "$GITHUB_OUTPUT" || true
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
-  comment-on-failure:
-    name: Comment on failure
-    if: github.event_name == 'pull_request' && needs.build-sdk.outputs.build_failed == 'true'
-    needs: [build-sdk]
-    uses: ./.github/workflows/reusable-pr-comment.yml
-    with:
-      message: |
-        SDK build failed.
-        Workflow: ${{ github.workflow }}
-        Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        Tail of build log:
-        ```
-        ${{ needs.build-sdk.outputs.build_snippet }}
-        ```
+      - name: Comment on failure
+        if: github.event_name == 'pull_request' && steps.build.outputs.failed == 'true'
+        uses: ./.github/workflows/reusable-pr-comment.yml
+        with:
+          message: |
+            SDK build failed.
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Tail of build log:
+            ```
+            ${{ steps.build.outputs.build_snippet }}
+            ```
+
+      - name: Fail if build failed
+        if: steps.build.outputs.failed == 'true'
+        run: |
+          echo "Build failed with status ${{ steps.build.outputs.status }}"
+          exit 1

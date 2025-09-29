@@ -26,17 +26,15 @@ permissions:
   issues: write
 
 jobs:
-  changes:
-    name: Detect path changes
+  cloud:
+    name: Build cloud/packages/cloud
     runs-on: ubuntu-latest
-    outputs:
-      cloud: ${{ steps.filter.outputs.cloud }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Needed so paths-filter can diff against the base of the PR
           fetch-depth: 0
+
       - name: Compute changes
         id: filter
         uses: dorny/paths-filter@v3
@@ -46,51 +44,68 @@ jobs:
               - 'cloud/packages/cloud/**'
               - 'cloud/bun.lock'
               - 'cloud/package.json'
-  build-cloud:
-    name: Build cloud/packages/cloud
-    needs: [changes]
-    if: needs.changes.outputs.cloud == 'true'
-    uses: ./.github/workflows/reusable-bun-build.yml
-    with:
-      working_directory: cloud/packages/cloud
-      lockfile: cloud/bun.lock
-      bun_version: latest
-      install_args: ""
-      build_script: build
-      checkout_fetch_depth: 1
 
-  gate-cloud:
-    name: "Gate: Cloud package build"
-    needs: [changes, build-cloud]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Evaluate gate
+      - name: Skip if no cloud package changes
+        if: steps.filter.outputs.cloud != 'true'
+        run: echo "No changes under cloud/packages/cloud; skipping build."
+
+      - name: Setup Bun
+        if: steps.filter.outputs.cloud == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        if: steps.filter.outputs.cloud == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-cloud-${{ hashFiles('cloud/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-cloud-
+
+      - name: Install dependencies
+        if: steps.filter.outputs.cloud == 'true'
+        working-directory: cloud
+        run: bun install
+
+      - name: Run build (capture log)
+        if: steps.filter.outputs.cloud == 'true'
+        id: build
+        continue-on-error: true
+        working-directory: cloud/packages/cloud
+        env:
+          LOG_FILE: ${{ runner.temp }}/bun-build.log
         run: |
-          if [ "${{ needs.changes.outputs.cloud }}" = "true" ]; then
-            if [ "${{ needs.build-cloud.result }}" = "success" ]; then
-              echo "Cloud package changed; build passed."
-              exit 0
-            else
-              echo "Cloud package changed; build failed."
-              exit 1
-            fi
+          set +e
+          set -o pipefail
+          bun run build 2>&1 | tee "$LOG_FILE"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No cloud package changes; passing gate."
-            exit 0
+            echo "failed=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "snippet<<'EOF'" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$LOG_FILE" >> "$GITHUB_OUTPUT" || true
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
-  comment-on-failure:
-    name: Comment on failure
-    if: github.event_name == 'pull_request' && needs.build-cloud.outputs.build_failed == 'true'
-    needs: [build-cloud]
-    uses: ./.github/workflows/reusable-pr-comment.yml
-    with:
-      message: |
-        Cloud package build failed.
-        Workflow: ${{ github.workflow }}
-        Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        Tail of build log:
-        ```
-        ${{ needs.build-cloud.outputs.build_snippet }}
-        ```
+      - name: Comment on failure
+        if: github.event_name == 'pull_request' && steps.build.outputs.failed == 'true'
+        uses: ./.github/workflows/reusable-pr-comment.yml
+        with:
+          message: |
+            Cloud package build failed.
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Tail of build log:
+            ```
+            ${{ steps.build.outputs.build_snippet }}
+            ```
+
+      - name: Fail if build failed
+        if: steps.build.outputs.failed == 'true'
+        run: |
+          echo "Build failed with status ${{ steps.build.outputs.status }}"
+          exit 1
