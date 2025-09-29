@@ -5,12 +5,14 @@ on:
     branches:
       - main
       - dev
+      - staging
     paths:
       - "cloud/websites/store/**"
   push:
     branches:
       - main
       - dev
+      - staging
     paths:
       - "cloud/websites/store/**"
 

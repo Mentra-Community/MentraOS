@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - dev
+      - staging
     paths:
       - "cloud/packages/sdk/**"
       - "cloud/bun.lock"
@@ -13,6 +14,7 @@ on:
     branches:
       - main
       - dev
+      - staging
     paths:
       - "cloud/packages/sdk/**"
       - "cloud/bun.lock"
