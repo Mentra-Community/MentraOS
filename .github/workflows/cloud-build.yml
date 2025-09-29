@@ -26,6 +26,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   build-cloud:
@@ -38,3 +39,18 @@ jobs:
       install_args: ""
       build_script: build
       checkout_fetch_depth: 1
+
+  comment-on-failure:
+    name: Comment on failure
+    if: failure() && github.event_name == 'pull_request'
+    needs: [build-cloud]
+    uses: ./.github/workflows/reusable-pr-comment.yml
+    with:
+      message: |
+        Cloud package build failed.
+        Workflow: ${{ github.workflow }}
+        Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        Tail of build log:
+        ```
+        ${{ needs.build-cloud.outputs.build_snippet }}
+        ```

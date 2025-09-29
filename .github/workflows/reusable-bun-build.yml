@@ -32,6 +32,16 @@ on:
         required: false
         type: number
         default: 1
+    outputs:
+      build_status:
+        description: "Exit code of the build step"
+        value: ${{ jobs.bun-build.outputs.build_status }}
+      build_failed:
+        description: "Whether the build failed"
+        value: ${{ jobs.bun-build.outputs.build_failed }}
+      build_snippet:
+        description: "Tail snippet of the build log"
+        value: ${{ jobs.bun-build.outputs.build_snippet }}
 
 permissions:
   contents: read
@@ -40,6 +50,10 @@ jobs:
   bun-build:
     name: Bun build (${{ inputs.working_directory }})
     runs-on: ubuntu-latest
+    outputs:
+      build_status: ${{ steps.build.outputs.status }}
+      build_failed: ${{ steps.build.outputs.failed }}
+      build_snippet: ${{ steps.build.outputs.snippet }}
 
     defaults:
       run:
@@ -68,5 +82,27 @@ jobs:
       - name: Install dependencies
         run: bun install ${{ inputs.install_args }}
 
-      - name: Build
-        run: bun run ${{ inputs.build_script }}
+      - name: Run build (capture log)
+        id: build
+        continue-on-error: true
+        env:
+          LOG_FILE: ${{ runner.temp }}/bun-build.log
+        run: |
+          set -o pipefail
+          bun run ${{ inputs.build_script }} 2>&1 | tee "$LOG_FILE"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "snippet<<'EOF'" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$LOG_FILE" >> "$GITHUB_OUTPUT" || true
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Fail job if build failed
+        if: steps.build.outputs.status != '0'
+        run: |
+          echo "Build failed with status ${{ steps.build.outputs.status }}"
+          exit 1

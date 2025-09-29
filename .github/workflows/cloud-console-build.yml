@@ -22,6 +22,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   build-console:
@@ -34,3 +35,18 @@ jobs:
       install_args: --frozen-lockfile
       build_script: build
       checkout_fetch_depth: 1
+
+  comment-on-failure:
+    name: Comment on failure
+    if: failure() && github.event_name == 'pull_request'
+    needs: [build-console]
+    uses: ./.github/workflows/reusable-pr-comment.yml
+    with:
+      message: |
+        Console build failed.
+        Workflow: ${{ github.workflow }}
+        Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        Tail of build log:
+        ```
+        ${{ needs.build-console.outputs.build_snippet }}
+        ```

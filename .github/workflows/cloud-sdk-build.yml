@@ -26,6 +26,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   build-sdk:
@@ -38,3 +39,18 @@ jobs:
       install_args: ""
       build_script: build
       checkout_fetch_depth: 1
+
+  comment-on-failure:
+    name: Comment on failure
+    if: failure() && github.event_name == 'pull_request'
+    needs: [build-sdk]
+    uses: ./.github/workflows/reusable-pr-comment.yml
+    with:
+      message: |
+        SDK build failed.
+        Workflow: ${{ github.workflow }}
+        Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        Tail of build log:
+        ```
+        ${{ needs.build-sdk.outputs.build_snippet }}
+        ```
