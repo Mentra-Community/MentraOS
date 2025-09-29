@@ -82,7 +82,7 @@ jobs:
 
   comment-on-failure:
     name: Comment on failure
-    if: failure() && github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.build-cloud.outputs.build_failed == 'true'
     needs: [build-cloud]
     uses: ./.github/workflows/reusable-pr-comment.yml
     with:
