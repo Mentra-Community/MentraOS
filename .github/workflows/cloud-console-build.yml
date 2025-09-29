@@ -6,8 +6,6 @@ on:
       - main
       - dev
       - staging
-    paths:
-      - "cloud/websites/console/**"
   push:
     branches:
       - main
@@ -25,8 +23,29 @@ permissions:
   issues: write
 
 jobs:
+  changes:
+    name: Detect path changes
+    runs-on: ubuntu-latest
+    outputs:
+      console: ${{ steps.filter.outputs.console }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Needed so paths-filter can diff against the base of the PR
+          fetch-depth: 0
+      - name: Compute changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            console:
+              - 'cloud/websites/console/**'
+
   build-console:
     name: Build cloud/websites/console
+    needs: [changes]
+    if: needs.changes.outputs.console == 'true'
     uses: ./.github/workflows/reusable-bun-build.yml
     with:
       working_directory: cloud/websites/console
@@ -35,6 +54,27 @@ jobs:
       install_args: --frozen-lockfile
       build_script: build
       checkout_fetch_depth: 1
+
+  gate-console:
+    name: "Gate: Console build"
+    needs: [changes, build-console]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate gate
+        run: |
+          if [ "${{ needs.changes.outputs.console }}" = "true" ]; then
+            if [ "${{ needs.build-console.result }}" = "success" ]; then
+              echo "Console changed; build passed."
+              exit 0
+            else
+              echo "Console changed; build failed."
+              exit 1
+            fi
+          else
+            echo "No console changes; passing gate."
+            exit 0
+          fi
 
   comment-on-failure:
     name: Comment on failure
