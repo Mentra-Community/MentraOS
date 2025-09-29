@@ -1,0 +1,55 @@
+name: Reusable PR Comment
+
+# This reusable workflow posts a comment on a pull request with a provided message.
+# Usage (in a caller workflow/job):
+#   jobs:
+#     comment-on-failure:
+#       if: failure() && github.event_name == 'pull_request'
+#       uses: ./.github/workflows/reusable-pr-comment.yml
+#       with:
+#         message: |
+#           Build failed. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+#
+# Notes:
+# - Requires the workflow to run on 'pull_request' events (same-repo PRs). For forks, GITHUB_TOKEN is read-only by default.
+# - The permissions block below grants 'issues: write' to allow creating comments on PRs.
+
+on:
+  workflow_call:
+    inputs:
+      message:
+        description: "The comment body to post on the pull request"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  comment:
+    name: Post PR comment
+    # Only run for pull_request events (avoids noise/errors on push)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post comment to PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = core.getInput('message');
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+
+            if (!pr) {
+              core.info('No pull_request payload detected. Skipping comment.');
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pr.number,
+              body
+            });
