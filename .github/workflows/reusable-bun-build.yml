@@ -88,6 +88,8 @@ jobs:
         env:
           LOG_FILE: ${{ runner.temp }}/bun-build.log
         run: |
+          # Disable errexit to ensure we always capture and emit outputs even on failure
+          set +e
           set -o pipefail
           bun run ${{ inputs.build_script }} 2>&1 | tee "$LOG_FILE"
           status=${PIPESTATUS[0]}
