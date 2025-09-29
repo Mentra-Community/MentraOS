@@ -1,5 +1,5 @@
 // pages/CreateApp.tsx
-import React, { useState } from "react";
+import { useState } from "react";
 import { AxiosError } from "axios";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,18 +32,12 @@ import { AppI } from "@mentra/sdk";
 import { normalizeUrl } from "@/libs/utils";
 import PermissionsForm from "../components/forms/PermissionsForm";
 import HardwareRequirementsForm from "../components/forms/HardwareRequirementsForm";
-import { Permission } from "@/types/app";
+import { Permission, PermissionType } from "@/types/app";
 import { HardwareRequirement } from "@mentra/sdk";
-import { useAuth } from "../hooks/useAuth";
 import { useOrganization } from "@/context/OrganizationContext";
 import { App } from "@/types/app";
 import ImageUpload from "../components/forms/ImageUpload";
-
 import AppTypeTooltip from "../components/forms/AppTypeTooltip";
-// import type { AppType } from '@mentra/sdk';
-// import { App } from '@/types/app';
-// Import the public email provider list
-// import publicEmailDomains from 'email-providers/all.json';
 
 enum AppType {
   STANDARD = "standard",
@@ -54,7 +48,6 @@ enum AppType {
  */
 const CreateApp: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const { currentOrg } = useOrganization();
 
   // Form state
@@ -67,7 +60,13 @@ const CreateApp: React.FC = () => {
     logoURL: "",
     webviewURL: "",
     appType: AppType.BACKGROUND, // Default to BACKGROUND
-    permissions: [], // Initialize permissions as empty array
+    permissions: [
+      {
+        type: PermissionType.MICROPHONE,
+        description:
+          "Access to microphone for voice input and audio processing",
+      },
+    ], // Default opt-in Microphone permission; user can remove if not needed
     hardwareRequirements: [], // Initialize hardware requirements as empty array
     // isPublic: false,
   });
@@ -446,8 +445,8 @@ const CreateApp: React.FC = () => {
                   </p>
                 )}
                 <p className="text-xs text-gray-500">
-                  Provide a clear, concise description of your application's
-                  functionality.
+                  Provide a clear, concise description of your
+                  application&apos;s functionality.
                 </p>
               </div>
 
@@ -492,10 +491,11 @@ const CreateApp: React.FC = () => {
                 )}
                 <p className="text-xs text-gray-500">
                   The base URL of your server where MentraOS will communicate
-                  with your app. We'll automatically append "/webhook" to handle
-                  events when your app is activated. HTTPS is required and will
-                  be added automatically if not specified. Do not include a
-                  trailing slash - it will be automatically removed.
+                  with your app. We&apos;ll automatically append
+                  &quot;/webhook&quot; to handle events when your app is
+                  activated. HTTPS is required and will be added automatically
+                  if not specified. Do not include a trailing slash - it will be
+                  automatically removed.
                 </p>
               </div>
 
@@ -526,7 +526,7 @@ const CreateApp: React.FC = () => {
                 />
                 {/* Note: The actual Cloudflare URL is stored in logoURL but not displayed to the user */}
                 <p className="text-xs text-gray-500">
-                  Upload an image that will be used as your app's icon
+                  Upload an image that will be used as your app&apos;s icon
                   (recommended: 512x512 PNG).
                 </p>
               </div>
