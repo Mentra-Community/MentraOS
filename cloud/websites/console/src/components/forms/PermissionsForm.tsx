@@ -1,4 +1,4 @@
-import React from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -89,6 +89,14 @@ const isPermissionSelectable = (type: PermissionType): boolean => {
   return PERMISSION_DISPLAY_INFO[type]?.isSelectable !== false;
 };
 
+// Human-friendly label for permissions (avoid showing raw enum values)
+const getPermissionLabel = (type: PermissionType): string => {
+  if (type === PermissionType.MICROPHONE) {
+    return "Microphone + Transcripts";
+  }
+  return PERMISSION_DISPLAY_INFO[type]?.label ?? String(type);
+};
+
 interface PermissionsFormProps {
   permissions: Permission[];
   onChange: (permissions: Permission[]) => void;
@@ -174,7 +182,7 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
               <div className="flex items-center gap-2 mb-1">
                 <Shield className="h-4 w-4 text-blue-600 flex-shrink-0" />
                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                  {permission.type}
+                  {getPermissionLabel(permission.type)}
                 </span>
                 {PERMISSION_DISPLAY_INFO[permission.type]?.isLegacy && (
                   <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
@@ -188,9 +196,9 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
               {PERMISSION_DISPLAY_INFO[permission.type]?.isLegacy && (
                 <div className="text-xs text-orange-600 mt-1">
                   💡 Consider migrating to:{" "}
-                  {PERMISSION_DISPLAY_INFO[permission.type]?.replacedBy?.join(
-                    ", ",
-                  )}
+                  {PERMISSION_DISPLAY_INFO[permission.type]?.replacedBy
+                    ?.map((t) => getPermissionLabel(t))
+                    .join(", ")}
                 </div>
               )}
             </div>
@@ -260,13 +268,18 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
                   {availableTypes.map((type) => {
                     const isSelectable = isPermissionSelectable(type);
                     return (
-                      <SelectItem 
-                        key={type} 
+                      <SelectItem
+                        key={type}
                         value={type}
                         disabled={!isSelectable}
-                        className={!isSelectable ? "text-gray-400 cursor-not-allowed" : ""}
+                        className={
+                          !isSelectable
+                            ? "text-gray-400 cursor-not-allowed"
+                            : ""
+                        }
                       >
-                        {type}{!isSelectable ? " (Deprecated - Not Selectable)" : ""}
+                        {getPermissionLabel(type)}
+                        {!isSelectable ? " (Deprecated - Not Selectable)" : ""}
                       </SelectItem>
                     );
                   })}
@@ -284,9 +297,9 @@ const PermissionItem: React.FC<PermissionItemProps> = ({
                 <div className="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-md">
                   <div className="text-sm text-orange-800">
                     ⚠️ This is a legacy permission. Consider migrating to{" "}
-                    {PERMISSION_DISPLAY_INFO[permission.type]?.replacedBy?.join(
-                      ", ",
-                    )}{" "}
+                    {PERMISSION_DISPLAY_INFO[permission.type]?.replacedBy
+                      ?.map((t) => getPermissionLabel(t))
+                      .join(", ")}{" "}
                     for better clarity.
                   </div>
                 </div>
@@ -330,7 +343,7 @@ export function PermissionsForm({
   permissions,
   onChange,
 }: PermissionsFormProps) {
-  const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   // Helper function to create a new empty permission
   const createEmptyPermission = (type: PermissionType): Permission => ({
@@ -350,7 +363,6 @@ export function PermissionsForm({
       return !permissions.some((p, i) => p.type === type && i !== excludeIndex);
     });
   };
-
 
   // Add a new permission
   const addPermission = () => {
