@@ -65,46 +65,7 @@ jobs:
         working-directory: cloud/websites/console
         run: bun install --frozen-lockfile
 
-      - name: Run build (capture log)
+      - name: Run build
         if: steps.filter.outputs.console == 'true'
-        id: build
-        continue-on-error: true
         working-directory: cloud/websites/console
-        env:
-          LOG_FILE: ${{ runner.temp }}/bun-build.log
-        run: |
-          # Disable errexit to ensure we always capture and emit outputs even on failure
-          set +e
-          set -o pipefail
-          bun run build 2>&1 | tee "$LOG_FILE"
-          status=${PIPESTATUS[0]}
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          if [ "$status" -ne 0 ]; then
-            echo "failed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "failed=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "snippet<<'EOF'" >> "$GITHUB_OUTPUT"
-          tail -n 200 "$LOG_FILE" >> "$GITHUB_OUTPUT" || true
-          echo "EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Add failure summary
-        if: steps.build.outputs.failed == 'true'
-        run: |
-          {
-            echo "### Console build failed";
-            echo "";
-            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}";
-            echo "";
-            echo "Tail of build log:";
-            echo "";
-            echo '```';
-            echo "${{ steps.build.outputs.build_snippet }}";
-            echo '```';
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Fail if build failed
-        if: steps.build.outputs.failed == 'true'
-        run: |
-          echo "Build failed with status ${{ steps.build.outputs.status }}"
-          exit 1
+        run: bun run build
