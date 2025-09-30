@@ -38,7 +38,6 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { App } from "@/types/app";
 import ImageUpload from "../components/forms/ImageUpload";
 import AppTypeTooltip from "../components/forms/AppTypeTooltip";
-import "definitely-not-a-real-module";
 
 enum AppType {
   STANDARD = "standard",
