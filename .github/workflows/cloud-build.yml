@@ -93,16 +93,30 @@ jobs:
 
       - name: Comment on failure
         if: github.event_name == 'pull_request' && steps.build.outputs.failed == 'true'
-        uses: ./.github/workflows/reusable-pr-comment.yml
+        uses: actions/github-script@v7
+        env:
+          SNIPPET: ${{ steps.build.outputs.build_snippet }}
         with:
-          message: |
-            Cloud package build failed.
-            Workflow: ${{ github.workflow }}
-            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            Tail of build log:
-            ```
-            ${{ steps.build.outputs.build_snippet }}
-            ```
+          script: |
+            const body = [
+              'Cloud package build failed.',
+              `Workflow: ${context.workflow}`,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              'Tail of build log:',
+              '```',
+              process.env.SNIPPET || '',
+              '```',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            if (pr) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr.number,
+                body,
+              });
+            }
 
       - name: Fail if build failed
         if: steps.build.outputs.failed == 'true'
