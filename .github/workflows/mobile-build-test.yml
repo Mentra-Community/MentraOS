@@ -29,7 +29,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: mobile
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Prebuild Android
         working-directory: mobile
