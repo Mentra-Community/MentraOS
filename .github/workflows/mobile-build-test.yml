@@ -1,0 +1,57 @@
+name: Mobile Build Test
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'mobile/**'
+
+jobs:
+  android-build:
+    name: Android Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Create .env file
+        working-directory: mobile
+        run: |
+          cat > .env << 'EOF'
+          EXPO_PUBLIC_MENTRAOS_VERSION=ci-build
+          EXPO_PUBLIC_DEPLOYMENT_REGION=global
+          EXPO_PUBLIC_SUPABASE_URL=https://ykbiunzfbbtwlzdprmeh.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrYml1bnpmYmJ0d2x6ZHBybWVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzQyODA2OTMsImV4cCI6MjA0OTg1NjY5M30.rbEsE8IRz-gb3-D0H8VAJtGw-xvipl1Nc-gCnnQ748U
+          EXPO_PUBLIC_POSTHOG_API_KEY=
+          EXPO_PUBLIC_SENTRY_DSN=
+          EXPO_PUBLIC_AUTHING_APP_HOST=
+          EXPO_PUBLIC_AUTHING_APP_ID=
+          EOF
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: bun install
+
+      - name: Prebuild Android
+        working-directory: mobile
+        run: bun expo prebuild --platform android --no-install
+
+      - name: Build APK
+        working-directory: mobile
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace

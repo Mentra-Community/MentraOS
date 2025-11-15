@@ -139,3 +139,4 @@ MIT License Copyright 2025 MentraOS Community
   <img width="100" alt="MentraOS" src="./images/MentraLogoSquareRound.png" style="border-radius: 20%;" />
   <h3>© 2025 Mentra Labs</h3>
 </div>
+# Testing CI
