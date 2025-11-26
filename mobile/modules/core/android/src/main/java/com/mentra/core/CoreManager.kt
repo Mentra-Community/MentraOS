@@ -1123,7 +1123,7 @@ class CoreManager {
         currentRequiredData.addAll(requiredData)
 
         val mutableRequiredData = requiredData.toMutableList()
-        if (offlineMode &&
+        if (offlineMode && mutableRequiredData.isNotEmpty &&
                         !mutableRequiredData.contains(
                                 SpeechRequiredDataType.PCM_OR_TRANSCRIPTION
                         ) &&

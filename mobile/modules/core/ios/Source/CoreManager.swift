@@ -1082,7 +1082,8 @@ struct ViewState {
         // this must be done before the requiredData is modified by offlineStt:
         currentRequiredData = requiredData
 
-        if offlineMode, !requiredData.contains(.PCM_OR_TRANSCRIPTION),
+        if offlineMode, !requiredData.isEmpty,
+           !requiredData.contains(.PCM_OR_TRANSCRIPTION),
            !requiredData.contains(.TRANSCRIPTION)
         {
             requiredData.append(.TRANSCRIPTION)
