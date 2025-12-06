@@ -10,3 +10,6 @@
 
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/.)
 target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/bspal_audio_i2s.c)
+target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/bsp_gx8002.c)
+target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/gx8002_update.c)
+target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/stp513n.c)

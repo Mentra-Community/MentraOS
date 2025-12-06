@@ -58,4 +58,22 @@ void audio_i2s_stop(void);
  */
 void audio_i2s_init(void);
 
+/**
+ * @brief Callback function type for I2S received data
+ * 
+ * This callback is called when I2S receives audio data from external master.
+ * The data is in stereo format (interleaved L/R samples).
+ * 
+ * @param rx_data Pointer to received audio data buffer
+ * @param data_size Size of received data in bytes
+ */
+typedef void (*audio_i2s_rx_callback_t)(const int16_t *rx_data, size_t data_size);
+
+/**
+ * @brief Set callback function for I2S received data
+ * 
+ * @param callback Callback function to be called when data is received
+ */
+void audio_i2s_set_rx_callback(audio_i2s_rx_callback_t callback);
+
 #endif /* _BSPAL_AUDIO_I2S_H_ */

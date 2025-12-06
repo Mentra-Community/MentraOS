@@ -40,7 +40,7 @@
 /* Audio configuration constants */
 #define PDM_SAMPLE_RATE         16000    // 16 kHz voice optimized
 #define PDM_BIT_DEPTH           16       // PCM bit depth, measured in bits
-#define PDM_CHANNELS            1        // Mono microphone input
+#define PDM_CHANNELS            2        // Stereo I2S microphone input (two I2S microphones)
 #define PDM_FRAME_SIZE_SAMPLES  160      // 10ms frame @ 16kHz
 #define PDM_FRAME_SIZE_BYTES    (PDM_FRAME_SIZE_SAMPLES * 2)  // 16-bit samples
 
@@ -69,10 +69,41 @@ typedef enum {
 int pdm_audio_stream_init(void);
 
 /**
+ * @brief Start I2S only (without LC3 encoding)
+ * 
+ * Starts I2S hardware and sets RX callback to receive data.
+ * LC3 encoding remains disabled until pdm_audio_stream_set_enabled(true) is called.
+ * This function is called by VAD interrupt handler when VAD detects speech.
+ * 
+ * @return 0 on success, negative error code on failure
+ */
+int pdm_audio_stream_start_i2s_only(void);
+
+/**
+ * @brief Stop I2S only (without stopping LC3 encoding)
+ * 
+ * Stops I2S hardware but keeps LC3 encoder state unchanged.
+ * This function is called by VAD timeout handler when VAD timeout expires.
+ * 
+ * @return 0 on success, negative error code on failure
+ */
+int pdm_audio_stream_stop_i2s_only(void);
+
+/**
+ * @brief Check if LC3 encoding is currently active
+ * 
+ * Returns true if LC3 encoding is enabled and active (controlled by BLE).
+ * 
+ * @return true if encoding is active, false otherwise
+ */
+bool pdm_audio_stream_is_encoding_active(void);
+
+/**
  * @brief Enable/disable microphone audio streaming
  * 
  * Controls microphone capture and LC3 streaming to mobile app.
  * Called in response to MicStateConfig protobuf messages (Tag 20).
+ * If I2S is already running (started by VAD interrupt), only starts LC3 encoding.
  * 
  * @param enabled true to start streaming, false to stop
  * @return 0 on success, negative error code on failure

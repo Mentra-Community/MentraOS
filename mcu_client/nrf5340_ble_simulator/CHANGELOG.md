@@ -4,6 +4,209 @@ All notable changes to the nRF5340 DK BLE Glasses Protobuf Simulator will be doc
 
 ## Unreleased
 
+### 📱 STP513N Touch Controller Driver and I2S Master Configuration Support - 2025-12-29
+
+#### New Files
+- **✅ NEW**: `src/mos_driver/include/stp513n.h` - STP513N driver API declarations, including initialization, reset, connection, EEPROM operations
+- **✅ NEW**: `src/mos_driver/src/stp513n.c` - STP513N driver core implementation:
+  - Software I2C communication (using P0.02 SDA, P0.03 SCL)
+  - Hardware reset functionality (P0.02, falling edge active)
+  - I2C connection and communication
+  - EEPROM configuration read/write (64 bytes)
+  - Configuration update and verification
+  - Contains detailed Chinese and English comments
+- **✅ NEW**: `src/shell_stp513n_control.c` - Shell command interface for testing and debugging
+
+#### Modified Files
+
+##### Device Tree Configuration
+- **🔧 MODIFIED**: `boards/nrf5340dk_nrf5340_cpuapp_ns.overlay`
+  - **STP513N Configuration**:
+    - `stp513n_reset-gpios`: P0.02 (reset pin, falling edge active, shared with SDA)
+    - `stp513n_sda-gpios`: P0.02 (software I2C SDA)
+    - `stp513n_scl-gpios`: P0.03 (software I2C SCL)
+  - **I2S Master Configuration**:
+    - `I2S_SCK_M`: P1.08 (bit clock output, Master)
+    - `I2S_LRCK_M`: P1.06 (word select output, Master)
+    - `I2S_SDIN`: P1.09 (serial data input, from I2S microphones)
+    - `I2S_SDOUT`: P1.10 (serial data output, to I2S headphones)
+
+##### Main Program
+- **🔧 MODIFIED**: `src/main.c`
+  - Add STP513N driver initialization (enabled by default)
+  - Add `#include "stp513n.h"`
+
+##### I2S Master Driver
+- **🔧 MODIFIED**: `src/mos_driver/src/bspal_audio_i2s.c`
+  - Configure I2S as Master mode (`NRF_I2S_MODE_MASTER`)
+  - nRF5340 generates clock signals (SCK and LRCK) for external I2S microphones
+  - Audio clock configuration: ACLK, 16kHz sample rate, stereo
+  - Support bidirectional data transmission (RX: microphone input, TX: headphone output)
+
+##### Audio Stream Processing
+- **🔧 MODIFIED**: `src/pdm_audio_stream.c`
+  - Support I2S input mode (`USE_I2S_INPUT`)
+  - Support I2S headphone playback (`ENABLE_I2S_HEADPHONE_PLAYBACK`)
+  - Receive audio data from I2S microphones
+  - Output audio to headphones via I2S
+  - Integrated LC3 codec support
+- **🔧 MODIFIED**: `src/pdm_audio_stream.h`
+  - Update interface definitions to support I2S input and output
+  - Add I2S-specific start/stop functions
+
+##### CMake Configuration
+- **🔧 MODIFIED**: `CMakeLists.txt`
+  - Add `shell_stp513n_control.c` to build list
+  - Add `stp513n.c` to build list
+
+#### STP513N Shell Commands (11 commands)
+- **📋 Commands**:
+  - `stp513n help` - Show help menu
+  - `stp513n init` - Initialize STP513N driver
+  - `stp513n status` - Check initialization status
+  - `stp513n reset_connect` - Reset and connect (within 100ms window)
+  - `stp513n soft_reset` - Soft reset STP513N (I2C command)
+  - `stp513n connect` - Connect to STP513N test mode
+  - `stp513n read_eeprom <addr>` - Read EEPROM byte (0-63)
+  - `stp513n read_config` - Read full configuration (64 bytes)
+  - `stp513n update_config` - Update configuration from default
+  - `stp513n eeprom_status` - Get EEPROM write status
+  - `stp513n test_i2c` - Test I2C communication (scan bus)
+
+#### Technical Features
+
+##### STP513N Driver
+- **🔌 Software I2C Implementation**:
+  - Use GPIO to emulate I2C protocol (bit-banging)
+  - Support standard I2C read/write operations
+  - Timing parameters: 6µs delay, 1000 loop timeout
+  - Reason: Reset pin and SDA share the same pin (P0.02), requiring dynamic function switching
+- **🔄 Hardware Reset Sequence**:
+  - Complies with FAE specification: GPIO01 (P0.02) falling edge active
+  - Reset timing: Pull LOW for 20ms → Pull HIGH for 10ms
+  - Connection window: Complete connect command within 100ms after reset
+- **💾 EEPROM Configuration Management**:
+  - 64-byte configuration data storage
+  - Support configuration read, update, and verification
+  - Automatically detect configuration differences, update only when needed
+  - Provide Shell commands for configuration management
+
+##### I2S Master Configuration
+- **🎛️ Master Mode**:
+  - nRF5340 acts as I2S master device, generating clock signals
+  - Generate SCK (bit clock) and LRCK (word select) signals
+  - External I2S microphones act as slave devices receiving clocks
+- **🎵 Audio Configuration**:
+  - Sample rate: 16kHz
+  - Bit depth: 16-bit
+  - Channels: Stereo (2 channels)
+  - Clock source: ACLK (audio clock)
+  - MCK: 1.536 MHz (ACLK/8)
+  - LRCK: 16 kHz (MCK/96)
+- **📡 Bidirectional Data Transmission**:
+  - RX (receive): Receive audio data from external I2S microphones (P1.09 SDIN)
+  - TX (transmit): Output audio data to I2S headphones (P1.10 SDOUT)
+- **🔊 LC3 Codec Integration**:
+  - I2S input data is encoded via LC3
+  - LC3 decoded data is output to headphones via I2S
+  - Support BLE transmission (when connected)
+
+#### Hardware Connections
+
+##### STP513N Touch Controller
+- **Reset Pin (GPIO01)**: P0.02 (falling edge active, shared with SDA)
+- **I2C SDA**: P0.02 (software I2C)
+- **I2C SCL**: P0.03 (software I2C)
+- **I2C Address**: 0x60
+
+##### I2S Master Audio Interface
+- **SCK (Bit Clock)**: P1.08 (output, Master) → I2S microphone clock input
+- **LRCK (Word Select)**: P1.06 (output, Master) → I2S microphone word select input
+- **SDIN (Serial Data In)**: P1.09 (input) ← I2S microphone data output
+- **SDOUT (Serial Data Out)**: P1.10 (output) → I2S headphone data input
+
+#### Notes
+
+##### STP513N
+1. Software I2C is used because reset pin and SDA share the same pin (P0.02), requiring dynamic function switching
+2. I2C1 (P1.02/P1.03) is reserved for GX8002 to avoid pin conflicts
+3. Reset sequence must strictly follow FAE specification, otherwise I2C communication cannot be established
+4. EEPROM write requires wait time, check status register after each write
+5. Simplified Shell command interface, removed unnecessary low-level register operation commands
+
+##### I2S Master
+1. nRF5340 as master device must correctly configure clock signals
+2. External I2S microphones need to receive clock signals from nRF5340
+3. Audio data format must match (16-bit, stereo, 16kHz)
+4. I2S input and output can work simultaneously (full duplex)
+5. LC3 codec will increase latency but provides better compression and BLE transmission support
+
+### 🎤 GX8002 VAD System Complete Implementation with OTA Upgrade Support + nRF5340 I2S Slave Mode - 2025-12-06
+
+#### GX8002 VAD System & I2S Audio Processing
+- **✅ NEW**: Complete GX8002 VAD (Voice Activity Detection) system implementation
+- **✅ NEW**: nRF5340 I2S slave mode configuration for receiving audio from GX8002
+- **🎯 Features**: Voice detection, I2S audio streaming, LC3 encoding, BLE transmission
+- **📋 GPIO Control**:
+  - **P0.04**: GX8002 power control (HIGH=power on, LOW=power off, used for reset)
+  - **P0.12**: VAD interrupt input (falling edge trigger, starts I2S on voice detection)
+  - **P0.25**: Voice detection status (LOW=voice present, HIGH=no voice, from GX8002-GPIO02)
+  - **P0.26**: I2S active status indicator (HIGH=I2S active, LOW=I2S stopped)
+  - **P0.27**: VAD initialization status (HIGH=init in progress, LOW=init complete)
+
+#### I2C Communication Interface
+- **✅ NEW**: I2C1 interface for GX8002 communication (SDA: P1.02, SCL: P1.03)
+- **🔧 Dual Address Mode**: Command address 0x2F, data address 0x36 (hardware-fixed OTA upgrade address)
+- **⚡ Error Handling**: Automatic I2C bus recovery on consecutive errors
+- **📡 Pull-up Configuration**: I2C1 pull-up via device tree pinctrl
+
+#### OTA Firmware Upgrade Support
+- **✅ NEW**: Shell command `gx8002 update <version>` for firmware upgrade
+- **📦 Embedded Firmware**: Temporarily embed v07, v08 versions for testing
+- **🛡️ Safe Upgrade**: Automatically disable VAD interrupt and stop I2S before upgrade to avoid I2C conflicts
+- **🔄 Auto Recovery**: Automatically re-enable VAD interrupt after upgrade
+- **📈 Future Plan**: Use LittleFS to store 8002 OTA firmware
+
+#### Voice Detection & I2S Control Logic
+- **🎤 Voice Detection**: P0.25 GPIO monitoring for voice presence
+- **⏱️ Smart Timeout**: After timer timeout, check P0.25 - if LOW (voice present), extend timer by 5s; if HIGH (no voice), immediately stop I2S
+- **🔄 I2S Control**: Automatic start/stop of GX8002 I2S master and nRF5340 I2S slave based on voice detection
+- **📊 Status Indicators**: P0.26 GPIO shows I2S active status, P0.27 GPIO shows VAD initialization status
+
+#### Audio Processing & Encoding
+- **🎵 I2S Slave Mode**: nRF5340 configured as I2S slave to receive audio from GX8002 master
+- **🔀 Stereo to Mono**: Average method conversion (suitable for ASR and translation applications)
+- **💾 Buffer Management**: Optimized audio buffer management for continuous streaming
+- **🔌 Independent Control**: I2S can be stopped independently without affecting LC3 encoding and BLE transmission
+
+#### Interrupt Handling Framework
+- **✅ NEW**: Generic interrupt handling framework (`mos_components/mos_interrupt/`)
+- **🔧 Modular Design**: VAD interrupt handling logic separated into independent module
+- **🛡️ Unified API**: `bsp_gx8002_vad_int_disable()` and `bsp_gx8002_vad_int_re_enable()` for interrupt management
+- **🚫 Re-entry Prevention**: Improved interrupt handling flow to prevent re-entry and I2C conflicts
+
+#### USB CDC + RTT Logging Support
+- **✅ NEW**: `usb_cdc.conf` configuration file for USB CDC ACM console
+- **📡 SEGGER RTT**: Enable SEGGER RTT support (`CONFIG_USE_SEGGER_RTT=y`)
+- **🖥️ Dual Backend**: Shell supports both USB CDC and RTT backends
+- **📝 Logging**: Logs can be output via USB CDC (RTT log backend can be enabled as needed)
+
+#### Configuration & Optimization
+- **📦 Firmware Size**: Temporarily disable `CONFIG_LV_FONT_SIMSUN_14_CJK` to reduce firmware size
+- **🔧 I2C Shell**: Add `CONFIG_I2C_SHELL=y` and `CONFIG_SENSOR_SHELL=y` for I2C debugging
+- **🌳 Device Tree**: Complete GPIO, I2C1, I2S0, and USB CDC ACM configuration
+
+#### File Changes
+- **✅ NEW**: `mos_components/mos_interrupt/` - Interrupt handling framework
+- **✅ NEW**: `mos_driver/src/gx8002_update.c` - OTA upgrade implementation
+- **✅ NEW**: `src/shell_gx8002_control.c` - Shell command implementation
+- **✅ NEW**: `usb_cdc.conf` - USB CDC configuration
+- **🔧 MODIFIED**: `mos_driver/src/bsp_gx8002.c` - I2C communication, GPIO control, interrupt management
+- **🔧 MODIFIED**: `mos_components/mos_interrupt/src/vad_interrupt_handler.c` - VAD business logic, GPIO control
+- **🔧 MODIFIED**: `src/pdm_audio_stream.c` - I2S reception, stereo to mono conversion
+- **🔧 MODIFIED**: `boards/nrf5340dk_nrf5340_cpuapp_ns.overlay` - I2C1, I2S0, USB CDC, GPIO configuration
+- **🔧 MODIFIED**: `prj.conf` - RTT logging, I2C Shell, font configuration
+
 ### �️ Comprehensive Shell Display Command System - 2025-09-30
 
 #### Major Shell Display Control Implementation
