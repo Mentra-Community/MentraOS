@@ -1,5 +1,5 @@
-import RNFS from "react-native-fs"
 import bzip2 from "bzip2"
+import RNFS from "react-native-fs"
 import Tar from "tar-js"
 
 export class TarBz2Extractor {

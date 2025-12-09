@@ -56,29 +56,11 @@ class SocketComms {
     this.ws.connect(url, this.coreToken)
   }
 
-  private attemptReconnect(override = false) {
-    if (this.reconnecting && !override) return
-    this.reconnecting = true
-
-    this.connectWebsocket()
-
-    // If after some time we're still not connected, run this function again
-    setTimeout(() => {
-      if (this.ws.isConnected()) {
-        this.reconnectionAttempts = 0
-        this.reconnecting = false
-        return
-      }
-      this.reconnectionAttempts++
-      this.attemptReconnect(true)
-    }, 10000)
-  }
-
-  isWebSocketConnected(): boolean {
+  public isWebSocketConnected(): boolean {
     return this.ws.isConnected()
   }
 
-  restartConnection() {
+  public prestartConnection() {
     console.log(`SOCKET: restartConnection`)
     if (this.ws.isConnected()) {
       this.ws.disconnect()
@@ -105,7 +87,7 @@ class SocketComms {
     this.ws.sendText(JSON.stringify(msg))
   }
 
-  sendRtmpStreamStatus(statusMessage: any) {
+  public sendRtmpStreamStatus(statusMessage: any) {
     try {
       // Forward the status message directly since it's already in the correct format
       this.ws.sendText(JSON.stringify(statusMessage))
@@ -115,7 +97,7 @@ class SocketComms {
     }
   }
 
-  sendKeepAliveAck(ackMessage: any) {
+  public sendKeepAliveAck(ackMessage: any) {
     try {
       // Forward the ACK message directly since it's already in the correct format
       this.ws.sendText(JSON.stringify(ackMessage))
@@ -125,7 +107,7 @@ class SocketComms {
     }
   }
 
-  sendGlassesConnectionState(): void {
+  public sendGlassesConnectionState(): void {
     let modelName = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
     const glassesInfo = useGlassesStore.getState()
 
@@ -148,10 +130,9 @@ class SocketComms {
     )
   }
 
-  sendBatteryStatus(): void {
+  public sendBatteryStatus(): void {
     const batteryLevel = useGlassesStore.getState().batteryLevel
     const charging = useGlassesStore.getState().charging
-    this.send_battery_status(batteryLevel, charging)
     const msg = {
       type: "glasses_battery_update",
       level: batteryLevel,
@@ -161,7 +142,7 @@ class SocketComms {
     this.ws.sendText(JSON.stringify(msg))
   }
 
-  sendText(text: string) {
+  public sendText(text: string) {
     try {
       this.ws.sendText(text)
     } catch (error) {
@@ -179,27 +160,15 @@ class SocketComms {
 
   // SERVER COMMANDS
   // these are public functions that can be called from anywhere to notify the server of something:
-  // should all be prefixed with send_
+  // should all be prefixed with send
 
-  send_vad_status(isSpeaking: boolean) {
+  public sendVadStatus(isSpeaking: boolean) {
     const vadMsg = {
       type: "VAD",
       status: isSpeaking,
     }
 
     const jsonString = JSON.stringify(vadMsg)
-    this.ws.sendText(jsonString)
-  }
-
-  send_battery_status(level: number, charging: boolean) {
-    const msg = {
-      type: "glasses_battery_update",
-      level: level,
-      charging: charging,
-      timestamp: Date.now(),
-    }
-
-    const jsonString = JSON.stringify(msg)
     this.ws.sendText(jsonString)
   }
 
@@ -407,13 +376,14 @@ class SocketComms {
   }
 
   public handle_display_event(msg: any) {
-    // console.log(`SOCKET: Handling display event: ${JSON.stringify(msg)}`)
-    if (msg.view) {
-      CoreModule.displayEvent(msg)
-      // Update the Zustand store with the display content
-      const displayEvent = JSON.stringify(msg)
-      useDisplayStore.getState().setDisplayEvent(displayEvent)
+    if (!msg.view) {
+      console.error("SOCKET: display_event missing view")
+      return
     }
+    CoreModule.displayEvent(msg)
+    // Update the Zustand store with the display content
+    const displayEvent = JSON.stringify(msg)
+    useDisplayStore.getState().setDisplayEvent(displayEvent)
   }
 
   private handle_set_location_tier(msg: any) {

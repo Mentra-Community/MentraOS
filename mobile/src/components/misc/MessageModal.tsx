@@ -1,7 +1,8 @@
-import {useAppTheme} from "@/utils/useAppTheme"
 import {View, Modal, TouchableOpacity} from "react-native"
-import {Text} from "@/components/ignite"
 import Icon from "react-native-vector-icons/MaterialCommunityIcons"
+
+import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface ButtonProps {
   text: string

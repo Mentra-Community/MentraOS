@@ -1,7 +1,9 @@
-import {NavObject} from "@/contexts/NavigationHistoryContext"
-import {Platform} from "react-native"
 import * as WebBrowser from "expo-web-browser"
-import {mentraAuthProvider} from "./auth/authProvider"
+import {Platform} from "react-native"
+
+import {NavObject} from "@/contexts/NavigationHistoryContext"
+
+import mentraAuth from "./auth/authClient"
 
 export interface DeepLinkRoute {
   pattern: string
@@ -167,59 +169,57 @@ export const deepLinkRoutes: DeepLinkRoute[] = [
       const authParams = parseAuthParams(url)
 
       if (authParams && authParams.access_token && authParams.refresh_token) {
-        try {
-          // Update the Supabase session manually
-          const {error} = await mentraAuthProvider.updateSessionWithTokens({
-            access_token: authParams.access_token,
-            refresh_token: authParams.refresh_token,
-          })
-          if (error) {
-            console.error("Error setting session:", error)
-          } else {
-            // console.log("Session updated:", data.session)
-            // console.log("[LOGIN DEBUG] Session set successfully, data.session exists:", !!data.session)
-            console.log("[LOGIN DEBUG] Session set successfully")
-            // Dismiss the WebView after successful authentication (non-blocking)
-            console.log("[LOGIN DEBUG] About to dismiss browser, platform:", Platform.OS)
-            try {
-              const dismissResult = WebBrowser.dismissBrowser()
-              console.log("[LOGIN DEBUG] dismissBrowser returned:", dismissResult, "type:", typeof dismissResult)
-              if (dismissResult && typeof dismissResult.catch === "function") {
-                dismissResult.catch(() => {
-                  // Ignore errors - browser might not be open
-                })
-              }
-            } catch (dismissError) {
-              console.log("[LOGIN DEBUG] Error calling dismissBrowser:", dismissError)
-              // Ignore - browser might not be open or function might not exist
-            }
-
-            // Small delay to ensure auth state propagates
-            console.log("[LOGIN DEBUG] About to set timeout for navigation")
-            setTimeout(() => {
-              console.log("[LOGIN DEBUG] Inside setTimeout, about to call router.replace('/')")
-              try {
-                navObject.replace("/init")
-                console.log("[LOGIN DEBUG] router.replace called successfully")
-              } catch (navError) {
-                console.error("[LOGIN DEBUG] Error calling router.replace:", navError)
-              }
-            }, 100)
-            console.log("[LOGIN DEBUG] setTimeout scheduled")
-            return // Don't do the navigation below
-          }
-        } catch (e) {
-          console.error("Exception during setSession:", e)
-          console.error("[LOGIN DEBUG] setSession error details:", e)
+        // Update the Supabase session manually
+        const res = await mentraAuth.updateSessionWithTokens({
+          access_token: authParams.access_token,
+          refresh_token: authParams.refresh_token,
+        })
+        if (res.is_error()) {
+          console.error("Error setting session:", res.error)
+          return
         }
+        // console.log("Session updated:", data.session)
+        // console.log("[LOGIN DEBUG] Session set successfully, data.session exists:", !!data.session)
+        console.log("[LOGIN DEBUG] Session set successfully")
+        // Dismiss the WebView after successful authentication (non-blocking)
+        console.log("[LOGIN DEBUG] About to dismiss browser, platform:", Platform.OS)
+        try {
+          const dismissResult = WebBrowser.dismissBrowser()
+          console.log("[LOGIN DEBUG] dismissBrowser returned:", dismissResult, "type:", typeof dismissResult)
+          if (dismissResult && typeof dismissResult.catch === "function") {
+            dismissResult.catch(() => {
+              // Ignore errors - browser might not be open
+            })
+          }
+        } catch (dismissError) {
+          console.log("[LOGIN DEBUG] Error calling dismissBrowser:", dismissError)
+          // Ignore - browser might not be open or function might not exist
+        }
+
+        // Small delay to ensure auth state propagates
+        console.log("[LOGIN DEBUG] About to set timeout for navigation")
+        setTimeout(() => {
+          console.log("[LOGIN DEBUG] Inside setTimeout, about to call router.replace('/')")
+          try {
+            navObject.replace("/")
+            console.log("[LOGIN DEBUG] router.replace called successfully")
+          } catch (navError) {
+            console.error("[LOGIN DEBUG] Error calling router.replace:", navError)
+          }
+        }, 100)
+        console.log("[LOGIN DEBUG] setTimeout scheduled")
+        return // Don't do the navigation below
       }
 
       // Check if this is an auth callback without tokens
       if (!authParams) {
         // Try checking if user is already authenticated
-        const {data} = await mentraAuthProvider.getSession()
-        if (data?.session?.token) {
-          navObject.replace("/")
+        const res = await mentraAuth.getSession()
+        if (res.is_ok()) {
+          const session = res.value
+          if (session?.token) {
+            navObject.replace("/")
+          }
         }
       }
     },
@@ -248,25 +248,20 @@ export const deepLinkRoutes: DeepLinkRoute[] = [
       const authParams = parseAuthParams(url)
 
       if (authParams && authParams.access_token && authParams.refresh_token && authParams.type === "recovery") {
-        try {
-          // Set the recovery session
-          const {error} = await mentraAuthProvider.updateSessionWithTokens({
-            access_token: authParams.access_token,
-            refresh_token: authParams.refresh_token,
-          })
-
-          if (error) {
-            console.error("[RESET PASSWORD DEBUG] Error setting recovery session:", error)
-            navObject.replace("/auth/login")
-          } else {
-            console.log("[RESET PASSWORD DEBUG] Recovery session set successfully")
-            // Navigate to the reset password screen
-            navObject.replace("/auth/reset-password")
-          }
-        } catch (err) {
-          console.error("[RESET PASSWORD DEBUG] Exception during setSession:", err)
+        // Set the recovery session
+        const res = await mentraAuth.updateSessionWithTokens({
+          access_token: authParams.access_token,
+          refresh_token: authParams.refresh_token,
+        })
+        if (res.is_error()) {
+          console.error("[RESET PASSWORD DEBUG] Error setting recovery session:", res.error)
           navObject.replace("/auth/login")
+          return
         }
+
+        console.log("[RESET PASSWORD DEBUG] Recovery session set successfully")
+        // Navigate to the reset password screen
+        navObject.replace("/auth/reset-password")
       } else {
         console.log("[RESET PASSWORD DEBUG] Missing required auth parameters for password reset")
         navObject.replace("/auth/login")

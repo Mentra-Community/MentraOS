@@ -119,10 +119,12 @@ export interface TranscriptionData extends BaseMessage {
   type: StreamType.TRANSCRIPTION
   text: string // The transcribed text
   isFinal: boolean // Whether this is a final transcription
-  transcribeLanguage?: string // Detected language code
+  utteranceId?: string // Unique ID for this speech segment - interim and final for same utterance share the same ID
+  transcribeLanguage?: string // Subscription language code (used for routing, e.g., "en-US")
+  detectedLanguage?: string // Actual detected language from speech recognition (e.g., "ja", "en")
   startTime: number // Start time in milliseconds
   endTime: number // End time in milliseconds
-  speakerId?: string // ID of the speaker if available
+  speakerId?: string // ID of the speaker if available (from diarization)
   duration?: number // Audio duration in milliseconds
   provider?: string // The transcription provider (e.g., "azure", "soniox")
   confidence?: number // Confidence score (0-1)

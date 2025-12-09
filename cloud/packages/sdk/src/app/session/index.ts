@@ -1,3 +1,5 @@
+/* eslint-disable import/order */
+/* eslint-disable no-restricted-imports */
 /**
  * 🎯 App Session Module
  *
@@ -881,8 +883,18 @@ export class AppSession {
 
   /**
    * 👋 Disconnect from MentraOS Cloud
+   * Flushes any pending SimpleStorage writes before closing
    */
-  disconnect(): void {
+  async disconnect(): Promise<void> {
+    // Flush any pending SimpleStorage writes before closing
+    try {
+      await this.simpleStorage.flush()
+      console.log("SimpleStorage flushed on disconnect")
+    } catch (error) {
+      console.error("Error flushing SimpleStorage on disconnect:", error)
+      // Continue with disconnect even if flush fails
+    }
+
     // Clean up camera module first
     if (this.camera) {
       this.camera.cancelAllRequests()
@@ -1617,9 +1629,9 @@ export class AppSession {
     // Check if reconnection is allowed
     if (!this.config.autoReconnect || !this.sessionId) {
       this.logger.debug(
-        `🔄 Reconnection skipped: autoReconnect=${
-          this.config.autoReconnect
-        }, sessionId=${this.sessionId ? "valid" : "invalid"}`,
+        `🔄 Reconnection skipped: autoReconnect=${this.config.autoReconnect}, sessionId=${
+          this.sessionId ? "valid" : "invalid"
+        }`,
       )
       return
     }

@@ -1,6 +1,6 @@
 import {EventEmitter} from "events"
+
 import mantle from "./MantleManager"
-import CoreModule from "core"
 
 export interface SuperWebViewMessage {
   type: string
@@ -121,7 +121,7 @@ class MiniComms {
     })
   }
 
-  private handlePageReady(message: SuperWebViewMessage) {
+  private handlePageReady(_message: SuperWebViewMessage) {
     console.log(`SUPERCOMMS: Page is ready`)
 
     // Send initial data to WebView
@@ -135,8 +135,8 @@ class MiniComms {
     })
   }
 
-  private handleCustomAction(message: SuperWebViewMessage) {
-    console.log(`SUPERCOMMS: Custom action:`, message.payload)
+  private handleCustomAction(_message: SuperWebViewMessage) {
+    console.log(`SUPERCOMMS: Custom action:`, _message.payload)
   }
 
   // Public API for sending specific commands to WebView

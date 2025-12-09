@@ -145,7 +145,9 @@ export default function CloudConnection() {
         <View style={themed($innerContainer)}>
           <View style={themed($row)}>
             <Icon name={iconName} size={16} color={iconColor} style={themed($icon)} />
-            <Text style={themed($text)}>{statusLabel}</Text>
+            <Text style={themed($text)} weight="medium">
+              {statusLabel}
+            </Text>
           </View>
         </View>
       </LinearGradient>
@@ -182,9 +184,7 @@ const $icon: ThemedStyle<ViewStyle> = ({spacing}) => ({
   marginRight: spacing.s2,
 })
 
-const $text: ThemedStyle<TextStyle> = ({colors, typography}) => ({
+const $text: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
-  fontFamily: typography.primary.medium,
   fontSize: 14,
-  fontWeight: "600",
 })

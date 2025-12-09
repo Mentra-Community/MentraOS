@@ -3,6 +3,7 @@ import {FlatList, TextStyle, TouchableOpacity, View, ViewStyle} from "react-nati
 
 import {Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {
   ClientAppletInterface,
   DUMMY_APPLET,
@@ -11,8 +12,8 @@ import {
   useStartApplet,
 } from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
+import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 
 const GRID_COLUMNS = 4
 
@@ -57,13 +58,19 @@ export const ForegroundAppsGrid: React.FC = () => {
     return inactiveApps
   }, [foregroundApps])
 
-  const handlePress = (packageName: string) => {
+  const handlePress = async (app: ClientAppletInterface) => {
     const getMoreApplet = getMoreAppsApplet()
-    if (packageName === getMoreApplet.packageName) {
+    if (app.packageName === getMoreApplet.packageName) {
       push(getMoreApplet.offlineRoute)
       return
     }
-    startApplet(packageName)
+
+    const result = await askPermissionsUI(app, theme)
+    if (result !== 1) {
+      return
+    }
+
+    startApplet(app.packageName)
   }
 
   const renderItem = useCallback(
@@ -81,7 +88,7 @@ export const ForegroundAppsGrid: React.FC = () => {
       }
 
       return (
-        <TouchableOpacity style={themed($gridItem)} onPress={() => handlePress(item.packageName)} activeOpacity={0.7}>
+        <TouchableOpacity style={themed($gridItem)} onPress={() => handlePress(item)} activeOpacity={0.7}>
           <AppIcon app={item} style={themed($appIcon)} />
           <Text
             text={item.name}

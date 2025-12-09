@@ -1,4 +1,5 @@
 import {SvgXml} from "react-native-svg"
+
 import {useAppTheme} from "@/utils/useAppTheme"
 
 interface GlassesIconProps {

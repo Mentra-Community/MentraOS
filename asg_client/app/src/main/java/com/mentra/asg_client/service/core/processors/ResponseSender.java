@@ -123,6 +123,32 @@ public class ResponseSender {
     }
 
     /**
+     * Send MTK firmware update complete notification over BLE.
+     * Notifies mobile app that MTK firmware has been successfully updated
+     * and glasses need to be restarted.
+     */
+    public void sendMtkUpdateComplete() {
+        if (!isBluetoothConnected()) {
+            Log.d(TAG, "Cannot send MTK update complete - not connected to BLE device");
+            return;
+        }
+
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "mtk_update_complete");
+            message.put("message", "Please restart your glasses.");
+            message.put("timestamp", System.currentTimeMillis());
+
+            // Use reliable sending for MTK update complete
+            boolean sent = reliableManager.sendMessage(message);
+            Log.i(TAG, "🔄 Sent MTK update complete via BLE (sent: " + sent + ")");
+
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating MTK update complete JSON", e);
+        }
+    }
+
+    /**
      * Send report swipe status over BLE.
      *
      * @param report The swipe report status (true/false)

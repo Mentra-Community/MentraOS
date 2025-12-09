@@ -96,8 +96,8 @@ const unique = {
 
   // Slider states
   sliderThumb: palette.neutral300,
-  sliderTrackActive: palette.primary300,
-  sliderTrackInactive: palette.lightPurple1,
+  sliderTrackActive: palette.primary500,
+  sliderTrackInactive: palette.neutral700,
 } as const
 
 const design = {

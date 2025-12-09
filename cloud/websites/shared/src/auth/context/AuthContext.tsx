@@ -311,15 +311,8 @@ export function AuthProvider({
         }
         // --- END CONDITIONAL WebView Logic ---
 
-        // 3. Fallback to standard auth
-        // Check for saved core token (for web)
+        // 3. Check for saved core token (for web)
         const savedCoreToken = localStorage.getItem("core_token")
-        if (savedCoreToken) {
-          console.log("Using saved core token.")
-          setupAxiosAuth(savedCoreToken)
-          setCoreToken(savedCoreToken)
-          setTokenReady(true)
-        }
 
         // 4. Check for standard Supabase session
         console.log("Checking for standard Supabase session...")
@@ -330,10 +323,21 @@ export function AuthProvider({
         if (data?.session?.token) {
           console.log("Found active Supabase session.")
           setProviderToken(data.session.token)
-          if (!savedCoreToken) {
+          if (savedCoreToken) {
+            // Use saved core token with valid session
+            console.log("Using saved core token with valid session.")
+            setupAxiosAuth(savedCoreToken)
+            setCoreToken(savedCoreToken)
+            setTokenReady(true)
+          } else {
             await exchangeForCoreToken(data.session.token)
           }
         } else {
+          // No valid session - clear any stale core token
+          if (savedCoreToken) {
+            console.log("No valid session but found stale core token - clearing it.")
+            localStorage.removeItem("core_token")
+          }
           setTokenReady(true) // No session, but ready
         }
       } catch (error) {

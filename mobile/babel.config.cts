@@ -17,7 +17,6 @@ module.exports = function (api: any) {
           },
           extensions: [".ios.js", ".android.js", ".js", ".ts", ".tsx", ".json"],
         },
-        "transform-inline-environment-variables"
       ],
     ],
   }

@@ -1,9 +1,11 @@
 import {ComponentType, Fragment, ReactElement} from "react"
 import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewProps, ViewStyle} from "react-native"
+
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {$styles} from "@/theme"
-import {Text, TextProps} from "./Text"
 import {useAppTheme} from "@/utils/useAppTheme"
+
+import {Text, TextProps} from "./Text"
 
 type Presets = "default" | "reversed"
 

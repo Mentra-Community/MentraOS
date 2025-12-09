@@ -814,6 +814,50 @@ UserSchema.statics.findOrCreateUser = async function (
     // Don't fail user creation if app installation fails
   }
 
+  // Auto-delete apps specified in DELETE_APP_BY_PACKAGE_NAME environment variable
+  try {
+    const deletePackageNames = process.env.DELETE_APP_BY_PACKAGE_NAME;
+
+    if (deletePackageNames && deletePackageNames.trim()) {
+      const packagesToDelete = deletePackageNames
+        .split(",")
+        .map((pkg) => pkg.trim())
+        .filter((pkg) => pkg.length > 0);
+
+      if (packagesToDelete.length > 0 && user.installedApps) {
+        const deletedApps: string[] = [];
+
+        // Filter out apps that should be deleted
+        user.installedApps = user.installedApps.filter((app: any) => {
+          const shouldDelete = packagesToDelete.includes(app.packageName);
+          if (shouldDelete) {
+            deletedApps.push(app.packageName);
+          }
+          return !shouldDelete;
+        });
+
+        // Only save if we actually deleted something
+        if (deletedApps.length > 0) {
+          await user.save();
+          logger.info(
+            {
+              email,
+              deletedApps,
+              deletedCount: deletedApps.length,
+            },
+            `Auto-deleted ${deletedApps.length} app(s) for user: ${email}`,
+          );
+        }
+      }
+    }
+  } catch (error) {
+    {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error(err, "Error auto-deleting apps:");
+    }
+    // Don't fail user creation if app deletion fails
+  }
+
   return user;
 };
 

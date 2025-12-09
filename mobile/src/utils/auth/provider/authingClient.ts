@@ -1,15 +1,12 @@
+import {EventEmitter} from "events"
+
 import {AuthenticationClient} from "authing-js-sdk"
 import type {AuthenticationClientOptions, User} from "authing-js-sdk"
-import AsyncStorage from "@react-native-async-storage/async-storage"
-import {EventEmitter} from "events"
-import {
-  MentraAuthSession,
-  MentraAuthSessionResponse,
-  MentraAuthStateChangeSubscriptionResponse,
-  MentraAuthUserResponse,
-  MentraSigninResponse,
-  MentraSignOutResponse,
-} from "../authProvider.types"
+
+import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
+import {storage} from "@/utils/storage/storage"
+import {Result, result as Res, AsyncResult} from "typesafe-ts"
+import {AuthClient} from "@/utils/auth/authClient"
 
 interface Session {
   access_token?: string
@@ -30,13 +27,14 @@ type AuthChangeEvent =
 
 type AuthChangeCallback = (event: AuthChangeEvent, session: any) => void
 
-export class AuthingWrapperClient {
+export class AuthingWrapperClient extends AuthClient {
   private authing: AuthenticationClient
   private eventEmitter: EventEmitter
   private refreshTimeout: ReturnType<typeof setTimeout> | null = null
   private static instance: AuthingWrapperClient
 
   private constructor() {
+    super()
     const authingOptions: AuthenticationClientOptions = {
       appId: process.env.EXPO_PUBLIC_AUTHING_APP_ID || "",
       appHost: process.env.EXPO_PUBLIC_AUTHING_APP_HOST || "",
@@ -48,9 +46,14 @@ export class AuthingWrapperClient {
   }
 
   public static async getInstance(): Promise<AuthingWrapperClient> {
+    console.log("AuthingWrapperClient: getInstance()")
     if (!AuthingWrapperClient.instance) {
       AuthingWrapperClient.instance = new AuthingWrapperClient()
-      const session = await AuthingWrapperClient.instance.readSessionFromStorage()
+      const res = await AuthingWrapperClient.instance.readSessionFromStorage()
+      if (res.is_error()) {
+        return AuthingWrapperClient.instance
+      }
+      const session = res.value
 
       if (session?.access_token) {
         AuthingWrapperClient.instance.authing.setToken(session.access_token)
@@ -62,7 +65,8 @@ export class AuthingWrapperClient {
     return AuthingWrapperClient.instance
   }
 
-  public onAuthStateChange(callback: AuthChangeCallback): MentraAuthStateChangeSubscriptionResponse {
+  public onAuthStateChange(callback: AuthChangeCallback): Result<any, Error> {
+    console.log("AuthingWrapperClient: onAuthStateChange()")
     const handler = (event: string, session: MentraAuthSession) => {
       callback(event as AuthChangeEvent, session)
     }
@@ -74,89 +78,67 @@ export class AuthingWrapperClient {
     this.eventEmitter.on("USER_DELETED", (session: MentraAuthSession) => handler("USER_DELETED", session))
     this.eventEmitter.on("PASSWORD_RECOVERY", (session: MentraAuthSession) => handler("PASSWORD_RECOVERY", session))
 
-    return {
-      data: {
-        subscription: {
-          unsubscribe: () => {
-            this.eventEmitter.off("SIGNED_IN", handler)
-            this.eventEmitter.off("SIGNED_OUT", handler)
-            this.eventEmitter.off("TOKEN_REFRESHED", handler)
-            this.eventEmitter.off("USER_UPDATED", handler)
-            this.eventEmitter.off("USER_DELETED", handler)
-            this.eventEmitter.off("PASSWORD_RECOVERY", handler)
-          },
-        },
+    return Res.ok({
+      unsubscribe: () => {
+        this.eventEmitter.off("SIGNED_IN", handler)
+        this.eventEmitter.off("SIGNED_OUT", handler)
+        this.eventEmitter.off("TOKEN_REFRESHED", handler)
+        this.eventEmitter.off("USER_UPDATED", handler)
+        this.eventEmitter.off("USER_DELETED", handler)
+        this.eventEmitter.off("PASSWORD_RECOVERY", handler)
       },
-      error: null,
-    }
+    })
   }
 
-  public async getUser(): Promise<MentraAuthUserResponse> {
-    try {
+  public getUser(): AsyncResult<MentraAuthUser, Error> {
+    console.log("AuthingWrapperClient: getUser()")
+    return Res.try_async(async () => {
       const user = await this.authing.getCurrentUser()
-      return {
-        data: user
-          ? {
-              user: {
-                id: user.id,
-                email: user.email!,
-                name: user.name || "",
-                avatarUrl: user.photo || "",
-                createdAt: user.createdAt as string,
-                provider: user.identities?.[0]?.provider as string,
-              },
-            }
-          : null,
-        error: null,
+      if (!user) {
+        throw new Error("Error getting user")
       }
-    } catch (error) {
-      console.error("Error getting user:", error)
-      return {
-        data: null,
-        error: {
-          message: "Failed to get user",
-        },
+      let mentraUser: MentraAuthUser = {
+        id: user.id,
+        email: user.email!,
+        name: user.name || "",
+        avatarUrl: user.photo || "",
+        createdAt: user.createdAt as string,
+        provider: user.identities?.[0]?.provider as string,
       }
-    }
+      return mentraUser
+    })
   }
 
-  public async signUp(credentials: {email: string; password: string}): Promise<MentraSigninResponse> {
-    try {
+  public signUp(credentials: {email: string; password: string}): AsyncResult<MentraSigninResponse, Error> {
+    console.log("AuthingWrapperClient: signUp()")
+    return Res.try_async(async () => {
       const user = await this.authing.registerByEmail(credentials.email, credentials.password)
-      return {
-        data: user
-          ? {
-              session: {
-                token: user.token as string,
-                user: {
-                  id: user.id,
-                  email: user.email!,
-                  name: user.name || "",
-                },
-              },
-              user: {
-                id: user.id,
-                email: user.email!,
-                name: user.name || "",
-              },
-            }
-          : null,
-        error: null,
+      if (!user) {
+        throw new Error("Error signing up")
       }
-    } catch (error: any) {
-      console.error("Error signing up:", error)
-      return {
-        data: null,
-        error: {
-          message: error.message,
-        },
+      let mentraUser: MentraAuthUser = {
+        id: user.id,
+        email: user.email!,
+        name: user.name || "",
+        avatarUrl: user.photo || "",
+        createdAt: user.createdAt as string,
+        provider: user.identities?.[0]?.provider as string,
       }
-    }
+      let mentraSession: MentraAuthSession = {
+        token: user.token as string,
+        user: mentraUser,
+      }
+      let mentraSigninResponse: MentraSigninResponse = {
+        session: mentraSession,
+        user: mentraUser,
+      }
+      return mentraSigninResponse
+    })
   }
 
-  public async signInWithPassword(credentials: {email: string; password: string}): Promise<MentraSigninResponse> {
-    try {
-      console.log("AuthingWrapperClient: signInWithPassword")
+  public signInWithPassword(credentials: {email: string; password: string}): AsyncResult<MentraSigninResponse, Error> {
+    console.log("AuthingWrapperClient: signInWithPassword()")
+    return Res.try_async(async () => {
       const user = await this.authing.loginByEmail(credentials.email, credentials.password)
       const token = user.token
       const tokenExpiresAt = user.tokenExpiredAt && new Date(user.tokenExpiredAt).getTime()
@@ -181,84 +163,62 @@ export class AuthingWrapperClient {
         }
         this.eventEmitter.emit("SIGNED_IN", authSession)
         this.setupTokenRefresh()
-        return {
-          data: {
-            session: authSession,
-            user: {
-              id: session.user!.id,
-              email: session.user!.email!,
-              name: session.user!.name || "",
-            },
-          },
-          error: null,
+        let mentraUser: MentraAuthUser = {
+          id: session.user!.id,
+          email: session.user!.email!,
+          name: session.user!.name || "",
         }
+        let mentraSigninResponse: MentraSigninResponse = {
+          session: authSession,
+          user: mentraUser,
+        }
+        return mentraSigninResponse
       }
 
       throw new Error("Failed to sign in")
-    } catch (error: any) {
-      console.error("Sign in error:", error)
-      return {
-        data: null,
-        error: {
-          message: error.message,
-        },
-      }
-    }
+    })
   }
 
-  public async signOut(): Promise<MentraSignOutResponse> {
-    try {
+  public signOut(): AsyncResult<void, Error> {
+    console.log("AuthingWrapperClient: signOut()")
+    return Res.try_async(async () => {
       await this.authing.logout()
       await this.clearSession()
       this.eventEmitter.emit("SIGNED_OUT", null)
-      return {error: null}
-    } catch (error) {
-      console.error("Sign out error:", error)
-      return {
-        error: {
-          message: "Failed to sign out",
-        },
-      }
-    }
+    })
   }
 
-  public async getSession(): Promise<MentraAuthSessionResponse> {
-    try {
-      const session = await this.readSessionFromStorage()
-      return {
-        data: {
-          session: session
-            ? {
-                token: session.access_token,
-                user: {
-                  id: session.user!.id,
-                  email: session.user!.email!,
-                  name: session.user!.name || "",
-                },
-              }
-            : null,
-        },
-        error: null,
-      }
-    } catch (error) {
-      console.error("Error getting session:", error)
-      return {
-        data: null,
-        error: {
-          message: "Failed to get session",
-        },
-      }
+  public getSession(): AsyncResult<MentraAuthSession, Error> {
+    console.log("AuthingWrapperClient: getSession()")
+    const res = this.readSessionFromStorage()
+    if (res.is_error()) {
+      console.error("Error loading session:", res.error)
+      return Res.error_async(res.error)
     }
+    const session = res.value
+    return Res.ok_async({
+      token: session.access_token,
+      user: {
+        id: session.user!.id,
+        email: session.user!.email!,
+        name: session.user!.name || "",
+      },
+    })
   }
 
-  private async readSessionFromStorage(): Promise<Session | null> {
-    const sessionJson = await AsyncStorage.getItem(SESSION_KEY)
-    return sessionJson ? JSON.parse(sessionJson) : null
+  private readSessionFromStorage(): Result<Session, Error> {
+    const res = storage.load<Session>(SESSION_KEY)
+    return res
   }
 
   private async setupTokenRefresh() {
     try {
-      const session = await this.readSessionFromStorage()
+      const res = await this.readSessionFromStorage()
+      if (res.is_error()) {
+        console.error("Error loading session:", res.error)
+        return
+      }
+      const session = res.value
       if (!session?.access_token) return
 
       const now = Date.now()
@@ -310,15 +270,17 @@ export class AuthingWrapperClient {
     }
   }
 
-  public async startAutoRefresh(): Promise<void> {
+  public startAutoRefresh(): AsyncResult<void, Error> {
     this.setupTokenRefresh()
+    return Res.ok_async(undefined)
   }
 
-  public async stopAutoRefresh(): Promise<void> {
+  public stopAutoRefresh(): AsyncResult<void, Error> {
     if (this.refreshTimeout) {
       clearTimeout(this.refreshTimeout)
       this.refreshTimeout = null
     }
+    return Res.ok_async(undefined)
   }
 
   private async getCurrentUser(): Promise<User | null> {
@@ -331,7 +293,10 @@ export class AuthingWrapperClient {
   }
 
   private async saveSession(session: Session): Promise<void> {
-    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session))
+    const res = await storage.save(SESSION_KEY, session)
+    if (res.is_error()) {
+      console.error("Failed to save session", res.error)
+    }
   }
 
   private async clearSession(): Promise<void> {
@@ -339,9 +304,32 @@ export class AuthingWrapperClient {
       clearTimeout(this.refreshTimeout)
       this.refreshTimeout = null
     }
-    await AsyncStorage.removeItem(SESSION_KEY)
+    const res = await storage.remove(SESSION_KEY)
+    if (res.is_error()) {
+      console.error("Failed to clear session", res.error)
+    }
     // clears the session and user
     this.authing.logout()
+  }
+
+  public resetPasswordForEmail(_email: string): AsyncResult<any, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  public updateUserPassword(_password: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  public updateSessionWithTokens(_tokens: {access_token: string; refresh_token: string}): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  public appleSignIn(): AsyncResult<string, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  public googleSignIn(): AsyncResult<string, Error> {
+    return Res.error_async(new Error("Method not implemented"))
   }
 }
 

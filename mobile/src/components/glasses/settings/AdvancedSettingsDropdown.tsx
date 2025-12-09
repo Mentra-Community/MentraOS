@@ -1,9 +1,10 @@
-import {Text} from "@/components/ignite"
-import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {MaterialCommunityIcons} from "@expo/vector-icons"
 import {useEffect, useRef} from "react"
 import {Animated, TouchableOpacity, View, TextStyle, ViewStyle} from "react-native"
+
+import {Text} from "@/components/ignite"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface AdvancedSettingsDropdownProps {
   isOpen: boolean

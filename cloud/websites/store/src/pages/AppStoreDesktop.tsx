@@ -1,4 +1,4 @@
-import {useState, useEffect, useCallback, useMemo, useRef} from "react"
+import React, {useState, useEffect, useCallback, useMemo, useRef} from "react"
 import {useNavigate, useSearchParams} from "react-router-dom"
 import {X, Building, ChevronLeft, ChevronRight} from "lucide-react"
 import {motion} from "framer-motion"
@@ -39,7 +39,8 @@ const AppStoreDesktop: React.FC = () => {
 
   // Slideshow state - desktop slides only
   const slideComponents = [CaptionsSlide, MergeSlide, StreamSlide, XSlide]
-  const [currentSlide, setCurrentSlide] = useState(0)
+  const [currentSlide, setCurrentSlide] = useState(1) // Start at 1 to account for cloned slide
+  const [isTransitioning, setIsTransitioning] = useState(true)
   const slideIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Helper function to check if authentication tokens are ready
@@ -48,18 +49,53 @@ const AppStoreDesktop: React.FC = () => {
     return !authLoading && (supabaseToken || coreToken)
   }
 
-  // Slideshow navigation functions
+  // Reset the auto-play timer
+  const resetAutoPlayTimer = useCallback(() => {
+    if (slideIntervalRef.current) {
+      clearInterval(slideIntervalRef.current)
+    }
+    slideIntervalRef.current = setInterval(() => {
+      setCurrentSlide((prev) => prev + 1)
+    }, 8000)
+  }, [])
+
+  // Slideshow navigation functions with infinite scroll
   const goToNextSlide = useCallback(() => {
-    setCurrentSlide((prev) => (prev + 1) % slideComponents.length)
-  }, [slideComponents.length])
+    setCurrentSlide((prev) => prev + 1)
+    resetAutoPlayTimer()
+  }, [resetAutoPlayTimer])
 
   const goToPrevSlide = useCallback(() => {
-    setCurrentSlide((prev) => (prev - 1 + slideComponents.length) % slideComponents.length)
-  }, [slideComponents.length])
+    setCurrentSlide((prev) => prev - 1)
+    resetAutoPlayTimer()
+  }, [resetAutoPlayTimer])
 
-  const goToSlide = useCallback((index: number) => {
-    setCurrentSlide(index)
-  }, [])
+  const goToSlide = useCallback(
+    (index: number) => {
+      setCurrentSlide(index)
+      resetAutoPlayTimer()
+    },
+    [resetAutoPlayTimer],
+  )
+
+  // Handle looping back to the real slides after transition completes
+  useEffect(() => {
+    if (currentSlide === slideComponents.length + 1) {
+      // We've reached the clone at the end, jump back to start (index 1) without animation
+      setTimeout(() => {
+        setIsTransitioning(false)
+        setCurrentSlide(1)
+        setTimeout(() => setIsTransitioning(true), 50)
+      }, 400) // Match transition duration
+    } else if (currentSlide === 0) {
+      // We've reached the clone at the start, jump to end (last real slide) without animation
+      setTimeout(() => {
+        setIsTransitioning(false)
+        setCurrentSlide(slideComponents.length)
+        setTimeout(() => setIsTransitioning(true), 50)
+      }, 400) // Match transition duration
+    }
+  }, [currentSlide, slideComponents.length])
 
   // Set slides as loaded after a short delay
   useEffect(() => {
@@ -437,7 +473,7 @@ const AppStoreDesktop: React.FC = () => {
 
         {/* Slideshow Section - Hidden when searching */}
         {!searchQuery && (
-          <div className="">
+          <div className="mt-[16px]">
             {!slidesLoaded ? (
               <SkeletonSlider />
             ) : (
@@ -446,14 +482,26 @@ const AppStoreDesktop: React.FC = () => {
                 <motion.div
                   className="flex"
                   animate={{x: `-${currentSlide * 100}%`}}
-                  transition={{
-                    type: "tween",
-                    duration: 0.4,
-                    ease: [0.25, 0.1, 0.25, 1],
-                  }}>
+                  transition={
+                    isTransitioning
+                      ? {
+                          type: "tween",
+                          duration: 0.4,
+                          ease: [0.25, 0.1, 0.25, 1],
+                        }
+                      : {duration: 0}
+                  }>
+                  {/* Clone of last slide for seamless loop */}
+                  {slideComponents[slideComponents.length - 1] &&
+                    React.createElement(slideComponents[slideComponents.length - 1], {
+                      key: "clone-last",
+                    })}
+                  {/* Actual slides */}
                   {slideComponents.map((SlideComponent, index) => (
                     <SlideComponent key={index} />
                   ))}
+                  {/* Clone of first slide for seamless loop */}
+                  {slideComponents[0] && React.createElement(slideComponents[0], {key: "clone-first"})}
                 </motion.div>
 
                 {/* Previous Button - Left Side */}
@@ -494,21 +542,30 @@ const AppStoreDesktop: React.FC = () => {
 
                 {/* Slide Indicators */}
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 flex gap-2 z-1">
-                  {slideComponents.map((_, index) => (
-                    <motion.button
-                      key={index}
-                      onClick={() => goToSlide(index)}
-                      className={`rounded-full h-[2px] ${
-                        index === currentSlide ? "bg-white" : "bg-white/50 hover:bg-white/75"
-                      }`}
-                      aria-label={`Go to slide ${index + 1}`}
-                      animate={{
-                        width: index === currentSlide ? 32 : 8,
-                      }}
-                      transition={{duration: 0.3}}
-                      whileHover={{scale: 1.2}}
-                    />
-                  ))}
+                  {slideComponents.map((_, index) => {
+                    // Calculate actual slide index accounting for cloned slides
+                    const actualIndex =
+                      currentSlide === 0
+                        ? slideComponents.length - 1
+                        : currentSlide === slideComponents.length + 1
+                          ? 0
+                          : currentSlide - 1
+                    return (
+                      <motion.button
+                        key={index}
+                        onClick={() => goToSlide(index + 1)} // Add 1 to account for cloned slide
+                        className={`rounded-full h-[2px] ${
+                          index === actualIndex ? "bg-white" : "bg-white/50 hover:bg-white/75"
+                        }`}
+                        aria-label={`Go to slide ${index + 1}`}
+                        animate={{
+                          width: index === actualIndex ? 32 : 8,
+                        }}
+                        transition={{duration: 0.3}}
+                        whileHover={{scale: 1.2}}
+                      />
+                    )
+                  })}
                 </div>
               </div>
             )}

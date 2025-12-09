@@ -1,14 +1,7 @@
+import {requireNativeModule} from "expo-modules-core"
 import {Linking, Platform} from "react-native"
-import {NativeModules} from "react-native"
 
-const {SettingsNavigationModule} = NativeModules
-
-interface SettingsNavigationModule {
-  openBluetoothSettings(): Promise<boolean>
-  openLocationSettings(): Promise<boolean>
-  showLocationServicesDialog(): Promise<boolean>
-  openAppSettings(): Promise<boolean>
-}
+const Core = requireNativeModule("Core")
 
 /**
  * Utility functions for navigating to system settings pages
@@ -23,7 +16,7 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for direct Bluetooth settings access
-        await SettingsNavigationModule.openBluetoothSettings()
+        await Core.openBluetoothSettings()
         return true
       } else if (Platform.OS === "ios") {
         // iOS doesn't have direct Bluetooth settings access, open general settings
@@ -51,7 +44,7 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for location services dialog (better UX)
-        await SettingsNavigationModule.showLocationServicesDialog()
+        await Core.showLocationServicesDialog()
         return true
       } else if (Platform.OS === "ios") {
         // iOS doesn't have a similar dialog, open location settings
@@ -78,7 +71,7 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for direct location settings access
-        await SettingsNavigationModule.openLocationSettings()
+        await Core.openLocationSettings()
         return true
       } else if (Platform.OS === "ios") {
         // iOS doesn't have direct location settings access, open general settings
@@ -106,7 +99,7 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for app settings
-        await SettingsNavigationModule.openAppSettings()
+        await Core.openAppSettings()
         return true
       } else if (Platform.OS === "ios") {
         // iOS app settings

@@ -1,5 +1,6 @@
-import React from "react"
-import {View, Text, ViewStyle, TextStyle} from "react-native"
+import {View, ViewStyle, TextStyle} from "react-native"
+
+import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
 
@@ -10,7 +11,7 @@ interface InfoRowProps {
 }
 
 export function InfoRow({label, value, showDivider = true}: InfoRowProps) {
-  const {theme, themed} = useAppTheme()
+  const {themed} = useAppTheme()
 
   // Add zero-width spaces after periods to help with text wrapping
   const formattedValue = value.replace(/\./g, ".\u200B")
@@ -18,8 +19,8 @@ export function InfoRow({label, value, showDivider = true}: InfoRowProps) {
   return (
     <>
       <View style={themed($row)}>
-        <Text style={themed($label)}>{label}</Text>
-        <Text style={themed($value)}>{formattedValue}</Text>
+        <Text text={label} style={themed($label)} />
+        <Text text={formattedValue} style={themed($value)} />
       </View>
       {showDivider && <View style={themed($divider)} />}
     </>

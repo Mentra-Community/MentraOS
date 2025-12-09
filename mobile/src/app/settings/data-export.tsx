@@ -1,5 +1,19 @@
-import {Header, Screen, Text} from "@/components/ignite"
-import ActionButton from "@/components/ui/ActionButton"
+import * as Clipboard from "expo-clipboard"
+import {useEffect, useState} from "react"
+import {
+  ActivityIndicator,
+  Platform,
+  ScrollView,
+  Share,
+  TextStyle,
+  TouchableOpacity,
+  View,
+  ViewStyle,
+} from "react-native"
+
+import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
+import {Divider} from "@/components/ui/Divider"
+import {Group} from "@/components/ui/Group"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAuth} from "@/contexts/AuthContext"
 import {useCoreStatus} from "@/contexts/CoreStatusProvider"
@@ -10,9 +24,6 @@ import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {DataExportService, UserDataExport} from "@/utils/DataExportService"
 import {useAppTheme} from "@/utils/useAppTheme"
-import * as Clipboard from "expo-clipboard"
-import {useEffect, useState} from "react"
-import {ActivityIndicator, Platform, ScrollView, Share, TextStyle, View, ViewStyle} from "react-native"
 
 export default function DataExportPage() {
   const [exportData, setExportData] = useState<UserDataExport | null>(null)
@@ -20,6 +31,7 @@ export default function DataExportPage() {
   const [loading, setLoading] = useState(true)
   const [copying, setCopying] = useState(false)
   const [sharing, setSharing] = useState(false)
+  const [previewExpanded, setPreviewExpanded] = useState(false)
 
   const {user, session} = useAuth()
   const {status} = useCoreStatus()
@@ -57,7 +69,7 @@ export default function DataExportPage() {
 
     setCopying(true)
     try {
-      Clipboard.setString(jsonString)
+      Clipboard.setStringAsync(jsonString)
       showAlert("Copied!", "Your data has been copied to the clipboard.", [{text: translate("common:ok")}])
     } catch (error) {
       console.error("DataExport: Error copying to clipboard:", error)
@@ -103,19 +115,8 @@ export default function DataExportPage() {
         title="Data Export"
         leftIcon="chevron-left"
         onLeftPress={goBack}
-        rightIcon={!loading ? "more" : undefined}
-        rightIconColor={theme.colors.text}
-        onRightPress={
-          !loading
-            ? () => {
-                showAlert("Export Options", "Choose an action for your data:", [
-                  {text: "Copy to Clipboard", onPress: handleCopy},
-                  {text: "Share", onPress: handleShare},
-                  {text: translate("common:cancel"), style: "cancel"},
-                ])
-              }
-            : undefined
-        }
+        titleMode="flex"
+        titleStyle={{textAlign: "left", paddingLeft: theme.spacing.s3}}
       />
 
       {loading ? (
@@ -125,55 +126,87 @@ export default function DataExportPage() {
           <Text text="Collecting your data..." style={themed($loadingText)} />
         </View>
       ) : (
-        <View style={themed($contentContainer)}>
+        <ScrollView style={themed($contentContainer)} showsVerticalScrollIndicator={false}>
+          <Spacer height={theme.spacing.s4} />
+
           {/* Data Summary */}
-          <View style={themed($summaryContainer)}>
-            <Text text="Export Summary" style={themed($summaryTitle)} />
+          <Group title="Export Summary">
             {exportData && (
+              <View style={themed($summaryContent)}>
+                <View style={themed($summaryRow)}>
+                  <Text text="Generated" style={themed($summaryLabel)} />
+                  <Text
+                    text={new Date(exportData.metadata.exportDate).toLocaleString()}
+                    style={themed($summaryValue)}
+                  />
+                </View>
+                <View style={themed($summaryRow)}>
+                  <Text text="Size" style={themed($summaryLabel)} />
+                  <Text text={formatDataSize(jsonString)} style={themed($summaryValue)} />
+                </View>
+                <View style={themed($summaryRow)}>
+                  <Text text="Apps" style={themed($summaryLabel)} />
+                  <Text text={String(exportData.installedApps.length)} style={themed($summaryValue)} />
+                </View>
+                <View style={themed($summaryRow)}>
+                  <Text text="Settings" style={themed($summaryLabel)} />
+                  <Text text={String(Object.keys(exportData.userSettings).length)} style={themed($summaryValue)} />
+                </View>
+              </View>
+            )}
+          </Group>
+
+          <Spacer height={theme.spacing.s6} />
+
+          {/* Action Buttons */}
+          <View style={themed($buttonContainer)}>
+            <Button
+              flex
+              preset="alternate"
+              disabled={copying || !jsonString}
+              onPress={handleCopy}
+              LeftAccessory={() => <Icon name="copy" size={20} color={theme.colors.foreground} />}>
+              <Text text={copying ? "Copying..." : "Copy"} style={themed($buttonText)} />
+            </Button>
+            <Button
+              flex
+              preset="primary"
+              disabled={sharing || !jsonString}
+              onPress={handleShare}
+              LeftAccessory={() => <Icon name="share-2" size={20} color={theme.colors.primary_foreground} />}>
+              <Text text={sharing ? "Sharing..." : "Share"} style={themed($buttonTextPrimary)} />
+            </Button>
+          </View>
+
+          <Spacer height={theme.spacing.s6} />
+
+          {/* Collapsible JSON Preview */}
+          <View style={themed($previewContainer)}>
+            <TouchableOpacity
+              style={themed($previewHeader)}
+              onPress={() => setPreviewExpanded(!previewExpanded)}
+              activeOpacity={0.7}>
+              <Text text="Data Preview" style={themed($previewTitle)} />
+              <Icon name={previewExpanded ? "chevron-up" : "chevron-down"} size={24} color={theme.colors.foreground} />
+            </TouchableOpacity>
+
+            {previewExpanded && (
               <>
-                <Text
-                  text={`Generated: ${new Date(exportData.metadata.exportDate).toLocaleString()}`}
-                  style={themed($summaryText)}
-                />
-                <Text text={`Size: ${formatDataSize(jsonString)}`} style={themed($summaryText)} />
-                <Text text={`Apps: ${exportData.installedApps.length}`} style={themed($summaryText)} />
-                <Text text={`Settings: ${Object.keys(exportData.userSettings).length}`} style={themed($summaryText)} />
+                <Divider />
+                <View style={themed($jsonPreviewContainer)}>
+                  <ScrollView
+                    style={themed($jsonScrollView)}
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled={true}>
+                    <Text text={jsonString} style={themed($jsonText)} />
+                  </ScrollView>
+                </View>
               </>
             )}
           </View>
 
-          <Spacer height={theme.spacing.s4} />
-
-          {/* Action Buttons */}
-          <View style={themed($buttonContainer)}>
-            <View style={themed($button)}>
-              <ActionButton
-                label={copying ? "Copying..." : "Copy to Clipboard"}
-                variant="default"
-                onPress={handleCopy}
-                disabled={copying || !jsonString}
-              />
-            </View>
-            <View style={themed($button)}>
-              <ActionButton
-                label={sharing ? "Sharing..." : "Share"}
-                variant="default"
-                onPress={handleShare}
-                disabled={sharing || !jsonString}
-              />
-            </View>
-          </View>
-
-          <Spacer height={theme.spacing.s4} />
-
-          {/* JSON Preview */}
-          <View style={themed($jsonContainer)}>
-            <Text text="Data Preview" style={themed($jsonTitle)} />
-            <ScrollView style={themed($jsonScrollView)} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
-              <Text text={jsonString} style={themed($jsonText)} />
-            </ScrollView>
-          </View>
-        </View>
+          <Spacer height={theme.spacing.s6} />
+        </ScrollView>
       )}
     </Screen>
   )
@@ -182,7 +215,7 @@ export default function DataExportPage() {
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.background,
   flex: 1,
-  paddingHorizontal: spacing.s4,
+  paddingHorizontal: spacing.s6,
 })
 
 const $contentContainer: ThemedStyle<ViewStyle> = () => ({
@@ -200,52 +233,76 @@ const $loadingText: ThemedStyle<TextStyle> = ({colors}) => ({
   textAlign: "center",
 })
 
-const $summaryContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
-  borderRadius: spacing.s4,
-  padding: spacing.s4,
-  borderWidth: spacing.s0_5,
-  borderColor: colors.border,
+const $summaryContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  gap: spacing.s3,
+  paddingVertical: spacing.s2,
 })
 
-const $summaryTitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 18,
-  fontWeight: "bold",
-  color: colors.text,
-  marginBottom: 8,
+const $summaryRow: ThemedStyle<ViewStyle> = () => ({
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
 })
 
-const $summaryText: ThemedStyle<TextStyle> = ({colors}) => ({
+const $summaryLabel: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
+  fontWeight: "500",
   color: colors.textDim,
-  marginBottom: 4,
+})
+
+const $summaryValue: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 14,
+  fontWeight: "600",
+  color: colors.text,
 })
 
 const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   gap: spacing.s3,
+  paddingHorizontal: spacing.s6,
 })
 
-const $button: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
+const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.foreground,
+  fontSize: 14,
+  fontWeight: "500",
 })
 
-const $jsonContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  flex: 1,
-  backgroundColor: colors.backgroundAlt,
+const $buttonTextPrimary: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.primary_foreground,
+  fontSize: 14,
+  fontWeight: "500",
+})
+
+const $previewContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s4,
-  borderWidth: spacing.s0_5,
-  borderColor: colors.border,
   overflow: "hidden",
 })
 
-const $jsonTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+const $previewHeader: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  paddingVertical: spacing.s4,
+  paddingHorizontal: spacing.s6,
+  minHeight: 56,
+})
+
+const $previewTitle: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 16,
   fontWeight: "600",
   color: colors.text,
-  padding: spacing.s4,
-  borderBottomWidth: 1,
-  borderBottomColor: colors.border,
+})
+
+const $jsonPreviewContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  height: 400,
+  backgroundColor: colors.background,
+  margin: spacing.s4,
+  borderRadius: spacing.s3,
+  borderWidth: 1,
+  borderColor: colors.border,
+  overflow: "hidden",
 })
 
 const $jsonScrollView: ThemedStyle<ViewStyle> = () => ({
@@ -254,7 +311,7 @@ const $jsonScrollView: ThemedStyle<ViewStyle> = () => ({
 
 const $jsonText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-  fontSize: 12,
+  fontSize: 11,
   color: colors.text,
   padding: spacing.s4,
   lineHeight: 16,

@@ -1,4 +1,5 @@
 import {type ConfigPlugin} from "expo/config-plugins"
+
 import {withAndroidConfiguration} from "./withAndroid"
 import {withIosConfiguration} from "./withIos"
 

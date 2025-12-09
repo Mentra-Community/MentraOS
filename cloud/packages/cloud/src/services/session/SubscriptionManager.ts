@@ -79,6 +79,12 @@ export class SubscriptionManager {
 
   getSubscribedApps(subscription: ExtendedStreamType): string[] {
     const subscribedApps: string[] = [];
+
+    // Parse the incoming subscription to get base type and language
+    const incomingParsed = isLanguageStream(subscription as string)
+      ? parseLanguageStream(subscription as string)
+      : null;
+
     for (const [packageName, subs] of this.subscriptions.entries()) {
       for (const sub of subs) {
         if (
@@ -88,6 +94,19 @@ export class SubscriptionManager {
         ) {
           subscribedApps.push(packageName);
           break;
+        }
+
+        // For language streams, compare base type and language (ignore query params like ?hints=)
+        if (incomingParsed && isLanguageStream(sub as string)) {
+          const subParsed = parseLanguageStream(sub as string);
+          if (
+            subParsed &&
+            subParsed.type === incomingParsed.type &&
+            subParsed.transcribeLanguage === incomingParsed.transcribeLanguage
+          ) {
+            subscribedApps.push(packageName);
+            break;
+          }
         }
 
         // Back-compat: location_stream implies location_update

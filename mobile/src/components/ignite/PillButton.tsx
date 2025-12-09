@@ -1,10 +1,11 @@
 import {} from "react"
-import {TouchableOpacity, TouchableOpacityProps, TextStyle, ViewStyle, StyleProp} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
 import {TOptions} from "i18next"
-import {TxKeyPath} from "@/i18n"
+import {TouchableOpacity, TouchableOpacityProps, TextStyle, ViewStyle, StyleProp} from "react-native"
+
 import {Text} from "@/components/ignite/Text"
+import {TxKeyPath} from "@/i18n"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export type PillButtonVariant = "primary" | "secondary" | "icon"
 

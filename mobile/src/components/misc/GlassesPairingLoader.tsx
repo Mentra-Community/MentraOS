@@ -1,27 +1,26 @@
 import {useEffect, useRef, useState} from "react"
-import {View, Animated, Easing, useWindowDimensions, ViewStyle, TextStyle, Image, Platform} from "react-native"
-import {Text} from "@/components/ignite"
-import {getModelSpecificTips} from "./GlassesTroubleshootingModal"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {View, Animated, Easing, ViewStyle, TextStyle, Image, ImageStyle} from "react-native"
+
+import {Button, Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
-import {translate} from "@/i18n"
+import {useAppTheme} from "@/utils/useAppTheme"
+
+import {getModelSpecificTips} from "./GlassesTroubleshootingModal"
 
 interface GlassesPairingLoaderProps {
   glassesModelName: string
+  deviceName?: string
+  onCancel?: () => void
 }
 
-const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({glassesModelName}) => {
-  const {width: _width} = useWindowDimensions()
+const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({glassesModelName, deviceName, onCancel}) => {
   const {theme, themed} = useAppTheme()
 
   // Animation values
   const progressAnim = useRef(new Animated.Value(0)).current
-  const connectionBarOpacity = useRef(new Animated.Value(0)).current
-  const connectionBarScale = useRef(new Animated.Value(0.8)).current
 
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
-  const progressValue = useRef(0)
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const tips = getModelSpecificTips(glassesModelName)
@@ -35,24 +34,6 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({glassesModel
       useNativeDriver: false,
       easing: Easing.out(Easing.exp),
     }).start()
-
-    // Connection bar animation - appears after 3 seconds
-    setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(connectionBarOpacity, {
-          toValue: 1,
-          duration: 800,
-          useNativeDriver: true,
-          easing: Easing.out(Easing.cubic),
-        }),
-        Animated.spring(connectionBarScale, {
-          toValue: 1,
-          friction: 8,
-          tension: 40,
-          useNativeDriver: true,
-        }),
-      ]).start()
-    }, 3000)
 
     // Set up fact rotator
     const rotateTips = () => {
@@ -76,15 +57,6 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({glassesModel
     outputRange: ["0%", "100%"],
   })
 
-  // Update progress bar listener
-  progressAnim.addListener(({value}) => {
-    progressValue.current = value
-  })
-
-  // Get images for phone and glasses
-  const phoneImage =
-    Platform.OS === "ios" ? require("../../../assets/guide/iphone.png") : require("../../../assets/guide/android.png")
-
   // Use dynamic image for Even Realities G1 based on style and color
   let glassesImage = getGlassesImage(glassesModelName)
   if (
@@ -97,143 +69,104 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({glassesModel
   }
 
   return (
-    <View style={{flex: 1}}>
+    <View style={themed($outerContainer)}>
       <View style={themed($container)}>
-        <View style={{flex: 1, justifyContent: "center"}}>
-          {/* New phone and glasses images layout */}
-          <View style={themed($imagesContainer)}>
-            <Image source={phoneImage} style={themed($phoneImage)} resizeMode="contain" />
+        {/* Title */}
+        <Text style={themed($title)}>
+          {glassesModelName}
+          {deviceName ? ` - ${deviceName}` : ""}
+        </Text>
 
-            {/* Animated connection bar */}
-            <Animated.View
-              style={[
-                themed($connectionBar),
-                {
-                  opacity: connectionBarOpacity,
-                  transform: [{scaleX: connectionBarScale}],
-                },
-              ]}>
-              <View style={themed($connectionDiamond)} />
-              <View style={themed($connectionLine)} />
-              <View style={themed($connectionDiamond)} />
-            </Animated.View>
-
-            <Image source={glassesImage} style={themed($glassesImage)} resizeMode="contain" />
-          </View>
-
-          {/* Status text and tips */}
-          <View style={themed($textContainer)}>
-            <Text style={themed($statusText)}>
-              {translate("pairing:pairing").toLocaleUpperCase()} {glassesModelName.toUpperCase()}...
-            </Text>
-            <Text style={themed($tipText)}>{tips[currentTipIndex]}</Text>
-          </View>
+        {/* Glasses image */}
+        <View style={themed($imageContainer)}>
+          <Image source={glassesImage} style={themed($glassesImageNew)} resizeMode="contain" />
         </View>
 
-        {/* Progress bar at the bottom */}
-        <View style={themed($progressBarWrapper)}>
-          <View style={themed($progressBarContainer)}>
-            <Animated.View style={[themed($progressBar), {width: progressWidth}]} />
-          </View>
+        {/* Progress bar */}
+        <View style={themed($progressBarContainer)}>
+          <Animated.View style={[themed($progressBar), {width: progressWidth}]} />
         </View>
+
+        {/* Instruction text */}
+        <Text style={themed($instructionText)}>{tips[currentTipIndex].body}</Text>
+
+        {/* Cancel button */}
+        {onCancel && (
+          <View style={themed($buttonContainer)}>
+            <Button preset="alternate" compact tx="common:cancel" onPress={onCancel} style={themed($cancelButton)} />
+          </View>
+        )}
       </View>
     </View>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = () => ({
+const $outerContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 1,
+  justifyContent: "center",
+  gap: spacing.s4,
 })
 
-const $imagesContainer: ThemedStyle<ViewStyle> = () => ({
-  height: 250,
-  width: "100%",
-  position: "relative",
+const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.primary_foreground,
+  borderRadius: spacing.s6,
+  borderWidth: 1,
+  borderColor: colors.border,
+  padding: spacing.s6,
+  gap: spacing.s4,
 })
 
-const $phoneImage: ThemedStyle<any> = () => ({
-  position: "absolute",
-  left: -100, // Push left more so only right 2/3 shows
-  top: "50%",
-  marginTop: -120, // Center vertically (half of height)
-  width: 240,
-  height: 240,
-})
-
-const $glassesImage: ThemedStyle<any> = () => ({
-  position: "absolute",
-  right: -120, // Push right so only left 1/2 shows
-  top: "50%",
-  marginTop: -90, // Center vertically (half of height)
-  width: 240,
-  height: 180,
-})
-
-const $textContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginTop: spacing.s8,
-  alignItems: "center",
-  paddingHorizontal: spacing.s4,
-})
-
-const $statusText: ThemedStyle<TextStyle> = ({colors}) => ({
+const $title: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 20,
-  fontWeight: "700",
-  fontFamily: "Montserrat-Bold",
+  fontWeight: "600",
   color: colors.text,
-  marginBottom: 16,
-  letterSpacing: 1,
-})
-
-const $tipText: ThemedStyle<TextStyle> = ({colors}) => ({
   textAlign: "center",
-  fontSize: 16,
-  lineHeight: 24,
-  fontFamily: "Montserrat-Regular",
-  color: colors.text,
-  opacity: 0.8,
+  lineHeight: 28,
 })
 
-const $progressBarWrapper: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.s4,
-  marginBottom: 80, // Push up from bottom to match button positioning
+const $imageContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  alignItems: "center",
+  justifyContent: "center",
+  paddingVertical: spacing.s4,
+  minHeight: 150,
+})
+
+const $glassesImageNew: ThemedStyle<ImageStyle> = () => ({
+  width: "100%",
+  height: 140,
+  resizeMode: "contain",
 })
 
 const $progressBarContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
   width: "100%",
-  height: 6,
-  borderRadius: 3,
+  height: 12,
+  borderRadius: 6,
   backgroundColor: colors.separator,
   overflow: "hidden",
 })
 
-const $progressBar: ThemedStyle<ViewStyle> = ({colors}) => ({
+const $progressBar: ThemedStyle<ViewStyle> = () => ({
   height: "100%",
-  borderRadius: 3,
-  backgroundColor: colors.palette.primary300,
+  borderRadius: 6,
+  backgroundColor: "#10b981", // Green color for progress
 })
 
-const $connectionBar: ThemedStyle<ViewStyle> = () => ({
-  position: "absolute",
+const $instructionText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 14,
+  fontWeight: "400",
+  color: colors.textDim,
+  textAlign: "center",
+  paddingHorizontal: spacing.s4,
+  lineHeight: 20,
+})
+
+const $buttonContainer: ThemedStyle<ViewStyle> = () => ({
   flexDirection: "row",
-  alignItems: "center",
-  top: "50%",
-  marginTop: -22, // Center the 4px bar and raise by 20px
-  left: 60, // Extend into phone image
-  right: 60, // Extend into glasses image
-  zIndex: 10, // Ensure it appears over the images
+  justifyContent: "flex-end",
 })
 
-const $connectionLine: ThemedStyle<ViewStyle> = ({colors}) => ({
-  flex: 1,
-  height: 4,
-  backgroundColor: colors.primary,
-})
-
-const $connectionDiamond: ThemedStyle<ViewStyle> = ({colors}) => ({
-  width: 12,
-  height: 12,
-  backgroundColor: colors.primary,
-  transform: [{rotate: "45deg"}],
+const $cancelButton: ThemedStyle<ViewStyle> = () => ({
+  minWidth: 100,
 })
 
 export default GlassesPairingLoader

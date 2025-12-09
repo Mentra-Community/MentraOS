@@ -4,12 +4,13 @@
 
 import {useState} from "react"
 import {View, TouchableOpacity, Image, FlatList, ActivityIndicator} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {PhotoInfo} from "../../../types/asg"
-import {translate} from "@/i18n/translate"
-import {asgCameraApi} from "../../../services/asg/asgCameraApi"
+
 import {Text} from "@/components/ignite"
+import {translate} from "@/i18n/translate"
+import {asgCameraApi} from "@/services/asg/asgCameraApi"
+import {ThemedStyle} from "@/theme"
+import {PhotoInfo} from "@/types/asg"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 // Helper function to determine content type based on photos array
 const getContentType = (photos: PhotoInfo[]): "photos" | "videos" | "items" => {

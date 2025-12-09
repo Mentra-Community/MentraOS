@@ -8,7 +8,8 @@ import bridge from "@/bridge/MantleBridge"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {useDisplayStore} from "@/stores/display"
-import {GlassesInfo, useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "@/stores/glasses"
+import {GlassesInfo} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import TranscriptProcessor from "@/utils/TranscriptProcessor"
@@ -36,8 +37,8 @@ TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
 
 class MantleManager {
   private static instance: MantleManager | null = null
-  private calendarSyncTimer: number | null = null
-  private clearTextTimeout: number | null = null
+  private calendarSyncTimer: ReturnType<typeof setInterval> | null = null
+  private clearTextTimeout: ReturnType<typeof setTimeout> | null = null
   private transcriptProcessor: TranscriptProcessor
 
   public static getInstance(): MantleManager {
@@ -73,9 +74,10 @@ class MantleManager {
   // sets up the bridge and initializes app state
   public async init() {
     await bridge.dummy()
-    const loadedSettings = await restComms.loadUserSettings() // get settings from server
-    if (loadedSettings.is_ok()) {
-      await useSettingsStore.getState().setManyLocally(loadedSettings.value) // write settings to local storage
+    const res = await restComms.loadUserSettings() // get settings from server
+    if (res.is_ok()) {
+      const loadedSettings = res.value
+      await useSettingsStore.getState().setManyLocally(loadedSettings) // write settings to local storage
     } else {
       console.error("Mantle: No settings received from server")
     }
@@ -113,7 +115,7 @@ class MantleManager {
       60 * 60 * 1000,
     ) // 1 hour
     try {
-      let locationAccuracy = await useSettingsStore.getState().loadSetting(SETTINGS.location_tier.key)
+      let locationAccuracy = await useSettingsStore.getState().getSetting(SETTINGS.location_tier.key)
       let properAccuracy = this.getLocationAccuracy(locationAccuracy)
       Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: properAccuracy,
@@ -145,6 +147,24 @@ class MantleManager {
           }
         }
         restComms.updateGlassesState(statusObj)
+      },
+      {equalityFn: shallow},
+    )
+
+    // subscribe to core settings changes and update the core:
+    useSettingsStore.subscribe(
+      state => state.getCoreSettings(),
+      (state: Record<string, any>, previousState: Record<string, any>) => {
+        const coreSettingsObj: Record<string, any> = {}
+
+        for (const key in state) {
+          const k = key as keyof Record<string, any>
+          if (state[k] !== previousState[k]) {
+            coreSettingsObj[k] = state[k] as any
+          }
+        }
+        console.log("Mantle: core settings changed", coreSettingsObj)
+        CoreModule.updateSettings(coreSettingsObj)
       },
       {equalityFn: shallow},
     )
@@ -219,11 +239,13 @@ class MantleManager {
         correlationId,
       )
     } catch (error) {
-      console.error("Mantle: Error requesting single location", error)
+      console.log("Mantle: Error requesting single location", error)
     }
   }
 
+  // mostly for debugging / local stt:
   public async displayTextMain(text: string) {
+    this.resetDisplayTimeout()
     socketComms.handle_display_event({
       type: "display_event",
       view: "main",
@@ -239,6 +261,16 @@ class MantleManager {
     useDisplayStore.getState().setView(isUp ? "dashboard" : "main")
   }
 
+  public async resetDisplayTimeout() {
+    if (this.clearTextTimeout) {
+      console.log("Mantle: canceling pending timeout")
+      clearTimeout(this.clearTextTimeout)
+    }
+    this.clearTextTimeout = setTimeout(() => {
+      console.log("Mantle: clearing text from wall")
+    }, 10000) // 10 seconds
+  }
+
   public async handle_local_transcription(data: any) {
     // TODO: performance!
     const offlineStt = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
@@ -247,17 +279,9 @@ class MantleManager {
       const processedText = this.transcriptProcessor.processString(data.text, data.isFinal ?? false)
 
       // Scheduling timeout to clear text from wall. In case of online STT online dashboard manager will handle it.
-      if (data.isFinal) {
-        console.log("Mantle: isFinal, scheduling timeout to clear text from wall")
-        if (this.clearTextTimeout) {
-          console.log("Mantle: canceling pending timeout")
-          clearTimeout(this.clearTextTimeout)
-        }
-        this.clearTextTimeout = setTimeout(() => {
-          console.log("Mantle: clearing text from wall")
-          this.displayTextMain("")
-        }, 10000) // 10 seconds
-      }
+      // if (data.isFinal) {
+      //   this.resetDisplayTimeout()
+      // }
 
       if (processedText) {
         this.displayTextMain(processedText)

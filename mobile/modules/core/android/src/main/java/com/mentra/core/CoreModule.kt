@@ -206,5 +206,78 @@ class CoreModule : Module() {
                                     ?: throw IllegalStateException("No context available")
             NotificationListener.getInstance(context).getInstalledApps()
         }
+
+        // MARK: - Settings Navigation
+
+        AsyncFunction("openBluetoothSettings") {
+            val context = appContext.reactContext ?: appContext.currentActivity
+                    ?: throw IllegalStateException("No context available")
+            val intent = android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        }
+
+        AsyncFunction("openLocationSettings") {
+            val context = appContext.reactContext ?: appContext.currentActivity
+                    ?: throw IllegalStateException("No context available")
+            val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        }
+
+        AsyncFunction("showLocationServicesDialog") {
+            val activity = appContext.currentActivity
+            if (activity == null) {
+                val context = appContext.reactContext
+                        ?: throw IllegalStateException("No context available")
+                val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                return@AsyncFunction true
+            }
+
+            val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
+                    com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+                    10000
+            ).build()
+
+            val builder = com.google.android.gms.location.LocationSettingsRequest.Builder()
+                    .addLocationRequest(locationRequest)
+                    .setAlwaysShow(true)
+
+            val client = com.google.android.gms.location.LocationServices.getSettingsClient(activity)
+            val task = client.checkLocationSettings(builder.build())
+
+            task.addOnSuccessListener { true }
+            task.addOnFailureListener { exception ->
+                if (exception is com.google.android.gms.common.api.ResolvableApiException) {
+                    try {
+                        exception.startResolutionForResult(activity, 1001)
+                    } catch (sendEx: android.content.IntentSender.SendIntentException) {
+                        // Fallback
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        activity.startActivity(intent)
+                    }
+                } else {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    activity.startActivity(intent)
+                }
+            }
+            true
+        }
+
+        AsyncFunction("openAppSettings") {
+            val context = appContext.reactContext ?: appContext.currentActivity
+                    ?: throw IllegalStateException("No context available")
+            val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            intent.data = android.net.Uri.parse("package:${context.packageName}")
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        }
     }
 }

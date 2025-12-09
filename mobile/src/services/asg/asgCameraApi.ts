@@ -3,8 +3,10 @@
  * Provides methods to interact with the AsgCameraServer Java APIs
  */
 
-import {PhotoInfo, GalleryResponse, ServerStatus, HealthResponse} from "../../types/asg"
 import RNFS from "react-native-fs"
+
+import {PhotoInfo, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
+
 import {localStorageService} from "./localStorageService"
 
 export class AsgCameraApiClient {

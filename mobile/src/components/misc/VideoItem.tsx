@@ -1,8 +1,10 @@
 import {View, TouchableOpacity} from "react-native"
-import {Text} from "@/components/ignite"
 import Icon from "react-native-vector-icons/MaterialIcons"
-import VideoThumbnail from "./VideoThumbnail"
+
+import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/utils/useAppTheme"
+
+import VideoThumbnail from "./VideoThumbnail"
 
 interface VideoItemProps {
   videoPath: string

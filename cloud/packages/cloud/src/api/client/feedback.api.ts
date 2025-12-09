@@ -39,3 +39,5 @@ async function submitFeedback(req: Request, res: Response) {
 }
 
 export default router;
+
+console.log("testing");

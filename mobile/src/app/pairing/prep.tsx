@@ -1,16 +1,18 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {useRoute} from "@react-navigation/native"
+import CoreModule from "core"
+import {Linking, PermissionsAndroid, Platform, ScrollView} from "react-native"
+
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
+import {PairingGuide, PairingOptions} from "@/components/pairing/GlassesPairingGuides"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {$styles} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {PairingGuide, PairingOptions} from "@/components/pairing/GlassesPairingGuides"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {useRoute} from "@react-navigation/native"
-import {Linking, PermissionsAndroid, Platform, ScrollView} from "react-native"
-import CoreModule from "core"
-import {$styles} from "@/theme"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -214,7 +216,12 @@ export default function PairingPrepScreen() {
 
   return (
     <Screen preset="fixed" style={themed($styles.screen)} safeAreaEdges={["bottom"]}>
-      <Header title={glassesModelName} leftIcon="chevron-left" onLeftPress={goBack} />
+      <Header
+        title={glassesModelName}
+        leftIcon="chevron-left"
+        onLeftPress={goBack}
+        RightActionComponent={<MentraLogoStandalone />}
+      />
       <ScrollView style={{marginRight: -theme.spacing.s6, paddingRight: theme.spacing.s6}}>
         <PairingGuide model={glassesModelName} />
       </ScrollView>

@@ -51,15 +51,15 @@ jobs:
           # Create .env from example
           cp .env.example .env
 
+      - name: Run Expo prebuild
+        working-directory: ./mobile
+        run: pnpm expo prebuild --platform ios
+
       - name: Setup Sherpa Onnx
         working-directory: ./mobile
         run: |
           chmod +x scripts/setup-sherpa-onnx-optional.sh
           ./scripts/setup-sherpa-onnx-optional.sh
-
-      - name: Run Expo prebuild
-        working-directory: ./mobile
-        run: pnpm expo prebuild --platform ios
 
       - name: Install CocoaPods dependencies
         working-directory: ./mobile/ios

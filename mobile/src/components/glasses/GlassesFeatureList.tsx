@@ -1,6 +1,9 @@
-import {View, StyleSheet} from "react-native"
+import {View, ViewStyle, TextStyle, ImageStyle} from "react-native"
+
 import {Icon, Text} from "@/components/ignite"
+import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
+
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 
 interface GlassesFeatureListProps {
@@ -17,7 +20,7 @@ export const featureLabels: Record<GlassesFeature, string> = {
 }
 
 export function GlassesFeatureList({glassesModel}: GlassesFeatureListProps) {
-  const {theme} = useAppTheme()
+  const {theme, themed} = useAppTheme()
   const capabilities = getModelCapabilities(glassesModel as DeviceTypes)
 
   if (!capabilities) {
@@ -43,30 +46,30 @@ export function GlassesFeatureList({glassesModel}: GlassesFeatureListProps) {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.featureRow}>
+    <View style={themed($container)}>
+      <View style={themed($featureRow)}>
         {featureOrder.slice(0, 2).map(feature => (
-          <View key={feature} style={styles.featureItem}>
+          <View key={feature} style={themed($featureItem)}>
             <Icon
               name={getFeatureValue(feature) ? "check" : "close"}
               size={24}
               color={theme.colors.text}
-              style={styles.icon}
+              containerStyle={themed($icon)}
             />
-            <Text style={[styles.featureText, {color: theme.colors.text}]}>{featureLabels[feature]}</Text>
+            <Text text={featureLabels[feature]} style={themed($featureText)} />
           </View>
         ))}
       </View>
-      <View style={styles.featureRow}>
+      <View style={themed($featureRow)}>
         {featureOrder.slice(2, 4).map(feature => (
-          <View key={feature} style={styles.featureItem}>
+          <View key={feature} style={themed($featureItem)}>
             <Icon
               name={getFeatureValue(feature) ? "check" : "close"}
               size={24}
               color={theme.colors.text}
-              style={styles.icon}
+              containerStyle={themed($icon)}
             />
-            <Text style={[styles.featureText, {color: theme.colors.text}]}>{featureLabels[feature]}</Text>
+            <Text text={featureLabels[feature]} style={themed($featureText)} />
           </View>
         ))}
       </View>
@@ -74,25 +77,28 @@ export function GlassesFeatureList({glassesModel}: GlassesFeatureListProps) {
   )
 }
 
-const styles = StyleSheet.create({
-  container: {
-    marginVertical: 20,
-  },
-  featureItem: {
-    alignItems: "center",
-    flexDirection: "row",
-    flex: 1,
-  },
-  featureRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginVertical: 6,
-  },
-  featureText: {
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  icon: {
-    marginRight: 10,
-  },
+const $container: ThemedStyle<ViewStyle> = () => ({
+  marginVertical: 20,
+})
+
+const $featureItem: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  flexDirection: "row",
+  flex: 1,
+})
+
+const $featureRow: ThemedStyle<ViewStyle> = () => ({
+  flexDirection: "row",
+  justifyContent: "space-between",
+  marginVertical: 6,
+})
+
+const $featureText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 14,
+  fontWeight: "500",
+  color: colors.text,
+})
+
+const $icon: ThemedStyle<ImageStyle> = () => ({
+  marginRight: 10,
 })

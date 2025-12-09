@@ -6,20 +6,29 @@ import pluginReactNative from "eslint-plugin-react-native"
 import pluginReactotron from "eslint-plugin-reactotron"
 import pluginPrettier from "eslint-plugin-prettier"
 import prettierConfig from "eslint-config-prettier"
-import pluginImport from "eslint-plugin-import"
+import expoConfig from "eslint-config-expo/flat.js"
+import {defineConfig} from "eslint/config"
 
-export default [
-  // Base config for all JS/TS files
+export default defineConfig([
+  
+  // Recommended configs
+  expoConfig,
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  pluginReact.configs.flat.recommended,
+  pluginReact.configs.flat["jsx-runtime"],
+  prettierConfig,
+
+  // custom config:
   {
     files: ["**/*.{js,mjs,cjs,ts,jsx,tsx}"],
-    ignores: ["eslint.config.mjs"],
+    ignores: ["eslint.config.mjs", "metro.config.js"],
     plugins: {
       "@typescript-eslint": tseslint.plugin,
       "react": pluginReact,
       "react-native": pluginReactNative,
       "reactotron": pluginReactotron,
       "prettier": pluginPrettier,
-      "import": pluginImport,
     },
     languageOptions: {
       globals: {
@@ -37,25 +46,11 @@ export default [
       react: {
         version: "detect", // Automatically detect the React version
       },
-    },
-  },
-
-  // Recommended configs
-  js.configs.recommended,
-  ...tseslint.configs.recommended,
-  pluginReact.configs.flat.recommended,
-  pluginReact.configs.flat["jsx-runtime"],
-  prettierConfig,
-
-  // All rule overrides in one place
-  {
-    plugins: {
-      "@typescript-eslint": tseslint.plugin,
-      "react": pluginReact,
-      "react-native": pluginReactNative,
-      "reactotron": pluginReactotron,
-      "prettier": pluginPrettier,
-      "import": pluginImport,
+      "import/resolver": {
+        typescript: {
+          project: ["./mobile/tsconfig.json", "./cloud/tsconfig.json"],
+        },
+      },
     },
     rules: {
       // Prettier
@@ -195,4 +190,4 @@ export default [
       "mobile/**/*.aab",
     ],
   },
-]
+])

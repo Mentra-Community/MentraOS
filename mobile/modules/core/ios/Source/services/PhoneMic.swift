@@ -16,11 +16,11 @@ class PhoneMic {
     private var audioEngine: AVAudioEngine?
     private var audioSession: AVAudioSession?
 
-    /// Recording state
-    var isRecording: Bool {
-        guard let audioEngine = audioEngine else { return false }
-        return audioEngine.isRunning
-    }
+    /// Recording state - tracked via boolean to avoid EXC_BAD_ACCESS crash
+    /// when AVAudioEngine becomes invalid during audio route changes.
+    /// See: MENTRA-OS-14P
+    private var _isRecording = false
+    var isRecording: Bool { _isRecording }
 
     private var currentMicMode: String = ""
     private var cancellables = Set<AnyCancellable>()
@@ -323,8 +323,11 @@ class PhoneMic {
         switch type {
         case .began:
             Bridge.log("Audio session interrupted - another app took control")
-            // Phone call started, pause recording
-            if isRecording {
+            // Phone call started - the system has stopped our audio engine.
+            // Reset _isRecording so we can restart when interruption ends.
+            if _isRecording {
+                _isRecording = false
+                currentMicMode = ""
                 CoreManager.shared.onInterruption(began: true)
             }
         case .ended:
@@ -436,10 +439,10 @@ class PhoneMic {
             return true
         }
 
-        // Clean up any existing engine
+        // Clean up any existing engine (shouldn't happen if _isRecording is accurate, but be safe)
         if let existingEngine = audioEngine {
+            _isRecording = false
             existingEngine.stop()
-            //      existingEngine.inputNode.removeTap(onBus: 0)
             audioEngine = nil
         }
 
@@ -480,7 +483,27 @@ class PhoneMic {
 
     /// Internal recording logic shared by all recording modes
     private func startRecordingInternal() -> Bool {
-        // NOW create the audio engine
+        // check if we're in the background:
+        let appState = UIApplication.shared.applicationState
+        if appState == .background {
+            Bridge.log("MIC: App is in background, cannot start recording")
+            return false
+        }
+
+        if let existingEngine = audioEngine {
+            _isRecording = false
+            existingEngine.inputNode.removeTap(onBus: 0)
+            existingEngine.stop()
+            audioEngine = nil
+        }
+
+        let session = AVAudioSession.sharedInstance()
+        guard let availableInputs = session.availableInputs, !availableInputs.isEmpty else {
+            Bridge.log("MIC: No audio inputs available, cannot start recording")
+            return false
+        }
+
+        // NOW create the audio engine:
         audioEngine = AVAudioEngine()
 
         // Safely get the input node
@@ -528,6 +551,11 @@ class PhoneMic {
             return false
         }
 
+        // Remove any existing tap before installing new one (prevents crash if tap
+        // already exists from previous engine). This is safe even if no tap exists.
+        // See: MENTRA-OS-YM, MENTRA-OS-137
+        inputNode.removeTap(onBus: 0)
+
         inputNode.installTap(onBus: 0, bufferSize: 256, format: nil) {
             [weak self] buffer, _ in
             guard let self = self else { return }
@@ -570,6 +598,7 @@ class PhoneMic {
         // Start the audio engine
         do {
             try audioEngine?.start()
+            _isRecording = true
             Bridge.log("MIC: Started recording from: \(getActiveInputDevice() ?? "Unknown device")")
             return true
         } catch {
@@ -586,11 +615,16 @@ class PhoneMic {
 
     /// Stop recording from the microphone
     func stopRecording() {
-        guard isRecording else {
+        guard _isRecording else {
             return
         }
 
-        // Remove the tap and stop the engine
+        // Set state FIRST before touching engine to prevent crash if
+        // route change triggers isRecording check mid-cleanup
+        _isRecording = false
+        currentMicMode = ""
+
+        // Remove the tap and stop the engine (may fail if engine invalid, that's ok)
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
 
@@ -598,7 +632,6 @@ class PhoneMic {
         try? audioSession?.setActive(false)
         audioEngine = nil
         audioSession = nil
-        currentMicMode = ""
 
         Bridge.log("MIC: Stopped recording")
     }

@@ -1,37 +1,34 @@
-import AsyncStorage from "@react-native-async-storage/async-storage"
 import {useFocusEffect, useLocalSearchParams} from "expo-router"
-import {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from "react"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {Animated, BackHandler, TextStyle, View, ViewStyle} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import Toast from "react-native-toast-message"
-import FontAwesome from "react-native-vector-icons/FontAwesome"
 
-import {Header, PillButton, Screen, Text} from "@/components/ignite"
+import {Header, Icon, PillButton, Screen, Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
 import LoadingOverlay from "@/components/misc/LoadingOverlay"
 import SettingsSkeleton from "@/components/misc/SettingsSkeleton"
 import GroupTitle from "@/components/settings/GroupTitle"
-import {InfoRow} from "@/components/settings/InfoRow"
 import MultiSelectSetting from "@/components/settings/MultiSelectSetting"
 import NumberSetting from "@/components/settings/NumberSetting"
 import SelectSetting from "@/components/settings/SelectSetting"
 import SelectWithSearchSetting from "@/components/settings/SelectWithSearchSetting"
-import {SettingsGroup} from "@/components/settings/SettingsGroup"
 import SliderSetting from "@/components/settings/SliderSetting"
 import TextSettingNoSave from "@/components/settings/TextSettingNoSave"
 import TimeSetting from "@/components/settings/TimeSetting"
 import TitleValueSetting from "@/components/settings/TitleValueSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
-import ActionButton from "@/components/ui/ActionButton"
 import Divider from "@/components/ui/Divider"
+import InfoCardSection from "@/components/ui/InfoCard"
+import {RouteButton} from "@/components/ui/RouteButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
 import {useApplets, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
-import {useSettingsStore} from "@/stores/settings"
 import {$styles, ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
+import {storage} from "@/utils/storage"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function AppSettings() {
@@ -71,24 +68,6 @@ export default function AppSettings() {
   const [settingsLoading, setSettingsLoading] = useState(true)
   const [hasCachedSettings, setHasCachedSettings] = useState(false)
 
-  if (!packageName || typeof packageName !== "string") {
-    console.error("No packageName found in params")
-    return null
-  }
-
-  useFocusEffect(
-    useCallback(() => {
-      const onBackPress = () => {
-        goBack()
-        return true
-      }
-      const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress)
-      return () => {
-        subscription.remove()
-      }
-    }, [goBack]),
-  )
-
   // Handle app start/stop actions with debouncing
   const handleStartStopApp = async () => {
     if (!appInfo) return
@@ -112,11 +91,11 @@ export default function AppSettings() {
         const proceed = await new Promise<boolean>(resolve => {
           // Use the shared alert utility
           showAlert(
-            "App is down for maintenance",
-            `${appInfo.name} appears offline. Try anyway?\n\nThe developer${developerName}needs to get their server back up and running. Please contact them for more details.`,
+            translate("appSettings:appDownForMaintenance"),
+            translate("appSettings:appOfflineMessage", {appName: appInfo.name, developerName}),
             [
               {text: translate("common:cancel"), style: "cancel", onPress: () => resolve(false)},
-              {text: "Try Anyway", onPress: () => resolve(true)},
+              {text: translate("appSettings:tryAnyway"), onPress: () => resolve(true)},
             ],
             {iconName: "alert-circle-outline", iconColor: theme.colors.palette.angry500},
           )
@@ -154,15 +133,15 @@ export default function AppSettings() {
     console.log(`Uninstalling app: ${packageName}`)
 
     showAlert(
-      "Uninstall App",
-      `Are you sure you want to uninstall ${appInfo?.name || appName}?`,
+      translate("appSettings:uninstallApp"),
+      translate("appSettings:uninstallConfirm", {appName: appInfo?.name || appName}),
       [
         {
-          text: "Cancel",
+          text: translate("common:cancel"),
           style: "cancel",
         },
         {
-          text: "Uninstall",
+          text: translate("appSettings:uninstall"),
           style: "destructive",
           onPress: async () => {
             try {
@@ -180,7 +159,7 @@ export default function AppSettings() {
               // Show success message
               Toast.show({
                 type: "success",
-                text1: `${appInfo?.name || appName} has been uninstalled successfully`,
+                text1: translate("appSettings:uninstalledSuccess", {appName: appInfo?.name || appName}),
               })
 
               replace("/(tabs)/home")
@@ -189,7 +168,7 @@ export default function AppSettings() {
               refreshApplets()
               Toast.show({
                 type: "error",
-                text1: `Error uninstalling app: ${error.message || "Unknown error"}`,
+                text1: translate("appSettings:uninstallError", {error: error.message || "Unknown error"}),
               })
             } finally {
               setIsUninstalling(false)
@@ -198,9 +177,8 @@ export default function AppSettings() {
         },
       ],
       {
-        iconName: "delete-forever",
+        iconName: "trash",
         iconSize: 48,
-        iconColor: theme.colors.palette.angry600,
       },
     )
   }
@@ -210,17 +188,17 @@ export default function AppSettings() {
     if (!hasCachedSettings) setSettingsLoading(true)
     const startTime = Date.now() // For profiling
     try {
-      const data = await restComms.getAppSettings(packageName)
+      const res = await restComms.getAppSettings(packageName)
+
       const elapsed = Date.now() - startTime
       console.log(`[PROFILE] getTpaSettings for ${packageName} took ${elapsed}ms`)
       console.log("GOT TPA SETTING")
-      console.log(JSON.stringify(data))
       // TODO: Profile backend and optimize if slow
       // If no data is returned from the server, create a minimal app info object
-      if (!data) {
+      if (res.is_error()) {
         setServerAppInfo({
           name: appInfo?.name || appName,
-          description: data?.description || "No description available.",
+          description: translate("appSettings:noDescription"),
           settings: [],
           uninstallable: true,
         })
@@ -229,7 +207,10 @@ export default function AppSettings() {
         setSettingsLoading(false)
         return
       }
+      const data: any = res.value
       setServerAppInfo(data)
+
+      console.log("GOT TPA SETTING", JSON.stringify(data))
 
       // Update appName if we got it from server
       if (data.name) {
@@ -248,13 +229,10 @@ export default function AppSettings() {
         })
         setSettingsState(initialState)
         // Cache the settings
-        AsyncStorage.setItem(
-          SETTINGS_CACHE_KEY(packageName),
-          JSON.stringify({
-            serverAppInfo: data,
-            settingsState: initialState,
-          }),
-        )
+        storage.save(SETTINGS_CACHE_KEY(packageName), {
+          serverAppInfo: data,
+          settingsState: initialState,
+        })
         setHasCachedSettings(data.settings.length > 0)
       } else {
         setHasCachedSettings(false)
@@ -276,7 +254,7 @@ export default function AppSettings() {
       console.error("Error fetching App settings:", err)
       setServerAppInfo({
         name: appInfo?.name || appName,
-        description: "No description available.",
+        description: translate("appSettings:noDescription"),
         settings: [],
         uninstallable: true,
       })
@@ -302,8 +280,55 @@ export default function AppSettings() {
       })
   }
 
+  // Pre-process settings into groups for proper isFirst/isLast styling
+  const processedSettings = useMemo(() => {
+    if (!serverAppInfo?.settings) return []
+
+    const settings = serverAppInfo.settings
+    const result: Array<{setting: any; isFirst: boolean; isLast: boolean; isGrouped: boolean}> = []
+    let currentGroupStart = -1
+
+    for (let i = 0; i < settings.length; i++) {
+      const setting = settings[i]
+
+      if (setting.type === "group") {
+        // Close previous group if exists
+        if (currentGroupStart !== -1 && result.length > 0) {
+          // Find last non-group setting and mark as last
+          for (let j = result.length - 1; j >= 0; j--) {
+            if (result[j].isGrouped) {
+              result[j].isLast = true
+              break
+            }
+          }
+        }
+        // Add group title (not styled as grouped)
+        result.push({setting, isFirst: false, isLast: false, isGrouped: false})
+        currentGroupStart = result.length
+      } else {
+        // Check if this is the first setting after a group title or at the start
+        const isFirstInGroup =
+          currentGroupStart === result.length ||
+          (currentGroupStart === -1 && result.filter(r => r.isGrouped).length === 0)
+
+        // Check if next is a group or end
+        const nextSetting = settings[i + 1]
+        const isLastInGroup = !nextSetting || nextSetting.type === "group"
+
+        result.push({
+          setting,
+          isFirst: isFirstInGroup,
+          isLast: isLastInGroup,
+          isGrouped: true,
+        })
+      }
+    }
+
+    return result
+  }, [serverAppInfo?.settings])
+
   // Render each setting.
-  const renderSetting = (setting: any, index: number) => {
+  const renderSetting = (setting: any, isFirst: boolean, isLast: boolean, index: number) => {
     switch (setting.type) {
       case "group":
         return <GroupTitle key={`group-${index}`} title={setting.title} />
@@ -314,6 +339,8 @@ export default function AppSettings() {
             label={setting.label}
             value={settingsState[setting.key]}
             onValueChange={val => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "text":
@@ -324,6 +351,8 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             onChangeText={text => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "text_no_save_button":
@@ -334,6 +363,8 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             onChangeText={text => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "slider":
@@ -351,6 +382,8 @@ export default function AppSettings() {
               }))
             }
             onValueSet={val => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "select":
@@ -362,6 +395,8 @@ export default function AppSettings() {
             options={setting.options}
             defaultValue={setting.defaultValue}
             onValueChange={val => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "select_with_search":
@@ -373,6 +408,8 @@ export default function AppSettings() {
             options={setting.options}
             defaultValue={setting.defaultValue}
             onValueChange={val => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "numeric_input":
@@ -386,6 +423,8 @@ export default function AppSettings() {
             step={setting.step}
             placeholder={setting.placeholder}
             onValueChange={val => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "time_picker":
@@ -396,6 +435,8 @@ export default function AppSettings() {
             value={settingsState[setting.key] || 0}
             showSeconds={setting.showSeconds !== false}
             onValueChange={val => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "multiselect":
@@ -406,44 +447,37 @@ export default function AppSettings() {
             values={settingsState[setting.key]}
             options={setting.options}
             onValueChange={vals => handleSettingChange(setting.key, vals)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "titleValue":
-        return <TitleValueSetting key={index} label={setting.label} value={setting.value} />
+        return (
+          <TitleValueSetting
+            key={index}
+            label={setting.label}
+            value={setting.value}
+            isFirst={isFirst}
+            isLast={isLast}
+          />
+        )
       default:
         return null
     }
   }
 
-  // Add header button when webviewURL exists
-  useLayoutEffect(() => {
-    if (serverAppInfo?.webviewURL) {
-      // TODO2.0:
-      // navigation.setOptions({
-      //   headerRight: () => (
-      //     <View style={{marginRight: 8}}>
-      //       <FontAwesome.Button
-      //         name="globe"
-      //         size={22}
-      //         color={isDarkTheme ? "#FFFFFF" : "#000000"}
-      //         backgroundColor="transparent"
-      //         underlayColor="transparent"
-      //         onPress={() => {
-      //           navigation.replace("AppWebView", {
-      //             webviewURL: serverAppInfo.webviewURL,
-      //             appName: appName,
-      //             packageName: packageName,
-      //             fromSettings: true,
-      //           })
-      //         }}
-      //         style={{padding: 0, margin: 0}}
-      //         iconStyle={{marginRight: 0}}
-      //       />
-      //     </View>
-      //   ),
-      // })
-    }
-  }, [serverAppInfo, packageName, appName])
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        goBack()
+        return true
+      }
+      const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress)
+      return () => {
+        subscription.remove()
+      }
+    }, [goBack]),
+  )
 
   // Reset hasLoadedData when packageName changes
   useEffect(() => {
@@ -461,31 +495,36 @@ export default function AppSettings() {
     let debounceTimeout: NodeJS.Timeout
 
     const loadCachedSettings = async () => {
-      const cached = await useSettingsStore.getState().loadSetting(SETTINGS_CACHE_KEY(packageName))
-      if (cached && isMounted) {
-        setServerAppInfo(cached.serverAppInfo)
-        setSettingsState(cached.settingsState)
-        setHasCachedSettings(!!(cached.serverAppInfo?.settings && cached.serverAppInfo.settings.length > 0))
-        setSettingsLoading(false)
-
-        // Update appName from cached data if available
-        if (cached.serverAppInfo?.name) {
-          setAppName(cached.serverAppInfo.name)
-        }
-
-        // TACTICAL BYPASS: If webviewURL exists in cached data, execute immediate redirect
-        // if (cached.serverAppInfo?.webviewURL && fromWebView !== "true") {
-        //   replace("/applet/webview", {
-        //     webviewURL: cached.serverAppInfo.webviewURL,
-        //     appName: appName,
-        //     packageName: packageName,
-        //   })
-        //   return
-        // }
-      } else {
+      const res = await storage.load(SETTINGS_CACHE_KEY(packageName))
+      if (res.is_error()) {
         setHasCachedSettings(false)
         setSettingsLoading(true)
+        return
       }
+      const cached: any = res.value
+      if (!isMounted) {
+        return
+      }
+
+      setServerAppInfo(cached.serverAppInfo)
+      setSettingsState(cached.settingsState)
+      setHasCachedSettings(!!(cached.serverAppInfo?.settings && cached.serverAppInfo.settings.length > 0))
+      setSettingsLoading(false)
+
+      // Update appName from cached data if available
+      if (cached.serverAppInfo?.name) {
+        setAppName(cached.serverAppInfo.name)
+      }
+
+      // TACTICAL BYPASS: If webviewURL exists in cached data, execute immediate redirect
+      // if (cached.serverAppInfo?.webviewURL && fromWebView !== "true") {
+      //   replace("/applet/webview", {
+      //     webviewURL: cached.serverAppInfo.webviewURL,
+      //     appName: appName,
+      //     packageName: packageName,
+      //   })
+      //   return
+      // }
     }
 
     // Load cached settings immediately
@@ -505,6 +544,11 @@ export default function AppSettings() {
 
   if (!appInfo) {
     // Optionally, you could render a fallback error or nothing
+    return null
+  }
+
+  if (!packageName || typeof packageName !== "string") {
+    console.error("No packageName found in params")
     return null
   }
 
@@ -564,7 +608,7 @@ export default function AppSettings() {
               </View>
               <View style={themed($buttonContainer)}>
                 <PillButton
-                  text={appInfo.running ? "Stop" : "Start"}
+                  text={appInfo.running ? translate("common:stop") : translate("common:start")}
                   onPress={handleStartStopApp}
                   variant="icon"
                   buttonStyle={{paddingHorizontal: theme.spacing.s6, minWidth: 80}}
@@ -584,10 +628,8 @@ export default function AppSettings() {
                 paddingHorizontal: theme.spacing.s3,
                 paddingVertical: theme.spacing.s2,
               }}>
-              <FontAwesome name="warning" size={16} color={theme.colors.error} />
-              <Text style={{color: theme.colors.error, flex: 1}}>
-                This app appears to be offline. Some actions may not work.
-              </Text>
+              <Icon name="alert" size={16} color={theme.colors.error} />
+              <Text style={{color: theme.colors.error, flex: 1}}>{translate("appSettings:appOfflineWarning")}</Text>
             </View>
           )}
 
@@ -595,7 +637,9 @@ export default function AppSettings() {
 
           {/* Description Section */}
           <View style={themed($descriptionSection)}>
-            <Text style={themed($descriptionText)}>{serverAppInfo?.description || "No description available."}</Text>
+            <Text style={themed($descriptionText)}>
+              {serverAppInfo?.description || translate("appSettings:noDescription")}
+            </Text>
           </View>
 
           <Divider variant="full" />
@@ -603,7 +647,7 @@ export default function AppSettings() {
           {/* App Instructions Section */}
           {serverAppInfo?.instructions && (
             <View style={themed($sectionContainer)}>
-              <Text style={themed($sectionTitle)}>About this App</Text>
+              <Text style={themed($sectionTitle)}>{translate("appSettings:aboutThisApp")}</Text>
               <Text style={themed($instructionsText)}>{serverAppInfo.instructions}</Text>
             </View>
           )}
@@ -612,58 +656,60 @@ export default function AppSettings() {
           <View style={themed($settingsContainer)}>
             {settingsLoading && (!serverAppInfo?.settings || typeof serverAppInfo.settings === "undefined") ? (
               <SettingsSkeleton />
-            ) : serverAppInfo?.settings && serverAppInfo.settings.length > 0 ? (
-              serverAppInfo.settings.map((setting: any, index: number) =>
-                renderSetting({...setting, uniqueKey: `${setting.key}-${index}`}, index),
+            ) : processedSettings.length > 0 ? (
+              processedSettings.map(({setting, isFirst, isLast}, index) =>
+                renderSetting(setting, isFirst, isLast, index),
               )
             ) : (
-              <Text style={themed($noSettingsText)}>No settings available for this app</Text>
+              <Text style={themed($noSettingsText)}>{translate("appSettings:noSettings")}</Text>
             )}
           </View>
 
           {/* Additional Information Section */}
           <View>
-            <Text
-              style={[
-                themed($groupTitle),
+            <Text style={themed($sectionTitleText)}>{translate("appSettings:appInfo")}</Text>
+            <InfoCardSection
+              items={[
                 {
-                  marginTop: theme.spacing.s4,
-                  marginBottom: theme.spacing.s2,
-                  paddingHorizontal: theme.spacing.s4,
-                  fontSize: 16,
-                  fontFamily: "Montserrat-Regular",
-                  color: theme.colors.textDim,
+                  label: translate("appSettings:company"),
+                  value: serverAppInfo?.organization?.name || "—",
                 },
-              ]}>
-              Other
-            </Text>
-            <SettingsGroup>
-              <View style={{paddingVertical: theme.spacing.s3}}>
-                <Text style={{fontSize: 15, color: theme.colors.text}}>Additional Information</Text>
-              </View>
-              <InfoRow label="Company" value={serverAppInfo?.organization?.name || "-"} showDivider={false} />
-              <InfoRow label="Website" value={serverAppInfo?.organization?.website || "-"} showDivider={false} />
-              <InfoRow label="Contact" value={serverAppInfo?.organization?.contactEmail || "-"} showDivider={false} />
-              <InfoRow
-                label="App Type"
-                value={
-                  appInfo?.type === "standard" ? "Foreground" : appInfo?.type === "background" ? "Background" : "-"
-                }
-                showDivider={false}
-              />
-              <InfoRow label="Package Name" value={packageName} showDivider={false} />
-            </SettingsGroup>
+                {
+                  label: translate("appSettings:website"),
+                  value: serverAppInfo?.organization?.website || "—",
+                },
+                {
+                  label: translate("appSettings:contact"),
+                  value: serverAppInfo?.organization?.contactEmail || "—",
+                },
+                {
+                  label: translate("appSettings:appType"),
+                  value:
+                    appInfo?.type === "standard"
+                      ? translate("appSettings:foreground")
+                      : appInfo?.type === "background"
+                        ? translate("appSettings:background")
+                        : "—",
+                },
+                {
+                  label: translate("appSettings:packageName"),
+                  value: packageName,
+                },
+              ]}
+            />
           </View>
 
           {/* Uninstall Button at the bottom */}
-          <ActionButton
-            label="Uninstall"
+          <RouteButton
+            label={translate("appSettings:uninstall")}
             variant="destructive"
             onPress={() => {
               if (serverAppInfo?.uninstallable) {
                 handleUninstallApp()
               } else {
-                showAlert("Cannot Uninstall", "This app cannot be uninstalled.", [{text: "OK", style: "default"}])
+                showAlert(translate("appSettings:cannotUninstall"), translate("appSettings:cannotUninstallMessage"), [
+                  {text: translate("common:ok"), style: "default"},
+                ])
               }
             }}
             disabled={!serverAppInfo?.uninstallable}
@@ -698,10 +744,10 @@ const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   marginTop: spacing.s3,
 })
 
-const $appIconLarge: ThemedStyle<ViewStyle> = () => ({
+const $appIconLarge: ThemedStyle<ViewStyle> = ({spacing}) => ({
   width: 90,
   height: 90,
-  borderRadius: 45, // Half of width/height for perfect circle
+  borderRadius: spacing.s6, // Squircle-friendly radius
 })
 
 const $appNameSmall: ThemedStyle<TextStyle> = ({colors}) => ({
@@ -757,8 +803,8 @@ const $instructionsText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
 })
 
-const $settingsContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  gap: spacing.s4,
+const $settingsContainer: ThemedStyle<ViewStyle> = () => ({
+  // Gap is handled by individual settings via isFirst/isLast marginBottom
 })
 
 const $noSettingsText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
@@ -770,4 +816,13 @@ const $noSettingsText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   color: colors.textDim,
 })
 
-const $groupTitle: ThemedStyle<TextStyle> = () => ({})
+const _$groupTitle: ThemedStyle<TextStyle> = () => ({})
+
+const $sectionTitleText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 14,
+  color: colors.text,
+  lineHeight: 20,
+  letterSpacing: 0,
+  marginBottom: spacing.s2,
+  marginTop: spacing.s3,
+})

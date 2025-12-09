@@ -123,6 +123,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     private BroadcastReceiver heartbeatReceiver;
     private BroadcastReceiver restartReceiver;
     private BroadcastReceiver otaProgressReceiver;
+    private BroadcastReceiver mtkUpdateReceiver;
     
     // ---------------------------------------------
     // Heartbeat Timeout Management
@@ -592,6 +593,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             registerHeartbeatReceiver();
             registerRestartReceiver();
             registerOtaProgressReceiver();
+            registerMtkUpdateReceiver();
             Log.d(TAG, "✅ All receivers registered successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error registering receivers", e);
@@ -627,6 +629,14 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 Log.d(TAG, "✅ OTA progress receiver unregistered");
             } else {
                 Log.d(TAG, "⏭️ OTA progress receiver is null - skipping");
+            }
+            
+            if (mtkUpdateReceiver != null) {
+                Log.d(TAG, "🔄 Unregistering MTK update receiver");
+                unregisterReceiver(mtkUpdateReceiver);
+                Log.d(TAG, "✅ MTK update receiver unregistered");
+            } else {
+                Log.d(TAG, "⏭️ MTK update receiver is null - skipping");
             }
             
             // Stop heartbeat monitoring
@@ -842,7 +852,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         try {
             JSONObject versionInfo = new JSONObject();
             versionInfo.put("type", "version_info");
-            versionInfo.put("timestamp", System.currentTimeMillis());
             
             String appVersion = "1.0.0";
             String buildNumber = "1";
@@ -1252,6 +1261,43 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             }
         } catch (Exception e) {
             Log.e(TAG, "💥 Error handling installation progress", e);
+        }
+    }
+
+    private void registerMtkUpdateReceiver() {
+        Log.d(TAG, "🔄 registerMtkUpdateReceiver() started");
+        
+        try {
+            mtkUpdateReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if ("com.mentra.asg_client.MTK_UPDATE_COMPLETE".equals(intent.getAction())) {
+                        Log.i(TAG, "🔄 Received MTK update complete broadcast");
+                        sendMtkUpdateCompleteOverBle();
+                    }
+                }
+            };
+            
+            IntentFilter filter = new IntentFilter("com.mentra.asg_client.MTK_UPDATE_COMPLETE");
+            registerReceiver(mtkUpdateReceiver, filter);
+            Log.d(TAG, "✅ MTK update receiver registered successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error registering MTK update receiver", e);
+        }
+    }
+
+    private void sendMtkUpdateCompleteOverBle() {
+        Log.d(TAG, "📤 sendMtkUpdateCompleteOverBle() started");
+        try {
+            if (commandProcessor != null) {
+                Log.d(TAG, "📤 Sending MTK update complete to command processor");
+                commandProcessor.sendMtkUpdateComplete();
+                Log.d(TAG, "✅ MTK update complete sent successfully");
+            } else {
+                Log.w(TAG, "⚠️ Command processor is null - cannot send MTK update complete");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error sending MTK update complete", e);
         }
     }
 

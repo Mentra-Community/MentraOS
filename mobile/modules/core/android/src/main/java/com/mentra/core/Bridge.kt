@@ -481,6 +481,15 @@ public class Bridge private constructor() {
             sendTypedMessage("version_info", eventBody as Map<String, Any>)
         }
 
+        /** Send MTK firmware update complete notification - matches iOS implementation */
+        @JvmStatic
+        fun sendMtkUpdateComplete(message: String) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["message"] = message
+            eventBody["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
+        }
+
         /** Send RTMP stream status - forwards to websocket system (matches iOS) */
         @JvmStatic
         fun sendRtmpStreamStatus(statusJson: Map<String, Any>) {

@@ -1,16 +1,16 @@
-import {Button, Header, Screen, Text} from "@/components/ignite"
-import {Spacer} from "@/components/ui/Spacer"
-import {translate} from "@/i18n"
-import {$styles, ThemedStyle, spacing} from "@/theme"
-import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {FontAwesome} from "@expo/vector-icons"
-import {router} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 import Toast from "react-native-toast-message"
-import {mentraAuthProvider} from "@/utils/auth/authProvider"
+
+import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {translate} from "@/i18n"
+import {$styles, ThemedStyle, spacing} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import mentraAuth from "@/utils/auth/authClient"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function ResetPasswordScreen() {
   const [email, setEmail] = useState("")
@@ -22,7 +22,7 @@ export default function ResetPasswordScreen() {
   const [isValidToken, setIsValidToken] = useState(false)
 
   const {theme, themed} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack, replace} = useNavigationHistory()
 
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0
   const isFormValid = passwordsMatch && newPassword.length >= 6
@@ -33,19 +33,18 @@ export default function ResetPasswordScreen() {
   }, [])
 
   const checkSession = async () => {
-    const {
-      data: {session},
-    } = await mentraAuthProvider.getSession()
-    if (session) {
-      setIsValidToken(true)
-      // Get the user's email from the session
-      if (session.user?.email) {
-        setEmail(session.user.email)
-      }
-    } else {
+    const res = await mentraAuth.getSession()
+    if (res.is_error()) {
       // No valid session, redirect back to login
       showAlert(translate("common:error"), translate("login:invalidResetLink"))
-      router.replace("/auth/login")
+      replace("/auth/login")
+      return
+    }
+    const session = res.value
+    setIsValidToken(true)
+    // Get the user's email from the session
+    if (session.user?.email) {
+      setEmail(session.user.email)
     }
   }
 
@@ -63,64 +62,63 @@ export default function ResetPasswordScreen() {
 
     setIsLoading(true)
 
-    try {
-      const {error} = await mentraAuthProvider.updateUserPassword(newPassword)
-
-      if (error) {
-        showAlert(translate("common:error"), error.message)
-      } else {
-        // Try to automatically log the user in with the new password
-        if (email) {
-          const {data: signInData, error: signInError} = await mentraAuthProvider.signIn(email, newPassword)
-
-          if (!signInError && signInData?.session) {
-            Toast.show({
-              type: "success",
-              text1: translate("login:passwordResetSuccess"),
-              text2: translate("login:loggingYouIn"),
-              position: "bottom",
-            })
-
-            setTimeout(() => {
-              router.replace("/")
-            }, 1000)
-          } else {
-            // If auto-login fails, just redirect to login
-            Toast.show({
-              type: "success",
-              text1: translate("login:passwordResetSuccess"),
-              text2: translate("login:redirectingToLogin"),
-              position: "bottom",
-            })
-
-            await mentraAuthProvider.signOut()
-
-            setTimeout(() => {
-              router.replace("/auth/login")
-            }, 2000)
-          }
-        } else {
-          // No email, fallback to login redirect
-          Toast.show({
-            type: "success",
-            text1: translate("login:passwordResetSuccess"),
-            text2: translate("login:redirectingToLogin"),
-            position: "bottom",
-          })
-
-          await mentraAuthProvider.signOut()
-
-          setTimeout(() => {
-            router.replace("/auth/login")
-          }, 2000)
-        }
-      }
-    } catch (err) {
-      console.error("Error resetting password:", err)
-      showAlert(translate("common:error"), err.toString())
-    } finally {
-      setIsLoading(false)
+    let res = await mentraAuth.updateUserPassword(newPassword)
+    if (res.is_error()) {
+      showAlert(translate("common:error"), res.error.message)
+      return
     }
+
+    if (!email) {
+      // No email, fallback to login redirect
+      Toast.show({
+        type: "success",
+        text1: translate("login:passwordResetSuccess"),
+        text2: translate("login:redirectingToLogin"),
+        position: "bottom",
+      })
+
+      await mentraAuth.signOut()
+
+      setTimeout(() => {
+        replace("/auth/login")
+      }, 2000)
+    }
+
+    // Try to automatically log the user in with the new password
+    const res2 = await mentraAuth.signInWithPassword({email, password: newPassword})
+    if (res2.is_error()) {
+      showAlert(translate("common:error"), res2.error.message)
+      return
+    }
+
+    if (res2.is_error()) {
+      // If auto-login fails, just redirect to login
+      Toast.show({
+        type: "success",
+        text1: translate("login:passwordResetSuccess"),
+        text2: translate("login:redirectingToLogin"),
+        position: "bottom",
+      })
+
+      await mentraAuth.signOut()
+
+      setTimeout(() => {
+        replace("/auth/login")
+      }, 2000)
+    }
+
+    Toast.show({
+      type: "success",
+      text1: translate("login:passwordResetSuccess"),
+      text2: translate("login:loggingYouIn"),
+      position: "bottom",
+    })
+
+    setTimeout(() => {
+      replace("/")
+    }, 1000)
+
+    setIsLoading(false)
   }
 
   if (!isValidToken) {
@@ -275,7 +273,7 @@ const $enhancedInputContainer: ThemedStyle<ViewStyle> = ({colors, spacing, isDar
   borderColor: colors.border,
   borderRadius: 8,
   paddingHorizontal: spacing.s3,
-  backgroundColor: isDark ? colors.transparent : colors.background,
+  backgroundColor: isDark ? colors.palette.transparent : colors.background,
   ...(isDark
     ? {
         shadowOffset: {
@@ -304,7 +302,7 @@ const $errorText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
 const $primaryButton: ThemedStyle<ViewStyle> = () => ({})
 
 const $pressedButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.buttonPressed,
+  backgroundColor: colors.primary_foreground,
   opacity: 0.9,
 })
 
@@ -315,6 +313,6 @@ const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
 })
 
 const $disabledInput: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.backgroundDim,
+  backgroundColor: colors.primary_foreground,
   opacity: 0.7,
 })

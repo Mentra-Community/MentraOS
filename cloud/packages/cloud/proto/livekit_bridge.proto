@@ -19,7 +19,6 @@ service LiveKitBridge {
   // Room lifecycle management
   rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
   rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
-
   // Server-side audio playback (MP3/WAV → LiveKit track)
   //
   // Returns streaming events for progress tracking.
@@ -29,6 +28,9 @@ service LiveKitBridge {
 
   // Health check (for monitoring/load balancing)
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // Bridge status (room connectivity for a specific user session)
+  rpc GetStatus(BridgeStatusRequest) returns (BridgeStatusResponse);
 }
 
 // Audio chunk (PCM16 mono)
@@ -220,6 +222,32 @@ message HealthCheckResponse {
 
   // Additional diagnostics
   map<string, string> metadata = 5;
+}
+
+// Bridge status request/response messages
+message BridgeStatusRequest {
+  // User ID (for routing to correct room session)
+  string user_id = 1;
+}
+
+message BridgeStatusResponse {
+  // Whether the bridge is currently connected to the LiveKit room
+  bool connected = 1;
+
+  // Local participant ID (e.g., cloud-agent:{userId})
+  string participant_id = 2;
+
+  // Number of participants in room (including self)
+  int32 participant_count = 3;
+
+  // Last disconnect timestamp (milliseconds since epoch), 0 if never
+  int64 last_disconnect_at = 4;
+
+  // Best-effort reason for last disconnect (may be empty)
+  string last_disconnect_reason = 5;
+
+  // Optional: bridge/server version string for diagnostics
+  string server_version = 6;
 }
 
 // Statistics message (for future monitoring/debugging)

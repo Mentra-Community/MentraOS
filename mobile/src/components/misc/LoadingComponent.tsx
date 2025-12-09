@@ -1,39 +1,39 @@
-import React from "react"
-import {View, ActivityIndicator, StyleSheet, SafeAreaView} from "react-native"
-import {Text} from "@/components/ignite"
+import {View, ActivityIndicator, SafeAreaView, ViewStyle, TextStyle} from "react-native"
 
-const LoadingComponent = ({
-  message = "Loading...",
-  theme,
-}: {
-  message?: string
-  theme?: {backgroundColor?: string; textColor?: string}
-}) => {
+import {Text} from "@/components/ignite"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
+
+const LoadingComponent = ({message = "Loading..."}: {message?: string}) => {
+  const {themed} = useAppTheme()
+
   return (
-    <SafeAreaView style={[styles.safeArea, {backgroundColor: theme?.backgroundColor || "#ffffff"}]}>
-      <View style={styles.loadingContainer}>
+    <SafeAreaView style={themed($safeArea)}>
+      <View style={themed($loadingContainer)}>
         <ActivityIndicator size="large" color="#999999" />
-        <Text text={message} style={[styles.text, {color: theme?.textColor || "#000000"}]} />
+        <Text text={message} style={themed($text)} />
       </View>
     </SafeAreaView>
   )
 }
 
-const styles = StyleSheet.create({
-  loadingContainer: {
-    alignItems: "center",
-    flex: 1,
-    justifyContent: "center",
-    marginHorizontal: 20,
-  },
-  safeArea: {
-    flex: 1,
-  },
-  text: {
-    fontSize: 18,
-    marginBottom: 20,
-    textAlign: "center",
-  },
+const $safeArea: ThemedStyle<ViewStyle> = ({colors}) => ({
+  flex: 1,
+  backgroundColor: colors.background,
+})
+
+const $loadingContainer: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  flex: 1,
+  justifyContent: "center",
+  marginHorizontal: 20,
+})
+
+const $text: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 18,
+  marginBottom: 20,
+  textAlign: "center",
+  color: colors.text,
 })
 
 export default LoadingComponent

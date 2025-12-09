@@ -1,6 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage"
-import {SETTINGS} from "@/stores/settings"
-import {storage} from "@/utils/storage"
+import {useSettingsStore} from "@/stores/settings"
 
 export interface UserDataExport {
   metadata: {
@@ -34,9 +32,6 @@ export interface UserDataExport {
   userSettings: {
     [key: string]: any
   }
-  localStorage: {
-    [key: string]: any
-  }
 }
 
 export class DataExportService {
@@ -58,7 +53,6 @@ export class DataExportService {
       augmentosStatus: this.sanitizeStatusData(status),
       installedApps: this.sanitizeAppData(appStatus),
       userSettings: await this.collectSettingsData(),
-      localStorage: await this.collectLocalStorageData(),
     }
 
     console.log("DataExportService: Data collection completed")
@@ -152,70 +146,9 @@ export class DataExportService {
    */
   private static async collectSettingsData(): Promise<{[key: string]: any}> {
     console.log("DataExportService: Collecting settings data...")
-
-    const settings: {[key: string]: any} = {}
-
-    try {
-      // Collect all known settings
-      for (const [keyName, keyValue] of Object.entries(SETTINGS)) {
-        try {
-          const value = await AsyncStorage.getItem(keyValue.key)
-          if (value !== null) {
-            try {
-              settings[keyName] = JSON.parse(value)
-            } catch {
-              settings[keyName] = value // Store as string if not JSON
-            }
-          }
-        } catch (error) {
-          console.warn(`Failed to read setting ${keyName}:`, error)
-        }
-      }
-
-      console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
-    } catch (error) {
-      console.error("DataExportService: Error collecting settings:", error)
-    }
-
+    const settings: Record<string, any> = useSettingsStore.getState().settings ?? {}
+    console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
     return settings
-  }
-
-  /**
-   * Collect data from MMKV/local storage
-   */
-  private static async collectLocalStorageData(): Promise<{[key: string]: any}> {
-    console.log("DataExportService: Collecting local storage data...")
-
-    const localStorage: {[key: string]: any} = {}
-
-    try {
-      // Get common storage keys (you might want to expand this list)
-      const commonKeys = [
-        "onboarding_completed",
-        "theme_preference",
-        "user_preferences",
-        "app_cache",
-        // Add more keys as needed
-      ]
-
-      for (const key of commonKeys) {
-        try {
-          const value = storage.load(key)
-          if (value !== undefined) {
-            localStorage[key] = value
-          }
-        } catch (error) {
-          // Key doesn't exist, skip
-          console.warn(`DataExportService: Key ${key} does not exist in local storage`)
-        }
-      }
-
-      console.log(`DataExportService: Collected ${Object.keys(localStorage).length} local storage items`)
-    } catch (error) {
-      console.error("DataExportService: Error collecting local storage:", error)
-    }
-
-    return localStorage
   }
 
   /**

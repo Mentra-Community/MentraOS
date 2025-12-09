@@ -1,3 +1,5 @@
+import {BackgroundTimer} from "react-native-nitro-bg-timer"
+
 export class TranscriptProcessor {
   private maxCharsPerLine: number = 44
   private maxLines: number = 3
@@ -49,7 +51,7 @@ export class TranscriptProcessor {
 
         // If no timer is running, schedule one
         if (!this.pendingTimer) {
-          this.pendingTimer = setTimeout(() => {
+          this.pendingTimer = BackgroundTimer.setTimeout(() => {
             // Trigger sending the most recent pending update
             this.lastPartialUpdateTime = Date.now()
             this.pendingTimer = null
@@ -68,7 +70,7 @@ export class TranscriptProcessor {
 
       // Clear any pending update since we're sending now
       if (this.pendingTimer) {
-        clearTimeout(this.pendingTimer)
+        BackgroundTimer.clearTimeout(this.pendingTimer)
         this.pendingTimer = null
       }
       this.pendingUpdate = null
@@ -182,7 +184,7 @@ export class TranscriptProcessor {
     this.currentDisplayLines = []
     this.lastPartialUpdateTime = 0
     if (this.pendingTimer) {
-      clearTimeout(this.pendingTimer)
+      BackgroundTimer.clearTimeout(this.pendingTimer)
       this.pendingTimer = null
     }
     this.pendingUpdate = null

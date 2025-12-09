@@ -1,32 +1,55 @@
-import {useState, useEffect, useCallback} from "react"
+import {useLocalSearchParams, useFocusEffect} from "expo-router"
+import {useState, useEffect, useCallback, useRef} from "react"
 import {View, TextInput, TouchableOpacity, BackHandler} from "react-native"
-import {useLocalSearchParams, useFocusEffect, router} from "expo-router"
-import {Screen, Icon, Header, Checkbox, Button, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
 import {ViewStyle, TextStyle} from "react-native"
-import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {ScrollView} from "react-native"
 import Toast from "react-native-toast-message"
+
+import {EyeIcon} from "@/components/icons/EyeIcon"
+import {EyeOffIcon} from "@/components/icons/EyeOffIcon"
+import {WifiIcon} from "@/components/icons/WifiIcon"
+import {Screen, Header, Checkbox, Button, Text} from "@/components/ignite"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useGlassesStore} from "@/stores/glasses"
+import {$styles, ThemedStyle} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import {useAppTheme} from "@/utils/useAppTheme"
+import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 
 export default function WifiPasswordScreen() {
   const params = useLocalSearchParams()
   const deviceModel = (params.deviceModel as string) || "Glasses"
   const initialSsid = (params.ssid as string) || ""
   const returnTo = params.returnTo as string | undefined
+  const nextRoute = params.nextRoute as string | undefined
 
   const {theme, themed} = useAppTheme()
-  const {push, goBack} = useNavigationHistory()
+  const {push, goBack, replace} = useNavigationHistory()
+  const glassesConnected = useGlassesStore(state => state.connected)
   const [ssid, setSsid] = useState(initialSsid)
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [rememberPassword, setRememberPassword] = useState(true)
   const [hasSavedPassword, setHasSavedPassword] = useState(false)
 
+  // Navigate away if glasses disconnect (but not on initial mount)
+  const prevGlassesConnectedRef = useRef(glassesConnected)
+  useEffect(() => {
+    if (prevGlassesConnectedRef.current && !glassesConnected) {
+      console.log("[WifiPasswordScreen] Glasses disconnected - navigating away")
+      showAlert("Glasses Disconnected", "Please reconnect your glasses to set up WiFi.", [{text: "OK"}])
+      if (returnTo && typeof returnTo === "string") {
+        replace(decodeURIComponent(returnTo))
+      } else {
+        replace("/")
+      }
+    }
+    prevGlassesConnectedRef.current = glassesConnected
+  }, [glassesConnected, returnTo])
+
   const handleGoBack = useCallback(() => {
     if (returnTo && typeof returnTo === "string") {
-      router.replace(decodeURIComponent(returnTo))
+      replace(decodeURIComponent(returnTo))
     } else {
       goBack()
     }
@@ -87,31 +110,41 @@ export default function WifiPasswordScreen() {
       password,
       rememberPassword: rememberPassword.toString(),
       returnTo,
+      nextRoute,
     })
   }
 
   return (
-    <Screen preset="fixed" contentContainerStyle={themed($container)}>
-      <Header title="Enter Glasses WiFi Details" leftIcon="chevron-left" onLeftPress={handleGoBack} />
-      <ScrollView
-        style={{marginBottom: 20, marginTop: 10, marginRight: -theme.spacing.s4, paddingRight: theme.spacing.s4}}>
-        <View style={themed($content)}>
-          <View style={themed($inputContainer)}>
-            <Text style={themed($label)}>Network Name (SSID)</Text>
-            <TextInput
-              style={themed($input)}
-              value={ssid}
-              onChangeText={setSsid}
-              placeholder="Enter network name"
-              placeholderTextColor={theme.colors.textDim}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!initialSsid} // Only editable if manually entering
-            />
+    <Screen preset="fixed" style={themed($styles.screen)}>
+      <Header title="Wi-Fi" leftIcon="chevron-left" onLeftPress={handleGoBack} />
+      <ScrollView contentContainerStyle={themed($scrollContent)} style={{flex: 1}}>
+        {/* Centered card container */}
+        <View style={themed($card)}>
+          {/* WiFi Icon and SSID Header */}
+          <View style={themed($iconContainer)}>
+            <WifiIcon size={48} color={theme.colors.palette.success500} />
           </View>
 
+          <Text style={themed($ssidTitle)}>{ssid || "Enter Network Details"}</Text>
+
+          {/* Manual entry shows SSID input */}
+          {!initialSsid && (
+            <View style={themed($inputContainer)}>
+              <Text style={themed($label)}>Network Name (SSID)</Text>
+              <TextInput
+                style={themed($input)}
+                value={ssid}
+                onChangeText={setSsid}
+                placeholder="Enter network name"
+                placeholderTextColor={theme.colors.textDim}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+          )}
+
           <View style={themed($inputContainer)}>
-            <Text style={themed($label)}>Password</Text>
+            <Text style={themed($label)}>Wi-Fi password</Text>
             <View style={themed($passwordContainer)}>
               <TextInput
                 style={themed($passwordInput)}
@@ -124,7 +157,11 @@ export default function WifiPasswordScreen() {
                 autoCorrect={false}
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={themed($eyeButton)}>
-                <Icon icon={showPassword ? "view" : "hidden"} size={20} color={theme.colors.textDim} />
+                {showPassword ? (
+                  <EyeIcon size={24} color={theme.colors.textDim} />
+                ) : (
+                  <EyeOffIcon size={24} color={theme.colors.textDim} />
+                )}
               </TouchableOpacity>
             </View>
             {hasSavedPassword && (
@@ -132,30 +169,35 @@ export default function WifiPasswordScreen() {
             )}
           </View>
 
-          <View style={themed($checkboxContainer)}>
-            <Checkbox value={rememberPassword} onValueChange={setRememberPassword} />
+          <TouchableOpacity
+            style={themed($checkboxContainer)}
+            onPress={() => setRememberPassword(!rememberPassword)}
+            activeOpacity={0.7}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+            <Checkbox
+              value={rememberPassword}
+              onValueChange={setRememberPassword}
+              containerStyle={{padding: 8, marginTop: -8}}
+              inputOuterStyle={{
+                backgroundColor: rememberPassword ? theme.colors.palette.success500 : theme.colors.background,
+                borderColor: rememberPassword ? theme.colors.palette.success500 : theme.colors.border,
+                borderWidth: 2,
+              }}
+              inputDetailStyle={{
+                tintColor: theme.colors.palette.white,
+              }}
+            />
             <View style={themed($checkboxContent)}>
               <Text style={themed($checkboxLabel)}>Remember Password</Text>
-              <Text style={themed($checkboxDescription)}>Save this password for future connections</Text>
+              <Text style={themed($checkboxDescription)}>Save this password for future connections.</Text>
             </View>
-          </View>
+          </TouchableOpacity>
+
+          <View style={themed($divider)} />
 
           <View style={themed($buttonContainer)}>
-            <Button
-              text="Connect"
-              style={themed($primaryButton)}
-              pressedStyle={themed($pressedButton)}
-              textStyle={themed($buttonText)}
-              onPress={handleConnect}
-            />
-
-            <Button
-              text="Cancel"
-              style={themed($secondaryButton)}
-              pressedStyle={themed($pressedSecondaryButton)}
-              onPress={handleGoBack}
-              preset="reversed"
-            />
+            <Button text="Cancel" onPress={handleGoBack} preset="alternate" style={themed($cancelButton)} />
+            <Button text="Connect" onPress={handleConnect} style={themed($connectButton)} />
           </View>
         </View>
       </ScrollView>
@@ -163,32 +205,50 @@ export default function WifiPasswordScreen() {
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
+const $scrollContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexGrow: 1,
+  justifyContent: "center",
+  paddingVertical: spacing.s6,
 })
 
-const $content: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  paddingHorizontal: spacing.s6,
+const $card: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.primary_foreground,
+  borderRadius: spacing.s6,
+  borderWidth: 1,
+  borderColor: colors.border,
+  padding: spacing.s6,
+  width: "100%",
+  alignItems: "center",
+})
+
+const $iconContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  marginBottom: spacing.s3,
+})
+
+const $ssidTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 20,
+  fontWeight: "600",
+  color: colors.text,
+  textAlign: "center",
+  marginBottom: spacing.s4,
 })
 
 const $inputContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginBottom: spacing.s6,
+  marginBottom: spacing.s4,
+  width: "100%",
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 16,
-  fontWeight: "500",
+  fontWeight: "400",
   color: colors.text,
   marginBottom: spacing.s2,
 })
 
 const $input: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   height: 50,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: spacing.s2,
-  padding: spacing.s3,
+  borderRadius: spacing.s3,
+  padding: spacing.s4,
   fontSize: 16,
   color: colors.text,
   backgroundColor: colors.background,
@@ -203,10 +263,8 @@ const $passwordContainer: ThemedStyle<ViewStyle> = () => ({
 const $passwordInput: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   flex: 1,
   height: 50,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: spacing.s2,
-  padding: spacing.s3,
+  borderRadius: spacing.s3,
+  padding: spacing.s4,
   paddingRight: 50,
   fontSize: 16,
   color: colors.text,
@@ -233,47 +291,46 @@ const $checkboxContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   alignItems: "flex-start",
   marginBottom: spacing.s6,
-  paddingVertical: spacing.s3,
+  width: "100%",
 })
 
-const $checkboxContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $checkboxContent: ThemedStyle<ViewStyle> = () => ({
   flex: 1,
-  marginLeft: spacing.s3,
 })
 
-const $checkboxLabel: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+const $checkboxLabel: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 16,
   fontWeight: "500",
   color: colors.text,
-  marginBottom: spacing.s2,
 })
 
 const $checkboxDescription: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
   color: colors.textDim,
+  marginTop: 2,
+})
+
+const $divider: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  width: "100%",
+  height: 1,
+  backgroundColor: colors.border,
+  marginTop: spacing.s2,
+  marginBottom: spacing.s6,
 })
 
 const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginTop: spacing.s8,
+  flexDirection: "row",
   gap: spacing.s3,
+  width: "100%",
+  justifyContent: "flex-end",
 })
 
-const $primaryButton: ThemedStyle<ViewStyle> = () => ({})
-
-const $secondaryButton: ThemedStyle<ViewStyle> = () => ({})
-
-const $pressedButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.buttonPressed,
-  opacity: 0.9,
+const $cancelButton: ThemedStyle<ViewStyle> = () => ({
+  flex: 0,
+  minWidth: 100,
 })
 
-const $pressedSecondaryButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.palette.neutral200,
-  opacity: 0.9,
-})
-
-const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.textAlt,
-  fontSize: 16,
-  fontWeight: "bold",
+const $connectButton: ThemedStyle<ViewStyle> = () => ({
+  flex: 0,
+  minWidth: 100,
 })

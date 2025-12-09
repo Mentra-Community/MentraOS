@@ -1,15 +1,16 @@
+import {FontAwesome} from "@expo/vector-icons"
 import {useState} from "react"
 import {View, TextInput, ActivityIndicator, ScrollView, ViewStyle, TextStyle} from "react-native"
-import {mentraAuthProvider} from "@/utils/auth/authProvider"
-import {Button, Header, Screen, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {$styles, ThemedStyle, spacing} from "@/theme"
-import {translate} from "@/i18n"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import showAlert from "@/utils/AlertUtils"
-import {FontAwesome} from "@expo/vector-icons"
-import {Spacer} from "@/components/ui/Spacer"
 import Toast from "react-native-toast-message"
+
+import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Spacer} from "@/components/ui/Spacer"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {translate} from "@/i18n"
+import {$styles, ThemedStyle, spacing} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import mentraAuth from "@/utils/auth/authClient"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("")
@@ -28,30 +29,28 @@ export default function ForgotPasswordScreen() {
 
     setIsLoading(true)
 
-    try {
-      const {error} = await mentraAuthProvider.resetPasswordForEmail(email)
+    const res = await mentraAuth.resetPasswordForEmail(email)
+    if (res.is_error()) {
+      showAlert(translate("common:error"), res.error.message)
+      console.error("Error sending reset email:", res.error.message)
 
-      if (error) {
-        showAlert(translate("common:error"), error.message)
-      } else {
-        Toast.show({
-          type: "success",
-          text1: translate("login:resetEmailSent"),
-          text2: translate("login:checkEmailForReset"),
-          position: "bottom",
-          visibilityTime: 5000,
-        })
-        // Navigate back to login screen after showing success message
-        setTimeout(() => {
-          goBack()
-        }, 2000)
-      }
-    } catch (err) {
-      console.error("Error sending reset email:", err)
-      showAlert(translate("common:error"), err.toString())
-    } finally {
       setIsLoading(false)
+      return
     }
+
+    Toast.show({
+      type: "success",
+      text1: translate("login:resetEmailSent"),
+      text2: translate("login:checkEmailForReset"),
+      position: "bottom",
+      visibilityTime: 5000,
+    })
+    // Navigate back to login screen after showing success message
+    setTimeout(() => {
+      goBack()
+    }, 2000)
+
+    setIsLoading(false)
   }
 
   return (

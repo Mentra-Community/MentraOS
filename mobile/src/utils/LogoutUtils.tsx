@@ -1,10 +1,11 @@
-import AsyncStorage from "@react-native-async-storage/async-storage"
-import {mentraAuthProvider} from "@/utils/auth/authProvider"
-import bridge from "@/bridge/MantleBridge"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import restComms from "@/services/RestComms"
-import {SETTINGS} from "@/stores/settings"
+import {Session} from "@supabase/supabase-js"
 import CoreModule from "core"
+
+import bridge from "@/bridge/MantleBridge"
+import restComms from "@/services/RestComms"
+import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import mentraAuth from "@/utils/auth/authClient"
+import {storage} from "@/utils/storage"
 
 export class LogoutUtils {
   private static readonly TAG = "LogoutUtils"
@@ -74,9 +75,9 @@ export class LogoutUtils {
   private static async clearSupabaseAuth(): Promise<void> {
     console.log(`${this.TAG}: Clearing Supabase authentication...`)
 
-    const {error} = await mentraAuthProvider.signOut()
-    if (error) {
-      console.error(`${this.TAG}: Error signing out:`, error)
+    const res = await mentraAuth.signOut()
+    if (res.is_error()) {
+      console.error(`${this.TAG}: Error signing out:`, res.error)
     }
 
     // Completely clear ALL Supabase Auth storage
@@ -90,11 +91,11 @@ export class LogoutUtils {
       "supabase.auth.provider_refresh_token",
     ]
 
-    try {
-      await AsyncStorage.multiRemove(supabaseKeys)
-      console.log(`${this.TAG}: Cleared Supabase auth tokens`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error clearing Supabase tokens:`, error)
+    for (const key of supabaseKeys) {
+      const res = await storage.remove(key)
+      if (res.is_error()) {
+        console.error(`${this.TAG}: Error clearing Supabase token:`, res.error)
+      }
     }
   }
 
@@ -134,19 +135,9 @@ export class LogoutUtils {
   private static async clearAppSettings(): Promise<void> {
     console.log(`${this.TAG}: Clearing app settings...`)
 
+    // burn it all:
     try {
-      // Clear specific settings that should be reset on logout
-      const settingsToKeep = [
-        SETTINGS.theme_preference.key, // Keep theme preference
-        SETTINGS.backend_url.key, // Keep custom backend URL if set
-      ]
-
-      const settingsToClear = Object.values(SETTINGS).filter(key => !settingsToKeep.includes(key.key))
-
-      if (settingsToClear.length > 0) {
-        await AsyncStorage.multiRemove(settingsToClear.map(setting => setting.key))
-        console.log(`${this.TAG}: Cleared ${settingsToClear.length} app settings`)
-      }
+      storage.clearAll()
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)
     }
@@ -158,24 +149,24 @@ export class LogoutUtils {
   private static async clearAuthStorage(): Promise<void> {
     console.log(`${this.TAG}: Clearing remaining auth storage...`)
 
-    try {
-      // Get all AsyncStorage keys and filter for user/auth related ones
-      const allKeys = await AsyncStorage.getAllKeys()
-      const authKeys = allKeys.filter(
-        (key: string) =>
-          key.startsWith("supabase.auth.") ||
-          key.includes("user") ||
-          key.includes("token") ||
-          key.includes("session") ||
-          key.includes("auth"),
-      )
+    // Get all AsyncStorage keys and filter for user/auth related ones
+    const allKeys = storage.getAllKeys()
+    const authKeys = allKeys.filter(
+      (key: string) =>
+        key.startsWith("supabase.auth.") ||
+        key.includes("user") ||
+        key.includes("token") ||
+        key.includes("session") ||
+        key.includes("auth"),
+    )
 
-      if (authKeys.length > 0) {
-        await AsyncStorage.multiRemove(authKeys)
+    if (authKeys.length > 0) {
+      const res = await storage.removeMultiple(authKeys)
+      if (res.is_error()) {
+        console.error(`${this.TAG}: Error clearing auth storage:`, res.error)
+      } else {
         console.log(`${this.TAG}: Cleared ${authKeys.length} additional auth keys`)
       }
-    } catch (error) {
-      console.error(`${this.TAG}: Error clearing auth storage:`, error)
     }
   }
 
@@ -214,18 +205,17 @@ export class LogoutUtils {
    * Check if user is properly logged out by verifying key storage items
    */
   public static async verifyLogoutSuccess(): Promise<boolean> {
-    try {
-      // Check if any critical auth tokens remain
-      const supabaseSession = await AsyncStorage.getItem("supabase.auth.session")
-      const coreToken = restComms.getCoreToken()
-
-      const isLoggedOut = !supabaseSession && !coreToken
-
-      console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
-      return isLoggedOut
-    } catch (error) {
-      console.error(`${this.TAG}: Error verifying logout:`, error)
-      return false
+    // Check if any critical auth tokens remain
+    const res = storage.load<Session>("supabase.auth.session")
+    let supabaseSession = null
+    if (res.is_ok()) {
+      supabaseSession = res.value
     }
+    const coreToken = restComms.getCoreToken()
+
+    const isLoggedOut = !supabaseSession && !coreToken
+
+    console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
+    return isLoggedOut
   }
 }

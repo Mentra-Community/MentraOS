@@ -1,15 +1,19 @@
+import Compression
 import Foundation
+import libbz2
 import SWCompression
 
 @objc(TarBz2Extractor)
 public class TarBz2Extractor: NSObject {
+    private static let chunkSize = 1 << 16 // 64 KB
+
     @objc
     public static func extractTarBz2From(
         _ sourcePath: String,
         to destinationPath: String,
         error errorPointer: NSErrorPointer
     ) -> Bool {
-        Bridge.log("TarBz2Extractor: begin extraction from \(sourcePath)")
+        Bridge.log("TarBz2Extractor: begin extraction")
         do {
             try performExtraction(from: sourcePath, to: destinationPath)
             Bridge.log("TarBz2Extractor: extraction complete")
@@ -31,7 +35,6 @@ public class TarBz2Extractor: NSObject {
     }
 
     private static func performExtraction(from sourcePath: String, to destinationPath: String) throws {
-        Bridge.log("TarBz2Extractor: creating destination directory")
         let fileManager = FileManager.default
         try fileManager.createDirectory(
             atPath: destinationPath,
@@ -39,17 +42,10 @@ public class TarBz2Extractor: NSObject {
             attributes: nil
         )
 
-        Bridge.log("TarBz2Extractor: decompressing bzip2 archive")
         let tempTarURL = try decompressBzipArchive(at: sourcePath)
-        defer {
-            Bridge.log("TarBz2Extractor: cleaning up temporary files")
-            try? fileManager.removeItem(at: tempTarURL)
-        }
+        defer { try? fileManager.removeItem(at: tempTarURL) }
 
-        Bridge.log("TarBz2Extractor: extracting tar archive")
         try extractTarArchive(at: tempTarURL, to: destinationPath)
-
-        Bridge.log("TarBz2Extractor: flattening directory structure")
         try flattenNestedDirectory(at: destinationPath)
     }
 
@@ -58,23 +54,48 @@ public class TarBz2Extractor: NSObject {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("tar")
 
-        let sourceURL = URL(fileURLWithPath: sourcePath)
+        guard let sourceFile = fopen(sourcePath, "rb") else {
+            throw makeError(code: 1001, message: "Unable to open source file at \(sourcePath)")
+        }
+        defer { fclose(sourceFile) }
 
-        Bridge.log("TarBz2Extractor: reading compressed data")
-        let compressedData = try Data(contentsOf: sourceURL)
-        let compressedSizeMB = Double(compressedData.count) / (1024 * 1024)
-        Bridge.log("TarBz2Extractor: compressed size: \(String(format: "%.2f", compressedSizeMB)) MB")
+        guard let destinationFile = fopen(tempTarURL.path, "wb") else {
+            throw makeError(code: 1002, message: "Unable to create temporary tar file")
+        }
+        defer { fclose(destinationFile) }
 
-        Bridge.log("TarBz2Extractor: decompressing data")
-        guard let decompressedData = try? BZip2.decompress(data: compressedData) else {
-            throw makeError(code: 1003, message: "Unable to decompress bzip2 archive")
+        var bzError: Int32 = BZ_OK
+        guard let bzFile = BZ2_bzReadOpen(&bzError, sourceFile, 0, 0, nil, 0), bzError == BZ_OK else {
+            throw makeError(code: 1003, message: "Unable to open bzip stream (code \(bzError))")
         }
 
-        let decompressedSizeMB = Double(decompressedData.count) / (1024 * 1024)
-        Bridge.log("TarBz2Extractor: decompressed size: \(String(format: "%.2f", decompressedSizeMB)) MB")
+        var buffer = [Int8](repeating: 0, count: chunkSize)
+        while true {
+            let bytesRead = BZ2_bzRead(&bzError, bzFile, &buffer, Int32(buffer.count))
+            if bzError == BZ_OK || bzError == BZ_STREAM_END {
+                if bytesRead > 0 {
+                    let written = buffer.withUnsafeBytes { rawBuffer -> Int in
+                        guard let baseAddress = rawBuffer.baseAddress else { return 0 }
+                        return fwrite(baseAddress, 1, Int(bytesRead), destinationFile)
+                    }
+                    guard written == Int(bytesRead) else {
+                        BZ2_bzReadClose(&bzError, bzFile)
+                        throw makeError(code: 1004, message: "Failed to write decompressed data")
+                    }
+                }
+                if bzError == BZ_STREAM_END {
+                    break
+                }
+            } else {
+                BZ2_bzReadClose(&bzError, bzFile)
+                throw makeError(code: 1005, message: "bzip2 read failed with code \(bzError)")
+            }
+        }
 
-        Bridge.log("TarBz2Extractor: writing temporary tar file")
-        try decompressedData.write(to: tempTarURL, options: .atomic)
+        BZ2_bzReadClose(&bzError, bzFile)
+        guard bzError == BZ_OK else {
+            throw makeError(code: 1006, message: "bzip2 close failed with code \(bzError)")
+        }
 
         return tempTarURL
     }
@@ -87,13 +108,8 @@ public class TarBz2Extractor: NSObject {
         defer { try? handle.close() }
 
         var reader = TarReader(fileHandle: handle)
-        var entryCount = 0
-        var fileCount = 0
-        var dirCount = 0
 
         while let entry = try reader.read() {
-            entryCount += 1
-
             let sanitizedName = sanitize(entryName: entry.info.name)
             if sanitizedName.isEmpty {
                 continue
@@ -102,18 +118,13 @@ public class TarBz2Extractor: NSObject {
             let entryURL = destinationRoot.appendingPathComponent(sanitizedName)
             switch entry.info.type {
             case .directory:
-                dirCount += 1
                 try fileManager.createDirectory(
                     at: entryURL,
                     withIntermediateDirectories: true,
                     attributes: nil
                 )
-                if dirCount % 10 == 0 {
-                    Bridge.log("TarBz2Extractor: created \(dirCount) directories")
-                }
             case .regular:
                 guard let data = entry.data else { continue }
-                fileCount += 1
                 try fileManager.createDirectory(
                     at: entryURL.deletingLastPathComponent(),
                     withIntermediateDirectories: true,
@@ -121,16 +132,10 @@ public class TarBz2Extractor: NSObject {
                 )
                 let finalURL = remapModelFileIfNeeded(for: entryURL)
                 try data.write(to: finalURL, options: .atomic)
-
-                if fileCount % 10 == 0 {
-                    Bridge.log("TarBz2Extractor: extracted \(fileCount) files")
-                }
             default:
                 continue
             }
         }
-
-        Bridge.log("TarBz2Extractor: extracted \(fileCount) files and \(dirCount) directories (total \(entryCount) entries)")
     }
 
     private static func flattenNestedDirectory(at destinationPath: String) throws {
@@ -138,15 +143,9 @@ public class TarBz2Extractor: NSObject {
         let destinationURL = URL(fileURLWithPath: destinationPath, isDirectory: true)
         let nestedURL = destinationURL.appendingPathComponent(destinationURL.lastPathComponent)
 
-        guard fileManager.fileExists(atPath: nestedURL.path) else {
-            Bridge.log("TarBz2Extractor: no nested directory to flatten")
-            return
-        }
+        guard fileManager.fileExists(atPath: nestedURL.path) else { return }
 
-        Bridge.log("TarBz2Extractor: flattening nested directory structure")
         let nestedFiles = try fileManager.contentsOfDirectory(at: nestedURL, includingPropertiesForKeys: nil)
-        Bridge.log("TarBz2Extractor: moving \(nestedFiles.count) items")
-
         for file in nestedFiles {
             let target = destinationURL.appendingPathComponent(file.lastPathComponent)
             if fileManager.fileExists(atPath: target.path) {
@@ -156,7 +155,6 @@ public class TarBz2Extractor: NSObject {
         }
 
         try fileManager.removeItem(at: nestedURL)
-        Bridge.log("TarBz2Extractor: flattening complete")
     }
 
     private static func sanitize(entryName: String) -> String {

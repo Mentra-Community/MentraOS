@@ -1,6 +1,8 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {ScrollView, View, ViewStyle, TextStyle} from "react-native"
 
 import BackendUrl from "@/components/dev/BackendUrl"
+import StoreUrl from "@/components/dev/StoreUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
@@ -11,8 +13,6 @@ import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {$styles, ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export default function DeveloperSettingsScreen() {
   const {theme, themed} = useAppTheme()
@@ -39,7 +39,7 @@ export default function DeveloperSettingsScreen() {
 
       <ScrollView style={{flex: 1, marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}>
         <RouteButton
-          label="🎥 Buffer Recording Debug"
+          label="Buffer Recording Debug"
           subtitle="Control 30-second video buffer on glasses"
           onPress={() => push("/settings/buffer-debug")}
         />
@@ -71,12 +71,20 @@ export default function DeveloperSettingsScreen() {
 
         <Spacer height={theme.spacing.s4} />
 
-        <RouteButton label="🔄 Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
+        <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
 
         <Spacer height={theme.spacing.s4} />
 
         <RouteButton
-          label="🔄 Test Sentry"
+          label="Sitemap"
+          subtitle="view the app's route map"
+          onPress={() => push("/_sitemap")}
+        />
+
+        <Spacer height={theme.spacing.s4} />
+
+        <RouteButton
+          label="Test Sentry"
           subtitle="Send a crash to Sentry"
           onPress={() => {
             throw new Error("Test Sentry crash")
@@ -86,7 +94,7 @@ export default function DeveloperSettingsScreen() {
         <Spacer height={theme.spacing.s4} />
 
         {/* G1 Specific Settings - Only show when connected to Even Realities G1 */}
-        {defaultWearable && defaultWearable.includes(DeviceTypes.G1) && (
+        {defaultWearable?.includes(DeviceTypes.G1) && (
           <Group title="G1 Specific Settings">
             <ToggleSetting
               label={translate("settings:powerSavingMode")}
@@ -96,11 +104,16 @@ export default function DeveloperSettingsScreen() {
                 await setPowerSavingMode(value)
               }}
             />
-            <Spacer height={theme.spacing.s4} />
           </Group>
         )}
 
-        {!process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE && <BackendUrl />}
+        <Spacer height={theme.spacing.s4} />
+
+        <BackendUrl />
+
+        <Spacer height={theme.spacing.s4} />
+
+        <StoreUrl />
 
         <Spacer height={theme.spacing.s4} />
         <Spacer height={theme.spacing.s12} />

@@ -251,6 +251,9 @@ public class MediaCaptureService {
                 return new BleParams(400, 400, 35, 25);
             case "large":
                 return new BleParams(1024, 1024, 45, 40);
+            case "full":
+                // Full resolution requested - use largest BLE-friendly size
+                return new BleParams(1280, 1280, 50, 45);
             case "medium":
             default:
                 return new BleParams(720, 720, 42, 38);
@@ -437,13 +440,31 @@ public class MediaCaptureService {
     }
     
     /**
+     * Flash privacy LED synchronized with shutter sound for photo capture
+     */
+    private void flashPrivacyLedForPhoto() {
+        if (hardwareManager == null) {
+            Log.w(TAG, "⚠️ hardwareManager is null, cannot flash privacy LED");
+            return;
+        }
+
+        if (!hardwareManager.supportsRecordingLed()) {
+            Log.w(TAG, "⚠️ Privacy LED not supported on this device");
+            return;
+        }
+
+        Log.d(TAG, "📸 Flashing privacy LED synchronized with shutter sound");
+        hardwareManager.flashRecordingLed(2200); // 300ms flash duration
+    }
+    
+    /**
      * Trigger white LED flash for photo capture (synchronized with shutter sound)
      */
     private void triggerPhotoFlashLed() {
         Log.i(TAG, "📸 triggerPhotoFlashLed() called");
 
         if (hardwareManager != null && hardwareManager.supportsRgbLed()) {
-            hardwareManager.flashRgbLedWhite(5000); // 5 second flash
+            hardwareManager.flashRgbLedWhite(2200); // 5 second flash
             Log.i(TAG, "📸 Photo flash LED (white) triggered via hardware manager");
         } else {
             Log.w(TAG, "⚠️ RGB LED not supported on this device");
@@ -1105,12 +1126,9 @@ public class MediaCaptureService {
 
         playShutterSound();
         if (enableLed) {
-            triggerPhotoFlashLed(); // Trigger white LED flash synchronized with shutter sound
+            triggerPhotoFlashLed(); // Trigger white RGB LED flash synchronized with shutter sound
+            flashPrivacyLedForPhoto(); // Flash privacy LED synchronized with shutter sound
         }
-
-
-        // LED control is now handled by CameraNeo tied to camera lifecycle
-        // This prevents LED flickering during rapid photo capture
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestFramework.shouldFail("CAMERA_CAPTURE")) {
@@ -1124,15 +1142,17 @@ public class MediaCaptureService {
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_CAPTURE");
 
         // Use the new enqueuePhotoRequest for thread-safe rapid capture
+        // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
         CameraNeo.enqueuePhotoRequest(
                 mContext,
                 photoFilePath,
                 size,
                 enableLed,
+                false,  // isFromSdk - button photo, use high quality resolution
                 new CameraNeo.PhotoCaptureCallback() {
                     @Override
                     public void onPhotoCaptured(String filePath) {
-                        Log.d(TAG, "Offline photo captured successfully at: " + filePath);
+                        Log.d(TAG, "Local photo captured successfully at: " + filePath);
                         
                         // LED is now managed by CameraNeo and will turn off when camera closes
                         
@@ -1242,15 +1262,19 @@ public class MediaCaptureService {
 
         try {
             playShutterSound();
-            // Disable LED for webhook uploads to avoid distracting white flash
-            // LED control is handled by CameraNeo for camera lifecycle management
+            if (enableLed) {
+                triggerPhotoFlashLed(); // Trigger white RGB LED flash synchronized with shutter sound
+                flashPrivacyLedForPhoto(); // Flash privacy LED synchronized with shutter sound
+            }
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
+            // isFromSdk=true because this is an SDK-requested photo (take_photo command)
             CameraNeo.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
                     size,
                     enableLed,
+                    true,  // isFromSdk - use optimized resolution for fast transfer
                     new CameraNeo.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {
@@ -2050,8 +2074,10 @@ public class MediaCaptureService {
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_CAPTURE");
 
         playShutterSound();
-        // Disable LED for BLE transfers to avoid distracting white flash
-        // LED control is handled by CameraNeo for camera lifecycle management
+        if (enableLed) {
+            triggerPhotoFlashLed(); // Trigger white RGB LED flash synchronized with shutter sound
+            flashPrivacyLedForPhoto(); // Flash privacy LED synchronized with shutter sound
+        }
 
         try {
             // Use CameraNeo for photo capture

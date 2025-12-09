@@ -1,8 +1,9 @@
 import {View} from "react-native"
+
 import {Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {ThemedStyle} from "@/theme"
 import {OtaProgress} from "@/utils/CoreStatusParser"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface OtaProgressSectionProps {
   otaProgress?: OtaProgress

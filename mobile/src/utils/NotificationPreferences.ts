@@ -1,5 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage"
 import {SETTINGS} from "@/stores/settings"
+import {storage} from "@/utils/storage/storage"
 
 export interface NotificationAppPreference {
   packageName: string
@@ -27,56 +27,57 @@ export class NotificationPreferences {
    * Get app-specific notification preferences
    */
   static async getAppPreferences(): Promise<Record<string, NotificationAppPreference>> {
-    try {
-      const prefsJson = await AsyncStorage.getItem(SETTINGS.notification_app_preferences.key)
-      return prefsJson ? JSON.parse(prefsJson) : {}
-    } catch (error) {
-      console.error("Error getting app preferences:", error)
+    const res = storage.load<Record<string, NotificationAppPreference>>(SETTINGS.notification_app_preferences.key)
+    if (res.is_error()) {
+      console.error("Failed to get app preferences", res.error)
       return {}
     }
+    const preferences = res.value
+    return preferences
   }
 
   /**
    * Set preference for a specific app
    */
   static async setAppPreference(packageName: string, appName: string, enabled: boolean): Promise<void> {
-    try {
-      const preferences = await this.getAppPreferences()
-      preferences[packageName] = {
-        packageName,
-        appName,
-        enabled,
-        lastUpdated: Date.now(),
-      }
-
-      await AsyncStorage.setItem(SETTINGS.notification_app_preferences.key, JSON.stringify(preferences))
-
-      // Also store a simple app name -> blocked mapping for Android to read easily
-      const simpleBlacklist: Record<string, boolean> = {}
-      Object.values(preferences).forEach(pref => {
-        if (pref.packageName.startsWith("manual.")) {
-          simpleBlacklist[pref.appName] = !pref.enabled // blocked = !enabled
-        }
-      })
-
-      await AsyncStorage.setItem("SIMPLE_NOTIFICATION_BLACKLIST", JSON.stringify(simpleBlacklist))
-      console.log("📋 Updated simple blacklist:", simpleBlacklist)
-    } catch (error) {
-      console.error("Error setting app preference:", error)
+    const preferences = await this.getAppPreferences()
+    preferences[packageName] = {
+      packageName,
+      appName,
+      enabled,
+      lastUpdated: Date.now(),
     }
+
+    const res = await storage.save(SETTINGS.notification_app_preferences.key, preferences)
+    if (res.is_error()) {
+      console.error("Failed to save app preferences", res.error)
+    }
+
+    // Also store a simple app name -> blocked mapping for Android to read easily
+    const simpleBlacklist: Record<string, boolean> = {}
+    Object.values(preferences).forEach(pref => {
+      if (pref.packageName.startsWith("manual.")) {
+        simpleBlacklist[pref.appName] = !pref.enabled // blocked = !enabled
+      }
+    })
+
+    const res2 = await storage.save("SIMPLE_NOTIFICATION_BLACKLIST", simpleBlacklist)
+    if (res2.is_error()) {
+      console.error("Failed to save simple blacklist", res2.error)
+    }
+    console.log("📋 Updated simple blacklist:", simpleBlacklist)
   }
 
   /**
    * Completely remove an app preference
    */
   static async removeAppPreference(packageName: string): Promise<void> {
-    try {
-      const preferences = await this.getAppPreferences()
-      delete preferences[packageName]
+    const preferences = await this.getAppPreferences()
+    delete preferences[packageName]
 
-      await AsyncStorage.setItem(SETTINGS.notification_app_preferences.key, JSON.stringify(preferences))
-    } catch (error) {
-      console.error("Error removing app preference:", error)
+    const res = await storage.save(SETTINGS.notification_app_preferences.key, preferences)
+    if (res.is_error()) {
+      console.error("Failed to save app preferences", res.error)
     }
   }
 
@@ -86,21 +87,20 @@ export class NotificationPreferences {
   static async bulkUpdateAppPreferences(
     updates: Array<{packageName: string; appName: string; enabled: boolean}>,
   ): Promise<void> {
-    try {
-      const preferences = await this.getAppPreferences()
+    const preferences = await this.getAppPreferences()
 
-      updates.forEach(update => {
-        preferences[update.packageName] = {
-          packageName: update.packageName,
-          appName: update.appName,
-          enabled: update.enabled,
-          lastUpdated: Date.now(),
-        }
-      })
+    updates.forEach(update => {
+      preferences[update.packageName] = {
+        packageName: update.packageName,
+        appName: update.appName,
+        enabled: update.enabled,
+        lastUpdated: Date.now(),
+      }
+    })
 
-      await AsyncStorage.setItem(SETTINGS.notification_app_preferences.key, JSON.stringify(preferences))
-    } catch (error) {
-      console.error("Error bulk updating app preferences:", error)
+    const res = await storage.save(SETTINGS.notification_app_preferences.key, preferences)
+    if (res.is_error()) {
+      console.error("Failed to save app preferences", res.error)
     }
   }
 
@@ -108,10 +108,9 @@ export class NotificationPreferences {
    * Reset all preferences to default (all enabled)
    */
   static async resetToDefaults(): Promise<void> {
-    try {
-      await AsyncStorage.removeItem(SETTINGS.notification_app_preferences.key)
-    } catch (error) {
-      console.error("Error resetting preferences:", error)
+    const res = await storage.remove(SETTINGS.notification_app_preferences.key)
+    if (res.is_error()) {
+      console.error("Error resetting preferences", res.error)
     }
   }
 
@@ -154,10 +153,9 @@ export class NotificationPreferences {
    * Import preferences from backup/sync
    */
   static async importPreferences(data: {apps: Record<string, NotificationAppPreference>}): Promise<void> {
-    try {
-      await AsyncStorage.setItem(SETTINGS.notification_app_preferences.key, JSON.stringify(data.apps))
-    } catch (error) {
-      console.error("Error importing preferences:", error)
+    const res = await storage.save(SETTINGS.notification_app_preferences.key, data.apps)
+    if (res.is_error()) {
+      console.error("Failed to import preferences", res.error)
     }
   }
 }

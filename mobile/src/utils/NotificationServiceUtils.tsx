@@ -1,5 +1,6 @@
 import CoreModule from "modules/core/src/CoreModule"
 import {Linking, Platform} from "react-native"
+
 import showAlert from "@/utils/AlertUtils"
 
 export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<boolean> {

@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
+import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.SysControl;
@@ -167,5 +168,36 @@ public class OtaService extends Service {
         // OtaHelper is already subscribed to EventBus and will receive this event directly
         // No need to re-post the event - this was causing an infinite loop
         Log.d(TAG, "Received battery status: " + event.getBatteryLevel() + "%, charging: " + event.isCharging());
+    }
+    
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onMtkOtaProgress(MtkOtaProgressEvent event) {
+        Log.d(TAG, "MTK OTA progress: " + event.toString());
+        
+        switch (event.getStatus()) {
+            case STARTED:
+                updateNotification("MTK firmware update started");
+                break;
+            case WRITE_PROGRESS:
+                updateNotification("Writing MTK firmware...");
+                break;
+            case UPDATE_PROGRESS:
+                updateNotification("Installing MTK firmware...");
+                break;
+            case SUCCESS:
+                updateNotification("MTK firmware updated successfully");
+                // Send broadcast to notify app that MTK update is complete
+                sendMtkUpdateCompleteMessage();
+                break;
+            case ERROR:
+                updateNotification("MTK firmware update failed: " + event.getMessage());
+                break;
+        }
+    }
+    
+    private void sendMtkUpdateCompleteMessage() {
+        Log.i(TAG, "Sending MTK update complete broadcast");
+        Intent intent = new Intent("com.mentra.asg_client.MTK_UPDATE_COMPLETE");
+        sendBroadcast(intent);
     }
 }

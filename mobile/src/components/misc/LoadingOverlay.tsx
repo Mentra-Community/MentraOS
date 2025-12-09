@@ -1,8 +1,8 @@
-import {useAppTheme} from "@/utils/useAppTheme"
-import React from "react"
 import {View, ActivityIndicator, ViewStyle, TextStyle} from "react-native"
+
 import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface LoadingOverlayProps {
   message?: string
@@ -12,7 +12,7 @@ interface LoadingOverlayProps {
  * A consistent loading overlay component to be used across the app
  * for loading states, especially during transitions between screens.
  */
-const LoadingOverlay: React.FC<LoadingOverlayProps> = ({message = "Loading..."}) => {
+const LoadingOverlay = ({message = "Loading..."}: LoadingOverlayProps) => {
   const {themed, theme} = useAppTheme()
 
   return (
@@ -37,7 +37,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors}) => ({
   backgroundColor: colors.background,
 })
 
-const $contentContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
+const $contentContainer: ThemedStyle<ViewStyle> = () => ({
   alignItems: "center",
   borderRadius: 10,
   justifyContent: "center",
@@ -51,7 +51,7 @@ const $message: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
 })
 
-const $spinner: ThemedStyle<ViewStyle> = ({colors}) => ({
+const $spinner: ThemedStyle<ViewStyle> = () => ({
   marginBottom: 12,
 })
 

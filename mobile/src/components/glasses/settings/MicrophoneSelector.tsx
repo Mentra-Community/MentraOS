@@ -3,6 +3,7 @@ import {Fragment} from "react"
 import {View, TouchableOpacity, TextStyle, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
+import {Badge} from "@/components/ui"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
@@ -38,9 +39,7 @@ export function MicrophoneSelector({preferredMic, onMicChange}: MicrophoneSelect
       <TouchableOpacity style={themed($itemContainer)} onPress={() => onMicChange("auto")}>
         <View style={themed($recommendedWrapper)}>
           <Text style={{color: theme.colors.text}}>{translate("microphoneSettings:auto")}</Text>
-          <View style={themed($recommendedContainer)}>
-            <Text tx="deviceSettings:recommended" style={themed($recommendedText)} />
-          </View>
+          <Badge text={translate("deviceSettings:recommended")} />
         </View>
         {preferredMic === "auto" && <MaterialCommunityIcons name="check" size={24} color={theme.colors.primary} />}
       </TouchableOpacity>
@@ -80,19 +79,6 @@ const $itemContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   justifyContent: "space-between",
   alignItems: "center",
   paddingVertical: spacing.s2,
-})
-
-const $recommendedContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary + "20",
-  paddingHorizontal: spacing.s2,
-  paddingVertical: spacing.s0_5,
-  borderRadius: spacing.s1,
-})
-
-const $recommendedText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.primary,
-  fontSize: 11,
-  fontWeight: "600",
 })
 
 const $itemText: ThemedStyle<TextStyle> = ({colors}) => ({

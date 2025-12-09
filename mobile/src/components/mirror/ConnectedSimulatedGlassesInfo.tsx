@@ -1,12 +1,13 @@
+import {useCameraPermissions} from "expo-camera"
+import {Linking, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+
+import {Button, Icon, Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {useCameraPermissions} from "expo-camera"
-import {Linking, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
-import {Button, Icon, Text} from "@/components/ignite"
 
 export default function ConnectedSimulatedGlassesInfo({
   style,

@@ -1,7 +1,3 @@
-import Icon from "react-native-vector-icons/MaterialIcons"
-
-import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {CameraType, CameraView, useCameraPermissions} from "expo-camera"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useRef, useState} from "react"
@@ -15,17 +11,21 @@ import {
   View,
   ViewStyle,
 } from "react-native"
-import {Text} from "@/components/ignite"
+import RNFS from "react-native-fs"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
+import Icon from "react-native-vector-icons/MaterialIcons"
 
+import {Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {SimulatedGlassesControls} from "@/components/mirror/SimulatedGlassesControls"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import RNFS from "react-native-fs"
+import {useAppTheme} from "@/utils/useAppTheme"
+
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 // Request microphone permission for recording
 const requestMicrophonePermission = async () => {

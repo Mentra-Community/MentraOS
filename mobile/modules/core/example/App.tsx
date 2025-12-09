@@ -1,5 +1,5 @@
-import {useEvent} from "expo"
 import Core, {CoreView} from "core"
+import {useEvent} from "expo"
 // eslint-disable-next-line
 import {Button, SafeAreaView, ScrollView, Text, View} from "react-native"
 

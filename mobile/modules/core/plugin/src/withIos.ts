@@ -1,7 +1,8 @@
 import {execSync} from "child_process"
-import {type ConfigPlugin, withPodfile, withDangerousMod} from "expo/config-plugins"
-import path from "path"
 import fs from "fs"
+import path from "path"
+
+import {type ConfigPlugin, withPodfile, withDangerousMod} from "expo/config-plugins"
 
 /**
  * Add project specification after platform declaration
@@ -90,14 +91,14 @@ const withXcodeEnvLocal: ConfigPlugin = config => {
       try {
         // Get node executable path
         const nodeExecutable = execSync("which node", {encoding: "utf-8"}).trim()
-        
+
         // Path to .xcode.env.local
         const iosPath = path.join(config.modRequest.platformProjectRoot)
         const xcodeEnvLocalPath = path.join(iosPath, ".xcode.env.local")
-        
+
         // Content to write
         const content = `export NODE_BINARY=${nodeExecutable}\n`
-        
+
         // Write or append to .xcode.env.local
         if (fs.existsSync(xcodeEnvLocalPath)) {
           const existingContent = fs.readFileSync(xcodeEnvLocalPath, "utf-8")
@@ -110,7 +111,7 @@ const withXcodeEnvLocal: ConfigPlugin = config => {
       } catch (error) {
         console.warn("Failed to create .xcode.env.local:", error)
       }
-      
+
       return config
     },
   ])

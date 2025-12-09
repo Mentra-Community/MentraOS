@@ -1,4 +1,10 @@
-import {View} from "react-native"
+// @ts-nocheck
+
+import {Text} from "@/components/ignite/Text"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
+import {useEffect, useRef, useState} from "react"
+import {ScrollView, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 export const DebugHitSlop = ({children, hitSlop, style, ...props}) => {
   if (!__DEV__ || !hitSlop) return children
@@ -125,7 +131,7 @@ function deepCompare(obj1: any, obj2: any, path: string = ""): DiffResult[] {
  * Pretty prints the differences between two objects
  */
 function prettyPrintDiff(obj1: any, obj2: any, options: PrintOptions = {}): void {
-  const {showEqual = false, colorize = true, compact = false} = options
+  const {colorize = true, compact = false} = options
 
   const differences = deepCompare(obj1, obj2)
 
@@ -211,7 +217,7 @@ function prettyPrintDiff(obj1: any, obj2: any, options: PrintOptions = {}): void
 /**
  * Returns differences as a formatted string
  */
-function getDiffString(obj1: any, obj2: any, options: PrintOptions = {}): string {
+function getDiffString(obj1: any, obj2: any, _options: PrintOptions = {}): string {
   const differences = deepCompare(obj1, obj2)
 
   if (differences.length === 0) {
@@ -279,7 +285,7 @@ interface PrintOptions {
 }
 
 // Export functions
-export {deepCompare, prettyPrintDiff, getDiffString}
+export {deepCompare, getDiffString, prettyPrintDiff}
 
 // Example usage:
 /*
@@ -321,20 +327,18 @@ const differences = deepCompare(obj1, obj2);
 console.log(differences);
 */
 
-import {useState, useEffect, useRef} from "react"
-import {Text, ScrollView, StyleSheet, TouchableOpacity} from "react-native"
-
 export const ConsoleLogger = () => {
   const [logs, setLogs] = useState([])
   const [isVisible, setIsVisible] = useState(true)
   const scrollViewRef = useRef(null)
+  const {themed} = useAppTheme()
 
   useEffect(() => {
     const originalLog = console.log
     const originalWarn = console.warn
     const originalError = console.error
 
-    const addLog = (type, args) => {
+    const addLog = (type: string, args: any[]) => {
       const message = args.map(arg => (typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg))).join(" ")
 
       setLogs(prev => {
@@ -374,37 +378,37 @@ export const ConsoleLogger = () => {
 
   if (!isVisible) {
     return (
-      <TouchableOpacity style={styles.toggleButton} onPress={() => setIsVisible(true)}>
-        <Text style={styles.toggleButtonText}>Show Console</Text>
+      <TouchableOpacity style={themed($toggleButton)} onPress={() => setIsVisible(true)}>
+        <Text style={themed($toggleButtonText)}>Show Console</Text>
       </TouchableOpacity>
     )
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerText}>Console ({logs.length}/100)</Text>
-        <View style={styles.headerButtons}>
-          <TouchableOpacity style={styles.clearButton} onPress={() => setLogs([])}>
-            <Text style={styles.buttonText}>Clear</Text>
+    <View style={themed($container)}>
+      <View style={themed($header)}>
+        <Text style={themed($headerText)}>Console ({logs.length}/100)</Text>
+        <View style={themed($headerButtons)}>
+          <TouchableOpacity style={themed($clearButton)} onPress={() => setLogs([])}>
+            <Text style={themed($buttonText)}>Clear</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.hideButton} onPress={() => setIsVisible(false)}>
-            <Text style={styles.buttonText}>Hide</Text>
+          <TouchableOpacity style={themed($hideButton)} onPress={() => setIsVisible(false)}>
+            <Text style={themed($buttonText)}>Hide</Text>
           </TouchableOpacity>
         </View>
       </View>
       <ScrollView
         ref={scrollViewRef}
-        style={styles.logContainer}
+        style={themed($logContainer)}
         onContentSizeChange={() => scrollViewRef.current?.scrollToEnd()}>
-        {logs.map((log, index) => (
-          <View key={index} style={styles.logEntry}>
-            <Text style={styles.timestamp}>{log.timestamp}</Text>
+        {logs.map((log: any, index: number) => (
+          <View key={index} style={themed($logEntry)}>
+            <Text style={themed($timestamp)}>{log.timestamp}</Text>
             <Text
               style={[
-                styles.logText,
-                log.type === "error" && styles.errorText,
-                log.type === "warn" && styles.warnText,
+                themed($logText),
+                log.type === "error" && themed($errorText),
+                log.type === "warn" && themed($warnText),
               ]}>
               [{log.type.toUpperCase()}] {log.message}
             </Text>
@@ -415,88 +419,100 @@ export const ConsoleLogger = () => {
   )
 }
 
-const styles = StyleSheet.create({
-  container: {
-    position: "absolute",
-    top: 50,
-    left: 0,
-    right: 0,
-    height: 250,
-    backgroundColor: "#000",
-    borderTopWidth: 2,
-    borderTopColor: "#333",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 8,
-    backgroundColor: "#1a1a1a",
-    borderBottomWidth: 1,
-    borderBottomColor: "#333",
-  },
-  headerText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-  headerButtons: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  clearButton: {
-    backgroundColor: "#444",
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  hideButton: {
-    backgroundColor: "#444",
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 12,
-  },
-  logContainer: {
-    flex: 1,
-    padding: 8,
-  },
-  logEntry: {
-    marginBottom: 4,
-  },
-  timestamp: {
-    color: "#888",
-    fontSize: 10,
-    fontFamily: "monospace",
-  },
-  logText: {
-    color: "#0f0",
-    fontFamily: "monospace",
-    fontSize: 11,
-  },
-  errorText: {
-    color: "#f00",
-  },
-  warnText: {
-    color: "#ff0",
-  },
-  toggleButton: {
-    position: "absolute",
-    bottom: 20,
-    right: 20,
-    backgroundColor: "#1a1a1a",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#333",
-  },
-  toggleButtonText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "bold",
-  },
+const $container: ThemedStyle<ViewStyle> = ({colors}) => ({
+  position: "absolute",
+  top: 50,
+  left: 0,
+  right: 0,
+  height: 250,
+  backgroundColor: colors.background,
+  borderTopWidth: 2,
+  borderTopColor: colors.border,
+  zIndex: 1000,
+})
+
+const $header: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: spacing.s3 || 8,
+  backgroundColor: colors.background,
+  borderBottomWidth: 1,
+  borderBottomColor: colors.border || "#333",
+})
+
+const $headerText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
+  fontSize: 14,
+})
+
+const $headerButtons: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  gap: spacing.s2 || 8,
+})
+
+const $clearButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.tint,
+  paddingHorizontal: spacing.s4 || 12,
+  paddingVertical: spacing.s2 || 4,
+  borderRadius: spacing.s2 || 4,
+})
+
+const $hideButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.tint,
+  paddingHorizontal: spacing.s4 || 12,
+  paddingVertical: spacing.s2 || 4,
+  borderRadius: spacing.s2 || 4,
+})
+
+const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
+  fontSize: 12,
+})
+
+const $logContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flex: 1,
+  padding: spacing.s3 || 8,
+})
+
+const $logEntry: ThemedStyle<ViewStyle> = () => ({
+  marginBottom: 4,
+})
+
+const $timestamp: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.textDim || "#888",
+  fontSize: 10,
+  fontFamily: "monospace",
+})
+
+const $logText: ThemedStyle<TextStyle> = () => ({
+  color: "#0f0", // Most themes won't have neon green, so fall back to legacy color
+  fontFamily: "monospace",
+  fontSize: 11,
+})
+
+const $errorText: ThemedStyle<TextStyle> = () => ({
+  color: "#f00",
+})
+
+const $warnText: ThemedStyle<TextStyle> = () => ({
+  color: "#ff0",
+})
+
+const $toggleButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  position: "absolute",
+  bottom: 20,
+  right: 20,
+  backgroundColor: colors.tint,
+  paddingHorizontal: spacing.s5 || 16,
+  paddingVertical: spacing.s3 || 8,
+  borderRadius: spacing.s3 || 8,
+  borderWidth: 1,
+  borderColor: colors.border || "#333",
+  zIndex: 1000,
+})
+
+const $toggleButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
+  fontSize: 12,
 })

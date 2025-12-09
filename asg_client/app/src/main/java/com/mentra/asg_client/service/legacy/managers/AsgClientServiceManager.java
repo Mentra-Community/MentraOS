@@ -202,6 +202,13 @@ public class AsgClientServiceManager {
 
         try {
             asgSettings = new AsgSettings(context);
+
+            Log.d(TAG, "ZSL enabled: " + asgSettings.isZslEnabled());
+            Log.d(TAG, "MFNR enabled: " + asgSettings.isMfnrEnabled());
+
+            // Explicitly enable ZSL and MFNR for enhanced photo quality
+            asgSettings.setZslEnabled(true);
+            asgSettings.setMfnrEnabled(true);
             Log.d(TAG, "✅ Settings initialized successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing settings", e);

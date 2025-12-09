@@ -257,6 +257,14 @@ class Bridge {
         Bridge.sendTypedMessage("wifi_scan_results", body: eventBody)
     }
 
+    static func sendMtkUpdateComplete(message: String, timestamp: Int64) {
+        let eventBody: [String: Any] = [
+            "message": message,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("mtk_update_complete", body: eventBody)
+    }
+
     // Arbitrary WS Comms (dont use these, make a dedicated function for your use case):
     static func sendWSText(_ msg: String) {
         let data = ["text": msg]

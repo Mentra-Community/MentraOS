@@ -1,6 +1,8 @@
+import * as Sentry from "@sentry/react-native"
 import {FC, createContext, useEffect, useState, useContext} from "react"
+
 import {LogoutUtils} from "@/utils/LogoutUtils"
-import {mentraAuthProvider} from "@/utils/auth/authProvider"
+import mentraAuth from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
 
 interface AuthContextProps {
@@ -27,10 +29,14 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     // 1. Check for an active session on mount
     const getInitialSession = async () => {
-      const {data: initialSessionData} = await mentraAuthProvider.getSession()
-      const session = initialSessionData?.session
-      console.log("AuthContext: Initial session:", session)
-      console.log("AuthContext: Initial user:", session?.user)
+      // console.log("AuthContext: Getting initial session")
+      const res = await mentraAuth.getSession()
+      if (res.is_error()) {
+        console.error("AuthContext: Error getting initial session:", res.error)
+        setLoading(false)
+        return
+      }
+      const session = res.value
       setSession(session)
       setUser(session?.user ?? null)
       setLoading(false)
@@ -38,31 +44,41 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     // 2. Setup auth state change listener
     const setupAuthListener = async () => {
-      try {
-        const {data: authStateChangeData} = await mentraAuthProvider.onAuthStateChange((event, session: any) => {
-          console.log("AuthContext: Auth state changed:", event)
-          console.log("AuthContext: Session:", session)
-          console.log("AuthContext: User:", session?.user)
-          setSession(session)
-          setUser(session?.user ?? null)
-          setLoading(false)
+      const res = await mentraAuth.onAuthStateChange((_event, session: any) => {
+        // console.log("AuthContext: Auth state changed:", event)
+        // console.log("AuthContext: Session:", session)
+        // console.log("AuthContext: User:", session?.user)
+        setSession(session)
+        setUser(session?.user ?? null)
+        setLoading(false)
+        // set sentry user:
+        Sentry.setUser({
+          id: session?.user?.id,
+          email: session?.user?.email,
         })
-
-        if (authStateChangeData?.subscription) {
-          subscription = authStateChangeData.subscription
+      })
+      console.log("AuthContext: setupAuthListener()", res)
+      if (res.is_ok()) {
+        let changeData = res.value
+        if (changeData.data?.subscription) {
+          subscription = changeData.data.subscription
         }
-      } catch (error) {
-        console.error("AuthContext: Error setting up auth listener:", error)
       }
     }
 
-    // Run both initial checks
-    getInitialSession().catch(error => {
-      console.error("AuthContext: Error getting initial session:", error)
-      setLoading(false)
-    })
-
+    getInitialSession()
     setupAuthListener()
+
+    // // Run both initial checks
+    // getInitialSession().catch(error => {
+    //   console.error("AuthContext: Error getting initial session:", error)
+    //   setLoading(false)
+    // })
+
+    // setupAuthListener().catch(error => {
+    //   console.error("AuthContext: Error setting up auth listener:", error)
+    //   setLoading(false)
+    // })
 
     // Cleanup the listener
     return () => {

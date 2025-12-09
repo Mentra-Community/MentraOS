@@ -15,18 +15,16 @@ import {
   ViewStyle,
 } from "react-native"
 import {useSharedValue, withDelay, withTiming} from "react-native-reanimated"
-import Icon from "react-native-vector-icons/FontAwesome"
 
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {Icon} from "@/components/ignite"
 import {Button, Header, Screen, Text} from "@/components/ignite"
-import {PillButton} from "@/components/ignite/PillButton"
 import GlassesTroubleshootingModal from "@/components/misc/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {SearchResultDevice, useSearchResults} from "@/contexts/SearchResultsContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {$styles, ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {MOCK_CONNECTION} from "@/utils/Constants"
@@ -35,8 +33,19 @@ import {PermissionFeatures, requestFeaturePermissions} from "@/utils/Permissions
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {useAppTheme} from "@/utils/useAppTheme"
 
+class SearchResultDevice {
+  deviceMode: string
+  deviceName: string
+  deviceAddress: string
+  constructor(deviceMode: string, deviceName: string, deviceAddress: string) {
+    this.deviceMode = deviceMode
+    this.deviceName = deviceName
+    this.deviceAddress = deviceAddress
+  }
+}
+
 export default function SelectGlassesBluetoothScreen() {
-  const {searchResults, setSearchResults} = useSearchResults()
+  const [searchResults, setSearchResults] = useState<SearchResultDevice[]>([])
   const {glassesModelName}: {glassesModelName: string} = useLocalSearchParams()
   const {theme, themed} = useAppTheme()
   const {goBack, replace, clearHistoryAndGoHome} = useNavigationHistory()
@@ -225,73 +234,75 @@ export default function SelectGlassesBluetoothScreen() {
       return // Stop the connection process
     }
 
-    // update the preferredmic to be the phone mic:
-    await useSettingsStore.getState().setSetting(SETTINGS.preferred_mic.key, "phone")
-
     // All permissions granted, proceed with connecting to the wearable
+    // Note: preferred_mic will use default "auto" - user can change in settings if needed
+    // (Previously set here, but moved because default_wearable wasn't set yet for the indexer)
     setTimeout(() => {
       CoreModule.connectByName(deviceName)
     }, 2000)
-    replace("/pairing/loading", {glassesModelName: glassesModelName})
+    replace("/pairing/loading", {glassesModelName: glassesModelName, deviceName: deviceName})
+  }
+
+  const filterDeviceName = (deviceName: string) => {
+    // filter out MENTRA_LIVE from the device name:
+    return deviceName.replace("MENTRA_LIVE_BLE_", "")
   }
 
   return (
     <Screen preset="fixed" style={themed($styles.screen)} safeAreaEdges={["bottom"]}>
-      <Header
-        leftIcon="chevron-left"
-        onLeftPress={goBack}
-        RightActionComponent={
-          <PillButton
-            text="Help"
-            variant="icon"
-            onPress={() => setShowTroubleshootingModal(true)}
-            buttonStyle={{marginRight: theme.spacing.s6}}
-          />
-        }
-      />
+      <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
       <View style={themed($container)}>
-        <View style={themed($contentContainer)}>
-          <Image source={getGlassesOpenImage(glassesModelName)} style={themed($glassesImage)} />
-          <Text
-            style={themed($scanningText)}
-            text={translate("pairing:scanningForGlassesModel", {model: glassesModelName})}
-          />
+        <View style={themed($centerWrapper)}>
+          <View style={themed($contentContainer)}>
+            <Image source={getGlassesOpenImage(glassesModelName)} style={themed($glassesImage)} />
+            <Text
+              style={themed($scanningText)}
+              text={translate("pairing:scanningForGlassesModel", {model: glassesModelName})}
+            />
 
-          {!searchResults || searchResults.length === 0 ? (
-            <View style={{justifyContent: "center", flex: 1, paddingVertical: theme.spacing.s4}}>
-              <ActivityIndicator size="large" color={theme.colors.text} />
+            {!searchResults || searchResults.length === 0 ? (
+              <View style={{justifyContent: "center", flex: 1, paddingVertical: theme.spacing.s4}}>
+                <ActivityIndicator size="large" color={theme.colors.text} />
+              </View>
+            ) : (
+              <ScrollView style={{maxHeight: 300, paddingRight: theme.spacing.s6, marginRight: -theme.spacing.s6}}>
+                <Group>
+                  {searchResults.map((device, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={themed($settingItem)}
+                      onPress={() => triggerGlassesPairingGuide(device.deviceMode, device.deviceName)}>
+                      <View style={themed($settingsTextContainer)}>
+                        <Text
+                          text={`${glassesModelName} - ${filterDeviceName(device.deviceName)}`}
+                          style={themed($label)}
+                          numberOfLines={2}
+                        />
+                      </View>
+                      <Icon name="chevron-right" size={24} color={theme.colors.text} />
+                    </TouchableOpacity>
+                  ))}
+                </Group>
+              </ScrollView>
+            )}
+            <Divider />
+            <View style={themed($buttonContainer)}>
+              <Button
+                preset="alternate"
+                compact
+                tx="common:cancel"
+                onPress={() => goBack()}
+                style={themed($cancelButton)}
+              />
             </View>
-          ) : (
-            <ScrollView style={{maxHeight: 300, paddingRight: theme.spacing.s6, marginRight: -theme.spacing.s6}}>
-              <Group>
-                {searchResults.map((device, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={themed($settingItem)}
-                    onPress={() => triggerGlassesPairingGuide(device.deviceMode, device.deviceName)}>
-                    <View style={themed($settingsTextContainer)}>
-                      <Text
-                        text={`${glassesModelName} - ${device.deviceName}`}
-                        style={themed($label)}
-                        numberOfLines={2}
-                      />
-                    </View>
-                    <Icon name="angle-right" size={24} color={theme.colors.text} />
-                  </TouchableOpacity>
-                ))}
-              </Group>
-            </ScrollView>
-          )}
-          <Divider />
-          <Button
-            preset="alternate"
-            // flexContainer
-            // flex
-            compact
-            tx="common:cancel"
-            onPress={() => goBack()}
-          />
+          </View>
         </View>
+        <Button
+          preset="secondary"
+          tx="pairing:needMoreHelp"
+          onPress={() => setShowTroubleshootingModal(true)}
+          style={themed($helpButton)}
+        />
       </View>
       <GlassesTroubleshootingModal
         isVisible={showTroubleshootingModal}
@@ -302,7 +313,12 @@ export default function SelectGlassesBluetoothScreen() {
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = () => ({
+const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flex: 1,
+  paddingBottom: spacing.s6,
+})
+
+const $centerWrapper: ThemedStyle<ViewStyle> = () => ({
   flex: 1,
   justifyContent: "center",
 })
@@ -311,9 +327,24 @@ const $contentContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   // height: 520,
   backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s6,
+  borderWidth: 1,
+  borderColor: colors.border,
   padding: spacing.s6,
   gap: spacing.s6,
   // paddingBottom: spacing.s16,
+})
+
+const $buttonContainer: ThemedStyle<ViewStyle> = () => ({
+  flexDirection: "row",
+  justifyContent: "flex-end",
+})
+
+const $cancelButton: ThemedStyle<ViewStyle> = () => ({
+  minWidth: 100,
+})
+
+const $helpButton: ThemedStyle<ViewStyle> = () => ({
+  width: "100%",
 })
 
 const $settingItem: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({

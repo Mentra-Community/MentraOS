@@ -1,22 +1,26 @@
-import {Button, Header, Icon, Screen} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {$styles, ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
-import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import CoreModule from "core"
-import {useLocalSearchParams, router} from "expo-router"
+import {useLocalSearchParams} from "expo-router"
 import {useEffect, useRef, useState, useCallback} from "react"
 import {ActivityIndicator, TextStyle, View, ViewStyle} from "react-native"
+
+import {WifiIcon} from "@/components/icons/WifiIcon"
+import {Button, Header, Icon, Screen} from "@/components/ignite"
 import {Text} from "@/components/ignite"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
+import {$styles, ThemedStyle} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import {useAppTheme} from "@/utils/useAppTheme"
+import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 
 export default function WifiConnectingScreen() {
   const params = useLocalSearchParams()
-  const deviceModel = (params.deviceModel as string) || "Glasses"
+  const _deviceModel = (params.deviceModel as string) || "Glasses"
   const ssid = params.ssid as string
   const password = (params.password as string) || ""
   const rememberPassword = (params.rememberPassword as string) === "true"
   const returnTo = params.returnTo as string | undefined
+  const nextRoute = params.nextRoute as string | undefined
 
   const {theme, themed} = useAppTheme()
 
@@ -24,9 +28,25 @@ export default function WifiConnectingScreen() {
   const [errorMessage, setErrorMessage] = useState("")
   const connectionTimeoutRef = useRef<number | null>(null)
   const failureGracePeriodRef = useRef<number | null>(null)
-  const {goBack, navigate} = useNavigationHistory()
+  const {goBack, navigate, replace} = useNavigationHistory()
   const wifiConnected = useGlassesStore(state => state.wifiConnected)
   const wifiSsid = useGlassesStore(state => state.wifiSsid)
+  const glassesConnected = useGlassesStore(state => state.connected)
+
+  // Navigate away if glasses disconnect (but not on initial mount)
+  const prevGlassesConnectedRef = useRef(glassesConnected)
+  useEffect(() => {
+    if (prevGlassesConnectedRef.current && !glassesConnected) {
+      console.log("[WifiConnectingScreen] Glasses disconnected - navigating away")
+      showAlert("Glasses Disconnected", "Please reconnect your glasses to set up WiFi.", [{text: "OK"}])
+      if (returnTo && typeof returnTo === "string") {
+        replace(decodeURIComponent(returnTo))
+      } else {
+        replace("/")
+      }
+    }
+    prevGlassesConnectedRef.current = glassesConnected
+  }, [glassesConnected, returnTo])
 
   useEffect(() => {
     // Start connection attempt
@@ -106,16 +126,18 @@ export default function WifiConnectingScreen() {
   }
 
   const handleSuccess = useCallback(() => {
-    if (returnTo && typeof returnTo === "string") {
-      router.replace(decodeURIComponent(returnTo))
+    if (nextRoute && typeof nextRoute === "string") {
+      replace(decodeURIComponent(nextRoute))
+    } else if (returnTo && typeof returnTo === "string") {
+      replace(decodeURIComponent(returnTo))
     } else {
       navigate("/")
     }
-  }, [returnTo, navigate])
+  }, [nextRoute, returnTo, navigate])
 
   const handleCancel = useCallback(() => {
     if (returnTo && typeof returnTo === "string") {
-      router.replace(decodeURIComponent(returnTo))
+      replace(decodeURIComponent(returnTo))
     } else {
       goBack()
     }
@@ -123,7 +145,7 @@ export default function WifiConnectingScreen() {
 
   const handleHeaderBack = useCallback(() => {
     if (returnTo && typeof returnTo === "string") {
-      router.replace(decodeURIComponent(returnTo))
+      replace(decodeURIComponent(returnTo))
     } else {
       goBack()
     }
@@ -145,41 +167,19 @@ export default function WifiConnectingScreen() {
           <View style={themed($successContainer)}>
             <View style={themed($successContent)}>
               <View style={themed($successIconContainer)}>
-                <Ionicons name="checkmark-circle" size={80} color="#0066FF" />
+                <WifiIcon size={48} color={theme.colors.palette.success500} />
               </View>
 
-              <Text style={themed($successTitle)}>Network added!</Text>
+              <Text style={themed($successTitle)}>Network added</Text>
 
-              <Text style={themed($successDescription)}>Your {deviceModel} will automatically update when it is:</Text>
-
-              <View style={themed($conditionsList)}>
-                <View style={themed($conditionItem)}>
-                  <View style={themed($conditionIcon)}>
-                    <Icon name="power-settings-new" size={24} color={theme.colors.text} />
-                  </View>
-                  <Text style={themed($conditionText)}>Powered on</Text>
-                </View>
-
-                <View style={themed($conditionItem)}>
-                  <View style={themed($conditionIcon)}>
-                    <Icon name="bolt" size={24} color={theme.colors.text} />
-                  </View>
-                  <Text style={themed($conditionText)}>Charging</Text>
-                </View>
-
-                <View style={themed($conditionItem)}>
-                  <View style={themed($conditionIcon)}>
-                    <Icon name="wifi" size={24} color={theme.colors.text} />
-                  </View>
-                  <Text style={themed($conditionText)}>Connected to a saved Wi-Fi network</Text>
-                </View>
-              </View>
+              <Text style={themed($successDescription)}>
+                Connected devices will perform automatic updates and media imports while charging through the Mentra
+                app. Automatic updates can be disabled in Device settings at any time.
+              </Text>
             </View>
 
             <View style={themed($successButtonContainer)}>
-              <Button onPress={handleSuccess}>
-                <Text>Done</Text>
-              </Button>
+              <Button text="Continue" onPress={handleSuccess} />
             </View>
           </View>
         )
@@ -189,7 +189,7 @@ export default function WifiConnectingScreen() {
           <View style={themed($failureContainer)}>
             <View style={themed($failureContent)}>
               <View style={themed($failureIconContainer)}>
-                <Icon name="x" size={80} color={theme.colors.error} />
+                <Icon name="x-circle" size={80} color={theme.colors.destructive} />
               </View>
 
               <Text style={themed($failureTitle)}>Connection Failed</Text>
@@ -198,16 +198,22 @@ export default function WifiConnectingScreen() {
 
               <View style={themed($failureTipsList)}>
                 <View style={themed($failureTipItem)}>
-                  <View style={themed($failureTipIcon)}>
-                    <Icon name="lock" size={24} color={theme.colors.textDim} />
-                  </View>
+                  <Icon
+                    name="lock"
+                    size={20}
+                    color={theme.colors.textDim}
+                    containerStyle={{marginRight: theme.spacing.s3}}
+                  />
                   <Text style={themed($failureTipText)}>Make sure the password was entered correctly</Text>
                 </View>
 
                 <View style={themed($failureTipItem)}>
-                  <View style={themed($failureTipIcon)}>
-                    <Icon name="wifi" size={24} color={theme.colors.textDim} />
-                  </View>
+                  <Icon
+                    name="wifi"
+                    size={20}
+                    color={theme.colors.textDim}
+                    containerStyle={{marginRight: theme.spacing.s3}}
+                  />
                   <Text style={themed($failureTipText)}>
                     Mentra Live Beta can only connect to pure 2.4GHz WiFi networks (not 5GHz or dual-band 2.4/5GHz)
                   </Text>
@@ -219,8 +225,7 @@ export default function WifiConnectingScreen() {
               <Button onPress={handleTryAgain}>
                 <Text>Try Again</Text>
               </Button>
-              <View style={{height: theme.spacing.s3}} />
-              <Button onPress={handleCancel} preset="alternate">
+              <Button onPress={handleCancel} preset="alternate" style={{marginTop: theme.spacing.s3}}>
                 <Text>Cancel</Text>
               </Button>
             </View>
@@ -230,11 +235,13 @@ export default function WifiConnectingScreen() {
   }
 
   return (
-    <Screen preset="fixed" contentContainerStyle={themed($styles.screen)}>
+    <Screen
+      preset="fixed"
+      contentContainerStyle={connectionStatus === "connecting" ? themed($styles.screen) : undefined}>
       {connectionStatus === "connecting" && (
         <Header title="Connecting" leftIcon="chevron-left" onLeftPress={handleHeaderBack} />
       )}
-      <View style={themed($content)}>{renderContent()}</View>
+      <View style={themed(connectionStatus === "connecting" ? $content : $contentNoPadding)}>{renderContent()}</View>
     </Screen>
   )
 }
@@ -244,6 +251,10 @@ const $content: ThemedStyle<ViewStyle> = ({spacing}) => ({
   padding: spacing.s6,
   justifyContent: "center",
   alignItems: "center",
+})
+
+const $contentNoPadding: ThemedStyle<ViewStyle> = () => ({
+  flex: 1,
 })
 
 const $statusText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
@@ -274,7 +285,6 @@ const $successContent: ThemedStyle<ViewStyle> = () => ({
 
 const $successIconContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   alignItems: "center",
-  marginTop: spacing.s12,
   marginBottom: spacing.s6,
 })
 
@@ -287,36 +297,16 @@ const $successTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
 })
 
 const $successDescription: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 16,
+  fontSize: 14,
   color: colors.textDim,
   textAlign: "center",
-  marginBottom: spacing.s8,
   paddingHorizontal: spacing.s6,
-})
-
-const $conditionsList: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.s8,
-})
-
-const $conditionItem: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  marginBottom: spacing.s6,
-})
-
-const $conditionIcon: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginRight: spacing.s4,
-  width: 32,
-})
-
-const $conditionText: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 16,
-  color: colors.text,
-  flex: 1,
+  lineHeight: 20,
 })
 
 const $successButtonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   marginBottom: spacing.s6,
+  paddingHorizontal: spacing.s4,
 })
 
 const $failureContainer: ThemedStyle<ViewStyle> = () => ({
@@ -339,7 +329,7 @@ const $failureIconContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
 const $failureTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 24,
   fontWeight: "600",
-  color: colors.error,
+  color: colors.destructive,
   textAlign: "center",
   marginBottom: spacing.s6,
 })
@@ -353,8 +343,8 @@ const $failureDescription: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
 })
 
 const $failureButtonsContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  //marginHorizontal: spacing.s6,
   marginBottom: spacing.s6,
+  paddingHorizontal: spacing.s6,
 })
 
 const $failureTipsList: ThemedStyle<ViewStyle> = ({spacing}) => ({
@@ -364,17 +354,12 @@ const $failureTipsList: ThemedStyle<ViewStyle> = ({spacing}) => ({
 
 const $failureTipItem: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
-  alignItems: "center",
-  marginBottom: spacing.s6,
-})
-
-const $failureTipIcon: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginRight: spacing.s4,
-  width: 32,
+  alignItems: "flex-start",
+  marginBottom: spacing.s4,
 })
 
 const $failureTipText: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 16,
+  fontSize: 14,
   color: colors.textDim,
   flex: 1,
 })

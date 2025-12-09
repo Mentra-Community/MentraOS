@@ -1,7 +1,8 @@
+import {View, TextStyle, ViewStyle} from "react-native"
+
 import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {View, TextStyle, ViewStyle} from "react-native"
 
 export function EmptyState() {
   const {themed} = useAppTheme()

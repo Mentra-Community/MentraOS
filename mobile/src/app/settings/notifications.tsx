@@ -1,13 +1,13 @@
+import CoreModule from "core"
 import {useState, useEffect, useCallback, useMemo} from "react"
 import {View, Platform, TextInput, FlatList, ActivityIndicator, Image} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Screen, Text, Header, Switch} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import CoreModule from "core"
 import {$styles} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface InstalledApp {
   packageName: string

@@ -1,8 +1,9 @@
 import {useState, useEffect} from "react"
 import {View, Platform, Pressable, Alert, TextInput, ViewStyle, TextStyle} from "react-native"
+
 import {Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 type NumberSettingProps = {
   label: string
@@ -13,6 +14,8 @@ type NumberSettingProps = {
   placeholder?: string
   onValueChange: (value: number) => void
   containerStyle?: ViewStyle
+  isFirst?: boolean
+  isLast?: boolean
 }
 
 const NumberSetting: React.FC<NumberSettingProps> = ({
@@ -24,8 +27,21 @@ const NumberSetting: React.FC<NumberSettingProps> = ({
   placeholder = "Enter number...",
   onValueChange,
   containerStyle,
+  isFirst,
+  isLast,
 }) => {
   const {theme, themed} = useAppTheme()
+
+  const groupedStyle: ViewStyle | undefined =
+    isFirst !== undefined || isLast !== undefined
+      ? {
+          borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          marginBottom: isLast ? 0 : theme.spacing.s2,
+        }
+      : undefined
   const [localValue, setLocalValue] = useState(value.toString())
   const [_isEditing, setIsEditing] = useState(false)
 
@@ -104,7 +120,7 @@ const NumberSetting: React.FC<NumberSettingProps> = ({
   }
 
   return (
-    <View style={[themed($container), containerStyle]}>
+    <View style={[themed($container), groupedStyle, containerStyle]}>
       <Text style={themed($label)}>{label}</Text>
 
       <View style={themed($inputContainer)}>
@@ -148,19 +164,18 @@ const NumberSetting: React.FC<NumberSettingProps> = ({
 }
 
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: 8,
+  backgroundColor: colors.primary_foreground,
+  borderRadius: spacing.s4,
   paddingVertical: spacing.s4,
-  paddingHorizontal: spacing.s6,
+  paddingHorizontal: spacing.s4,
   width: "100%",
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 16,
+  fontSize: 14,
+  fontWeight: "600",
   color: colors.text,
-  marginBottom: spacing.s3,
+  marginBottom: spacing.s2,
 })
 
 const $inputContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({

@@ -7,6 +7,11 @@
  * Storage is organized by userId (email) and packageName, creating isolated storage spaces
  * for each App-user combination. Data is persisted in MongoDB using the SimpleStorage model.
  *
+ * Limits:
+ * - Max value size: 100KB per value
+ * - Max total storage: 1MB per (email, packageName)
+ * - Rate limit: 100 requests/min per (email, packageName)
+ *
  * Base: /api/sdk/simple-storage
  * Endpoints:
  * - GET    /:email           -> get all key/value data for a user+package
@@ -21,9 +26,13 @@
 
 import { Router, Request, Response } from "express";
 import { authenticateSDK } from "../middleware/sdk.middleware";
+import { simpleStorageRateLimit } from "../middleware/simple-storage-rate-limit.middleware";
 import * as SimpleStorageService from "../../services/sdk/simple-storage.service";
 
 const router = Router();
+
+// Apply rate limiting to all routes (100 req/min per user+package)
+router.use(simpleStorageRateLimit);
 
 router.get("/:email", authenticateSDK, getAllHandler);
 router.put("/:email", authenticateSDK, updateManyHandler);
@@ -104,7 +113,18 @@ async function updateManyHandler(req: Request, res: Response) {
     });
   } catch (error) {
     console.error("PUT /api/sdk/simple-storage/:email error:", error);
-    return res.status(500).json({ error: "Failed to update storage" });
+
+    const message =
+      error instanceof Error ? error.message : "Failed to update storage";
+
+    if (message.includes("exceeds 100KB limit")) {
+      return res.status(400).json({ error: message });
+    }
+    if (message.includes("exceeds 1MB limit")) {
+      return res.status(413).json({ error: message });
+    }
+
+    return res.status(500).json({ error: message });
   }
 }
 
@@ -195,7 +215,7 @@ async function setKeyHandler(req: Request, res: Response) {
 
     const email = String(req.params.email || "").toLowerCase();
     const key = String(req.params.key || "");
-    const packageName = req.sdk?.packageName;
+    const packageName = req.sdk.packageName;
     const { value } = req.body || {};
 
     if (!email || !key) {
@@ -215,7 +235,19 @@ async function setKeyHandler(req: Request, res: Response) {
     });
   } catch (error) {
     console.error("PUT /api/sdk/simple-storage/:email/:key error:", error);
-    return res.status(500).json({ error: "Failed to set key" });
+
+    // Return specific error messages
+    const message =
+      error instanceof Error ? error.message : "Failed to set key";
+
+    if (message.includes("exceeds 100KB limit")) {
+      return res.status(400).json({ error: message });
+    }
+    if (message.includes("exceeds 1MB limit")) {
+      return res.status(413).json({ error: message });
+    }
+
+    return res.status(500).json({ error: message });
   }
 }
 

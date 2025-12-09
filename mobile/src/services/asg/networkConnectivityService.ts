@@ -5,6 +5,7 @@
 
 import NetInfo, {NetInfoState, NetInfoSubscription} from "@react-native-community/netinfo"
 import WifiManager from "react-native-wifi-reborn"
+
 import {asgCameraApi} from "./asgCameraApi"
 
 export interface NetworkStatus {

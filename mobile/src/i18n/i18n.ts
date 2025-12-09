@@ -1,19 +1,17 @@
 import * as Localization from "expo-localization"
-import {I18nManager} from "react-native"
 import i18n from "i18next"
 import {initReactI18next} from "react-i18next"
+import {I18nManager} from "react-native"
 import "intl-pluralrules"
 
 // if English isn't your default language, move Translations to the appropriate language file.
-import en, {Translations} from "./en"
 import ar from "./ar"
-import ko from "./ko"
+import en, {Translations} from "./en"
 import es from "./es"
 import fr from "./fr"
-import ja from "./ja"
 import hi from "./hi"
-
-const fallbackLocale = "en-US"
+import ja from "./ja"
+import ko from "./ko"
 
 const systemLocales = Localization.getLocales()
 

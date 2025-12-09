@@ -98,8 +98,8 @@ const unique = {
 
   // Slider states
   sliderThumb: palette.white,
-  sliderTrackActive: palette.purpleBlue4,
-  sliderTrackInactive: palette.purpleGray1,
+  sliderTrackActive: palette.primary500,
+  sliderTrackInactive: palette.neutral600,
 } as const
 
 const design = {

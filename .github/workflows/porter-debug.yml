@@ -1,10 +1,9 @@
 "on":
   push:
     branches:
-      - cloud/device-state
+      - cloud/captions-clean
     paths:
       - "cloud/**"
-      - ".github/workflows/porter-debug.yml"
 name: 🚀 [debug] Porter.run Deploy
 jobs:
   porter-deploy:
@@ -19,7 +18,7 @@ jobs:
         uses: porter-dev/setup-porter@v0.1.0
       - name: Deploy stack
         timeout-minutes: 30
-        run: exec porter apply -f ./cloud/porter.yaml
+        run: exec porter apply -f ./cloud/porter-livekit.yaml
         env:
           PORTER_APP_NAME: cloud-debug
           PORTER_NAMESPACE: debug

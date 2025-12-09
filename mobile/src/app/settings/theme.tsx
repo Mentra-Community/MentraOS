@@ -1,12 +1,13 @@
-import {View, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
-import {Screen, Header, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {$styles, ThemedStyle} from "@/theme"
 import {MaterialCommunityIcons} from "@expo/vector-icons"
-import {type ThemeType} from "@/utils/useAppTheme"
+import {View, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
+
+import {Screen, Header, Text} from "@/components/ignite"
+import {Group} from "@/components/ui/Group"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {Group} from "@/components/ui/Group"
+import {$styles, ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
+import {type ThemeType} from "@/utils/useAppTheme"
 
 export default function ThemeSettingsPage() {
   const {theme, themed} = useAppTheme()

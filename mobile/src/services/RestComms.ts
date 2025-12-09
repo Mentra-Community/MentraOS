@@ -1,11 +1,10 @@
+import {AppletInterface} from "@/../../cloud/packages/types/src"
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import {GlassesInfo} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-
-import {AppletInterface} from "@/../../cloud/packages/types/src"
 
 interface RequestConfig {
   method: "GET" | "POST" | "DELETE"
@@ -194,12 +193,8 @@ class RestComms {
       method: "GET",
       endpoint: `/appsettings/${appName}`,
     }
-    interface Response {
-      success: boolean
-      data: any
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(response => response.data)
+    const res = this.authenticatedRequest<any>(config)
+    return res
   }
 
   public updateAppSetting(appName: string, update: {key: string; value: any}): AsyncResult<void, Error> {
@@ -326,7 +321,7 @@ class RestComms {
     //   // const response = await Res.value
     //   // return {url: response.url, token: response.token}
     // })()
-    
+
     return res.map(response => response.data)
   }
 
@@ -364,10 +359,10 @@ class RestComms {
     }
     interface Response {
       success: boolean
-      data: any
+      data: {settings: Record<string, any>}
     }
     const res = this.authenticatedRequest<Response>(config)
-    return res.map(response => response.data)
+    return res.map(response => response.data.settings)
   }
 
   // Error Reporting

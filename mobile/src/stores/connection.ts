@@ -1,4 +1,5 @@
 import {create} from "zustand"
+
 import {WebSocketStatus} from "@/services/WebSocketManager"
 
 interface ConnectionState {
@@ -12,8 +13,6 @@ interface ConnectionState {
   setStatus: (status: WebSocketStatus) => void
   setUrl: (url: string | null) => void
   setError: (error: string | null) => void
-  setConnected: () => void
-  setDisconnected: () => void
   incrementReconnectAttempts: () => void
   resetReconnectAttempts: () => void
   reset: () => void
@@ -32,20 +31,6 @@ export const useConnectionStore = create<ConnectionState>(set => ({
   setUrl: url => set({url}),
 
   setError: error => set({error, status: WebSocketStatus.ERROR}),
-
-  setConnected: () =>
-    set({
-      status: WebSocketStatus.CONNECTED,
-      lastConnectedAt: new Date(),
-      error: null,
-      reconnectAttempts: 0,
-    }),
-
-  setDisconnected: () =>
-    set({
-      status: WebSocketStatus.DISCONNECTED,
-      lastDisconnectedAt: new Date(),
-    }),
 
   incrementReconnectAttempts: () =>
     set(state => ({

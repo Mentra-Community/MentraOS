@@ -1,3 +1,7 @@
+import {execSync} from "child_process"
+import fs from "fs"
+import path from "path"
+
 import {
   ConfigPlugin,
   withAppBuildGradle,
@@ -5,9 +9,6 @@ import {
   withGradleProperties,
   withAndroidManifest,
 } from "@expo/config-plugins"
-import {execSync} from "child_process"
-import fs from "fs"
-import path from "path"
 
 /**
  * Expo Config Plugin to apply android-working modifications

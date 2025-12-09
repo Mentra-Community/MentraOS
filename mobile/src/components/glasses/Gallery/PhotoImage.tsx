@@ -3,13 +3,19 @@
  * Shows a placeholder for AVIF files since React Native doesn't support them natively
  */
 
+import LinearGradient from "expo-linear-gradient"
 import {useState, useEffect} from "react"
 import {View, Image} from "react-native"
 import {ViewStyle, ImageStyle, TextStyle} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {PhotoInfo} from "../../../types/asg"
+import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
+
 import {Text} from "@/components/ignite"
+import {ThemedStyle} from "@/theme"
+import {PhotoInfo} from "@/types/asg"
+import {useAppTheme} from "@/utils/useAppTheme"
+
+// @ts-ignore
+const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)
 
 interface PhotoImageProps {
   photo: PhotoInfo
@@ -18,7 +24,7 @@ interface PhotoImageProps {
 }
 
 export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImageProps) {
-  const {themed} = useAppTheme()
+  const {theme, themed} = useAppTheme()
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
   const [isAvif, setIsAvif] = useState(false)
@@ -27,6 +33,7 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
   // 1. For synced videos, use thumbnailPath if available
   // 2. For server videos, use thumbnail_data if available (base64 data URL)
   // 3. Otherwise use the main URL
+  // Note: Relative URLs (starting with /) are from server during sync and won't load
   const imageUrl = (() => {
     if (photo.is_video) {
       if (photo.thumbnailPath) {
@@ -41,6 +48,24 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
     }
     return photo.url
   })()
+
+  // If URL is a relative path (from server during sync), show shimmer placeholder
+  // These URLs won't work without the server base URL, so don't attempt to load them
+  const isRelativeUrl = imageUrl?.startsWith("/")
+  if (isRelativeUrl && showPlaceholder) {
+    const imageStyle = style as ViewStyle
+    return (
+      <ShimmerPlaceholder
+        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+        shimmerStyle={{
+          width: imageStyle?.width || "100%",
+          height: imageStyle?.height || imageStyle?.width || 100,
+          borderRadius: 0,
+        }}
+        duration={1500}
+      />
+    )
+  }
 
   useEffect(() => {
     // For local files (file:// URLs), skip async validation and load immediately
@@ -119,13 +144,19 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
     )
   }
 
-  // Show error placeholder
+  // Show error placeholder as shimmer
   if (hasError && showPlaceholder) {
+    const imageStyle = style as ViewStyle
     return (
-      <View style={[themed($placeholderContainer), style as ViewStyle]}>
-        <Text style={themed($placeholderText)}>❌</Text>
-        <Text style={themed($placeholderSubtext)}>Failed to load</Text>
-      </View>
+      <ShimmerPlaceholder
+        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+        shimmerStyle={{
+          width: imageStyle?.width || "100%",
+          height: imageStyle?.height || imageStyle?.width || 100,
+          borderRadius: 0,
+        }}
+        duration={1500}
+      />
     )
   }
 

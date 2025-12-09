@@ -154,13 +154,12 @@ const AppCard: React.FC<AppCardProps> = memo(
 
             {app.description && (
               <p
-                className="leading-tight text-[10px] font-normalbreak-words text-[var(--muted-foreground)]"
+                className="leading-normal text-[10px] font-normal break-words text-[var(--muted-foreground)]"
                 style={{
                   fontFamily: '"Red Hat Display", sans-serif',
                   letterSpacing: "0.04em",
                   color: theme === "light" ? "#4a4a4a" : "#9A9CAC",
                   WebkitLineClamp: 1,
-                  height: "1.3em",
                   display: "-webkit-box",
                   WebkitBoxOrient: "vertical",
                   overflow: "hidden",

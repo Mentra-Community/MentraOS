@@ -6,8 +6,7 @@ import {BatteryStatus} from "@/components/glasses/info/BatteryStatus"
 import {EmptyState} from "@/components/glasses/info/EmptyState"
 import {ButtonSettings} from "@/components/glasses/settings/ButtonSettings"
 import {Icon} from "@/components/ignite"
-import SliderSetting from "@/components/settings/SliderSetting"
-import ToggleSetting from "@/components/settings/ToggleSetting"
+import BrightnessSetting from "@/components/settings/BrightnessSetting"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
@@ -18,7 +17,7 @@ import {useApplets} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {showDestructiveAlert} from "@/utils/AlertUtils"
+import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
@@ -54,16 +53,35 @@ export default function DeviceSettings() {
   const hasDeviceInfo = Boolean(bluetoothName || buildNumber || wifiLocalIp)
 
   const confirmForgetGlasses = () => {
-    showDestructiveAlert(
+    showAlert(
       translate("settings:forgetGlasses"),
       translate("settings:forgetGlassesConfirm"),
       [
         {text: translate("common:cancel"), style: "cancel"},
         {
-          text: translate("common:yes"),
+          text: "Unpair",
           onPress: () => {
             CoreModule.forget()
             goBack()
+          },
+        },
+      ],
+      {
+        cancelable: false,
+      },
+    )
+  }
+
+  const confirmDisconnectGlasses = () => {
+    showAlert(
+      translate("settings:disconnectGlassesTitle"),
+      translate("settings:disconnectGlassesConfirm"),
+      [
+        {text: translate("common:cancel"), style: "cancel"},
+        {
+          text: "Disconnect",
+          onPress: () => {
+            CoreModule.disconnect()
           },
         },
       ],
@@ -104,23 +122,14 @@ export default function DeviceSettings() {
         )}
         {/* Brightness Settings */}
         {features?.display?.adjustBrightness && glassesConnected && (
-          <ToggleSetting
+          <BrightnessSetting
             icon={<Icon name="brightness-half" size={24} color={theme.colors.secondary_foreground} />}
             label={translate("deviceSettings:autoBrightness")}
-            value={autoBrightness}
-            onValueChange={setAutoBrightness}
-          />
-        )}
-        {features?.display?.adjustBrightness && glassesConnected && !autoBrightness && (
-          <SliderSetting
-            label={translate("deviceSettings:brightness")}
-            value={brightness}
-            min={0}
-            max={100}
-            onValueChange={() => {}}
-            onValueSet={setBrightness}
-            // containerStyle={{paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0}}
-            disableBorder
+            autoBrightnessValue={autoBrightness}
+            brightnessValue={brightness}
+            onAutoBrightnessChange={setAutoBrightness}
+            onBrightnessChange={() => {}}
+            onBrightnessSet={setBrightness}
           />
         )}
       </Group>
@@ -157,7 +166,6 @@ export default function DeviceSettings() {
         <RouteButton
           icon={<Icon name="wifi" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("settings:glassesWifiSettings")}
-          subtitle={translate("settings:glassesWifiDescription")}
           onPress={() => {
             push("/pairing/glasseswifisetup", {deviceModel: defaultWearable || "Glasses"})
           }}
@@ -176,9 +184,7 @@ export default function DeviceSettings() {
           <RouteButton
             icon={<Icon name="unlink" size={24} color={theme.colors.secondary_foreground} />}
             label={translate("deviceSettings:disconnectGlasses")}
-            onPress={() => {
-              CoreModule.disconnect()
-            }}
+            onPress={confirmDisconnectGlasses}
           />
         )}
 

@@ -1,11 +1,11 @@
+import * as Linking from "expo-linking"
 import {FC, ReactNode, createContext, useContext, useEffect} from "react"
+
 // import {Linking} from "react-native"
 // import {useAuth} from "@/contexts/AuthContext"
-import {deepLinkRoutes} from "@/utils/deepLinkRoutes"
 import {NavObject, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-
-import * as Linking from "expo-linking"
-import {mentraAuthProvider} from "@/utils/auth/authProvider"
+import mentraAuth from "@/utils/auth/authClient"
+import {deepLinkRoutes} from "@/utils/deepLinkRoutes"
 
 interface DeeplinkContextType {
   processUrl: (url: string) => Promise<void>
@@ -38,11 +38,15 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     routes: deepLinkRoutes,
     authCheckHandler: async () => {
       // TODO: this is a hack when we should really be using the auth context:
-      const {data} = await mentraAuthProvider.getSession()
-      if (!data?.session?.token) {
+      const res = await mentraAuth.getSession()
+      if (res.is_error()) {
         return false
       }
-      return true
+      const session = res.value
+      if (!session?.token) {
+        return false
+      }
+      return true      
     },
     fallbackHandler: (url: string) => {
       console.warn("Fallback handler called for URL:", url)

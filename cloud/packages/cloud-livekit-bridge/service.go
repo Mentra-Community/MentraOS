@@ -59,15 +59,17 @@ func (s *LiveKitBridgeService) JoinRoom(
 		"livekit_url": req.LivekitUrl,
 	})
 
-	// Check if session already exists
-	if _, exists := s.sessions.Load(req.UserId); exists {
-		s.bsLogger.LogWarn("Session already exists for user", map[string]interface{}{
-			"user_id": req.UserId,
+	// Always replace existing session if present (handles reconnections, crashes, zombie sessions)
+	if existingVal, exists := s.sessions.Load(req.UserId); exists {
+		s.bsLogger.LogInfo("Replacing existing bridge session", map[string]interface{}{
+			"user_id":   req.UserId,
+			"room_name": req.RoomName,
+			"reason":    "new_join_request",
 		})
-		return &pb.JoinRoomResponse{
-			Success: false,
-			Error:   "session already exists for this user",
-		}, nil
+
+		existingSession := existingVal.(*RoomSession)
+		existingSession.Close() // Calls room.Disconnect(), closes goroutines
+		s.sessions.Delete(req.UserId)
 	}
 
 	// Create new session
@@ -449,7 +451,7 @@ func (s *LiveKitBridgeService) PlayAudio(
 
 	return nil
 }
- 
+
 // StopAudio handles stopping audio playback
 func (s *LiveKitBridgeService) StopAudio(
 	ctx context.Context,

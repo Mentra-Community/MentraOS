@@ -1,8 +1,9 @@
-import {View, ViewStyle} from "react-native"
 import {Children, isValidElement, cloneElement} from "react"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {View, ViewStyle} from "react-native"
+
 import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export const Group = ({title, style, children}: {title?: string; style?: ViewStyle; children?: React.ReactNode}) => {
   const {themed} = useAppTheme()

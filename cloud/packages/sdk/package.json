@@ -1,20 +1,34 @@
 {
   "name": "@mentra/sdk",
-  "version": "2.1.28",
+  "version": "2.1.29-beta.2",
   "description": "Build apps for MentraOS smartglasses. This SDK provides everything you need to create real-time smartglasses applications.",
   "source": "src/index.ts",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    "development": {
-      "import": "./src/index.ts",
-      "require": "./src/index.ts",
-      "types": "./src/index.ts"
+    ".": {
+      "development": {
+        "import": "./src/index.ts",
+        "require": "./src/index.ts",
+        "types": "./src/index.ts"
+      },
+      "default": {
+        "import": "./dist/index.js",
+        "require": "./dist/index.js",
+        "types": "./dist/index.d.ts"
+      }
     },
-    "default": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+    "./display-utils": {
+      "development": {
+        "import": "./src/display-utils.ts",
+        "require": "./src/display-utils.ts",
+        "types": "./src/display-utils.ts"
+      },
+      "default": {
+        "import": "./dist/display-utils.js",
+        "require": "./dist/display-utils.js",
+        "types": "./dist/display-utils.d.ts"
+      }
     }
   },
   "bin": {
@@ -25,7 +39,7 @@
     "build:js-only": "bun run clean && bun run build:js",
     "build:full": "bun run clean && bun run build:js && bun run build:types",
     "clean": "rm -rf dist",
-    "build:js": "bun build src/index.ts --outdir dist --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external boxen --external chalk --external cookie-parser --external dotenv --external express --external jimp --external jsonwebtoken --external jsrsasign --external multer --external pino --external pino-pretty --external strip-ansi --external ws",
+    "build:js": "bun build src/index.ts src/display-utils.ts --outdir dist --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external boxen --external chalk --external cookie-parser --external dotenv --external express --external jimp --external jsonwebtoken --external jsrsasign --external multer --external pino --external pino-pretty --external strip-ansi --external ws",
     "build:types": "bun x tsc --emitDeclarationOnly",
     "dev": "echo 'No build needed in dev mode - using source files directly'",
     "prepare": "bun run build",

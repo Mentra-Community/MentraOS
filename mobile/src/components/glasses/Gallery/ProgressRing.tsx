@@ -1,7 +1,8 @@
 import {View, ViewStyle, TextStyle} from "react-native"
 import Svg, {Circle} from "react-native-svg"
-import {useAppTheme} from "@/utils/useAppTheme"
+
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface ProgressRingProps {
   progress: number // 0-100

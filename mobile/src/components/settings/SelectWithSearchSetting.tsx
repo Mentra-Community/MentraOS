@@ -1,8 +1,9 @@
 // SelectWithSearchSetting.tsx
-import {useAppTheme} from "@/utils/useAppTheme"
 import {useState, useMemo, useEffect} from "react"
 import {
   View,
+  ViewStyle,
+  TextStyle,
   TextInput,
   Modal,
   TouchableOpacity,
@@ -12,9 +13,14 @@ import {
   Platform,
   TouchableWithoutFeedback,
 } from "react-native"
-import {Icon, Text} from "@/components/ignite"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
-import SearchIcon from "../../../assets/icons/component/SearchIcon"
+
+import {Icon, Text} from "@/components/ignite"
+import {translate} from "@/i18n"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
+
+import SearchIcon from "assets/icons/component/SearchIcon"
 
 type Option = {
   label: string
@@ -27,19 +33,34 @@ type SelectWithSearchSettingProps = {
   options: Option[]
   onValueChange: (value: string) => void
   defaultValue?: string
+  isFirst?: boolean
+  isLast?: boolean
 }
 
-const SelectWithSearchSetting: React.FC<SelectWithSearchSettingProps> = ({
+const SelectWithSearchSetting = ({
   label,
   value,
   options,
   onValueChange,
   defaultValue,
-}) => {
-  const {theme} = useAppTheme()
+  isFirst,
+  isLast,
+}: SelectWithSearchSettingProps) => {
+  const {theme, themed} = useAppTheme()
 
   const [search, setSearch] = useState("")
   const [modalVisible, setModalVisible] = useState(false)
+
+  const groupedStyle: ViewStyle | undefined =
+    isFirst !== undefined || isLast !== undefined
+      ? {
+          borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          marginBottom: isLast ? 0 : theme.spacing.s2,
+        }
+      : undefined
 
   // If the current value doesn't match any option, use the defaultValue
   useEffect(() => {
@@ -58,78 +79,39 @@ const SelectWithSearchSetting: React.FC<SelectWithSearchSettingProps> = ({
     return options.filter(option => option.label.toLowerCase().includes(search.toLowerCase()))
   }, [search, options])
 
-  const selectedLabel = options.find(option => option.value === value)?.label || "Select..."
+  const selectedLabel = options.find(option => option.value === value)?.label || translate("appSettings:select")
 
   return (
-    <View style={styles.container}>
+    <View style={themed($container)}>
       <TouchableOpacity
-        style={[
-          styles.selectRow,
-          {
-            backgroundColor: theme.colors.backgroundAlt,
-            borderRadius: theme.spacing.s4,
-            borderWidth: theme.spacing.s0_5,
-            borderColor: theme.colors.border,
-            paddingVertical: theme.spacing.s4,
-            paddingHorizontal: theme.spacing.s6 - theme.spacing.s1, // 20px
-          },
-        ]}
+        style={[themed($selectButton), groupedStyle]}
         onPress={() => setModalVisible(true)}
         activeOpacity={0.7}>
-        <Text style={[styles.label, {color: theme.colors.text}]}>{label}</Text>
-        <View style={styles.valueContainer}>
-          <Text style={[styles.selectText, {color: theme.colors.textDim}]}>{selectedLabel}</Text>
-          <Icon icon="caretRight" size={16} color={theme.colors.textDim} style={styles.chevron} />
+        <Text text={label} style={themed($label)} />
+        <View style={themed($valueContainer)}>
+          <Text text={selectedLabel} style={themed($valueText)} />
+          <Icon icon="caretRight" size={16} color={theme.colors.textDim} />
         </View>
       </TouchableOpacity>
+
       <Modal
         visible={modalVisible}
         animationType="fade"
         transparent={true}
-        style={{flex: 1}}
         onRequestClose={() => setModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex: 1}}>
           <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
-            <View style={styles.modalOverlay}>
+            <View style={themed($modalOverlay)}>
               <TouchableWithoutFeedback>
-                <View
-                  style={[
-                    styles.modalContent,
-                    {
-                      backgroundColor: theme.colors.backgroundAlt,
-                      borderColor: theme.colors.border,
-                      borderWidth: theme.spacing.s0_5,
-                      padding: theme.spacing.s4,
-                      borderRadius: theme.spacing.s4,
-                      shadowRadius: theme.spacing.s2,
-                    },
-                  ]}>
-                  <View style={[styles.modalHeader, {marginBottom: theme.spacing.s3}]}>
-                    <Text style={[styles.modalLabel, {color: theme.colors.textDim}]}>{label}</Text>
+                <View style={themed($modalContent)}>
+                  <View style={themed($modalHeader)}>
+                    <Text text={label} style={themed($modalLabel)} />
                   </View>
-                  <View
-                    style={[
-                      styles.searchContainer,
-                      {
-                        borderColor: theme.colors.inputBorderHighlight,
-                        backgroundColor: theme.colors.backgroundAlt,
-                        borderRadius: 100, // Pill shape
-                        marginBottom: theme.spacing.s3,
-                        paddingHorizontal: theme.spacing.s3,
-                        paddingVertical: theme.spacing.s2,
-                      },
-                    ]}>
+                  <View style={themed($searchContainer)}>
                     <SearchIcon size={20} color={theme.colors.textDim} />
                     <TextInput
-                      style={[
-                        styles.searchInput,
-                        {
-                          color: theme.colors.text,
-                          flex: 1,
-                          marginHorizontal: theme.spacing.s2,
-                        },
-                      ]}
-                      placeholder="Search"
+                      style={themed($searchInput)}
+                      placeholder={translate("appSettings:search")}
                       placeholderTextColor={theme.colors.textDim}
                       value={search}
                       onChangeText={setSearch}
@@ -147,16 +129,10 @@ const SelectWithSearchSetting: React.FC<SelectWithSearchSettingProps> = ({
                     data={filteredOptions}
                     keyExtractor={item => item.value}
                     keyboardShouldPersistTaps="always"
-                    style={styles.optionsList}
+                    style={themed($optionsList)}
                     renderItem={({item}) => (
                       <Pressable
-                        style={[
-                          styles.optionItem,
-                          {
-                            paddingVertical: theme.spacing.s3,
-                            paddingRight: theme.spacing.s4,
-                          },
-                        ]}
+                        style={themed($optionItem)}
                         onPress={() => {
                           onValueChange(item.value)
                           setModalVisible(false)
@@ -167,17 +143,11 @@ const SelectWithSearchSetting: React.FC<SelectWithSearchSettingProps> = ({
                         ) : (
                           <View style={{width: 24, height: 24}} />
                         )}
-                        <Text
-                          style={[
-                            styles.optionText,
-                            {color: theme.colors.text, flex: 1, marginLeft: theme.spacing.s2},
-                          ]}>
-                          {item.label}
-                        </Text>
+                        <Text text={item.label} style={themed($optionText)} />
                       </Pressable>
                     )}
                     ListEmptyComponent={
-                      <Text style={[styles.emptyText, {color: theme.colors.text + "99"}]}>No options found</Text>
+                      <Text style={themed($emptyText)}>{translate("appSettings:noOptionsFound")}</Text>
                     }
                   />
                 </View>
@@ -190,79 +160,116 @@ const SelectWithSearchSetting: React.FC<SelectWithSearchSettingProps> = ({
   )
 }
 
-const styles = {
-  chevron: {
-    marginLeft: 2,
-  },
-  container: {
-    width: "100%",
-  },
-  emptyText: {
-    fontSize: 15,
-    marginTop: 20,
-    textAlign: "center",
-  },
-  label: {
-    flex: 1,
-    fontSize: 15,
-  },
-  modalContent: {
-    elevation: 5,
-    maxHeight: "70%",
-    shadowColor: "#000",
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    width: "90%",
-  },
-  modalHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  modalLabel: {
-    fontSize: 16,
-    fontWeight: "normal",
-  },
-  modalOverlay: {
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.25)",
-    flex: 1,
-    justifyContent: "center",
-  },
-  optionItem: {
-    alignItems: "center",
-    flexDirection: "row",
-    paddingLeft: 0,
-  },
-  optionText: {
-    fontSize: 16,
-  },
-  optionsList: {
-    flexGrow: 0,
-    maxHeight: 250,
-  },
-  searchContainer: {
-    alignItems: "center",
-    borderWidth: 1,
-    flexDirection: "row",
-  },
-  searchInput: {
-    fontSize: 16,
-    paddingVertical: 0, // Remove default padding
-  },
-  selectRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  selectText: {
-    fontSize: 15,
-  },
-  valueContainer: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 4,
-  },
-} as const
+const $container: ThemedStyle<ViewStyle> = () => ({
+  width: "100%",
+})
+
+const $selectButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  width: "100%",
+  backgroundColor: colors.primary_foreground,
+  paddingVertical: spacing.s4,
+  paddingHorizontal: spacing.s4,
+  borderRadius: spacing.s4,
+})
+
+const $label: ThemedStyle<TextStyle> = ({colors}) => ({
+  flex: 1,
+  fontSize: 14,
+  fontWeight: "600",
+  color: colors.text,
+})
+
+const $valueContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  alignItems: "center",
+  gap: spacing.s1,
+})
+
+const $valueText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 14,
+  color: colors.textDim,
+})
+
+const $modalOverlay: ThemedStyle<ViewStyle> = () => ({
+  flex: 1,
+  backgroundColor: "rgba(0,0,0,0.25)",
+  justifyContent: "center",
+  alignItems: "center",
+})
+
+const $modalContent: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  width: "90%",
+  maxHeight: "70%",
+  backgroundColor: colors.primary_foreground,
+  borderRadius: spacing.s4,
+  padding: spacing.s4,
+  shadowColor: "#000",
+  shadowOffset: {width: 0, height: 2},
+  shadowOpacity: 0.2,
+  shadowRadius: spacing.s2,
+  elevation: 5,
+})
+
+const $modalHeader: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: spacing.s3,
+})
+
+const $modalLabel: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 16,
+  fontWeight: "600",
+  color: colors.text,
+})
+
+const $searchContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  flexDirection: "row",
+  alignItems: "center",
+  borderWidth: 1,
+  borderColor: colors.border,
+  backgroundColor: colors.background,
+  borderRadius: 100,
+  marginBottom: spacing.s3,
+  paddingHorizontal: spacing.s3,
+  paddingVertical: spacing.s2,
+})
+
+const $searchInput: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  flex: 1,
+  fontSize: 16,
+  color: colors.text,
+  marginHorizontal: spacing.s2,
+  paddingVertical: 0,
+})
+
+const $optionsList: ThemedStyle<ViewStyle> = () => ({
+  flexGrow: 0,
+  maxHeight: 300,
+})
+
+const $optionItem: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  alignItems: "center",
+  paddingVertical: spacing.s3,
+  paddingRight: spacing.s4,
+})
+
+const $optionText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  flex: 1,
+  fontSize: 16,
+  color: colors.text,
+  marginLeft: spacing.s2,
+})
+
+const $emptyText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 15,
+  textAlign: "center",
+  marginTop: 20,
+  color: colors.textDim,
+})
 
 export default SelectWithSearchSetting

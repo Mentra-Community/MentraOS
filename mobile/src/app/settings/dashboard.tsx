@@ -1,7 +1,6 @@
 import {useState} from "react"
 import {Alert, ScrollView} from "react-native"
 
-import {getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {Header, Screen} from "@/components/ignite"
 import HeadUpAngleComponent from "@/components/misc/HeadUpAngleComponent"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -9,10 +8,12 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n/translate"
+import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {$styles} from "@/theme"
-import { useGlassesStore } from "@/stores/glasses"
+import {useAppTheme} from "@/utils/useAppTheme"
+
+import {getModelCapabilities} from "@/../../cloud/packages/types/src"
 
 export default function DashboardSettingsScreen() {
   const {theme, themed} = useAppTheme()

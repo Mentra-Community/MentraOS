@@ -1,12 +1,13 @@
+import {useState} from "react"
+import {TextInput, View, ViewStyle, TextStyle} from "react-native"
+
 import {Button, Text} from "@/components/ignite"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {translate} from "@/i18n"
-import {useState} from "react"
-import {TextInput, View, ViewStyle, TextStyle} from "react-native"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 
 export default function BackendUrl() {
   const {theme, themed} = useAppTheme()
@@ -65,7 +66,7 @@ export default function BackendUrl() {
               {
                 text: translate("common:ok"),
                 onPress: () => {
-                  replace("/init")
+                  replace("/")
                 },
               },
             ],
@@ -106,7 +107,7 @@ export default function BackendUrl() {
       {
         text: "OK",
         onPress: () => {
-          replace("/init")
+          replace("/")
         },
       },
     ])

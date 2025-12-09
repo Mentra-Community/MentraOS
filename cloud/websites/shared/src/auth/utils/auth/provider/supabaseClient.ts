@@ -219,18 +219,19 @@ export class SupabaseWrapperClient {
   public onAuthStateChange(callback: (event: string, session: any) => void): MentraAuthStateChangeSubscriptionResponse {
     try {
       const wrappedCallback = (event: AuthChangeEvent, session: Session | null) => {
-        const modifiedSession = {
-          token: session?.access_token,
+        // Only create modifiedSession if we have a real session with a user
+        const modifiedSession = session?.user ? {
+          token: session.access_token,
           user: {
-            id: session?.user.id,
-            email: session?.user.email,
-            name: session?.user.user_metadata.full_name as string,
-            phoneNumber: session?.user.user_metadata.phone_number as string,
-            avatarUrl: session?.user.user_metadata?.avatar_url || session?.user.user_metadata?.picture,
-            createdAt: session?.user.created_at,
-            provider: session?.user.user_metadata.provider,
+            id: session.user.id,
+            email: session.user.email,
+            name: session.user.user_metadata?.full_name as string,
+            phoneNumber: session.user.user_metadata?.phone_number as string,
+            avatarUrl: session.user.user_metadata?.avatar_url || session.user.user_metadata?.picture,
+            createdAt: session.user.created_at,
+            provider: session.user.user_metadata?.provider,
           },
-        }
+        } : null
 
         console.log("AuthContext: Modified session:", modifiedSession)
 

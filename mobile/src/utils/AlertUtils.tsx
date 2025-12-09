@@ -1,14 +1,17 @@
-import {useState} from "react"
-import {Alert, BackHandler, Platform, Animated} from "react-native"
-import BasicDialog from "@/components/ui/BasicDialog"
-import {useAppTheme} from "./useAppTheme"
-import {SettingsNavigationUtils} from "./SettingsNavigationUtils"
-import {StatusBar} from "expo-status-bar"
 import * as NavigationBar from "expo-navigation-bar"
+import {StatusBar} from "expo-status-bar"
+import {useState} from "react"
 import {useEffect, useRef} from "react"
+import {Alert, BackHandler, Platform, Animated} from "react-native"
+
+import {Icon, IconTypes} from "@/components/ignite"
+import BasicDialog from "@/components/ui/BasicDialog"
+
+import {SettingsNavigationUtils} from "./SettingsNavigationUtils"
+import {useAppTheme} from "./useAppTheme"
+
 // eslint-disable-next-line
 import {StyleSheet} from "react-native"
-import { Icon, IconTypes } from "@/components/ignite"
 
 // Type for button style options
 type ButtonStyle = "default" | "cancel" | "destructive"
@@ -215,65 +218,65 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     })
   }
 
+  if (!visible) {
+    return children
+  }
+
   return (
     <>
       {children}
-      {visible && (
-        <>
-          <StatusBar style="light" />
-          <Animated.View
-            style={{
-              ...StyleSheet.absoluteFillObject,
-              zIndex: 10,
-              justifyContent: "center",
-              alignItems: "center",
-              backgroundColor: theme.colors.background + "60",
-              paddingHorizontal: 24,
-              opacity: fadeAnim,
-            }}>
-            <Animated.View
-              style={{
-                width: "100%",
-                maxWidth: 400,
-                transform: [{scale: scaleAnim}],
-                opacity: fadeAnim,
-              }}>
-              <BasicDialog
-                title={title}
-                description={message}
-                icon={
-                  options.icon ??
-                  (options.iconName ? (
-                    <Icon
-                      name={options.iconName as IconTypes}
-                      size={options.iconSize ?? 24}
-                      color={options.iconColor ?? theme.colors.secondary_foreground}
-                    />
-                  ) : undefined)
-                }
-                leftButtonText={buttons.length > 1 ? buttons[0].text : undefined}
-                onLeftPress={
-                  buttons.length > 1
-                    ? () => {
-                        buttons[0].onPress?.()
-                        handleDismiss()
-                      }
-                    : undefined
-                }
-                rightButtonText={buttons.length > 1 ? buttons[1].text : buttons[0].text}
-                onRightPress={() => {
-                  if (buttons.length > 1) {
-                    buttons[1].onPress?.()
-                  } else {
+      <StatusBar style="light" />
+      <Animated.View
+        style={{
+          ...StyleSheet.absoluteFillObject,
+          zIndex: 10,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: theme.colors.background + "B3",
+          paddingHorizontal: 24,
+          opacity: fadeAnim,
+        }}>
+        <Animated.View
+          style={{
+            width: "100%",
+            maxWidth: 400,
+            transform: [{scale: scaleAnim}],
+            opacity: fadeAnim,
+          }}>
+          <BasicDialog
+            title={title}
+            description={message}
+            icon={
+              options.icon ??
+              (options.iconName ? (
+                <Icon
+                  name={options.iconName as IconTypes}
+                  size={options.iconSize ?? 24}
+                  color={options.iconColor ?? theme.colors.secondary_foreground}
+                />
+              ) : undefined)
+            }
+            leftButtonText={buttons.length > 1 ? buttons[0].text : undefined}
+            onLeftPress={
+              buttons.length > 1
+                ? () => {
                     buttons[0].onPress?.()
+                    handleDismiss()
                   }
-                  handleDismiss()
-                }}
-              />
-            </Animated.View>
-          </Animated.View>
-        </>
-      )}
+                : undefined
+            }
+            rightButtonText={buttons.length > 1 ? buttons[1].text : buttons[0].text}
+            onRightPress={() => {
+              if (buttons.length > 1) {
+                buttons[1].onPress?.()
+              } else {
+                buttons[0].onPress?.()
+              }
+              handleDismiss()
+            }}
+          />
+        </Animated.View>
+      </Animated.View>
     </>
   )
 }
@@ -486,8 +489,8 @@ const showPermissionsAlert = (title: string, message: string, options?: Connecti
 const showDestructiveAlert = (title: string, message: string, buttons: AlertButton[], options?: AlertOptions) => {
   if (modalRef) {
     modalRef.showModal(title, message, buttons, {
-      iconName: "delete-forever",
-      iconColor: "#FF3B30",
+      iconName: "trash",
+      // iconColor not specified - will use default theme text color
       iconSize: 32,
       ...options,
     })

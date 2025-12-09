@@ -1,18 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { X, Building } from "lucide-react";
-import { useAuth } from "@mentra/shared";
-import { useTheme } from "../hooks/useTheme";
-import { usePlatform } from "../hooks/usePlatform";
-import { useSearch } from "../contexts/SearchContext";
-import { useIsMobile } from "../hooks/useMediaQuery";
-import SearchBar from "../components/SearchBar";
-import api, { AppFilterOptions } from "../api";
-import { AppI } from "../types";
-import Header from "../components/Header";
-import AppCard from "../components/AppCard";
-import { toast } from "sonner";
-import { formatCompatibilityError } from "../utils/errorHandling";
+import {useIsMobile} from "../hooks/useMediaQuery"
 import AppStoreMobile from "./AppStoreMobile"
 import AppStoreDesktop from "./AppStoreDesktop"
 
@@ -20,8 +6,8 @@ import AppStoreDesktop from "./AppStoreDesktop"
 declare global {
   interface Window {
     ReactNativeWebView?: {
-      postMessage: (message: string) => void;
-    };
+      postMessage: (message: string) => void
+    }
   }
 }
 

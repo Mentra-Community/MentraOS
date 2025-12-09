@@ -19,7 +19,6 @@ service LiveKitBridge {
   // Room lifecycle management
   rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
   rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
-
   // Server-side audio playback (MP3/WAV → LiveKit track)
   //
   // Returns streaming events for progress tracking.

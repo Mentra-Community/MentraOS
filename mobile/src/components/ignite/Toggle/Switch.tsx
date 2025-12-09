@@ -1,12 +1,13 @@
 import {useEffect, useMemo, useRef, useCallback, useState} from "react"
 import {Animated, Image, ImageStyle, Platform, StyleProp, TextStyle, View, ViewStyle} from "react-native"
 
-import {$styles} from "@/theme"
 import {iconRegistry} from "@/components/ignite/Icon"
 import {isRTL} from "@/i18n"
-import {$inputOuterBase, BaseToggleInputProps, Toggle, ToggleProps} from "./Toggle"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {$styles} from "@/theme"
 import type {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
+
+import {$inputOuterBase, BaseToggleInputProps, Toggle, ToggleProps} from "./Toggle"
 
 export interface SwitchToggleProps extends Omit<ToggleProps<SwitchInputProps>, "ToggleInput"> {
   /**

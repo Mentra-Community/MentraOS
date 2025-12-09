@@ -149,7 +149,7 @@ export const CaptionsSlideMobile: React.FC = () => {
 
         {/* Get Now Button */}
         <motion.button
-          className="shrink-0  w-[88px] h-[38px] xs:w-[70px] xs:h-[28px] sm:w-[80px] sm:h-[32px] bg-[#000000] hover:bg-[#ffd500] text-white shadow-lg rounded-full cursor-pointer xs:text-[14px] sm:text-[14px] text-[14px] font-medium"
+          className="shrink-0  w-[88px] h-[38px] xs:w-[70px] xs:h-[28px] sm:w-[80px] sm:h-[32px] bg-[#2E610B] hover:bg-[#ffd500] text-white shadow-lg rounded-full cursor-pointer xs:text-[14px] sm:text-[14px] text-[14px] font-medium"
           onClick={() => navigate(`/package/${appData?.packageName || "com.augmentos.livecaptions"}`)}
           whileHover={{scale: 1.05}}
           whileTap={{scale: 0.95}}>
@@ -179,7 +179,7 @@ export const MergeSlide: React.FC = () => {
 
       {/* Custom positioned buttons for this slide */}
       <motion.button
-        className=" absolute font-bold bottom-[20px] left-[20px] sm:bottom-[2.2vw] sm:left-[3vw] bg-[#FF8786] hover:bg-[#00ddff] text-white shadow-lg rounded-full cursor-pointer"
+        className=" absolute font-bold bottom-[20px] left-[20px] sm:bottom-[2.2vw] sm:left-[3vw] bg-[#8F2995] hover:bg-[#00ddff] text-white shadow-lg rounded-full cursor-pointer"
         style={{
           width: "clamp(130px, 12vw, 190px)",
           height: "clamp(30px, 2.2vw, 35px)",
@@ -296,7 +296,7 @@ export const MergeSlideMobile: React.FC = () => {
 
         {/* Get Now Button */}
         <motion.button
-          className="shrink-0 w-[88px] h-[38px] xs:w-[70px] xs:h-[28px] sm:w-[80px] sm:h-[32px] bg-[var(--foreground)] hover:bg-[#00ddff] text-white shadow-lg rounded-full cursor-pointer xs:text-[14px] sm:text-[14px] text-[14px] font-medium"
+          className="shrink-0 w-[88px] h-[38px] xs:w-[70px] xs:h-[28px] sm:w-[80px] sm:h-[32px] bg-[#8F2995] hover:bg-[#00ddff] text-white shadow-lg rounded-full cursor-pointer xs:text-[14px] sm:text-[14px] text-[14px] font-medium"
           onClick={() => navigate(`/package/${appData?.packageName || "com.mentra.merge"}`)}
           whileHover={{scale: 1.05}}
           whileTap={{scale: 0.95}}>
@@ -591,7 +591,7 @@ export const XSlideMobile: React.FC = () => {
 
         {/* Get Now Button */}
         <motion.button
-          className="shrink-0 w-[88px] h-[38px] xs:w-[70px] xs:h-[28px] sm:w-[80px] sm:h-[32px] bg-[var(--foreground)] hover:bg-[#000000] hover:text-white text-white shadow-lg rounded-full cursor-pointer xs:text-[14px] sm:text-[14px] text-[14px] font-medium"
+          className="shrink-0 w-[88px] h-[38px] xs:w-[70px] xs:h-[28px] sm:w-[80px] sm:h-[32px] bg-[#0A0A0A] hover:bg-[#000000] hover:text-white text-white shadow-lg rounded-full cursor-pointer xs:text-[14px] sm:text-[14px] text-[14px] font-medium"
           onClick={() => navigate(`/package/${appData?.packageName || "com.augmentos.xstats"}`)}
           whileHover={{scale: 1.05}}
           whileTap={{scale: 0.95}}>

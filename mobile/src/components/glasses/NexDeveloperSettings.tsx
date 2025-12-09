@@ -1,22 +1,23 @@
+import CoreModule from "core"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
-import {Text} from "@/components/ignite"
 
 import bridge from "@/bridge/MantleBridge"
+import {Text} from "@/components/ignite"
 import {PillButton} from "@/components/ignite"
+import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useCoreStatus} from "@/contexts/CoreStatusProvider"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n/translate"
+import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {MOCK_CONNECTION} from "@/utils/Constants"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useAppTheme} from "@/utils/useAppTheme"
-import ToggleSetting from "@/components/settings/ToggleSetting"
-import CoreModule from "core"
-import {useGlassesStore} from "@/stores/glasses"
+
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
 
 // Nex Interface Version - Single source of truth
@@ -124,7 +125,8 @@ const PatternPreview = ({imageType, imageSize, isDark = false, showDualLayout = 
             marginBottom: 20,
             letterSpacing: 0.5,
           }}>
-          /// MentraOS Connected \\\
+          {/* MentraOS Connected */}
+          {"/// MentraOS Connected \\\\\\"}
         </Text>
 
         <Text

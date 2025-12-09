@@ -2,6 +2,7 @@
   "private": true,
   "workspaces": [
     "packages/*",
+    "packages/*/*",
     "websites/*"
   ],
   "scripts": {
@@ -23,7 +24,8 @@
     "store": "cd websites/store && bun run dev",
     "ngrok:isaiah": "ngrok http --url=isaiah.augmentos.cloud 8002",
     "ngrok:isaiah2": "ngrok http --url=isaiah.mentra.glass 8002",
-    "ngrok:israelov": "ngrok http --url=israelovpuddle.ngrok.app 8002"
+    "ngrok:israelov": "ngrok http --url=israelovpuddle.ngrok.app 8002",
+    "captions": "bun run --cwd packages/apps/captions/ start"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.13",

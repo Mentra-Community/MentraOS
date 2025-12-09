@@ -3,9 +3,11 @@
  */
 
 import { ExtendedStreamType, TranscriptionData } from "@mentra/sdk";
-import { Logger } from "pino";
-import UserSession from "../UserSession";
 import dotenv from "dotenv";
+import { Logger } from "pino";
+
+// eslint-disable-next-line no-restricted-imports
+import UserSession from "../UserSession";
 dotenv.config();
 
 // Environment variables for provider configuration
@@ -189,6 +191,13 @@ export interface StreamMetrics {
   consecutiveFailures: number;
   lastSuccessfulWrite?: number;
 
+  // Latency & Backlog Tracking
+  totalAudioBytesSent?: number; // Total bytes sent to provider
+  lastTranscriptEndMs?: number; // Last transcript end time (relative to stream start)
+  lastTranscriptLagMs?: number; // Lag between now and when the transcript was spoken
+  maxTranscriptLagMs?: number; // Maximum lag observed
+  transcriptLagWarnings?: number; // Count of lag warnings (>5s)
+
   // Error Tracking
   errorCount: number;
   lastError?: Error;
@@ -229,6 +238,8 @@ export interface StreamHealth {
   consecutiveFailures: number;
   lastSuccessfulWrite?: number;
   providerHealth: ProviderHealthStatus;
+  transcriptLagMs?: number;
+  maxTranscriptLagMs?: number;
 }
 
 //===========================================================

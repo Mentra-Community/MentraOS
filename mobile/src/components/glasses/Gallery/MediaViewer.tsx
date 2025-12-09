@@ -2,17 +2,19 @@
  * Media viewer component that handles both images and videos
  */
 
+import Slider from "@react-native-community/slider"
 import {useState, useRef, useEffect, type ElementRef} from "react"
 import {View, TouchableOpacity, Modal, StatusBar} from "react-native"
 // eslint-disable-next-line no-restricted-imports
 import {Text, StyleSheet} from "react-native"
-import Video from "react-native-video"
-import Slider from "@react-native-community/slider"
-import {PhotoInfo} from "../../../types/asg"
-import {spacing} from "@/theme"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
-import {ImageViewer} from "./ImageViewer"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
+import Video from "react-native-video"
+
+import {spacing} from "@/theme"
+import {PhotoInfo} from "@/types/asg"
+
+import {ImageViewer} from "./ImageViewer"
 
 interface MediaViewerProps {
   visible: boolean

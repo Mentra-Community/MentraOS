@@ -1,5 +1,6 @@
-import {useAppTheme} from "@/utils/useAppTheme"
 import {LinearGradient} from "expo-linear-gradient"
+
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function BackgroundGradient({children, colors}: {children: React.ReactNode; colors?: [string, string]}) {
   const {theme} = useAppTheme()

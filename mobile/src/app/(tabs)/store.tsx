@@ -1,16 +1,17 @@
-import {useState, useCallback, useMemo} from "react"
+import {useFocusEffect} from "@react-navigation/native"
+import {useLocalSearchParams} from "expo-router"
+import {useState, useCallback, useMemo, useEffect} from "react"
 import {View, ViewStyle, ActivityIndicator, BackHandler, TextStyle} from "react-native"
 import {WebView} from "react-native-webview"
-import InternetConnectionFallbackComponent from "@/components/misc/InternetConnectionFallbackComponent"
-import {useFocusEffect} from "@react-navigation/native"
-import {useAppStoreWebviewPrefetch} from "@/contexts/AppStoreWebviewPrefetchProvider"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {useLocalSearchParams} from "expo-router"
+
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Text, Screen, Header} from "@/components/ignite"
+import InternetConnectionFallbackComponent from "@/components/misc/InternetConnectionFallbackComponent"
+import {useAppStoreWebviewPrefetch} from "@/contexts/AppStoreWebviewPrefetchProvider"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {$styles, ThemedStyle} from "@/theme"
 import {useRefreshApplets} from "@/stores/applets"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {$styles, ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function AppStoreWeb() {
   const [_webviewLoading, setWebviewLoading] = useState(true)
@@ -18,11 +19,11 @@ export default function AppStoreWeb() {
   const [errorMessage, setErrorMessage] = useState("")
   const {packageName} = useLocalSearchParams()
   const [canGoBack, setCanGoBack] = useState(false)
+  const [isAuthReady, setIsAuthReady] = useState(false)
   const {push} = useNavigationHistory()
   const {appStoreUrl, webViewRef: prefetchedWebviewRef} = useAppStoreWebviewPrefetch()
   const refreshApplets = useRefreshApplets()
   const {theme, themed} = useAppTheme()
-  const {bottom} = useSafeAreaInsets()
 
   // Construct the final URL with packageName if provided
   const finalUrl = useMemo(() => {
@@ -39,6 +40,11 @@ export default function AppStoreWeb() {
     console.log("AppStoreWeb: finalUrl", url.toString())
     return url.toString()
   }, [appStoreUrl, packageName])
+
+  // Reset auth ready state when URL changes (e.g., new tokens, theme change)
+  useEffect(() => {
+    setIsAuthReady(false)
+  }, [finalUrl])
 
   const handleError = (syntheticEvent: any) => {
     const {nativeEvent} = syntheticEvent
@@ -84,6 +90,13 @@ export default function AppStoreWeb() {
     try {
       const data = JSON.parse(event.nativeEvent.data)
 
+      // Handle auth ready message from store - hides loading overlay
+      if (data.type === "AUTH_READY") {
+        console.log("AppStoreWeb: Received AUTH_READY from store")
+        setIsAuthReady(true)
+        return
+      }
+
       if ((data.type === "OPEN_APP_SETTINGS" || data.type === "OPEN_TPA_SETTINGS") && data.packageName) {
         // Navigate to TPA settings page
         push("/applet/settings", {packageName: data.packageName})
@@ -123,7 +136,7 @@ export default function AppStoreWeb() {
   if (!finalUrl) {
     return (
       <Screen preset="fixed" style={themed($styles.screen)}>
-        <Header leftTx="store:title" />
+        <Header leftTx="store:title" RightActionComponent={<MentraLogoStandalone />} />
         <View style={[themed($loadingContainer), {marginHorizontal: -theme.spacing.s4}]}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text text="Preparing App Store..." style={themed($loadingText)} />
@@ -135,7 +148,7 @@ export default function AppStoreWeb() {
   if (hasError) {
     return (
       <Screen preset="fixed" style={themed($styles.screen)}>
-        <Header leftTx="store:title" />
+        <Header leftTx="store:title" RightActionComponent={<MentraLogoStandalone />} />
         <InternetConnectionFallbackComponent
           retry={handleRetry}
           message={errorMessage || "Unable to load the App Store. Please check your connection and try again."}
@@ -147,7 +160,7 @@ export default function AppStoreWeb() {
   // If the prefetched WebView is ready, show it in the correct style
   return (
     <Screen preset="fixed" style={themed($styles.screen)}>
-      <Header leftTx="store:title" />
+      <Header leftTx="store:title" RightActionComponent={<MentraLogoStandalone />} />
       <View style={[themed($webViewContainer), {marginHorizontal: -theme.spacing.s6}]}>
         {/* Show the prefetched WebView, but now visible and full size */}
         <WebView
@@ -155,37 +168,27 @@ export default function AppStoreWeb() {
           source={{uri: finalUrl}}
           style={themed($webView)}
           onLoadStart={() => setWebviewLoading(true)}
-          onLoadEnd={() => setWebviewLoading(false)}
+          onLoadEnd={() => {
+            setWebviewLoading(false)
+            setIsAuthReady(true)
+          }}
           onError={handleError}
           onNavigationStateChange={navState => setCanGoBack(navState.canGoBack)}
           onMessage={handleWebViewMessage}
           javaScriptEnabled={true}
           domStorageEnabled={true}
-          startInLoadingState={true}
+          startInLoadingState={false}
           scalesPageToFit={false}
           bounces={false}
           scrollEnabled={true}
-          injectedJavaScript={`
-              const meta = document.createElement('meta');
-              meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-              meta.setAttribute('name', 'viewport');
-              document.getElementsByTagName('head')[0].appendChild(meta);
-              true;
-              // append a div with height 200px to the end:
-              const div = document.createElement('div');
-              div.style.height = '${bottom + theme.spacing.s6}px';
-              div.style.width = '100%';
-              div.style.backgroundColor = '${theme.colors.background}';
-              document.body.appendChild(div);
-              // document.body.style.height = 'calc(100vh + 200px)';
-            `}
-          renderLoading={() => (
-            <View style={themed($loadingOverlay)}>
-              <ActivityIndicator size="large" color={theme.colors.primary} />
-              <Text text="Loading App Store..." style={themed($loadingText)} />
-            </View>
-          )}
         />
+        {/* Loading overlay - stays visible until store confirms auth ready */}
+        {!isAuthReady && (
+          <View style={themed($loadingOverlay)}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text text="Loading App Store..." style={themed($loadingText)} />
+          </View>
+        )}
       </View>
     </Screen>
   )

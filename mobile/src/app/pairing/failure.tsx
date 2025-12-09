@@ -1,15 +1,16 @@
+import CoreModule from "core"
+import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
 import {View, ViewStyle, TextStyle} from "react-native"
-import {useLocalSearchParams} from "expo-router"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {Screen, Header, Text, Button} from "@/components/ignite"
-import {ThemedStyle} from "@/theme"
-import Icon from "react-native-vector-icons/FontAwesome"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import Animated, {useAnimatedStyle, useSharedValue, withTiming} from "react-native-reanimated"
-import {translate} from "@/i18n/translate"
+import Icon from "react-native-vector-icons/FontAwesome"
+
+import {Screen, Header, Text, Button} from "@/components/ignite"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {TxKeyPath} from "@/i18n"
-import CoreModule from "core"
+import {translate} from "@/i18n/translate"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function PairingFailureScreen() {
   const {themed, theme} = useAppTheme()
@@ -58,14 +59,9 @@ export default function PairingFailureScreen() {
         />
 
         <View style={themed($buttonContainer)}>
-          <Button tx="pairing:tryAgain" preset="filled" onPress={handleRetry} style={themed($button)} />
+          <Button tx="pairing:tryAgain" preset="primary" onPress={handleRetry} style={themed($button)} />
 
-          <Button
-            tx="pairing:goHome"
-            preset="filled"
-            onPress={handleGoHome}
-            style={[themed($button), themed($secondaryButton)]}
-          />
+          <Button tx="pairing:goHome" preset="alternate" onPress={handleGoHome} style={themed($button)} />
         </View>
 
         {/* <View style={themed($helpContainer)}>
@@ -128,10 +124,4 @@ const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
 
 const $button: ThemedStyle<ViewStyle> = () => ({
   width: "100%",
-})
-
-const $secondaryButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.palette.neutral600,
-  borderWidth: 1,
-  borderColor: colors.border,
 })

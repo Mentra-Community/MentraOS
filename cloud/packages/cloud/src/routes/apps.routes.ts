@@ -34,6 +34,10 @@ const ALLOWED_API_KEY_PACKAGES = [
   "test.augmentos.mira",
   "cloud.augmentos.mira",
   "com.augmentos.mira",
+  "com.mentra.mentraai.beta",
+  // "com.mentra.mentraai.dev",  //later
+  // "com.mentra.mentraai" //later
+
 ];
 
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";

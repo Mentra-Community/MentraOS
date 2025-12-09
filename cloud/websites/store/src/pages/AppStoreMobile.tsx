@@ -1,10 +1,12 @@
-import {useState, useEffect, useCallback, useMemo, useRef} from "react"
+import React, {useState, useEffect, useCallback, useMemo, useRef} from "react"
 import {useNavigate, useSearchParams} from "react-router-dom"
 import {X, Building} from "lucide-react"
-import {motion} from "framer-motion"
+import {motion, AnimatePresence} from "framer-motion"
 import {useAuth} from "@mentra/shared"
 import {useTheme} from "../hooks/useTheme"
 import {useSearch} from "../contexts/SearchContext"
+import {useProfileDropdown} from "../contexts/ProfileDropdownContext"
+import {usePlatform} from "../hooks/usePlatform"
 import SearchBar from "../components/SearchBar"
 import api, {AppFilterOptions} from "../api"
 import {AppI} from "../types"
@@ -15,6 +17,7 @@ import SkeletonSlider from "../components/SkeletonSlider"
 import {toast} from "sonner"
 import {formatCompatibilityError} from "../utils/errorHandling"
 import {CaptionsSlideMobile, MergeSlideMobile, StreamSlideMobile, XSlideMobile} from "../components/ui/slides"
+import {ProfileDropdown} from "../components/ProfileDropdown"
 
 /**
  * Mobile-optimized AppStore component
@@ -23,6 +26,8 @@ const AppStoreMobile: React.FC = () => {
   const navigate = useNavigate()
   const {isAuthenticated, supabaseToken, coreToken, isLoading: authLoading} = useAuth()
   const {theme} = useTheme()
+  const {isWebView} = usePlatform()
+  const profileDropdown = useProfileDropdown()
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Get organization ID from URL query parameter
@@ -40,7 +45,8 @@ const AppStoreMobile: React.FC = () => {
 
   // Slideshow state - mobile slides only
   const slideComponents = [CaptionsSlideMobile, MergeSlideMobile, StreamSlideMobile, XSlideMobile]
-  const [currentSlide, setCurrentSlide] = useState(0)
+  const [currentSlide, setCurrentSlide] = useState(1) // Start at 1 to account for cloned slide
+  const [isTransitioning, setIsTransitioning] = useState(true)
   const slideIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Helper function to check if authentication tokens are ready
@@ -49,18 +55,53 @@ const AppStoreMobile: React.FC = () => {
     return !authLoading && (supabaseToken || coreToken)
   }
 
-  // Slideshow navigation functions
+  // Reset the auto-play timer
+  const resetAutoPlayTimer = useCallback(() => {
+    if (slideIntervalRef.current) {
+      clearInterval(slideIntervalRef.current)
+    }
+    slideIntervalRef.current = setInterval(() => {
+      setCurrentSlide((prev) => prev + 1)
+    }, 8000)
+  }, [])
+
+  // Slideshow navigation functions with infinite scroll
   const goToNextSlide = useCallback(() => {
-    setCurrentSlide((prev) => (prev + 1) % slideComponents.length)
-  }, [slideComponents.length])
+    setCurrentSlide((prev) => prev + 1)
+    resetAutoPlayTimer()
+  }, [resetAutoPlayTimer])
 
   const goToPrevSlide = useCallback(() => {
-    setCurrentSlide((prev) => (prev - 1 + slideComponents.length) % slideComponents.length)
-  }, [slideComponents.length])
+    setCurrentSlide((prev) => prev - 1)
+    resetAutoPlayTimer()
+  }, [resetAutoPlayTimer])
 
-  const goToSlide = useCallback((index: number) => {
-    setCurrentSlide(index)
-  }, [])
+  const goToSlide = useCallback(
+    (index: number) => {
+      setCurrentSlide(index)
+      resetAutoPlayTimer()
+    },
+    [resetAutoPlayTimer],
+  )
+
+  // Handle looping back to the real slides after transition completes
+  useEffect(() => {
+    if (currentSlide === slideComponents.length + 1) {
+      // We've reached the clone at the end, jump back to start (index 1) without animation
+      setTimeout(() => {
+        setIsTransitioning(false)
+        setCurrentSlide(1)
+        setTimeout(() => setIsTransitioning(true), 50)
+      }, 400) // Match transition duration
+    } else if (currentSlide === 0) {
+      // We've reached the clone at the start, jump to end (last real slide) without animation
+      setTimeout(() => {
+        setIsTransitioning(false)
+        setCurrentSlide(slideComponents.length)
+        setTimeout(() => setIsTransitioning(true), 50)
+      }, 400) // Match transition duration
+    }
+  }, [currentSlide, slideComponents.length])
 
   // Set slides as loaded after a short delay
   useEffect(() => {
@@ -399,7 +440,7 @@ const AppStoreMobile: React.FC = () => {
 
       {/* Search bar - sticky at top on mobile */}
       <div
-        className="sticky top-0 z-20 px-[24px] py-3"
+        className="sticky top-0 z-20 px-[24px] py-[24px]"
         style={{
           backgroundColor: "var(--bg-primary)",
         }}>
@@ -414,6 +455,35 @@ const AppStoreMobile: React.FC = () => {
           className="w-full"
         />
       </div>
+
+      {/* Profile dropdown - only show on mobile non-webview when authenticated */}
+      {!isWebView && isAuthenticated && (
+        <AnimatePresence>
+          {profileDropdown.isOpen && (
+            <>
+              {/* Backdrop */}
+              <motion.div
+                initial={{opacity: 0}}
+                animate={{opacity: 1}}
+                exit={{opacity: 0}}
+                transition={{duration: 0.2}}
+                className="fixed inset-0 bg-black/20 z-40"
+                onClick={() => profileDropdown.setIsOpen(false)}
+              />
+
+              {/* Dropdown Content */}
+              <motion.div
+                initial={{opacity: 0, y: -10}}
+                animate={{opacity: 1, y: 0}}
+                exit={{opacity: 0, y: -10}}
+                transition={{duration: 0.2}}
+                className="fixed top-[85px] left-[24px] right-[24px] z-50">
+                <ProfileDropdown variant="mobile" />
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      )}
 
       <main className="px-[24px] pb-6">
         {/* Organization filter indicator */}
@@ -460,7 +530,7 @@ const AppStoreMobile: React.FC = () => {
               <SkeletonSlider />
             ) : (
               <div
-                className="w-full relative overflow-hidden touch-pan-y mt-3"
+                className="w-full relative overflow-hidden touch-pan-y "
                 onTouchStart={(e) => {
                   const touch = e.touches[0]
                   const target = e.currentTarget as HTMLDivElement & {
@@ -495,33 +565,54 @@ const AppStoreMobile: React.FC = () => {
                 <motion.div
                   className="flex"
                   animate={{x: `-${currentSlide * 100}%`}}
-                  transition={{
-                    type: "tween",
-                    duration: 0.4,
-                    ease: [0.25, 0.1, 0.25, 1],
-                  }}>
+                  transition={
+                    isTransitioning
+                      ? {
+                          type: "tween",
+                          duration: 0.4,
+                          ease: [0.25, 0.1, 0.25, 1],
+                        }
+                      : {duration: 0}
+                  }>
+                  {/* Clone of last slide for seamless loop */}
+                  {slideComponents[slideComponents.length - 1] &&
+                    React.createElement(slideComponents[slideComponents.length - 1], {
+                      key: "clone-last",
+                    })}
+                  {/* Actual slides */}
                   {slideComponents.map((SlideComponent, index) => (
                     <SlideComponent key={index} />
                   ))}
+                  {/* Clone of first slide for seamless loop */}
+                  {slideComponents[0] && React.createElement(slideComponents[0], {key: "clone-first"})}
                 </motion.div>
 
                 {/* Slide Indicators */}
                 <div className="absolute top-[10px] left-1/2 -translate-x-1/2 flex gap-2 z-1">
-                  {slideComponents.map((_, index) => (
-                    <motion.button
-                      key={index}
-                      onClick={() => goToSlide(index)}
-                      className={`rounded-full h-[2px] ${
-                        index === currentSlide ? "bg-white" : "bg-white/50 hover:bg-white/75"
-                      }`}
-                      aria-label={`Go to slide ${index + 1}`}
-                      animate={{
-                        width: index === currentSlide ? 32 : 8,
-                      }}
-                      transition={{duration: 0.3}}
-                      whileHover={{scale: 1.2}}
-                    />
-                  ))}
+                  {slideComponents.map((_, index) => {
+                    // Calculate actual slide index accounting for cloned slides
+                    const actualIndex =
+                      currentSlide === 0
+                        ? slideComponents.length - 1
+                        : currentSlide === slideComponents.length + 1
+                          ? 0
+                          : currentSlide - 1
+                    return (
+                      <motion.button
+                        key={index}
+                        onClick={() => goToSlide(index + 1)} // Add 1 to account for cloned slide
+                        className={`rounded-full h-[2px] ${
+                          index === actualIndex ? "bg-white" : "bg-white/50 hover:bg-white/75"
+                        }`}
+                        aria-label={`Go to slide ${index + 1}`}
+                        animate={{
+                          width: index === actualIndex ? 32 : 8,
+                        }}
+                        transition={{duration: 0.3}}
+                        whileHover={{scale: 1.2}}
+                      />
+                    )
+                  })}
                 </div>
               </div>
             )}

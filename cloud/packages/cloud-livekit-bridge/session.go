@@ -90,7 +90,12 @@ func (s *RoomSession) getOrCreateTrack(trackName string) (*lkmedia.PCMLocalTrack
 
 	s.tracks[trackName] = track
 	s.publications[trackName] = publication
-	log.Printf("Published PCM track '%s' for user %s", trackName, s.userId)
+
+	// Allow WebRTC negotiation to complete before returning
+	// This prevents audio loss on the first chunk (~100ms for SDP offer/answer)
+	time.Sleep(100 * time.Millisecond)
+
+	log.Printf("Published PCM track '%s' for user %s (WebRTC warmed)", trackName, s.userId)
 	return track, nil
 }
 

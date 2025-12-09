@@ -61,15 +61,15 @@ The `compress` option controls image compression during webhook upload to optimi
 | `"medium"` | 75% scale | 80% quality | ~50-60% smaller | Balanced quality/speed |
 | `"heavy"` | 50% scale | 60% quality | ~75-85% smaller | Slow connections, large photos |
 
-**Example:** A 1440×1088 pixel photo captured at medium size (typical: ~280KB):
-- `"none"`: 1440×1088, full quality → **~280KB**
-- `"medium"`: 1080×816, 80% quality → **~140KB** (50% smaller)
-- `"heavy"`: 720×544, 60% quality → **~70KB** (75% smaller)
+**Example:** A 1440×1080 pixel photo captured at medium size (typical: ~280KB):
+- `"none"`: 1440×1080, full quality → **~280KB**
+- `"medium"`: 1080×810, 80% quality → **~140KB** (50% smaller)
+- `"heavy"`: 720×540, 60% quality → **~70KB** (75% smaller)
 
-For large size photos (3264×2448, typical: ~800KB):
-- `"none"`: 3264×2448, full quality → **~800KB**
-- `"medium"`: 2448×1836, 80% quality → **~400KB**
-- `"heavy"`: 1632×1224, 60% quality → **~200KB**
+For large size photos (3200×2400, typical: ~800KB):
+- `"none"`: 3200×2400, full quality → **~800KB**
+- `"medium"`: 2400×1800, 80% quality → **~400KB**
+- `"heavy"`: 1600×1200, 60% quality → **~200KB**
 
 **Important Notes:**
 - Compression only applies to **webhook uploads** (WiFi/cellular)

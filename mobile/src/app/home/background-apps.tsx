@@ -16,8 +16,8 @@ export default function BackgroundAppsScreen() {
     <Screen preset="fixed" style={themed($styles.screen)}>
       <Header leftIcon="chevron-left" onLeftPress={goBack} titleTx="home:backgroundApps" />
 
-      <View style={themed($headerInfo)}>
-        <Text style={themed($headerText)}>Multiple background apps can be active at once.</Text>
+      <View style={themed($customHeaderDescription)}>
+        <Text style={themed($subtitle)}>Multiple background apps can be active at once.</Text>
       </View>
 
       <ScrollView
@@ -34,17 +34,16 @@ export default function BackgroundAppsScreen() {
   )
 }
 
-const $headerInfo: ThemedStyle<ViewStyle> = ({spacing, colors}) => ({
+const $customHeaderDescription: ThemedStyle<ViewStyle> = ({spacing}) => ({
   paddingHorizontal: spacing.s4,
-  paddingVertical: spacing.s3,
-  borderBottomWidth: 1,
-  borderBottomColor: colors.border,
+  paddingBottom: spacing.s4,
 })
 
-const $headerText: ThemedStyle<TextStyle> = ({colors}) => ({
+const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
+  fontWeight: "400",
   color: colors.textDim,
-  textAlign: "center",
+  textAlign: "left",
 })
 
 const $scrollView: ThemedStyle<ViewStyle> = () => ({

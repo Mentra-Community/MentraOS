@@ -5,10 +5,12 @@ import {useAuth} from "@mentra/shared"
 import {usePlatform} from "../hooks/usePlatform"
 import {useTheme} from "../hooks/useTheme"
 import {useSearch} from "../contexts/SearchContext"
+import {useProfileDropdown} from "../contexts/ProfileDropdownContext"
 import {Button} from "./ui/button"
 import {Search, User} from "lucide-react"
 import SearchBar from "./SearchBar"
 import {DropDown} from "./ui/dropdown"
+import {ProfileDropdown} from "./ProfileDropdown"
 
 interface HeaderProps {
   onSearch?: (e: React.FormEvent) => void
@@ -17,15 +19,18 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}) => {
-  const {isAuthenticated, signOut, user} = useAuth()
+  const {isAuthenticated, user} = useAuth()
   const {isWebView} = usePlatform()
   const {theme} = useTheme()
   const {searchQuery, setSearchQuery} = useSearch()
+  const profileDropdown = useProfileDropdown()
   const navigate = useNavigate()
   const location = useLocation()
   const isStorePage = location.pathname === "/"
+  const isAppDetailPage = location.pathname.startsWith("/package/")
   const [searchMode, setsearchMode] = useState(false)
   const searchRef = useRef<HTMLFormElement>(null)
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 639 : false)
 
   // Check URL params for search trigger
   useEffect(() => {
@@ -77,6 +82,7 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
   useEffect(() => {
     const handleResize = () => {
       setWindowWidth(window.innerWidth)
+      setIsMobile(window.innerWidth <= 639)
     }
 
     window.addEventListener("resize", handleResize)
@@ -142,12 +148,6 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
     }
   }, [searchMode, onSearchClear, setSearchQuery])
 
-  // Handle sign out
-  const handleSignOut = async () => {
-    await signOut()
-    navigate("/")
-  }
-
   // Don't show header in webview
   if (isWebView) {
     return null
@@ -155,12 +155,13 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
 
   return (
     <header
-      className="sticky top-0 z-10 transition-all duration-300"
+      className="sticky top-0 z-[5] transition-all duration-300"
       style={{
         background: theme === "light" ? "#ffffff" : "#171717",
-        borderBottom: isScrolled ? `1px solid var(--border-color)` : "1px solid transparent",
+        borderBottom: !isMobile && isScrolled ? `1px solid var(--border-color)` : "1px solid transparent",
       }}>
-      <div className=" mx-auto px px-8 sm:px- md:px-16 lg:px-25  pt-[16px] pb-[16px]">
+      <div
+        className={`mx-auto px-[24px] sm:px-12 md:px-16 lg:px-24 z-20  ${isMobile ? (isAppDetailPage ? "pt-[32px] pb-[32px]" : "pt-[32px]") : "pb-[16px] pt-[16px]"}`}>
         {/* Two-row layout for medium screens, single row for large+ */}
         <div className="flex relative flex-row lg:flex-row lg:items-center lg:justify-between items-center ">
           {/* Top row: Logo and Buttons */}
@@ -178,9 +179,13 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
                     <Link
                       to="/"
                       className="flex items-center gap-2 sm:gap-4 select-none hover:opacity-80 transition-opacity">
-                      <img src="/mentra_logo_gr.png" alt="Mentra Logo" className="h-6 sm:h-7 w-auto object-contain" />
+                      <img
+                        src="/mentra_logo_gr.png"
+                        alt="Mentra Logo"
+                        className="h-[16px] sm:h-7 w-auto object-contain"
+                      />
                       <span
-                        className="text-[20px] sm:text-[20px] font-light mb-[-0px]"
+                        className="text-[20px] sm:text-[20px] font-normal  mb-[-0px]"
                         style={{
                           fontFamily: "Red Hat Display, sans-serif",
                           letterSpacing: "0.06em",
@@ -228,31 +233,41 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
             </div>
 
             {/* Buttons container - only visible on mobile (below sm) in top row */}
-            <div className="flex items-center gap-3 sm:hidden ml-auto justify-end flex-shrink-0">
+            <div className="flex items-center gap-3 sm:hidden ml-auto justify-end flex-shrink-0 relative">
               {/* Authentication */}
               {isAuthenticated ? (
-                <Button
-                  onClick={handleSignOut}
-                  variant={theme === "light" ? "default" : "outline"}
-                  className="rounded-full border-[1.5px]"
+                <button
+                  onClick={profileDropdown.toggleDropdown}
+                  className="flex justify-center items-center rounded-full w-[44px] h-[44px] overflow-hidden"
                   style={{
-                    backgroundColor: theme === "light" ? "#000000" : "transparent",
-                    borderColor: theme === "light" ? "#000000" : "#3f3f46",
-                    color: theme === "light" ? "#ffffff" : "#e4e4e7",
+                    backgroundColor: "var(--bg-secondary)",
                   }}>
-                  Sign Out
-                </Button>
+                  {getUserAvatar() ? (
+                    <img
+                      key={getUserAvatar()}
+                      src={getUserAvatar()!}
+                      alt="Profile"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        console.error("Failed to load avatar:", getUserAvatar())
+                        e.currentTarget.style.display = "none"
+                      }}
+                    />
+                  ) : (
+                    <User
+                      size={20}
+                      style={{
+                        color: "var(--text-muted)",
+                      }}
+                    />
+                  )}
+                </button>
               ) : (
                 <Button
                   onClick={() => navigate("/login")}
                   variant={theme === "light" ? "default" : "outline"}
-                  className="rounded-full border-[1.5px] flex items-center gap-2"
-                  style={{
-                    backgroundColor: theme === "light" ? "#000000" : "transparent",
-                    borderColor: theme === "light" ? "#000000" : "#3f3f46",
-                    color: theme === "light" ? "#ffffff" : "#e4e4e7",
-                  }}>
-                  <User className="w-4 h-4" />
+                  className="rounded-full border-[1.0px] border-[var(--border-btn)] flex items-center gap-[10px] py-2 px-4 bg-[var(--primary-foreground)] text-[var(--foreground)]">
+                  <User className="w-4 h-4" style={{color: "var(--foreground)"}} />
                   Login
                 </Button>
               )}
@@ -340,7 +355,16 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
                               backgroundColor: "var(--bg-secondary)",
                             }}>
                             {getUserAvatar() ? (
-                              <img src={getUserAvatar()!} alt="Profile" className="w-full h-full object-cover" />
+                              <img
+                                key={getUserAvatar()}
+                                src={getUserAvatar()!}
+                                alt="Profile"
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  console.error("Failed to load avatar:", getUserAvatar())
+                                  e.currentTarget.style.display = "none"
+                                }}
+                              />
                             ) : (
                               <User
                                 size={20}
@@ -351,68 +375,8 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
                             )}
                           </button>
                         }
-                        contentClassName="mt-2 right-0 shadow-lg rounded-lg p-0 min-w-[280px]">
-                        <div
-                          className="flex flex-col rounded-lg"
-                          style={{
-                            backgroundColor: "var(--bg-primary)",
-                          }}>
-                          {/* User Info Section */}
-                          <div
-                            className="flex flex-col items-center py-6 px-4 border-b"
-                            style={{
-                              borderColor: "var(--border-color)",
-                            }}>
-                            <div
-                              className="w-20 h-20 rounded-full flex items-center justify-center overflow-hidden mb-3"
-                              style={{
-                                backgroundColor: theme === "light" ? "#F2F2F2" : "var(--bg-tertiary)",
-                              }}>
-                              {getUserAvatar() ? (
-                                <img src={getUserAvatar()!} alt="Profile" className="w-full h-full object-cover" />
-                              ) : (
-                                <User
-                                  size={40}
-                                  style={{
-                                    color: "var(--text-muted)",
-                                  }}
-                                />
-                              )}
-                            </div>
-                            <div className="text-center">
-                              <p
-                                className="font-medium text-base"
-                                style={{
-                                  color: "var(--text-primary)",
-                                }}>
-                                {user?.name || user?.email?.split("@")[0] || "User"}
-                              </p>
-                              <p
-                                className="text-sm mt-1"
-                                style={{
-                                  color: "var(--text-secondary)",
-                                }}>
-                                {user?.email || "No email"}
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* Sign Out Button */}
-                          <div className="p-2">
-                            <button
-                              onClick={handleSignOut}
-                              className="w-full text-center px-4 py-2.5 rounded text-red-600 font-medium transition-colors"
-                              style={{
-                                backgroundColor: "transparent",
-                              }}
-                              onMouseEnter={(e) =>
-                                (e.currentTarget.style.backgroundColor = theme === "light" ? "#f3f4f6" : "#27272a")
-                              }
-                              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}>
-                              Sign Out
-                            </button>
-                          </div>
-                        </div>
+                        contentClassName="mt-2 right-0 shadow-lg rounded-xl p-0 min-w-[280px]">
+                        <ProfileDropdown variant="desktop" />
                       </DropDown>
                     </div>
                   ) : (
@@ -444,13 +408,8 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear, onSearchChange}
                       <Button
                         onClick={() => navigate("/login")}
                         variant={theme === "light" ? "default" : "outline"}
-                        className="rounded-full border-[1.5px] flex items-center gap-2"
-                        style={{
-                          backgroundColor: theme === "light" ? "#000000" : "transparent",
-                          borderColor: theme === "light" ? "#000000" : "#3f3f46",
-                          color: theme === "light" ? "#ffffff" : "#e4e4e7",
-                        }}>
-                        <User className="w-4 h-4" />
+                        className="rounded-full border-[1.0px] border-[var(--border-btn)] flex items-center gap-[10px] py-2 px-4 bg-[var(--primary-foreground)] text-[var(--foreground)]">
+                        <User className="w-4 h-4" style={{color: "var(--foreground)"}} />
                         Login
                       </Button>
                     </div>

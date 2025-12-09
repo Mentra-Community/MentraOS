@@ -1,4 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage"
+import {storage} from "@/utils/storage/storage"
 
 export interface GallerySettings {
   autoSaveToCameraRoll: boolean
@@ -21,27 +21,23 @@ export class GallerySettingsService {
   }
 
   async getSettings(): Promise<GallerySettings> {
-    try {
-      const stored = await AsyncStorage.getItem(this.SETTINGS_KEY)
-      if (stored) {
-        return {...this.DEFAULT_SETTINGS, ...JSON.parse(stored)}
-      }
-      return this.DEFAULT_SETTINGS
-    } catch (error) {
-      console.error("[GallerySettings] Error loading settings:", error)
+    const res = storage.load<GallerySettings>(this.SETTINGS_KEY)
+    if (res.is_error()) {
+      console.error("[GallerySettings] Error loading settings:", res.error)
       return this.DEFAULT_SETTINGS
     }
+    const stored = res.value
+    return {...this.DEFAULT_SETTINGS, ...stored}
   }
 
   async updateSettings(settings: Partial<GallerySettings>): Promise<void> {
-    try {
-      const current = await this.getSettings()
-      const updated = {...current, ...settings}
-      await AsyncStorage.setItem(this.SETTINGS_KEY, JSON.stringify(updated))
-      console.log("[GallerySettings] Settings updated:", updated)
-    } catch (error) {
-      console.error("[GallerySettings] Error saving settings:", error)
+    const current = await this.getSettings()
+    const updated = {...current, ...settings}
+    const res = await storage.save(this.SETTINGS_KEY, updated)
+    if (res.is_error()) {
+      console.error("[GallerySettings] Error saving settings:", res.error)
     }
+    console.log("[GallerySettings] Settings updated:", updated)
   }
 
   async getAutoSaveToCameraRoll(): Promise<boolean> {

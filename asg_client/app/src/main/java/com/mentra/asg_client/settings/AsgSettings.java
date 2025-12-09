@@ -20,6 +20,8 @@ public class AsgSettings {
     private static final String KEY_BUTTON_PHOTO_SIZE = "button_photo_size";
     private static final String KEY_BUTTON_CAMERA_LED = "button_camera_led";
     private static final String KEY_SAVE_IN_GALLERY_MODE = "save_in_gallery_mode";
+    private static final String KEY_ZSL_ENABLED = "zsl_enabled";
+    private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
 
     private final SharedPreferences prefs;
     private final Context context;
@@ -168,5 +170,45 @@ public class AsgSettings {
         Log.d(TAG, "📸 Gallery mode state changed: " + (inGalleryMode ? "ACTIVE" : "INACTIVE"));
         // Using commit() for immediate persistence
         prefs.edit().putBoolean(KEY_SAVE_IN_GALLERY_MODE, inGalleryMode).commit();
+    }
+
+    /**
+     * Get the ZSL (Zero Shutter Lag) setting
+     * @return true if ZSL should be enabled, false otherwise (default: true)
+     */
+    public boolean isZslEnabled() {
+        boolean enabled = prefs.getBoolean(KEY_ZSL_ENABLED, true);
+        Log.d(TAG, "Retrieved ZSL enabled setting: " + enabled);
+        return enabled;
+    }
+
+    /**
+     * Set the ZSL (Zero Shutter Lag) setting
+     * @param enabled true to enable ZSL, false to disable
+     */
+    public void setZslEnabled(boolean enabled) {
+        Log.d(TAG, "Setting ZSL enabled to: " + enabled);
+        // Using commit() for immediate persistence
+        prefs.edit().putBoolean(KEY_ZSL_ENABLED, enabled).commit();
+    }
+
+    /**
+     * Get the MFNR (Multi-Frame Noise Reduction) setting
+     * @return true if MFNR should be enabled, false otherwise (default: true)
+     */
+    public boolean isMfnrEnabled() {
+        boolean enabled = prefs.getBoolean(KEY_MFNR_ENABLED, true);
+        Log.d(TAG, "Retrieved MFNR enabled setting: " + enabled);
+        return enabled;
+    }
+
+    /**
+     * Set the MFNR (Multi-Frame Noise Reduction) setting
+     * @param enabled true to enable MFNR, false to disable
+     */
+    public void setMfnrEnabled(boolean enabled) {
+        Log.d(TAG, "Setting MFNR enabled to: " + enabled);
+        // Using commit() for immediate persistence
+        prefs.edit().putBoolean(KEY_MFNR_ENABLED, enabled).commit();
     }
 }

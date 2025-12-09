@@ -4,7 +4,6 @@ import {
   HardwareType,
   HardwareRequirementLevel,
 } from "@/../../cloud/packages/types/src"
-
 import {simulatedGlasses} from "@/../../cloud/packages/types/src/hardware"
 
 /**

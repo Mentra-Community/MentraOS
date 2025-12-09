@@ -270,7 +270,7 @@ public class OtaHelper {
         // Process apps in order - important for sequential updates
         String[] orderedPackages = {
             "com.mentra.asg_client",     // Update ASG client first
-            "com.augmentos.otaupdater"      // Then OTA updater
+            // "com.augmentos.otaupdater"      // Then OTA updater
         };
         
         for (String packageName : orderedPackages) {

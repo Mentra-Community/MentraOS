@@ -7,6 +7,7 @@ import android.util.Log;
 import android.view.KeyEvent;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
+import com.mentra.asg_client.service.utils.SysProp;
 
 public class SysControl {
     private static final String TAG = "SysControl";
@@ -232,6 +233,32 @@ public class SysControl {
         context.sendBroadcast(nn);
     }
     
+    /**
+     * Install MTK OTA firmware update
+     * Sends a broadcast to the system to install MTK firmware from a zip file.
+     * The system will handle extraction and installation automatically.
+     * 
+     * @param context Application context
+     * @param otaPath Path to the MTK firmware zip file (e.g., "/sdcard/update.zip")
+     */
+    public static void installOTA(Context context, String otaPath) {
+        if (otaPath == null || otaPath.isEmpty()) {
+            Log.e(TAG, "installOTA: otaPath cannot be null or empty");
+            return;
+        }
+        
+        Log.i(TAG, "📦 Installing MTK OTA from: " + otaPath);
+        
+        Intent nn = new Intent("com.xy.updateota");
+        nn.putExtra("cmd", "start");
+        nn.putExtra("pkname", context.getPackageName());
+        nn.putExtra("path", otaPath);
+        nn.setPackage("com.android.systemui");
+        context.sendBroadcast(nn);
+        
+        Log.d(TAG, "✅ MTK OTA install broadcast sent");
+    }
+    
     // NEW METHODS - Advanced Hotspot Control
     public static void openHotspotAlt(Context context) {
         Intent nn = new Intent();
@@ -357,6 +384,31 @@ public class SysControl {
         } catch (Exception e) {
             Log.e(TAG, "Failed to flash recording LED", e);
         }
+    }
+    
+    /**
+     * Get system OTA version (MTK firmware version)
+     * Reads the ro.custom.ota.version system property which contains the MTK OTA version.
+     * @param context Application context
+     * @return System OTA version string (format: YYYYMMDD, e.g., "20241130") or default "20241130" if not available
+     */
+    public static String getSystemCurrentVersion(Context context) {
+        String VERSION_CUSTOM = "ro.custom.ota.version";
+        String ver = "";
+        try {
+            ver = SysProp.get(context, VERSION_CUSTOM);
+        } catch (Exception e) {
+            Log.w(TAG, "Error reading system OTA version property", e);
+        }
+        
+        String version = ver;
+        if (ver == null || ver.length() < 8) {
+            // Default fallback version (matches K900_server behavior)
+            version = "20241130";
+            Log.d(TAG, "System OTA version not available or invalid, using default: " + version);
+        }
+        
+        return version;
     }
     
     private static void sendBroadcast(Context context, Intent nn) {

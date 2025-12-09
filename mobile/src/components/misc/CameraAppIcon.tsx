@@ -1,9 +1,10 @@
+import {SquircleView} from "expo-squircle-view"
 import {View, ViewStyle} from "react-native"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {SquircleView} from "expo-squircle-view"
+
 import {useSetting, SETTINGS} from "@/stores/settings"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface CameraAppIconProps {
   size?: "small" | "medium" | "large"

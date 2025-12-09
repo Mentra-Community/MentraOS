@@ -115,16 +115,7 @@ public class CameraNeo extends LifecycleService {
     private Size jpegSize;
     private String cameraId;
 
-    // Target photo resolution (4:3 landscape orientation)
-    private static final int TARGET_WIDTH = 1440;
-    private static final int TARGET_HEIGHT = 1088;
-    private static final int TARGET_WIDTH_SMALL = 960;
-    private static final int TARGET_HEIGHT_SMALL = 720;
-    private static final int TARGET_WIDTH_LARGE = 3264;
-    private static final int TARGET_HEIGHT_LARGE = 2448;
-
-    // Auto-exposure settings for better photo quality - now dynamic
-    private static final int JPEG_QUALITY = 90; // High quality JPEG
+    // Photo resolution and quality constants are defined in CameraConstants.java
     
     // Dynamic JPEG orientation mapping based on device rotation
     private static final SparseIntArray JPEG_ORIENTATION = new SparseIntArray();
@@ -145,6 +136,9 @@ public class CameraNeo extends LifecycleService {
     // LED control - tied to camera lifecycle
     private static volatile boolean pendingLedEnabled = false;  // LED state for current/pending requests
     private IHardwareManager hardwareManager;
+    
+    // MediaTek vendor-specific camera settings (ZSL, MFNR)
+    private CameraSettings mCameraSettings;
 
     // Camera characteristics for dynamic auto-exposure and autofocus
     private int[] availableAeModes;
@@ -215,10 +209,13 @@ public class CameraNeo extends LifecycleService {
      */
 
     // Simplified AE system - autofocus runs automatically
-    private enum ShotState { IDLE, WAITING_AE, SHOOTING }
+    // Following XyCamera2 pattern: WAITING_AE -> request lock -> WAITING_AE_LOCK -> SHOOTING
+    private enum ShotState { IDLE, WAITING_AE, WAITING_AE_LOCK, SHOOTING }
     private volatile ShotState shotState = ShotState.IDLE;
+    private boolean mWaitingForAeConvergence = false;  // Flag to track if waiting for AE (XyCamera2 pattern)
+    private boolean mAeLockRequested = false;  // Flag to track if AE lock requested (XyCamera2 pattern)
     private long aeStartTimeNs;
-    private static final long AE_WAIT_NS = 1_000_000_000L; // 0.5 second max wait for AE
+    private static final long AE_WAIT_NS = 1_000_000_000L; // 1 second max wait for AE (matching XyCamera2)
 
     // Simple AE callback - autofocus handled automatically
     private final SimplifiedAeCallback aeCallback = new SimplifiedAeCallback();
@@ -261,14 +258,16 @@ public class CameraNeo extends LifecycleService {
         String size;
         PhotoCaptureCallback callback;
         boolean enableLed;  // Whether to use LED flash for this photo
+        boolean isFromSdk;  // true = SDK photo (optimized sizes), false = button photo (high quality)
         long timestamp;
         int retryCount;
-        
-        PhotoRequest(String filePath, String size, boolean enableLed, PhotoCaptureCallback callback) {
+
+        PhotoRequest(String filePath, String size, boolean enableLed, boolean isFromSdk, PhotoCaptureCallback callback) {
             this.requestId = "photo_" + System.currentTimeMillis() + "_" + filePath.hashCode();
             this.filePath = filePath;
             this.size = size;
             this.enableLed = enableLed;
+            this.isFromSdk = isFromSdk;
             this.callback = callback;
             this.timestamp = System.currentTimeMillis();
             this.retryCount = 0;
@@ -406,6 +405,8 @@ public class CameraNeo extends LifecycleService {
         }
         // Initialize hardware manager for LED control
         hardwareManager = HardwareManagerFactory.getInstance(this);
+        // Initialize camera settings for vendor-specific features (ZSL, MFNR)
+        mCameraSettings = new CameraSettings(this);
         createNotificationChannel();
         showNotification("Camera Service", "Service is running");
         startBackgroundThread();
@@ -414,17 +415,18 @@ public class CameraNeo extends LifecycleService {
     /**
      * Primary entry point for photo requests - uses global queue to prevent race conditions
      * This method immediately queues the request and ensures only one service instance exists
-     * 
+     *
      * @param context Application context
      * @param filePath File path to save the photo
      * @param size Photo size (small/medium/large)
      * @param enableLed Whether to enable LED flash for this photo
+     * @param isFromSdk true for SDK photos (optimized sizes), false for button photos (high quality)
      * @param callback Callback to be notified when photo is captured
      */
-    public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, PhotoCaptureCallback callback) {
+    public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
-            PhotoRequest request = new PhotoRequest(filePath, size, enableLed, callback);
+            PhotoRequest request = new PhotoRequest(filePath, size, enableLed, isFromSdk, callback);
             globalRequestQueue.offer(request);
             
             // Store callback in registry for later retrieval
@@ -448,6 +450,7 @@ public class CameraNeo extends LifecycleService {
                         sInstance.sPhotoCallback = queuedRequest.callback;
                         sInstance.pendingPhotoPath = queuedRequest.filePath;
                         sInstance.pendingRequestedSize = queuedRequest.size;
+                        sInstance.pendingIsFromSdk = queuedRequest.isFromSdk;
                         sInstance.shotState = ShotState.WAITING_AE;
                         
                         if (sInstance.backgroundHandler != null) {
@@ -478,22 +481,24 @@ public class CameraNeo extends LifecycleService {
 
     /**
      * Legacy method - redirects to enqueuePhotoRequest for backward compatibility
-     * 
+     * Defaults to SDK photo (isFromSdk=true) for optimized transfer sizes
+     *
      * @deprecated Use enqueuePhotoRequest instead
      */
     @Deprecated
     public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback) {
-        enqueuePhotoRequest(context, filePath, null, false, callback);
+        enqueuePhotoRequest(context, filePath, null, false, true, callback);
     }
 
     /**
      * Legacy method with size parameter - redirects to enqueuePhotoRequest
-     * 
+     * Defaults to SDK photo (isFromSdk=true) for optimized transfer sizes
+     *
      * @deprecated Use enqueuePhotoRequest instead
      */
     @Deprecated
     public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback, String size) {
-        enqueuePhotoRequest(context, filePath, size, false, callback);
+        enqueuePhotoRequest(context, filePath, size, false, true, callback);
     }
 
     /**
@@ -654,7 +659,35 @@ public class CameraNeo extends LifecycleService {
     }
 
     private String pendingRequestedSize;
-    
+    private boolean pendingIsFromSdk;  // true = SDK photo (optimized sizes), false = button photo
+
+    /**
+     * Get the appropriate JPEG quality based on the requested size tier and source.
+     * SDK photos use lower quality for faster transfer; button photos use high quality.
+     */
+    private int getJpegQualityForSize() {
+        if (pendingIsFromSdk) {
+            // SDK photos - optimized for fast transfer
+            if (pendingRequestedSize == null) {
+                return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
+            }
+            switch (pendingRequestedSize) {
+                case CameraConstants.SIZE_SMALL:
+                    return CameraConstants.SDK_JPEG_QUALITY_SMALL;
+                case CameraConstants.SIZE_LARGE:
+                    return CameraConstants.SDK_JPEG_QUALITY_LARGE;
+                case CameraConstants.SIZE_FULL:
+                    return CameraConstants.SDK_JPEG_QUALITY_FULL;
+                case CameraConstants.SIZE_MEDIUM:
+                default:
+                    return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
+            }
+        } else {
+            // Button photos - high quality
+            return CameraConstants.BUTTON_JPEG_QUALITY;
+        }
+    }
+
     /**
      * Process all queued photo requests from the global queue
      * This is called when the service starts with USE_GLOBAL_QUEUE flag
@@ -707,6 +740,7 @@ public class CameraNeo extends LifecycleService {
             if (cameraDevice != null && cameraCaptureSession != null) {
                 Log.d(TAG, "Camera already open, taking next photo from queue");
                 pendingRequestedSize = request.size;
+                pendingIsFromSdk = request.isFromSdk;
                 pendingPhotoPath = request.filePath;
                 
                 // Check if we're already processing a photo
@@ -735,36 +769,50 @@ public class CameraNeo extends LifecycleService {
      */
     private void setupCameraForPhotoRequest(PhotoRequest request) {
         if (request == null) return;
-        
-        // Store the requested size and LED state
+
+        // Check if size or SDK flag has changed BEFORE updating pending values
+        // This is critical for detecting when camera needs to be reopened
+        boolean sizeChanged = false;
+        boolean sdkFlagChanged = false;
+        if (pendingRequestedSize != null && request.size != null) {
+            sizeChanged = !pendingRequestedSize.equals(request.size);
+        } else if (pendingRequestedSize == null && request.size != null) {
+            sizeChanged = true;
+        } else if (pendingRequestedSize != null && request.size == null) {
+            sizeChanged = true;
+        }
+        sdkFlagChanged = (pendingIsFromSdk != request.isFromSdk);
+
+        // Now store the requested size, SDK flag, and LED state
         pendingRequestedSize = request.size;
+        pendingIsFromSdk = request.isFromSdk;
         sPhotoCallback = request.callback;
-        
+
         // Update LED state if any request needs LED
         if (request.enableLed) {
             pendingLedEnabled = true;
         }
-        
+
         // Check if camera is already open and kept alive
         if (isCameraKeptAlive && cameraDevice != null) {
-            Log.d(TAG, "Camera already open, taking photo immediately");
-            
-            // Check if size has changed
-            boolean sizeChanged = false;
-            if (pendingRequestedSize != null && request.size != null) {
-                sizeChanged = !pendingRequestedSize.equals(request.size);
-            }
-            
-            if (sizeChanged) {
-                Log.d(TAG, "Photo size changed, reopening camera");
+            Log.d(TAG, "Camera already open, checking if reconfiguration needed");
+
+            // Need to reopen camera if size changed OR if SDK flag changed
+            // (SDK flag affects resolution selection even for same size tier)
+            boolean needsReopen = sizeChanged || sdkFlagChanged;
+
+            if (needsReopen) {
+                Log.d(TAG, "Camera config changed (sizeChanged=" + sizeChanged +
+                          ", sdkFlagChanged=" + sdkFlagChanged + "), reopening camera");
                 cancelKeepAliveTimer();
                 closeCamera();
                 openCameraInternal(request.filePath, false);
             } else {
-                // Cancel keep-alive timer and take photo
+                // Cancel keep-alive timer and take photo with existing config
+                Log.d(TAG, "Camera config unchanged, taking photo immediately");
                 cancelKeepAliveTimer();
                 pendingPhotoPath = request.filePath;
-                
+
                 // Start capture sequence
                 shotState = ShotState.WAITING_AE;
                 if (backgroundHandler != null) {
@@ -799,7 +847,8 @@ public class CameraNeo extends LifecycleService {
             if (shotState != ShotState.IDLE) {
                 Log.d(TAG, "Camera is busy (state: " + shotState + "), queuing photo request");
                 // Queue this request to be processed after current photo completes
-                photoRequestQueue.offer(new PhotoRequest(filePath, pendingRequestedSize, false, sPhotoCallback));
+                // Inherit isFromSdk from current pending request context
+                photoRequestQueue.offer(new PhotoRequest(filePath, pendingRequestedSize, false, pendingIsFromSdk, sPhotoCallback));
                 return;
             }
             
@@ -1154,6 +1203,14 @@ public class CameraNeo extends LifecycleService {
             // Get characteristics for the selected camera
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(this.cameraId);
 
+            // Initialize MediaTek vendor keys for ZSL/MFNR (if available)
+            if (mCameraSettings != null) {
+                mCameraSettings.init(characteristics);
+                boolean zslSupported = mCameraSettings.isZslSupported();
+                boolean mfnrSupported = mCameraSettings.isMfnrSupported();
+                Log.d(TAG, "Vendor feature support - ZSL: " + zslSupported + ", MFNR: " + mfnrSupported);
+            }
+
             // Query camera capabilities for dynamic auto-exposure
             queryCameraCapabilities(characteristics);
 
@@ -1179,11 +1236,26 @@ public class CameraNeo extends LifecycleService {
                     return;
                 }
 
-                // Log available video sizes
-                Log.i(TAG, "Available video sizes for camera " + this.cameraId + ":");
+                // Log available video sizes with detailed analysis
+                Log.i(TAG, "📹 VIDEO RESOLUTION DEBUG - Available video sizes for camera " + this.cameraId + " (" + videoSizes.length + " options):");
+                boolean has1080p = false;
+                boolean has720p = false;
+                boolean has4K = false;
                 for (Size size : videoSizes) {
-                    Log.i(TAG, "  " + size.getWidth() + "x" + size.getHeight());
+                    String marker = "";
+                    if (size.getWidth() == 1920 && size.getHeight() == 1080) {
+                        has1080p = true;
+                        marker = " ← 1080p";
+                    } else if (size.getWidth() == 1280 && size.getHeight() == 720) {
+                        has720p = true;
+                        marker = " ← 720p";
+                    } else if (size.getWidth() == 3840 && size.getHeight() == 2160) {
+                        has4K = true;
+                        marker = " ← 4K";
+                    }
+                    Log.i(TAG, "  " + size.getWidth() + "x" + size.getHeight() + marker);
                 }
+                Log.i(TAG, "📹 Resolution support: 4K=" + has4K + ", 1080p=" + has1080p + ", 720p=" + has720p);
 
                 // Use pending video settings if available, otherwise default to 1080p
                 int targetVideoWidth;
@@ -1191,15 +1263,22 @@ public class CameraNeo extends LifecycleService {
                 if (pendingVideoSettings != null && pendingVideoSettings.isValid()) {
                     targetVideoWidth = pendingVideoSettings.width;
                     targetVideoHeight = pendingVideoSettings.height;
-                    Log.i(TAG, "Using requested video settings: " + pendingVideoSettings);
+                    Log.i(TAG, "📹 Using CUSTOM video settings from command: " + pendingVideoSettings);
                 } else {
                     targetVideoWidth = 1920;
                     targetVideoHeight = 1080;
-                    Log.i(TAG, "Using default video settings: 1920x1080@30fps");
+                    Log.i(TAG, "📹 Using DEFAULT video settings: 1920x1080@30fps (no custom settings provided)");
                 }
-                Log.i(TAG, "Requesting video resolution: " + targetVideoWidth + "x" + targetVideoHeight);
+                Log.i(TAG, "📹 TARGET resolution: " + targetVideoWidth + "x" + targetVideoHeight);
                 videoSize = chooseOptimalSize(videoSizes, targetVideoWidth, targetVideoHeight);
-                Log.i(TAG, "Selected video size: " + videoSize.getWidth() + "x" + videoSize.getHeight());
+                Log.i(TAG, "📹 SELECTED resolution: " + videoSize.getWidth() + "x" + videoSize.getHeight());
+
+                // Warn if we didn't get what we asked for
+                if (videoSize.getWidth() != targetVideoWidth || videoSize.getHeight() != targetVideoHeight) {
+                    Log.w(TAG, "⚠️ VIDEO RESOLUTION MISMATCH: Requested " + targetVideoWidth + "x" + targetVideoHeight +
+                          " but got " + videoSize.getWidth() + "x" + videoSize.getHeight() +
+                          " - camera may not support requested resolution for MediaRecorder");
+                }
 
                 // Initialize MediaRecorder only for single video mode
                 // In buffer mode, CircularVideoBufferInternal handles its own MediaRecorders
@@ -1215,44 +1294,81 @@ public class CameraNeo extends LifecycleService {
                     return;
                 }
 
-                int desiredW = TARGET_WIDTH;
-                int desiredH = TARGET_HEIGHT;
-                if (pendingRequestedSize != null) {
-                    switch (pendingRequestedSize) {
-                        case "small":
-                            desiredW = TARGET_WIDTH_SMALL;
-                            desiredH = TARGET_HEIGHT_SMALL;
-                            break;
-                        case "large":
-                            desiredW = TARGET_WIDTH_LARGE;
-                            desiredH = TARGET_HEIGHT_LARGE;
-                            break;
-                        case "medium":
-                        default:
-                            desiredW = TARGET_WIDTH;
-                            desiredH = TARGET_HEIGHT;
-                            break;
+                // Select resolution based on source (SDK vs button) and size tier
+                int desiredW, desiredH;
+                if (pendingIsFromSdk) {
+                    // SDK photos - optimized for fast WiFi transfer
+                    if (pendingRequestedSize == null) {
+                        desiredW = CameraConstants.SDK_WIDTH_MEDIUM;
+                        desiredH = CameraConstants.SDK_HEIGHT_MEDIUM;
+                    } else {
+                        switch (pendingRequestedSize) {
+                            case CameraConstants.SIZE_SMALL:
+                                desiredW = CameraConstants.SDK_WIDTH_SMALL;
+                                desiredH = CameraConstants.SDK_HEIGHT_SMALL;
+                                break;
+                            case CameraConstants.SIZE_LARGE:
+                                desiredW = CameraConstants.SDK_WIDTH_LARGE;
+                                desiredH = CameraConstants.SDK_HEIGHT_LARGE;
+                                break;
+                            case CameraConstants.SIZE_FULL:
+                                desiredW = CameraConstants.SDK_WIDTH_FULL;
+                                desiredH = CameraConstants.SDK_HEIGHT_FULL;
+                                break;
+                            case CameraConstants.SIZE_MEDIUM:
+                            default:
+                                desiredW = CameraConstants.SDK_WIDTH_MEDIUM;
+                                desiredH = CameraConstants.SDK_HEIGHT_MEDIUM;
+                                break;
+                        }
                     }
+                    Log.d(TAG, "SDK photo - using optimized resolution");
+                } else {
+                    // Button photos - high quality for local storage
+                    if (pendingRequestedSize == null) {
+                        desiredW = CameraConstants.BUTTON_WIDTH_MEDIUM;
+                        desiredH = CameraConstants.BUTTON_HEIGHT_MEDIUM;
+                    } else {
+                        switch (pendingRequestedSize) {
+                            case CameraConstants.SIZE_SMALL:
+                                desiredW = CameraConstants.BUTTON_WIDTH_SMALL;
+                                desiredH = CameraConstants.BUTTON_HEIGHT_SMALL;
+                                break;
+                            case CameraConstants.SIZE_LARGE:
+                                desiredW = CameraConstants.BUTTON_WIDTH_LARGE;
+                                desiredH = CameraConstants.BUTTON_HEIGHT_LARGE;
+                                break;
+                            case CameraConstants.SIZE_MEDIUM:
+                            default:
+                                desiredW = CameraConstants.BUTTON_WIDTH_MEDIUM;
+                                desiredH = CameraConstants.BUTTON_HEIGHT_MEDIUM;
+                                break;
+                        }
+                    }
+                    Log.d(TAG, "Button photo - using high quality resolution");
                 }
                 jpegSize = chooseOptimalSize(jpegSizes, desiredW, desiredH);
-                Log.d(TAG, "Selected JPEG size: " + jpegSize.getWidth() + "x" + jpegSize.getHeight());
+                Log.d(TAG, "Selected JPEG size: " + jpegSize.getWidth() + "x" + jpegSize.getHeight() +
+                          " (requested: " + desiredW + "x" + desiredH + ", isFromSdk: " + pendingIsFromSdk + ")");
 
                 // Setup ImageReader for JPEG data
+                // ZSL requires larger buffer (12 images) to cache preview frames for MFNR
+                // Standard buffer (2 images) is insufficient for ZSL circular buffer
                 imageReader = ImageReader.newInstance(
                         jpegSize.getWidth(), jpegSize.getHeight(),
-                        ImageFormat.JPEG, 2);
+                        ImageFormat.JPEG, 12);
 
-            imageReader.setOnImageAvailableListener(reader -> {
-                // Only process images when we're actually shooting, not during precapture metering
-                if (shotState != ShotState.SHOOTING) {
-                    // Suppress logging to prevent logcat overflow
-                    // Only log errors or important state changes
-                    // Consume the image to prevent backing up the queue
-                    try (Image image = reader.acquireLatestImage()) {
-                        // Just consume and discard
-                    }
-                    return;
-                }
+                imageReader.setOnImageAvailableListener(reader -> {
+                    // Only process images when we're actually shooting, not during precapture metering
+                    if (shotState != ShotState.SHOOTING) {
+                        // Suppress logging to prevent logcat overflow
+                        // Only log errors or important state changes
+                        // Consume the image to prevent backing up the queue
+                        try (Image image = reader.acquireLatestImage()) {
+                            // Just consume and discard
+                        }
+                        return;
+            }
 
                 // Process the captured JPEG (only when in SHOOTING state)
                 Log.d(TAG, "Processing final photo capture...");
@@ -1511,11 +1627,7 @@ public class CameraNeo extends LifecycleService {
             cameraOpenCloseLock.release();
             cameraDevice = camera;
             
-            // Turn on LED if enabled for photo flash
-            if (pendingLedEnabled && hardwareManager != null && hardwareManager.supportsRecordingLed()) {
-                Log.d(TAG, "📸 Turning on camera LED (camera opened)");
-                hardwareManager.setRecordingLedOn();
-            }
+            // LED flash will be triggered when photo is captured, not when camera opens
             
             // Mark camera as ready
             synchronized (SERVICE_LOCK) {
@@ -1615,16 +1727,31 @@ public class CameraNeo extends LifecycleService {
                     return;
                 }
                 surfaces.add(imageReader.getSurface());
-                previewBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+                
+                // Use TEMPLATE_PREVIEW for repeating requests (matches XyCamera2 pattern)
+                // TEMPLATE_STILL_CAPTURE is only used for the final capture, not the repeating preview
+                previewBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                 previewBuilder.addTarget(imageReader.getSurface());
+                Log.d(TAG, "🔍 Using TEMPLATE_PREVIEW for repeating request (ZSL compatible)");
             }
 
             // Configure auto-exposure settings for better photo quality
             previewBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
             previewBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
 
-            // Use dynamic FPS range to prevent long exposure times that cause overexposure
-            previewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
+            // Use appropriate FPS range based on mode
+            if (forVideo) {
+                // For video: use fixed FPS range to ensure consistent frame rate
+                // Using flexible range (like 5-30fps) allows AE to drop frame rate in low light
+                int targetFps = (pendingVideoSettings != null) ? pendingVideoSettings.fps : 30;
+                Range<Integer> videoFpsRange = Range.create(targetFps, targetFps);
+                previewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, videoFpsRange);
+                Log.d(TAG, "Video: Using fixed FPS range " + videoFpsRange + " for consistent frame rate");
+            } else {
+                // For photo: use dynamic FPS range to allow longer exposure times for MFNR
+                previewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
+                Log.d(TAG, "Photo: Using dynamic FPS range " + selectedFpsRange + " for exposure flexibility");
+            }
 
             // Apply user exposure compensation BEFORE capture (not during)
             previewBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, userExposureCompensation);
@@ -1665,12 +1792,17 @@ public class CameraNeo extends LifecycleService {
             previewBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
 
             if (!forVideo) {
-                // Photo-specific settings
-                previewBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) JPEG_QUALITY);
+                // Photo-specific settings - quality varies by size tier
+                previewBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) getJpegQualityForSize());
                 int displayOrientation = getDisplayRotation();
                 int jpegOrientation = JPEG_ORIENTATION.get(displayOrientation, 90);
                 previewBuilder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
                 Log.d(TAG, "Setting JPEG orientation: " + jpegOrientation + " for display orientation: " + displayOrientation);
+                
+                // Apply ZSL settings for photo preview (enables ZSL buffer for MFNR)
+                if (mCameraSettings != null && mCameraSettings.isZslSupported()) {
+                    mCameraSettings.configurePreviewBuilder(previewBuilder);
+                }
             }
 
             CameraCaptureSession.StateCallback sessionStateCallback = new CameraCaptureSession.StateCallback() {
@@ -1709,6 +1841,7 @@ public class CameraNeo extends LifecycleService {
                                     sPhotoCallback = firstRequest.callback;
                                     pendingPhotoPath = firstRequest.filePath;
                                     pendingRequestedSize = firstRequest.size;
+                                    pendingIsFromSdk = firstRequest.isFromSdk;
                                     // Store LED state from request
                                     pendingLedEnabled = firstRequest.enableLed;
                                 }
@@ -1992,10 +2125,8 @@ public class CameraNeo extends LifecycleService {
             // Reset keep-alive flag when camera is actually closed
             isCameraKeptAlive = false;
             
-            // Turn off LED when camera closes
-            if (pendingLedEnabled && hardwareManager != null && hardwareManager.supportsRecordingLed()) {
-                Log.d(TAG, "📸 Turning off camera LED (camera closed)");
-                hardwareManager.setRecordingLedOff();
+            // Reset LED state when camera closes (flash already completed automatically)
+            if (pendingLedEnabled) {
                 pendingLedEnabled = false;  // Reset LED state
             }
             
@@ -2060,14 +2191,15 @@ public class CameraNeo extends LifecycleService {
                     
                     // Update the callback for this request
                     sPhotoCallback = nextRequest.callback;
-                    
+
                     // Cancel any pending keep-alive timer
                     cancelKeepAliveTimer();
-                    
+
                     // Process the queued request
                     pendingPhotoPath = nextRequest.filePath;
                     pendingRequestedSize = nextRequest.size;
-                    
+                    pendingIsFromSdk = nextRequest.isFromSdk;
+
                     // Update LED state if this request needs LED
                     if (nextRequest.enableLed) {
                         pendingLedEnabled = true;
@@ -2101,14 +2233,15 @@ public class CameraNeo extends LifecycleService {
                 
                 // Update the callback for this request
                 sPhotoCallback = nextRequest.callback;
-                
+
                 // Cancel any pending keep-alive timer
                 cancelKeepAliveTimer();
-                
+
                 // Process the queued request
                 pendingPhotoPath = nextRequest.filePath;
                 pendingRequestedSize = nextRequest.size;
-                
+                pendingIsFromSdk = nextRequest.isFromSdk;
+
                 // Start new capture sequence
                 shotState = ShotState.WAITING_AE;
                 if (backgroundHandler != null) {
@@ -2315,22 +2448,36 @@ public class CameraNeo extends LifecycleService {
 
     /**
      * Choose optimal FPS range for photo capture
+     * Prefers wider FPS ranges (5-30fps) to allow longer exposure times
+     * Longer exposures enable higher ISO (1000+), which triggers MFNR (requires ISO>800)
+     * Fixed 30fps limits max exposure to 33ms, restricting ISO upper bound
      */
     private Range<Integer> chooseOptimalFpsRange(Range<Integer>[] ranges) {
-        // Prefer ranges that include 30fps and don't go too low (prevents long exposure times)
+        // Prefer wider ranges (5-30fps) that allow longer exposures for higher ISO
+        // This helps trigger MFNR in low-light conditions
         for (Range<Integer> range : ranges) {
-            if (range.contains(30) && range.getLower() >= 15) {
+            if (range.contains(30) && range.getLower() <= 5) {
+                Log.d(TAG, "Selected wide FPS range: " + range + " (allows longer exposure for higher ISO)");
+                return range;
+            }
+        }
+        
+        // Fallback: prefer ranges that include 30fps with lower minimum (allows longer exposure)
+        for (Range<Integer> range : ranges) {
+            if (range.contains(30) && range.getLower() <= 15) {
+                Log.d(TAG, "Selected FPS range: " + range);
                 return range;
             }
         }
 
-        // Fallback: choose range with highest minimum FPS
+        // Final fallback: choose range with highest minimum FPS
         Range<Integer> best = ranges[0];
         for (Range<Integer> range : ranges) {
             if (range.getLower() > best.getLower()) {
                 best = range;
             }
         }
+        Log.d(TAG, "Selected fallback FPS range: " + best);
         return best;
     }
 
@@ -2348,8 +2495,17 @@ public class CameraNeo extends LifecycleService {
                 return;
             }
             
+            // Build preview request and verify ZSL is configured
+            CaptureRequest previewRequest = previewBuilder.build();
+            Boolean zslInPreview = previewRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+            if (zslInPreview != null && zslInPreview) {
+                Log.d(TAG, "✓ ZSL verified in preview request: CONTROL_ENABLE_ZSL = true (buffer filling)");
+            } else {
+                Log.w(TAG, "⚠ ZSL NOT enabled in preview request - ZSL buffer will not fill!");
+            }
+            
             // Start repeating preview request with AE monitoring
-            cameraCaptureSession.setRepeatingRequest(previewBuilder.build(),
+            cameraCaptureSession.setRepeatingRequest(previewRequest,
                 aeCallback, backgroundHandler);
 
             // Trigger the capture sequence immediately
@@ -2366,27 +2522,36 @@ public class CameraNeo extends LifecycleService {
 
     /**
      * Start simplified AE convergence sequence
+     * Following XyCamera2 pattern: set waiting flag, let repeating request callback monitor AE
      */
     private void startPrecaptureSequence() {
         try {
             shotState = ShotState.WAITING_AE;
+            mWaitingForAeConvergence = true;
+            mAeLockRequested = false;
             aeStartTimeNs = System.nanoTime();
 
+            // Check if ZSL is enabled
+            boolean zslEnabled = (mCameraSettings != null && mCameraSettings.isZslSupported() && 
+                                 mCameraSettings.mAsgSettings.isZslEnabled());
+            
+            Log.d(TAG, "🔍 DIAGNOSTIC: startPrecaptureSequence() called");
+            Log.d(TAG, "🔍 ZSL enabled: " + zslEnabled);
+            Log.d(TAG, "🔍 Current shot state: " + shotState);
+            Log.d(TAG, "🔍 Waiting for AE convergence: " + mWaitingForAeConvergence);
+
             // Start AE convergence - autofocus runs automatically in CONTINUOUS_PICTURE mode
-            Log.d(TAG, "Starting AE convergence" + (hasAutoFocus ? " (autofocus runs automatically)" : "") + "...");
+            Log.d(TAG, "Starting AE convergence (monitoring via repeating request callback)...");
+            
+            // XyCamera2 pattern: Don't send any triggers, just set the waiting flag
+            // The repeating request callback (aeCallback) will monitor AE state and trigger capture when ready
+            Log.d(TAG, "🔍 XyCamera2 MODE: No precapture trigger - monitoring AE via repeating request callback");
 
-            // Trigger only AE precapture - no manual AF trigger needed for CONTINUOUS_PICTURE
-            previewBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
-                CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START);
-
-            cameraCaptureSession.capture(previewBuilder.build(), aeCallback, backgroundHandler);
-
-            Log.d(TAG, "Triggered AE precapture, waiting for convergence...");
-
-        } catch (CameraAccessException e) {
+        } catch (Exception e) {
             Log.e(TAG, "Error starting AE convergence", e);
             notifyPhotoError("Error starting AE convergence: " + e.getMessage());
             shotState = ShotState.IDLE;
+            mWaitingForAeConvergence = false;
             cancelKeepAliveTimer();
             closeCamera();
             stopSelf();
@@ -2395,53 +2560,84 @@ public class CameraNeo extends LifecycleService {
 
     /**
      * Simplified AE callback that waits briefly for exposure convergence
-     * Autofocus runs automatically in CONTINUOUS_PICTURE mode
+     * Following XyCamera2 pattern: monitor AE in repeating request, request lock, then capture
      */
     private class SimplifiedAeCallback extends CameraCaptureSession.CaptureCallback {
+        private int callbackCount = 0;  // Diagnostic counter
+        
         @Override
         public void onCaptureCompleted(@NonNull CameraCaptureSession session,
                                      @NonNull CaptureRequest request,
                                      @NonNull TotalCaptureResult result) {
 
+            callbackCount++;
+            
+            // Log first few callbacks to verify it's being invoked
+            if (callbackCount <= 10 || callbackCount % 30 == 0) {
+                Log.d(TAG, "🔍 AE callback #" + callbackCount + " | Shot state: " + shotState + " | Waiting: " + mWaitingForAeConvergence + " | LockRequested: " + mAeLockRequested);
+            }
+
+            // Only process if we're waiting for AE convergence
+            if (!mWaitingForAeConvergence) {
+                return;
+            }
+
             Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
-            // Suppress verbose AE logging to prevent logcat overflow
-            // Only log important state transitions
+            
+            // Check if this callback is from the repeating request or one-shot precapture
+            Integer precaptureTrigger = request.get(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER);
+            Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+            
+            if (callbackCount <= 5) {
+                Log.d(TAG, "🔍 Request details - ZSL: " + zslInRequest + ", Precapture trigger: " + precaptureTrigger + ", AE state: " + getAeStateName(aeState));
+            }
 
             if (aeState == null) {
-                Log.w(TAG, "AE_STATE is null, proceeding with capture anyway");
-                if (shotState == ShotState.WAITING_AE) {
-                    Log.d(TAG, "No AE state available, capturing immediately");
-                    capturePhoto();
+                Log.w(TAG, "AE_STATE is null in callback");
+                if (callbackCount % 10 == 0) {
+                    Log.w(TAG, "🔍 Still waiting for AE state... (callback #" + callbackCount + ")");
                 }
                 return;
             }
 
-            switch (shotState) {
-                case WAITING_AE:
-                    // Simple AE convergence check - no AF state checking needed
-                    boolean aeConverged = (aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED ||
-                                         aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED ||
-                                         aeState == CaptureResult.CONTROL_AE_STATE_LOCKED);
+            // Check for timeout
+            boolean timeout = (System.nanoTime() - aeStartTimeNs) > AE_WAIT_NS;
+            if (timeout) {
+                Log.w(TAG, "🔍 AE convergence timeout after 3 seconds, forcing capture");
+                mWaitingForAeConvergence = false;
+                mAeLockRequested = false;
+                capturePhoto();
+                return;
+            }
 
-                    boolean timeout = (System.nanoTime() - aeStartTimeNs) > AE_WAIT_NS;
+            // XyCamera2 pattern: Check if AE lock was requested and confirmed
+            if (mAeLockRequested) {
+                if (aeState == CaptureResult.CONTROL_AE_STATE_LOCKED || 
+                    aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED) {
+                    Log.d(TAG, "🔍 AE locked! State: " + getAeStateName(aeState) + ", capturing photo");
+                    mAeLockRequested = false;
+                    mWaitingForAeConvergence = false;
+                    shotState = ShotState.SHOOTING;
+                    capturePhoto();
+                } else if (callbackCount % 10 == 0) {
+                    Log.d(TAG, "🔍 Waiting for AE lock... State: " + getAeStateName(aeState));
+                }
+                return;
+            }
 
-                    if (aeConverged || timeout) {
-                        Log.d(TAG, "AE ready (AE: " + getAeStateName(aeState) +
-                             (timeout ? " - timeout)" : ")") + ", capturing photo...");
-                        capturePhoto();
-                    } else {
-                        // Suppress convergence logging - too verbose
-                    }
-                    break;
+            // Check if AE has converged - if so, request AE lock
+            boolean isAeConverged = (aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED ||
+                                    aeState == CaptureResult.CONTROL_AE_STATE_LOCKED);
 
-                case SHOOTING:
-                    // Photo capture in progress - suppressed log
-                    break;
-
-                case IDLE:
-                default:
-                    // Ignore callbacks when idle
-                    break;
+            if (isAeConverged) {
+                Log.d(TAG, "🔍 AE converged! Requesting AE lock, state: " + getAeStateName(aeState));
+                requestAeLock(session);
+            } else if (callbackCount % 10 == 0) {
+                // Log periodically to track convergence
+                Integer iso = result.get(CaptureResult.SENSOR_SENSITIVITY);
+                Long exposureTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+                Log.d(TAG, "🔍 Waiting for AE convergence... State: " + getAeStateName(aeState) + 
+                          ", ISO: " + iso + ", Exposure: " + (exposureTime != null ? exposureTime / 1_000_000.0 : "null") + "ms");
             }
         }
 
@@ -2449,12 +2645,99 @@ public class CameraNeo extends LifecycleService {
         public void onCaptureFailed(@NonNull CameraCaptureSession session,
                                   @NonNull CaptureRequest request,
                                   @NonNull CaptureFailure failure) {
-            Log.e(TAG, "Capture failed during AE sequence: " + failure.getReason());
+            // Diagnostic: Check what type of request failed
+            Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+            Integer precaptureTrigger = request.get(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER);
+            Boolean aeLock = request.get(CaptureRequest.CONTROL_AE_LOCK);
+            
+            Log.e(TAG, "🔍 DIAGNOSTIC: Capture failed during AE sequence");
+            Log.e(TAG, "🔍 Failure reason: " + failure.getReason());
+            Log.e(TAG, "🔍 ZSL in request: " + zslInRequest);
+            Log.e(TAG, "🔍 AE lock in request: " + aeLock);
+            Log.e(TAG, "🔍 Precapture trigger in request: " + precaptureTrigger);
+            Log.e(TAG, "🔍 Shot state: " + shotState);
+            Log.e(TAG, "🔍 Waiting flags - AE convergence: " + mWaitingForAeConvergence + ", Lock requested: " + mAeLockRequested);
+            Log.e(TAG, "🔍 Frame number: " + failure.getFrameNumber());
+            Log.e(TAG, "🔍 Was image captured: " + failure.wasImageCaptured());
+            
+            // XyCamera2 pattern: Failures from repeating request during SHOOTING are normal, ignore them
+            if (shotState == ShotState.SHOOTING) {
+                Log.d(TAG, "🔍 Failure during SHOOTING state - likely from repeating request, ignoring");
+                return;
+            }
+            
             notifyPhotoError("AE sequence failed: " + failure.getReason());
             shotState = ShotState.IDLE;
+            mWaitingForAeConvergence = false;
+            mAeLockRequested = false;
             cancelKeepAliveTimer();
             closeCamera();
             stopSelf();
+        }
+    }
+    
+    /**
+     * Request AE lock (XyCamera2 pattern)
+     * Updates the repeating request to lock AE, then waits for lock confirmation
+     */
+    private void requestAeLock(CameraCaptureSession session) {
+        if (session == null || cameraDevice == null) {
+            Log.w(TAG, "Cannot lock AE: session/camera is null");
+            return;
+        }
+
+        try {
+            Log.d(TAG, "🔍 Requesting AE lock by updating repeating request");
+            
+            // Update preview builder to request AE lock
+            previewBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
+            
+            // Keep ZSL settings applied
+            if (mCameraSettings != null && mCameraSettings.isZslSupported()) {
+                mCameraSettings.configurePreviewBuilder(previewBuilder);
+            }
+            
+            // Update the repeating request with AE lock
+            session.setRepeatingRequest(previewBuilder.build(), aeCallback, backgroundHandler);
+            mAeLockRequested = true;
+            shotState = ShotState.WAITING_AE_LOCK;
+            Log.d(TAG, "🔍 AE lock requested via repeating request (CONTROL_AE_LOCK=true)");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to lock AE: " + e.getMessage());
+            mAeLockRequested = false;
+            mWaitingForAeConvergence = false;
+            // Force capture on error
+            capturePhoto();
+        }
+    }
+    
+    /**
+     * Restore preview after capture (XyCamera2 pattern)
+     * Unlocks AE and restores repeating request with ZSL enabled
+     */
+    private void restorePreview(CameraCaptureSession session) {
+        try {
+            if (session == null || cameraDevice == null) {
+                Log.w(TAG, "Cannot restore preview: session/camera is null");
+                return;
+            }
+            
+            Log.d(TAG, "🔍 Restoring preview after capture (unlocking AE)");
+            
+            // Unlock AE and restore preview settings
+            previewBuilder.set(CaptureRequest.CONTROL_AE_LOCK, false);
+            mAeLockRequested = false;
+            
+            // Apply ZSL settings for preview
+            if (mCameraSettings != null && mCameraSettings.isZslSupported()) {
+                mCameraSettings.configurePreviewBuilder(previewBuilder);
+            }
+            
+            // Restore repeating preview request
+            session.setRepeatingRequest(previewBuilder.build(), aeCallback, backgroundHandler);
+            Log.d(TAG, "🔍 Preview restored (AE unlocked, repeating request restarted)");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to restore preview: " + e.getMessage());
         }
     }
 
@@ -2472,6 +2755,7 @@ public class CameraNeo extends LifecycleService {
 
             // Copy settings from preview
             stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+            stillBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);  // Lock AE for capture (XyCamera2 pattern)
             stillBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
             stillBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, userExposureCompensation);
             stillBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
@@ -2499,22 +2783,51 @@ public class CameraNeo extends LifecycleService {
                 });
             }
 
-            // High quality settings
+            // High quality settings - JPEG quality varies by size tier
             stillBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
             stillBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
-            stillBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) JPEG_QUALITY);
+            stillBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) getJpegQualityForSize());
             int displayOrientation = getDisplayRotation();
             int jpegOrientation = JPEG_ORIENTATION.get(displayOrientation, 90);
             stillBuilder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
             Log.d(TAG, "Capturing photo with JPEG orientation: " + jpegOrientation + " for display orientation: " + displayOrientation);
 
+            // Apply ZSL + MFNR settings for photo capture (if supported)
+            if (mCameraSettings != null && mCameraSettings.isMfnrSupported()) {
+                mCameraSettings.configureCaptureBuilder(stillBuilder);
+            }
+
             // Capture the photo immediately
-            cameraCaptureSession.capture(stillBuilder.build(), new CameraCaptureSession.CaptureCallback() {
+            // CRITICAL: Do NOT call stopRepeating() before capture - this would clear the ZSL buffer
+            // ZSL buffer is required for MFNR to access historical frames for multi-frame merging
+            // The repeating request must continue running to maintain the circular buffer
+            // Build the capture request
+            CaptureRequest captureRequest = stillBuilder.build();
+            
+            // Verify ZSL is actually configured in the request
+            Boolean zslEnabled = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+            if (zslEnabled != null && zslEnabled) {
+                Log.d(TAG, "✓ ZSL verified in capture request: CONTROL_ENABLE_ZSL = true");
+            } else {
+                Log.w(TAG, "⚠ ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = " + zslEnabled + ")");
+            }
+
+            cameraCaptureSession.capture(captureRequest, new CameraCaptureSession.CaptureCallback() {
                 @Override
                 public void onCaptureCompleted(@NonNull CameraCaptureSession session,
                                              @NonNull CaptureRequest request,
                                              @NonNull TotalCaptureResult result) {
                     Log.i(TAG, "Photo capture completed successfully");  // Keep as INFO level
+                    
+                    // Verify ZSL was actually used by checking the request
+                    Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+                    if (zslInRequest != null && zslInRequest) {
+                        Log.d(TAG, "✓ ZSL confirmed active in capture result");
+                    }
+                    
+                    // XyCamera2 pattern: Restore preview after capture (unlock AE, restore repeating request)
+                    restorePreview(session);
+                    
                     // Image processing will happen in ImageReader callback
                 }
 
@@ -2524,7 +2837,13 @@ public class CameraNeo extends LifecycleService {
                                           @NonNull CaptureFailure failure) {
                     Log.e(TAG, "Photo capture failed: " + failure.getReason());
                     notifyPhotoError("Photo capture failed: " + failure.getReason());
+                    
+                    // XyCamera2 pattern: Restore preview even on failure
+                    restorePreview(session);
+                    
                     shotState = ShotState.IDLE;
+                    mWaitingForAeConvergence = false;
+                    mAeLockRequested = false;
                     cancelKeepAliveTimer();
                     closeCamera();
                     stopSelf();

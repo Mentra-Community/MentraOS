@@ -1,8 +1,6 @@
 import {View, TouchableOpacity, ViewStyle} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import showAlert from "@/utils/AlertUtils"
+
+import {Icon} from "@/components/ignite"
 import {
   cameraPackageName,
   captionsPackageName,
@@ -10,7 +8,10 @@ import {
   useStopAllApplets,
   useStopApplet,
 } from "@/stores/applets"
-import { Icon } from "@/components/ignite"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {ThemedStyle} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export const OfflineModeButton: React.FC = () => {
   const {theme, themed} = useAppTheme()

@@ -1,4 +1,3 @@
-import {router} from "expo-router"
 import {useState, useEffect} from "react"
 import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal} from "react-native"
 import Svg, {Path} from "react-native-svg"
@@ -14,7 +13,7 @@ import restComms from "@/services/RestComms"
 import {$styles, ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {LogoutUtils} from "@/utils/LogoutUtils"
-import {mentraAuthProvider} from "@/utils/auth/authProvider"
+import mentraAuth from "@/utils/auth/authClient"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 // Default user icon component for profile pictures
@@ -47,32 +46,33 @@ export default function ProfileSettingsPage() {
   useEffect(() => {
     const fetchUserData = async () => {
       setLoading(true)
-      try {
-        const {data, error} = await mentraAuthProvider.getUser()
-        if (error) {
-          console.error(error)
-          setUserData(null)
-        } else if (data?.user) {
-          const fullName = data.user.name || null
-          const avatarUrl = data.user.avatarUrl || null
-          const email = data.user.email || null
-          const createdAt = data.user.createdAt || null
-          const provider = data.user.provider || null
-
-          setUserData({
-            fullName,
-            avatarUrl,
-            email,
-            createdAt,
-            provider,
-          })
-        }
-      } catch (error) {
-        console.error(error)
+      const res = await mentraAuth.getUser()
+      if (res.is_error()) {
+        console.error(res.error)
         setUserData(null)
-      } finally {
-        setLoading(false)
+        return
       }
+      const user = res.value
+      if (!user) {
+        setUserData(null)
+        setLoading(false)
+        return
+      }
+
+      const fullName = user.name || null
+      const avatarUrl = user.avatarUrl || null
+      const email = user.email || null
+      const createdAt = user.createdAt || null
+      const provider = user.provider || null
+
+      setUserData({
+        fullName,
+        avatarUrl,
+        email,
+        createdAt,
+        provider,
+      })
+      setLoading(false)
     }
 
     fetchUserData()
@@ -179,7 +179,7 @@ export default function ProfileSettingsPage() {
         [
           {
             text: translate("common:ok"),
-            onPress: () => router.replace("/"),
+            onPress: () => replace("/"),
           },
         ],
         {cancelable: false},
@@ -191,7 +191,7 @@ export default function ProfileSettingsPage() {
         [
           {
             text: translate("common:ok"),
-            onPress: () => router.replace("/"),
+            onPress: () => replace("/"),
           },
         ],
         {cancelable: false},
@@ -250,13 +250,15 @@ export default function ProfileSettingsPage() {
           <ActivityIndicator size="large" color={theme.colors.palette.primary500} />
         ) : userData ? (
           <>
-            {userData.avatarUrl ? (
-              <Image source={{uri: userData.avatarUrl}} style={themed($profileImage)} />
-            ) : (
-              <View style={themed($profilePlaceholder)}>
-                <DefaultUserIcon size={60} color={theme.colors.textDim} />
-              </View>
-            )}
+            <View style={themed($profileSection)}>
+              {userData.avatarUrl ? (
+                <Image source={{uri: userData.avatarUrl}} style={themed($profileImage)} />
+              ) : (
+                <View style={themed($profilePlaceholder)}>
+                  <DefaultUserIcon size={60} color={theme.colors.textDim} />
+                </View>
+              )}
+            </View>
 
             <Group>
               <RouteButton label={translate("profileSettings:name")} text={userData.fullName || "N/A"} />
@@ -274,8 +276,12 @@ export default function ProfileSettingsPage() {
                 <RouteButton label={translate("profileSettings:changePassword")} onPress={handleChangePassword} />
               )}
               <RouteButton label={translate("profileSettings:requestDataExport")} onPress={handleRequestDataExport} />
-              <RouteButton label={translate("profileSettings:deleteAccount")} onPress={handleDeleteAccount} />
-              <RouteButton label={translate("settings:signOut")} onPress={confirmSignOut} />
+              <RouteButton
+                label={translate("profileSettings:deleteAccount")}
+                onPress={handleDeleteAccount}
+                variant="destructive"
+              />
+              <RouteButton label={translate("settings:signOut")} onPress={confirmSignOut} variant="destructive" />
             </Group>
           </>
         ) : (
@@ -315,12 +321,18 @@ export default function ProfileSettingsPage() {
   )
 }
 
+const $profileSection: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "center",
+  paddingHorizontal: spacing.s4,
+  paddingTop: spacing.s4,
+  paddingBottom: spacing.s6,
+})
+
 const $profileImage: ThemedStyle<ImageStyle> = () => ({
   width: 100,
   height: 100,
   borderRadius: 50,
-  alignSelf: "center",
-  marginBottom: 20,
 })
 
 const $profilePlaceholder: ThemedStyle<ViewStyle> = ({colors}) => ({
@@ -329,7 +341,5 @@ const $profilePlaceholder: ThemedStyle<ViewStyle> = ({colors}) => ({
   borderRadius: 50,
   justifyContent: "center",
   alignItems: "center",
-  alignSelf: "center",
-  marginBottom: 20,
   backgroundColor: colors.border,
 })

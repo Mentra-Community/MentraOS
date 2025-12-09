@@ -1,14 +1,15 @@
+import {ArrowLeftIcon} from "assets/icons/component/ArrowLeftIcon"
+import {CloseXIcon} from "assets/icons/component/CloseXIcon"
 import {ImageStyle, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
+import {Badge} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useActiveForegroundApp, useStopApplet} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {CloseXIcon} from "assets/icons/component/CloseXIcon"
-import {ArrowLeftIcon} from "assets/icons/component/ArrowLeftIcon"
 
 export const ActiveForegroundApp: React.FC = () => {
   const {themed, theme} = useAppTheme()
@@ -96,9 +97,7 @@ export const ActiveForegroundApp: React.FC = () => {
             {applet.name}
           </Text>
           <View style={themed($tagContainer)}>
-            <View style={themed($activeTag)}>
-              <Text style={themed($tagText)}>Active</Text>
-            </View>
+            <Badge text="Active" />
           </View>
         </View>
         {!applet.loading && (
@@ -162,19 +161,6 @@ const $appName: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
 const $tagContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   gap: spacing.s2,
-})
-
-const $activeTag: ThemedStyle<ViewStyle> = ({spacing, colors}) => ({
-  paddingHorizontal: spacing.s2,
-  paddingVertical: 2,
-  backgroundColor: colors.background,
-  borderRadius: spacing.s6,
-})
-
-const $tagText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: spacing.s3,
-  color: colors.secondary_foreground,
-  fontWeight: "500",
 })
 
 const $closeButton: ThemedStyle<ViewStyle> = ({spacing}) => ({

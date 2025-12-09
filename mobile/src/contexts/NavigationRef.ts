@@ -1,4 +1,5 @@
 import {createRef} from "react"
+
 import type {NavObject} from "@/contexts/NavigationHistoryContext"
 
 export const navigationRef = createRef<NavObject>()

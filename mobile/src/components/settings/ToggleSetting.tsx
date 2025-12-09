@@ -1,7 +1,8 @@
+import {View, ViewStyle, TextStyle} from "react-native"
+
+import {Switch, Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {View, ViewStyle, TextStyle} from "react-native"
-import {Switch, Text} from "@/components/ignite"
 
 type ToggleSettingProps = {
   label: string
@@ -12,6 +13,8 @@ type ToggleSettingProps = {
   style?: ViewStyle
   icon?: React.ReactNode
   compact?: boolean
+  isFirst?: boolean
+  isLast?: boolean
 }
 
 const ToggleSetting: React.FC<ToggleSettingProps> = ({
@@ -23,16 +26,35 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
   style,
   icon,
   compact = false,
+  isFirst,
+  isLast,
 }) => {
   const {theme, themed} = useAppTheme()
 
+  const groupedStyle: ViewStyle | undefined =
+    isFirst !== undefined || isLast !== undefined
+      ? {
+          borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          marginBottom: isLast ? 0 : theme.spacing.s2,
+        }
+      : undefined
+
   return (
     <View
-      style={[themed($container), style, disabled && {opacity: 0.5}, compact && {paddingVertical: theme.spacing.s3}]}>
+      style={[
+        themed($container),
+        groupedStyle,
+        style,
+        disabled && {opacity: 0.5},
+        compact && {paddingVertical: theme.spacing.s3},
+      ]}>
       <View style={themed($textContainer)}>
         <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4, justifyContent: "center"}}>
           {icon && icon}
-          <Text text={label} style={[themed($label), compact && {fontSize: 12}]} />
+          <Text text={label} weight="semiBold" style={[themed($label), compact && {fontSize: 12}]} />
         </View>
         {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
@@ -65,7 +87,6 @@ const $textContainer: ThemedStyle<ViewStyle> = () => ({
 
 const $label: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
-  fontWeight: 600,
   color: colors.text,
 })
 

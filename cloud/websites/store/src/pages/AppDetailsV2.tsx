@@ -213,7 +213,7 @@ const AppDetails: React.FC = () => {
     <>
       {/* Header - Show on all screens EXCEPT webview */}
       {!isWebView && (
-        <div className="sticky top-0 z-50">
+        <div className="sticky top-0 z-0">
           <Header_v2 />
         </div>
       )}

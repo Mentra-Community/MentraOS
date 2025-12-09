@@ -1,8 +1,10 @@
 import {TextStyle, View, ViewStyle} from "react-native"
+
 import {Button, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
+
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export const PairGlassesCard = ({style}: {style?: ViewStyle}) => {

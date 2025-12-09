@@ -1,9 +1,10 @@
 import {Stack} from "expo-router"
+
 import NexDeveloperSettings from "@/components/glasses/NexDeveloperSettings"
 import {Screen, Header} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {$styles} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function NexDeveloperSettingsPage() {
   const {themed} = useAppTheme()

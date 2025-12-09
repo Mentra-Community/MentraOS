@@ -948,6 +948,142 @@ func (x *HealthCheckResponse) GetMetadata() map[string]string {
 	return nil
 }
 
+// Bridge status request/response messages
+type BridgeStatusRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// User ID (for routing to correct room session)
+	UserId        string `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BridgeStatusRequest) Reset() {
+	*x = BridgeStatusRequest{}
+	mi := &file_proto_livekit_bridge_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BridgeStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BridgeStatusRequest) ProtoMessage() {}
+
+func (x *BridgeStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_livekit_bridge_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BridgeStatusRequest.ProtoReflect.Descriptor instead.
+func (*BridgeStatusRequest) Descriptor() ([]byte, []int) {
+	return file_proto_livekit_bridge_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *BridgeStatusRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+type BridgeStatusResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Whether the bridge is currently connected to the LiveKit room
+	Connected bool `protobuf:"varint,1,opt,name=connected,proto3" json:"connected,omitempty"`
+	// Local participant ID (e.g., cloud-agent:{userId})
+	ParticipantId string `protobuf:"bytes,2,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	// Number of participants in room (including self)
+	ParticipantCount int32 `protobuf:"varint,3,opt,name=participant_count,json=participantCount,proto3" json:"participant_count,omitempty"`
+	// Last disconnect timestamp (milliseconds since epoch), 0 if never
+	LastDisconnectAt int64 `protobuf:"varint,4,opt,name=last_disconnect_at,json=lastDisconnectAt,proto3" json:"last_disconnect_at,omitempty"`
+	// Best-effort reason for last disconnect (may be empty)
+	LastDisconnectReason string `protobuf:"bytes,5,opt,name=last_disconnect_reason,json=lastDisconnectReason,proto3" json:"last_disconnect_reason,omitempty"`
+	// Optional: bridge/server version string for diagnostics
+	ServerVersion string `protobuf:"bytes,6,opt,name=server_version,json=serverVersion,proto3" json:"server_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BridgeStatusResponse) Reset() {
+	*x = BridgeStatusResponse{}
+	mi := &file_proto_livekit_bridge_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BridgeStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BridgeStatusResponse) ProtoMessage() {}
+
+func (x *BridgeStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_livekit_bridge_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BridgeStatusResponse.ProtoReflect.Descriptor instead.
+func (*BridgeStatusResponse) Descriptor() ([]byte, []int) {
+	return file_proto_livekit_bridge_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *BridgeStatusResponse) GetConnected() bool {
+	if x != nil {
+		return x.Connected
+	}
+	return false
+}
+
+func (x *BridgeStatusResponse) GetParticipantId() string {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return ""
+}
+
+func (x *BridgeStatusResponse) GetParticipantCount() int32 {
+	if x != nil {
+		return x.ParticipantCount
+	}
+	return 0
+}
+
+func (x *BridgeStatusResponse) GetLastDisconnectAt() int64 {
+	if x != nil {
+		return x.LastDisconnectAt
+	}
+	return 0
+}
+
+func (x *BridgeStatusResponse) GetLastDisconnectReason() string {
+	if x != nil {
+		return x.LastDisconnectReason
+	}
+	return ""
+}
+
+func (x *BridgeStatusResponse) GetServerVersion() string {
+	if x != nil {
+		return x.ServerVersion
+	}
+	return ""
+}
+
 // Statistics message (for future monitoring/debugging)
 type SessionStats struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
@@ -965,7 +1101,7 @@ type SessionStats struct {
 
 func (x *SessionStats) Reset() {
 	*x = SessionStats{}
-	mi := &file_proto_livekit_bridge_proto_msgTypes[11]
+	mi := &file_proto_livekit_bridge_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -977,7 +1113,7 @@ func (x *SessionStats) String() string {
 func (*SessionStats) ProtoMessage() {}
 
 func (x *SessionStats) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_livekit_bridge_proto_msgTypes[11]
+	mi := &file_proto_livekit_bridge_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -990,7 +1126,7 @@ func (x *SessionStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionStats.ProtoReflect.Descriptor instead.
 func (*SessionStats) Descriptor() ([]byte, []int) {
-	return file_proto_livekit_bridge_proto_rawDescGZIP(), []int{11}
+	return file_proto_livekit_bridge_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SessionStats) GetUserId() string {
@@ -1138,7 +1274,16 @@ const file_proto_livekit_bridge_proto_rawDesc = "" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
 	"\aSERVING\x10\x01\x12\x0f\n" +
 	"\vNOT_SERVING\x10\x02\x12\x13\n" +
-	"\x0fSERVICE_UNKNOWN\x10\x03\"\xc7\x02\n" +
+	"\x0fSERVICE_UNKNOWN\x10\x03\".\n" +
+	"\x13BridgeStatusRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\"\x93\x02\n" +
+	"\x14BridgeStatusResponse\x12\x1c\n" +
+	"\tconnected\x18\x01 \x01(\bR\tconnected\x12%\n" +
+	"\x0eparticipant_id\x18\x02 \x01(\tR\rparticipantId\x12+\n" +
+	"\x11participant_count\x18\x03 \x01(\x05R\x10participantCount\x12,\n" +
+	"\x12last_disconnect_at\x18\x04 \x01(\x03R\x10lastDisconnectAt\x124\n" +
+	"\x16last_disconnect_reason\x18\x05 \x01(\tR\x14lastDisconnectReason\x12%\n" +
+	"\x0eserver_version\x18\x06 \x01(\tR\rserverVersion\"\xc7\x02\n" +
 	"\fSessionStats\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12*\n" +
 	"\x11audio_frames_sent\x18\x02 \x01(\x03R\x0faudioFramesSent\x122\n" +
@@ -1148,14 +1293,15 @@ const file_proto_livekit_bridge_proto_rawDesc = "" +
 	"\x0ebytes_received\x18\x05 \x01(\x03R\rbytesReceived\x12.\n" +
 	"\x13session_duration_ms\x18\x06 \x01(\x03R\x11sessionDurationMs\x12\x1b\n" +
 	"\troom_name\x18\a \x01(\tR\broomName\x12+\n" +
-	"\x11participant_count\x18\b \x01(\x05R\x10participantCount2\xca\x04\n" +
+	"\x11participant_count\x18\b \x01(\x05R\x10participantCount2\xb0\x05\n" +
 	"\rLiveKitBridge\x12W\n" +
 	"\vStreamAudio\x12!.mentra.livekit.bridge.AudioChunk\x1a!.mentra.livekit.bridge.AudioChunk(\x010\x01\x12[\n" +
 	"\bJoinRoom\x12&.mentra.livekit.bridge.JoinRoomRequest\x1a'.mentra.livekit.bridge.JoinRoomResponse\x12^\n" +
 	"\tLeaveRoom\x12'.mentra.livekit.bridge.LeaveRoomRequest\x1a(.mentra.livekit.bridge.LeaveRoomResponse\x12]\n" +
 	"\tPlayAudio\x12'.mentra.livekit.bridge.PlayAudioRequest\x1a%.mentra.livekit.bridge.PlayAudioEvent0\x01\x12^\n" +
 	"\tStopAudio\x12'.mentra.livekit.bridge.StopAudioRequest\x1a(.mentra.livekit.bridge.StopAudioResponse\x12d\n" +
-	"\vHealthCheck\x12).mentra.livekit.bridge.HealthCheckRequest\x1a*.mentra.livekit.bridge.HealthCheckResponseB(Z&github.com/mentra/livekit-bridge/protob\x06proto3"
+	"\vHealthCheck\x12).mentra.livekit.bridge.HealthCheckRequest\x1a*.mentra.livekit.bridge.HealthCheckResponse\x12d\n" +
+	"\tGetStatus\x12*.mentra.livekit.bridge.BridgeStatusRequest\x1a+.mentra.livekit.bridge.BridgeStatusResponseB(Z&github.com/mentra/livekit-bridge/protob\x06proto3"
 
 var (
 	file_proto_livekit_bridge_proto_rawDescOnce sync.Once
@@ -1170,7 +1316,7 @@ func file_proto_livekit_bridge_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_livekit_bridge_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_livekit_bridge_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_livekit_bridge_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_proto_livekit_bridge_proto_goTypes = []any{
 	(PlayAudioEvent_EventType)(0),          // 0: mentra.livekit.bridge.PlayAudioEvent.EventType
 	(HealthCheckResponse_ServingStatus)(0), // 1: mentra.livekit.bridge.HealthCheckResponse.ServingStatus
@@ -1185,31 +1331,35 @@ var file_proto_livekit_bridge_proto_goTypes = []any{
 	(*StopAudioResponse)(nil),              // 10: mentra.livekit.bridge.StopAudioResponse
 	(*HealthCheckRequest)(nil),             // 11: mentra.livekit.bridge.HealthCheckRequest
 	(*HealthCheckResponse)(nil),            // 12: mentra.livekit.bridge.HealthCheckResponse
-	(*SessionStats)(nil),                   // 13: mentra.livekit.bridge.SessionStats
-	nil,                                    // 14: mentra.livekit.bridge.JoinRoomResponse.MetadataEntry
-	nil,                                    // 15: mentra.livekit.bridge.PlayAudioEvent.MetadataEntry
-	nil,                                    // 16: mentra.livekit.bridge.HealthCheckResponse.MetadataEntry
+	(*BridgeStatusRequest)(nil),            // 13: mentra.livekit.bridge.BridgeStatusRequest
+	(*BridgeStatusResponse)(nil),           // 14: mentra.livekit.bridge.BridgeStatusResponse
+	(*SessionStats)(nil),                   // 15: mentra.livekit.bridge.SessionStats
+	nil,                                    // 16: mentra.livekit.bridge.JoinRoomResponse.MetadataEntry
+	nil,                                    // 17: mentra.livekit.bridge.PlayAudioEvent.MetadataEntry
+	nil,                                    // 18: mentra.livekit.bridge.HealthCheckResponse.MetadataEntry
 }
 var file_proto_livekit_bridge_proto_depIdxs = []int32{
-	14, // 0: mentra.livekit.bridge.JoinRoomResponse.metadata:type_name -> mentra.livekit.bridge.JoinRoomResponse.MetadataEntry
+	16, // 0: mentra.livekit.bridge.JoinRoomResponse.metadata:type_name -> mentra.livekit.bridge.JoinRoomResponse.MetadataEntry
 	0,  // 1: mentra.livekit.bridge.PlayAudioEvent.type:type_name -> mentra.livekit.bridge.PlayAudioEvent.EventType
-	15, // 2: mentra.livekit.bridge.PlayAudioEvent.metadata:type_name -> mentra.livekit.bridge.PlayAudioEvent.MetadataEntry
+	17, // 2: mentra.livekit.bridge.PlayAudioEvent.metadata:type_name -> mentra.livekit.bridge.PlayAudioEvent.MetadataEntry
 	1,  // 3: mentra.livekit.bridge.HealthCheckResponse.status:type_name -> mentra.livekit.bridge.HealthCheckResponse.ServingStatus
-	16, // 4: mentra.livekit.bridge.HealthCheckResponse.metadata:type_name -> mentra.livekit.bridge.HealthCheckResponse.MetadataEntry
+	18, // 4: mentra.livekit.bridge.HealthCheckResponse.metadata:type_name -> mentra.livekit.bridge.HealthCheckResponse.MetadataEntry
 	2,  // 5: mentra.livekit.bridge.LiveKitBridge.StreamAudio:input_type -> mentra.livekit.bridge.AudioChunk
 	3,  // 6: mentra.livekit.bridge.LiveKitBridge.JoinRoom:input_type -> mentra.livekit.bridge.JoinRoomRequest
 	5,  // 7: mentra.livekit.bridge.LiveKitBridge.LeaveRoom:input_type -> mentra.livekit.bridge.LeaveRoomRequest
 	7,  // 8: mentra.livekit.bridge.LiveKitBridge.PlayAudio:input_type -> mentra.livekit.bridge.PlayAudioRequest
 	9,  // 9: mentra.livekit.bridge.LiveKitBridge.StopAudio:input_type -> mentra.livekit.bridge.StopAudioRequest
 	11, // 10: mentra.livekit.bridge.LiveKitBridge.HealthCheck:input_type -> mentra.livekit.bridge.HealthCheckRequest
-	2,  // 11: mentra.livekit.bridge.LiveKitBridge.StreamAudio:output_type -> mentra.livekit.bridge.AudioChunk
-	4,  // 12: mentra.livekit.bridge.LiveKitBridge.JoinRoom:output_type -> mentra.livekit.bridge.JoinRoomResponse
-	6,  // 13: mentra.livekit.bridge.LiveKitBridge.LeaveRoom:output_type -> mentra.livekit.bridge.LeaveRoomResponse
-	8,  // 14: mentra.livekit.bridge.LiveKitBridge.PlayAudio:output_type -> mentra.livekit.bridge.PlayAudioEvent
-	10, // 15: mentra.livekit.bridge.LiveKitBridge.StopAudio:output_type -> mentra.livekit.bridge.StopAudioResponse
-	12, // 16: mentra.livekit.bridge.LiveKitBridge.HealthCheck:output_type -> mentra.livekit.bridge.HealthCheckResponse
-	11, // [11:17] is the sub-list for method output_type
-	5,  // [5:11] is the sub-list for method input_type
+	13, // 11: mentra.livekit.bridge.LiveKitBridge.GetStatus:input_type -> mentra.livekit.bridge.BridgeStatusRequest
+	2,  // 12: mentra.livekit.bridge.LiveKitBridge.StreamAudio:output_type -> mentra.livekit.bridge.AudioChunk
+	4,  // 13: mentra.livekit.bridge.LiveKitBridge.JoinRoom:output_type -> mentra.livekit.bridge.JoinRoomResponse
+	6,  // 14: mentra.livekit.bridge.LiveKitBridge.LeaveRoom:output_type -> mentra.livekit.bridge.LeaveRoomResponse
+	8,  // 15: mentra.livekit.bridge.LiveKitBridge.PlayAudio:output_type -> mentra.livekit.bridge.PlayAudioEvent
+	10, // 16: mentra.livekit.bridge.LiveKitBridge.StopAudio:output_type -> mentra.livekit.bridge.StopAudioResponse
+	12, // 17: mentra.livekit.bridge.LiveKitBridge.HealthCheck:output_type -> mentra.livekit.bridge.HealthCheckResponse
+	14, // 18: mentra.livekit.bridge.LiveKitBridge.GetStatus:output_type -> mentra.livekit.bridge.BridgeStatusResponse
+	12, // [12:19] is the sub-list for method output_type
+	5,  // [5:12] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name
@@ -1226,7 +1376,7 @@ func file_proto_livekit_bridge_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_livekit_bridge_proto_rawDesc), len(file_proto_livekit_bridge_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

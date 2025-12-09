@@ -1,18 +1,21 @@
-import React, {useRef, useState, useEffect} from "react"
+import {useRef, useState, useEffect} from "react"
 import {
   View,
-  Text,
-  StyleSheet,
   Modal,
   TouchableOpacity,
   PanResponder,
   TouchableWithoutFeedback,
   KeyboardAvoidingView,
   Platform,
+  ViewStyle,
+  TextStyle,
 } from "react-native"
 import Svg, {Path, Circle} from "react-native-svg"
-import {useAppTheme} from "@/utils/useAppTheme"
+
+import {Text} from "@/components/ignite"
 import {PillButton} from "@/components/ignite/PillButton"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface HeadUpAngleArcModalProps {
   visible: boolean
@@ -40,14 +43,8 @@ const describeArc = (cx: number, cy: number, r: number, startAngle: number, endA
   return [`M ${start.x} ${start.y}`, `A ${r} ${r} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`].join(" ")
 }
 
-const HeadUpAngleArcModal: React.FC<HeadUpAngleArcModalProps> = ({
-  visible,
-  initialAngle,
-  maxAngle = 60,
-  onCancel,
-  onSave,
-}) => {
-  const {theme} = useAppTheme()
+const HeadUpAngleArcModal = ({visible, initialAngle, maxAngle = 60, onCancel, onSave}: HeadUpAngleArcModalProps) => {
+  const {theme, themed} = useAppTheme()
   const [angle, setAngle] = useState<number>(initialAngle)
   const initialAngleRef = useRef(initialAngle)
   const svgSize = 500
@@ -108,27 +105,25 @@ const HeadUpAngleArcModal: React.FC<HeadUpAngleArcModalProps> = ({
             setAngle(initialAngleRef.current)
             onCancel()
           }}>
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, {backgroundColor: theme.colors.background}]}>
+          <View style={themed($modalOverlay)}>
+            <View style={themed($modalContent)}>
               <TouchableWithoutFeedback>
-                <View style={styles.modalHeader}>
-                  <Text style={[styles.modalLabel, {color: theme.colors.text}]}>Adjust Head-Up Angle</Text>
+                <View style={themed($modalHeader)}>
+                  <Text text="Adjust Head-Up Angle" style={themed($modalLabel)} weight="bold" />
                   <TouchableOpacity
                     hitSlop={10}
                     onPress={() => {
                       setAngle(initialAngleRef.current)
                       onCancel()
                     }}>
-                    <Text style={[styles.closeButton, {color: theme.colors.text, marginRight: -8}]}>✕</Text>
+                    <Text text="✕" style={themed($closeButton)} />
                   </TouchableOpacity>
                 </View>
               </TouchableWithoutFeedback>
 
-              <Text style={[styles.subtitle, {color: theme.colors.text}]}>
-                Drag the slider to adjust your HeadUp angle.
-              </Text>
+              <Text text="Drag the slider to adjust your HeadUp angle." style={themed($subtitle)} />
 
-              <View style={styles.svgWrapper} {...panResponder.panHandlers}>
+              <View style={themed($svgWrapper)} {...panResponder.panHandlers}>
                 <Svg width={svgSize} height={svgSize}>
                   <Path d={backgroundArcPath} stroke={theme.colors.border} strokeWidth={7} fill="none" />
                   <Path d={currentArcPath} stroke={"#007AFF"} strokeWidth={7} fill="none" />
@@ -136,14 +131,14 @@ const HeadUpAngleArcModal: React.FC<HeadUpAngleArcModalProps> = ({
                 </Svg>
               </View>
 
-              <Text style={[styles.angleLabel, {color: theme.colors.text}]}>{Math.round(angle)}°</Text>
+              <Text text={`${Math.round(angle)}°`} style={themed($angleLabel)} weight="bold" />
 
-              <View style={styles.buttonRow}>
+              <View style={themed($buttonRow)}>
                 <PillButton
                   text="Save"
                   variant="primary"
                   onPress={() => onSave(Math.round(angle))}
-                  buttonStyle={styles.buttonFlex}
+                  buttonStyle={themed($buttonFlex)}
                 />
               </View>
             </View>
@@ -156,65 +151,76 @@ const HeadUpAngleArcModal: React.FC<HeadUpAngleArcModalProps> = ({
 
 export default HeadUpAngleArcModal
 
-const styles = StyleSheet.create({
-  angleLabel: {
-    fontSize: 36,
-    fontWeight: "bold",
-    marginVertical: 20,
-  },
-  buttonFlex: {
-    flex: 1,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 20,
-    justifyContent: "space-between",
-    width: "80%",
-    marginTop: -10,
-  },
-  closeButton: {
-    fontSize: 22,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  modalContent: {
-    alignItems: "center",
-    borderRadius: 10,
-    elevation: 5,
-    maxHeight: "80%",
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    width: "90%",
-  },
-  modalHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 12,
-    width: "100%",
-  },
-  modalLabel: {
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  modalOverlay: {
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.25)",
-    flex: 1,
-    justifyContent: "center",
-  },
-  subtitle: {
-    fontSize: 14,
-    marginBottom: 20,
-    textAlign: "center",
-  },
-  svgWrapper: {
-    alignItems: "center",
-    height: 400,
-    justifyContent: "center",
-    width: 400,
-  },
+const $angleLabel: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 36,
+  marginVertical: 20,
+  color: colors.text,
+})
+
+const $buttonFlex: ThemedStyle<ViewStyle> = () => ({
+  flex: 1,
+})
+
+const $buttonRow: ThemedStyle<ViewStyle> = () => ({
+  flexDirection: "row",
+  gap: 20,
+  justifyContent: "space-between",
+  width: "80%",
+  marginTop: -10,
+})
+
+const $closeButton: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 22,
+  paddingHorizontal: 8,
+  paddingVertical: 2,
+  color: colors.text,
+  marginRight: -8,
+})
+
+const $modalContent: ThemedStyle<ViewStyle> = ({colors}) => ({
+  alignItems: "center",
+  borderRadius: 10,
+  elevation: 5,
+  maxHeight: "80%",
+  padding: 16,
+  shadowColor: "#000",
+  shadowOffset: {width: 0, height: 2},
+  shadowOpacity: 0.2,
+  shadowRadius: 8,
+  width: "90%",
+  backgroundColor: colors.background,
+})
+
+const $modalHeader: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  flexDirection: "row",
+  justifyContent: "space-between",
+  marginBottom: 12,
+  width: "100%",
+})
+
+const $modalLabel: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 18,
+  color: colors.text,
+})
+
+const $modalOverlay: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  backgroundColor: "rgba(0,0,0,0.25)",
+  flex: 1,
+  justifyContent: "center",
+})
+
+const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 14,
+  marginBottom: 20,
+  textAlign: "center",
+  color: colors.text,
+})
+
+const $svgWrapper: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  height: 400,
+  justifyContent: "center",
+  width: 400,
 })

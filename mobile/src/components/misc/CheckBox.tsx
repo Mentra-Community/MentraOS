@@ -1,8 +1,9 @@
 // CheckBox.tsx
 
 import {Pressable, View} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
+
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface CheckBoxProps {
   checked: boolean

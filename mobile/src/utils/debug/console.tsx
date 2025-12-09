@@ -10,10 +10,11 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
 } from "react-native"
+
 import {Text} from "@/components/ignite/Text"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export const ConsoleLogger = () => {
   const {themed} = useAppTheme()
@@ -177,7 +178,7 @@ export const ConsoleLogger = () => {
         },
       ]}>
       <View style={themed($header)} {...panResponder.panHandlers}>
-        <Text text={`Console (${logs.length}/500) - Drag to move`} style={themed($headerText)} />
+        <Text text={`Console (${logs.length}/500) - Drag to move`} style={themed($headerText)} weight="bold" />
         <View style={themed($headerButtons)}>
           <TouchableOpacity style={themed($clearButton)} onPress={() => setLogs([])}>
             <Text text="Clear" style={themed($buttonText)} />
@@ -246,7 +247,6 @@ const $header: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 const $headerText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   color: colors.text,
   fontSize: spacing.s3,
-  fontWeight: "bold",
 })
 
 const $headerButtons: ThemedStyle<ViewStyle> = ({spacing}) => ({

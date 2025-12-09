@@ -1,8 +1,7 @@
-import * as React from "react"
-import { Slot } from "@radix-ui/react-slot"
-import { cva, type VariantProps } from "class-variance-authority"
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
+import {Slot} from "@radix-ui/react-slot"
+import {cva, type VariantProps} from "class-variance-authority"
+import {clsx, type ClassValue} from "clsx"
+import {twMerge} from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -13,14 +12,11 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default:
-          "bg-blue-600 text-white shadow-xs hover:bg-blue-700",
+        default: "bg-blue-600 text-white shadow-xs hover:bg-blue-700",
         destructive:
           "bg-red-600 text-white shadow-xs hover:bg-red-700 focus-visible:ring-red-500/20 dark:focus-visible:ring-red-500/40",
-        outline:
-          "border border-gray-300 bg-white shadow-xs hover:bg-gray-100 hover:text-gray-900",
-        secondary:
-          "bg-gray-100 text-gray-900 shadow-xs hover:bg-gray-200",
+        outline: "border border-gray-300 bg-white shadow-xs hover:bg-gray-100 hover:text-gray-900",
+        secondary: "bg-gray-100 text-gray-900 shadow-xs hover:bg-gray-200",
         ghost: "hover:bg-gray-100 hover:text-gray-900",
         link: "text-blue-600 underline-offset-4 hover:underline",
       },
@@ -35,7 +31,7 @@ const buttonVariants = cva(
       variant: "default",
       size: "default",
     },
-  }
+  },
 )
 
 function Button({
@@ -50,13 +46,7 @@ function Button({
   }) {
   const Comp = asChild ? Slot : "button"
 
-  return (
-    <Comp
-      data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
-    />
-  )
+  return <Comp data-slot="button" className={cn(buttonVariants({variant, size, className}))} {...props} />
 }
 
-export { Button, buttonVariants }
+export {Button, buttonVariants}

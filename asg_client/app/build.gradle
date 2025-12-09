@@ -25,6 +25,54 @@ def asgStorePassword = project.hasProperty("ASG_STORE_PASSWORD") ? project.prope
 def asgKeyPassword = project.hasProperty("ASG_KEY_PASSWORD") ? project.property("ASG_KEY_PASSWORD") : ""
 def asgKeyAlias = project.hasProperty("ASG_KEY_ALIAS") ? project.property("ASG_KEY_ALIAS") : "asg"
 
+// Determine which signing config will be used for release builds
+def useReleaseKey = asgStorePassword ? true : false
+
+// Print signing configuration status during build
+gradle.taskGraph.whenReady { taskGraph ->
+    def isReleaseBuild = taskGraph.allTasks.any { it.name.toLowerCase().contains('release') }
+    def isDebugBuild = taskGraph.allTasks.any { it.name.toLowerCase().contains('debug') }
+
+    if (isReleaseBuild || isDebugBuild) {
+        println ""
+        println "╔════════════════════════════════════════════════════════════════╗"
+        println "║                    ASG CLIENT SIGNING INFO                     ║"
+        println "╠════════════════════════════════════════════════════════════════╣"
+
+        if (isReleaseBuild) {
+            if (useReleaseKey) {
+                println "║  ✅ RELEASE BUILD: Using PRODUCTION signing key               ║"
+                println "║     Keystore: credentials/asg-keystore.jks                    ║"
+                println "║     Key Alias: ${asgKeyAlias.padRight(48)}║"
+            } else {
+                println "║  ⚠️  RELEASE BUILD: Using DEBUG signing key (FALLBACK!)       ║"
+                println "║                                                               ║"
+                println "║  WARNING: ASG_STORE_PASSWORD not set!                         ║"
+                println "║  This APK will NOT work for production distribution.          ║"
+                println "║                                                               ║"
+                println "║  To fix, add to ~/.gradle/gradle.properties:                   ║"
+                println "║    ASG_STORE_PASSWORD=xxx                                     ║"
+                println "║    ASG_KEY_PASSWORD=xxx                                       ║"
+                println "║    ASG_KEY_ALIAS=asg                                          ║"
+            }
+        }
+
+        if (isDebugBuild && !isReleaseBuild) {
+            def debugKeystoreFile = file("../credentials/debug.keystore")
+            if (debugKeystoreFile.exists()) {
+                println "║  🔧 DEBUG BUILD: Using project debug keystore                 ║"
+                println "║     Keystore: credentials/debug.keystore                      ║"
+            } else {
+                println "║  🔧 DEBUG BUILD: Using system default debug keystore          ║"
+                println "║     Keystore: ~/.android/debug.keystore                       ║"
+            }
+        }
+
+        println "╚════════════════════════════════════════════════════════════════╝"
+        println ""
+    }
+}
+
 android {
     namespace 'com.mentra.asg_client'
     compileSdk 34
@@ -75,8 +123,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 15
-        versionName "15.0"
+        versionCode 19
+        versionName "19.0"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"

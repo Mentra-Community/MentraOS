@@ -1,3 +1,9 @@
+import {
+  AppletInterface,
+  getModelCapabilities,
+  HardwareRequirementLevel,
+  HardwareType,
+} from "@/../../cloud/packages/types/src"
 import {useMemo} from "react"
 import {AsyncResult, result as Res} from "typesafe-ts"
 import {create} from "zustand"
@@ -9,13 +15,6 @@ import STTModelManager from "@/services/STTModelManager"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
-
-import {
-  AppletInterface,
-  getModelCapabilities,
-  HardwareRequirementLevel,
-  HardwareType,
-} from "@/../../cloud/packages/types/src"
 
 export interface ClientAppletInterface extends AppletInterface {
   offline: boolean
@@ -88,7 +87,6 @@ export const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
       logoUrl: require("@assets/applet-icons/captions.png"),
       // description: "Live captions for your mentra glasses.",
       webviewUrl: "",
-      // version: "0.0.1",
       healthy: true,
       permissions: [],
       offlineRoute: "",
@@ -147,21 +145,26 @@ const startStopOfflineApplet = (packageName: string, status: boolean): AsyncResu
     // Captions app special handling
     if (packageName === captionsPackageName) {
       console.log(`APPLET: Captions app ${status ? "started" : "stopped"}`)
-      await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, status, true)
+      await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, status)
     }
 
     // Camera app special handling - send gallery mode to glasses
     if (packageName === cameraPackageName) {
       console.log(`APPLET: Camera app ${status ? "started" : "stopped"}`)
-      await useSettingsStore.getState().setSetting(SETTINGS.gallery_mode.key, status, true)
+      await useSettingsStore.getState().setSetting(SETTINGS.gallery_mode.key, status)
     }
   })
 }
 
+let refreshTimeout: ReturnType<typeof setTimeout> | null = null
 // actually turn on or off an applet:
 const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> => {
   // TODO: not the best way to handle this, but it works reliably:
-  setTimeout(() => {
+  if (refreshTimeout) {
+    clearTimeout(refreshTimeout)
+    refreshTimeout = null
+  }
+  refreshTimeout = setTimeout(() => {
     useAppletStatusStore.getState().refreshApplets()
   }, 2000)
 
@@ -311,10 +314,12 @@ export const useStopAllApplets = () => useAppletStatusStore(state => state.stopA
 export const useInactiveForegroundApps = () => {
   const apps = useApplets()
   const [isOffline] = useSetting(SETTINGS.offline_mode.key)
-  if (isOffline) {
-    return useMemo(() => apps.filter(app => app.type === "standard" && !app.running && app.offline), [apps])
-  }
-  return useMemo(() => apps.filter(app => (app.type === "standard" || !app.type) && !app.running), [apps])
+  return useMemo(() => {
+    if (isOffline) {
+      return apps.filter(app => app.type === "standard" && !app.running && app.offline)
+    }
+    return apps.filter(app => (app.type === "standard" || !app.type) && !app.running)
+  }, [apps, isOffline])
 }
 export const useBackgroundApps = () => {
   const apps = useApplets()

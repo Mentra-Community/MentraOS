@@ -1,8 +1,9 @@
 import {View, ViewStyle, TextStyle} from "react-native"
+
+import {Text} from "@/components/ignite"
+import {TxKeyPath} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {TxKeyPath} from "@/i18n"
-import {Text} from "@/components/ignite"
 
 interface EmptyAppsViewProps {
   statusMessageKey: TxKeyPath

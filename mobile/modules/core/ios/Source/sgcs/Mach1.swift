@@ -112,7 +112,6 @@ class Mach1: UltraliteBaseViewController, SGCManager {
     func cleanup() {}
 
     var type: String = DeviceTypes.MACH1
-
     let hasMic: Bool = false
     var micEnabled: Bool = false
     var caseOpen = false
@@ -200,13 +199,15 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     // Handle the tap event
     @objc func handleTapEvent(_ notification: Notification) {
+        Bridge.log("MACH1: handleTapEvent called!")
+
         guard let userInfo = notification.userInfo else {
             Bridge.log("MACH1: handleTapEvent: no userInfo")
             return
         }
 
         guard let tap = userInfo["tap"] else {
-            Bridge.log("MACH1: handleTapEvent: no tap")
+            Bridge.log("MACH1: handleTapEvent: no tap in userInfo")
             return
         }
 
@@ -215,13 +216,19 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         let tapNumber = hack.split(separator: "(").last?.split(separator: ")").first
         let tapNumberInt = Int(tapNumber ?? "0") ?? -1
 
+        Bridge.log("MACH1: Tap detected! Count: \(tapNumberInt)")
+
         if tapNumberInt >= 2 {
             isHeadUp = !isHeadUp
-            // start a timer and auto turn off the dashboard after 6 seconds:
+            // Notify CoreManager of head up state change (same as G1 does with IMU)
+            CoreManager.shared.updateHeadUp(isHeadUp)
+
+            // start a timer and auto turn off the dashboard after 15 seconds:
             if isHeadUp {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
                     if self.isHeadUp {
                         self.isHeadUp = false
+                        CoreManager.shared.updateHeadUp(false)
                     }
                 }
             }
@@ -236,37 +243,49 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func connectById(_ id: String) {
         setup()
+
+        // Extract the ID from the device name if it contains brackets
+        // e.g., "Vuzix Z100 [f1b87c]" -> "f1b87c"
+        var peripheralId = id
+        if let deviceId = id.split(separator: "[").last?.split(separator: "]").first {
+            peripheralId = String(deviceId)
+        }
+
         let isLinked = UltraliteManager.shared.isLinked.value
         let currentDevice = UltraliteManager.shared.currentDevice
         let isConnected =
             isLinked && currentDevice != nil && currentDevice!.isPaired
                 && currentDevice!.isConnected.value
-        let peripheral = discoveredPeripherals[id] ?? currentDevice?.peripheral
+        let peripheral = discoveredPeripherals[peripheralId] ?? currentDevice?.peripheral
 
-        let gotControl = currentDevice?.requestControl(
-            layout: UltraliteSDK.Ultralite.Layout.textBottomLeftAlign, timeout: 0,
-            hideStatusBar: true, showTapAnimation: true, maxNumTaps: 3
-        )
-
-        Bridge.log("MACH1: gotControl: \(gotControl ?? false)")
-        Bridge.log("MACH1: control is nil \(gotControl == nil)")
-
+        // Bind listeners to get notified when device connects
         UltraliteManager.shared.currentDevice?.isConnected.bind(listener: isConnectedListener!)
         UltraliteManager.shared.currentDevice?.batteryLevel.bind(listener: batteryLevelListener!)
 
         if isConnected {
+            // Already connected, request control now
+            let gotControl = currentDevice?.requestControl(
+                layout: UltraliteSDK.Ultralite.Layout.textBottomLeftAlign, timeout: 0,
+                hideStatusBar: true, showTapAnimation: true, maxNumTaps: 3
+            )
+            Bridge.log("MACH1: Already connected, gotControl: \(gotControl ?? false)")
             ready = true
             return
         }
 
         if !isLinked {
             if peripheral == nil {
-                Bridge.log("Mach1Manager: No peripheral found or stored with ID: \(id)")
-                CONNECTING_DEVICE = id
+                Bridge.log("Mach1Manager: No peripheral found or stored with ID: \(peripheralId)")
+                CONNECTING_DEVICE = peripheralId
                 UltraliteManager.shared.startScan(callback: foundDevice2)
                 return
             }
-            Bridge.log("Mach1Manager: Connecting to peripheral with ID: \(id)")
+            Bridge.log("Mach1Manager: Connecting to peripheral with ID: \(peripheralId)")
+
+            // Stop scanning and clear connecting state before linking
+            UltraliteManager.shared.stopScan()
+            CONNECTING_DEVICE = ""
+
             UltraliteManager.shared.link(device: peripheral!, callback: linked)
             UltraliteManager.shared.currentDevice?.isConnected.bind(listener: isConnectedListener!)
             UltraliteManager.shared.currentDevice?.batteryLevel.bind(

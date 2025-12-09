@@ -1,6 +1,7 @@
+import {View, ViewStyle} from "react-native"
+
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {View, ViewStyle} from "react-native"
 
 export const Card = ({children}: {children: React.ReactNode}) => {
   const {themed} = useAppTheme()

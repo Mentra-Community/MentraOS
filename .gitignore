@@ -4,7 +4,10 @@ AugmentOS-Cloud-Example-App/*
 RtmpStreamExampleBasic/*
 server/config.json
 K900_server_sdk/*
+K900_android_sdk/*
 K900Server_open/*
+k900_android_sdk/*
+K900ServerPlus/*
 K900_server/*
 .claude/*
 aar_extract/*
@@ -100,7 +103,7 @@ docs/_build/
 eggs
 htmlcov
 #include/
-lib/
+.lib/
 man/
 nosetests.xml
 parts
@@ -163,7 +166,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+.lib/
 lib64/
 parts/
 sdist/

@@ -1,9 +1,8 @@
 import {useState, useEffect} from "react"
-import {View, ViewStyle} from "react-native"
-import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
-import ToggleSetting from "@/components/settings/ToggleSetting"
+import {ViewStyle} from "react-native"
+
 import SliderSetting from "@/components/settings/SliderSetting"
+import ToggleSetting from "@/components/settings/ToggleSetting"
 import {translate} from "@/i18n"
 
 interface BrightnessSettingsProps {
@@ -19,9 +18,8 @@ export function BrightnessSettings({
   brightness,
   onAutoBrightnessChange,
   onBrightnessChange,
-  style,
+  style: _style,
 }: BrightnessSettingsProps) {
-  const {theme, themed} = useAppTheme()
   const [tempBrightness, setTempBrightness] = useState(brightness)
 
   // Sync local state when brightness prop changes
@@ -52,12 +50,3 @@ export function BrightnessSettings({
     </>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
-  paddingVertical: 12,
-  paddingHorizontal: 16,
-  borderRadius: spacing.s4,
-  borderWidth: 2,
-  borderColor: colors.border,
-})

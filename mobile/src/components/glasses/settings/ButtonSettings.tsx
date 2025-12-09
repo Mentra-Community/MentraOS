@@ -1,3 +1,7 @@
+import {MaterialCommunityIcons} from "@expo/vector-icons"
+import {useState} from "react"
+import {TouchableOpacity, View, ViewStyle} from "react-native"
+
 import {Text} from "@/components/ignite"
 import {AppPicker} from "@/components/misc/AppPicker"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -5,9 +9,6 @@ import {translate} from "@/i18n"
 import {ClientAppletInterface} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {MaterialCommunityIcons} from "@expo/vector-icons"
-import {useState} from "react"
-import {TouchableOpacity, View, ViewStyle} from "react-native"
 interface ButtonSettingsProps {
   enabled: boolean
   selectedApp: string

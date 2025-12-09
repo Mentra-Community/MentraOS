@@ -25,6 +25,7 @@ const (
 	LiveKitBridge_PlayAudio_FullMethodName   = "/mentra.livekit.bridge.LiveKitBridge/PlayAudio"
 	LiveKitBridge_StopAudio_FullMethodName   = "/mentra.livekit.bridge.LiveKitBridge/StopAudio"
 	LiveKitBridge_HealthCheck_FullMethodName = "/mentra.livekit.bridge.LiveKitBridge/HealthCheck"
+	LiveKitBridge_GetStatus_FullMethodName   = "/mentra.livekit.bridge.LiveKitBridge/GetStatus"
 )
 
 // LiveKitBridgeClient is the client API for LiveKitBridge service.
@@ -53,6 +54,8 @@ type LiveKitBridgeClient interface {
 	StopAudio(ctx context.Context, in *StopAudioRequest, opts ...grpc.CallOption) (*StopAudioResponse, error)
 	// Health check (for monitoring/load balancing)
 	HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
+	// Bridge status (room connectivity for a specific user session)
+	GetStatus(ctx context.Context, in *BridgeStatusRequest, opts ...grpc.CallOption) (*BridgeStatusResponse, error)
 }
 
 type liveKitBridgeClient struct {
@@ -135,6 +138,16 @@ func (c *liveKitBridgeClient) HealthCheck(ctx context.Context, in *HealthCheckRe
 	return out, nil
 }
 
+func (c *liveKitBridgeClient) GetStatus(ctx context.Context, in *BridgeStatusRequest, opts ...grpc.CallOption) (*BridgeStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BridgeStatusResponse)
+	err := c.cc.Invoke(ctx, LiveKitBridge_GetStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LiveKitBridgeServer is the server API for LiveKitBridge service.
 // All implementations must embed UnimplementedLiveKitBridgeServer
 // for forward compatibility.
@@ -161,6 +174,8 @@ type LiveKitBridgeServer interface {
 	StopAudio(context.Context, *StopAudioRequest) (*StopAudioResponse, error)
 	// Health check (for monitoring/load balancing)
 	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
+	// Bridge status (room connectivity for a specific user session)
+	GetStatus(context.Context, *BridgeStatusRequest) (*BridgeStatusResponse, error)
 	mustEmbedUnimplementedLiveKitBridgeServer()
 }
 
@@ -188,6 +203,9 @@ func (UnimplementedLiveKitBridgeServer) StopAudio(context.Context, *StopAudioReq
 }
 func (UnimplementedLiveKitBridgeServer) HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HealthCheck not implemented")
+}
+func (UnimplementedLiveKitBridgeServer) GetStatus(context.Context, *BridgeStatusRequest) (*BridgeStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetStatus not implemented")
 }
 func (UnimplementedLiveKitBridgeServer) mustEmbedUnimplementedLiveKitBridgeServer() {}
 func (UnimplementedLiveKitBridgeServer) testEmbeddedByValue()                       {}
@@ -300,6 +318,24 @@ func _LiveKitBridge_HealthCheck_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LiveKitBridge_GetStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BridgeStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LiveKitBridgeServer).GetStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LiveKitBridge_GetStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LiveKitBridgeServer).GetStatus(ctx, req.(*BridgeStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LiveKitBridge_ServiceDesc is the grpc.ServiceDesc for LiveKitBridge service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -322,6 +358,10 @@ var LiveKitBridge_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HealthCheck",
 			Handler:    _LiveKitBridge_HealthCheck_Handler,
+		},
+		{
+			MethodName: "GetStatus",
+			Handler:    _LiveKitBridge_GetStatus_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

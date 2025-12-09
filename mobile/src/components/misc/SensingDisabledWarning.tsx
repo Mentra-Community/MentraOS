@@ -1,12 +1,13 @@
 // SensingDisabledWarning.tsx
 import {View, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
-import {Text} from "@/components/ignite"
 import Icon from "react-native-vector-icons/MaterialCommunityIcons"
-import {translate} from "@/i18n"
+
+import {Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 const SensingDisabledWarning: React.FC = () => {
   const {push} = useNavigationHistory()

@@ -1,24 +1,13 @@
-import React, {useState, useRef, useEffect} from "react"
-import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  Platform,
-  Keyboard,
-  ScrollView,
-  TextStyle,
-  ViewStyle,
-  TouchableOpacity,
-} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {Screen} from "@/components/ignite"
-import {router, useLocalSearchParams} from "expo-router"
+import {useLocalSearchParams} from "expo-router"
+import {useState, useRef, useEffect} from "react"
+import {View, TextInput, Platform, ScrollView, TextStyle, ViewStyle, TouchableOpacity} from "react-native"
 import {SafeAreaView} from "react-native-safe-area-context"
-import {textEditorStore} from "@/utils/TextEditorStore"
-import {goBack} from "expo-router/build/global-state/routing"
+
+import {Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {ThemedStyle} from "@/theme"
+import {textEditorStore} from "@/utils/TextEditorStore"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function TextEditorScreen() {
   const {label, value, settingKey} = useLocalSearchParams()
@@ -56,15 +45,13 @@ export default function TextEditorScreen() {
         {/* Custom header for proper iOS styling */}
         <View style={themed($header)}>
           <TouchableOpacity onPress={handleCancel} style={themed($headerButton)}>
-            <Text style={themed($cancelButtonText)}>Cancel</Text>
+            <Text text="Cancel" style={themed($cancelButtonText)} />
           </TouchableOpacity>
 
-          <Text style={themed($headerTitle)} numberOfLines={1}>
-            {label as string}
-          </Text>
+          <Text text={label as string} style={themed($headerTitle)} numberOfLines={1} />
 
           <TouchableOpacity onPress={handleSave} style={themed($headerButton)}>
-            <Text style={themed($doneButtonText)}>Done</Text>
+            <Text text="Done" style={themed($doneButtonText)} />
           </TouchableOpacity>
         </View>
 

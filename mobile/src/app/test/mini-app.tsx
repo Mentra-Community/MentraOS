@@ -1,11 +1,12 @@
 import {useRef, useEffect} from "react"
 import {View, ViewStyle, TextStyle, ActivityIndicator} from "react-native"
 import {WebView} from "react-native-webview"
-import {useAppTheme} from "@/utils/useAppTheme"
+
 import {Screen, Header, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {ThemedStyle} from "@/theme"
 import miniComms, {SuperWebViewMessage} from "@/services/MiniComms"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function MiniApp() {
   const {theme, themed} = useAppTheme()

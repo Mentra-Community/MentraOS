@@ -86,7 +86,6 @@ public class VersionCommandHandler implements ICommandHandler {
         try {
             JSONObject versionInfo = new JSONObject();
             versionInfo.put("type", "version_info");
-            versionInfo.put("timestamp", System.currentTimeMillis());
             
             String appVersion = "1.0.0";
             String buildNumber = "1";

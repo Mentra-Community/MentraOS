@@ -1,5 +1,6 @@
 import {PropsWithChildren} from "react"
 import {View, ViewStyle} from "react-native"
+
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
 

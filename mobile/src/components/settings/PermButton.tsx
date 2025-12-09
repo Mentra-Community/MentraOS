@@ -1,7 +1,8 @@
+import {TouchableOpacity, View, ViewStyle, TextStyle} from "react-native"
+
+import {Icon, Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {View, ViewStyle, TextStyle} from "react-native"
-import {Button, Text} from "@/components/ignite"
 
 type ToggleSettingProps = {
   label: string
@@ -12,25 +13,20 @@ type ToggleSettingProps = {
 }
 
 const PermissionButton: React.FC<ToggleSettingProps> = ({label, subtitle, value: _value, onPress, containerStyle}) => {
-  const {themed} = useAppTheme()
+  const {theme, themed} = useAppTheme()
 
   return (
-    <View style={[themed($container), containerStyle]}>
+    <TouchableOpacity style={[themed($container), containerStyle]} onPress={onPress} activeOpacity={0.7}>
       <View style={themed($textContainer)}>
         <Text text={label} style={themed($label)} />
         {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
-      <Button style={themed($button)} tx="common:request" onPress={onPress} />
-    </View>
+      <View style={themed($iconContainer)}>
+        <Icon name="arrow-right" size={24} color={theme.colors.foreground} />
+      </View>
+    </TouchableOpacity>
   )
 }
-
-const $button: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  fontSize: spacing.s2,
-  width: 90,
-  padding: spacing.s2,
-  margin: 0,
-})
 
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flexDirection: "row",
@@ -49,7 +45,16 @@ const $textContainer: ThemedStyle<ViewStyle> = () => ({
   justifyContent: "flex-start",
   gap: 4,
   flex: 1,
-  marginRight: 16, // Add spacing between text and toggle
+  marginRight: 16,
+})
+
+const $iconContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.background,
+  padding: spacing.s3,
+  width: spacing.s12,
+  height: spacing.s12,
+  borderRadius: spacing.s12,
+  alignItems: "center",
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors}) => ({

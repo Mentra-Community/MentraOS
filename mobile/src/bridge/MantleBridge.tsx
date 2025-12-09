@@ -54,7 +54,7 @@ export class MantleBridge {
       this.handleCoreMessage(event.body)
     })
 
-    console.log("Core message event listener initialized")
+    console.log("BRIDGE: Core message event listener initialized")
   }
 
   /**
@@ -102,6 +102,7 @@ export class MantleBridge {
 
       let binaryString
       let bytes
+      let res
 
       switch (data.type) {
         case "core_status_update":
@@ -232,7 +233,7 @@ export class MantleBridge {
           GlobalEventEmitter.emit("AUDIO_DISCONNECTED", {})
           break
         case "save_setting":
-          await useSettingsStore.getState().setSetting(data.key, data.value, false)
+          await useSettingsStore.getState().setSetting(data.key, data.value)
           break
         case "head_up":
           mantle.handle_head_up(data.up)
@@ -242,32 +243,29 @@ export class MantleBridge {
           break
         case "phone_notification":
           // Send phone notification via REST instead of WebSocket
-          restComms
-            .sendPhoneNotification({
-              notificationId: data.notificationId,
-              app: data.app,
-              title: data.title,
-              content: data.content,
-              priority: data.priority,
-              timestamp: data.timestamp,
-              packageName: data.packageName,
-            })
-            .catch(error => {
-              console.error("Failed to send phone notification:", error)
-              // TODO: Consider retry logic or queuing failed notifications
-            })
+          res = await restComms.sendPhoneNotification({
+            notificationId: data.notificationId,
+            app: data.app,
+            title: data.title,
+            content: data.content,
+            priority: data.priority,
+            timestamp: data.timestamp,
+            packageName: data.packageName,
+          })
+          if (res.is_error()) {
+            console.error("Failed to send phone notification:", res.error)
+          }
           break
         case "phone_notification_dismissed":
           // Send phone notification dismissal via REST
-          restComms
-            .sendPhoneNotificationDismissed({
-              notificationKey: data.notificationKey,
-              packageName: data.packageName,
-              notificationId: data.notificationId,
-            })
-            .catch(error => {
-              console.error("Failed to send phone notification dismissal:", error)
-            })
+          res = await restComms.sendPhoneNotificationDismissed({
+            notificationKey: data.notificationKey,
+            packageName: data.packageName,
+            notificationId: data.notificationId,
+          })
+          if (res.is_error()) {
+            console.error("Failed to send phone notification dismissal:", res.error)
+          }
           break
         // TODO: this is a bit of a hack, we should have dedicated functions for ws endpoints in the core:
         case "ws_text":
@@ -301,6 +299,23 @@ export class MantleBridge {
         case "keep_alive_ack":
           console.log("MantleBridge: Forwarding keep-alive ACK to server:", data)
           socketComms.sendKeepAliveAck(data)
+          break
+        case "mtk_update_complete":
+          console.log("MantleBridge: MTK firmware update complete:", data.message)
+          GlobalEventEmitter.emit("MTK_UPDATE_COMPLETE", {
+            message: data.message,
+            timestamp: data.timestamp,
+          })
+          break
+        case "version_info":
+          console.log("MantleBridge: Received version_info:", data)
+          useGlassesStore.getState().setGlassesInfo({
+            appVersion: data.app_version,
+            buildNumber: data.build_number,
+            modelName: data.device_model,
+            androidVersion: data.android_version,
+            otaVersionUrl: data.ota_version_url,
+          })
           break
         default:
           console.log("Unknown event type:", data.type)
@@ -338,7 +353,6 @@ export class MantleBridge {
 
   async updateButtonVideoSettings(width: number, height: number, fps: number) {
     console.log("updateButtonVideoSettings", width, height, fps)
-    console.log("status.glasses_info?.model_name", status.glasses_info?.model_name)
     return await CoreModule.updateSettings({
       button_video_width: width,
       button_video_height: height,

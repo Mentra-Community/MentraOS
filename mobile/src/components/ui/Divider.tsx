@@ -1,8 +1,7 @@
-import * as React from "react"
 import {View, ViewStyle} from "react-native"
+
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {StyleSheet} from "react-native"
 
 interface DividerProps {
   variant?: "full" | "inset"
@@ -15,10 +14,6 @@ const Divider = ({variant = "full", color, thickness = 1}: DividerProps) => {
 
   const style = variant === "full" ? $dividerFull : $dividerInset
 
-  // @ts-ignore
-  if (thickness === 1) {
-    thickness = StyleSheet.hairlineWidth
-  }
   return <View style={[themed(style), color && {backgroundColor: color}, {height: thickness}]} />
 }
 
@@ -34,5 +29,5 @@ const $dividerInset: ThemedStyle<ViewStyle> = ({colors}) => ({
   width: "90%",
   alignSelf: "center",
 })
-export {Divider};
+export {Divider}
 export default Divider

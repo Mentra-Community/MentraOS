@@ -1,9 +1,10 @@
+import {DarkTheme, DefaultTheme, useTheme as _useNavTheme} from "@react-navigation/native"
+import * as SystemUI from "expo-system-ui"
 import {createContext, useCallback, useContext, useEffect, useMemo, useState} from "react"
 import {Platform, StyleProp, useColorScheme} from "react-native"
-import {DarkTheme, DefaultTheme, useTheme as _useNavTheme} from "@react-navigation/native"
-import {type Theme, type ThemeContexts, type ThemedStyle, type ThemedStyleArray, lightTheme, darkTheme} from "@/theme"
-import * as SystemUI from "expo-system-ui"
+
 import {useSetting, SETTINGS} from "@/stores/settings"
+import {type Theme, type ThemeContexts, type ThemedStyle, type ThemedStyleArray, lightTheme, darkTheme} from "@/theme"
 
 type ThemeContextType = {
   themeScheme: ThemeContexts

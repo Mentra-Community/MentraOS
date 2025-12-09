@@ -46,6 +46,7 @@ public class OtaHelper {
     private static ConnectivityManager connectivityManager;
     private static volatile boolean isCheckingVersion = false;
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
+    private static volatile boolean isMtkOtaInProgress = false;  // Tracks MTK firmware update in progress
     private static final Object versionCheckLock = new Object();
     private Handler handler;
     private Context context;
@@ -55,6 +56,17 @@ public class OtaHelper {
     // Retry logic constants
     private static final int MAX_DOWNLOAD_RETRIES = 3;
     private static final long[] RETRY_DELAYS = {30000, 60000, 120000}; // 30s, 1m, 2m
+    
+    // Update order configuration - can be easily modified to change update sequence
+    // Order: APK updates → MTK firmware → BES firmware
+    private static final String UPDATE_TYPE_APK = "apk";
+    private static final String UPDATE_TYPE_MTK = "mtk";
+    private static final String UPDATE_TYPE_BES = "bes";
+    private static final String[] UPDATE_ORDER = {UPDATE_TYPE_APK, UPDATE_TYPE_MTK, UPDATE_TYPE_BES};
+    
+    // ⚠️ DEBUG FLAG: Set to true to skip all checks and install MTK firmware from local file
+    // This will bypass version checking, downloading, and directly install /storage/emulated/0/asg/mtk_firmware.zip
+    private static final boolean DEBUG_FORCE_MTK_INSTALL = false;
 
     public OtaHelper(Context context) {
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
@@ -208,16 +220,16 @@ public class OtaHelper {
     public void startVersionCheck(Context context) {
         Log.d(TAG, "Check OTA update method init");
 
-        if (!isNetworkAvailable(context)) {
-            Log.e(TAG, "No WiFi connection available. Skipping OTA check.");
-            return;
-        }
+        // if (!isNetworkAvailable(context)) {
+        //     Log.e(TAG, "No WiFi connection available. Skipping OTA check.");
+        //     return;
+        // }
         
-        // Check battery status before proceeding with OTA update
-        if (!isBatterySufficientForUpdates()) {
-            Log.w(TAG, "🚨 Battery insufficient for OTA updates - skipping version check");
-            return;
-        }
+        // // Check battery status before proceeding with OTA update
+        // if (!isBatterySufficientForUpdates()) {
+        //     Log.w(TAG, "🚨 Battery insufficient for OTA updates - skipping version check");
+        //     return;
+        // }
 
         // Check if version check is already in progress
         if (isCheckingVersion) {
@@ -236,8 +248,30 @@ public class OtaHelper {
             }
 
             try {
-                // Fetch version info
-                String versionInfo = fetchVersionInfo(OtaConstants.VERSION_JSON_URL);
+                // ⚠️ DEBUG: Mock JSON to skip APK checks and trigger MTK install
+                String versionInfo;
+                if (DEBUG_FORCE_MTK_INSTALL) {
+                    Log.w(TAG, "DEBUG: Using mock version.json (APK versions set to 0 to skip updates)");
+                    versionInfo = "{"
+                        + "\"apps\": {"
+                        + "  \"com.mentra.asg_client\": {"
+                        + "    \"versionCode\": 0,"
+                        + "    \"versionName\": \"0.0.0\","
+                        + "    \"apkUrl\": \"https://mock.url/app.apk\","
+                        + "    \"sha256\": \"mock\""
+                        + "  },"
+                        + "  \"com.augmentos.otaupdater\": {"
+                        + "    \"versionCode\": 0,"
+                        + "    \"versionName\": \"0.0.0\","
+                        + "    \"apkUrl\": \"https://mock.url/updater.apk\","
+                        + "    \"sha256\": \"mock\""
+                        + "  }"
+                        + "}"
+                        + "}";
+                } else {
+                    // Fetch version info normally
+                    versionInfo = fetchVersionInfo(OtaConstants.VERSION_JSON_URL);
+                }
                 JSONObject json = new JSONObject(versionInfo);
                 
                 // Check if new format (multiple apps) or legacy format
@@ -311,15 +345,44 @@ public class OtaHelper {
         }
         
         Log.d(TAG, "apkUpdateNeeded: " + apkUpdateNeeded);
-        // PHASE 2: Update BES firmware (only if no APK update)
-        if (!apkUpdateNeeded && rootJson.has("bes_firmware")) {
-            Log.i(TAG, "No APK updates needed - checking BES firmware");
-            checkAndUpdateBesFirmware(rootJson.getJSONObject("bes_firmware"), context);
+        
+        // PHASE 2: Update MTK firmware (only if no APK update)
+        boolean mtkUpdateStarted = false;
+        
+        // ⚠️ DEBUG MODE: Force install MTK firmware from local file
+        if (DEBUG_FORCE_MTK_INSTALL && !apkUpdateNeeded) {
+            Log.w(TAG, "========================================");
+            Log.w(TAG, "⚠️⚠️⚠️ DEBUG MODE ACTIVE ⚠️⚠️⚠️");
+            Log.w(TAG, "Force installing MTK firmware from local file");
+            Log.w(TAG, "Skipping version check and download");
+            Log.w(TAG, "========================================");
+            mtkUpdateStarted = debugInstallMtkFirmware(context);
+            if (mtkUpdateStarted) {
+                Log.i(TAG, "DEBUG: MTK firmware install triggered");
+            } else {
+                Log.e(TAG, "DEBUG: MTK firmware install failed - check if file exists");
+            }
+        }
+        // Normal MTK update flow
+        else if (!apkUpdateNeeded && rootJson.has("mtk_firmware")) {
+            Log.i(TAG, "No APK updates needed - checking MTK firmware");
+            mtkUpdateStarted = checkAndUpdateMtkFirmware(rootJson.getJSONObject("mtk_firmware"), context);
+            if (mtkUpdateStarted) {
+                Log.i(TAG, "MTK firmware update started - BES firmware check will happen after restart");
+            }
         } else if (apkUpdateNeeded) {
-            Log.i(TAG, "APK update performed - BES firmware check will happen after restart");
+            Log.i(TAG, "APK update performed - MTK firmware check will happen after restart");
         }
         
-        Log.d(TAG, "Sequential app updates completed");
+        // PHASE 3: Update BES firmware (only if no APK update and no MTK update)
+        if (!apkUpdateNeeded && !mtkUpdateStarted && rootJson.has("bes_firmware")) {
+            Log.i(TAG, "No APK or MTK updates needed - checking BES firmware");
+            checkAndUpdateBesFirmware(rootJson.getJSONObject("bes_firmware"), context);
+        } else if (apkUpdateNeeded || mtkUpdateStarted) {
+            Log.i(TAG, "APK or MTK update performed - BES firmware check will happen after next check cycle");
+        }
+        
+        Log.d(TAG, "Sequential updates completed (APK → MTK → BES)");
     }
     
     private long getInstalledVersion(String packageName, Context context) {
@@ -338,6 +401,11 @@ public class OtaHelper {
             // Check for mutual exclusion - don't start APK update if firmware update in progress
             if (BesOtaManager.isBesOtaInProgress) {
                 Log.w(TAG, "BES firmware update in progress - skipping APK update");
+                return false;
+            }
+            
+            if (isMtkOtaInProgress) {
+                Log.w(TAG, "MTK firmware update in progress - skipping APK update");
                 return false;
             }
             
@@ -932,6 +1000,12 @@ public class OtaHelper {
                 return false;
             }
             
+            // Check if MTK OTA in progress
+            if (isMtkOtaInProgress) {
+                Log.w(TAG, "MTK firmware update in progress - skipping BES firmware update");
+                return false;
+            }
+            
             // Check version (optional - BES may not always report version reliably)
             long serverVersion = firmwareInfo.optLong("versionCode", 0);
             String versionName = firmwareInfo.optString("versionName", "unknown");
@@ -1105,6 +1179,287 @@ public class OtaHelper {
             return match;
         } catch (Exception e) {
             Log.e(TAG, "Firmware SHA256 check error", e);
+            return false;
+        }
+    }
+    
+    // ========== MTK Firmware Update Methods ==========
+    
+    /**
+     * Check and update MTK firmware if newer version available
+     * @param firmwareInfo JSON object with firmware metadata
+     * @param context Application context
+     * @return true if update started successfully
+     */
+    private boolean checkAndUpdateMtkFirmware(JSONObject firmwareInfo, Context context) {
+        try {
+            // Check for mutual exclusion - don't start MTK update if other updates in progress
+            if (isUpdating) {
+                Log.w(TAG, "APK update in progress - skipping MTK firmware update");
+                return false;
+            }
+            
+            if (BesOtaManager.isBesOtaInProgress) {
+                Log.w(TAG, "BES firmware update in progress - skipping MTK firmware update");
+                return false;
+            }
+            
+            // Check if MTK OTA already in progress
+            if (isMtkOtaInProgress) {
+                Log.w(TAG, "MTK firmware update already in progress");
+                return false;
+            }
+            
+            // Get version info from server
+            long serverVersion = firmwareInfo.optLong("versionCode", 0);
+            String versionName = firmwareInfo.optString("versionName", "unknown");
+            
+            Log.i(TAG, "MTK firmware available - Version: " + versionName + " (code: " + serverVersion + ")");
+            
+            // Get current MTK firmware version from system property
+            String currentVersionStr = com.mentra.asg_client.SysControl.getSystemCurrentVersion(context);
+            long currentVersion = 0;
+            
+            try {
+                currentVersion = Long.parseLong(currentVersionStr);
+            } catch (NumberFormatException e) {
+                Log.w(TAG, "Could not parse current MTK version: " + currentVersionStr);
+            }
+            
+            Log.d(TAG, "Current MTK firmware version: " + currentVersionStr + " (parsed: " + currentVersion + ")");
+            Log.d(TAG, "Server MTK firmware version: " + serverVersion);
+            
+            // Compare versions
+            if (serverVersion > currentVersion) {
+                Log.i(TAG, "Server MTK firmware version is newer - proceeding with update");
+            } else {
+                Log.i(TAG, "MTK firmware is up to date - skipping update");
+                return false;
+            }
+            
+            // Download firmware file
+            String firmwareUrl = firmwareInfo.getString("firmwareUrl");
+            boolean downloaded = downloadMtkFirmware(firmwareUrl, firmwareInfo, context);
+            
+            if (downloaded) {
+                // Set flag before starting update
+                isMtkOtaInProgress = true;
+                
+                // Post started event
+                EventBus.getDefault().post(com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent.createStarted());
+                
+                // Trigger MTK OTA installation via system broadcast
+                Log.i(TAG, "Starting MTK firmware update from: " + OtaConstants.MTK_FIRMWARE_PATH);
+                com.mentra.asg_client.SysControl.installOTA(context, OtaConstants.MTK_FIRMWARE_PATH);
+                
+                Log.i(TAG, "MTK firmware update initiated - system will handle installation");
+                return true;
+            } else {
+                Log.e(TAG, "Failed to download MTK firmware");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to update MTK firmware", e);
+            isMtkOtaInProgress = false;
+        }
+        return false;
+    }
+    
+    /**
+     * Download MTK firmware zip file from server
+     * @param firmwareUrl URL to download firmware from
+     * @param firmwareInfo JSON metadata about the firmware
+     * @param context Application context
+     * @return true if downloaded and verified successfully
+     */
+    private boolean downloadMtkFirmware(String firmwareUrl, JSONObject firmwareInfo, Context context) {
+        try {
+            File asgDir = new File(OtaConstants.BASE_DIR);
+            if (!asgDir.exists()) {
+                boolean created = asgDir.mkdirs();
+                Log.d(TAG, "ASG directory created: " + created);
+            }
+            
+            File firmwareFile = new File(asgDir, OtaConstants.MTK_FIRMWARE_FILENAME);
+            
+            // Create backup of existing firmware if it exists
+            if (firmwareFile.exists()) {
+                File backupFile = new File(asgDir, OtaConstants.MTK_BACKUP_FILENAME);
+                Log.d(TAG, "Creating backup of existing MTK firmware");
+                if (backupFile.exists()) {
+                    backupFile.delete();
+                }
+                firmwareFile.renameTo(backupFile);
+            }
+            
+            Log.d(TAG, "Downloading MTK firmware from: " + firmwareUrl);
+            
+            // Download firmware file
+            URL url = new URL(firmwareUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.connect();
+            
+            long fileSize = conn.getContentLength();
+            
+            // Check file size is reasonable (max 100MB for MTK firmware)
+            if (fileSize > 100 * 1024 * 1024) {
+                Log.e(TAG, "MTK firmware file too large: " + fileSize + " bytes (max 100MB)");
+                conn.disconnect();
+                return false;
+            }
+            
+            InputStream in = conn.getInputStream();
+            FileOutputStream out = new FileOutputStream(firmwareFile);
+            
+            byte[] buffer = new byte[8192];
+            int len;
+            long total = 0;
+            int lastProgress = 0;
+            
+            Log.d(TAG, "Downloading MTK firmware, size: " + fileSize + " bytes");
+            
+            while ((len = in.read(buffer)) > 0) {
+                out.write(buffer, 0, len);
+                total += len;
+                
+                // Log progress at 10% intervals
+                int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
+                if (progress >= lastProgress + 10 || progress == 100) {
+                    Log.d(TAG, "MTK firmware download progress: " + progress + "%");
+                    
+                    // Post download progress event
+                    EventBus.getDefault().post(new DownloadProgressEvent(
+                        DownloadProgressEvent.DownloadStatus.PROGRESS,
+                        progress,
+                        total,
+                        fileSize
+                    ));
+                    
+                    lastProgress = progress;
+                }
+            }
+            
+            out.close();
+            in.close();
+            conn.disconnect();
+            
+            Log.i(TAG, "MTK firmware downloaded to: " + firmwareFile.getAbsolutePath());
+            
+            // Verify SHA256 hash
+            boolean verified = verifyMtkFirmwareChecksum(firmwareFile.getAbsolutePath(), firmwareInfo);
+            if (verified) {
+                Log.i(TAG, "MTK firmware file verified successfully");
+                return true;
+            } else {
+                Log.e(TAG, "MTK firmware verification failed - deleting file");
+                firmwareFile.delete();
+                return false;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to download MTK firmware", e);
+            return false;
+        }
+    }
+    
+    /**
+     * Verify MTK firmware zip file checksum
+     * @param filePath Path to firmware file
+     * @param firmwareInfo JSON with expected sha256
+     * @return true if checksum matches
+     */
+    private boolean verifyMtkFirmwareChecksum(String filePath, JSONObject firmwareInfo) {
+        try {
+            String expectedHash = firmwareInfo.optString("sha256", "");
+            if (expectedHash.isEmpty()) {
+                Log.w(TAG, "No SHA256 hash provided for MTK firmware - skipping verification");
+                return true;
+            }
+            
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            FileInputStream is = new FileInputStream(filePath);
+            
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) > 0) {
+                digest.update(buffer, 0, read);
+            }
+            is.close();
+            
+            byte[] hashBytes = digest.digest();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hashBytes) {
+                sb.append(String.format("%02x", b));
+            }
+            String calculatedHash = sb.toString();
+            
+            Log.d(TAG, "Expected MTK firmware SHA256: " + expectedHash);
+            Log.d(TAG, "Calculated MTK firmware SHA256: " + calculatedHash);
+            
+            boolean match = calculatedHash.equalsIgnoreCase(expectedHash);
+            Log.d(TAG, "MTK firmware SHA256 check " + (match ? "passed" : "failed"));
+            return match;
+        } catch (Exception e) {
+            Log.e(TAG, "MTK firmware SHA256 check error", e);
+            return false;
+        }
+    }
+    
+    // ========== MTK Firmware Update State Management ==========
+    
+    /**
+     * Set MTK OTA in progress flag
+     * Called by MtkOtaReceiver when update completes or fails
+     * @param inProgress true if MTK OTA is in progress, false otherwise
+     */
+    public static void setMtkOtaInProgress(boolean inProgress) {
+        isMtkOtaInProgress = inProgress;
+        Log.d(TAG, "MTK OTA in progress flag set to: " + inProgress);
+    }
+    
+    /**
+     * Check if MTK OTA is in progress
+     * @return true if MTK OTA update is in progress
+     */
+    public static boolean isMtkOtaInProgress() {
+        return isMtkOtaInProgress;
+    }
+    
+    // ========== DEBUG METHODS ==========
+    
+    /**
+     * DEBUG: Force install MTK firmware from local zip file without any checks
+     * Skips version checking, downloading, and mutual exclusion
+     * Use for testing only!
+     * 
+     * @param context Application context
+     * @return true if install command was sent successfully
+     */
+    public static boolean debugInstallMtkFirmware(Context context) {
+        try {
+            File firmwareFile = new File(OtaConstants.MTK_FIRMWARE_PATH);
+            
+            if (!firmwareFile.exists()) {
+                Log.e(TAG, "DEBUG: MTK firmware file not found at: " + OtaConstants.MTK_FIRMWARE_PATH);
+                return false;
+            }
+            
+            Log.w(TAG, "⚠️ DEBUG: Force installing MTK firmware from: " + OtaConstants.MTK_FIRMWARE_PATH);
+            Log.w(TAG, "⚠️ DEBUG: Skipping all checks - version, mutual exclusion, SHA256");
+            
+            // Set flag
+            isMtkOtaInProgress = true;
+            
+            // Post started event
+            EventBus.getDefault().post(com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent.createStarted());
+            
+            // Trigger MTK OTA installation via system broadcast
+            com.mentra.asg_client.SysControl.installOTA(context, OtaConstants.MTK_FIRMWARE_PATH);
+            
+            Log.i(TAG, "DEBUG: MTK firmware install command sent - monitor MtkOtaReceiver for progress");
+            return true;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "DEBUG: Failed to install MTK firmware", e);
+            isMtkOtaInProgress = false;
             return false;
         }
     }

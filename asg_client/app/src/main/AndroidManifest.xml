@@ -117,6 +117,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- MTK OTA firmware update progress receiver -->
+        <receiver
+            android:name="com.mentra.asg_client.io.ota.receivers.MtkOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xy.otaupdateresult" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="com.mentra.asg_client.service.core.AsgClientService"
             android:enabled="true"

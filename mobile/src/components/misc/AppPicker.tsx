@@ -1,13 +1,14 @@
 import {useState, useMemo, useCallback, FC} from "react"
 import {View, TouchableOpacity, ViewStyle, TextStyle, Modal, ScrollView, TextInput, Platform} from "react-native"
+import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
+
 import {Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {translate} from "@/i18n"
-import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
-import {ClientAppletInterface} from "@/stores/applets"
 import {Group} from "@/components/ui/Group"
+import {translate} from "@/i18n"
+import {ClientAppletInterface} from "@/stores/applets"
+import {ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 interface AppPickerProps {
   visible: boolean
@@ -173,16 +174,12 @@ export const AppPicker: FC<AppPickerProps> = ({
                           <View style={themed($appNameRow)}>
                             <Text text={app.name} style={themed($appName)} numberOfLines={1} />
                             {isOffline && (
-                              <View style={themed($badge)}>
-                                <MaterialCommunityIcons name="home" size={12} color={theme.colors.text} />
+                              <View style={[themed($badge), {backgroundColor: theme.colors.success}]}>
+                                <MaterialCommunityIcons name="home" size={12} color={theme.colors.palette.white} />
                               </View>
                             )}
                             {isSelected && (
-                              <MaterialCommunityIcons
-                                name="check-circle"
-                                size={20}
-                                color={theme.colors.palette.primary400}
-                              />
+                              <MaterialCommunityIcons name="check-circle" size={20} color={theme.colors.success} />
                             )}
                           </View>
                           {!isCompatible && showCompatibilityWarnings && compatibilityMessage && (

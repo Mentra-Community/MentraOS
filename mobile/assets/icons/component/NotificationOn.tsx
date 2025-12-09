@@ -1,6 +1,6 @@
 // in ../icons/NotificationOn.tsx
-import React from "react"
 import Svg, {G, Path, Defs, ClipPath, Rect} from "react-native-svg"
+
 import {useAppTheme} from "@/utils/useAppTheme"
 
 interface NotificationOnProps {

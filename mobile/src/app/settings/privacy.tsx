@@ -1,3 +1,7 @@
+import CoreModule from "core"
+import {useEffect, useState} from "react"
+import {AppState, Platform, ScrollView} from "react-native"
+
 import {Header, Screen} from "@/components/ignite"
 import PermissionButton from "@/components/settings/PermButton"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -9,9 +13,6 @@ import {$styles} from "@/theme"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-import CoreModule from "core"
-import {useEffect, useState} from "react"
-import {AppState, Platform, ScrollView} from "react-native"
 
 export default function PrivacySettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)

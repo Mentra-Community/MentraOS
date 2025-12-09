@@ -1,11 +1,11 @@
-import {useCallback, useMemo} from "react"
+import {BottomSheetBackdrop, BottomSheetModal, BottomSheetView} from "@gorhom/bottom-sheet"
+import {useCallback, useMemo, useRef} from "react"
 import {FlatList, ImageStyle, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
 import {translate} from "@/i18n"
 import {ClientAppletInterface, DUMMY_APPLET, useIncompatibleApps} from "@/stores/applets"
-import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
@@ -15,19 +15,15 @@ const GRID_COLUMNS = 4
 export const IncompatibleApps: React.FC = () => {
   const {themed, theme} = useAppTheme()
   const incompatibleApps = useIncompatibleApps()
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const bottomSheetRef = useRef<BottomSheetModal>(null)
 
-  // Get connected glasses name
-  const glassesName = defaultWearable || "your glasses"
+  const snapPoints = useMemo(() => ["50%", "75%"], [])
 
-  // Prepare grid data with placeholders
   const gridData = useMemo(() => {
-    // Calculate how many empty placeholders we need to fill the last row
     const totalItems = incompatibleApps.length
     const remainder = totalItems % GRID_COLUMNS
     const emptySlots = remainder === 0 ? 0 : GRID_COLUMNS - remainder
 
-    // Add empty placeholders to align items to the left
     const paddedApps = [...incompatibleApps]
     for (let i = 0; i < emptySlots; i++) {
       paddedApps.push(DUMMY_APPLET)
@@ -36,9 +32,17 @@ export const IncompatibleApps: React.FC = () => {
     return paddedApps
   }, [incompatibleApps])
 
+  const handleOpenSheet = useCallback(() => {
+    bottomSheetRef.current?.present()
+  }, [])
+
+  const renderBackdrop = useCallback(
+    (props: any) => <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} pressBehavior="close" />,
+    [],
+  )
+
   const handleAppPress = useCallback(
     (app: ClientAppletInterface) => {
-      // Show alert explaining why the app is incompatible
       const missingHardware =
         app.compatibility?.missingRequired?.map(req => req.type.toLowerCase()).join(", ") || "required features"
 
@@ -61,7 +65,6 @@ export const IncompatibleApps: React.FC = () => {
 
   const renderItem = useCallback(
     ({item}: {item: ClientAppletInterface}) => {
-      // Don't render empty placeholders
       if (!item.name) {
         return <View style={themed($gridItem)} />
       }
@@ -75,47 +78,75 @@ export const IncompatibleApps: React.FC = () => {
         </TouchableOpacity>
       )
     },
-    [themed, theme, handleAppPress],
+    [themed, handleAppPress],
   )
 
-  // Don't show section if no incompatible apps
   if (incompatibleApps.length === 0) {
     return null
   }
 
   return (
-    <View style={themed($container)}>
-      <View style={themed($header)}>
-        <Text style={themed($headerText)}>{`Incompatible with ${glassesName}`}</Text>
-      </View>
+    <>
+      <TouchableOpacity style={themed($trigger)} onPress={handleOpenSheet} activeOpacity={0.7}>
+        <Text
+          style={themed($triggerText)}
+          text={translate("home:incompatibleAppsCount", {count: incompatibleApps.length})}
+        />
+      </TouchableOpacity>
 
-      <FlatList
-        data={gridData}
-        renderItem={renderItem}
-        keyExtractor={item => item.packageName}
-        numColumns={GRID_COLUMNS}
-        scrollEnabled={false}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={themed($gridContent)}
-      />
-    </View>
+      <BottomSheetModal
+        ref={bottomSheetRef}
+        snapPoints={snapPoints}
+        backdropComponent={renderBackdrop}
+        enablePanDownToClose
+        backgroundStyle={themed($sheetBackground)}
+        handleIndicatorStyle={themed($handleIndicator)}>
+        <BottomSheetView style={themed($sheetContent)}>
+          <Text style={themed($sheetTitle)} tx="home:incompatibleApps" />
+          <FlatList
+            data={gridData}
+            renderItem={renderItem}
+            keyExtractor={item => item.packageName}
+            numColumns={GRID_COLUMNS}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={themed($gridContent)}
+          />
+        </BottomSheetView>
+      </BottomSheetModal>
+    </>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginTop: spacing.s4,
+const $trigger: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  paddingVertical: spacing.s4,
+  marginBottom: spacing.s4,
 })
 
-const $header: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginBottom: spacing.s3,
-  paddingHorizontal: spacing.s2,
-})
-
-const $headerText: ThemedStyle<TextStyle> = ({colors}) => ({
+const $triggerText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 16,
   fontWeight: "600",
   color: colors.textDim,
+})
+
+const $sheetBackground: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.primary_foreground,
+})
+
+const $handleIndicator: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.textDim,
+})
+
+const $sheetContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 1,
+  paddingHorizontal: spacing.s4,
+})
+
+const $sheetTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 18,
+  fontWeight: "700",
+  color: colors.text,
+  marginBottom: spacing.s4,
+  textAlign: "center",
 })
 
 const $gridContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
@@ -129,11 +160,10 @@ const $gridItem: ThemedStyle<ViewStyle> = ({spacing}) => ({
   paddingHorizontal: spacing.s2,
 })
 
-const $appContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $appContainer: ThemedStyle<ViewStyle> = () => ({
   position: "relative",
   width: 64,
   height: 64,
-  marginBottom: spacing.s2,
 })
 
 const $appIcon: ThemedStyle<ImageStyle> = ({spacing}) => ({

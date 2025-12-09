@@ -300,7 +300,7 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new VideoCommandHandler(context, serviceManager, streamingManager, fileManager, stateManager));
             Log.d(TAG, "✅ Registered VideoCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new PingCommandHandler(communicationManager, responseBuilder));
+            commandHandlerRegistry.registerHandler(new PingCommandHandler(communicationManager, responseBuilder, serviceManager));
             Log.d(TAG, "✅ Registered PingCommandHandler");
 
             commandHandlerRegistry.registerHandler(new RtmpCommandHandler(context, stateManager, streamingManager));
@@ -376,6 +376,20 @@ public class CommandProcessor {
             Log.d(TAG, "✅ Installation progress sent successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error sending installation progress", e);
+        }
+    }
+
+    /**
+     * Send MTK firmware update complete notification over BLE
+     */
+    public void sendMtkUpdateComplete() {
+        Log.d(TAG, "📤 sendMtkUpdateComplete() called");
+
+        try {
+            responseSender.sendMtkUpdateComplete();
+            Log.d(TAG, "✅ MTK update complete sent successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error sending MTK update complete", e);
         }
     }
 

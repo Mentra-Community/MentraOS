@@ -1,24 +1,16 @@
-import {useCallback} from "react"
-import {View, BackHandler} from "react-native"
-import {useLocalSearchParams, useFocusEffect, router} from "expo-router"
-import {Screen, Header, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {$styles, ThemedStyle} from "@/theme"
-import {ViewStyle, TextStyle, ScrollView} from "react-native"
-import {RouteButton} from "@/components/ui/RouteButton"
+import {useLocalSearchParams, useFocusEffect} from "expo-router"
+import {useCallback, useEffect} from "react"
+import {BackHandler} from "react-native"
+
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import { useGlassesStore } from "@/stores/glasses"
 
 export default function GlassesWifiSetupScreen() {
-  const {deviceModel = "Glasses", returnTo} = useLocalSearchParams()
-  const {theme, themed} = useAppTheme()
-  const {push, goBack} = useNavigationHistory()
-  const wifiSsid = useGlassesStore(state => state.wifiSsid)
-  const wifiConnected = useGlassesStore(state => state.wifiConnected)
+  const {deviceModel = "Glasses", returnTo, nextRoute} = useLocalSearchParams()
+  const {goBack, replace} = useNavigationHistory()
 
   const handleGoBack = useCallback(() => {
     if (returnTo && typeof returnTo === "string") {
-      router.replace(decodeURIComponent(returnTo))
+      replace(decodeURIComponent(returnTo))
     } else {
       goBack()
     }
@@ -33,104 +25,11 @@ export default function GlassesWifiSetupScreen() {
     }, [handleGoBack]),
   )
 
-  const handleScanForNetworks = () => {
-    push("/pairing/glasseswifisetup/scan", {deviceModel, returnTo})
-  }
+  // Immediately redirect to scan screen (using replace to avoid white screen on back)
+  useEffect(() => {
+    replace("/pairing/glasseswifisetup/scan", {deviceModel, returnTo, nextRoute})
+  }, [])
 
-  const handleManualEntry = () => {
-    push("/pairing/glasseswifisetup/password", {deviceModel, ssid: "", returnTo})
-  }
-
-  // const handleDisconnectWifi = async () => {
-  //   try {
-  //     console.log("Disconnecting from WiFi...")
-  //     await bridge.disconnectFromWifi()
-  //     console.log("WiFi disconnect command sent successfully")
-  //   } catch (error) {
-  //     console.error("Failed to disconnect from WiFi:", error)
-  //   }
-  // }
-
-  return (
-    <Screen preset="fixed" contentContainerStyle={themed($styles.screen)} safeAreaEdges={[]}>
-      <Header title="Glasses WiFi Setup" leftIcon="chevron-left" onLeftPress={handleGoBack} />
-
-      <ScrollView style={{marginRight: -theme.spacing.s6, paddingRight: theme.spacing.s6}}>
-        <View style={themed($content)}>
-          <Text style={themed($subtitle)}>Your {deviceModel} glasses needs WiFi to connect to the internet.</Text>
-
-          {/* Show current WiFi status if available */}
-          {wifiConnected && wifiSsid && (
-            <View style={themed($statusContainer)}>
-              <Text style={themed($statusText)}>Currently connected to: {wifiSsid}</Text>
-            </View>
-          )}
-
-          {!wifiConnected && (
-            <View style={themed($statusContainer)}>
-              <Text style={themed($statusText)}>Not connected to WiFi</Text>
-              <Text style={themed($statusText)}>
-                Note: Mentra Live Beta is only compatible with 2.4ghz WiFi networks.
-              </Text>
-            </View>
-          )}
-
-          <View style={themed($buttonContainer)}>
-            <RouteButton
-              label="Scan for Networks"
-              subtitle="Automatically find nearby WiFi networks"
-              onPress={handleScanForNetworks}
-            />
-
-            <RouteButton
-              label="Enter Network Manually"
-              subtitle="Type in network name and password"
-              onPress={handleManualEntry}
-            />
-
-            {/* {isWifiConnected && currentWifi && (
-              <ActionButton
-                label="Disconnect from WiFi"
-                subtitle="Disconnect from current network"
-                variant="destructive"
-                onPress={handleDisconnectWifi}
-              />
-            )} */}
-          </View>
-        </View>
-      </ScrollView>
-    </Screen>
-  )
+  // Redirect screen - no UI needed
+  return null
 }
-
-const $content: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  alignItems: "center",
-  marginTop: spacing.s10,
-})
-
-const $subtitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 16,
-  color: colors.textDim,
-  marginBottom: spacing.s8,
-  textAlign: "center",
-})
-
-const $statusContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  padding: spacing.s4,
-  borderRadius: spacing.s2,
-  marginBottom: spacing.s8,
-  width: "100%",
-})
-
-const $statusText: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 14,
-  color: colors.text,
-  textAlign: "center",
-})
-
-const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  width: "100%",
-  gap: spacing.s4,
-  marginTop: spacing.s4,
-})

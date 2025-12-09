@@ -18,32 +18,32 @@ export const APP_TAGS: Record<string, string[]> = {
 
 // Hardware icon mapping
 export const hardwareIcons: Record<HardwareType, React.ReactNode> = {
-  [HardwareType.CAMERA]: <Camera className="h-4 w-4" />,
-  [HardwareType.DISPLAY]: <Cpu className="h-4 w-4" />,
-  [HardwareType.MICROPHONE]: <Mic className="h-4 w-4" />,
-  [HardwareType.SPEAKER]: <Speaker className="h-4 w-4" />,
-  [HardwareType.IMU]: <RotateCw className="h-4 w-4" />,
-  [HardwareType.BUTTON]: <CircleDot className="h-4 w-4" />,
-  [HardwareType.LIGHT]: <Lightbulb className="h-4 w-4" />,
-  [HardwareType.WIFI]: <Wifi className="h-4 w-4" />,
+  [HardwareType.CAMERA]: <Camera className="h-6 w-6" />,
+  [HardwareType.DISPLAY]: <Cpu className="h-6 w-6" />,
+  [HardwareType.MICROPHONE]: <Mic className="h-6 w-6" />,
+  [HardwareType.SPEAKER]: <Speaker className="h-6 w-6" />,
+  [HardwareType.IMU]: <RotateCw className="h-6 w-6" />,
+  [HardwareType.BUTTON]: <CircleDot className="h-6 w-6" />,
+  [HardwareType.LIGHT]: <Lightbulb className="h-6 w-6" />,
+  [HardwareType.WIFI]: <Wifi className="h-6 w-6" />,
 }
 
 // Get icon for permission type
 export const getPermissionIcon = (type: string) => {
   const normalizedType = type.toLowerCase()
   if (normalizedType.includes("microphone") || normalizedType.includes("audio")) {
-    return <Mic className="h-5 w-4" />
+    return <Mic className="h-6 w-6" />
   }
   if (normalizedType.includes("camera") || normalizedType.includes("photo")) {
-    return <Camera className="h-4 w-4" />
+    return <Camera className="h-6 w-6" />
   }
   if (normalizedType.includes("location") || normalizedType.includes("gps")) {
-    return <MapPin className="h-4 w-4" />
+    return <MapPin className="h-6 w-6" />
   }
   if (normalizedType.includes("calendar")) {
-    return <Calendar className="h-4 w-4" />
+    return <Calendar className="h-6 w-6" />
   }
-  return <Shield className="h-4 w-4" />
+  return <Shield className="h-6 w-6" />
 }
 
 // Get default description for permission type

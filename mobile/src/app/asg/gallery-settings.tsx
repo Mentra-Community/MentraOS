@@ -3,7 +3,6 @@ import {View, ViewStyle, TextStyle, ScrollView} from "react-native"
 
 import {Header, Screen, Text} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
-import ActionButton from "@/components/ui/ActionButton"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
@@ -129,11 +128,7 @@ export default function GallerySettingsScreen() {
         {/* Camera Settings button for glasses with configurable button */}
         {features?.hasButton && (
           <View style={themed($section)}>
-            <RouteButton
-              label={translate("settings:cameraSettings")}
-              subtitle={translate("settings:cameraSettingsDescription")}
-              onPress={() => push("/settings/camera")}
-            />
+            <RouteButton label={translate("settings:cameraSettings")} onPress={() => push("/settings/camera")} />
           </View>
         )}
 
@@ -141,7 +136,6 @@ export default function GallerySettingsScreen() {
           <Text style={themed($sectionTitle)}>Automatic Sync</Text>
           <ToggleSetting
             label="Save to Camera Roll"
-            subtitle="Automatically save new photos to your device's camera roll when syncing"
             value={autoSaveToCameraRoll}
             onValueChange={handleToggleAutoSave}
           />
@@ -177,9 +171,8 @@ export default function GallerySettingsScreen() {
         </View>
 
         <View style={themed($section)}>
-          <ActionButton
+          <RouteButton
             label={translate("glasses:deleteAllPhotos")}
-            //subtitle="Remove all photos from device storage (camera roll photos are not affected)"
             onPress={handleDeleteAll}
             variant="destructive"
             disabled={isLoadingStats || localPhotoCount + localVideoCount === 0}
@@ -200,7 +193,6 @@ const $sectionCompact: ThemedStyle<ViewStyle> = ({spacing}) => ({
 
 const $sectionTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 14,
-  fontWeight: "400",
   color: colors.text,
   lineHeight: 20,
   letterSpacing: 0,

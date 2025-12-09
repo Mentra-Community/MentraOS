@@ -285,11 +285,17 @@ export default function TranscriptionSettingsScreen() {
 
   return (
     <Screen preset="fixed" style={themed($styles.screen)}>
-      <Header title={translate("settings:transcriptionSettings")} leftIcon="chevron-left" onLeftPress={handleGoBack} />
-
-      <Spacer height={theme.spacing.s4} />
+      <Header
+        title={translate("settings:transcriptionSettings")}
+        leftIcon="chevron-left"
+        onLeftPress={handleGoBack}
+        titleMode="flex"
+        titleStyle={{textAlign: "left", paddingLeft: theme.spacing.s3}}
+      />
 
       <ScrollView>
+        <Spacer height={theme.spacing.s4} />
+
         <ToggleSetting
           label={translate("settings:bypassVAD")}
           subtitle={translate("settings:bypassVADSubtitle")}
@@ -330,8 +336,6 @@ export default function TranscriptionSettingsScreen() {
                   extractionProgress={extractionProgress}
                   currentModelInfo={modelInfo}
                 />
-
-                <Spacer height={theme.spacing.s4} />
               </>
             )}
           </>

@@ -1,3 +1,4 @@
+import {BottomSheetModalProvider} from "@gorhom/bottom-sheet"
 import * as Sentry from "@sentry/react-native"
 import {PostHogProvider} from "posthog-react-native"
 import {Suspense} from "react"
@@ -13,11 +14,9 @@ import {Text} from "@/components/ignite"
 import BackgroundGradient from "@/components/ui/BackgroundGradient"
 import {AppStoreWebviewPrefetchProvider} from "@/contexts/AppStoreWebviewPrefetchProvider"
 import {AuthProvider} from "@/contexts/AuthContext"
-import {ButtonActionProvider} from "@/contexts/ButtonActionProvider"
 import {CoreStatusProvider} from "@/contexts/CoreStatusProvider"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {NavigationHistoryProvider} from "@/contexts/NavigationHistoryContext"
-import {SearchResultsProvider} from "@/contexts/SearchResultsContext"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import {ModalProvider} from "@/utils/AlertUtils"
@@ -71,15 +70,14 @@ export const AllProviders = withWrappers(
   KeyboardProvider,
   CoreStatusProvider,
   AuthProvider,
-  SearchResultsProvider,
   AppStoreWebviewPrefetchProvider,
-  ButtonActionProvider,
   NavigationHistoryProvider,
   DeeplinkProvider,
   props => {
     return <GestureHandlerRootView style={{flex: 1}}>{props.children}</GestureHandlerRootView>
   },
   ModalProvider,
+  BottomSheetModalProvider,
   props => {
     const posthogApiKey = process.env.EXPO_PUBLIC_POSTHOG_API_KEY
     const isChina = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)

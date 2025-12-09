@@ -1,9 +1,10 @@
-import {View} from "react-native"
-import {Text} from "@/components/ignite"
 import {useLocalSearchParams} from "expo-router"
+import {View} from "react-native"
+
+import {Text} from "@/components/ignite"
 import {Screen, Header} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function VideoPlayer() {
   const {fileName} = useLocalSearchParams()

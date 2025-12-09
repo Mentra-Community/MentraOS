@@ -26,6 +26,10 @@ public class AsgClientApplication extends Application {
 
         SysControl.setI2SAudioPlayReceiverPackage(this, getPackageName());
 
+        // Get and log system OTA version (MTK firmware version)
+        String systemOtaVersion = SysControl.getSystemCurrentVersion(this);
+        Log.i(TAG, "📱 System OTA Version (MTK): " + systemOtaVersion);
+
         Log.i(TAG, "ASG Client Application initialized");
     }
 

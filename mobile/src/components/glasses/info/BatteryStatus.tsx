@@ -39,7 +39,7 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
             textStyle={themed($compactTextStyle)}
             iconEnd={
               <View style={themed($compactBatteryValue)}>
-                <Icon name="battery-3" size={14} color={theme.colors.text} />
+                <Icon name="battery-3" size={16} color={theme.colors.text} />
                 <Text style={themed($compactTextStyle)}>{glassesBatteryLevel}%</Text>
               </View>
             }
@@ -54,7 +54,7 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
             textStyle={themed($compactTextStyle)}
             iconEnd={
               <View style={themed($compactBatteryValue)}>
-                <Icon name="battery-3" size={14} color={theme.colors.text} />
+                <Icon name="battery-3" size={16} color={theme.colors.text} />
                 <Text style={themed($compactTextStyle)}>{caseBatteryLevel}%</Text>
               </View>
             }
@@ -107,7 +107,7 @@ const $sideBySideContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
 })
 
 const $compactTextStyle: ThemedStyle<TextStyle> = () => ({
-  fontSize: 12,
+  fontSize: 14,
   width: 60,
   fontWeight: 600,
 })

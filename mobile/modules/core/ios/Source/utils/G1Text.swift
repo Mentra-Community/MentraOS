@@ -165,7 +165,7 @@ class G1Text {
         return chunkTextForTransmission(pageText)
     }
 
-    private func chunkTextForTransmission(_ text: String) -> [[UInt8]] {
+    func chunkTextForTransmission(_ text: String) -> [[UInt8]] {
         guard let textData = text.data(using: .utf8) else { return [] }
         let textBytes = [UInt8](textData)
         let totalChunks = Int(ceil(Double(textBytes.count) / Double(G1Text.MAX_CHUNK_SIZE)))

@@ -32,7 +32,7 @@ export const SYSTEM_DASHBOARD_PACKAGE_NAME =
 export const PRE_INSTALLED = [
   "com.augmentos.livecaptions",
   "cloud.augmentos.notify",
-  "cloud.augmentos.mira",
+  // "cloud.augmentos.mira",
 ];
 export const PRE_INSTALLED_DEBUG = [
   // "com.mentra.link",
@@ -51,15 +51,28 @@ export const PRE_INSTALLED_DEBUG = [
 
 // export const PRE_INSTALLED = ["cloud.augmentos.live-captions-global", "cloud.augmentos.notify", "cloud.augmentos.mira"];
 
+// Add debug apps in non-production environments
 if (
   process.env.NODE_ENV !== "production" ||
   process.env.DEBUG_APPS === "true"
 ) {
-  // If we're in debug mode, add the debug apps to the preinstalled list.
   PRE_INSTALLED.push(...PRE_INSTALLED_DEBUG);
   logger.info(
     { PRE_INSTALLED_DEBUG },
     "Debug mode enabled - adding debug apps to preinstalled list:",
+  );
+}
+
+// Add additional pre-installed apps from environment variable
+if (process.env.ADDITIONAL_PRE_INSTALLED_APPS) {
+  const additionalApps = process.env.ADDITIONAL_PRE_INSTALLED_APPS.split(",")
+    .map((app) => app.trim())
+    .filter((app) => app.length > 0);
+
+  PRE_INSTALLED.push(...additionalApps);
+  logger.info(
+    { additionalApps },
+    "Adding additional pre-installed apps from ADDITIONAL_PRE_INSTALLED_APPS:",
   );
 }
 

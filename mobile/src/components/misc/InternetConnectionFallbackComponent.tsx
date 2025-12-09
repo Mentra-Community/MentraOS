@@ -1,8 +1,9 @@
+import {View, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
+import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
+
+import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import React from "react"
-import {View, Text, TouchableOpacity, StyleSheet, TextStyle} from "react-native"
-import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 
 interface InternetConnectionFallbackComponentProps {
   retry: () => void
@@ -16,17 +17,22 @@ export default function InternetConnectionFallbackComponent({
   const {theme, themed} = useAppTheme()
 
   return (
-    <View style={styles.fallbackContainer}>
+    <View style={themed($fallbackContainer)}>
       <MaterialCommunityIcons name="wifi-off" size={60} color={theme.colors.text} />
-      <Text style={themed($fallbackText)}>{message}</Text>
-      <TouchableOpacity
-        style={[styles.retryButton, {backgroundColor: theme.colors.palette.primary500}]}
-        onPress={retry}>
-        <Text style={[styles.retryButtonText, {color: theme.colors.palette.neutral100}]}>Retry</Text>
+      <Text text={message} style={themed($fallbackText)} />
+      <TouchableOpacity style={themed($retryButton)} onPress={retry}>
+        <Text text="Retry" style={themed($retryButtonText)} />
       </TouchableOpacity>
     </View>
   )
 }
+
+const $fallbackContainer: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  flex: 1,
+  justifyContent: "center",
+  padding: 20,
+})
 
 const $fallbackText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
@@ -35,27 +41,15 @@ const $fallbackText: ThemedStyle<TextStyle> = ({colors}) => ({
   marginVertical: 20,
 })
 
-const styles = StyleSheet.create({
-  fallbackContainer: {
-    alignItems: "center",
-    flex: 1,
-    justifyContent: "center",
-    padding: 20,
-  },
-  fallbackText: {
-    fontFamily: "Montserrat-Regular",
-    fontSize: 16,
-    marginVertical: 20,
-    textAlign: "center",
-  },
-  retryButton: {
-    borderRadius: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  retryButtonText: {
-    fontFamily: "Montserrat-SemiBold",
-    fontSize: 16,
-    fontWeight: "600",
-  },
+const $retryButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  borderRadius: 8,
+  paddingHorizontal: 20,
+  paddingVertical: 10,
+  backgroundColor: colors.palette.primary500,
+})
+
+const $retryButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 16,
+  fontWeight: "600",
+  color: colors.palette.neutral100,
 })

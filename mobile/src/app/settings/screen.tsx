@@ -1,3 +1,8 @@
+import CoreModule from "core"
+import {useFocusEffect} from "expo-router"
+import {useCallback} from "react"
+import {ScrollView} from "react-native"
+
 import {Header, Screen} from "@/components/ignite"
 import SliderSetting from "@/components/settings/SliderSetting"
 import {Spacer} from "@/components/ui/Spacer"
@@ -5,10 +10,6 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {$styles} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
-import CoreModule from "core"
-import {useFocusEffect} from "expo-router"
-import {useCallback} from "react"
-import {ScrollView} from "react-native"
 
 export default function ScreenSettingsScreen() {
   const {theme, themed} = useAppTheme()

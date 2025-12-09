@@ -85,7 +85,7 @@ export interface PhotoRequestToGlasses extends BaseMessage {
   webhookUrl?: string // URL where ASG should send the photo directly
   authToken?: string // Auth token for webhook authentication
   /** Desired capture size to guide device resolution selection */
-  size?: "small" | "medium" | "large"
+  size?: "small" | "medium" | "large" | "full"
   /** Image compression level: none, medium, or heavy */
   compress?: "none" | "medium" | "heavy"
 }

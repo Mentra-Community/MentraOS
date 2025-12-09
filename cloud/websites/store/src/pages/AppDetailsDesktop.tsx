@@ -1,4 +1,4 @@
-import {X, Info, Share2, Smartphone, ChevronLeft} from "lucide-react"
+import {Info, Share2, Smartphone, ChevronLeft} from "lucide-react"
 import {Button} from "@/components/ui/button"
 import GetMentraOSButton from "../components/GetMentraOSButton"
 import {HardwareRequirementLevel, HardwareType} from "../types"
@@ -23,7 +23,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
   return (
     <div className="min-h-screen flex justify-center">
       {/* Desktop Close Button */}
-      <button
+      {/* <button
         onClick={handleBackNavigation}
         className="absolute top-6 right-6 transition-colors hover:opacity-70"
         style={{
@@ -31,7 +31,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
         }}
         aria-label="Close">
         <X className="h-6 w-6" />
-      </button>
+      </button> */}
 
       {/* Content wrapper with responsive padding - matches Header_v2 exactly */}
       <div className="px-4 sm:px-8 md:px-16 lg:px-25 pt-[24px] pb-16 w-full">
@@ -135,7 +135,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
 
                 {/* Share Button */}
                 <button
-                  className="w-[113px] flex items-center gap-2 px-5 h-[44px] rounded-full border transition-colors"
+                  className="w-[113px] flex items-center gap-2 px-5 h-[44px] rounded-full transition-colors bg-[var(--share-button)] border-[var(--border-btn)] border-[1px]"
                   style={{
                     borderColor: "var(--border-color)",
                     color: "var(--text-primary)",
@@ -150,7 +150,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                       })
                     }
                   }}>
-                  <Share2 className="w-[18px] h-[18px]" />
+                  <Share2 className="w-[18px] h-[18px] bg-[var(--share-button)] border-[var(--border-btn)]" />
                   <span className="text-[18px] font-medium">Share</span>
                 </button>
               </div>
@@ -260,16 +260,13 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                     style={{
                       backgroundColor: "var(--primaary-foreground)",
                     }}>
-                    <div className="flex items-center">
-                      <div
-                        className="w-10 h-10 flex items-center justify-center rounded-lg"
-                        style={{
-                          backgroundColor: "var(--bg-secondary)",
-                        }}>
+                    <div className="flex items-center gap-[16px]">
+                      <div>
                         <div
                           style={{
                             color: "var(--text-secondary)",
-                          }}>
+                          }}
+                          className="w-[24px] h-[24px]">
                           {getPermissionIcon(permission.type || "Display")}
                         </div>
                       </div>
@@ -348,12 +345,8 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                     style={{
                       backgroundColor: "var(--primaary-foreground)",
                     }}>
-                    <div className="flex items-center">
-                      <div
-                        className="w-10 h-10 flex items-center justify-center rounded-lg"
-                        style={{
-                          backgroundColor: "var(--bg-secondary)",
-                        }}>
+                    <div className="flex items-center gap-[16px]">
+                      <div className="">
                         <div
                           style={{
                             color: "var(--text-secondary)",
@@ -442,17 +435,17 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
               }}>
               Get in touch with the developer or learn more about this app.
             </p>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center py-3">
+            <div className="flex justify-between gap-y-6 flex-wrap">
+              <div className="flex flex-col">
                 <span
-                  className="text-[20px] font-medium"
+                  className="text-[20px] font-medium mb-2"
                   style={{
                     color: "var(--text-secondary)",
                   }}>
                   Company
                 </span>
                 <span
-                  className="text-[20px] font-normal text-right"
+                  className="text-[20px] font-normal"
                   style={{
                     color: "var(--text-primary)",
                   }}>
@@ -460,16 +453,16 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-3">
+              <div className="flex flex-col">
                 <span
-                  className="text-[20px] font-medium"
+                  className="text-[20px] font-medium mb-2"
                   style={{
                     color: "var(--text-secondary)",
                   }}>
                   Package Name
                 </span>
                 <span
-                  className="text-[20px] font-normal hover:underline text-right"
+                  className="text-[20px] font-normal hover:underline"
                   style={{
                     color: "var(--accent-primary)",
                   }}>
@@ -478,9 +471,9 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
               </div>
 
               {app.developerProfile?.website && (
-                <div className="flex justify-between items-center py-3">
+                <div className="flex flex-col">
                   <span
-                    className="text-[20px] font-medium"
+                    className="text-[20px] font-medium mb-2"
                     style={{
                       color: "var(--text-secondary)",
                     }}>
@@ -490,7 +483,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                     href={app.developerProfile.website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[20px] font-normal hover:underline text-right"
+                    className="text-[20px] font-normal hover:underline"
                     style={{
                       color: "var(--accent-primary)",
                     }}>
@@ -500,9 +493,9 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
               )}
 
               {app.developerProfile?.contactEmail && (
-                <div className="flex justify-between items-center py-3">
+                <div className="flex flex-col">
                   <span
-                    className="text-[20px] font-medium"
+                    className="text-[20px] font-medium mb-2"
                     style={{
                       color: "var(--text-secondary)",
                     }}>
@@ -510,7 +503,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                   </span>
                   <a
                     href={`mailto:${app.developerProfile.contactEmail}`}
-                    className="text-[20px] font-normal hover:underline text-right"
+                    className="text-[20px] font-normal hover:underline"
                     style={{
                       color: "var(--accent-primary)",
                     }}>

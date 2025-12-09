@@ -1,15 +1,16 @@
+import {FontAwesome} from "@expo/vector-icons"
 import {useState} from "react"
 import {View, TextInput, TouchableOpacity, ActivityIndicator, ScrollView, ViewStyle, TextStyle} from "react-native"
-import {Button, Header, Screen, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {$styles, ThemedStyle, spacing} from "@/theme"
-import {translate} from "@/i18n"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import showAlert from "@/utils/AlertUtils"
-import {FontAwesome} from "@expo/vector-icons"
-import {Spacer} from "@/components/ui/Spacer"
 import Toast from "react-native-toast-message"
-import {mentraAuthProvider} from "@/utils/auth/authProvider"
+
+import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Spacer} from "@/components/ui/Spacer"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {translate} from "@/i18n"
+import {$styles, ThemedStyle, spacing} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import mentraAuth from "@/utils/auth/authClient"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function ChangePasswordScreen() {
   const [newPassword, setNewPassword] = useState("")
@@ -38,25 +39,20 @@ export default function ChangePasswordScreen() {
 
     setIsLoading(true)
 
-    try {
-      const {error} = await mentraAuthProvider.updateUserPassword(newPassword)
-
-      if (error) {
-        showAlert(translate("common:error"), error.message)
-      } else {
-        Toast.show({
-          type: "success",
-          text1: translate("profileSettings:passwordUpdatedSuccess"),
-          position: "bottom",
-        })
-        goBack()
-      }
-    } catch (err) {
-      console.error("Error updating password:", err)
-      showAlert(translate("common:error"), err.toString())
-    } finally {
+    const res = await mentraAuth.updateUserPassword(newPassword)
+    if (res.is_error()) {
+      console.error("Error updating password")
+      showAlert(translate("common:error"), res.error.message)
       setIsLoading(false)
+      return
     }
+    Toast.show({
+      type: "success",
+      text1: translate("profileSettings:passwordUpdatedSuccess"),
+      position: "bottom",
+    })
+    setIsLoading(false)
+    goBack()
   }
 
   return (
