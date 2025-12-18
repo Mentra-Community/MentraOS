@@ -96,7 +96,7 @@ The Mentra Store already has a ton of useful apps that real users are running ev
       </td>
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.mentra.translation" style="text-decoration: none; color: inherit;">
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/5b164770-ec85-47ad-3825-7ff2520c5600/square" alt="Live Translation" width="80" style="border-radius: 18px;" />
+          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/b5891997-3e90-4bdc-398a-834e3318b900/square" alt="Live Translation" width="80" style="border-radius: 18px;" />
           <br /><b>Translation</b>
         </a>
       </td>
