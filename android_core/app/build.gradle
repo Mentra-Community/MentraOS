@@ -159,7 +159,10 @@ dependencies {
     // implementation "com.arthenica:ffmpeg-kit-full:6.0-2"
 
 
-    api 'com.github.pedroSG94:rtmp-rtsp-stream-client-java:2.1.3'
+    // RTMP streaming library - using RootEncoder (successor to rtmp-rtsp-stream-client-java)
+    // See: https://github.com/pedroSG94/RootEncoder
+    // Using version 2.2.6 which uses rtplibrary package (compatible with existing code)
+    api 'com.github.pedroSG94.RootEncoder:rtplibrary:2.2.6'
 
 }
 

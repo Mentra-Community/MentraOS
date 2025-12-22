@@ -33,7 +33,8 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * Service for recording and streaming using rtmp-rtsp-stream-client-java (2.1.3).
+ * Service for recording and streaming using RootEncoder rtplibrary (2.2.6).
+ * RootEncoder is the successor to rtmp-rtsp-stream-client-java.
  */
 public class CameraRecordingService extends Service implements ConnectCheckerRtmp {
 

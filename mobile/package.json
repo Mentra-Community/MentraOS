@@ -29,7 +29,7 @@
     "bundle:web": "npx expo export --platform web",
     "serve:web": "npx serve dist",
     "prebuild:clean": "npx expo prebuild --clean",
-    "build:android:release": "./fix-react-native-symlinks.sh && pnpm expo prebuild --platform android && cd android && ./gradlew assembleRelease && cd .. && adb install -r android/app/build/outputs/apk/release/app-release.apk",
+    "build:android:release": "./fix-react-native-symlinks.sh && bun expo prebuild --platform android && cd android && ./gradlew assembleRelease && cd .. && adb install -r android/app/build/outputs/apk/release/app-release.apk",
     "build:google:play": "./fix-react-native-symlinks.sh && pnpm expo prebuild --platform android && cd android && ./gradlew bundleRelease",
     "upload:google:play": "./fix-react-native-symlinks.sh && pnpm expo prebuild --platform android && cd android && bundle exec fastlane google_play"
   },
