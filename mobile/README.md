@@ -16,10 +16,60 @@ Install swiftformat from https://github.com/nicklockwood/SwiftFormat/releases
 
 ## Android
 
-```
+### Development Build (Requires Metro Server)
+
+For development builds that connect to Metro bundler:
+
+```bash
 bun install
 bun expo prebuild
 bun android
+```
+
+### Release Build (Standalone APK)
+
+For production builds that bundle JavaScript and work without Metro server:
+
+```bash
+bun run build:android:release
+```
+
+This command will:
+
+- Fix React Native symlinks
+- Run Expo prebuild
+- Build a release APK with JavaScript bundled
+- Install the APK on your connected device
+
+The release APK will be located at:
+
+```
+mobile/android/app/build/outputs/apk/release/app-release.apk
+```
+
+**Note**: The release APK works independently without USB connection or Metro server, as JavaScript is bundled into the APK.
+
+### Environment Variables
+
+Before building, ensure you have the required environment variables set:
+
+**`android_core/.env`** (required for core service):
+
+```env
+MENTRAOS_HOST=stagingapi.mentraglass.com
+MENTRAOS_PORT=443
+MENTRAOS_SECURE=true
+```
+
+**`mobile/.env`** (required for mobile app):
+
+```env
+MENTRAOS_VERSION=2.2.15
+MENTRAOS_APPSTORE_URL=https://appsbeta.mentraglass.com
+POSTHOG_API_KEY=your_posthog_key
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_key
+SENTRY_DSN=your_sentry_dsn
 ```
 
 ## iOS
