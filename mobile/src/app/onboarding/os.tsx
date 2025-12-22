@@ -10,6 +10,7 @@ const steps: OnboardingStep[] = [
     name: "Start and stop apps",
     source: require("@assets/onboarding/os/start_stop_apps.mov"),
     containerClassName: "bg-background",
+    playerClassName: "rounded-2xl mx-8",
     transition: false,
     playCount: 2,
     bullets: [
@@ -23,6 +24,7 @@ const steps: OnboardingStep[] = [
     name: "Open an app",
     source: require("@assets/onboarding/os/open_an_app.mov"),
     containerClassName: "bg-background",
+    playerClassName: "rounded-2xl mx-8",
     transition: false,
     playCount: 2,
     bullets: [
@@ -36,6 +38,7 @@ const steps: OnboardingStep[] = [
     name: "Background apps",
     source: require("@assets/onboarding/os/background_apps.mov"),
     containerClassName: "bg-background",
+    playerClassName: "rounded-2xl mx-8",
     transition: false,
     playCount: 2,
     bullets: [
@@ -49,6 +52,7 @@ const steps: OnboardingStep[] = [
     name: "Foreground and Background Apps",
     source: require("@assets/onboarding/os/foreground_background_apps.mov"),
     containerClassName: "bg-background",
+    playerClassName: "rounded-2xl mx-8",
     transition: false,
     playCount: 2,
     bullets: [
@@ -62,6 +66,7 @@ const steps: OnboardingStep[] = [
     name: "Mentra AI",
     source: require("@assets/onboarding/os/mentra_ai.mov"),
     containerClassName: "bg-background",
+    playerClassName: "rounded-2xl mx-8",
     transition: false,
     playCount: 2,
     bullets: [

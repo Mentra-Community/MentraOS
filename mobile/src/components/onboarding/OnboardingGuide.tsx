@@ -1,13 +1,17 @@
 import {Image, ImageSource} from "expo-image"
 import {useVideoPlayer, VideoView, VideoSource, VideoPlayer} from "expo-video"
 import {useState, useCallback, useEffect, useMemo} from "react"
-import {BackHandler, ImageStyle, Platform, View, ViewStyle} from "react-native"
+import {BackHandler, ImageStyle, Platform, useWindowDimensions, View, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Text} from "@/components/ignite"
 import {Button, Header, Icon} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEventListener} from "expo"
+import {withUniwind} from "uniwind"
+
+const StyledVideoView = withUniwind(VideoView)
 
 interface BaseStep {
   name: string
@@ -25,6 +29,7 @@ interface VideoStep extends BaseStep {
   playCount: number
   containerStyle?: ViewStyle
   containerClassName?: string
+  playerClassName?: string
 }
 
 interface ImageStep extends BaseStep {
@@ -80,9 +85,12 @@ export function OnboardingGuide({
   const [showReplayButton, setShowReplayButton] = useState(false)
   const [hasStarted, setHasStarted] = useState(autoStart)
   const [playCount, setPlayCount] = useState(0)
+  const [player1Size, setPlayer1Size] = useState({width: 0, height: 0, aspectRatio: 0})
+  const [player2Size, setPlayer2Size] = useState({width: 0, height: 0, aspectRatio: 0})
   const [transitionCount, setTransitionCount] = useState(0)
   const [uiIndex, setUiIndex] = useState(1)
   const [activePlayer, setActivePlayer] = useState<1 | 2>(1)
+  const {width: screenWidth, height: screenHeight} = useWindowDimensions()
 
   // Initialize players with first video sources found
   const initialSource1 = useMemo(() => findNextVideoSource(steps, 0), [steps])
@@ -340,7 +348,7 @@ export function OnboardingGuide({
 
   const renderBullets = useCallback((bullets: string[]) => {
     return (
-      <View className="flex flex-col gap-2 flex-1 px-2">
+      <View className="flex flex-col gap-2 flex-1 px-2 justify-end">
         <Text className="text-center text-xl self-start font-semibold" text={bullets[0]} />
         {bullets.slice(1).map((bullet, index) => (
           <View key={index} className="flex-row items-start gap-2 px-4">
@@ -352,7 +360,47 @@ export function OnboardingGuide({
     )
   }, [])
 
+  const setVideoDims = (payload: any, which: "player1" | "player2") => {
+    const videoTrack = payload.availableVideoTracks[0]
+    if (!videoTrack) {
+      console.log(`No video track found for ${which}`)
+      return
+    }
+
+    const {width: videoWidth, height: videoHeight} = videoTrack.size
+    // const aspectRatio = videoHeight / videoWidth
+    const aspectRatio = videoWidth / videoHeight
+    // scale the video to fit screen width:
+    const scale = screenWidth / videoWidth
+    const scaledWidth = videoWidth * scale
+    const scaledHeight = videoHeight * scale
+
+    if (which === "player1") {
+      setPlayer1Size({width: scaledWidth, height: scaledHeight, aspectRatio: aspectRatio})
+    } else {
+      setPlayer2Size({width: scaledWidth, height: scaledHeight, aspectRatio: aspectRatio})
+    }
+  }
+
+  useEventListener(player1, "sourceLoad", payload => {
+    setVideoDims(payload, "player1")
+  })
+
+  useEventListener(player2, "sourceLoad", payload => {
+    setVideoDims(payload, "player2")
+  })
+
   const isLastStep = currentIndex === steps.length - 1
+
+  const p1Width = player1Size.width
+  const p1Height = player1Size.height
+
+  const p2Width = player2Size.width
+  const p2Height = player2Size.height
+
+  let containerHeight = activePlayer === 1 ? p1Height : p2Height
+
+  console.log(`p1Width: ${p1Width}, p1Height: ${p1Height} ${player1Size.aspectRatio}`)
 
   return (
     <>
@@ -371,7 +419,7 @@ export function OnboardingGuide({
           {step.title && <Text className="text-center text-2xl font-semibold" text={step.title} />}
 
           <View className="-mx-6">
-            {/* <View className="relative" style={{width: "100%", aspectRatio: 1}}> */}
+            <View className="relative" style={{width: "100%", aspectRatio: player1Size.aspectRatio}}>
               {isCurrentStepImage ? (
                 <View style={step.containerStyle} className={step.containerClassName}>
                   <Image
@@ -394,15 +442,14 @@ export function OnboardingGuide({
                       bottom: 0,
                       zIndex: activePlayer === 1 ? 1 : 0,
                       ...step.containerStyle,
-                      
                     }}
                     className={step.containerClassName}>
-                    <VideoView
+                    <StyledVideoView
                       player={player1}
                       style={{
-                        width: "100%",
-                        height: "100%",
+                        aspectRatio: player1Size.aspectRatio,
                       }}
+                      className="rounded-2xl mx-8"
                       nativeControls={false}
                     />
                   </View>
@@ -417,24 +464,22 @@ export function OnboardingGuide({
                       ...step.containerStyle,
                     }}
                     className={step.containerClassName}>
-                    <VideoView
+                    <StyledVideoView
                       player={player2}
                       style={{
-                        width: "100%",
-                        height: "100%",
+                        aspectRatio: player2Size.aspectRatio,
                       }}
                       nativeControls={false}
                     />
                   </View>
+                  {showReplayButton && isCurrentStepVideo && (
+                    <View className="absolute bottom-8 left-0 right-0 items-center z-10">
+                      <Button preset="secondary" className="min-w-24" tx="onboarding:replay" onPress={handleReplay} />
+                    </View>
+                  )}
                 </>
               )}
-            {/* </View> */}
-
-            {showReplayButton && isCurrentStepVideo && (
-              <View className="absolute bottom-8 left-0 right-0 items-center z-10">
-                <Button preset="secondary" className="min-w-24" tx="onboarding:replay" onPress={handleReplay} />
-              </View>
-            )}
+            </View>
           </View>
 
           {hasStarted && (
