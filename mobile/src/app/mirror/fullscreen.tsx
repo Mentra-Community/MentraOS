@@ -1,3 +1,4 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {CameraType, CameraView, useCameraPermissions} from "expo-camera"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useRef, useState} from "react"
@@ -13,6 +14,7 @@ import {
 } from "react-native"
 import RNFS from "react-native-fs"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
+// eslint-disable-next-line import/no-unresolved
 import Icon from "react-native-vector-icons/MaterialIcons"
 
 import {Text} from "@/components/ignite"
@@ -24,8 +26,6 @@ import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 // Request microphone permission for recording
 const requestMicrophonePermission = async () => {

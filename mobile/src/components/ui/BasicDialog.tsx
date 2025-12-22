@@ -29,7 +29,7 @@ const BasicDialog = ({
     <View style={themed($container)}>
       <View style={themed($titleDescription)}>
         {icon}
-        {title && <Text text={title} style={themed($headline)} weight="semibold"/>}
+        {title && <Text text={title} style={themed($headline)} weight="semibold" />}
         {description && (
           <Text text={typeof description === "string" ? description : undefined} style={themed($description)}>
             {typeof description !== "string" ? description : undefined}

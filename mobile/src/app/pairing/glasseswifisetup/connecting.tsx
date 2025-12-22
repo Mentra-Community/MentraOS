@@ -7,7 +7,7 @@ import {WifiIcon} from "@/components/icons/WifiIcon"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
@@ -234,9 +234,7 @@ export default function WifiConnectingScreen() {
   }
 
   return (
-    <Screen
-      preset="fixed"
-      contentContainerStyle={connectionStatus === "connecting" ? undefined : undefined}>
+    <Screen preset="fixed" contentContainerStyle={connectionStatus === "connecting" ? undefined : undefined}>
       {connectionStatus === "connecting" && (
         <Header title="Connecting" leftIcon="chevron-left" onLeftPress={handleHeaderBack} />
       )}

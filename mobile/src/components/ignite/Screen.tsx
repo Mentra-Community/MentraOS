@@ -254,7 +254,12 @@ export function Screen(props: ScreenProps) {
   const $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
 
   return (
-    <View style={[$styles.screen, $containerStyle, {backgroundColor: backgroundColor || colors.background} /*, $containerInsets*/]}>
+    <View
+      style={[
+        $styles.screen,
+        $containerStyle,
+        {backgroundColor: backgroundColor || colors.background} /*, $containerInsets*/,
+      ]}>
       {/*<BackgroundGradient colors={props.gradientColors}>*/}
       <View style={[$containerInsets, {flex: 1}]}>
         <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />

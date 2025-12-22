@@ -98,7 +98,7 @@ export const BackgroundAppsGrid = () => {
   return (
     <View style={themed($container)}>
       <View style={themed($header)}>
-        <Text tx="home:inactiveApps" className="font-semibold text-xl"/>
+        <Text tx="home:inactiveApps" className="font-semibold text-xl" />
       </View>
       <FlatList
         data={gridData}
@@ -135,7 +135,7 @@ const $header: ThemedStyle<ViewStyle> = ({spacing}) => ({
   paddingBottom: spacing.s3,
 })
 
-const $headerText: ThemedStyle<TextStyle> = ({colors}) => ({
+const _$headerText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 20,
   fontWeight: 600,
   color: colors.secondary_foreground,

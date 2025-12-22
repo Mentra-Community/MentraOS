@@ -1,4 +1,5 @@
 import {TouchableOpacity, View, ViewStyle} from "react-native"
+
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
 import {Badge} from "@/components/ui"

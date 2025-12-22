@@ -10,7 +10,9 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import STTModelManager from "@/services/STTModelManager"
+import {modelDownloadService} from "@/services/modelDownloadService"
 import {useStopAllApplets} from "@/stores/applets"
+import {useModelDownloadStore, selectIsDownloading} from "@/stores/modelDownload"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
@@ -19,12 +21,17 @@ export default function TranscriptionSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack} = useNavigationHistory()
 
+  // Model download state from store (decoupled from UI lifecycle)
+  const downloadState = useModelDownloadStore(state => state.downloadState)
+  const downloadProgress = useModelDownloadStore(state => state.downloadProgress)
+  const extractionProgress = useModelDownloadStore(state => state.extractionProgress)
+  const downloadingModelId = useModelDownloadStore(state => state.modelId)
+  const lastError = useModelDownloadStore(state => state.lastError)
+  const isDownloading = useModelDownloadStore(selectIsDownloading)
+
   const [selectedModelId, setSelectedModelId] = useState(STTModelManager.getCurrentModelId())
   const [modelInfo, setModelInfo] = useState<any>(null)
   const [allModels, setAllModels] = useState<any[]>([])
-  const [isDownloading, setIsDownloading] = useState(false)
-  const [downloadProgress, setDownloadProgress] = useState(0)
-  const [extractionProgress, setExtractionProgress] = useState(0)
   const [isCheckingModel, setIsCheckingModel] = useState(true)
   const [bypassVadForDebugging, setBypassVadForDebugging] = useSetting(SETTINGS.bypass_vad_for_debugging.key)
   const [offlineMode, setOfflineMode] = useSetting(SETTINGS.offline_mode.key)
@@ -34,6 +41,26 @@ export default function TranscriptionSettingsScreen() {
   const [lastRestartTime, setLastRestartTime] = useState(0)
 
   const stopAllApps = useStopAllApplets()
+
+  // Show error alert when download fails
+  useEffect(() => {
+    if (downloadState === "error" && lastError) {
+      showAlert("Download Failed", lastError, [{text: "OK"}])
+    }
+  }, [downloadState, lastError])
+
+  // Show success and enable local transcription when download completes
+  useEffect(() => {
+    if (downloadState === "complete") {
+      // Re-check model status after download
+      checkModelStatus()
+
+      // Enable local transcription
+      setEnforceLocalTranscription(true)
+
+      showAlert("Success", "Speech recognition model downloaded successfully!", [{text: "OK"}])
+    }
+  }, [downloadState])
 
   const handleToggleOfflineMode = () => {
     const title = offlineMode ? "Disable Offline Mode?" : "Enable Offline Mode?"
@@ -68,13 +95,10 @@ export default function TranscriptionSettingsScreen() {
     )
   }
 
-  // Cancel download function
+  // Cancel download function - now uses the service
   const handleCancelDownload = async () => {
     try {
-      await STTModelManager.cancelDownload()
-      setIsDownloading(false)
-      setDownloadProgress(0)
-      setExtractionProgress(0)
+      await modelDownloadService.cancelDownload()
     } catch (error) {
       console.error("Error canceling download:", error)
     }
@@ -106,7 +130,7 @@ export default function TranscriptionSettingsScreen() {
       return true // Prevent default back action
     }
     return false // Allow default back action
-  }, [isDownloading, goBack, handleCancelDownload])
+  }, [isDownloading, goBack])
 
   // Block hardware back button on Android during downloads
   useFocusEffect(
@@ -124,10 +148,6 @@ export default function TranscriptionSettingsScreen() {
     if (!shouldBlock) {
       goBack()
     }
-  }
-
-  const enableEnforceLocalTranscription = async () => {
-    await setEnforceLocalTranscription(true)
   }
 
   const timeRemainingTillRestart = () => {
@@ -184,38 +204,10 @@ export default function TranscriptionSettingsScreen() {
     }
   }
 
+  // Use the service to start download - no local state management needed
   const handleDownloadModel = async (modelId?: string) => {
     const targetModelId = modelId || selectedModelId
-    try {
-      setIsDownloading(true)
-      setDownloadProgress(0)
-      setExtractionProgress(0)
-
-      await STTModelManager.downloadModel(
-        targetModelId,
-        progress => {
-          setDownloadProgress(progress.percentage)
-        },
-        progress => {
-          setExtractionProgress(progress.percentage)
-        },
-      )
-
-      // Re-check model status after download
-      await checkModelStatus()
-
-      await activateModelandRestartTranscription(targetModelId)
-
-      await enableEnforceLocalTranscription()
-
-      showAlert("Success", "Speech recognition model downloaded successfully!", [{text: "OK"}])
-    } catch (error: any) {
-      showAlert("Download Failed", error.message || "Failed to download the model. Please try again.", [{text: "OK"}])
-    } finally {
-      setIsDownloading(false)
-      setDownloadProgress(0)
-      setExtractionProgress(0)
-    }
+    await modelDownloadService.startDownload(targetModelId)
   }
 
   const handleDeleteModel = async (modelId?: string) => {
@@ -326,9 +318,12 @@ export default function TranscriptionSettingsScreen() {
               onModelChange={handleModelChange}
               onDownload={() => handleDownloadModel()}
               onDelete={() => handleDeleteModel()}
+              onCancelDownload={handleCancelDownload}
               isDownloading={isDownloading}
+              downloadingModelId={downloadingModelId}
               downloadProgress={downloadProgress}
               extractionProgress={extractionProgress}
+              downloadState={downloadState}
               currentModelInfo={modelInfo}
             />
           </>

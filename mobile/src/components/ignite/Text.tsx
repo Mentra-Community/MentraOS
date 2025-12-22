@@ -1,14 +1,14 @@
 import {TOptions} from "i18next"
 import {ReactNode, forwardRef, ForwardedRef} from "react"
 // eslint-disable-next-line no-restricted-imports
-import {StyleProp, Text as RNText, TextProps as RNTextProps, TextStyle} from "react-native"
+import {StyleProp, Text as RNText, TextProps as RNTextProps, TextStyle, StyleSheet} from "react-native"
+import {withUniwind} from "uniwind"
 
 import {isRTL, translate, TxKeyPath} from "@/i18n"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {typography} from "@/theme/typography"
 import {useAppTheme} from "@/utils/useAppTheme"
-import {withUniwind} from "uniwind"
-import {StyleSheet} from "react-native"
+
 // import { flatten } from 'react-native/Libraries/StyleSheet/';
 
 type Sizes = keyof typeof $sizeStyles
@@ -74,8 +74,8 @@ export const TextBase = forwardRef(function Text(props: TextProps, ref: Forwarde
   // if ($styleOverride?.valueOf())
 
   // extract fontWeight from the styleOverride:
-  let weightOverride: Weights | undefined = undefined;
-  const mStyles = StyleSheet.flatten($styleOverride) as TextStyle | undefined;
+  let weightOverride: Weights | undefined = undefined
+  const mStyles = StyleSheet.flatten($styleOverride) as TextStyle | undefined
   if (mStyles?.fontWeight) {
     switch (mStyles.fontWeight) {
       case 100:

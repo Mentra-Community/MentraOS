@@ -11,8 +11,8 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {$styles} from "@/theme"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function AccountPage() {
   const {theme, themed} = useAppTheme()

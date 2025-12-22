@@ -16,6 +16,7 @@ import {
 import {Icon, Text, Button} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {ModelInfo, STTModelManager} from "@/services/STTModelManager"
+import {DownloadState} from "@/stores/modelDownload"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
 
@@ -25,9 +26,12 @@ type ModelSelectorProps = {
   onModelChange: (modelId: string) => void
   onDownload: (modelId: string) => void
   onDelete: (modelId: string) => void
+  onCancelDownload: () => void
   isDownloading: boolean
+  downloadingModelId: string | null
   downloadProgress: number
   extractionProgress: number
+  downloadState: DownloadState
   currentModelInfo: ModelInfo | null
 }
 
@@ -37,9 +41,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   onModelChange,
   onDownload,
   onDelete: _onDelete,
+  onCancelDownload,
   isDownloading,
+  downloadingModelId,
   downloadProgress,
   extractionProgress,
+  downloadState,
   currentModelInfo: _currentModelInfo,
 }) => {
   const {theme, themed} = useAppTheme()
@@ -48,8 +55,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const selectedModel = models.find(m => m.modelId === selectedModelId)
   const isDownloaded = selectedModel?.downloaded || false
 
+  // Check if this specific model is being downloaded
+  const isThisModelDownloading = isDownloading && downloadingModelId === selectedModelId
+
   const getStatusIcon = () => {
-    if (isDownloading) {
+    if (isThisModelDownloading) {
       return <ActivityIndicator size="small" color={theme.colors.foreground} />
     }
     return null
@@ -58,10 +68,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const getSubtitle = () => {
     if (!selectedModel) return ""
 
-    if (isDownloading) {
-      if (extractionProgress > 0) {
-        return `Extracting...`
-      } else if (downloadProgress > 0) {
+    if (isThisModelDownloading) {
+      if (downloadState === "activating") {
+        return "Activating model..."
+      } else if (downloadState === "extracting" || extractionProgress > 0) {
+        return `Extracting... ${extractionProgress}%`
+      } else if (downloadState === "downloading" || downloadProgress > 0) {
         return `Downloading... ${downloadProgress}%`
       } else {
         return "Preparing download..."
@@ -78,6 +90,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const renderModelOption = ({item}: {item: ModelInfo}) => {
     const isSelected = item.modelId === selectedModelId
     const isModelDownloaded = item.downloaded
+    const isModelBeingDownloaded = isDownloading && downloadingModelId === item.modelId
 
     return (
       <Pressable
@@ -98,12 +111,17 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
               ]}
             />
             <Text
-              text={`${STTModelManager.formatBytes(item.size)}${isModelDownloaded ? " • Downloaded" : ""}`}
+              text={
+                isModelBeingDownloaded
+                  ? `Downloading... ${downloadProgress}%`
+                  : `${STTModelManager.formatBytes(item.size)}${isModelDownloaded ? " • Downloaded" : ""}`
+              }
               style={themed($optionSubtext)}
             />
           </View>
           <View style={themed($optionIcons)}>
-            {isSelected && <Icon name="check" size={24} color={theme.colors.foreground} />}
+            {isModelBeingDownloaded && <ActivityIndicator size="small" color={theme.colors.foreground} />}
+            {isSelected && !isModelBeingDownloaded && <Icon name="check" size={24} color={theme.colors.foreground} />}
           </View>
         </View>
       </Pressable>
@@ -133,13 +151,24 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       </Group>
 
       {/* Download button for current selection */}
-      {selectedModel && !isDownloaded && !isDownloading && (
+      {selectedModel && !isDownloaded && !isThisModelDownloading && (
         <Button
           preset="primary"
           text="Download Model"
           onPress={() => onDownload(selectedModelId)}
           style={{marginTop: theme.spacing.s4}}
           LeftAccessory={() => <Icon name="download" size={20} color={theme.colors.primary_foreground} />}
+        />
+      )}
+
+      {/* Cancel button when downloading */}
+      {isThisModelDownloading && (
+        <Button
+          preset="default"
+          text="Cancel Download"
+          onPress={onCancelDownload}
+          style={{marginTop: theme.spacing.s4}}
+          LeftAccessory={() => <Icon name="x" size={20} color={theme.colors.foreground} />}
         />
       )}
 
