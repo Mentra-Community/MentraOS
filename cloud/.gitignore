@@ -2,7 +2,7 @@
 # This is to ignore those files. and folders
 wip/
 old/
-
+.logs/
 # Ignore the .env file
 .env
 .env.local

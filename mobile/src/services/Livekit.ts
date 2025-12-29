@@ -8,6 +8,7 @@ class Livekit {
   private room: Room | null = null
 
   private sequence = 0
+  private isReconnecting = false
 
   private constructor() {}
 
@@ -25,7 +26,7 @@ class Livekit {
   }
 
   public isRoomConnected(): boolean {
-    return this.room?.state === ConnectionState.Connected
+    return this.room?.state === ConnectionState.Connected && !this.isReconnecting
   }
 
   public async connect() {
@@ -33,6 +34,8 @@ class Livekit {
       await this.room.disconnect()
       this.room = null
     }
+
+    this.isReconnecting = false
 
     const res = await restComms.getLivekitUrlAndToken()
     if (res.is_error()) {
@@ -52,21 +55,30 @@ class Livekit {
     await this.room.connect(url, token)
     this.room.on(RoomEvent.Connected, () => {
       console.log("LivekitManager: Connected to room")
+      this.isReconnecting = false
     })
     this.room.on(RoomEvent.Disconnected, () => {
       console.log("LivekitManager: Disconnected from room")
+      this.isReconnecting = false
+    })
+    this.room.on(RoomEvent.Reconnecting, () => {
+      console.log("LivekitManager: Reconnecting to room...")
+      this.isReconnecting = true
+    })
+    this.room.on(RoomEvent.Reconnected, () => {
+      console.log("LivekitManager: Reconnected to room")
+      this.isReconnecting = false
     })
   }
 
   public async addPcm(data: Uint8Array) {
-    if (!this.room || this.room.state !== ConnectionState.Connected) {
-      console.log("LivekitManager: Room not connected")
+    // Don't send data if not connected or if reconnecting (buffer will fill up)
+    if (!this.room || this.room.state !== ConnectionState.Connected || this.isReconnecting) {
       return
     }
 
     // prepend a sequence number:
     data = new Uint8Array([this.getSequence(), ...data])
-
     this.room?.localParticipant.publishData(data, {reliable: false})
   }
 
@@ -75,6 +87,7 @@ class Livekit {
       await this.room.disconnect()
       this.room = null
     }
+    this.isReconnecting = false
   }
 }
 

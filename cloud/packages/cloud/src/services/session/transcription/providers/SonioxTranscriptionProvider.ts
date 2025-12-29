@@ -7,8 +7,6 @@ import WebSocket from "ws";
 
 import { StreamType, getLanguageInfo, parseLanguageStream, TranscriptionData, SonioxToken } from "@mentra/sdk";
 
-
- 
 import {
   TranscriptionProvider,
   StreamInstance,
@@ -441,6 +439,10 @@ class SonioxTranscriptionStream implements StreamInstance {
             resolve();
           } else if (this.state === StreamState.ERROR) {
             reject(this.lastError || new Error("Stream initialization failed"));
+          } else if (this.state === StreamState.CLOSED || this.state === StreamState.CLOSING) {
+            // Fix: Handle CLOSED state to prevent infinite polling loop
+            // See: cloud/issues/015-http-304-etag-caching-bug (related transcription hang issue)
+            reject(new Error("Stream closed before becoming ready"));
           } else {
             setTimeout(checkReady, 100);
           }

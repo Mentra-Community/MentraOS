@@ -116,7 +116,7 @@ export default function NonProdWarning() {
 
   return (
     <TouchableOpacity style={themed($settingsButton)} onPress={nonProdWarning}>
-      <MaterialCommunityIcons name="alert" size={theme.spacing.s6} color={theme.colors.error} />
+      <MaterialCommunityIcons name="alert" size={theme.spacing.s6} color={theme.colors.text} />
     </TouchableOpacity>
   )
 }

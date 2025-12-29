@@ -2,312 +2,291 @@
 
 ## Overview
 
-This document provides the concrete implementation steps to fix the cross-cloud session contamination bug where an old cloud instance can kill subscriptions on a new cloud when users switch environments.
+This document provides the concrete implementation steps to fix the cross-cloud session contamination bug. The fix is simpler than originally thought: **make sessionId unique per cloud session instance**.
 
-## Prerequisites
+## Root Cause Recap
 
-The following have already been implemented (from issue 006):
+When user switches from Server A to Server B:
+1. Both servers send webhooks with the **same** sessionId (`userId-packageName`)
+2. SDK's `handleSessionRequest` overwrites `activeSessions[sessionId]` with new session
+3. Old session is **orphaned** but its WebSocket and event handlers are still active
+4. When Server A's WebSocket closes (after 60s grace period), orphaned session's cleanup handler fires
+5. Cleanup calls `activeSessions.delete(sessionId)` - **deleting the NEW session!**
 
-- [x] Phase 1a: Derive subscriptions from handlers (SDK)
-- [x] Phase 1b: Terminated flag to prevent reconnection after session end
-- [x] Phase 2: OWNERSHIP_RELEASE protocol
-- [x] Phase 4: AppSession class consolidation on Cloud
+## The Fix
 
-## Remaining Work
-
-### Priority 1: sessionId-aware disposal in Captions App (Short-term)
-
-This is the immediate fix that prevents cross-cloud contamination without changing the sessionId format.
-
-#### Step 1.1: Update UserSession to store and expose sessionId
-
-**File**: `packages/apps/captions/src/app/session/UserSession.ts`
-
-```typescript
-export class UserSession {
-  public readonly userId: string
-  public readonly sessionId: string // ADD: Store sessionId from AppSession
-
-  constructor(appSession: AppSession) {
-    this.userId = appSession.userId
-    this.sessionId = appSession.sessionId // ADD: Capture sessionId
-    // ... existing constructor code
-  }
-
-  // ADD: Helper method for sessionId-aware lookup
-  static getUserSessionIfMatches(userId: string, sessionId: string): UserSession | undefined {
-    const session = UserSession.userSessions.get(userId)
-    if (session && session.sessionId === sessionId) {
-      return session
-    }
-    return undefined
-  }
-}
-```
-
-#### Step 1.2: Update onStop to check sessionId before disposing
-
-**File**: `packages/apps/captions/src/app/index.ts`
-
-```typescript
-protected async onStop(sessionId: string, userId: string, reason: string): Promise<void> {
-  // Use sessionId-aware lookup to prevent cross-cloud contamination
-  const userSession = UserSession.getUserSessionIfMatches(userId, sessionId)
-
-  if (userSession) {
-    this.logger.info(
-      { sessionId, userId, reason },
-      `Disposing session: ${reason}`
-    )
-    userSession.dispose()
-  } else {
-    // This happens when old cloud sends onStop for stale session
-    // Log but don't dispose - the current session belongs to a different cloud
-    this.logger.info(
-      { sessionId, userId, reason },
-      `Ignoring stop for non-matching session (likely stale cross-cloud stop)`
-    )
-  }
-}
-```
-
-#### Step 1.3: Verify AppSession exposes sessionId
-
-**File**: `packages/sdk/src/app/session/index.ts`
-
-Verify that `sessionId` is accessible:
-
-```typescript
-export class AppSession {
-  public readonly sessionId: string // Should already be public/accessible
-  // ...
-}
-```
-
-### Priority 2: Apply same fix to external Captions app
-
-The production Captions app at `captions-beta.mentraglass.com` needs the same sessionId-aware disposal guard.
-
-**Action**: Apply Step 1.1 and Step 1.2 to the external captions app codebase.
-
-### Priority 3: Generate unique sessionIds (Medium-term)
-
-This makes the system more robust by ensuring sessionIds are truly unique per session instance.
-
-#### Step 3.1: Update Cloud to generate UUID-based sessionId
+### Step 1: Generate Unique sessionId (Cloud)
 
 **File**: `packages/cloud/src/services/session/AppManager.ts`
 
+**Current Code** (line ~634):
 ```typescript
-import { randomUUID } from 'crypto'
+await this.triggerWebhook(webhookURL, {
+  type: WebhookRequestType.SESSION_REQUEST,
+  sessionId: this.userSession.userId + "-" + packageName,
+  userId: this.userSession.userId,
+  // ...
+});
+```
+
+**New Code**:
+```typescript
+import { randomUUID } from 'crypto';
 
 // In triggerAppWebhookInternal()
-async triggerAppWebhookInternal(packageName: string, appInfo: AppInfo) {
-  // Generate unique sessionId for this session instance
-  const sessionId = randomUUID()
+const uniqueSessionId = `${this.userSession.userId}-${packageName}-${randomUUID()}`;
 
-  const webhookPayload = {
-    type: 'SESSION_REQUEST',
-    sessionId,
-    userId: this.userSession.userId,
-    packageName,
-    mentraOSWebsocketUrl: this.getWebsocketUrl(),
-    // ... rest of payload
-  }
+await this.triggerWebhook(webhookURL, {
+  type: WebhookRequestType.SESSION_REQUEST,
+  sessionId: uniqueSessionId,
+  userId: this.userSession.userId,
+  // ...
+});
 
-  // Log with context for debugging
-  this.logger.info(
-    { sessionId, userId: this.userSession.userId, packageName },
-    `Triggering webhook with unique sessionId`
-  )
-
-  // ... rest of method
-}
+this.logger.info(
+  { sessionId: uniqueSessionId, userId: this.userSession.userId, packageName },
+  `[AppManager] Triggering webhook with unique sessionId`
+);
 ```
 
-#### Step 3.2: Update any code that parses sessionId
+### Step 2: Fix sessionId Parsing (Cloud)
 
-Search for any code that assumes `sessionId = userId + "-" + packageName` format:
+**File**: `packages/cloud/src/services/session/AppManager.ts`
 
-```bash
-grep -r "sessionId.*split\|sessionId.*indexOf\|sessionId.*-" packages/
+**Current Code** (line ~751):
+```typescript
+const enrichedError = Object.assign(error, {
+  packageName: payload.sessionId.split("-")[1],  // BUG: Assumes userId-packageName format
+  // ...
+});
 ```
 
-Update any parsing logic to extract userId/packageName from separate fields instead of parsing sessionId.
+**New Code**:
+```typescript
+const enrichedError = Object.assign(error, {
+  packageName: payload.packageName || "unknown",  // Use explicit field instead of parsing
+  // ...
+});
+```
 
-### Priority 4: Add sessionId to persistence (Future)
+**Note**: Also need to add `packageName` to the webhook payload if not already present.
 
-If session restoration on cloud restart requires sessionId:
+### Step 3: Clean Up Existing Session (SDK) - Optional but Recommended
 
-**File**: `packages/cloud/src/models/User.ts`
+**File**: `packages/sdk/src/app/server/index.ts`
+
+In `handleSessionRequest()`, add cleanup before creating new session:
 
 ```typescript
-interface RunningApp {
-  packageName: string
-  sessionId: string  // ADD: Persist sessionId for restoration
-  startedAt: Date
-}
+private async handleSessionRequest(request: SessionWebhookRequest, res: express.Response): Promise<void> {
+  const {sessionId, userId, mentraOSWebsocketUrl, augmentOSWebsocketUrl} = request
+  this.logger.info({userId, sessionId}, `🗣️ Received session request for user ${userId}, session ${sessionId}`)
 
-// Update runningApps field
-runningApps: RunningApp[]  // Change from string[] to RunningApp[]
+  // NEW: Clean up any existing session for this user to prevent orphaned sessions
+  const existingSession = this.activeSessionsByUserId.get(userId);
+  if (existingSession) {
+    const existingSessionId = existingSession.getSessionId();
+    this.logger.info(
+      { userId, oldSessionId: existingSessionId, newSessionId: sessionId },
+      `🧹 Cleaning up existing session for user before creating new one`
+    );
+    
+    try {
+      // Disconnect old session (this will trigger its cleanup, but with different sessionId)
+      await existingSession.disconnect();
+    } catch (error) {
+      this.logger.warn({ error, userId }, `Error disconnecting old session, continuing with new session`);
+    }
+    
+    // Remove from maps
+    this.activeSessions.delete(existingSessionId);
+    this.activeSessionsByUserId.delete(userId);
+  }
+
+  // Create new App session (existing code)
+  const session = new AppSession({
+    // ...
+  });
+  
+  // ... rest of existing code
+}
 ```
 
-This allows cloud restart to restore sessions with their original sessionIds.
+### Step 4: Add getSessionId() Method (SDK)
+
+**File**: `packages/sdk/src/app/session/index.ts`
+
+Ensure `getSessionId()` method exists and is public:
+
+```typescript
+/**
+ * Get the session ID for this session
+ */
+getSessionId(): string {
+  return this.sessionId;
+}
+```
+
+---
+
+## Why This Works
+
+With unique sessionIds:
+
+```
+Timeline with FIX:
+─────────────────────────────────────────────────────────────────────────────
+
+T+0:    User connects to Server A
+        → Server A triggers webhook with sessionId: "user-app-uuid1"
+        → TPA stores activeSessions["user-app-uuid1"] = AppSession1
+
+T+5:    User switches to Server B  
+        → Server B triggers webhook with sessionId: "user-app-uuid2" (DIFFERENT!)
+        → TPA cleans up existing session for user (Step 3)
+        → TPA stores activeSessions["user-app-uuid2"] = AppSession2
+
+T+65:   Server A grace period expires (if cleanup in Step 3 didn't close it)
+        → Server A closes WebSocket with "User session ended"
+        → AppSession1's cleanup calls activeSessions.delete("user-app-uuid1")
+        → activeSessions["user-app-uuid2"] is UNAFFECTED ✅
+
+Result: New session on Server B continues working normally
+```
+
+---
+
+## Files Changed Summary
+
+### Cloud
+
+| File | Changes |
+|------|---------|
+| `packages/cloud/src/services/session/AppManager.ts` | Generate UUID sessionId, fix parsing |
+
+### SDK
+
+| File | Changes |
+|------|---------|
+| `packages/sdk/src/app/server/index.ts` | Clean up existing session before creating new one |
+| `packages/sdk/src/app/session/index.ts` | Ensure getSessionId() is public |
 
 ---
 
 ## Testing Plan
 
+### Manual Test: Cross-Cloud Switch
+
+1. Connect to cloud-dev, start captions app
+2. Verify transcription working
+3. Switch to cloud-debug (in mobile app settings or by restarting with different URL)
+4. Verify captions app receives new webhook
+5. Verify transcription continues on cloud-debug
+6. Wait 60+ seconds for cloud-dev grace period to expire
+7. **Verify transcription STILL works on cloud-debug** (this is the bug we're fixing)
+
 ### Unit Tests
 
-#### Test 1: sessionId-aware disposal
-
 ```typescript
-describe("UserSession.getUserSessionIfMatches", () => {
-  it("should return session when sessionId matches", () => {
-    const appSession = createMockAppSession({sessionId: "session-123", userId: "user-1"})
-    const userSession = new UserSession(appSession)
+describe("Unique sessionId generation", () => {
+  it("should generate different sessionIds for same user/package", async () => {
+    const appManager = createAppManager();
+    
+    const sessionId1 = await appManager.startApp("com.test.app");
+    const sessionId2 = await appManager.startApp("com.test.app");
+    
+    expect(sessionId1).not.toBe(sessionId2);
+  });
+  
+  it("should include userId and packageName in sessionId", async () => {
+    const appManager = createAppManager({ userId: "test@example.com" });
+    
+    const sessionId = await appManager.startApp("com.test.app");
+    
+    expect(sessionId).toContain("test@example.com");
+    expect(sessionId).toContain("com.test.app");
+  });
+});
 
-    const result = UserSession.getUserSessionIfMatches("user-1", "session-123")
-    expect(result).toBe(userSession)
-  })
-
-  it("should return undefined when sessionId does not match", () => {
-    const appSession = createMockAppSession({sessionId: "session-123", userId: "user-1"})
-    new UserSession(appSession)
-
-    const result = UserSession.getUserSessionIfMatches("user-1", "different-session")
-    expect(result).toBeUndefined()
-  })
-
-  it("should return undefined when userId does not exist", () => {
-    const result = UserSession.getUserSessionIfMatches("nonexistent", "any-session")
-    expect(result).toBeUndefined()
-  })
-})
-```
-
-#### Test 2: onStop ignores stale sessions
-
-```typescript
-describe("LiveCaptionsApp.onStop", () => {
-  it("should dispose session when sessionId matches", async () => {
-    const app = new LiveCaptionsApp()
-    const session = createUserSession({sessionId: "session-123", userId: "user-1"})
-    const disposeSpy = jest.spyOn(session, "dispose")
-
-    await app.onStop("session-123", "user-1", "User session ended")
-
-    expect(disposeSpy).toHaveBeenCalled()
-  })
-
-  it("should NOT dispose session when sessionId does not match", async () => {
-    const app = new LiveCaptionsApp()
-    const session = createUserSession({sessionId: "session-123", userId: "user-1"})
-    const disposeSpy = jest.spyOn(session, "dispose")
-
-    await app.onStop("different-session", "user-1", "User session ended")
-
-    expect(disposeSpy).not.toHaveBeenCalled()
-  })
-})
-```
-
-### Integration Tests
-
-#### Test 3: Cross-cloud switch simulation
-
-```typescript
-describe("Cross-cloud session handling", () => {
-  it("should not kill new session when old cloud sends onStop", async () => {
-    // 1. Start session on cloud-dev
-    const sessionDev = await startSession("cloud-dev", "user-1")
-    expect(sessionDev.sessionId).toBeTruthy()
-
-    // 2. Start session on cloud-debug (simulates user switch)
-    const sessionDebug = await startSession("cloud-debug", "user-1")
-    expect(sessionDebug.sessionId).not.toBe(sessionDev.sessionId)
-
-    // 3. Simulate cloud-dev sending onStop for old session
-    await app.onStop(sessionDev.sessionId, "user-1", "User session ended")
-
-    // 4. Verify cloud-debug session is still active
-    const activeSession = UserSession.getUserSession("user-1")
-    expect(activeSession.sessionId).toBe(sessionDebug.sessionId)
-    expect(activeSession.isActive()).toBe(true)
-  })
-})
+describe("AppServer session cleanup", () => {
+  it("should clean up existing session before creating new one", async () => {
+    const appServer = createAppServer();
+    const disconnectSpy = jest.fn();
+    
+    // First session
+    await appServer.handleSessionRequest({
+      sessionId: "user-app-uuid1",
+      userId: "user@test.com",
+      // ...
+    }, mockRes);
+    
+    const firstSession = appServer.activeSessionsByUserId.get("user@test.com");
+    firstSession.disconnect = disconnectSpy;
+    
+    // Second session for same user
+    await appServer.handleSessionRequest({
+      sessionId: "user-app-uuid2", 
+      userId: "user@test.com",
+      // ...
+    }, mockRes);
+    
+    expect(disconnectSpy).toHaveBeenCalled();
+    expect(appServer.activeSessions.has("user-app-uuid1")).toBe(false);
+    expect(appServer.activeSessions.has("user-app-uuid2")).toBe(true);
+  });
+});
 ```
 
 ---
 
 ## Rollback Plan
 
-### If Priority 1 causes issues:
+If issues are found:
 
-Remove the sessionId check and revert to userId-only lookup:
-
+### Cloud Rollback
+Revert to deterministic sessionId:
 ```typescript
-protected async onStop(sessionId: string, userId: string, reason: string): Promise<void> {
-  // ROLLBACK: Revert to userId-only lookup
-  const userSession = UserSession.getUserSession(userId)
-  if (userSession) {
-    userSession.dispose()
-  }
-}
+sessionId: this.userSession.userId + "-" + packageName
 ```
 
-### If Priority 3 causes issues:
-
-Revert to deterministic sessionId generation:
-
-```typescript
-// ROLLBACK: Revert to deterministic sessionId
-const sessionId = `${this.userSession.userId}-${packageName}`
-```
+### SDK Rollback  
+Remove the cleanup code in `handleSessionRequest()` (just delete the new cleanup block).
 
 ---
 
-## Risk Assessment
+## Backward Compatibility
 
-| Change                    | Risk   | Mitigation                                    |
-| ------------------------- | ------ | --------------------------------------------- |
-| sessionId check in onStop | Low    | Only adds a guard, doesn't change happy path  |
-| UUID sessionId generation | Medium | Might break code that parses sessionId format |
-| sessionId persistence     | Medium | Requires DB migration, needs careful rollout  |
+✅ **Fully backward compatible**
+
+- Old SDK receiving UUID sessionId: Works fine (sessionId is opaque string)
+- New SDK receiving old sessionId format: Works fine (just a string)
+- Mixed versions: Work fine (sessionId is never parsed by SDK)
+
+The only code that parses sessionId is the error enrichment in `AppManager.triggerWebhook()`, which we're fixing in Step 2.
 
 ---
 
 ## Timeline Estimate
 
-| Task                           | Estimate      | Priority |
-| ------------------------------ | ------------- | -------- |
-| Step 1.1-1.3: Captions app fix | 2 hours       | P1       |
-| Step 2: External captions app  | 1 hour        | P1       |
-| Step 3: UUID sessionId         | 4 hours       | P2       |
-| Testing                        | 3 hours       | P1       |
-| **Total**                      | **~10 hours** |          |
-
----
-
-## Success Metrics
-
-1. **No cross-cloud contamination**: When user switches clouds, old session's onStop doesn't kill new session
-2. **Transcription continues**: Switching environments doesn't stop transcription
-3. **No regressions**: Normal single-environment usage unaffected
-4. **Observable**: Logs clearly show when stale onStop is ignored
+| Task | Estimate |
+|------|----------|
+| Step 1: UUID sessionId generation | 30 min |
+| Step 2: Fix sessionId parsing | 15 min |
+| Step 3: SDK session cleanup | 1 hour |
+| Step 4: getSessionId() method | 15 min |
+| Testing | 2 hours |
+| **Total** | **~4 hours** |
 
 ---
 
 ## Checklist
 
-- [ ] Update `UserSession.ts` to store sessionId (Step 1.1)
-- [ ] Add `getUserSessionIfMatches` helper (Step 1.1)
-- [ ] Update `onStop` to use sessionId check (Step 1.2)
-- [ ] Verify `AppSession.sessionId` is accessible (Step 1.3)
-- [ ] Write unit tests (Test 1, Test 2)
-- [ ] Write integration test (Test 3)
-- [ ] Apply fix to external captions app (Step 2)
-- [ ] Test cross-cloud scenario manually
-- [ ] Deploy and verify in staging
-- [ ] Monitor production for stale onStop logs
+- [ ] Update `AppManager.triggerAppWebhookInternal()` to generate UUID sessionId
+- [ ] Add `packageName` to webhook payload (if needed)
+- [ ] Fix `AppManager.triggerWebhook()` error enrichment to not parse sessionId
+- [ ] Add session cleanup in `AppServer.handleSessionRequest()`
+- [ ] Ensure `AppSession.getSessionId()` is public
+- [ ] Write unit tests
+- [ ] Manual test cross-cloud switch scenario
+- [ ] Deploy to staging and test
+- [ ] Monitor production for issues

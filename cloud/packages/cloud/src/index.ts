@@ -1,27 +1,31 @@
 /**
- * @fileoverview AugmentOS Cloud Server entry point.
+ * @fileoverview MentraOS Cloud Server entry point (Hono + Bun native).
  * Initializes core services and sets up HTTP/WebSocket servers using Bun.serve().
+ *
+ * This is the new entry point using Hono for native Bun HTTP handling.
+ *
+ * IMPORTANT: This file explicitly calls Bun.serve() and does NOT use export default
+ * to prevent Bun from auto-starting the server a second time. Bun auto-detects
+ * `export default` with a `fetch` function and tries to call Bun.serve() on it,
+ * which would cause EADDRINUSE errors.
  */
 
-import path from "path";
-import { Readable } from "stream";
-
-import cookieParser from "cookie-parser";
-import cors from "cors";
 import dotenv from "dotenv";
-import express from "express";
-import helmet from "helmet";
-import pinoHttp from "pino-http";
 dotenv.config();
 
-import { registerApi } from "./api";
-import { CORS_ORIGINS } from "./config/cors";
 import * as mongoConnection from "./connections/mongodb.connection";
+import honoApp from "./hono-app";
 import * as AppUptimeService from "./services/core/app-uptime.service";
 import { memoryTelemetryService } from "./services/debug/MemoryTelemetryService";
 import { logger as rootLogger } from "./services/logging/pino-logger";
-import UserSession from "./services/session/UserSession";
 import { handleUpgrade, websocketHandlers } from "./services/websocket/bun-websocket";
+import generateCoreToken from "./utils/generateCoreToken";
+
+// Hono app with all routes
+
+// Optional: Legacy Express handler for routes not yet migrated
+// Uncomment the import below if you need Express fallback
+// import { createLegacyExpressHandler } from "./legacy-express";
 
 const logger = rootLogger.child({ service: "index" });
 
@@ -56,286 +60,37 @@ mongoConnection
     logger.error("MongoDB connection failed:", error);
   });
 
-// Initialize Express app (for HTTP routes)
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
-const expressApp = express();
 
-// Middleware setup
-expressApp.use(helmet());
-expressApp.use(
-  cors({
-    credentials: true,
-    origin: CORS_ORIGINS,
-  }),
-);
+// Optional: Create legacy Express handler for routes not yet migrated
+// Uncomment if you need Express fallback for specific routes
+// const legacyExpressHandler = createLegacyExpressHandler();
 
-expressApp.use(express.json({ limit: "50mb" }));
-expressApp.use(express.urlencoded({ limit: "50mb", extended: true }));
-expressApp.use(cookieParser());
-
-// Add pino-http middleware for request logging
-expressApp.use(
-  pinoHttp({
-    logger: rootLogger as any,
-    genReqId: (req) => {
-      // Generate correlation ID for each request
-      return `${req.method}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-    },
-    customLogLevel: (req, res, err) => {
-      if (res.statusCode >= 400 && res.statusCode < 500) return "warn";
-      if (res.statusCode >= 500 || err) return "error";
-      return "info";
-    },
-    customSuccessMessage: (req, res) => {
-      return `${req.method} ${req.url} - ${res.statusCode}`;
-    },
-    customErrorMessage: (req, res, err) => {
-      return `${req.method} ${req.url} - ${res.statusCode} - ${err.message}`;
-    },
-    // Reduce verbosity in development by excluding request/response details
-    serializers: {
-      req: (req) => ({
-        method: req.method,
-        url: req.url,
-      }),
-      res: (res) => ({
-        statusCode: res.statusCode,
-      }),
-    },
-    // Don't log noisy or frequent requests
-    autoLogging: {
-      ignore: (req) => {
-        return req.url === "/health" || req.url === "/api/livekit/token" || req.url?.startsWith("/api/livekit/token");
-      },
-    },
-  }),
-);
-
-// Routes
-registerApi(expressApp);
-
-// Health check endpoint
-expressApp.get("/health", (req, res) => {
-  try {
-    const activeSessions = UserSession.getAllSessions();
-
-    res.json({
-      status: "ok",
-      timestamp: new Date().toISOString(),
-      sessions: {
-        activeCount: activeSessions.length,
-      },
-      uptime: process.uptime(),
-    });
-  } catch (error) {
-    console.error("Health check error:", error);
-    res.status(500).json({
-      status: "error",
-      error: "Health check failed",
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-
-// Serve static files from the public directory
-expressApp.use(express.static(path.join(__dirname, "./public")));
-
-// Serve uploaded photos
-expressApp.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+// Routes that should fall back to Express (if enabled)
+// These are routes that haven't been migrated to Hono yet
+const LEGACY_EXPRESS_PATHS = [
+  "/appsettings",
+  "/tpasettings",
+  "/api/dev",
+  "/api/admin",
+  "/api/orgs",
+  "/api/photos",
+  "/api/gallery",
+  "/api/tools",
+  "/api/permissions",
+  "/api/hardware",
+  "/api/user-data",
+  "/api/account",
+  "/api/onboarding",
+  "/api/app-uptime",
+  "/api/streams",
+];
 
 /**
- * Create a proper Node.js IncomingMessage-like object from a Bun Request.
- * This uses Node's actual Readable stream to ensure compatibility with body-parser.
+ * Check if a path should fall back to Express
  */
-function createNodeRequest(req: Request, url: URL, bodyBuffer: Buffer | null, clientIP: string): any {
-  // Create a proper Readable stream from the body buffer
-  const readable = new Readable({
-    read() {
-      if (bodyBuffer && bodyBuffer.length > 0) {
-        this.push(bodyBuffer);
-      }
-      this.push(null); // Signal end of stream
-    },
-  });
-
-  // Add IncomingMessage properties to the Readable stream
-  const nodeReq = readable as any;
-
-  nodeReq.method = req.method;
-  nodeReq.url = url.pathname + url.search;
-  nodeReq.headers = {} as Record<string, string>;
-  nodeReq.httpVersion = "1.1";
-  nodeReq.httpVersionMajor = 1;
-  nodeReq.httpVersionMinor = 1;
-  nodeReq.complete = false;
-  nodeReq.aborted = false;
-  nodeReq.upgrade = false;
-
-  // Create mock socket
-  const mockSocket = {
-    remoteAddress: clientIP,
-    remotePort: 0,
-    localAddress: "127.0.0.1",
-    localPort: PORT,
-    destroy: () => {},
-    end: () => {},
-    write: () => true,
-    setTimeout: () => mockSocket,
-    setNoDelay: () => mockSocket,
-    setKeepAlive: () => mockSocket,
-    ref: () => mockSocket,
-    unref: () => mockSocket,
-    encrypted: false,
-    writable: true,
-    readable: true,
-    on: () => mockSocket,
-    once: () => mockSocket,
-    off: () => mockSocket,
-    emit: () => false,
-    removeListener: () => mockSocket,
-  };
-
-  nodeReq.socket = mockSocket;
-  nodeReq.connection = mockSocket;
-
-  // Copy headers from Bun Request
-  req.headers.forEach((value, key) => {
-    nodeReq.headers[key.toLowerCase()] = value;
-  });
-
-  return nodeReq;
-}
-
-/**
- * Create a mock ServerResponse that collects the response and resolves a Promise with a Bun Response.
- */
-function createNodeResponse(resolve: (response: Response) => void): any {
-  const responseBody: Buffer[] = [];
-  const responseHeaders: Record<string, string | string[]> = {};
-  let statusCode = 200;
-
-  const mockSocket = {
-    writable: true,
-    on: () => mockSocket,
-    once: () => mockSocket,
-    off: () => mockSocket,
-    emit: () => false,
-    removeListener: () => mockSocket,
-  };
-
-  const nodeRes: any = {
-    socket: mockSocket,
-    connection: mockSocket,
-    statusCode: 200,
-    statusMessage: "OK",
-    headersSent: false,
-    finished: false,
-    writable: true,
-    _header: null,
-    _headerSent: false,
-
-    writeHead(code: number, reasonOrHeaders?: string | Record<string, any>, headers?: Record<string, any>) {
-      statusCode = code;
-      nodeRes.statusCode = code;
-      const h = typeof reasonOrHeaders === "object" ? reasonOrHeaders : headers;
-      if (h) {
-        for (const [key, value] of Object.entries(h)) {
-          responseHeaders[key.toLowerCase()] = value as string;
-        }
-      }
-      nodeRes.headersSent = true;
-      nodeRes._headerSent = true;
-      return nodeRes;
-    },
-
-    setHeader(name: string, value: string | string[]) {
-      responseHeaders[name.toLowerCase()] = value;
-      return nodeRes;
-    },
-
-    getHeader(name: string) {
-      return responseHeaders[name.toLowerCase()];
-    },
-
-    removeHeader(name: string) {
-      delete responseHeaders[name.toLowerCase()];
-    },
-
-    hasHeader(name: string) {
-      return name.toLowerCase() in responseHeaders;
-    },
-
-    getHeaders() {
-      return { ...responseHeaders };
-    },
-
-    getHeaderNames() {
-      return Object.keys(responseHeaders);
-    },
-
-    write(chunk: Buffer | string, encoding?: BufferEncoding | (() => void), callback?: () => void) {
-      if (typeof encoding === "function") {
-        callback = encoding;
-      }
-      responseBody.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      if (callback) callback();
-      return true;
-    },
-
-    end(chunk?: Buffer | string | (() => void), encoding?: BufferEncoding | (() => void), callback?: () => void) {
-      if (typeof chunk === "function") {
-        callback = chunk;
-        chunk = undefined;
-      } else if (typeof encoding === "function") {
-        callback = encoding;
-      }
-
-      if (chunk) {
-        responseBody.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-      }
-
-      nodeRes.finished = true;
-      nodeRes.writable = false;
-
-      const body = Buffer.concat(responseBody);
-      const headers = new Headers();
-
-      for (const [key, value] of Object.entries(responseHeaders)) {
-        if (Array.isArray(value)) {
-          value.forEach((v) => headers.append(key, v));
-        } else if (value) {
-          headers.set(key, value as string);
-        }
-      }
-
-      if (callback) callback();
-
-      resolve(
-        new Response(body.length > 0 ? body : null, {
-          status: statusCode,
-          headers,
-        }),
-      );
-    },
-
-    flushHeaders() {},
-    addTrailers() {},
-    writeContinue() {},
-    assignSocket() {},
-    detachSocket() {},
-    cork() {},
-    uncork() {},
-
-    // Event emitter methods (no-ops for compatibility)
-    on: () => nodeRes,
-    once: () => nodeRes,
-    off: () => nodeRes,
-    emit: () => false,
-    removeListener: () => nodeRes,
-    addListener: () => nodeRes,
-  };
-
-  return nodeRes;
+function shouldUseLegacyExpress(pathname: string): boolean {
+  return LEGACY_EXPRESS_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
 }
 
 // Start Bun.serve() with native WebSocket support
@@ -360,30 +115,16 @@ const server = Bun.serve({
       return upgradeResult;
     }
 
-    // For all other HTTP requests, delegate to Express
-    // Read body upfront if present
-    let bodyBuffer: Buffer | null = null;
-    if (req.body && req.method !== "GET" && req.method !== "HEAD") {
-      try {
-        const arrayBuffer = await req.arrayBuffer();
-        bodyBuffer = Buffer.from(arrayBuffer);
-      } catch {
-        // Body already consumed or not present
-        bodyBuffer = null;
-      }
+    // Optional: Fall back to legacy Express handler for unmigrated routes
+    // Uncomment the block below if you need Express fallback
+    /*
+    if (shouldUseLegacyExpress(url.pathname)) {
+      return legacyExpressHandler(req, server);
     }
+    */
 
-    return new Promise<Response>((resolve) => {
-      // Get client IP
-      const clientIP = server.requestIP(req)?.address || "127.0.0.1";
-
-      // Create Node.js-compatible request and response objects
-      const nodeReq = createNodeRequest(req, url, bodyBuffer, clientIP);
-      const nodeRes = createNodeResponse(resolve);
-
-      // Let Express handle the request
-      expressApp(nodeReq, nodeRes);
-    });
+    // All HTTP requests handled by Hono
+    return honoApp.fetch(req, { ip: server.requestIP(req) });
   },
 });
 
@@ -399,8 +140,20 @@ logger.info(`\n
     ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
     ☁️☁️☁️      😎 MentraOS Cloud Server 🚀
     ☁️☁️☁️      🌐 Listening on port ${PORT} 🌐
-    ☁️☁️☁️      ⚡ Bun Native WebSocket Enabled ⚡
+    ☁️☁️☁️      ⚡ Pure Hono + Bun Native ⚡
     ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
     ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️\n`);
 
-export default server;
+// Generate core token for debugging with postman.
+// generateCoreToken
+// (async () => {
+//   const coreToken = await generateCoreToken("");
+//   logger.debug(`Core Token:\n${coreToken}`);
+// })();
+
+// IMPORTANT: Do NOT add `export default server` here!
+// Bun auto-detects default exports with a `fetch` function and calls Bun.serve() on them.
+// Since we already called Bun.serve() above, this would cause EADDRINUSE (port already in use).
+//
+// If you need to export the server for testing, use a named export:
+// export { server };

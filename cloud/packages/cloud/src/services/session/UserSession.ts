@@ -352,6 +352,28 @@ export class UserSession {
     this.setupGlassesHeartbeat();
 
     this.logger.debug(`[UserSession:updateWebSocket] WebSocket and heartbeat updated for user ${this.userId}`);
+
+    // CRITICAL: Force mic state resync after WebSocket reconnects
+    // Without this, the phone may think mic is off while cloud has active subscriptions.
+    // This fixes the bug where mic turns off after WebSocket reconnection because
+    // MicrophoneManager tried to send state while WebSocket was closed, and never
+    // retried after the WebSocket came back up.
+    //
+    // We add a small delay to ensure the WebSocket is fully established and ready
+    // to receive messages before we send the mic state.
+    if (this.microphoneManager) {
+      this.logger.info(`[UserSession:updateWebSocket] Scheduling mic state resync after WebSocket reconnect`);
+      setTimeout(() => {
+        if (this.microphoneManager && this.websocket?.readyState === WebSocketReadyState.OPEN) {
+          this.logger.info(`[UserSession:updateWebSocket] Forcing mic state resync after WebSocket reconnect`);
+          this.microphoneManager.forceResync();
+        } else {
+          this.logger.warn(
+            `[UserSession:updateWebSocket] Skipping mic resync - WebSocket not ready or manager disposed`,
+          );
+        }
+      }, 100); // Small delay to ensure WebSocket is fully ready
+    }
   }
 
   /**

@@ -625,13 +625,23 @@ class PhoneMic {
         _isRecording = false
         currentMicMode = ""
 
-        // Remove the tap and stop the engine (may fail if engine invalid, that's ok)
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
+        // Capture engine reference before cleanup to avoid race conditions
+        let engine = audioEngine
+        audioEngine = nil
+
+        // Remove the tap and stop the engine safely
+        // Accessing inputNode can crash if engine is in an invalid state (e.g., during
+        // audio route changes), so we guard against this. See: MENTRA-OS-17X
+        if let engine = engine {
+            // Only access inputNode if engine is still attached
+            if engine.inputNode.engine != nil {
+                engine.inputNode.removeTap(onBus: 0)
+            }
+            engine.stop()
+        }
 
         // Clean up
         try? audioSession?.setActive(false)
-        audioEngine = nil
         audioSession = nil
 
         Bridge.log("MIC: Stopped recording")

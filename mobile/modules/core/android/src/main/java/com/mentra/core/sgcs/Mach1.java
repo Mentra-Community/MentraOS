@@ -540,6 +540,12 @@ public class Mach1 extends SGCManager {
     }
 
     private void onUltraliteBatteryChanged(BatteryStatus batteryStatus) {
+        // Guard against null batteryStatus which can occur during connection/disconnection
+        // See: MENTRA-OS-154
+        if (batteryStatus == null) {
+            Log.d(TAG, "Ultralite battery status is null, ignoring");
+            return;
+        }
         Log.d(TAG, "Ultralite new battery status: " + batteryStatus.getLevel());
         // Update the class field, not a local variable
         this.batteryLevel = batteryStatus.getLevel();

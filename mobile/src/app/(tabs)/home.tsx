@@ -1,6 +1,6 @@
 import {useFocusEffect} from "@react-navigation/native"
 import {useCallback} from "react"
-import {ScrollView} from "react-native"
+import {ScrollView, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {ActiveForegroundApp} from "@/components/home/ActiveForegroundApp"
@@ -11,6 +11,7 @@ import {IncompatibleApps} from "@/components/home/IncompatibleApps"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
 import {Header, Screen} from "@/components/ignite"
 import CloudConnection from "@/components/misc/CloudConnection"
+import NonProdWarning from "@/components/misc/NonProdWarning"
 import SensingDisabledWarning from "@/components/misc/SensingDisabledWarning"
 import {Group} from "@/components/ui"
 import {Spacer} from "@/components/ui/Spacer"
@@ -34,7 +35,15 @@ export default function Homepage() {
 
   return (
     <Screen preset="fixed">
-      <Header leftTx="home:title" RightActionComponent={<MentraLogoStandalone />} />
+      <Header
+        leftTx="home:title"
+        RightActionComponent={
+          <View style={{flexDirection: "row", alignItems: "center"}}>
+            <NonProdWarning />
+            <MentraLogoStandalone />
+          </View>
+        }
+      />
 
       <ScrollView contentInsetAdjustmentBehavior="automatic" showsVerticalScrollIndicator={false}>
         <Spacer height={theme.spacing.s4} />

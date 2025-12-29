@@ -1353,7 +1353,18 @@ router.post("/install/:packageName", authWithOptionalSession, installApp);
 router.post("/uninstall/:packageName", authWithOptionalSession, uninstallApp);
 
 router.get("/version", async (req, res) => {
-  res.json({ version: CLOUD_VERSION });
+  // Disable caching to prevent 304 responses that cause JSON parse errors on mobile
+  // Mobile OkHttp sends If-None-Match, gets 304 with empty body, fails to parse
+  // See: cloud/issues/015-http-304-etag-caching-bug
+  //
+  // We send response manually to avoid Express auto-adding ETag header
+  // res.json() automatically adds ETag which causes 304 responses
+  const body = JSON.stringify({ version: CLOUD_VERSION });
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Content-Type", "application/json; charset=utf-8");
+  res.set("Content-Length", Buffer.byteLength(body).toString());
+  res.status(200).send(body);
 });
 
 router.get("/available", optionalAuthWithOptionalSession, getAvailableApps);

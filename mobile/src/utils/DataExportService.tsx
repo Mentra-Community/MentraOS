@@ -163,6 +163,6 @@ export class DataExportService {
    */
   public static generateFilename(): string {
     const date = new Date().toISOString().split("T")[0] // YYYY-MM-DD
-    return `augmentos-data-export-${date}.json`
+    return `mentraos-data-export-${date}.json`
   }
 }

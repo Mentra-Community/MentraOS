@@ -56,6 +56,8 @@ export const SETTINGS: Record<string, Setting> = {
       }
       return "https://api.mentra.glass"
     },
+    // If env var is set, always use it (on every boot)
+    override: () => process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE,
     writable: true,
     saveOnServer: false,
     persist: true,
@@ -71,6 +73,8 @@ export const SETTINGS: Record<string, Setting> = {
       }
       return "https://apps.mentra.glass"
     },
+    // If env var is set, always use it (on every boot)
+    override: () => process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE,
     writable: true,
     saveOnServer: false,
     persist: true,

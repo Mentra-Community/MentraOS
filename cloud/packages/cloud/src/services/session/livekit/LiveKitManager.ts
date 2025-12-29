@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { AccessToken, VideoGrant } from "livekit-server-sdk";
+import { AccessToken, VideoGrant, RoomServiceClient } from "livekit-server-sdk";
 import { Logger } from "pino";
 
 import { logger as rootLogger } from "../../logging/pino-logger";
@@ -22,7 +22,7 @@ export class LiveKitManager {
 
   constructor(session: UserSession) {
     this.session = session;
-     
+
     const startMs = (session as any).startTime instanceof Date ? (session as any).startTime.getTime() : Date.now();
     const lkTraceId = `livekit:${session.userId}:${startMs}`;
     this.logger = rootLogger.child({
@@ -306,6 +306,93 @@ export class LiveKitManager {
       this.logger.warn({ feature: "livekit", err }, "Failed to fetch bridge status");
       return null;
     }
+  }
+
+  /**
+   * Get the HTTP URL for LiveKit API calls (converts wss:// to https://)
+   */
+  private getHttpUrl(): string {
+    return this.livekitUrl.replace(/^wss?:\/\//, (m) => (m === "wss://" ? "https://" : "http://"));
+  }
+
+  /**
+   * Check if the mobile client is currently in the LiveKit room.
+   * Uses LiveKit Server SDK to query room participants.
+   */
+  public async isClientInRoom(): Promise<boolean> {
+    if (!this.apiKey || !this.apiSecret || !this.livekitUrl) {
+      this.logger.warn({ feature: "livekit" }, "Cannot check room - LiveKit not configured");
+      return false;
+    }
+
+    try {
+      const roomService = new RoomServiceClient(this.getHttpUrl(), this.apiKey, this.apiSecret);
+      const participants = await roomService.listParticipants(this.getRoomName());
+      const clientInRoom = participants.some((p) => p.identity === this.session.userId);
+
+      this.logger.debug(
+        {
+          feature: "livekit",
+          roomName: this.getRoomName(),
+          clientIdentity: this.session.userId,
+          clientInRoom,
+          participantCount: participants.length,
+        },
+        "Checked if client in room",
+      );
+
+      return clientInRoom;
+    } catch (err) {
+      this.logger.error({ feature: "livekit", err }, "Failed to check if client in room");
+      return false;
+    }
+  }
+
+  /**
+   * Get detailed room status including all participants.
+   * Useful for debugging LiveKit connection issues.
+   */
+  public async getRoomStatus(): Promise<{
+    roomName: string;
+    clientInRoom: boolean;
+    bridgeInRoom: boolean;
+    participants: string[];
+    micEnabled: boolean;
+    bridgeConnected: boolean;
+  }> {
+    const roomName = this.getRoomName();
+    const clientIdentity = this.session.userId;
+    const bridgeIdentity = `cloud-agent:${this.session.userId}`;
+    const micEnabled = this.session.microphoneManager?.isEnabled() ?? false;
+    const bridgeConnected = this.bridgeClient?.isConnected() ?? false;
+
+    let participants: string[] = [];
+    let clientInRoom = false;
+    let bridgeInRoom = false;
+
+    if (this.apiKey && this.apiSecret && this.livekitUrl) {
+      try {
+        const roomService = new RoomServiceClient(this.getHttpUrl(), this.apiKey, this.apiSecret);
+        const parts = await roomService.listParticipants(roomName);
+        participants = parts.map((p) => p.identity);
+        clientInRoom = participants.includes(clientIdentity);
+        bridgeInRoom = participants.includes(bridgeIdentity);
+      } catch (err) {
+        this.logger.error({ feature: "livekit", err }, "Failed to get room participants");
+      }
+    }
+
+    const status = {
+      roomName,
+      clientInRoom,
+      bridgeInRoom,
+      participants,
+      micEnabled,
+      bridgeConnected,
+    };
+
+    this.logger.info({ feature: "livekit", ...status }, "Room status");
+    return status;
   }
 
   /**

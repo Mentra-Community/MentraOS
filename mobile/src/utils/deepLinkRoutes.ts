@@ -162,7 +162,7 @@ export const deepLinkRoutes: DeepLinkRoute[] = [
           refresh_token: params.get("refresh_token"),
           token_type: params.get("token_type"),
           expires_in: params.get("expires_in"),
-          // Add any other parameters you might need
+          type: params.get("type"), // signup, email_change, recovery, etc.
         }
       }
 
@@ -211,17 +211,21 @@ export const deepLinkRoutes: DeepLinkRoute[] = [
         return // Don't do the navigation below
       }
 
-      // Check if this is an auth callback without tokens
-      if (!authParams) {
-        // Try checking if user is already authenticated
-        const res = await mentraAuth.getSession()
-        if (res.is_ok()) {
-          const session = res.value
-          if (session?.token) {
-            navObject.replace("/")
-          }
+      // Fallback: Check if user is authenticated and navigate accordingly
+      // This handles email_change callbacks or any callback without usable tokens
+      const res = await mentraAuth.getSession()
+      if (res.is_ok()) {
+        const session = res.value
+        if (session?.token) {
+          // User is authenticated - go home
+          console.log("[LOGIN DEBUG] User authenticated, navigating home")
+          navObject.replace("/")
+          return
         }
       }
+      // Not authenticated - go to login
+      console.log("[LOGIN DEBUG] User not authenticated, navigating to login")
+      navObject.replace("/auth/login")
     },
   },
   {

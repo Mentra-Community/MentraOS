@@ -351,6 +351,9 @@ async function handleGlassesConnectionInit(
       userSession.logger.warn({ feature: "livekit", err }, "Reconnect: bridge status check failed");
     }
   }
+  // Testing client livekit reconnection logic.
+  // if (reconnection)
+  //   return userSession.logger.warn({ feature: "livekit" }, "Reconnecting, skipping CONNECTION_ACK message");
 
   // Prepare ACK message
   const ackMessage: ConnectionAck = {
