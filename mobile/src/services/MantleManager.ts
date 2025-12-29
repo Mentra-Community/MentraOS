@@ -11,6 +11,7 @@ import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore, GlassesInfo} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import TranscriptProcessor from "@/utils/TranscriptProcessor"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
@@ -84,6 +85,10 @@ class MantleManager {
     await CoreModule.updateSettings(useSettingsStore.getState().getCoreSettings()) // send settings to core
 
     setTimeout(async () => {
+      const requirementsCheck = await checkConnectivityRequirementsUI()
+      if (!requirementsCheck) {
+        return
+      }
       await CoreModule.connectDefault()
     }, 3000)
 
