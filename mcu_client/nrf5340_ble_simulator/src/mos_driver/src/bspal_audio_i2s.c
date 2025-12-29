@@ -187,16 +187,6 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
         // Note: TX buffer is used for I2S headphone output (I2S is in master mode)
         mp_block_to_fill = i2s_tx_req_buffer[next_buffer_index];
         
-        // #region agent log
-        static uint32_t buffer_switch_count = 0;
-        buffer_switch_count++;
-        if (buffer_switch_count <= 5 || buffer_switch_count % 200 == 0)
-        {
-            LOG_INF("[DEBUG] I2S TX buffer switched to buffer[%u], mp_block_to_fill=%p", 
-                next_buffer_index, (void *)mp_block_to_fill);
-        }
-        // #endregion
-        
         nrfx_i2s_buffers_t *next_buffers = (nrfx_i2s_buffers_t *)&i2s_req_buffer[next_buffer_index];
         current_buffer_index = next_buffer_index;
         
@@ -204,9 +194,6 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
         if (err_code != NRFX_SUCCESS)
         {
             LOG_ERR("Failed to set next I2S buffers: %d", err_code);
-            // #region agent log
-            LOG_ERR("[DEBUG] Failed to set I2S buffers, mp_block_to_fill may become NULL");
-            // #endregion
         }
     }
     else
@@ -226,10 +213,6 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
 
 void audio_i2s_start(void)
 {
-    // #region agent log
-    LOG_INF("[DEBUG] audio_i2s_start() called, current state=%d", state);
-    // #endregion
-    
     // Initialize I2S if not already initialized
     if (state == AUDIO_I2S_STATE_UNINIT)
     {
@@ -240,28 +223,16 @@ void audio_i2s_start(void)
     if (state == AUDIO_I2S_STATE_STARTED)
     {
         LOG_WRN("I2S already started, stopping first for clean restart");
-        // #region agent log
-        LOG_INF("[DEBUG] I2S already started, calling audio_i2s_stop()");
-        // #endregion
         // Use audio_i2s_stop() instead of direct nrfx_i2s_stop() to ensure proper state management
         // This avoids potential blocking issues with nrfx_i2s_stop()
         audio_i2s_stop();
-        // #region agent log
-        LOG_INF("[DEBUG] audio_i2s_stop() completed, state=%d, waiting 10ms", state);
-        // #endregion
         // Wait a bit for I2S to fully stop
         k_sleep(K_MSEC(10));
-        // #region agent log
-        LOG_INF("[DEBUG] After 10ms wait, state=%d", state);
-        // #endregion
     }
     
     if (state != AUDIO_I2S_STATE_IDLE)
     {
         LOG_ERR("I2S state is not IDLE (state=%d), cannot start", state);
-        // #region agent log
-        LOG_ERR("[DEBUG] audio_i2s_start() failed: state=%d (expected IDLE)", state);
-        // #endregion
         return;
     }
     
@@ -273,25 +244,14 @@ void audio_i2s_start(void)
     // Initialize mp_block_to_fill to first TX buffer
     mp_block_to_fill = i2s_tx_req_buffer[0];
     
-    // #region agent log
-    LOG_INF("[DEBUG] audio_i2s_start: mp_block_to_fill initialized to %p (buffer[0])", (void *)mp_block_to_fill);
-    LOG_INF("[DEBUG] Calling nrfx_i2s_start()...");
-    // #endregion
-    
     nrfx_err_t ret = nrfx_i2s_start(&i2s_inst, &i2s_req_buffer[0], 0);
     if (ret != NRFX_SUCCESS)
     {
         LOG_ERR("Failed to start I2S: %d", ret);
-        // #region agent log
-        LOG_ERR("[DEBUG] nrfx_i2s_start() failed with error: %d", ret);
-        // #endregion
         return;
     }
 
     state = AUDIO_I2S_STATE_STARTED;
-    // #region agent log
-    LOG_INF("[DEBUG] nrfx_i2s_start() succeeded, state set to STARTED");
-    // #endregion
     LOG_INF("I2S started successfully (master mode)");
     LOG_INF("I2S master mode: generating clock signals (SCK, LRCK) for I2S microphones");
     LOG_INF("Generating signals: SCK (P1.08), LRCK (P1.06) to I2S microphones");
