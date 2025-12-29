@@ -163,7 +163,7 @@ Have questions or ideas? We'd love to hear from you!
 
 ## Contributing
 
-MentraOS is made by a community and we welcome PRs. Here's the Contributors Guide: [docs.mentra.glass/contributing](https://docs.mentra.glass/contributing)
+MentraOS is made by a community and we welcome PRs. Here's the Contributors Guide: [docs.mentra.glass/os-devs/contributing](https://docs.mentraglass.com/os-devs/contributing/overview)
 
 Looking for ways to contribute? We mark issues we'd love the community to help with using the **"Help Wanted"** tag. Check them out here: [Help Wanted Issues](https://github.com/Mentra-Community/MentraOS/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22)
 
