@@ -318,48 +318,14 @@ open ios/MentraOS.xcworkspace
 
 Different components of MentraOS have their own coding standards:
 
-- `/mobile/AGENTS.md` - Mobile app development
-- `/cloud/AGENTS.md` - Backend services development
-- `/cloud/websites/console/AGENTS.md` - Developer portal
-- `/cloud/websites/store/AGENTS.md` - Store frontend
+- **MentraOS Manager Guidelines** - Mobile app development standards
+- **MentraOS Cloud Guidelines** - Backend service development
+- **SDK Development Guidelines** - Third-party app development
 
-## Commit Guidelines
+### Code Style
 
-### Commit Message Format
-
-Use imperative, present-tense commit subjects:
-
-```
-Add BLE retry delay
-Fix camera permission crash
-Refactor session management
-Update dependencies
-```
-
-### Commit Content
-
-- Keep scope focused on a single logical change
-- Reference issue IDs or PR numbers in the body when applicable
-- Include configuration updates in the commit description
-
-## Pull Request Guidelines
-
-### Before Submitting
-
-1. **Run tests**: Execute relevant test suites
-2. **Build**: Ensure platform builds succeed
-3. **Lint**: Run `bun lint` in affected modules
-4. **Test flows**: Verify hardware-dependent steps (BLE, camera, etc.)
-
-### PR Description
-
-Include:
-
-- **Scope**: What changes are included
-- **Test evidence**: Test results and coverage
-- **Logs**: Attach relevant log excerpts for hardware-dependent features
-- **Screenshots**: For UI-impacting changes, add screenshots or screen recordings
-- **Configuration updates**: Call out any config changes
+- For TypeScript/JavaScript: Follow ESLint configurations
+- For Swift: Follow Swift style guide
 
 ## Documentation
 
@@ -367,21 +333,17 @@ Include:
 - Include code comments for complex logic
 - Create or update API documentation as needed
 
+## Testing
+
+- Write unit tests for new features
+- Ensure your changes pass existing tests
+- Test on actual devices when possible
+
 ## Communication
 
 - **Discord**: https://discord.gg/5ukNvkEAqT
 - **GitHub Issues**: https://github.com/Mentra-Community/MentraOS/issues
 - **Project Board**: https://github.com/orgs/Mentra-Community/projects/2
-
-## Security Considerations
-
-- Never commit API keys, tokens, or secrets
-- Use `.env` files for local configuration (never commit these)
-- Mobile secrets belong in `mobile/app.config.ts` or secure config service
-- Rebuild native projects after modifying BLE or camera modules
-- Follow OWASP guidelines for web applications
-- Use parameterized queries to prevent SQL injection
-- Sanitize user inputs to prevent XSS attacks
 
 ## Where to Start
 
