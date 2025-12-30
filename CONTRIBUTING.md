@@ -16,7 +16,7 @@ Thank you for your interest in contributing to MentraOS! This guide will help yo
 
 ### Prerequisites
 
-- **Node.js**: ^18.18.0 || >=20.0. (20.x recommended)
+- **Node.js**: ^18.18.0 || >=20.0.0 (20.x recommended)
 - **nvm**: Strongly recommended for managing Node.js versions
 - **bun**: Required package manager and runtime (preferred over npm/yarn)
 - **Platform-specific**:
@@ -43,14 +43,13 @@ bun install
 ```
 MentraOS/
 ├── mobile/              # React Native mobile app (Expo)
-├── android_core/        # Core Android library
-├── sdk_ios/            # iOS native module
+│   └── ios/            # iOS native code
 ├── asg_client/         # Android smart glasses client
 ├── cloud/              # Backend services, SDK, and web portals
 │   ├── packages/
 │   │   ├── cloud/      # Main backend service
 │   │   ├── sdk/        # TypeScript SDK
-│   │   └── websites/   # Web portals (store, console)
+│   │   └── websites/   # Web portals (store, console, account)
 └── mcu_client/         # Hardware tooling
 ```
 
@@ -104,8 +103,8 @@ The cloud backend uses Docker and Bun.
 ```bash
 cd cloud
 
-# Quick setup (network, clean, start)
-./scripts/docker-setup.sh
+# Install dependencies
+bun install
 
 # Start development environment
 bun run dev
@@ -118,8 +117,6 @@ bun run test
 
 # View logs
 bun run logs              # All services
-bun run logs:cloud        # Cloud service only
-bun run logs:service <name> # Specific service
 
 # Clean environment
 bun run dev:clean
@@ -133,14 +130,7 @@ Copy `.env.example` to `.env` and configure your environment variables:
 cp .env.example .env
 ```
 
-**CRITICAL SECURITY WARNING**: Never expose MongoDB publicly without proper authentication and network security measures. MongoDB should:
-
-- Never be directly accessible from the internet
-- Use strong authentication (SCRAM-SHA-256)
-- Be behind a firewall/VPC in production
-- Use TLS/SSL for connections
-- Implement IP whitelisting
-- Enable MongoDB's built-in role-based access control
+**Security Note**: Never commit `.env` files or expose MongoDB publicly. Use strong authentication and keep databases behind firewalls/VPCs in production.
 
 #### Docker Tips
 
@@ -195,7 +185,7 @@ irm bun.sh/install.ps1 | iex
 
 ### TypeScript/JavaScript
 
-- **Formatting**: Prettier with single quotes, no bracket spacing, trailing commas
+- **Formatting**: Prettier (double quotes, no semicolons, no bracket spacing, trailing commas, 120 char line width)
 - **Indentation**: 2 spaces
 - **Components**: Functional components with hooks
 - **Naming**:
@@ -270,34 +260,6 @@ bun build:ios:archive
 # Or use Xcode:
 open ios/MentraOS.xcworkspace
 ```
-
-#### Sentry Configuration for iOS Release
-
-Sentry source map and debug symbol uploads require authentication for release builds.
-
-**Obtain Sentry Auth Token**:
-
-1. Visit https://sentry.io/settings/account/api/auth-tokens/
-2. Create a new auth token with appropriate permissions
-
-**Enable Sentry Uploads**:
-
-Option 1 - Local development (recommended):
-
-```bash
-# Create/edit ios/.xcode.env.local
-export SENTRY_AUTH_TOKEN=your_token_here
-export SENTRY_DISABLE_AUTO_UPLOAD=false
-```
-
-Option 2 - CI/CD pipeline:
-
-```bash
-export SENTRY_AUTH_TOKEN=your_token_here
-export SENTRY_DISABLE_AUTO_UPLOAD=false
-```
-
-**Note**: Sentry uploads are disabled by default to prevent build failures without credentials. The `SENTRY_DISABLE_AUTO_UPLOAD=true` is already set in `ios/.xcode.env` for development builds.
 
 ## Commit Guidelines
 
