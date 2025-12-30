@@ -14,7 +14,7 @@ import UltraliteSDK
 
 @MainActor
 class Mach1: UltraliteBaseViewController, SGCManager {
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?) {}
+    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, silent _: Bool) {}
 
     func sendGalleryMode() {}
 
@@ -104,7 +104,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, silent _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 

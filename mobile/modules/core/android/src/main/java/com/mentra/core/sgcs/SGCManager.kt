@@ -53,7 +53,8 @@ abstract class SGCManager {
             size: String,
             webhookUrl: String?,
             authToken: String?,
-            compress: String?
+            compress: String?,
+            silent: Boolean
     )
     abstract fun startRtmpStream(message: MutableMap<String, Any>)
     abstract fun stopRtmpStream()
@@ -61,7 +62,7 @@ abstract class SGCManager {
     abstract fun startBufferRecording()
     abstract fun stopBufferRecording()
     abstract fun saveBufferVideo(requestId: String, durationSeconds: Int)
-    abstract fun startVideoRecording(requestId: String, save: Boolean)
+    abstract fun startVideoRecording(requestId: String, save: Boolean, silent: Boolean)
     abstract fun stopVideoRecording(requestId: String)
 
     // Button Settings

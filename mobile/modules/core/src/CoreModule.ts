@@ -33,13 +33,14 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
     webhookUrl: string | null,
     authToken: string | null,
     compress: string,
+    silent: boolean,
   ): Promise<void>
 
   // Video Recording Commands
   startBufferRecording(): Promise<void>
   stopBufferRecording(): Promise<void>
   saveBufferVideo(requestId: string, durationSeconds: number): Promise<void>
-  startVideoRecording(requestId: string, save: boolean): Promise<void>
+  startVideoRecording(requestId: string, save: boolean, silent: boolean): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
   // RTMP Stream Commands

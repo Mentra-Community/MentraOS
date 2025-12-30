@@ -74,7 +74,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean save = data.optBoolean("save", false);
             String size = data.optString("size", "medium");
             String compress = data.optString("compress", "none"); // Default to none (no compression)
-            boolean enableLed = data.optBoolean("enable_led", true); // Default true for phone commands
+            // silent: true = no sound/LED, false (default) = normal behavior with sound/LED
+            boolean silent = data.optBoolean("silent", false);
+            boolean enableLed = !silent; // Convert to internal enableLed (inverted logic)
 
             // Generate file path using base class functionality
             String fileName = generateUniqueFilename("IMG_", ".jpg");

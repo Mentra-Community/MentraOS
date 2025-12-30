@@ -108,7 +108,9 @@ public class RtmpCommandHandler implements ICommandHandler {
             }
 
             String streamId = data.optString("streamId", "");
-            boolean enableLed = data.optBoolean("enable_led", true); // Default true for livestreams
+            // silent: true = no sound/LED, false (default) = normal behavior with sound/LED
+            boolean silent = data.optBoolean("silent", false);
+            boolean enableLed = !silent; // Convert to internal enableLed (inverted logic)
             RtmpStreamingService.startStreaming(context, rtmpUrl, streamId, enableLed);
 
             // Set StateManager for battery monitoring

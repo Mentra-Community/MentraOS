@@ -110,11 +110,11 @@ public class CoreModule: Module {
         AsyncFunction("photoRequest") {
             (
                 requestId: String, appId: String, size: String, webhookUrl: String?,
-                authToken: String?, compress: String?
+                authToken: String?, compress: String?, silent: Bool
             ) in
             await MainActor.run {
                 CoreManager.shared.photoRequest(
-                    requestId, appId, size, webhookUrl, authToken, compress
+                    requestId, appId, size, webhookUrl, authToken, compress, silent
                 )
             }
         }
@@ -139,9 +139,9 @@ public class CoreModule: Module {
             }
         }
 
-        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool) in
+        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool, silent: Bool) in
             await MainActor.run {
-                CoreManager.shared.startVideoRecording(requestId, save)
+                CoreManager.shared.startVideoRecording(requestId, save, silent)
             }
         }
 

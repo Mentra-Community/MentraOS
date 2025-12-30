@@ -55,7 +55,7 @@ protocol SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?
+        compress: String?, silent: Bool
     )
     func startRtmpStream(_ message: [String: Any])
     func stopRtmpStream()
@@ -63,7 +63,7 @@ protocol SGCManager {
     func startBufferRecording()
     func stopBufferRecording()
     func saveBufferVideo(requestId: String, durationSeconds: Int)
-    func startVideoRecording(requestId: String, save: Bool)
+    func startVideoRecording(requestId: String, save: Bool, silent: Bool)
     func stopVideoRecording(requestId: String)
 
     // MARK: - Button Settings

@@ -80,8 +80,9 @@ class CoreModule : Module() {
                 size: String,
                 webhookUrl: String,
                 authToken: String,
-                compress: String ->
-            coreManager?.photoRequest(requestId, appId, size, webhookUrl, authToken, compress)
+                compress: String,
+                silent: Boolean ->
+            coreManager?.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, silent)
         }
 
         // MARK: - Video Recording Commands
@@ -94,8 +95,8 @@ class CoreModule : Module() {
             coreManager?.saveBufferVideo(requestId, durationSeconds)
         }
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean ->
-            coreManager?.startVideoRecording(requestId, save)
+        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, silent: Boolean ->
+            coreManager?.startVideoRecording(requestId, save, silent)
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->

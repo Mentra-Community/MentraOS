@@ -3327,8 +3327,8 @@ public class MentraLive extends SGCManager {
         return isMicrophoneEnabled;
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress) {
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (authToken.isEmpty() ? "none" : "***") + ", compress=" + compress);
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean silent) {
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (authToken.isEmpty() ? "none" : "***") + ", compress=" + compress + ", silent=" + silent);
 
         try {
             JSONObject json = new JSONObject();
@@ -3349,6 +3349,8 @@ public class MentraLive extends SGCManager {
             } else {
                 json.put("compress", "none");
             }
+            // silent mode: disables shutter sound and privacy LED
+            json.put("silent", silent);
 
             // Always generate BLE ID for potential fallback
             String bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000);
@@ -5248,21 +5250,22 @@ public class MentraLive extends SGCManager {
     }
 
     @Override
-    public void startVideoRecording(String requestId, boolean save) {
-        startVideoRecording(requestId, save, 0, 0, 0); // Use defaults
+    public void startVideoRecording(String requestId, boolean save, boolean silent) {
+        startVideoRecording(requestId, save, silent, 0, 0, 0); // Use defaults
     }
 
     /**
      * Start video recording with optional resolution settings
      * @param requestId Request ID for tracking
      * @param save Whether to save the video
+     * @param silent Whether to disable sound and privacy LED
      * @param width Video width (0 for default)
      * @param height Video height (0 for default)
      * @param fps Video frame rate (0 for default)
      */
-    public void startVideoRecording(String requestId, boolean save, int width, int height, int fps) {
+    public void startVideoRecording(String requestId, boolean save, boolean silent, int width, int height, int fps) {
         Bridge.log("LIVE: Starting video recording: requestId=" + requestId + ", save=" + save +
-                   ", resolution=" + width + "x" + height + "@" + fps + "fps");
+                   ", silent=" + silent + ", resolution=" + width + "x" + height + "@" + fps + "fps");
 
         if (!isConnected) {
             Log.w(TAG, "Cannot start video recording - not connected");
@@ -5274,6 +5277,7 @@ public class MentraLive extends SGCManager {
             json.put("type", "start_video_recording");
             json.put("requestId", requestId);
             json.put("save", save);
+            json.put("silent", silent);
 
             // Add video settings if provided
             if (width > 0 && height > 0) {
