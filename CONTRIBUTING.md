@@ -310,7 +310,7 @@ open ios/MentraOS.xcworkspace
 ## Contribution Workflow
 
 1. **Fork the Repository**: Create your own fork of the MentraOS repository
-2. **Create a Branch**: Make your changes in a new branch from `dev`
+2. **Create a Branch** from `dev`: Make your changes in a new branch
 3. **Develop and Test**: Make your changes and test thoroughly
 4. **Submit a Pull Request**: Create a PR targeting `dev` with a clear description of your changes
 
