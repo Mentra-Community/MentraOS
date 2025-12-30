@@ -15,7 +15,7 @@ import Svg, {Path, Circle} from "react-native-svg"
 import {Text} from "@/components/ignite"
 import {PillButton} from "@/components/ignite/PillButton"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface HeadUpAngleArcModalProps {
   visible: boolean

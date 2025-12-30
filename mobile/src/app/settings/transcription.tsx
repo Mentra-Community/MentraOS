@@ -13,7 +13,7 @@ import STTModelManager from "@/services/STTModelManager"
 import {useStopAllApplets} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function TranscriptionSettingsScreen() {
   const {theme} = useAppTheme()

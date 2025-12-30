@@ -10,7 +10,7 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function PairingFailureScreen() {
   const {themed, theme} = useAppTheme()

@@ -4,7 +4,7 @@ import {View, Animated, Easing, ViewStyle, TextStyle, Image, ImageStyle} from "r
 import {Button, Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {getModelSpecificTips} from "./GlassesTroubleshootingModal"
 

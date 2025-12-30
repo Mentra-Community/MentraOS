@@ -2,7 +2,7 @@ import {MaterialCommunityIcons} from "@expo/vector-icons"
 import {View, TouchableOpacity, ViewStyle} from "react-native"
 
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export interface StarRatingProps {
   value: number | null

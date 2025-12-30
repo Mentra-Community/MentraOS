@@ -26,6 +26,7 @@ import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
+import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
 
 import org.json.JSONObject;
 
@@ -338,6 +339,9 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered ServiceHeartbeatCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new BleConfigCommandHandler());
+            Log.d(TAG, "✅ Registered BleConfigCommandHandler");
 
             Log.i(TAG, "✅ Successfully registered " + commandHandlerRegistry.getHandlerCount() + " command handlers");
 

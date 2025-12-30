@@ -5,7 +5,7 @@ import {iconRegistry} from "@/components/ignite/Icon"
 import {isRTL} from "@/i18n"
 import {$styles} from "@/theme"
 import type {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {$inputOuterBase, BaseToggleInputProps, Toggle, ToggleProps} from "./Toggle"
 

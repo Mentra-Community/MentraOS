@@ -14,7 +14,7 @@ import {useGallerySyncStore} from "@/stores/gallerySync"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function GallerySettingsScreen() {
   const {goBack, push} = useNavigationHistory()

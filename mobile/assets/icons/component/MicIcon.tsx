@@ -4,7 +4,7 @@ import Svg, {ClipPath, Defs, G, Path, Rect} from "react-native-svg"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 interface MicIconProps {
   color?: string
   height?: number

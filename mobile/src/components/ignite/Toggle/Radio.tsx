@@ -2,7 +2,7 @@ import {useEffect, useRef} from "react"
 import {StyleProp, View, ViewStyle, Animated} from "react-native"
 
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {$inputOuterBase, BaseToggleInputProps, ToggleProps, Toggle} from "./Toggle"
 

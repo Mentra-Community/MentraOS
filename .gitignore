@@ -343,3 +343,4 @@ mobile/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework/
 
 # ONNX Model files (large ML models)
 mobile/ios/Packages/SherpaOnnx/Model/*
+nicelogs.txt

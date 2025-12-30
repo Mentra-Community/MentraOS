@@ -1,7 +1,7 @@
 import CoreModule from "core"
-import {useFocusEffect, useLocalSearchParams} from "expo-router"
-import {useCallback, useEffect, useRef, useState} from "react"
-import {ActivityIndicator, BackHandler, FlatList, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {useLocalSearchParams} from "expo-router"
+import {useEffect, useRef, useState} from "react"
+import {ActivityIndicator, FlatList, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {WifiIcon} from "@/components/icons/WifiIcon"
@@ -10,11 +10,11 @@ import {WifiUnlockedIcon} from "@/components/icons/WifiUnlockedIcon"
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Badge} from "@/components/ui/Badge"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {useGlassesStore} from "@/stores/glasses"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {useAppTheme} from "@/utils/useAppTheme"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 
 // Enhanced network info type
@@ -40,36 +40,19 @@ export default function WifiScanScreen() {
   const {push, goBack, replace} = useNavigationHistory()
 
   // Navigate away if glasses disconnect (but not on initial mount)
-  const prevGlassesConnectedRef = useRef(glassesConnected)
   useEffect(() => {
-    if (prevGlassesConnectedRef.current && !glassesConnected) {
-      console.log("[WifiScanScreen] Glasses disconnected - navigating away")
-      showAlert("Glasses Disconnected", "Please reconnect your glasses to set up WiFi.", [{text: "OK"}])
-      if (returnTo && typeof returnTo === "string") {
-        replace(decodeURIComponent(returnTo))
-      } else {
-        replace("/")
-      }
+    if (!glassesConnected) {
+      console.log("CONNECTING: Glasses disconnected - navigating away")
+      showAlert("Glasses Disconnected", "Please reconnect your glasses to set up WiFi.", [
+        {
+          text: "OK",
+          onPress() {
+            goBack()
+          },
+        },
+      ])
     }
-    prevGlassesConnectedRef.current = glassesConnected
-  }, [glassesConnected, returnTo])
-
-  const handleGoBack = useCallback(() => {
-    if (returnTo && typeof returnTo === "string") {
-      replace(decodeURIComponent(returnTo))
-    } else {
-      goBack()
-    }
-    return true // Prevent default back behavior
-  }, [returnTo])
-
-  // Handle Android back button
-  useFocusEffect(
-    useCallback(() => {
-      const backHandler = BackHandler.addEventListener("hardwareBackPress", handleGoBack)
-      return () => backHandler.remove()
-    }, [handleGoBack]),
-  )
+  }, [glassesConnected])
 
   useEffect(() => {
     // Load saved networks
@@ -152,10 +135,10 @@ export default function WifiScanScreen() {
       console.log("🎯 ========= END SCAN.TSX WIFI RESULTS =========")
     }
 
-    GlobalEventEmitter.on("WIFI_SCAN_RESULTS", handleWifiScanResults)
+    GlobalEventEmitter.on("wifi_scan_results", handleWifiScanResults)
 
     return () => {
-      GlobalEventEmitter.removeListener("WIFI_SCAN_RESULTS", handleWifiScanResults)
+      GlobalEventEmitter.removeListener("wifi_scan_results", handleWifiScanResults)
       // Clean up timeout on unmount
       if (scanTimeoutRef.current) {
         clearTimeout(scanTimeoutRef.current)
@@ -267,13 +250,7 @@ export default function WifiScanScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header
-        title="Wi-Fi"
-        leftIcon="chevron-left"
-        onLeftPress={handleGoBack}
-        rightIcon="repeat"
-        onRightPress={startScan}
-      />
+      <Header title="Wi-Fi" leftIcon="chevron-left" onLeftPress={goBack} rightIcon="repeat" onRightPress={startScan} />
 
       <View style={themed($header)}>
         <View style={themed($iconContainer)}>

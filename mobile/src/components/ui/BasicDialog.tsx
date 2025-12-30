@@ -3,7 +3,7 @@ import {TextStyle, View, ViewStyle} from "react-native"
 import {Button} from "@/components/ignite"
 import {Text} from "@/components/ignite/Text"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface BasicDialogProps {
   title: string

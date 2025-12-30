@@ -14,7 +14,7 @@ import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import mentraAuth from "@/utils/auth/authClient"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 // Default user icon component for profile pictures
 const DefaultUserIcon = ({size = 100, color = "#999"}: {size?: number; color?: string}) => {

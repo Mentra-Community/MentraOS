@@ -5,7 +5,7 @@
  * Defines the hardware and software features available on this device.
  */
 
-import type { Capabilities } from "@mentra/sdk";
+import type { Capabilities } from "../hardware";
 
 /**
  * Mentra Live capability profile
@@ -82,14 +82,14 @@ export const mentraLive: Capabilities = {
         isFullColor: false,
         color: "white",
         position: "front_facing",
-      } as any,
+      },
       {
         id: "user_feedback",
         purpose: "user_feedback",
         isFullColor: true,
         color: "rgb",
         position: "user_facing",
-      } as any,
+      },
     ],
   },
 

@@ -16,7 +16,7 @@ import {
 import {Text, TextProps} from "@/components/ignite/Text"
 import type {ThemedStyle} from "@/theme"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export interface ToggleProps<T> extends Omit<TouchableOpacityProps, "style"> {
   /**

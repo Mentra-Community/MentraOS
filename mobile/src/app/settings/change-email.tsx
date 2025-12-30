@@ -9,7 +9,7 @@ import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function ChangeEmailScreen() {
   const [newEmail, setNewEmail] = useState("")

@@ -14,7 +14,7 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
 import {$styles, ThemedStyle} from "@/theme"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function GlassesPairingGuideScreen() {
   const {replace, goBack} = useNavigationHistory()
@@ -59,9 +59,9 @@ export default function GlassesPairingGuideScreen() {
   }
 
   useEffect(() => {
-    GlobalEventEmitter.on("PAIR_FAILURE", handlePairFailure)
+    GlobalEventEmitter.on("pair_failure", handlePairFailure)
     return () => {
-      GlobalEventEmitter.off("PAIR_FAILURE", handlePairFailure)
+      GlobalEventEmitter.off("pair_failure", handlePairFailure)
     }
   }, [])
 
@@ -82,12 +82,12 @@ export default function GlassesPairingGuideScreen() {
       replace("/pairing/success", {glassesModelName: glassesModelName})
     }
 
-    GlobalEventEmitter.on("AUDIO_PAIRING_NEEDED", handleAudioPairingNeeded)
-    GlobalEventEmitter.on("AUDIO_CONNECTED", handleAudioConnected)
+    GlobalEventEmitter.on("audio_pairing_needed", handleAudioPairingNeeded)
+    GlobalEventEmitter.on("audio_connected", handleAudioConnected)
 
     return () => {
-      GlobalEventEmitter.off("AUDIO_PAIRING_NEEDED", handleAudioPairingNeeded)
-      GlobalEventEmitter.off("AUDIO_CONNECTED", handleAudioConnected)
+      GlobalEventEmitter.off("audio_pairing_needed", handleAudioPairingNeeded)
+      GlobalEventEmitter.off("audio_connected", handleAudioConnected)
     }
   }, [replace, glassesModelName])
 

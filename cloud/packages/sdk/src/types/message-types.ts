@@ -157,6 +157,7 @@ export enum CloudToAppMessageType {
   APP_STOPPED = "app_stopped",
   SETTINGS_UPDATE = "settings_update",
   CAPABILITIES_UPDATE = "capabilities_update",
+  DEVICE_STATE_UPDATE = "device_state_update",
 
   // Dashboard updates
   DASHBOARD_MODE_CHANGED = "dashboard_mode_changed",

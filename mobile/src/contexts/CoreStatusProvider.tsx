@@ -44,10 +44,10 @@ export const CoreStatusProvider = ({children}: {children: ReactNode}) => {
       refreshStatus(data)
     }
 
-    GlobalEventEmitter.on("CORE_STATUS_UPDATE", handleCoreStatusUpdate)
+    GlobalEventEmitter.on("core_status_update", handleCoreStatusUpdate)
 
     return () => {
-      GlobalEventEmitter.removeListener("CORE_STATUS_UPDATE", handleCoreStatusUpdate)
+      GlobalEventEmitter.removeListener("core_status_update", handleCoreStatusUpdate)
     }
   }, [])
 

@@ -3,7 +3,7 @@ import {View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export const Group = ({title, style, children}: {title?: string; style?: ViewStyle; children?: React.ReactNode}) => {
   const {themed} = useAppTheme()

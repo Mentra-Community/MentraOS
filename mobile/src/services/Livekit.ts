@@ -8,7 +8,6 @@ class Livekit {
   private room: Room | null = null
 
   private sequence = 0
-  private isReconnecting = false
 
   private constructor() {}
 
@@ -26,25 +25,20 @@ class Livekit {
   }
 
   public isRoomConnected(): boolean {
-    return this.room?.state === ConnectionState.Connected && !this.isReconnecting
+    return this.room?.state === ConnectionState.Connected
   }
 
   public async connect() {
-    if (this.room) {
-      await this.room.disconnect()
-      this.room = null
-    }
-
-    this.isReconnecting = false
+    // disconnect first:
+    this.disconnect()
 
     const res = await restComms.getLivekitUrlAndToken()
     if (res.is_error()) {
-      console.error("LivekitManager: Error connecting to room", res.error)
+      console.error("LIVEKIT: Error connecting to room", res.error)
       return
     }
     const {url, token} = res.value
-    console.log(`LivekitManager: Connecting to room: ${url}, ${token}`)
-    this.room = new Room()
+    console.log(`LIVEKIT: Connecting to room: ${url}, ${token}`)
     await AudioSession.configureAudio({
       android: {
         // currently supports .media and .communication presets
@@ -52,28 +46,40 @@ class Livekit {
       },
     })
     await AudioSession.startAudioSession()
-    await this.room.connect(url, token)
-    this.room.on(RoomEvent.Connected, () => {
-      console.log("LivekitManager: Connected to room")
-      this.isReconnecting = false
+    this.room = new Room()
+    await this.room?.connect(url, token)
+    this.room?.on(RoomEvent.Connected, () => {
+      console.log("LIVEKIT: Connected to room")
     })
-    this.room.on(RoomEvent.Disconnected, () => {
-      console.log("LivekitManager: Disconnected from room")
-      this.isReconnecting = false
+    this.room?.on(RoomEvent.Reconnected, () => {
+      console.log("LIVEKIT: Reconnected to room")
     })
-    this.room.on(RoomEvent.Reconnecting, () => {
-      console.log("LivekitManager: Reconnecting to room...")
-      this.isReconnecting = true
+    this.room?.on(RoomEvent.Reconnecting, () => {
+      console.log("LIVEKIT: Reconnecting to room")
     })
-    this.room.on(RoomEvent.Reconnected, () => {
-      console.log("LivekitManager: Reconnected to room")
-      this.isReconnecting = false
+    this.room?.on(RoomEvent.EncryptionError, (error) => {
+      console.log("LIVEKIT: Encryption error", error)
+    })
+    this.room?.on(RoomEvent.ParticipantConnected, (participant) => {
+      console.log("LIVEKIT: Participant connected", participant.identity)
+    })
+    this.room?.on(RoomEvent.ParticipantDisconnected, (participant) => {
+      console.log("LIVEKIT: Participant disconnected", participant.identity)
+    })
+    this.room?.on(RoomEvent.MediaDevicesChanged, () => {
+      console.log("LIVEKIT: Media devices changed")
+    })
+    this.room?.on(RoomEvent.MediaDevicesError, (error) => {
+      console.log("LIVEKIT: Media devices error", error)
+    })
+    this.room?.on(RoomEvent.Disconnected, () => {
+      console.log("LIVEKIT: Disconnected from room")
     })
   }
 
   public async addPcm(data: Uint8Array) {
-    // Don't send data if not connected or if reconnecting (buffer will fill up)
-    if (!this.room || this.room.state !== ConnectionState.Connected || this.isReconnecting) {
+    // Don't send data if not connected
+    if (!this.room || this.room.state !== ConnectionState.Connected) {
       return
     }
 
@@ -84,7 +90,11 @@ class Livekit {
 
   async disconnect() {
     if (this.room) {
-      await this.room.disconnect()
+      try {
+        await this.room.disconnect()
+      } catch (error) {
+        console.error("LIVEKIT: Error disconnecting from room", error)
+      }
       this.room = null
     }
     this.isReconnecting = false

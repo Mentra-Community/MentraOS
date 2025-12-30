@@ -2,7 +2,7 @@ import {Image, ImageProps, ImageStyle, StyleProp, TextStyle, View, ViewStyle} fr
 
 import {translate} from "@/i18n/translate"
 import type {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {Button, ButtonProps} from "./Button"
 import {Text, TextProps} from "./Text"

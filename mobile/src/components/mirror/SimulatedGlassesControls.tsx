@@ -8,7 +8,7 @@ import {Text} from "@/components/ignite"
 import socketComms from "@/services/SocketComms"
 import {useDisplayStore} from "@/stores/display"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface SimulatedGlassesControlsProps {}
 

@@ -6,7 +6,7 @@ import {StatusCard} from "@/components/ui/RouteButton"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface BatteryStatusProps {
   compact?: boolean

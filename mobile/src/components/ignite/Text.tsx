@@ -6,7 +6,7 @@ import {StyleProp, Text as RNText, TextProps as RNTextProps, TextStyle} from "re
 import {isRTL, translate, TxKeyPath} from "@/i18n"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {typography} from "@/theme/typography"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {withUniwind} from "uniwind"
 import {StyleSheet} from "react-native"
 // import { flatten } from 'react-native/Libraries/StyleSheet/';

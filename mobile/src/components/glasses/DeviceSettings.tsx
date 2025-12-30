@@ -18,7 +18,7 @@ import {useApplets} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function DeviceSettings() {
   const {theme} = useAppTheme()

@@ -7,7 +7,7 @@ import {Screen, Text, Header, Switch} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface InstalledApp {
   packageName: string

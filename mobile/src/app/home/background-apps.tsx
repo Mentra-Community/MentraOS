@@ -6,7 +6,7 @@ import {Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function BackgroundAppsScreen() {
   const {themed, theme} = useAppTheme()

@@ -15,7 +15,7 @@ import {
 import {KeyboardAwareScrollView} from "react-native-keyboard-controller"
 
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ExtendedEdge, useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
 
 export const DEFAULT_BOTTOM_OFFSET = 50

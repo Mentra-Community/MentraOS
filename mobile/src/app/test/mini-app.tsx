@@ -6,7 +6,7 @@ import {Screen, Header, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import miniComms, {SuperWebViewMessage} from "@/services/MiniComms"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function MiniApp() {
   const {theme, themed} = useAppTheme()

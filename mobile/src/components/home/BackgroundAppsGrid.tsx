@@ -13,7 +13,7 @@ import {
 } from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 const GRID_COLUMNS = 4
 

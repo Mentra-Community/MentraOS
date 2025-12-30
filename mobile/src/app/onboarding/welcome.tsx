@@ -10,7 +10,7 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {TxKeyPath} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 

@@ -39,8 +39,8 @@ import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import showAlert from "@/utils/AlertUtils"
 // import {shareFile} from "@/utils/FileUtils"
-import {MediaLibraryPermissions} from "@/utils/MediaLibraryPermissions"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 // @ts-ignore
 const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)

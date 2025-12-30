@@ -3,7 +3,7 @@ import {View, ViewStyle, PanResponder, LayoutChangeEvent, TextStyle} from "react
 
 import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 type ThemedSliderProps = {
   value: number

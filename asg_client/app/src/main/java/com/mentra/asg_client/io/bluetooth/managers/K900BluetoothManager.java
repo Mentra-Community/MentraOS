@@ -45,12 +45,20 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private static final int MAX_TRANSFER_RETRIES = 3; // Max full transfer retries
     private ScheduledFuture<?> phoneConfirmationTimeout = null;
 
+    // BES2700 BLE flow control - tracks consecutive failures for exponential backoff
+    private static final int MAX_CONSECUTIVE_FAILURES = 10; // Abort after this many state=0 in a row
+    private static final int BASE_BACKOFF_MS = 150; // Base backoff delay for state=0 failures
+    private static final int MAX_BACKOFF_MS = 1000; // Cap exponential backoff at 1 second
+    private static final int PACING_DELAY_MS = 75; // Delay between successful packets - BES2700 needs time to drain BLE TX
+    private int consecutiveFailures = 0;
+
     // Inner class to track file transfer state
     private static class FileTransferSession {
         String filePath;
         String fileName;
         byte[] fileData;
-        int fileSize;
+        int fileSize;        // Real file size (for our internal tracking)
+        int fakeFileSize;    // Inflated file size to tell BES firmware (totalPackets * 400)
         int totalPackets;
         int currentPacketIndex;
         boolean isActive;
@@ -58,17 +66,30 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         boolean waitingForPhoneConfirmation;
         int retryCount;
 
+        // BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack:
+        //   totalPack = (fileSize + 400 - 1) / 400
+        // We "lie" about fileSize so BES expects the correct number of packets.
+        // This allows us to send smaller packets (221 bytes) that fit within BLE MTU.
+        private static final int BES_HARDCODED_PACK_SIZE = 400;
+
         FileTransferSession(String filePath, String fileName, byte[] fileData) {
             this.filePath = filePath;
             this.fileName = fileName;
             this.fileData = fileData;
             this.fileSize = fileData.length;
-            this.totalPackets = (fileSize + K900ProtocolUtils.FILE_PACK_SIZE - 1) / K900ProtocolUtils.FILE_PACK_SIZE;
+            this.totalPackets = (fileSize + K900ProtocolUtils.getFilePackSize() - 1) / K900ProtocolUtils.getFilePackSize();
+            // Calculate fake file size so BES firmware calculates correct totalPack
+            // BES does: totalPack = (fileSize + 400 - 1) / 400
+            // We want BES to get our totalPackets, so: fakeFileSize = totalPackets * 400
+            this.fakeFileSize = totalPackets * BES_HARDCODED_PACK_SIZE;
             this.currentPacketIndex = 0;
             this.isActive = true;
             this.startTime = System.currentTimeMillis();
             this.waitingForPhoneConfirmation = false;
             this.retryCount = 0;
+
+            Log.i(TAG, "📦 BES Lie Strategy: realSize=" + fileSize + ", fakeSize=" + fakeFileSize +
+                       ", totalPackets=" + totalPackets + ", actualPackSize=" + K900ProtocolUtils.getFilePackSize());
         }
     }
 
@@ -445,6 +466,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         
         currentFileTransfer = new FileTransferSession(filePath, fileName, fileData);
         pendingPackets.clear();
+        consecutiveFailures = 0; // Reset failure counter for new transfer
         
         Log.d(TAG, "Starting file transfer: " + fileName + " (" + fileData.length + " bytes, " + 
                    currentFileTransfer.totalPackets + " packets)");
@@ -496,8 +518,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         
         // Calculate packet data
         int packetIndex = currentFileTransfer.currentPacketIndex;
-        int offset = packetIndex * K900ProtocolUtils.FILE_PACK_SIZE;
-        int packSize = Math.min(K900ProtocolUtils.FILE_PACK_SIZE, 
+        int offset = packetIndex * K900ProtocolUtils.getFilePackSize();
+        int packSize = Math.min(K900ProtocolUtils.getFilePackSize(),
                                 currentFileTransfer.fileSize - offset);
         
         // Extract packet data
@@ -505,8 +527,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         System.arraycopy(currentFileTransfer.fileData, offset, packetData, 0, packSize);
         
         // Pack the file packet
+        // NOTE: We use fakeFileSize to lie to BES firmware about total file size.
+        // BES hardcodes 400-byte pack size when calculating totalPack, so we inflate
+        // fileSize to make BES expect the correct number of our smaller packets.
         byte[] packet = K900ProtocolUtils.packFilePacket(
-            packetData, packetIndex, packSize, currentFileTransfer.fileSize,
+            packetData, packetIndex, packSize, currentFileTransfer.fakeFileSize,
             currentFileTransfer.fileName, 0, // flags = 0
             K900ProtocolUtils.CMD_TYPE_PHOTO
         );
@@ -602,20 +627,80 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             (System.currentTimeMillis() - packetState.lastSendTime) : -1;
 
         Log.d(TAG, "📊 File transfer ACK: state=" + state + ", index=" + index +
-                   " (0-based: " + zeroBasedIndex + "), ACK received after " + ackDelay + "ms");
+                   " (0-based: " + zeroBasedIndex + "), ACK received after " + ackDelay + "ms" +
+                   ", consecutiveFailures=" + consecutiveFailures +
+                   ", currentPacketIndex=" + currentFileTransfer.currentPacketIndex);
 
         if (state == 1) { // Success (K900 uses state=1 for success)
+            // CRITICAL: Ignore duplicate ACKs for packets we've already moved past
+            // This prevents scheduling multiple sendNextFilePacket() calls
+            if (zeroBasedIndex < currentFileTransfer.currentPacketIndex) {
+                Log.w(TAG, "⚠️ Ignoring duplicate ACK for already-processed packet " + zeroBasedIndex +
+                          " (current=" + currentFileTransfer.currentPacketIndex + ")");
+                return;
+            }
+
+            // Reset consecutive failure counter on success
+            consecutiveFailures = 0;
+
             // Remove from pending packets
             pendingPackets.remove(zeroBasedIndex);
 
             // Move to next packet
             currentFileTransfer.currentPacketIndex = zeroBasedIndex + 1;
+
+            // Send next packet immediately - BES flow control via ACKs handles pacing
             sendNextFilePacket();
         } else {
-            // Error - retry the packet
-            Log.w(TAG, "File packet " + zeroBasedIndex + " failed with state " + state + ", retrying");
+            // Error - BES2700 buffer likely full, need to backoff before retry
+            // state=0 means BES couldn't process the packet (flow control)
+
+            // Ignore failures for packets we've already moved past (stale ACKs)
+            if (zeroBasedIndex < currentFileTransfer.currentPacketIndex) {
+                Log.w(TAG, "⚠️ Ignoring stale failure ACK for packet " + zeroBasedIndex +
+                          " (current=" + currentFileTransfer.currentPacketIndex + ")");
+                return;
+            }
+
+            consecutiveFailures++;
+
+            // Check if we've hit the failure limit - BLE TX may be permanently stuck
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                Log.e(TAG, "❌💥 File transfer ABORTED: " + consecutiveFailures +
+                          " consecutive failures - BES2700 BLE TX likely stuck");
+
+                // Report the failure
+                BluetoothReporting.reportFileTransferFailure(context, currentFileTransfer.filePath,
+                    "send_file", "ble_tx_stuck_consecutive_failures", null);
+
+                notificationManager.showDebugNotification("Transfer Failed",
+                    "BLE TX stuck after " + consecutiveFailures + " failures at packet " + zeroBasedIndex);
+
+                // Abort the transfer
+                comManager.setFastMode(false);
+                currentFileTransfer.isActive = false;
+                currentFileTransfer = null;
+                pendingPackets.clear();
+                consecutiveFailures = 0;
+                return;
+            }
+
+            // Calculate exponential backoff: BASE_BACKOFF_MS * 2^(failures-1), capped at MAX_BACKOFF_MS
+            int backoffMs = Math.min(BASE_BACKOFF_MS * (1 << (consecutiveFailures - 1)), MAX_BACKOFF_MS);
+
+            Log.w(TAG, "⚠️ File packet " + zeroBasedIndex + " failed (state=" + state +
+                      "), consecutive failures: " + consecutiveFailures +
+                      ", backoff: " + backoffMs + "ms");
+
             currentFileTransfer.currentPacketIndex = zeroBasedIndex;
-            sendNextFilePacket();
+
+            // Add exponential backoff delay to let BES2700 drain its buffers
+            fileTransferExecutor.schedule(() -> {
+                if (currentFileTransfer != null && currentFileTransfer.isActive) {
+                    Log.d(TAG, "📦 Retrying packet " + zeroBasedIndex + " after " + backoffMs + "ms backoff");
+                    sendNextFilePacket();
+                }
+            }, backoffMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
     }
     
@@ -644,9 +729,26 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @param success True if phone confirmed success, false if phone wants retry
      */
     public void handlePhoneConfirmation(String fileName, boolean success) {
-        if (currentFileTransfer == null || !currentFileTransfer.waitingForPhoneConfirmation) {
-            Log.w(TAG, "⚠️ Received unexpected phone confirmation for: " + fileName);
+        if (currentFileTransfer == null) {
+            Log.w(TAG, "⚠️ Received phone confirmation but no active transfer for: " + fileName);
             return;
+        }
+
+        // Accept confirmation if:
+        // 1. We're explicitly waiting for it (waitingForPhoneConfirmation == true), OR
+        // 2. Transfer is active and all packets have been sent (race condition: phone responded faster than expected)
+        boolean allPacketsSent = currentFileTransfer.currentPacketIndex >= currentFileTransfer.totalPackets;
+        if (!currentFileTransfer.waitingForPhoneConfirmation && !allPacketsSent) {
+            Log.w(TAG, "⚠️ Received phone confirmation too early for: " + fileName +
+                      " (currentPacket=" + currentFileTransfer.currentPacketIndex +
+                      "/" + currentFileTransfer.totalPackets + ")");
+            return;
+        }
+
+        // If phone responded before we entered waiting state, log it
+        if (!currentFileTransfer.waitingForPhoneConfirmation && allPacketsSent) {
+            Log.i(TAG, "📱 Phone responded before waiting state - accepting early confirmation for: " + fileName);
+            currentFileTransfer.waitingForPhoneConfirmation = true; // Set it now to avoid timeout firing
         }
 
         if (!currentFileTransfer.fileName.equals(fileName)) {

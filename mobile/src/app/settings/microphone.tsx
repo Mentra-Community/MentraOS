@@ -4,7 +4,7 @@ import {MicrophoneSelector} from "@/components/glasses/settings/MicrophoneSelect
 import {Header, Screen} from "@/components/ignite"
 import {Spacer} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function MicrophoneScreen() {
   const {theme} = useAppTheme()

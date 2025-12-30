@@ -6,7 +6,8 @@ import {Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {ThemedStyle} from "@/theme"
 import {textEditorStore} from "@/utils/TextEditorStore"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
+
 
 type TextSettingNoSaveProps = {
   label: string

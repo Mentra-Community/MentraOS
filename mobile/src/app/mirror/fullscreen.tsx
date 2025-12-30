@@ -23,7 +23,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 

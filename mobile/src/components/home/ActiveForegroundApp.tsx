@@ -1,16 +1,13 @@
 import {ImageStyle, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
-import {Text} from "@/components/ignite"
+import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
 import {Badge} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useActiveForegroundApp, useStopApplet} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
-
-import {ArrowLeftIcon} from "assets/icons/component/ArrowLeftIcon"
-import {CloseXIcon} from "assets/icons/component/CloseXIcon"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export const ActiveForegroundApp: React.FC = () => {
   const {themed, theme} = useAppTheme()
@@ -103,11 +100,11 @@ export const ActiveForegroundApp: React.FC = () => {
         </View>
         {!applet.loading && (
           <TouchableOpacity onPress={handleStopApp} style={themed($closeButton)} activeOpacity={0.7}>
-            <CloseXIcon size={24} color={theme.colors.textDim} />
+            <Icon name="x" size={24} color={theme.colors.textDim} />
           </TouchableOpacity>
         )}
         <View style={themed($iconContainer)}>
-          <ArrowLeftIcon size={24} color={theme.colors.text} />
+          <Icon name="arrow-left" size={24} color={theme.colors.text} />
         </View>
       </View>
     </TouchableOpacity>

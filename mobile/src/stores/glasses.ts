@@ -82,6 +82,19 @@ const initialState: GlassesInfo = {
   hotspotGatewayIp: "",
 }
 
+export const getGlasesInfoPartial = (state: GlassesInfo) => {
+  return {
+    batteryLevel: state.batteryLevel,
+    charging: state.charging,
+    caseBatteryLevel: state.caseBatteryLevel,
+    caseCharging: state.caseCharging,
+    connected: state.connected,
+    wifiConnected: state.wifiConnected,
+    wifiSsid: state.wifiSsid,
+    modelName: state.modelName,
+  }
+}
+
 export const useGlassesStore = create<GlassesState>()(
   subscribeWithSelector(set => ({
     ...initialState,

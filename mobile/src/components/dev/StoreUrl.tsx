@@ -7,7 +7,7 @@ import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function StoreUrl() {
   const {theme, themed} = useAppTheme()

@@ -12,7 +12,6 @@ import {
   Keyboard,
   Modal,
   Platform,
-  ScrollView,
   TextInput,
   TextStyle,
   TouchableOpacity,
@@ -24,13 +23,13 @@ import {Pressable} from "react-native-gesture-handler"
 import {Button, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
 
 import AppleIcon from "assets/icons/component/AppleIcon"
@@ -257,173 +256,166 @@ export default function LoginScreen() {
   }, [backPressCount, isSigningUp])
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["top"]} contentContainerStyle={themed($container)}>
-      <ScrollView
-        contentContainerStyle={themed($scrollContent)}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled">
-        <View style={themed($card)}>
-          {/* Auth Loading Overlay */}
-          {isAuthLoading && (
-            <Animated.View style={[themed($authLoadingOverlay), {opacity: authOverlayOpacity}]}>
-              <View style={themed($authLoadingContent)}>
-                <View style={themed($authLoadingLogoContainer)}>
-                  <LogoSvg width={108} height={58} />
-                </View>
-                <ActivityIndicator size="large" color={theme.colors.tint} style={themed($authLoadingIndicator)} />
-                <Text tx="login:connectingToServer" style={themed($authLoadingText)} />
+    <Screen preset="fixed" safeAreaEdges={["top", "bottom"]} contentContainerStyle={themed($container)}>
+      <View style={themed($card)}>
+        {/* Auth Loading Overlay */}
+        {isAuthLoading && (
+          <Animated.View style={[themed($authLoadingOverlay), {opacity: authOverlayOpacity}]}>
+            <View style={themed($authLoadingContent)}>
+              <View style={themed($authLoadingLogoContainer)}>
+                <LogoSvg width={108} height={58} />
               </View>
-            </Animated.View>
-          )}
-          <Animated.View style={{opacity, transform: [{translateY}]}}>
-            <View style={themed($logoContainer)}>
-              <LogoSvg width={108} height={58} />
+              <ActivityIndicator size="large" color={theme.colors.tint} style={themed($authLoadingIndicator)} />
+              <Text tx="login:connectingToServer" style={themed($authLoadingText)} />
             </View>
-            <Text preset="heading" tx="login:title" style={themed($title)} />
-            <Text preset="subheading" tx="login:subtitle" style={themed($subtitle)} />
           </Animated.View>
+        )}
+        <Animated.View style={{opacity, transform: [{translateY}]}}>
+          <View style={themed($logoContainer)}>
+            <LogoSvg width={108} height={58} />
+          </View>
+          <Text preset="heading" tx="login:title" style={themed($title)} />
+          <Text preset="subheading" tx="login:subtitle" style={themed($subtitle)} />
+        </Animated.View>
 
-          <Animated.View style={[themed($content), {opacity, transform: [{translateY}]}]}>
-            {isSigningUp ? (
-              <Animated.View style={[themed($form), {transform: [{scale: formScale}]}]}>
-                <View style={themed($inputGroup)}>
-                  <Text tx="login:email" style={themed($inputLabel)} />
-                  <View style={themed($enhancedInputContainer)}>
-                    <FontAwesome
-                      name="envelope"
-                      size={16}
-                      color={theme.colors.textDim}
-                      // style={themed($inputIcon)}
-                    />
-                    <Spacer width={spacing.s3} />
-                    <TextInput
-                      hitSlop={{top: 16, bottom: 16}}
-                      style={themed($enhancedInput)}
-                      placeholder={translate("login:emailPlaceholder")}
-                      value={email}
-                      onChangeText={setEmail}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      placeholderTextColor={theme.colors.textDim}
-                    />
-                  </View>
+        <Animated.View style={[themed($content), {opacity, transform: [{translateY}]}]}>
+          {isSigningUp ? (
+            <Animated.View style={[themed($form), {transform: [{scale: formScale}]}]}>
+              <View style={themed($inputGroup)}>
+                <Text tx="login:email" style={themed($inputLabel)} />
+                <View style={themed($enhancedInputContainer)}>
+                  <FontAwesome
+                    name="envelope"
+                    size={16}
+                    color={theme.colors.textDim}
+                    // style={themed($inputIcon)}
+                  />
+                  <Spacer width={spacing.s3} />
+                  <TextInput
+                    hitSlop={{top: 16, bottom: 16}}
+                    style={themed($enhancedInput)}
+                    placeholder={translate("login:emailPlaceholder")}
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholderTextColor={theme.colors.textDim}
+                  />
                 </View>
-
-                <View style={themed($inputGroup)}>
-                  <Text tx="login:password" style={themed($inputLabel)} />
-                  <View style={themed($enhancedInputContainer)}>
-                    <FontAwesome
-                      name="lock"
-                      size={16}
-                      color={theme.colors.textDim}
-                      // style={themed($inputIcon)}
-                    />
-                    <Spacer width={spacing.s3} />
-                    <TextInput
-                      hitSlop={{top: 16, bottom: 16}}
-                      style={themed($enhancedInput)}
-                      placeholder={translate("login:passwordPlaceholder")}
-                      value={password}
-                      autoCapitalize="none"
-                      onChangeText={setPassword}
-                      secureTextEntry={!showPassword}
-                      placeholderTextColor={theme.colors.textDim}
-                    />
-                    <TouchableOpacity
-                      hitSlop={{top: 16, bottom: 16, left: 16, right: 16}}
-                      onPress={togglePasswordVisibility}>
-                      <FontAwesome name={showPassword ? "eye" : "eye-slash"} size={18} color={theme.colors.textDim} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  onPress={() => push("/auth/forgot-password")}
-                  style={themed($forgotPasswordContainer)}>
-                  <Text tx="login:forgotPassword" style={themed($forgotPasswordText)} />
-                </TouchableOpacity>
-
-                <Spacer height={spacing.s3} />
-
-                <Button
-                  tx="login:login"
-                  style={themed($primaryButton)}
-                  pressedStyle={themed($pressedButton)}
-                  textStyle={themed($buttonText)}
-                  onPress={() => handleEmailSignIn(email, password)}
-                  disabled={isFormLoading}
-                  {...(isFormLoading &&
-                    formAction === "signin" && {
-                      LeftAccessory: () => (
-                        <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
-                      ),
-                    })}
-                />
-
-                <Spacer height={spacing.s4} />
-
-                {/* New to MentraOS? Create an Account link */}
-                <View style={themed($createAccountContainer)}>
-                  <Text style={themed($createAccountText)}>{translate("login:signup.newToMentra")}</Text>
-                  <TouchableOpacity onPress={() => push("/auth/signup")}>
-                    <Text style={themed($createAccountLink)}>{translate("login:signup.createAccount")}</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Spacer height={spacing.s3} />
-
-                <Pressable onPress={() => setIsSigningUp(false)}>
-                  <View style={{flexDirection: "row", justifyContent: "center", alignItems: "center"}}>
-                    <FontAwesome name="arrow-left" size={16} color={theme.colors.textDim} />
-                    <Text style={{marginLeft: 8, color: theme.colors.textDim}}>Back</Text>
-                  </View>
-                </Pressable>
-              </Animated.View>
-            ) : (
-              <View style={themed($signInOptions)}>
-                <Button
-                  flexContainer
-                  tx="login:continueWithEmail"
-                  style={themed($primaryButton)}
-                  pressedStyle={themed($pressedButton)}
-                  textStyle={themed($emailButtonText)}
-                  onPress={() => setIsSigningUp(true)}
-                  LeftAccessory={() => (
-                    <FontAwesome
-                      name="envelope"
-                      size={16}
-                      color={theme.colors.textAlt}
-                      // style={themed($emailIcon)}
-                    />
-                  )}
-                />
-                {!isChina && (
-                  <TouchableOpacity style={[themed($socialButton), themed($googleButton)]} onPress={handleGoogleSignIn}>
-                    <View style={[themed($socialIconContainer), {position: "absolute", left: 12}]}>
-                      <GoogleIcon />
-                    </View>
-                    <Text style={themed($socialButtonText)} tx="login:continueWithGoogle" />
-                  </TouchableOpacity>
-                )}
-
-                {Platform.OS === "ios" && !isChina && (
-                  <TouchableOpacity style={[themed($socialButton), themed($appleButton)]} onPress={handleAppleSignIn}>
-                    <View style={[themed($socialIconContainer), {position: "absolute", left: 12}]}>
-                      <AppleIcon color={theme.colors.text} />
-                    </View>
-                    <Text style={[themed($socialButtonText), themed($appleButtonText)]} tx="login:continueWithApple" />
-                  </TouchableOpacity>
-                )}
               </View>
-            )}
-          </Animated.View>
 
-          <Animated.View style={[{opacity}, $bottomContainerInsets]}>
-            <Text tx="login:termsText" size="xs" style={themed($termsText)} />
-          </Animated.View>
-        </View>
-      </ScrollView>
+              <View style={themed($inputGroup)}>
+                <Text tx="login:password" style={themed($inputLabel)} />
+                <View style={themed($enhancedInputContainer)}>
+                  <FontAwesome
+                    name="lock"
+                    size={16}
+                    color={theme.colors.textDim}
+                    // style={themed($inputIcon)}
+                  />
+                  <Spacer width={spacing.s3} />
+                  <TextInput
+                    hitSlop={{top: 16, bottom: 16}}
+                    style={themed($enhancedInput)}
+                    placeholder={translate("login:passwordPlaceholder")}
+                    value={password}
+                    autoCapitalize="none"
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    placeholderTextColor={theme.colors.textDim}
+                  />
+                  <TouchableOpacity
+                    hitSlop={{top: 16, bottom: 16, left: 16, right: 16}}
+                    onPress={togglePasswordVisibility}>
+                    <FontAwesome name={showPassword ? "eye" : "eye-slash"} size={18} color={theme.colors.textDim} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <TouchableOpacity onPress={() => push("/auth/forgot-password")} style={themed($forgotPasswordContainer)}>
+                <Text tx="login:forgotPassword" style={themed($forgotPasswordText)} />
+              </TouchableOpacity>
+
+              <Spacer height={spacing.s3} />
+
+              <Button
+                tx="login:login"
+                style={themed($primaryButton)}
+                pressedStyle={themed($pressedButton)}
+                textStyle={themed($buttonText)}
+                onPress={() => handleEmailSignIn(email, password)}
+                disabled={isFormLoading}
+                {...(isFormLoading &&
+                  formAction === "signin" && {
+                    LeftAccessory: () => (
+                      <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
+                    ),
+                  })}
+              />
+
+              <Spacer height={spacing.s4} />
+
+              {/* New to MentraOS? Create an Account link */}
+              <View style={themed($createAccountContainer)}>
+                <Text style={themed($createAccountText)}>{translate("login:signup.newToMentra")}</Text>
+                <TouchableOpacity onPress={() => push("/auth/signup")}>
+                  <Text style={themed($createAccountLink)}>{translate("login:signup.createAccount")}</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Spacer height={spacing.s3} />
+
+              <Pressable onPress={() => setIsSigningUp(false)}>
+                <View style={{flexDirection: "row", justifyContent: "center", alignItems: "center"}}>
+                  <FontAwesome name="arrow-left" size={16} color={theme.colors.textDim} />
+                  <Text style={{marginLeft: 8, color: theme.colors.textDim}}>Back</Text>
+                </View>
+              </Pressable>
+            </Animated.View>
+          ) : (
+            <View style={themed($signInOptions)}>
+              <Button
+                flexContainer
+                tx="login:continueWithEmail"
+                style={themed($primaryButton)}
+                pressedStyle={themed($pressedButton)}
+                textStyle={themed($emailButtonText)}
+                onPress={() => setIsSigningUp(true)}
+                LeftAccessory={() => (
+                  <FontAwesome
+                    name="envelope"
+                    size={16}
+                    color={theme.colors.textAlt}
+                    // style={themed($emailIcon)}
+                  />
+                )}
+              />
+              {!isChina && (
+                <TouchableOpacity style={[themed($socialButton), themed($googleButton)]} onPress={handleGoogleSignIn}>
+                  <View style={[themed($socialIconContainer), {position: "absolute", left: 12}]}>
+                    <GoogleIcon />
+                  </View>
+                  <Text style={themed($socialButtonText)} tx="login:continueWithGoogle" />
+                </TouchableOpacity>
+              )}
+
+              {Platform.OS === "ios" && !isChina && (
+                <TouchableOpacity style={[themed($socialButton), themed($appleButton)]} onPress={handleAppleSignIn}>
+                  <View style={[themed($socialIconContainer), {position: "absolute", left: 12}]}>
+                    <AppleIcon color={theme.colors.text} />
+                  </View>
+                  <Text style={[themed($socialButtonText), themed($appleButtonText)]} tx="login:continueWithApple" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </Animated.View>
+
+        <Animated.View style={[{opacity}, $bottomContainerInsets]}>
+          <Text tx="login:termsText" size="xs" style={themed($termsText)} />
+        </Animated.View>
+      </View>
 
       {/* Loading Modal */}
       <Modal visible={isFormLoading} transparent={true} animationType="fade">
@@ -456,11 +448,6 @@ export default function LoginScreen() {
 // Themed Styles
 const $container: ThemedStyle<ViewStyle> = () => ({
   flex: 1,
-})
-
-const $scrollContent: ThemedStyle<ViewStyle> = () => ({
-  flexGrow: 1,
-  justifyContent: "center",
 })
 
 const $card: ThemedStyle<ViewStyle> = ({spacing}) => ({

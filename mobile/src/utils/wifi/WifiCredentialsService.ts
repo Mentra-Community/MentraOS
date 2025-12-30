@@ -1,13 +1,13 @@
 import {storage} from "@/utils/storage/storage"
 
-export interface WifiCredential {
+interface WifiCredential {
   ssid: string
   password: string
   lastConnected?: number
   autoConnect?: boolean
 }
 
-export interface WifiCredentialsData {
+interface WifiCredentialsData {
   credentials: WifiCredential[]
   version: string
 }

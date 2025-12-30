@@ -12,7 +12,7 @@ import {translate} from "@/i18n"
 import {$styles} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function PairingPrepScreen() {
   const route = useRoute()

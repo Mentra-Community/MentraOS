@@ -3,7 +3,7 @@ import {Image, ImageStyle, Animated, StyleProp, View, ViewStyle} from "react-nat
 
 import {iconRegistry, IconTypes} from "@/components/ignite/Icon"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {$inputOuterBase, BaseToggleInputProps, ToggleProps, Toggle} from "./Toggle"
 

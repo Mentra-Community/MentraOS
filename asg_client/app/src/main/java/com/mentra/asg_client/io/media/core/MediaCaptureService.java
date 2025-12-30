@@ -245,18 +245,23 @@ public class MediaCaptureService {
     }
 
     private BleParams resolveBleParams(String requestedSize) {
-        // Conservative bandwidth for BLE; tune as needed
+        // BLE transfer is limited by BES2700 TX buffer (~88 packets before overflow)
+        // With 221-byte pack size, max reliable transfer is ~19KB
+        // Target file sizes accordingly with aggressive compression
         switch (requestedSize) {
             case "small":
-                return new BleParams(400, 400, 35, 25);
+                // Target ~8KB: 400x400 @ quality 28
+                return new BleParams(400, 400, 28, 20);
             case "large":
-                return new BleParams(1024, 1024, 45, 40);
+                // Target ~25KB: 800x800 @ quality 32 (may hit BLE limit)
+                return new BleParams(800, 800, 32, 28);
             case "full":
-                // Full resolution requested - use largest BLE-friendly size
-                return new BleParams(1280, 1280, 50, 45);
+                // Target ~35KB: 1024x1024 @ quality 35 (will likely hit BLE limit)
+                return new BleParams(1024, 1024, 35, 30);
             case "medium":
             default:
-                return new BleParams(720, 720, 42, 38);
+                // Target ~15KB: 640x640 @ quality 30 - safe for BLE
+                return new BleParams(640, 640, 30, 25);
         }
     }
 

@@ -21,7 +21,7 @@ import {Spacer} from "@/components/ui/Spacer"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export function MentraNextGlassesPairingGuide() {
   const {theme, themed} = useAppTheme()

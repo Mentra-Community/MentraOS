@@ -12,12 +12,11 @@ import {PairGlassesCard} from "@/components/home/PairGlassesCard"
 import {Header, Screen} from "@/components/ignite"
 import CloudConnection from "@/components/misc/CloudConnection"
 import NonProdWarning from "@/components/misc/NonProdWarning"
-import SensingDisabledWarning from "@/components/misc/SensingDisabledWarning"
 import {Group} from "@/components/ui"
 import {Spacer} from "@/components/ui/Spacer"
 import {useRefreshApplets} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function Homepage() {
   const {theme} = useAppTheme()
@@ -48,7 +47,6 @@ export default function Homepage() {
       <ScrollView contentInsetAdjustmentBehavior="automatic" showsVerticalScrollIndicator={false}>
         <Spacer height={theme.spacing.s4} />
         <CloudConnection />
-        <SensingDisabledWarning />
         <Group>
           {!defaultWearable && <PairGlassesCard />}
           {defaultWearable && <CompactDeviceStatus />}

@@ -20,7 +20,7 @@ export interface DownloadedFile {
   glassesModel?: string // Model of glasses that captured this media
 }
 
-export interface SyncState {
+interface SyncState {
   last_sync_time: number
   client_id: string
   total_downloaded: number

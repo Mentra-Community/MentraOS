@@ -3,7 +3,7 @@ import {ScrollView, TextStyle, View, ViewStyle} from "react-native"
 
 import {Button, Icon, Screen, Text} from "@/components/ignite"
 import type {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export interface ErrorDetailsProps {
   error: Error

@@ -23,11 +23,9 @@ import {
   getGlassesImage,
   getGlassesOpenImage,
 } from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
-import ChevronRight from "assets/icons/component/ChevronRight"
 import MicIcon from "assets/icons/component/MicIcon"
-import SolarLineIconsSet4 from "assets/icons/component/SolarLineIconsSet4"
 
 const getBatteryIcon = (batteryLevel: number): string => {
   if (batteryLevel >= 75) return "battery-3"
@@ -54,30 +52,9 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   const caseOpen = useGlassesStore(state => state.caseOpen)
   const batteryLevel = useGlassesStore(state => state.batteryLevel)
 
-  // If no glasses paired, show Pair Glasses button
-  if (!defaultWearable || defaultWearable === "null") {
-    return (
-      <View style={themed($disconnectedContainer)}>
-        <Button
-          textStyle={[{marginLeft: theme.spacing.s12}]}
-          textAlignment="left"
-          LeftAccessory={() => <SolarLineIconsSet4 color={theme.colors.textAlt} />}
-          RightAccessory={() => <ChevronRight color={theme.colors.textAlt} />}
-          onPress={() => push("/pairing/select-glasses-model")}
-          tx="home:pairGlasses"
-        />
-      </View>
-    )
-  }
-
   if (defaultWearable.includes(DeviceTypes.SIMULATED)) {
     return <ConnectedSimulatedGlassesInfo style={style} mirrorStyle={{backgroundColor: theme.colors.background}} />
   }
-
-  // Show simulated glasses view for simulated glasses
-  // if (defaultWearable.includes(DeviceTypes.SIMULATED)) {
-  // return <ConnectedSimulatedGlassesInfo />
-  // }
 
   const connectGlasses = async () => {
     if (!defaultWearable) {

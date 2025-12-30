@@ -10,7 +10,7 @@ import {WebSocketStatus} from "@/services/WebSocketManager"
 import {useRefreshApplets} from "@/stores/applets"
 import {useConnectionStore} from "@/stores/connection"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {BackgroundTimer} from "@/utils/timers"
 
 export default function CloudConnection() {

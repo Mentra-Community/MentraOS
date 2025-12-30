@@ -5,7 +5,7 @@ import MaterialIcons from "react-native-vector-icons/MaterialIcons"
 import {Button, Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface TroubleshootingModalProps {
   isVisible: boolean

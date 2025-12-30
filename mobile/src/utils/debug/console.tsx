@@ -1,20 +1,16 @@
 import {useState, useEffect, useRef} from "react"
-import {
-  ScrollView,
-  TouchableOpacity,
-  View,
-  PanResponder,
-  Animated,
-  ViewStyle,
-  TextStyle,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-} from "react-native"
+import {ScrollView, View, ViewStyle, TextStyle, NativeScrollEvent, NativeSyntheticEvent} from "react-native"
+import {Gesture, GestureDetector} from "react-native-gesture-handler"
+import Animated, {useSharedValue, useAnimatedStyle, withSpring} from "react-native-reanimated"
 
+import {Button} from "@/components/ignite"
 import {Text} from "@/components/ignite/Text"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+
+const MIN_Y = 60
+const MIN_X = 0
 
 export const ConsoleLogger = () => {
   const {themed} = useAppTheme()
@@ -25,54 +21,53 @@ export const ConsoleLogger = () => {
   const consoleOverrideSetup = useRef(false)
   const isAtBottom = useRef(true)
 
-  const pan = useRef(new Animated.ValueXY({x: 0, y: 50})).current
-  const toggleButtonPan = useRef(new Animated.ValueXY({x: 0, y: 0})).current
+  // Console window position
+  const panX = useSharedValue(MIN_X)
+  const panY = useSharedValue(MIN_Y)
+  const panStartX = useSharedValue(0)
+  const panStartY = useSharedValue(0)
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_evt, _gestureState) => {
-        // Only set pan responder if the gesture has moved significantly
-        // return Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5
-        return false
-      },
-      onPanResponderGrant: () => {
-        pan.setOffset({
-          x: pan.x._value,
-          y: pan.y._value,
-        })
-        pan.setValue({x: 0, y: 0})
-      },
-      onPanResponderMove: Animated.event([null, {dx: pan.x, dy: pan.y}], {useNativeDriver: false}),
-      onPanResponderRelease: () => {
-        pan.flattenOffset()
-      },
-    }),
-  ).current
+  // Toggle button position
+  const toggleX = useSharedValue(0)
+  const toggleY = useSharedValue(0)
+  const toggleStartX = useSharedValue(0)
+  const toggleStartY = useSharedValue(0)
 
-  const toggleButtonPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (evt, gestureState) => {
-        // Only set pan responder if the gesture has moved significantly
-        return Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5
-        // return true
-      },
-      onPanResponderGrant: () => {
-        toggleButtonPan.setOffset({
-          x: toggleButtonPan.x._value,
-          y: toggleButtonPan.y._value,
-        })
-        toggleButtonPan.setValue({x: 0, y: 0})
-      },
-      onPanResponderMove: Animated.event([null, {dx: toggleButtonPan.x, dy: toggleButtonPan.y}], {
-        useNativeDriver: false,
-      }),
-      onPanResponderRelease: () => {
-        toggleButtonPan.flattenOffset()
-      },
-    }),
-  ).current
+  const panGesture = Gesture.Pan()
+    .onStart(() => {
+      panStartX.value = panX.value
+      panStartY.value = panY.value
+    })
+    .onUpdate(event => {
+      panX.value = panStartX.value + event.translationX
+      panY.value = panStartY.value + event.translationY
+    })
+    .onEnd(() => {
+      if (panY.value < MIN_Y) {
+        panY.value = withSpring(MIN_Y)
+      }
+      if (panX.value < MIN_X) {
+        panX.value = withSpring(MIN_X)
+      }
+    })
+
+  const toggleGesture = Gesture.Pan()
+    .onStart(() => {
+      toggleStartX.value = toggleX.value
+      toggleStartY.value = toggleY.value
+    })
+    .onUpdate(event => {
+      toggleX.value = toggleStartX.value + event.translationX
+      toggleY.value = toggleStartY.value + event.translationY
+    })
+
+  const panAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{translateX: panX.value}, {translateY: panY.value}],
+  }))
+
+  const toggleAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{translateX: toggleX.value}, {translateY: toggleY.value}],
+  }))
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const {contentOffset, contentSize, layoutMeasurement} = event.nativeEvent
@@ -81,12 +76,10 @@ export const ConsoleLogger = () => {
   }
 
   useEffect(() => {
-    // Only override console if debugConsole is enabled and we haven't set it up yet
     if (!debugConsole || consoleOverrideSetup.current) {
       return
     }
 
-    // Use setTimeout to ensure React DevTools initializes first
     const timeoutId = setTimeout(() => {
       const originalLog = console.log
       const originalWarn = console.warn
@@ -136,9 +129,6 @@ export const ConsoleLogger = () => {
 
     return () => {
       clearTimeout(timeoutId)
-      // console.log = originalLog
-      // console.warn = originalWarn
-      // console.error = originalError
     }
   }, [debugConsole])
 
@@ -148,49 +138,32 @@ export const ConsoleLogger = () => {
 
   const handleHide = () => {
     setIsVisible(false)
-    // Reset toggle button position to default when hiding
-    // toggleButtonPan.setValue({x: 0, y: 0})
   }
 
   if (!isVisible) {
     return (
-      <Animated.View
-        style={[
-          themed($toggleButton),
-          {
-            transform: [{translateX: toggleButtonPan.x}, {translateY: toggleButtonPan.y}],
-          },
-        ]}
-        {...toggleButtonPanResponder.panHandlers}>
-        <TouchableOpacity onPress={() => setIsVisible(true)}>
-          <Text text="Show Console" style={themed($toggleButtonText)} />
-        </TouchableOpacity>
-      </Animated.View>
+      <GestureDetector gesture={toggleGesture}>
+        <Animated.View className="absolute bottom-28 right-2" style={toggleAnimatedStyle}>
+          <Button text="Show Console" preset="primary" compact onPress={() => setIsVisible(true)} />
+        </Animated.View>
+      </GestureDetector>
     )
   }
 
   return (
-    <Animated.View
-      style={[
-        themed($container),
-        {
-          transform: [{translateX: pan.x}, {translateY: pan.y}],
-        },
-      ]}>
-      <View style={themed($header)} {...panResponder.panHandlers}>
-        <Text text={`Console (${logs.length}/500) - Drag to move`} style={themed($headerText)} weight="bold" />
-        <View style={themed($headerButtons)}>
-          <TouchableOpacity style={themed($clearButton)} onPress={() => setLogs([])}>
-            <Text text="Clear" style={themed($buttonText)} />
-          </TouchableOpacity>
-          <TouchableOpacity style={themed($hideButton)} onPress={handleHide}>
-            <Text text="Hide" style={themed($buttonText)} />
-          </TouchableOpacity>
+    <Animated.View style={[themed($container), panAnimatedStyle]}>
+      <GestureDetector gesture={panGesture}>
+        <View style={themed($header)}>
+          <Text text={`Console (${logs.length}/500)`} className="text-xs font-bold" />
+          <View className="flex-row gap-2">
+            <Button text="Hide" preset="primary" compact onPress={handleHide} />
+            <Button text="Clear" preset="secondary" compact onPress={() => setLogs([])} />
+          </View>
         </View>
-      </View>
+      </GestureDetector>
       <ScrollView
         ref={scrollViewRef}
-        style={themed($logContainer)}
+        className="flex"
         contentContainerStyle={themed($logContentContainer)}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -200,15 +173,11 @@ export const ConsoleLogger = () => {
           }
         }}>
         {logs.map((log, index) => (
-          <View key={index} style={themed($logEntry)}>
-            {/*<Text text={log.timestamp} style={themed($timestamp)} />*/}
+          <View key={index}>
             <Text
               text={log.message}
-              style={[
-                themed($logText),
-                log.type === "error" && themed($errorText),
-                log.type === "warn" && themed($warnText),
-              ]}
+              className="text-[10px]/3 font-bold color-secondary-foreground font-mono"
+              style={[log.type === "error" && themed($errorText), log.type === "warn" && themed($warnText)]}
             />
           </View>
         ))}
@@ -244,55 +213,10 @@ const $header: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   borderColor: colors.border,
 })
 
-const $headerText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  color: colors.text,
-  fontSize: spacing.s3,
-})
-
-const $headerButtons: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "row",
-  gap: spacing.s6,
-})
-
-const $clearButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary_foreground,
-  paddingHorizontal: spacing.s3,
-  paddingVertical: spacing.s1,
-  borderRadius: spacing.s2,
-})
-
-const $hideButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.palette.neutral400,
-  paddingHorizontal: spacing.s3,
-  paddingVertical: spacing.s1,
-  borderRadius: spacing.s2,
-})
-
-const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.text,
-  fontSize: 12,
-})
-
-const $logContainer: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-})
-
 const $logContentContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   paddingHorizontal: spacing.s2,
   paddingBottom: spacing.s3,
   paddingTop: spacing.s2,
-})
-
-const $logEntry: ThemedStyle<ViewStyle> = () => ({
-  // marginBottom: spacing.s1,
-})
-
-const $logText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.secondary_foreground,
-  fontFamily: "monospace",
-  fontSize: 10,
-  lineHeight: 12,
-  fontWeight: 800,
 })
 
 const $errorText: ThemedStyle<TextStyle> = ({colors}) => ({
@@ -301,22 +225,4 @@ const $errorText: ThemedStyle<TextStyle> = ({colors}) => ({
 
 const $warnText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.warning,
-})
-
-const $toggleButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  position: "absolute",
-  bottom: 100,
-  right: 8,
-  backgroundColor: colors.palette.neutral100,
-  paddingHorizontal: 16,
-  paddingVertical: 8,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: colors.border,
-})
-
-const $toggleButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.text,
-  fontSize: 12,
-  fontWeight: "bold",
 })

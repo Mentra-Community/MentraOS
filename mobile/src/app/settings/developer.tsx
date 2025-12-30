@@ -9,15 +9,16 @@ import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles, ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {ThemedStyle} from "@/theme"
 
 export default function DeveloperSettingsScreen() {
   const {theme, themed} = useAppTheme()
-  const {goBack, push} = useNavigationHistory()
+  const {goBack, push, replaceAll} = useNavigationHistory()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
@@ -27,92 +28,100 @@ export default function DeveloperSettingsScreen() {
     <Screen preset="fixed">
       <Header title="Developer Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
-      <View style={themed($warningContainer)}>
-        <View style={themed($warningContent)}>
-          <Icon name="alert" size={16} color={theme.colors.text} />
-          <Text tx="warning:warning" style={themed($warningTitle)} />
-        </View>
-        <Text tx="warning:developerSettingsWarning" style={themed($warningSubtitle)} />
-      </View>
+      <ScrollView
+        style={{
+          flex: 1,
+          marginHorizontal: -theme.spacing.s4,
+          paddingHorizontal: theme.spacing.s4,
+        }}>
+        <View className="flex gap-4">
+          <View style={themed($warningContainer)}>
+            <View style={themed($warningContent)}>
+              <Icon name="alert" size={16} color={theme.colors.text} />
+              <Text tx="warning:warning" style={themed($warningTitle)} />
+            </View>
+            <Text tx="warning:developerSettingsWarning" style={themed($warningSubtitle)} />
+          </View>
 
-      <Spacer height={theme.spacing.s4} />
-
-      <ScrollView style={{flex: 1, marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}>
-        <RouteButton
-          label="Buffer Recording Debug"
-          subtitle="Control 30-second video buffer on glasses"
-          onPress={() => push("/settings/buffer-debug")}
-        />
-
-        <Spacer height={theme.spacing.s4} />
-
-        <Group>
-          <ToggleSetting
-            label={translate("settings:reconnectOnAppForeground")}
-            subtitle={translate("settings:reconnectOnAppForegroundSubtitle")}
-            value={reconnectOnAppForeground}
-            onValueChange={value => setReconnectOnAppForeground(value)}
-          />
-
-          <ToggleSetting
-            label={translate("devSettings:debugConsole")}
-            subtitle={translate("devSettings:debugConsoleSubtitle")}
-            value={debugConsole}
-            onValueChange={value => setDebugConsole(value)}
-          />
-
-          <ToggleSetting
-            label="Enable Squircles"
-            subtitle="Use iOS-style squircle app icons instead of circles"
-            value={enableSquircles}
-            onValueChange={value => setEnableSquircles(value)}
-          />
-        </Group>
-
-        <Spacer height={theme.spacing.s4} />
-
-        <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
-
-        <Spacer height={theme.spacing.s4} />
-
-        <RouteButton label="Sitemap" subtitle="view the app's route map" onPress={() => push("/_sitemap")} />
-
-        <Spacer height={theme.spacing.s4} />
-
-        <RouteButton
-          label="Test Sentry"
-          subtitle="Send a crash to Sentry"
-          onPress={() => {
-            throw new Error("Test Sentry crash")
-          }}
-        />
-
-        <Spacer height={theme.spacing.s4} />
-
-        {/* G1 Specific Settings - Only show when connected to Even Realities G1 */}
-        {defaultWearable?.includes(DeviceTypes.G1) && (
-          <Group title="G1 Specific Settings">
+          <Group>
             <ToggleSetting
-              label={translate("settings:powerSavingMode")}
-              subtitle={translate("settings:powerSavingModeSubtitle")}
-              value={powerSavingMode}
-              onValueChange={async value => {
-                await setPowerSavingMode(value)
-              }}
+              label="Developer Mode"
+              subtitle="Enable developer mode"
+              value={devMode}
+              onValueChange={value => setDevMode(value)}
+            />
+            <ToggleSetting
+              label={translate("settings:reconnectOnAppForeground")}
+              subtitle={translate("settings:reconnectOnAppForegroundSubtitle")}
+              value={reconnectOnAppForeground}
+              onValueChange={value => setReconnectOnAppForeground(value)}
+            />
+
+            <ToggleSetting
+              label={translate("devSettings:debugConsole")}
+              subtitle={translate("devSettings:debugConsoleSubtitle")}
+              value={debugConsole}
+              onValueChange={value => setDebugConsole(value)}
+            />
+
+            <ToggleSetting
+              label="Enable Squircles"
+              subtitle="Use iOS-style squircle app icons instead of circles"
+              value={enableSquircles}
+              onValueChange={value => setEnableSquircles(value)}
             />
           </Group>
-        )}
 
-        <Spacer height={theme.spacing.s4} />
+          <RouteButton
+            label="Mentra Live Onboarding"
+            subtitle="Start the Mentra Live onboarding"
+            onPress={() => replaceAll("/onboarding/live")}
+          />
 
-        <BackendUrl />
+          <RouteButton
+            label="Mentra OS Onboarding"
+            subtitle="Start the Mentra Live onboarding"
+            onPress={() => replaceAll("/onboarding/os")}
+          />
 
-        <Spacer height={theme.spacing.s4} />
+          <RouteButton label="Sitemap" subtitle="View the app's route map" onPress={() => push("/_sitemap")} />
 
-        <StoreUrl />
+          <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
 
-        <Spacer height={theme.spacing.s4} />
-        <Spacer height={theme.spacing.s12} />
+          <RouteButton
+            label="Buffer Recording Debug"
+            subtitle="Control 30-second video buffer on glasses"
+            onPress={() => push("/settings/buffer-debug")}
+          />
+
+          <RouteButton
+            label="Test Sentry"
+            subtitle="Send a crash to Sentry"
+            onPress={() => {
+              throw new Error("Test Sentry crash")
+            }}
+          />
+
+          {/* G1 Specific Settings - Only show when connected to Even Realities G1 */}
+          {defaultWearable?.includes(DeviceTypes.G1) && (
+            <Group title="G1 Specific Settings">
+              <ToggleSetting
+                label={translate("settings:powerSavingMode")}
+                subtitle={translate("settings:powerSavingModeSubtitle")}
+                value={powerSavingMode}
+                onValueChange={async value => {
+                  await setPowerSavingMode(value)
+                }}
+              />
+            </Group>
+          )}
+
+          <BackendUrl />
+
+          <StoreUrl />
+
+          <Spacer height={theme.spacing.s12} />
+        </View>
       </ScrollView>
     </Screen>
   )

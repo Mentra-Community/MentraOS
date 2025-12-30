@@ -12,7 +12,7 @@ import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {PhotoInfo} from "@/types/asg"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {MediaLibraryPermissions} from "@/utils/MediaLibraryPermissions"
+import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
@@ -56,9 +56,9 @@ class GallerySyncService {
     if (this.isInitialized) return
 
     // Listen for hotspot status changes
-    GlobalEventEmitter.addListener("HOTSPOT_STATUS_CHANGE", this.handleHotspotStatusChange)
-    GlobalEventEmitter.addListener("HOTSPOT_ERROR", this.handleHotspotError)
-    GlobalEventEmitter.addListener("GALLERY_STATUS", this.handleGalleryStatus)
+    GlobalEventEmitter.addListener("hotspot_status_change", this.handleHotspotStatusChange)
+    GlobalEventEmitter.addListener("hotspot_error", this.handleHotspotError)
+    GlobalEventEmitter.addListener("gallery_status", this.handleGalleryStatus)
 
     // Subscribe to glasses store to detect disconnection during sync
     this.glassesStoreUnsubscribe = useGlassesStore.subscribe(
@@ -85,9 +85,9 @@ class GallerySyncService {
    */
   cleanup(): void {
     if (this.hotspotListenerRegistered) {
-      GlobalEventEmitter.removeListener("HOTSPOT_STATUS_CHANGE", this.handleHotspotStatusChange)
-      GlobalEventEmitter.removeListener("HOTSPOT_ERROR", this.handleHotspotError)
-      GlobalEventEmitter.removeListener("GALLERY_STATUS", this.handleGalleryStatus)
+      GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
+      GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
+      GlobalEventEmitter.removeListener("gallery_status", this.handleGalleryStatus)
       this.hotspotListenerRegistered = false
     }
 
@@ -147,7 +147,7 @@ class GallerySyncService {
    * Handle gallery status from glasses
    */
   private handleGalleryStatus = (data: any): void => {
-    console.log("[GallerySyncService] Received GALLERY_STATUS:", data)
+    console.log("[GallerySyncService] Received gallery_status:", data)
 
     const store = useGallerySyncStore.getState()
     store.setGlassesGalleryStatus(data.photos || 0, data.videos || 0, data.total || 0, data.has_content || false)

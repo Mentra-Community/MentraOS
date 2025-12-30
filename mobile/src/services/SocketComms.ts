@@ -366,7 +366,7 @@ class SocketComms {
   }
 
   private handle_microphone_state_change(msg: any) {
-    const bypassVad = msg.bypassVad || false
+    const bypassVad = msg.bypassVad ?? true
     const requiredDataStrings = msg.requiredData || []
     // console.log(`SOCKET: requiredData = ${requiredDataStrings}, bypassVad = ${bypassVad}`)
     let shouldSendPcmData = false

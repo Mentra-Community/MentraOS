@@ -5,7 +5,7 @@ import {Badge} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {useBackgroundApps} from "@/stores/applets"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export const BackgroundAppsLink = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()

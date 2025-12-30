@@ -3,7 +3,7 @@ import {View, TouchableOpacity, TextStyle, ViewStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface StatusCardProps {
   label: string

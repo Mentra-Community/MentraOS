@@ -28,7 +28,7 @@ import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function AppSettings() {
   const {packageName, appName: appNameParam} = useLocalSearchParams()

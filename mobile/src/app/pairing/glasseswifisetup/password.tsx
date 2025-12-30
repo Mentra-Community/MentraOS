@@ -13,7 +13,7 @@ import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 
 export default function WifiPasswordScreen() {
@@ -33,19 +33,19 @@ export default function WifiPasswordScreen() {
   const [hasSavedPassword, setHasSavedPassword] = useState(false)
 
   // Navigate away if glasses disconnect (but not on initial mount)
-  const prevGlassesConnectedRef = useRef(glassesConnected)
   useEffect(() => {
-    if (prevGlassesConnectedRef.current && !glassesConnected) {
-      console.log("[WifiPasswordScreen] Glasses disconnected - navigating away")
-      showAlert("Glasses Disconnected", "Please reconnect your glasses to set up WiFi.", [{text: "OK"}])
-      if (returnTo && typeof returnTo === "string") {
-        replace(decodeURIComponent(returnTo))
-      } else {
-        replace("/")
-      }
+    if (!glassesConnected) {
+      console.log("CONNECTING: Glasses disconnected - navigating away")
+      showAlert("Glasses Disconnected", "Please reconnect your glasses to set up WiFi.", [
+        {
+          text: "OK",
+          onPress() {
+            goBack()
+          },
+        },
+      ])
     }
-    prevGlassesConnectedRef.current = glassesConnected
-  }, [glassesConnected, returnTo])
+  }, [glassesConnected])
 
   const handleGoBack = useCallback(() => {
     if (returnTo && typeof returnTo === "string") {

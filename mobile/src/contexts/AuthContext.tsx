@@ -69,17 +69,6 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     getInitialSession()
     setupAuthListener()
 
-    // // Run both initial checks
-    // getInitialSession().catch(error => {
-    //   console.error("AuthContext: Error getting initial session:", error)
-    //   setLoading(false)
-    // })
-
-    // setupAuthListener().catch(error => {
-    //   console.error("AuthContext: Error setting up auth listener:", error)
-    //   setLoading(false)
-    // })
-
     // Cleanup the listener
     return () => {
       subscription?.unsubscribe()

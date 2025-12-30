@@ -142,6 +142,20 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  onboarding_live_completed: {
+    key: "onboarding_live_completed",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  onboarding_os_completed: {
+    key: "onboarding_os_completed",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   has_ever_activated_app: {
     key: "has_ever_activated_app",
     defaultValue: () => false,

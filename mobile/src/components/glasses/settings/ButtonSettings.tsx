@@ -8,7 +8,7 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {translate} from "@/i18n"
 import {ClientAppletInterface} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 interface ButtonSettingsProps {
   enabled: boolean
   selectedApp: string

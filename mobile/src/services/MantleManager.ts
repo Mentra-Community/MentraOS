@@ -5,10 +5,12 @@ import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import bridge from "@/bridge/MantleBridge"
+import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
+import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore, GlassesInfo} from "@/stores/glasses"
+import {useGlassesStore, GlassesInfo, getGlasesInfoPartial} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
@@ -74,6 +76,7 @@ class MantleManager {
   // sets up the bridge and initializes app state
   public async init() {
     await bridge.dummy()
+    await migrate() // do any local migrations here
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
       const loadedSettings = res.value
@@ -95,6 +98,7 @@ class MantleManager {
     // send initial status request:
     await CoreModule.getStatus()
 
+    this.initServices()
     this.setupPeriodicTasks()
     this.setupSubscriptions()
   }
@@ -107,6 +111,10 @@ class MantleManager {
     }
     Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
     this.transcriptProcessor.clear()
+  }
+
+  private initServices() {
+    gallerySyncService.initialize()
   }
 
   private async setupPeriodicTasks() {
@@ -131,16 +139,7 @@ class MantleManager {
 
   private setupSubscriptions() {
     useGlassesStore.subscribe(
-      state => ({
-        batteryLevel: state.batteryLevel,
-        charging: state.charging,
-        caseBatteryLevel: state.caseBatteryLevel,
-        caseCharging: state.caseCharging,
-        connected: state.connected,
-        wifiConnected: state.wifiConnected,
-        wifiSsid: state.wifiSsid,
-        modelName: state.modelName,
-      }),
+      getGlasesInfoPartial,
       (state: Partial<GlassesInfo>, previousState: Partial<GlassesInfo>) => {
         const statusObj: Partial<GlassesInfo> = {}
 

@@ -2,7 +2,7 @@
 
 import {Text} from "@/components/ignite/Text"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEffect, useRef, useState} from "react"
 import {ScrollView, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 

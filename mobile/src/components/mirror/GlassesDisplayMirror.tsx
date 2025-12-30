@@ -6,7 +6,7 @@ import {Text} from "@/components/ignite"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string

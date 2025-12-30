@@ -18,7 +18,7 @@ import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityI
 import {Icon, Text} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import SearchIcon from "assets/icons/component/SearchIcon"
 

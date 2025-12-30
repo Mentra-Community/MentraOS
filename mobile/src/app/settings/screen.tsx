@@ -8,11 +8,10 @@ import SliderSetting from "@/components/settings/SliderSetting"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function ScreenSettingsScreen() {
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const {goBack} = useNavigationHistory()
   const [dashboardDepth, setDashboardDepth] = useSetting(SETTINGS.dashboard_depth.key)
   const [dashboardHeight, setDashboardHeight] = useSetting(SETTINGS.dashboard_height.key)

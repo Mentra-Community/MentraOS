@@ -9,7 +9,7 @@ import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export const ConnectDeviceButton = () => {
   const {status} = useCoreStatus()

@@ -12,15 +12,16 @@ import Toast from "react-native-toast-message"
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
 import BackgroundGradient from "@/components/ui/BackgroundGradient"
-import {AppStoreWebviewPrefetchProvider} from "@/contexts/AppStoreWebviewPrefetchProvider"
+import {AppStoreProvider} from "@/contexts/AppStoreContext"
 import {AuthProvider} from "@/contexts/AuthContext"
 import {CoreStatusProvider} from "@/contexts/CoreStatusProvider"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {NavigationHistoryProvider} from "@/contexts/NavigationHistoryContext"
+import {useThemeProvider} from "@/contexts/ThemeContext"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {ModalProvider} from "@/utils/AlertUtils"
+import {KonamiCodeProvider} from "@/utils/debug/konami"
 import {withWrappers} from "@/utils/structure/with-wrappers"
-import {useThemeProvider} from "@/utils/useAppTheme"
 
 // components at the top wrap everything below them in order:
 export const AllProviders = withWrappers(
@@ -69,7 +70,7 @@ export const AllProviders = withWrappers(
   KeyboardProvider,
   CoreStatusProvider,
   AuthProvider,
-  AppStoreWebviewPrefetchProvider,
+  AppStoreProvider,
   NavigationHistoryProvider,
   DeeplinkProvider,
   props => {
@@ -113,4 +114,5 @@ export const AllProviders = withWrappers(
       </>
     )
   },
+  KonamiCodeProvider,
 )

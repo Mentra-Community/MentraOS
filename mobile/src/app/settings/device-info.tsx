@@ -8,7 +8,7 @@ import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function DeviceInfoScreen() {
   const {theme, themed} = useAppTheme()

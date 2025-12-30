@@ -29,8 +29,47 @@ public class K900ProtocolUtils {
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
     
     // File transfer constants
-    public static final int FILE_PACK_SIZE = 400; // Max data size per packet
+    public static final int FILE_PACK_SIZE_DEFAULT = 400; // Default max data size per packet
+    public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
+    private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
     public static final int LENGTH_FILE_START = 2;
+
+    /**
+     * Get the current file pack size (data portion only, not including protocol overhead).
+     * Protocol overhead is 32 bytes: ## (2) + type (1) + packSize (2) + packIndex (2) +
+     * fileSize (4) + fileName (16) + flags (2) + verify (1) + $$ (2)
+     */
+    public static int getFilePackSize() {
+        return filePackSize;
+    }
+
+    /**
+     * Set the file pack size based on BLE MTU.
+     * The pack size is MTU - 3 (ATT header) - 32 (protocol overhead).
+     * @param mtu The negotiated BLE MTU from the phone
+     */
+    public static void setFilePackSizeFromMtu(int mtu) {
+        // MTU - 3 (ATT header) - 32 (protocol overhead) = max data size
+        int newPackSize = mtu - 3 - 32;
+
+        // Clamp to valid range
+        if (newPackSize < FILE_PACK_SIZE_MIN) {
+            newPackSize = FILE_PACK_SIZE_MIN;
+        } else if (newPackSize > FILE_PACK_SIZE_DEFAULT) {
+            newPackSize = FILE_PACK_SIZE_DEFAULT;
+        }
+
+        filePackSize = newPackSize;
+        Log.i("K900ProtocolUtils", "📦 File pack size set to " + filePackSize + " bytes (MTU=" + mtu + ")");
+    }
+
+    /**
+     * Reset file pack size to default (400 bytes)
+     */
+    public static void resetFilePackSize() {
+        filePackSize = FILE_PACK_SIZE_DEFAULT;
+        Log.i("K900ProtocolUtils", "📦 File pack size reset to default: " + filePackSize + " bytes");
+    }
     public static final int LENGTH_FILE_TYPE = 1;
     public static final int LENGTH_FILE_PACKSIZE = 2;
     public static final int LENGTH_FILE_PACKINDEX = 2;
@@ -608,7 +647,7 @@ public class K900ProtocolUtils {
      */
     public static byte[] packFilePacket(byte[] fileData, int packIndex, int packSize, 
                                        int fileSize, String fileName, int flags, byte fileType) {
-        if (fileData == null || packSize > FILE_PACK_SIZE) {
+        if (fileData == null || packSize > getFilePackSize()) {
             return null;
         }
         

@@ -1,6 +1,5 @@
 import {ButtonActions} from "@/effects/ButtonActions"
-import {GallerySyncEffect} from "@/effects/GallerySyncEffect"
-import {MtkUpdateAlertEffect} from "@/effects/MtkUpdateAlertEffect"
+import {MtkUpdateAlert} from "@/effects/MtkUpdateAlert"
 import {NetworkMonitoring} from "@/effects/NetworkMonitoring"
 import {OtaUpdateChecker} from "@/effects/OtaUpdateChecker"
 import {Reconnect} from "@/effects/Reconnect"
@@ -10,10 +9,9 @@ export const AllEffects = () => {
     <>
       <Reconnect />
       <OtaUpdateChecker />
-      <MtkUpdateAlertEffect />
+      <MtkUpdateAlert />
       <NetworkMonitoring />
       <ButtonActions />
-      <GallerySyncEffect />
     </>
   )
 }

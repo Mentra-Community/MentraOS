@@ -8,14 +8,17 @@ import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {Screen, Text, Button} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {$styles, ThemedStyle} from "@/theme"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {SETTINGS, useSetting} from "@/stores/settings"
 
 export default function PairingSuccessScreen() {
   const {theme, themed} = useAppTheme()
   const {clearHistoryAndGoHome} = useNavigationHistory()
   const {glassesModelName} = useLocalSearchParams<{glassesModelName: string}>()
+  const {replaceAll} = useNavigationHistory()
+  const [onboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
 
   // Get manufacturer logo component
   const getManufacturerLogo = (modelName: string) => {
@@ -33,6 +36,22 @@ export default function PairingSuccessScreen() {
   }
 
   const glassesImage = getGlassesImage(glassesModelName)
+
+  const handleContinue = () => {
+    if (glassesModelName === DeviceTypes.LIVE) {
+      replaceAll("/onboarding/live")
+      return
+    }
+
+    if (glassesModelName === DeviceTypes.G1) {
+      if (!onboardingOsCompleted) {
+        replaceAll("/onboarding/os")
+        return
+      }
+    }
+
+    clearHistoryAndGoHome()
+  }
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]}>
@@ -59,7 +78,7 @@ export default function PairingSuccessScreen() {
       <View style={{flex: 1}} />
 
       {/* Continue Button */}
-      <Button preset="primary" text="Go to home" onPress={clearHistoryAndGoHome} style={themed($continueButton)} />
+      <Button preset="primary" tx="common:continue" onPress={handleContinue} style={themed($continueButton)} />
     </Screen>
   )
 }

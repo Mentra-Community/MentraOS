@@ -14,6 +14,7 @@ import type {
   RgbLedControlResponse,
 } from "./glasses-to-cloud"
 import type {AppSession} from "../../app/session"
+import type {GlassesInfo} from "@mentra/types"
 
 //===========================================================
 // Responses
@@ -97,6 +98,18 @@ export interface CapabilitiesUpdate extends BaseMessage {
   type: CloudToAppMessageType.CAPABILITIES_UPDATE
   capabilities: Capabilities | null
   modelName: string | null
+}
+
+/**
+ * Device state update to App
+ * Sent when any device state changes (WiFi, battery, hotspot, connection, etc.)
+ * Apps receive this automatically - no subscription needed
+ */
+export interface DeviceStateUpdate extends BaseMessage {
+  type: CloudToAppMessageType.DEVICE_STATE_UPDATE
+  state: Partial<GlassesInfo> // Only changed fields (or full snapshot)
+  fullSnapshot?: boolean // True on initial connection or reconnection
+  timestamp: Date
 }
 
 /**
@@ -332,6 +345,7 @@ export type CloudToAppMessage =
   | AppStopped
   | SettingsUpdate
   | CapabilitiesUpdate
+  | DeviceStateUpdate
   | TranscriptionData
   | TranslationData
   | AudioChunk
@@ -378,6 +392,10 @@ export function isSettingsUpdate(message: CloudToAppMessage): message is Setting
 
 export function isCapabilitiesUpdate(message: CloudToAppMessage): message is CapabilitiesUpdate {
   return message.type === CloudToAppMessageType.CAPABILITIES_UPDATE
+}
+
+export function isDeviceStateUpdate(message: CloudToAppMessage): message is DeviceStateUpdate {
+  return message.type === CloudToAppMessageType.DEVICE_STATE_UPDATE
 }
 
 export function isDataStream(message: CloudToAppMessage): message is DataStream {

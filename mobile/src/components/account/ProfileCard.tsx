@@ -6,7 +6,7 @@ import {Text} from "@/components/ignite"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import mentraAuth from "@/utils/auth/authClient"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 // Default user icon component for profile pictures
 const DefaultUserIcon = ({size = 100, color = "#999"}: {size?: number; color?: string}) => {

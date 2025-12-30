@@ -488,6 +488,7 @@ class CoreManager {
                 sgc?.setMicEnabled(false)
             }
         }
+        getStatus() // to update the UI
     }
 
     private fun setOnboardMicEnabled(enabled: Boolean) {

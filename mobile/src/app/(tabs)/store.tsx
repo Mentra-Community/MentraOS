@@ -7,11 +7,11 @@ import {WebView} from "react-native-webview"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Text, Screen, Header} from "@/components/ignite"
 import InternetConnectionFallbackComponent from "@/components/misc/InternetConnectionFallbackComponent"
-import {useAppStoreWebviewPrefetch} from "@/contexts/AppStoreWebviewPrefetchProvider"
+import {useAppStoreWebviewPrefetch} from "@/contexts/AppStoreContext"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useRefreshApplets} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function AppStoreWeb() {
   const [_webviewLoading, setWebviewLoading] = useState(true)

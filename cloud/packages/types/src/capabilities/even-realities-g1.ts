@@ -5,7 +5,7 @@
  * Defines the hardware and software features available on this device.
  */
 
-import type {Capabilities} from "@mentra/sdk"
+import type { Capabilities } from "../hardware";
 
 /**
  * Even Realities G1 capability profile
@@ -24,8 +24,8 @@ export const evenRealitiesG1: Capabilities = {
     isColor: false,
     color: "green",
     canDisplayBitmap: true,
-    resolution: {width: 640, height: 200},
-    fieldOfView: {horizontal: 25},
+    resolution: { width: 640, height: 200 },
+    fieldOfView: { horizontal: 25 },
     maxTextLines: 5,
     adjustBrightness: true,
   },
@@ -60,4 +60,4 @@ export const evenRealitiesG1: Capabilities = {
 
   // WiFi capabilities - G1 does not support WiFi
   hasWifi: false,
-}
+};

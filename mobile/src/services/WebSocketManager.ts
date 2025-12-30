@@ -1,6 +1,8 @@
 import {EventEmitter} from "events"
 
+import restComms from "@/services/RestComms"
 import {useConnectionStore} from "@/stores/connection"
+import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
 import {BackgroundTimer} from "@/utils/timers"
 
 // import mantle from "@/services/MantleManager"
@@ -32,6 +34,12 @@ class WebSocketManager extends EventEmitter {
     return WebSocketManager.instance
   }
 
+  // things to run when the websocket status changes to connected:
+  private onConnect() {
+    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())
+    restComms.updateGlassesState(statusObj)
+  }
+
   // Only emit when status actually changes
   private updateStatus(newStatus: WebSocketStatus) {
     if (newStatus !== this.previousStatus) {
@@ -40,6 +48,10 @@ class WebSocketManager extends EventEmitter {
       // Update the connection store
       const store = useConnectionStore.getState()
       store.setStatus(newStatus)
+
+      if (newStatus === WebSocketStatus.CONNECTED) {
+        this.onConnect()
+      }
     }
   }
 
@@ -167,7 +179,7 @@ class WebSocketManager extends EventEmitter {
 
   // Send binary data (for audio)
   public sendBinary(data: ArrayBuffer | Uint8Array) {
-    if (!this.isConnected()) {
+    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {
       console.log("WSM: Cannot send binary data: WebSocket not connected")
       return
     }

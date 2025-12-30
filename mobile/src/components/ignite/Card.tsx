@@ -3,7 +3,7 @@ import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, Vie
 
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {Text, TextProps} from "./Text"
 

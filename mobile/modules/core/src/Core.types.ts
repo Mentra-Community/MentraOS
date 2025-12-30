@@ -1,6 +1,3 @@
-export type OnLoadEventPayload = {
-  url: string
-}
 
 export type CoreMessageEventPayload = {
   message: string

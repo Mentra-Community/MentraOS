@@ -410,6 +410,7 @@ struct ViewState {
                 sgc?.setMicEnabled(false)
             }
         }
+        getStatus() // to update the UI
     }
 
     func setOnboardMicEnabled(_ isEnabled: Bool) {

@@ -5,9 +5,9 @@ import {TouchableOpacity, TouchableOpacityProps, TextStyle, ViewStyle, StyleProp
 import {Text} from "@/components/ignite/Text"
 import {TxKeyPath} from "@/i18n"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
-export type PillButtonVariant = "primary" | "secondary" | "icon"
+type PillButtonVariant = "primary" | "secondary" | "icon"
 
 interface PillButtonProps extends Omit<TouchableOpacityProps, "style"> {
   /**

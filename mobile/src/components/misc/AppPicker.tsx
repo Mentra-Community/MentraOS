@@ -8,7 +8,7 @@ import {Group} from "@/components/ui/Group"
 import {translate} from "@/i18n"
 import {ClientAppletInterface} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface AppPickerProps {
   visible: boolean

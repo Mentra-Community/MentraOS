@@ -69,6 +69,7 @@ export function registerApi(app: Application) {
 
   // Public APIs (no auth required)
   app.use("/api/public/permissions", publicPermissionsApi);
+
   // Console mounts (with console auth middleware)
   app.use("/api/console/account", authenticateConsole, consoleAccountApi);
   app.use("/api/console/orgs", authenticateConsole, orgsApi);

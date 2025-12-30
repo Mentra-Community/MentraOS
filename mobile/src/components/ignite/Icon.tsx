@@ -5,6 +5,7 @@ import {
   FileType2,
   Fullscreen,
   Glasses,
+  Info,
   LayoutDashboard,
   Locate,
   Unlink,
@@ -26,7 +27,7 @@ import {
 } from "react-native"
 
 import {ShoppingBagIcon, HomeIcon} from "@/components/icons"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export type IconTypes = keyof typeof iconRegistry
 
@@ -109,6 +110,7 @@ const lucideIcons = {
   "locate": Locate,
   "layout-dashboard": LayoutDashboard,
   "wifi-off": WifiOff,
+  "info": Info,
   // "house": House,
   // custom icons:
   "shopping-bag": ShoppingBagIcon,

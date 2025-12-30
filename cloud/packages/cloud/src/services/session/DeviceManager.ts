@@ -28,7 +28,7 @@ import { getCapabilitiesForModel, isModelSupported } from "../../config/hardware
 import { User } from "../../models/user.model";
 import appService from "../core/app.service";
 import { PosthogService } from "../logging/posthog.service";
-import { WebSocketReadyState } from "../websocket/types";
+import { WebSocketReadyState, type IWebSocket } from "../websocket/types";
 
 import { HardwareCompatibilityService } from "./HardwareCompatibilityService";
 import type UserSession from "./UserSession";
@@ -172,6 +172,9 @@ export class DeviceManager {
       },
       "Device state updated successfully",
     );
+
+    // Broadcast device state changes to all connected apps
+    this.broadcastDeviceStateToApps(payload);
   }
 
   /**
@@ -407,6 +410,85 @@ export class DeviceManager {
       );
     } catch (error) {
       this.logger.error(error, "Error broadcasting CAPABILITIES_UPDATE");
+    }
+  }
+
+  /**
+   * Broadcast device state update to all connected apps
+   * Similar to sendCapabilitiesUpdateToApps(), but for reactive device state
+   *
+   * @param state - Partial device state (only changed fields, or full snapshot)
+   * @param fullSnapshot - True on initial connection or reconnection
+   */
+  private broadcastDeviceStateToApps(state: Partial<GlassesInfo>, fullSnapshot = false): void {
+    try {
+      const message = {
+        type: CloudToAppMessageType.DEVICE_STATE_UPDATE,
+        state,
+        fullSnapshot,
+        timestamp: new Date(),
+      };
+
+      // Broadcast to all connected app websockets
+      for (const [packageName, ws] of this.userSession.appWebsockets.entries()) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify(message));
+          } catch (sendError) {
+            this.logger.error(
+              { error: sendError, packageName, feature: "device-state" },
+              "Error sending DEVICE_STATE_UPDATE to app",
+            );
+          }
+        }
+      }
+
+      this.logger.debug(
+        {
+          userId: this.userSession.userId,
+          changedFields: Object.keys(state),
+          appCount: this.userSession.appWebsockets.size,
+          fullSnapshot,
+          feature: "device-state",
+        },
+        "Broadcasted DEVICE_STATE_UPDATE to apps",
+      );
+    } catch (error) {
+      this.logger.error({ error, feature: "device-state" }, "Error broadcasting device state update");
+    }
+  }
+
+  /**
+   * Send full device state snapshot to a specific app
+   * Called when app first connects or reconnects
+   *
+   * @param ws - WebSocket connection to send snapshot to
+   */
+  public sendFullStateSnapshot(ws: IWebSocket): void {
+    try {
+      const fullState = this.getDeviceState();
+
+      const message = {
+        type: CloudToAppMessageType.DEVICE_STATE_UPDATE,
+        state: fullState,
+        fullSnapshot: true,
+        timestamp: new Date(),
+      };
+
+      if (ws.readyState === WebSocketReadyState.OPEN) {
+        ws.send(JSON.stringify(message));
+
+        this.logger.info(
+          {
+            userId: this.userSession.userId,
+            stateFields: Object.keys(fullState),
+            feature: "device-state",
+          },
+          "Sent full device state snapshot to app",
+        );
+      }
+    } catch (error) {
+      this.logger.error({ error, feature: "device-state" }, "Error sending full device state snapshot");
     }
   }
 

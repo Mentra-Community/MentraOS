@@ -7,7 +7,7 @@ import {Icon} from "@/components/ignite"
 import {ClientAppletInterface, getMoreAppsApplet} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {withUniwind} from "uniwind"
 import {StyleSheet} from "react-native"
 

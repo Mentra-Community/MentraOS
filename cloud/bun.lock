@@ -257,9 +257,10 @@
     },
     "packages/sdk": {
       "name": "@mentra/sdk",
-      "version": "2.1.30-beta.1",
+      "version": "2.1.31-beta.2",
       "dependencies": {
         "@logtail/pino": "^0.5.4",
+        "@mentra/types": "workspace:*",
         "axios": "^1.8.1",
         "boxen": "^8.0.1",
         "chalk": "^5.6.2",
@@ -276,7 +277,6 @@
         "ws": "^8.18.2",
       },
       "devDependencies": {
-        "@mentra/types": "workspace:*",
         "@types/babel__core": "^7.20.5",
         "@types/express": "^4.17.17",
         "@types/jsonwebtoken": "^9.0.2",

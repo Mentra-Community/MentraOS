@@ -3,7 +3,7 @@ import {View} from "react-native"
 
 import {Text, Screen, Header} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function VideoPlayer() {
   const {fileName} = useLocalSearchParams()

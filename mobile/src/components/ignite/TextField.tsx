@@ -13,7 +13,7 @@ import {
 import {isRTL, translate} from "@/i18n"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {Text, TextProps} from "./Text"
 

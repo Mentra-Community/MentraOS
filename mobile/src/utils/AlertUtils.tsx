@@ -7,7 +7,7 @@ import {Icon, IconTypes} from "@/components/ignite"
 import BasicDialog from "@/components/ui/BasicDialog"
 
 import {SettingsNavigationUtils} from "./SettingsNavigationUtils"
-import {useAppTheme} from "./useAppTheme"
+import {useAppTheme} from "../contexts/ThemeContext"
 
 // eslint-disable-next-line
 import {StyleSheet} from "react-native"

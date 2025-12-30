@@ -2,15 +2,14 @@ import {ReactElement} from "react"
 import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewStyle} from "react-native"
 
 import {isRTL, translate} from "@/i18n"
-import {$styles} from "@/theme"
 import type {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ExtendedEdge, useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
 
 import {IconTypes, PressableIcon} from "./Icon"
 import {Text, TextProps} from "./Text"
 
-export interface HeaderProps {
+interface HeaderProps {
   /**
    * The layout of the title relative to the action components.
    * - `center` will force the title to always be centered relative to the header. If the title or the action buttons are too long, the title will be cut off.
@@ -29,10 +28,6 @@ export interface HeaderProps {
    * Optional inner header wrapper style override.
    */
   style?: StyleProp<ViewStyle>
-  /**
-   * Optional outer header container style override.
-   */
-  containerStyle?: StyleProp<ViewStyle>
   /**
    * Background color
    */
@@ -180,7 +175,6 @@ export function Header(props: HeaderProps) {
     titleContainerStyle: $titleContainerStyleOverride,
     style: $styleOverride,
     titleStyle: $titleStyleOverride,
-    containerStyle: $containerStyleOverride,
   } = props
 
   const $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges, "margin")
@@ -191,55 +185,41 @@ export function Header(props: HeaderProps) {
   // const {theme} = useAppTheme()
 
   return (
-    <View style={[$container, $containerInsets, {backgroundColor}, $containerStyleOverride]}>
-      <View style={[$styles.row, themed($wrapper), $styleOverride]}>
-        {/* <LinearGradient
-      colors={theme.isDark ? ["#090A14", "#080D33"] : ["#FFA500", "#FFF5E6"]}
-      style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
-      }}
-      start={{x: 0, y: 0}}
-      end={{x: 0, y: 1}}> */}
-        <HeaderAction
-          tx={leftTx}
-          text={leftText}
-          icon={leftIcon}
-          iconColor={leftIconColor}
-          onPress={onLeftPress}
-          txOptions={leftTxOptions}
-          backgroundColor={backgroundColor}
-          ActionComponent={LeftActionComponent}
-        />
+    <View style={[themed($wrapper), $containerInsets, {backgroundColor}, $styleOverride]}>
+      <HeaderAction
+        tx={leftTx}
+        text={leftText}
+        icon={leftIcon}
+        iconColor={leftIconColor}
+        onPress={onLeftPress}
+        txOptions={leftTxOptions}
+        backgroundColor={backgroundColor}
+        ActionComponent={LeftActionComponent}
+      />
 
-        {!!titleContent && (
-          <View
-            style={[
-              titleMode === "center" && themed($titleWrapperCenter),
-              titleMode === "flex" && themed($titleWrapperFlex),
-              $titleContainerStyleOverride,
-            ]}
-            pointerEvents="none">
-            <Text weight="normal" size="lg" text={titleContent} style={[$title, $titleStyleOverride]} />
-            {!!subtitleContent && <Text weight="normal" size="xs" text={subtitleContent} />}
-          </View>
-        )}
+      {!!titleContent && (
+        <View
+          style={[
+            titleMode === "center" && themed($titleWrapperCenter),
+            titleMode === "flex" && themed($titleWrapperFlex),
+            $titleContainerStyleOverride,
+          ]}
+          pointerEvents="none">
+          <Text weight="normal" size="lg" text={titleContent} style={[$title, $titleStyleOverride]} />
+          {!!subtitleContent && <Text weight="normal" size="xs" text={subtitleContent} />}
+        </View>
+      )}
 
-        <HeaderAction
-          tx={rightTx}
-          text={rightText}
-          icon={rightIcon}
-          iconColor={rightIconColor}
-          onPress={onRightPress}
-          txOptions={rightTxOptions}
-          backgroundColor={backgroundColor}
-          ActionComponent={RightActionComponent}
-        />
-        {/* </LinearGradient> */}
-      </View>
+      <HeaderAction
+        tx={rightTx}
+        text={rightText}
+        icon={rightIcon}
+        iconColor={rightIconColor}
+        onPress={onRightPress}
+        txOptions={rightTxOptions}
+        backgroundColor={backgroundColor}
+        ActionComponent={RightActionComponent}
+      />
     </View>
   )
 }
@@ -287,20 +267,14 @@ function HeaderAction(props: HeaderActionProps) {
   return <View style={[$actionFillerContainer, {backgroundColor}]} />
 }
 
-const $wrapper: ThemedStyle<ViewStyle> = () => ({
-  height: 48,
-  // height: 28,
+const $wrapper: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
   alignItems: "center",
   justifyContent: "space-between",
+  paddingBottom: spacing.s3,
 })
 
-const $container: ViewStyle = {
-  width: "100%",
-}
-
 const $title: TextStyle = {
-  // textAlign: "center",
-  // fontSize: 15,
   textAlign: "left",
   fontSize: 20,
 }
@@ -309,7 +283,6 @@ const $actionTextContainer: ThemedStyle<ViewStyle> = () => ({
   flexGrow: 0,
   alignItems: "center",
   justifyContent: "center",
-  height: "100%",
   zIndex: 2,
 })
 

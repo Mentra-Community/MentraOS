@@ -11,7 +11,7 @@ import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function PrivacySettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)

@@ -11,10 +11,10 @@
     "emitDeclarationOnly": true,
     "declaration": true,
     "declarationMap": true,
-    "baseUrl": ".",
-    "paths": {},
+    "composite": true,
     "lib": ["ES2020"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/test/**"]
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/test/**"],
+  "references": [{"path": "../types"}]
 }
