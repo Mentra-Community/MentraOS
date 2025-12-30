@@ -10,14 +10,12 @@
  */
 
 import type { Logger } from "pino";
+
+import { StreamType, CloudToAppMessageType, type CalendarEvent, type DataStream } from "@mentra/sdk";
+
+import { WebSocketReadyState } from "../websocket/types";
+
 import type UserSession from "./UserSession";
-import {
-  StreamType,
-  CloudToAppMessageType,
-  type CalendarEvent,
-  type DataStream,
-} from "@mentra/sdk";
-import WebSocket from "ws";
 
 export class CalendarManager {
   private readonly userSession: UserSession;
@@ -35,10 +33,7 @@ export class CalendarManager {
   constructor(userSession: UserSession) {
     this.userSession = userSession;
     this.logger = userSession.logger.child({ service: "CalendarManager" });
-    this.logger.info(
-      { userId: userSession.userId },
-      "CalendarManager initialized",
-    );
+    this.logger.info({ userId: userSession.userId }, "CalendarManager initialized");
   }
 
   /**
@@ -48,15 +43,10 @@ export class CalendarManager {
    */
   async updateEventsFromAPI(expoEvents: any[]): Promise<void> {
     try {
-      const normalizedEvents = expoEvents.map((expoEvent) =>
-        this.normalizeFromExpo(expoEvent),
-      );
+      const normalizedEvents = expoEvents.map((expoEvent) => this.normalizeFromExpo(expoEvent));
       normalizedEvents.forEach((normalized) => {
         if (!normalized) {
-          this.logger.warn(
-            { expoEvents },
-            "Ignored invalid calendar payload from client",
-          );
+          this.logger.warn({ expoEvents }, "Ignored invalid calendar payload from client");
           return;
         }
 
@@ -64,9 +54,7 @@ export class CalendarManager {
         this.broadcast(normalized);
       });
     } catch (error) {
-      this.logger
-        .child({ expoEvents })
-        .error(error, "Error updating calendar from client");
+      this.logger.child({ expoEvents }).error(error, "Error updating calendar from client");
     }
   }
 
@@ -81,9 +69,7 @@ export class CalendarManager {
       this.addEvent(normalized);
       this.broadcast(normalized);
     } catch (error) {
-      this.logger
-        .child({ event })
-        .error(error, "Error ingesting calendar event from glasses");
+      this.logger.child({ event }).error(error, "Error ingesting calendar event from glasses");
     }
   }
 
@@ -101,9 +87,7 @@ export class CalendarManager {
   public handleSubscriptionUpdate(packageNames: string[]): void {
     try {
       // Detect and relay to newly subscribed apps
-      const newPackages = packageNames.filter(
-        (p) => !this.subscribedApps.has(p),
-      );
+      const newPackages = packageNames.filter((p) => !this.subscribedApps.has(p));
 
       for (const packageName of newPackages) {
         this.relayToApp(packageName);
@@ -119,10 +103,7 @@ export class CalendarManager {
    */
   public handleUnsubscribe(packageName: string): void {
     this.subscribedApps.delete(packageName);
-    this.logger.debug(
-      { packageName },
-      "Removed app from calendar subscriptions",
-    );
+    this.logger.debug({ packageName }, "Removed app from calendar subscriptions");
   }
 
   /**
@@ -144,8 +125,7 @@ export class CalendarManager {
     // Try common Expo Calendar event field names
     const id = this.toStringSafe(input.id ?? input.eventId);
     const title = this.toStringSafe(input.title ?? "");
-    const start =
-      input.startDate ?? input.start ?? input.dtStart ?? input.start_time;
+    const start = input.startDate ?? input.start ?? input.dtStart ?? input.start_time;
     const end = input.endDate ?? input.end ?? input.dtEnd ?? input.end_time;
     const tz = this.toStringSafe(input.timeZone ?? input.timezone ?? "");
 
@@ -200,9 +180,7 @@ export class CalendarManager {
    */
   private addEvent(event: CalendarEvent): void {
     // Dedup by eventId + dtStart
-    const idx = this.events.findIndex(
-      (e) => e.eventId === event.eventId && e.dtStart === event.dtStart,
-    );
+    const idx = this.events.findIndex((e) => e.eventId === event.eventId && e.dtStart === event.dtStart);
 
     if (idx >= 0) {
       this.events[idx] = event; // replace existing
@@ -235,9 +213,7 @@ export class CalendarManager {
     try {
       this.userSession.relayMessageToApps(event);
     } catch (error) {
-      this.logger
-        .child({ event })
-        .error(error, "Error broadcasting calendar event to Apps");
+      this.logger.child({ event }).error(error, "Error broadcasting calendar event to Apps");
     }
   }
 
@@ -257,10 +233,8 @@ export class CalendarManager {
       const aEnd = this.safeTime(a.dtEnd ?? a.dtStart);
       const bEnd = this.safeTime(b.dtEnd ?? b.dtStart);
 
-      const aIsFutureOrPresent =
-        aStart >= now || (aStart <= now && aEnd >= now);
-      const bIsFutureOrPresent =
-        bStart >= now || (bStart <= now && bEnd >= now);
+      const aIsFutureOrPresent = aStart >= now || (aStart <= now && aEnd >= now);
+      const bIsFutureOrPresent = bStart >= now || (bStart <= now && bEnd >= now);
 
       if (aIsFutureOrPresent !== bIsFutureOrPresent) {
         return aIsFutureOrPresent ? -1 : 1; // future/present first
@@ -306,19 +280,13 @@ export class CalendarManager {
     const cachedEvents = this.getCachedEvents();
 
     if (cachedEvents.length === 0) {
-      this.logger.debug(
-        { packageName },
-        "No calendar events to relay to newly subscribed app",
-      );
+      this.logger.debug({ packageName }, "No calendar events to relay to newly subscribed app");
       return;
     }
 
     const appWebsocket = this.userSession.appWebsockets.get(packageName);
-    if (!appWebsocket || appWebsocket.readyState !== WebSocket.OPEN) {
-      this.logger.warn(
-        { packageName },
-        "App websocket not available for calendar relay",
-      );
+    if (!appWebsocket || appWebsocket.readyState !== WebSocketReadyState.OPEN) {
+      this.logger.warn({ packageName }, "App websocket not available for calendar relay");
       return;
     }
 

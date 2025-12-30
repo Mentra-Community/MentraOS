@@ -1,4 +1,9 @@
+import { Logger } from "pino";
+import WebSocket from "ws";
+
 import { StreamType, TranslationData } from "@mentra/sdk";
+
+import { ResourceTracker } from "../../../../utils/resource-tracker";
 import {
   AlibabaTranslationConfig,
   TranslationProvider,
@@ -12,8 +17,6 @@ import {
   TranslationProviderError,
   TranslationStreamHealth,
 } from "../types";
-import { Logger } from "pino";
-import WebSocket from "ws";
 
 interface AlibabaMessage {
   header: {
@@ -88,6 +91,8 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
 
   private ws?: WebSocket;
   private isClosing = false;
+  private disposed = false;
+  private resources = new ResourceTracker();
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 3;
   private pendingAudioChunks: ArrayBuffer[] = [];
@@ -127,10 +132,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
         "Alibaba translation stream initialized",
       );
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to initialize Alibaba translation stream",
-      );
+      this.logger.error({ error }, "Failed to initialize Alibaba translation stream");
       this.handleError(error as Error);
       throw error;
     }
@@ -138,10 +140,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
 
   async writeAudio(data: ArrayBuffer): Promise<boolean> {
     try {
-      if (
-        this.state !== TranslationStreamState.READY &&
-        this.state !== TranslationStreamState.ACTIVE
-      ) {
+      if (this.state !== TranslationStreamState.READY && this.state !== TranslationStreamState.ACTIVE) {
         // Buffer audio if still initializing
         if (this.state === TranslationStreamState.INITIALIZING) {
           this.pendingAudioChunks.push(data);
@@ -168,10 +167,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
 
       return true;
     } catch (error) {
-      this.logger.warn(
-        { error },
-        "Failed to write audio to Alibaba translation stream",
-      );
+      this.logger.warn({ error }, "Failed to write audio to Alibaba translation stream");
       this.metrics.audioWriteFailures++;
       this.metrics.consecutiveFailures++;
       return false;
@@ -180,9 +176,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
 
   getHealth(): TranslationStreamHealth {
     return {
-      isAlive:
-        this.state === TranslationStreamState.READY ||
-        this.state === TranslationStreamState.ACTIVE,
+      isAlive: this.state === TranslationStreamState.READY || this.state === TranslationStreamState.ACTIVE,
       lastActivity: this.lastActivity,
       consecutiveFailures: this.metrics.consecutiveFailures,
       lastSuccessfulWrite: this.metrics.lastSuccessfulWrite,
@@ -191,22 +185,24 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
   }
 
   async close(): Promise<void> {
-    if (this.isClosing || this.state === TranslationStreamState.CLOSED) {
+    if (this.isClosing || this.state === TranslationStreamState.CLOSED || this.disposed) {
       return;
     }
 
+    this.disposed = true;
     this.isClosing = true;
     this.state = TranslationStreamState.CLOSING;
+
+    // Clean up all tracked resources (removes event listeners)
+    this.resources.dispose();
+
     this.sendFinishTask();
   }
 
   private processPendingAudio(): void {
     if (this.pendingAudioChunks.length === 0) return;
 
-    this.logger.debug(
-      { count: this.pendingAudioChunks.length },
-      "Processing pending audio chunks",
-    );
+    this.logger.debug({ count: this.pendingAudioChunks.length }, "Processing pending audio chunks");
 
     for (const chunk of this.pendingAudioChunks) {
       this.writeAudio(chunk);
@@ -232,50 +228,42 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
           reject(new Error("Alibaba WebSocket connection timeout"));
         }, 10000); // 10 second timeout
 
-        ws.on("open", () => {
+        // Store handler references for proper cleanup (prevents memory leaks)
+        const openHandler = () => {
+          if (this.disposed) return;
           clearTimeout(connectionTimeout);
           this.logger.debug("Alibaba translation WebSocket connected");
           this.sendRunTaskMessage();
           this.state = TranslationStreamState.READY;
           resolve();
-        });
+        };
 
-        ws.on("message", (data: WebSocket.Data) => {
+        const messageHandler = (data: WebSocket.Data) => {
+          if (this.disposed) return;
           try {
             const message = JSON.parse(data.toString()) as AlibabaMessage;
             this.handleMessage(message);
             // Don't resolve here - Alibaba doesn't send 'ready' in the message handler
             // The actual ready state is handled in handleMessage
           } catch (error) {
-            this.logger.error(
-              { error },
-              "Alibaba translation WebSocket message error",
-            );
+            this.logger.error({ error }, "Alibaba translation WebSocket message error");
             this.handleError(error as Error);
           }
-        });
+        };
 
-        ws.on("error", (error) => {
+        const errorHandler = (error: Error) => {
+          if (this.disposed) return;
           this.logger.error({ error }, "Alibaba translation WebSocket error");
           this.handleError(
-            new TranslationProviderError(
-              "Alibaba translation WebSocket error",
-              TranslationProviderType.ALIBABA,
-              error,
-            ),
+            new TranslationProviderError("Alibaba translation WebSocket error", TranslationProviderType.ALIBABA, error),
           );
           reject(error);
-        });
+        };
 
-        ws.on("close", (code, reason) => {
-          this.logger.info(
-            { code, reason: reason.toString() },
-            "Alibaba translation WebSocket closed",
-          );
-          if (
-            !this.isClosing &&
-            this.reconnectAttempts < this.maxReconnectAttempts
-          ) {
+        const closeHandler = (code: number, reason: Buffer) => {
+          if (this.disposed) return;
+          this.logger.info({ code, reason: reason.toString() }, "Alibaba translation WebSocket closed");
+          if (!this.isClosing && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             this.logger.info(
               { attempt: this.reconnectAttempts },
@@ -286,12 +274,24 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
             this.state = TranslationStreamState.CLOSED;
             this.callbacks.onClosed?.();
           }
+        };
+
+        ws.on("open", openHandler);
+        ws.on("message", messageHandler);
+        ws.on("error", errorHandler);
+        ws.on("close", closeHandler);
+
+        // Track handlers for cleanup
+        this.resources.track(() => {
+          if (this.ws) {
+            this.ws.off("open", openHandler);
+            this.ws.off("message", messageHandler);
+            this.ws.off("error", errorHandler);
+            this.ws.off("close", closeHandler);
+          }
         });
       } catch (error) {
-        this.logger.error(
-          { error },
-          "Failed to connect to Alibaba translation stream",
-        );
+        this.logger.error({ error }, "Failed to connect to Alibaba translation stream");
         reject(error);
       }
     });
@@ -357,9 +357,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
         this.logger.warn(
           {
             targetLanguage: this.targetLanguage,
-            availableTranslations: message.payload.output.translations
-              ? ["translation"]
-              : [],
+            availableTranslations: message.payload.output.translations ? ["translation"] : [],
           },
           "No translation found for target language",
         );
@@ -393,8 +391,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
         this.latencyMeasurements.shift();
       }
       this.metrics.averageLatency =
-        this.latencyMeasurements.reduce((a, b) => a + b, 0) /
-        this.latencyMeasurements.length;
+        this.latencyMeasurements.reduce((a, b) => a + b, 0) / this.latencyMeasurements.length;
 
       // Send to callback
       this.callbacks.onData?.(translationData);
@@ -409,10 +406,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
         "Alibaba translation result",
       );
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to handle Alibaba translation result",
-      );
+      this.logger.error({ error }, "Failed to handle Alibaba translation result");
       this.metrics.errorCount++;
     }
   }
@@ -466,9 +460,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
           format: "wav",
           transcription_enabled: true,
           translation_enabled: true,
-          translation_target_languages: [
-            this.normalizeLanguage(this.targetLanguage),
-          ],
+          translation_target_languages: [this.normalizeLanguage(this.targetLanguage)],
         },
         input: {},
       },
@@ -536,10 +528,7 @@ export class AlibabaTranslationProvider implements TranslationProvider {
       this.isInitialized = true;
       this.logger.info("Alibaba translation provider initialized");
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to initialize Alibaba translation provider",
-      );
+      this.logger.error({ error }, "Failed to initialize Alibaba translation provider");
       throw error;
     }
   }
@@ -549,9 +538,7 @@ export class AlibabaTranslationProvider implements TranslationProvider {
     this.logger.info("Alibaba translation provider disposed");
   }
 
-  async createTranslationStream(
-    options: TranslationStreamOptions,
-  ): Promise<TranslationStreamInstance> {
+  async createTranslationStream(options: TranslationStreamOptions): Promise<TranslationStreamInstance> {
     if (!this.isInitialized) {
       throw new Error("Alibaba translation provider not initialized");
     }

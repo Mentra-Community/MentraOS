@@ -195,6 +195,14 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
             Log.i(TAG, "✅ Firmware loaded into memory: " + bytesRead + " bytes");
             Log.d(TAG, "📦 First 20 bytes: " + ByteUtil.outputHexString(fileData, 0, Math.min(fileLen, 20)));
             Log.d(TAG, "📦 Last 20 bytes: " + ByteUtil.outputHexString(fileData, Math.max(0, fileLen - 20), Math.min(fileLen, 20)));
+
+            // Calculate and log CRC32 for debugging
+            long crc32 = BesOtaUtil.crc32(fileData, 0, fileLen);
+            Log.i(TAG, "========== BesOtaManager CRC32 Debug ==========");
+            Log.i(TAG, "Firmware CRC32 (decimal): " + crc32);
+            Log.i(TAG, "Firmware CRC32 (hex): 0x" + String.format("%08X", crc32));
+            Log.i(TAG, "================================================");
+
             bInit = true;
             if (fileLen > BesOtaUtil.MAX_FILE_SIZE) {
                 Log.e(TAG, "❌ BES firmware file too big, len=" + fileLen + " (max: " + BesOtaUtil.MAX_FILE_SIZE + ")");
@@ -209,7 +217,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
         }
         return false;
     }
-    
+
     /**
      * Start firmware update process
      * @param filePath Path to firmware .bin file
@@ -490,8 +498,21 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
                     System.arraycopy(recvBuffer, BesBaseCommand.MIN_LENGTH, m.body, 0, m.body.length);
                 }
                 return m;
-            } else if (m.len + BesBaseCommand.MIN_LENGTH < curRecvLen || curRecvLen > RECV_BUFFER_SIZE) {
-                Log.e(TAG, "Receive error, curRecvLen=" + curRecvLen + ", expected=" + (m.len + BesBaseCommand.MIN_LENGTH));
+            } else if (m.len + BesBaseCommand.MIN_LENGTH < curRecvLen) {
+                // More bytes than expected - extract first message and log extra bytes
+                int expectedLen = m.len + BesBaseCommand.MIN_LENGTH;
+                int extraBytes = curRecvLen - expectedLen;
+                Log.w(TAG, "Received " + curRecvLen + " bytes but expected " + expectedLen + " - extra " + extraBytes + " bytes will be ignored");
+                Log.w(TAG, "Extra bytes: " + ByteUtil.outputHexString(recvBuffer, expectedLen, extraBytes));
+                m.error = false;
+                if (m.len > 0) {
+                    m.body = new byte[m.len];
+                    System.arraycopy(recvBuffer, BesBaseCommand.MIN_LENGTH, m.body, 0, m.body.length);
+                }
+                curRecvLen = 0;
+                return m;
+            } else if (curRecvLen > RECV_BUFFER_SIZE) {
+                Log.e(TAG, "Receive error, curRecvLen=" + curRecvLen + " exceeds buffer size " + RECV_BUFFER_SIZE);
                 m.error = true;
                 curRecvLen = 0;
                 return m;
@@ -513,8 +534,21 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
                     System.arraycopy(data, offset + BesBaseCommand.MIN_LENGTH, m.body, 0, m.body.length);
                 }
                 return m;
-            } else if (m.len + BesBaseCommand.MIN_LENGTH < len || len > RECV_BUFFER_SIZE) {
-                Log.e(TAG, "Receive error, len=" + len + ", expected=" + (m.len + BesBaseCommand.MIN_LENGTH));
+            } else if (m.len + BesBaseCommand.MIN_LENGTH < len) {
+                // More bytes than expected - extract first message and log extra bytes
+                int expectedLen = m.len + BesBaseCommand.MIN_LENGTH;
+                int extraBytes = len - expectedLen;
+                Log.w(TAG, "Received " + len + " bytes but expected " + expectedLen + " - extra " + extraBytes + " bytes will be ignored");
+                Log.w(TAG, "Extra bytes: " + ByteUtil.outputHexString(data, offset + expectedLen, extraBytes));
+                m.error = false;
+                if (m.len > 0) {
+                    m.body = new byte[m.len];
+                    System.arraycopy(data, offset + BesBaseCommand.MIN_LENGTH, m.body, 0, m.body.length);
+                }
+                curRecvLen = 0;
+                return m;
+            } else if (len > RECV_BUFFER_SIZE) {
+                Log.e(TAG, "Receive error, len=" + len + " exceeds buffer size " + RECV_BUFFER_SIZE);
                 m.error = true;
                 curRecvLen = 0;
                 return m;
@@ -649,6 +683,17 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
                 
                 crc32ConfirmSuccess();
                 if (isSentFinish()) {
+                    // Calculate CRC32 of all sent data for comparison
+                    long sentCrc32 = BesOtaUtil.crc32(fileData, 0, sentPos);
+                    Log.i(TAG, "========== FinishSend CRC32 Debug ==========");
+                    Log.i(TAG, "Total bytes sent: " + sentPos);
+                    Log.i(TAG, "File length: " + fileLen);
+                    Log.i(TAG, "Sent data CRC32 (decimal): " + sentCrc32);
+                    Log.i(TAG, "Sent data CRC32 (hex): 0x" + String.format("%08X", sentCrc32));
+                    Log.i(TAG, "First 16 bytes of sent data: " + ByteUtil.outputHexString(fileData, 0, Math.min(16, sentPos)));
+                    Log.i(TAG, "Last 16 bytes of sent data: " + ByteUtil.outputHexString(fileData, Math.max(0, sentPos - 16), Math.min(16, sentPos)));
+                    Log.i(TAG, "============================================");
+
                     byte[] data = SCmd_FinshSend();
                     Log.d(TAG, "Sending FinishSend command, data=" + (data != null ? ByteUtil.outputHexString(data, 0, data.length) : "null"));
                     send(data);
@@ -666,7 +711,21 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
                 Log.d(TAG, "Sending OtaApply command, data=" + (data != null ? ByteUtil.outputHexString(data, 0, data.length) : "null"));
                 send(data);
             } else {
-                Log.e(TAG, "Send finish error");
+                Log.e(TAG, "❌ ========== WHOLE CRC32 CHECK FAILED ==========");
+                Log.e(TAG, "❌ Response: len=" + msg.len + ", body=" + (msg.body != null ? ByteUtil.outputHexString(msg.body, 0, msg.body.length) : "null"));
+                Log.e(TAG, "❌ Expected body[0]=1 (CRC match), got body[0]=" + (msg.body != null && msg.body.length > 0 ? msg.body[0] : "null"));
+                Log.e(TAG, "❌ This means the BES chip computed a different CRC32 than what we sent in SetStartInfo");
+                Log.e(TAG, "❌ Possible causes:");
+                Log.e(TAG, "❌   1. Data corruption during UART transfer");
+                Log.e(TAG, "❌   2. File changed between SetStartInfo and data transfer");
+                Log.e(TAG, "❌   3. Bytes dropped or duplicated during transmission");
+                Log.e(TAG, "❌ Sent bytes: " + sentPos + ", Expected: " + fileLen);
+                if (sentPos != fileLen) {
+                    Log.e(TAG, "❌ SIZE MISMATCH! sentPos=" + sentPos + " != fileLen=" + fileLen);
+                }
+                Log.e(TAG, "❌ =============================================");
+                EventBus.getDefault().post(BesOtaProgressEvent.createFailed("Whole CRC32 check failed - data corruption?"));
+                cleanup();
             }
         }
         else if (msg.cmd == BesProtocolConstants.RCMD_APPLY) {

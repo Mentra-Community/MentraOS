@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 // MentraOS/cloud/packages/cloud/src/services/session/UserSettingsManager.ts
 
 /**
@@ -18,10 +18,13 @@
  * - Only metric_system_enabled is bridged in this phase. Other keys are not broadcast.
  */
 
-import WebSocket from "ws";
 import type { Logger } from "pino";
-import type UserSession from "./UserSession";
+
 import { UserSettings } from "../../models/user-settings.model";
+import { WebSocketReadyState } from "../websocket/types";
+
+import type UserSession from "./UserSession";
+
 
 export class UserSettingsManager {
   private readonly userSession: UserSession;
@@ -183,7 +186,7 @@ export class UserSettingsManager {
 
       for (const packageName of subscribedApps) {
         const ws = this.userSession.appWebsockets.get(packageName);
-        if (!ws || ws.readyState !== WebSocket.OPEN) continue;
+        if (!ws || ws.readyState !== WebSocketReadyState.OPEN) continue;
 
         const message = {
           ...payload,

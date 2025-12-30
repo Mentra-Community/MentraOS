@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import Photos
 
 public class CoreModule: Module {
     public func definition() -> ModuleDefinition {
@@ -17,141 +18,199 @@ public class CoreModule: Module {
         // MARK: - Display Commands
 
         AsyncFunction("displayEvent") { (params: [String: Any]) in
-            CoreManager.shared.handle_display_event(params)
+            await MainActor.run {
+                CoreManager.shared.displayEvent(params)
+            }
         }
 
         AsyncFunction("displayText") { (params: [String: Any]) in
-            CoreManager.shared.handle_display_text(params)
+            await MainActor.run {
+                CoreManager.shared.displayText(params)
+            }
         }
 
         // MARK: - Connection Commands
 
-        AsyncFunction("requestStatus") {
-            CoreManager.shared.handle_request_status()
+        AsyncFunction("getStatus") {
+            await MainActor.run {
+                CoreManager.shared.getStatus()
+            }
         }
 
         AsyncFunction("connectDefault") {
-            Bridge.log("calling connectDefault!")
-            CoreManager.shared.handle_connect_default()
+            await MainActor.run {
+                CoreManager.shared.connectDefault()
+            }
         }
 
         AsyncFunction("connectByName") { (deviceName: String) in
-            CoreManager.shared.handle_connect_by_name(deviceName)
+            await MainActor.run {
+                CoreManager.shared.connectByName(deviceName)
+            }
         }
 
         AsyncFunction("connectSimulated") {
-            Bridge.log("calling connectSimulated!")
-            CoreManager.shared.handle_connect_simulated()
+            await MainActor.run {
+                CoreManager.shared.connectSimulated()
+            }
         }
 
         AsyncFunction("disconnect") {
-            Bridge.log("calling disconnect!")
-            CoreManager.shared.handle_disconnect()
+            await MainActor.run {
+                CoreManager.shared.disconnect()
+            }
         }
 
         AsyncFunction("forget") {
-            Bridge.log("calling forget!")
-            CoreManager.shared.handle_forget()
+            await MainActor.run {
+                CoreManager.shared.forget()
+            }
         }
 
         AsyncFunction("findCompatibleDevices") { (modelName: String) in
-            CoreManager.shared.handle_find_compatible_devices(modelName)
+            await MainActor.run {
+                CoreManager.shared.findCompatibleDevices(modelName)
+            }
         }
 
         AsyncFunction("showDashboard") {
-            CoreManager.shared.handle_show_dashboard()
+            await MainActor.run {
+                CoreManager.shared.showDashboard()
+            }
         }
 
         // MARK: - WiFi Commands
 
         AsyncFunction("requestWifiScan") {
-            CoreManager.shared.handle_request_wifi_scan()
+            await MainActor.run {
+                CoreManager.shared.requestWifiScan()
+            }
         }
 
         AsyncFunction("sendWifiCredentials") { (ssid: String, password: String) in
-            CoreManager.shared.handle_send_wifi_credentials(ssid, password)
+            await MainActor.run {
+                CoreManager.shared.sendWifiCredentials(ssid, password)
+            }
         }
 
         AsyncFunction("setHotspotState") { (enabled: Bool) in
-            CoreManager.shared.handle_set_hotspot_state(enabled)
+            await MainActor.run {
+                CoreManager.shared.setHotspotState(enabled)
+            }
         }
 
         // MARK: - Gallery Commands
 
         AsyncFunction("queryGalleryStatus") {
-            CoreManager.shared.handle_query_gallery_status()
+            await MainActor.run {
+                CoreManager.shared.queryGalleryStatus()
+            }
         }
 
         AsyncFunction("photoRequest") {
-            (requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?) in
-            CoreManager.shared.handle_photo_request(requestId, appId, size, webhookUrl, authToken, compress)
+            (
+                requestId: String, appId: String, size: String, webhookUrl: String?,
+                authToken: String?, compress: String?
+            ) in
+            await MainActor.run {
+                CoreManager.shared.photoRequest(
+                    requestId, appId, size, webhookUrl, authToken, compress
+                )
+            }
         }
 
         // MARK: - Video Recording Commands
 
         AsyncFunction("startBufferRecording") {
-            CoreManager.shared.handle_start_buffer_recording()
+            await MainActor.run {
+                CoreManager.shared.startBufferRecording()
+            }
         }
 
         AsyncFunction("stopBufferRecording") {
-            CoreManager.shared.handle_stop_buffer_recording()
+            await MainActor.run {
+                CoreManager.shared.stopBufferRecording()
+            }
         }
 
         AsyncFunction("saveBufferVideo") { (requestId: String, durationSeconds: Int) in
-            CoreManager.shared.handle_save_buffer_video(requestId, durationSeconds)
+            await MainActor.run {
+                CoreManager.shared.saveBufferVideo(requestId, durationSeconds)
+            }
         }
 
         AsyncFunction("startVideoRecording") { (requestId: String, save: Bool) in
-            CoreManager.shared.handle_start_video_recording(requestId, save)
+            await MainActor.run {
+                CoreManager.shared.startVideoRecording(requestId, save)
+            }
         }
 
         AsyncFunction("stopVideoRecording") { (requestId: String) in
-            CoreManager.shared.handle_stop_video_recording(requestId)
+            await MainActor.run {
+                CoreManager.shared.stopVideoRecording(requestId)
+            }
         }
 
         // MARK: - RTMP Stream Commands
 
         AsyncFunction("startRtmpStream") { (params: [String: Any]) in
-            CoreManager.shared.handle_start_rtmp_stream(params)
+            await MainActor.run {
+                CoreManager.shared.startRtmpStream(params)
+            }
         }
 
         AsyncFunction("stopRtmpStream") {
-            CoreManager.shared.handle_stop_rtmp_stream()
+            await MainActor.run {
+                CoreManager.shared.stopRtmpStream()
+            }
         }
 
         AsyncFunction("keepRtmpStreamAlive") { (params: [String: Any]) in
-            CoreManager.shared.handle_keep_rtmp_stream_alive(params)
+            await MainActor.run {
+                CoreManager.shared.keepRtmpStreamAlive(params)
+            }
         }
 
         // MARK: - Microphone Commands
 
-        AsyncFunction("microphoneStateChange") { (requiredDataStrings: [String], bypassVad: Bool) in
-            let requiredData = SpeechRequiredDataType.fromStringArray(requiredDataStrings)
-            CoreManager.shared.handle_microphone_state_change(requiredData, bypassVad)
+        AsyncFunction("setMicState") { (sendPcmData: Bool, sendTranscript: Bool, bypassVad: Bool) in
+            await MainActor.run {
+                CoreManager.shared.setMicState(sendPcmData, sendTranscript, bypassVad)
+            }
         }
 
         AsyncFunction("restartTranscriber") {
-            CoreManager.shared.restartTranscriber()
+            await MainActor.run {
+                CoreManager.shared.restartTranscriber()
+            }
         }
 
         // MARK: - RGB LED Control
 
-        AsyncFunction("rgbLedControl") { (requestId: String, packageName: String?, action: String, color: String?, ontime: Int, offtime: Int, count: Int) in
-            CoreManager.shared.handle_rgb_led_control(
-                requestId: requestId,
-                packageName: packageName,
-                action: action,
-                color: color,
-                ontime: ontime,
-                offtime: offtime,
-                count: count
-            )
+        AsyncFunction("rgbLedControl") {
+            (
+                requestId: String, packageName: String?, action: String, color: String?,
+                ontime: Int, offtime: Int, count: Int
+            ) in
+            await MainActor.run {
+                CoreManager.shared.rgbLedControl(
+                    requestId: requestId,
+                    packageName: packageName,
+                    action: action,
+                    color: color,
+                    ontime: ontime,
+                    offtime: offtime,
+                    count: count
+                )
+            }
         }
 
         // MARK: - Settings Commands
 
         AsyncFunction("updateSettings") { (params: [String: Any]) in
-            CoreManager.shared.handle_update_settings(params)
+            await MainActor.run {
+                CoreManager.shared.updateSettings(params)
+            }
         }
 
         // MARK: - STT Commands
@@ -205,6 +264,59 @@ public class CoreModule: Module {
 
         AsyncFunction("getInstalledAppsForNotifications") { () -> [[String: Any]] in
             return []
+        }
+
+        // MARK: - Media Library Commands
+
+        AsyncFunction("saveToGalleryWithDate") {
+            (filePath: String, captureTimeMillis: Int64?) -> [String: Any] in
+            let fileURL = URL(fileURLWithPath: filePath)
+
+            guard FileManager.default.fileExists(atPath: filePath) else {
+                return ["success": false, "error": "File does not exist"]
+            }
+
+            var assetIdentifier: String?
+            let semaphore = DispatchSemaphore(value: 0)
+            var resultError: Error?
+
+            PHPhotoLibrary.shared().performChanges {
+                let creationRequest: PHAssetChangeRequest
+                let pathExtension = fileURL.pathExtension.lowercased()
+
+                if ["mp4", "mov", "avi", "m4v"].contains(pathExtension) {
+                    // Video
+                    creationRequest = PHAssetChangeRequest.creationRequestForAssetFromVideo(
+                        atFileURL: fileURL)!
+                } else {
+                    // Photo
+                    creationRequest = PHAssetChangeRequest.creationRequestForAssetFromImage(
+                        atFileURL: fileURL)!
+                }
+
+                // Set the creation date if provided
+                if let captureMillis = captureTimeMillis {
+                    let captureDate = Date(
+                        timeIntervalSince1970: TimeInterval(captureMillis) / 1000.0)
+                    creationRequest.creationDate = captureDate
+                    Bridge.log("CoreModule: Setting creation date to: \(captureDate)")
+                }
+
+                assetIdentifier = creationRequest.placeholderForCreatedAsset?.localIdentifier
+            } completionHandler: { _, error in
+                resultError = error
+                semaphore.signal()
+            }
+
+            semaphore.wait()
+
+            if let error = resultError {
+                Bridge.log("CoreModule: Error saving to gallery: \(error.localizedDescription)")
+                return ["success": false, "error": error.localizedDescription]
+            }
+
+            Bridge.log("CoreModule: Successfully saved to gallery with proper creation date")
+            return ["success": true, "identifier": assetIdentifier ?? ""]
         }
     }
 }

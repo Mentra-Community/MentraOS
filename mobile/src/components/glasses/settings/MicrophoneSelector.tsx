@@ -1,17 +1,14 @@
-import {MaterialCommunityIcons} from "@expo/vector-icons"
 import {Fragment} from "react"
 import {View, TouchableOpacity, TextStyle, ViewStyle} from "react-native"
 
-import {Text} from "@/components/ignite"
+import {Icon, Text} from "@/components/ignite"
 import {Badge} from "@/components/ui"
 import {translate} from "@/i18n/translate"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-
-interface MicrophoneSelectorProps {
-  preferredMic: string
-  onMicChange: (mic: string) => void
-}
 
 const MIC_OPTIONS = [
   // auto is rendered by itself since it has the recommended label
@@ -29,28 +26,58 @@ const MIC_OPTIONS = [
   },
 ]
 
-export function MicrophoneSelector({preferredMic, onMicChange}: MicrophoneSelectorProps) {
+export function MicrophoneSelector() {
   const {theme, themed} = useAppTheme()
+  const [preferredMic, setPreferredMic] = useSetting(SETTINGS.preferred_mic.key)
+
+  const setMic = async (val: string) => {
+    if (val === "phone") {
+      // We're potentially about to enable the mic, so request permission
+      const hasMicPermission = await requestFeaturePermissions(PermissionFeatures.MICROPHONE)
+      if (!hasMicPermission) {
+        // Permission denied, don't toggle the setting
+        console.log("Microphone permission denied, cannot enable phone microphone")
+        showAlert(
+          "Microphone Permission Required",
+          "Microphone permission is required to use the phone microphone feature. Please grant microphone permission in settings.",
+          [{text: "OK"}],
+          {
+            iconName: "microphone",
+            iconColor: "#2196F3",
+          },
+        )
+        return
+      }
+    }
+
+    await setPreferredMic(val)
+  }
 
   return (
     <View style={themed($container)}>
       <Text tx="microphoneSettings:preferredMic" style={[themed($label), {marginBottom: theme.spacing.s3}]} />
 
-      <TouchableOpacity style={themed($itemContainer)} onPress={() => onMicChange("auto")}>
+      <TouchableOpacity style={themed($itemContainer)} onPress={() => setMic("auto")}>
         <View style={themed($recommendedWrapper)}>
           <Text style={{color: theme.colors.text}}>{translate("microphoneSettings:auto")}</Text>
           <Badge text={translate("deviceSettings:recommended")} />
         </View>
-        {preferredMic === "auto" && <MaterialCommunityIcons name="check" size={24} color={theme.colors.primary} />}
+        {preferredMic === "auto" ? (
+          <Icon name="check" size={24} color={theme.colors.primary} />
+        ) : (
+          <Icon name="check" size={24} color={"transparent"} />
+        )}
       </TouchableOpacity>
 
       {MIC_OPTIONS.map((option: {label: string; value: string}) => (
         <Fragment key={option.value}>
           <View style={themed($separator)} />
-          <TouchableOpacity key={option.value} style={themed($itemContainer)} onPress={() => onMicChange(option.value)}>
+          <TouchableOpacity key={option.value} style={themed($itemContainer)} onPress={() => setMic(option.value)}>
             <Text text={option.label} style={themed($itemText)} />
-            {preferredMic === option.value && (
-              <MaterialCommunityIcons name="check" size={24} color={theme.colors.primary} />
+            {preferredMic === option.value ? (
+              <Icon name="check" size={24} color={theme.colors.primary} />
+            ) : (
+              <Icon name="check" size={24} color={"transparent"} />
             )}
           </TouchableOpacity>
         </Fragment>

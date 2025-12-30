@@ -1,3 +1,4 @@
+import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 import CoreModule from "core"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
@@ -8,8 +9,6 @@ import {Theme} from "@/theme"
 import showAlert, {showBluetoothAlert, showLocationAlert, showLocationServicesAlert} from "@/utils/AlertUtils"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {storage} from "@/utils/storage/storage"
-
-import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
 // Define permission features with their required permissions
 export const PermissionFeatures: Record<string, string> = {

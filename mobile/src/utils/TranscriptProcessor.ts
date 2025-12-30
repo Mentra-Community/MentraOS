@@ -1,4 +1,4 @@
-import {BackgroundTimer} from "react-native-nitro-bg-timer"
+import {BackgroundTimer} from "@/utils/timers"
 
 export class TranscriptProcessor {
   private maxCharsPerLine: number = 44

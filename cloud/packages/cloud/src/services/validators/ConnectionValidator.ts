@@ -3,9 +3,10 @@
  * Validates that both phone and glasses are connected before allowing hardware operations
  */
 
-import { WebSocket } from "ws";
-import UserSession from "../session/UserSession";
+
 import { logger } from "../logging/pino-logger";
+import UserSession from "../session/UserSession";
+import { WebSocketReadyState } from "../websocket/types";
 
 export interface ValidationResult {
   valid: boolean;
@@ -50,15 +51,15 @@ export class ConnectionValidator {
     }
 
     // Check phone WebSocket connection first
+    // Note: These are validation failures, not system errors - users disconnecting is expected behavior
     if (!userSession.websocket) {
-      logger.error(
+      logger.debug(
         {
           userId: userSession.userId,
           requestType,
-          error: "No WebSocket connection exists",
           feature: "device-state",
         },
-        "Hardware request validation failed - no WebSocket",
+        "Hardware request skipped - no WebSocket connection",
       );
 
       return {
@@ -68,16 +69,15 @@ export class ConnectionValidator {
       };
     }
 
-    if (userSession.websocket.readyState !== WebSocket.OPEN) {
-      logger.error(
+    if (userSession.websocket.readyState !== WebSocketReadyState.OPEN) {
+      logger.debug(
         {
           userId: userSession.userId,
           requestType,
           readyState: userSession.websocket.readyState,
-          error: "WebSocket not open",
           feature: "device-state",
         },
-        "Hardware request validation failed - WebSocket not open",
+        "Hardware request skipped - WebSocket not open",
       );
 
       return {
@@ -97,15 +97,14 @@ export class ConnectionValidator {
     const isSimulatedGlasses = model === "Simulated Glasses";
 
     if (!isGlassesConnected && !isSimulatedGlasses) {
-      logger.error(
+      logger.debug(
         {
           userId: userSession.userId,
           requestType,
           glassesModel: model,
-          error: "Glasses not connected",
           feature: "device-state",
         },
-        "Hardware request validation failed - glasses not connected",
+        "Hardware request skipped - glasses not connected",
       );
 
       return {
@@ -168,10 +167,7 @@ export class ConnectionValidator {
       return { valid: true };
     }
 
-    if (
-      !userSession.websocket ||
-      userSession.websocket.readyState !== WebSocket.OPEN
-    ) {
+    if (!userSession.websocket || userSession.websocket.readyState !== WebSocketReadyState.OPEN) {
       return {
         valid: false,
         error: "Phone is not connected",
@@ -213,12 +209,11 @@ export class ConnectionValidator {
     const deviceState = userSession.deviceManager.getDeviceState();
 
     if (!deviceState.wifiConnected) {
-      logger.error(
+      logger.debug(
         {
           userId: userSession.userId,
           glassesModel: userSession.deviceManager.getModel(),
           wifiConnected: deviceState.wifiConnected,
-          error: "Glasses not connected to WiFi",
           feature: "device-state",
         },
         "WiFi validation failed - glasses not connected to WiFi",
@@ -252,7 +247,7 @@ export class ConnectionValidator {
 
     if (!userSession.websocket) {
       parts.push("No WebSocket");
-    } else if (userSession.websocket.readyState !== WebSocket.OPEN) {
+    } else if (userSession.websocket.readyState !== WebSocketReadyState.OPEN) {
       parts.push(`WebSocket state: ${userSession.websocket.readyState}`);
     } else {
       parts.push("WebSocket: OPEN");
@@ -260,9 +255,7 @@ export class ConnectionValidator {
 
     const isPhoneConnected = userSession.deviceManager.isPhoneConnected;
     parts.push(`Phone: ${isPhoneConnected ? "Connected" : "Disconnected"}`);
-    parts.push(
-      `Glasses: ${userSession.deviceManager.isGlassesConnected ? "Connected" : "Disconnected"}`,
-    );
+    parts.push(`Glasses: ${userSession.deviceManager.isGlassesConnected ? "Connected" : "Disconnected"}`);
 
     const model = userSession.deviceManager.getModel();
     if (model) {

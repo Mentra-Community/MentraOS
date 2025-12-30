@@ -1,11 +1,13 @@
-name: Porter cloud-staging
+name: 🚀 Deploy cloud-staging
 
 on:
+  workflow_dispatch: # Manual trigger fallback
   push:
     branches:
       - staging
     paths:
       - "cloud/**"
+      - ".github/workflows/porter-staging.yml"
 jobs:
   porter-deploy:
     runs-on: ubuntu-latest

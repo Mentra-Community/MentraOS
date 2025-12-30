@@ -84,8 +84,22 @@ class NotificationListener private constructor(private val context: Context) {
         listeners.remove(listener)
     }
 
+    /** Allowlist for messaging apps that should NOT be blocked even if they match Google/Samsung patterns */
+    private val messagingAppAllowlist = setOf(
+        "com.google.android.apps.messaging",   // Google Messages (default SMS on Pixel/stock Android)
+        "com.samsung.android.messaging",       // Samsung Messages (default SMS on Samsung)
+        "com.android.mms",                     // Stock Android SMS app
+        "com.google.android.gm",               // Gmail
+        "com.samsung.android.email.provider",  // Samsung Email
+    )
+
     /** Check if this is a system package that should be blocked */
     private fun isSystemPackageToBlock(packageName: String): Boolean {
+        // First check if the package is in the messaging allowlist
+        if (messagingAppAllowlist.contains(packageName)) {
+            return false
+        }
+
         val pkg = packageName.lowercase()
         return pkg.contains("google") || pkg.contains("samsung") || pkg.contains(".sec.")
     }

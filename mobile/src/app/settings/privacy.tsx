@@ -9,7 +9,6 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles} from "@/theme"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
@@ -21,7 +20,7 @@ export default function PrivacySettingsScreen() {
   const [locationEnabled, setLocationEnabled] = useState(true)
   const [locationPermissionPending, setLocationPermissionPending] = useState(false)
   const [appState, setAppState] = useState(AppState.currentState)
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const {goBack} = useNavigationHistory()
   const [sensingEnabled, setSensingEnabled] = useSetting(SETTINGS.sensing_enabled.key)
 
@@ -200,9 +199,9 @@ export default function PrivacySettingsScreen() {
   }
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header titleTx="privacySettings:title" leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView>
+      <ScrollView className="pt-6">
         {/* Notification Permission - Android Only */}
         {Platform.OS === "android" && !notificationsEnabled && (
           <>

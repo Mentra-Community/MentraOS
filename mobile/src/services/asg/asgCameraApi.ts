@@ -601,7 +601,13 @@ export class AsgCameraApiClient {
   async batchSyncFiles(
     files: PhotoInfo[],
     includeThumbnails: boolean = false,
-    onProgress?: (current: number, total: number, fileName: string, fileProgress?: number) => void,
+    onProgress?: (
+      current: number,
+      total: number,
+      fileName: string,
+      fileProgress?: number,
+      downloadedFile?: PhotoInfo,
+    ) => void,
   ): Promise<{
     downloaded: PhotoInfo[]
     failed: string[]
@@ -653,6 +659,11 @@ export class AsgCameraApiClient {
           }
 
           console.log(`[ASG Camera API] Successfully downloaded: ${file.name}`)
+
+          // Notify progress callback that this file is complete with file info
+          if (onProgress) {
+            onProgress(globalIndex + 1, files.length, file.name, 100, downloadedFile)
+          }
 
           // Schedule delete operation (non-blocking)
           const deletePromise = this.deleteFilesFromServer([file.name])

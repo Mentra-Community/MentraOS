@@ -1,3 +1,4 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import CoreModule from "core"
 import {ActivityIndicator, View} from "react-native"
 
@@ -9,8 +10,6 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export const ConnectDeviceButton = () => {
   const {status} = useCoreStatus()

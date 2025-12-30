@@ -5,6 +5,7 @@
 //  Created by Matthew Fosse on 10/7/25.
 //
 
+@MainActor
 class Simulated: SGCManager {
     // MARK: - Device Information
 
@@ -17,6 +18,8 @@ class Simulated: SGCManager {
     var glassesDeviceModel: String = ""
     var glassesAndroidVersion: String = ""
     var glassesOtaVersionUrl: String = ""
+    var glassesFirmwareVersion: String = ""
+    var glassesBtMacAddress: String = ""
     var glassesSerialNumber: String = ""
     var glassesStyle: String = ""
     var glassesColor: String = ""

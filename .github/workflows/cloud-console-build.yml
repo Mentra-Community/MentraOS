@@ -1,4 +1,4 @@
-name: Console build
+name: 🧪 Test Console build
 
 on:
   pull_request:

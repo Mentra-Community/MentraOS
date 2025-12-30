@@ -3,7 +3,8 @@
  * Simplified from complex multi-timeout system to proven stream-tracker.service.ts patterns.
  */
 
-import WebSocket from "ws";
+import { Logger } from "pino";
+
 import {
   CloudToGlassesMessageType,
   CloudToAppMessageType,
@@ -20,10 +21,13 @@ import {
   RtmpStreamStopRequest,
   GlassesToCloudMessageType,
 } from "@mentra/sdk";
-import { Logger } from "pino";
-import UserSession from "./UserSession";
+
+
 import { StreamLifecycleController } from "../streaming/StreamLifecycleController";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
+import { WebSocketReadyState } from "../websocket/types";
+
+import UserSession from "./UserSession";
 // session.service no longer needed; using UserSession instance methods
 
 // Constants from the original stream-tracker.service.ts
@@ -150,7 +154,7 @@ export class UnmanagedStreamingExtension {
     }
     if (
       !this.userSession.websocket ||
-      this.userSession.websocket.readyState !== WebSocket.OPEN
+      this.userSession.websocket.readyState !== WebSocketReadyState.OPEN
     ) {
       throw new Error("Glasses WebSocket not connected");
     }
@@ -450,7 +454,7 @@ export class UnmanagedStreamingExtension {
         maxMissedAcks: MAX_MISSED_ACKS,
         shouldSendKeepAlive: () =>
           !!this.userSession.websocket &&
-          this.userSession.websocket.readyState === WebSocket.OPEN,
+          this.userSession.websocket.readyState === WebSocketReadyState.OPEN,
       },
       {
         sendKeepAlive: (ackId) => this.sendKeepAliveMessage(streamId, ackId),
@@ -486,7 +490,7 @@ export class UnmanagedStreamingExtension {
   ): Promise<void> {
     if (
       !this.userSession.websocket ||
-      this.userSession.websocket.readyState !== WebSocket.OPEN
+      this.userSession.websocket.readyState !== WebSocketReadyState.OPEN
     ) {
       this.logger.warn(
         { streamId },
@@ -649,7 +653,7 @@ export class UnmanagedStreamingExtension {
     // Send stop command to glasses if WebSocket is connected
     if (
       this.userSession.websocket &&
-      this.userSession.websocket.readyState === WebSocket.OPEN
+      this.userSession.websocket.readyState === WebSocketReadyState.OPEN
     ) {
       const stopMessage: StopRtmpStream = {
         type: CloudToGlassesMessageType.STOP_RTMP_STREAM,

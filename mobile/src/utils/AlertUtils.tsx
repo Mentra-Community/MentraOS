@@ -1,7 +1,6 @@
 import * as NavigationBar from "expo-navigation-bar"
 import {StatusBar} from "expo-status-bar"
-import {useState} from "react"
-import {useEffect, useRef} from "react"
+import {useState, useEffect, useRef} from "react"
 import {Alert, BackHandler, Platform, Animated} from "react-native"
 
 import {Icon, IconTypes} from "@/components/ignite"

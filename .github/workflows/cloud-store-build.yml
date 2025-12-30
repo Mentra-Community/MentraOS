@@ -1,4 +1,4 @@
-name: Store build
+name: 🧪 Test Store build
 
 on:
   pull_request:

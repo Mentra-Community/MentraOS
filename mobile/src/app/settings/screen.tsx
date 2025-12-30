@@ -27,7 +27,7 @@ export default function ScreenSettingsScreen() {
   )
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header titleTx="screenSettings:title" leftIcon="chevron-left" onLeftPress={goBack} />
 
       <ScrollView>

@@ -1,4 +1,9 @@
 import { Logger } from "pino";
+import WebSocket from "ws";
+
+import { getLanguageInfo, StreamType, TranscriptionData } from "@mentra/sdk";
+
+import { ResourceTracker } from "../../../../utils/resource-tracker";
 import {
   AlibabaProviderConfig,
   ProviderHealthStatus,
@@ -12,8 +17,6 @@ import {
   StreamState,
   TranscriptionProvider,
 } from "../types";
-import WebSocket from "ws";
-import { getLanguageInfo, StreamType, TranscriptionData } from "@mentra/sdk";
 
 interface AlibabaMessage {
   header: {
@@ -66,6 +69,8 @@ class AlibabaTranscriptionStream implements StreamInstance {
   private ws?: WebSocket;
   private connectionTimeout?: NodeJS.Timeout;
   private isClosing = false;
+  private disposed = false;
+  private resources = new ResourceTracker();
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 3;
 
@@ -105,15 +110,9 @@ class AlibabaTranscriptionStream implements StreamInstance {
 
       this.metrics.initializationTime = Date.now() - initStartTime;
 
-      this.logger.debug(
-        { streamId: this.id },
-        "Alibaba transcription stream initialized",
-      );
+      this.logger.debug({ streamId: this.id }, "Alibaba transcription stream initialized");
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to initialize Alibaba transcription stream",
-      );
+      this.logger.error({ error }, "Failed to initialize Alibaba transcription stream");
       this.handleError(error as Error);
       throw error;
     }
@@ -121,10 +120,7 @@ class AlibabaTranscriptionStream implements StreamInstance {
 
   async writeAudio(data: ArrayBuffer): Promise<boolean> {
     try {
-      if (
-        this.state !== StreamState.READY &&
-        this.state !== StreamState.ACTIVE
-      ) {
+      if (this.state !== StreamState.READY && this.state !== StreamState.ACTIVE) {
         // Buffer audio if still initializing
         if (this.state === StreamState.INITIALIZING) {
           this.pendingAudioChunks.push(data);
@@ -151,10 +147,7 @@ class AlibabaTranscriptionStream implements StreamInstance {
 
       return true;
     } catch (error) {
-      this.logger.warn(
-        { error },
-        "Failed to write audio to Alibaba transcription stream",
-      );
+      this.logger.warn({ error }, "Failed to write audio to Alibaba transcription stream");
       this.metrics.audioWriteFailures++;
       this.metrics.consecutiveFailures++;
       return false;
@@ -162,19 +155,23 @@ class AlibabaTranscriptionStream implements StreamInstance {
   }
 
   async close(): Promise<void> {
-    if (this.isClosing || this.state === StreamState.CLOSED) {
+    if (this.isClosing || this.state === StreamState.CLOSED || this.disposed) {
       return;
     }
 
+    this.disposed = true;
     this.isClosing = true;
     this.state = StreamState.CLOSING;
+
+    // Clean up all tracked resources (removes event listeners)
+    this.resources.dispose();
+
     this.sendFinishTask();
   }
 
   getHealth(): StreamHealth {
     return {
-      isAlive:
-        this.state === StreamState.READY || this.state === StreamState.ACTIVE,
+      isAlive: this.state === StreamState.READY || this.state === StreamState.ACTIVE,
       lastActivity: this.lastActivity,
       consecutiveFailures: this.metrics.consecutiveFailures,
       lastSuccessfulWrite: this.metrics.lastSuccessfulWrite,
@@ -199,44 +196,40 @@ class AlibabaTranscriptionStream implements StreamInstance {
           reject(new Error("Alibaba WebSocket connection timeout"));
         }, 10000); // 10 second timeout
 
-        ws.on("open", () => {
+        // Store handler references for proper cleanup (prevents memory leaks)
+        const openHandler = () => {
+          if (this.disposed) return;
           clearTimeout(connectionTimeout);
           this.logger.debug("Alibaba transcription WebSocket connected");
           this.sendRunTaskMessage();
           this.state = StreamState.READY;
           resolve();
-        });
+        };
 
-        ws.on("message", (data: Buffer) => {
+        const messageHandler = (data: Buffer) => {
+          if (this.disposed) return;
           try {
             const message = JSON.parse(data.toString()) as AlibabaMessage;
             this.handleMessage(message);
             // Don't resolve here - Alibaba doesn't send 'ready' in the message handler
             // The actual ready state is handled in handleMessage
           } catch (error) {
-            this.logger.error(
-              { error },
-              "Alibaba transcription WebSocket message error",
-            );
+            this.logger.error({ error }, "Alibaba transcription WebSocket message error");
             this.handleError(error as Error);
           }
-        });
+        };
 
-        ws.on("error", (error) => {
+        const errorHandler = (error: Error) => {
+          if (this.disposed) return;
           this.logger.error({ error }, "Alibaba transcription WebSocket error");
           this.handleError(error);
           reject(error);
-        });
+        };
 
-        ws.on("close", (code, reason) => {
-          this.logger.info(
-            { code, reason: reason.toString() },
-            "Alibaba transcription WebSocket closed",
-          );
-          if (
-            !this.isClosing &&
-            this.reconnectAttempts < this.maxReconnectAttempts
-          ) {
+        const closeHandler = (code: number, reason: Buffer) => {
+          if (this.disposed) return;
+          this.logger.info({ code, reason: reason.toString() }, "Alibaba transcription WebSocket closed");
+          if (!this.isClosing && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             this.logger.info(
               { attempt: this.reconnectAttempts },
@@ -245,14 +238,26 @@ class AlibabaTranscriptionStream implements StreamInstance {
             setTimeout(() => this.connect(), 1000 * this.reconnectAttempts);
           } else {
             this.state = StreamState.CLOSED;
-            this.callbacks.onClosed?.();
+            this.callbacks.onClosed?.(code);
+          }
+        };
+
+        ws.on("open", openHandler);
+        ws.on("message", messageHandler);
+        ws.on("error", errorHandler);
+        ws.on("close", closeHandler);
+
+        // Track handlers for cleanup
+        this.resources.track(() => {
+          if (this.ws) {
+            this.ws.off("open", openHandler);
+            this.ws.off("message", messageHandler);
+            this.ws.off("error", errorHandler);
+            this.ws.off("close", closeHandler);
           }
         });
       } catch (error) {
-        this.logger.error(
-          { error },
-          "Failed to connect to Alibaba transcription stream",
-        );
+        this.logger.error({ error }, "Failed to connect to Alibaba transcription stream");
         reject(error);
       }
     });
@@ -284,11 +289,7 @@ class AlibabaTranscriptionStream implements StreamInstance {
         break;
       case "task-failed":
         // TODO: Do i need to close the websocket here?????
-        this.handleError(
-          new Error(
-            `Alibaba transcription error: ${message.header.error_message || "Unknown error"}`,
-          ),
-        );
+        this.handleError(new Error(`Alibaba transcription error: ${message.header.error_message || "Unknown error"}`));
         break;
       default:
         this.logger.warn(
@@ -358,10 +359,7 @@ class AlibabaTranscriptionStream implements StreamInstance {
         "Alibaba transcription result",
       );
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to handle Alibaba transcription result",
-      );
+      this.logger.error({ error }, "Failed to handle Alibaba transcription result");
       this.metrics.errorCount++;
     }
   }
@@ -369,7 +367,8 @@ class AlibabaTranscriptionStream implements StreamInstance {
   private handleFinished(): void {
     this.logger.debug("Alibaba transcription task finished");
     this.state = StreamState.CLOSED;
-    this.callbacks.onClosed?.();
+    // Pass 1000 (normal close) since this is an intentional/expected completion
+    this.callbacks.onClosed?.(1000);
     // Update metrics
     this.metrics.totalDuration = Date.now() - this.startTime;
 
@@ -385,10 +384,7 @@ class AlibabaTranscriptionStream implements StreamInstance {
   private processPendingAudio(): void {
     if (this.pendingAudioChunks.length === 0) return;
 
-    this.logger.debug(
-      { count: this.pendingAudioChunks.length },
-      "Processing pending audio chunks",
-    );
+    this.logger.debug({ count: this.pendingAudioChunks.length }, "Processing pending audio chunks");
 
     for (const chunk of this.pendingAudioChunks) {
       this.writeAudio(chunk);
@@ -459,18 +455,7 @@ export class AlibabaTranscriptionProvider implements TranscriptionProvider {
   private failureCount = 0;
   private lastFailureTime = 0;
 
-  private GUMMY_REALTIME_SUPPORTED_LANGUAGES: string[] = [
-    "zh",
-    "en",
-    "ja",
-    "ko",
-    "yue",
-    "de",
-    "fr",
-    "ru",
-    "it",
-    "es",
-  ];
+  private GUMMY_REALTIME_SUPPORTED_LANGUAGES: string[] = ["zh", "en", "ja", "ko", "yue", "de", "fr", "ru", "it", "es"];
 
   constructor(
     private config: AlibabaProviderConfig,
@@ -517,10 +502,7 @@ export class AlibabaTranscriptionProvider implements TranscriptionProvider {
     // TODO: Cleanup Alibaba client when implementing
   }
 
-  async createTranscriptionStream(
-    language: string,
-    options: StreamOptions,
-  ): Promise<StreamInstance> {
+  async createTranscriptionStream(language: string, options: StreamOptions): Promise<StreamInstance> {
     if (!this.isInitialized) {
       throw new Error("Alibaba transcription provider not initialized");
     }
@@ -630,8 +612,6 @@ export class AlibabaTranscriptionProvider implements TranscriptionProvider {
 
   private getRecentFailureCount(timeWindowMs: number): number {
     const now = Date.now();
-    return this.lastFailureTime && now - this.lastFailureTime < timeWindowMs
-      ? this.failureCount
-      : 0;
+    return this.lastFailureTime && now - this.lastFailureTime < timeWindowMs ? this.failureCount : 0;
   }
 }

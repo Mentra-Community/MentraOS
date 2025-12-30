@@ -1,4 +1,4 @@
-name: Cloud package build
+name: 🧪 Test Cloud build
 
 on:
   pull_request:

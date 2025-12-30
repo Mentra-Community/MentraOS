@@ -1,8 +1,8 @@
 import {EventEmitter} from "events"
 
-import {BackgroundTimer} from "react-native-nitro-bg-timer"
-
 import {useConnectionStore} from "@/stores/connection"
+import {BackgroundTimer} from "@/utils/timers"
+
 // import mantle from "@/services/MantleManager"
 
 export enum WebSocketStatus {
@@ -104,7 +104,7 @@ class WebSocketManager extends EventEmitter {
     // mantle.displayTextMain(`WSM: Attempting reconnect`)
     const store = useConnectionStore.getState()
     if (store.status === WebSocketStatus.DISCONNECTED) {
-      this.handleReconnect()
+      this.connect(this.url!, this.coreToken!)
     }
     if (store.status === WebSocketStatus.CONNECTED) {
       console.log("WSM: Connected, stopping reconnect interval")
@@ -114,6 +114,7 @@ class WebSocketManager extends EventEmitter {
   }
 
   private startReconnectInterval() {
+    console.log("WSM: Starting reconnect interval, manuallyDisconnected: ", this.manuallyDisconnected)
     // mantle.displayTextMain(`WSM: Starting reconnect interval, manuallyDisconnected: ${this.manuallyDisconnected}`)
     if (this.reconnectInterval) {
       BackgroundTimer.clearInterval(this.reconnectInterval)
@@ -126,11 +127,6 @@ class WebSocketManager extends EventEmitter {
     }
 
     this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), 5000)
-  }
-
-  private handleReconnect() {
-    console.log("WSM: Attempting reconnect")
-    this.connect(this.url!, this.coreToken!)
   }
 
   public disconnect() {

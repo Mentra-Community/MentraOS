@@ -10,7 +10,7 @@ import {useAuth} from "@/contexts/AuthContext"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import mentraAuth from "@/utils/auth/authClient"
@@ -86,6 +86,11 @@ export default function ProfileSettingsPage() {
   const handleChangePassword = () => {
     console.log("Profile: Navigating to change password screen")
     push("/settings/change-password")
+  }
+
+  const handleChangeEmail = () => {
+    console.log("Profile: Navigating to change email screen")
+    push("/settings/change-email")
   }
 
   const handleDeleteAccount = () => {
@@ -243,7 +248,7 @@ export default function ProfileSettingsPage() {
   const {theme, themed} = useAppTheme()
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header title={translate("profileSettings:title")} leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView>
         {loading ? (
@@ -272,16 +277,20 @@ export default function ProfileSettingsPage() {
             <Spacer height={theme.spacing.s6} />
 
             <Group title={translate("account:appSettings")}>
-              {userData.provider == "email" && (
+              {/* Show password/email options only for email/password users (not OAuth) */}
+              {userData.provider !== "google" && userData.provider !== "apple" && (
                 <RouteButton label={translate("profileSettings:changePassword")} onPress={handleChangePassword} />
+              )}
+              {userData.provider !== "google" && userData.provider !== "apple" && (
+                <RouteButton label={translate("profileSettings:changeEmail")} onPress={handleChangeEmail} />
               )}
               <RouteButton label={translate("profileSettings:requestDataExport")} onPress={handleRequestDataExport} />
               <RouteButton
                 label={translate("profileSettings:deleteAccount")}
                 onPress={handleDeleteAccount}
-                variant="destructive"
+                preset="destructive"
               />
-              <RouteButton label={translate("settings:signOut")} onPress={confirmSignOut} variant="destructive" />
+              <RouteButton label={translate("settings:signOut")} onPress={confirmSignOut} preset="destructive" />
             </Group>
           </>
         ) : (

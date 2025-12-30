@@ -1,0 +1,25 @@
+FROM oven/bun:latest
+
+WORKDIR /app
+
+# Copy root package.json and lockfile for workspace resolution
+COPY package.json bun.lock* ./
+
+# Copy all workspace packages that are dependencies
+COPY packages/sdk ./packages/sdk
+COPY packages/types ./packages/types
+
+# Copy the captions app
+COPY packages/apps/captions ./packages/apps/captions
+
+# Install all dependencies
+RUN bun install
+
+# Set working directory to captions app
+WORKDIR /app/packages/apps/captions
+
+# Build the webview (this resolves @/ imports at build time and processes Tailwind)
+RUN bun run build.ts
+
+# Expose the port
+EXPOSE 80

@@ -2,7 +2,7 @@ import {useEffect, useRef, useState} from "react"
 import {View, ViewStyle, TextStyle} from "react-native"
 import LinearGradient from "react-native-linear-gradient"
 import Animated, {useSharedValue, withTiming} from "react-native-reanimated"
-import Icon from "react-native-vector-icons/FontAwesome"
+import {Icon} from "@/components/ignite"
 
 import {Text} from "@/components/ignite"
 import {translate} from "@/i18n"
@@ -11,6 +11,7 @@ import {useRefreshApplets} from "@/stores/applets"
 import {useConnectionStore} from "@/stores/connection"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
+import {BackgroundTimer} from "@/utils/timers"
 
 export default function CloudConnection() {
   const connectionStatus = useConnectionStore(state => state.status)
@@ -21,7 +22,7 @@ export default function CloudConnection() {
 
   // Add delay logic for disconnection alerts
   const [delayedStatus, setDelayedStatus] = useState<WebSocketStatus>(connectionStatus)
-  const disconnectionTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const disconnectionTimerRef = useRef<number | null>(null)
   const firstDisconnectedTimeRef = useRef<number | null>(null)
   const DISCONNECTION_DELAY = 5000 // 5 seconds delay
 
@@ -86,7 +87,7 @@ export default function CloudConnection() {
 
       // Clear any pending timer
       if (disconnectionTimerRef.current) {
-        clearTimeout(disconnectionTimerRef.current)
+        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
 
@@ -102,10 +103,10 @@ export default function CloudConnection() {
         firstDisconnectedTimeRef.current = Date.now()
 
         // Start timer to show banner after delay
-        disconnectionTimerRef.current = setTimeout(() => {
+        disconnectionTimerRef.current = BackgroundTimer.setTimeout(() => {
           setDelayedStatus(connectionStatus)
           cloudConnectionStatusAnim.value = withTiming(1, {duration: 500})
-          setTimeout(() => {
+          BackgroundTimer.setTimeout(() => {
             setHideCloudConnection(false)
           }, 500)
         }, DISCONNECTION_DELAY)
@@ -125,7 +126,7 @@ export default function CloudConnection() {
     // Cleanup function
     return () => {
       if (disconnectionTimerRef.current) {
-        clearTimeout(disconnectionTimerRef.current)
+        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
     }
@@ -145,7 +146,9 @@ export default function CloudConnection() {
         <View style={themed($innerContainer)}>
           <View style={themed($row)}>
             <Icon name={iconName} size={16} color={iconColor} style={themed($icon)} />
-            <Text style={themed($text)}>{statusLabel}</Text>
+            <Text style={themed($text)} weight="medium">
+              {statusLabel}
+            </Text>
           </View>
         </View>
       </LinearGradient>
@@ -182,9 +185,7 @@ const $icon: ThemedStyle<ViewStyle> = ({spacing}) => ({
   marginRight: spacing.s2,
 })
 
-const $text: ThemedStyle<TextStyle> = ({colors, typography}) => ({
+const $text: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
-  fontFamily: typography.primary.medium,
   fontSize: 14,
-  fontWeight: "600",
 })

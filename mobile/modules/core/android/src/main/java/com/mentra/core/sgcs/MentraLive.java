@@ -123,9 +123,12 @@ public class MentraLive extends SGCManager {
 
     // Local-only fields (not in parent SGCManager)
     private int glassesBuildNumberInt = 0; // Build number as integer for version checks
-    private boolean supportsLC3Audio = false; // Whether device supports LC3 audio (false for base K900)
     // Note: glassesAppVersion, glassesBuildNumber, glassesDeviceModel, glassesAndroidVersion
     // are inherited from SGCManager parent class
+
+    // Version info chunking support (for MTU workaround)
+    // Glasses send version_info in 2 chunks to fit within BLE MTU limits
+    private JSONObject pendingVersionInfoChunk1 = null; // Stores chunk 1 until chunk 2 arrives
 
     // BLE UUIDs - updated to match K900 BES2800 MCU UUIDs for compatibility with both glass types
     // CRITICAL FIX: Swapped TX and RX UUIDs to match actual usage from central device perspective
@@ -146,10 +149,12 @@ public class MentraLive extends SGCManager {
     private static final UUID LC3_WRITE_UUID = UUID.fromString("6E400003-B5A3-F393-E0A9-E50E24DCCA9E");
 
     // Reconnection parameters
-    private static final int BASE_RECONNECT_DELAY_MS = 1000; // Start with 1 second
-    private static final int MAX_RECONNECT_DELAY_MS = 30000; // Max 30 seconds
-    private static final int MAX_RECONNECT_ATTEMPTS = 10;
+    private static final int BASE_RECONNECT_DELAY_MS = 500; // Start with 0.5 seconds (faster initial retry)
+    private static final int MAX_RECONNECT_DELAY_MS = 20000; // Max 20 seconds (more aggressive)
+    private static final int MAX_RECONNECT_ATTEMPTS = 20; // Increased from 10 for better persistence
+    private static final int RECONNECT_SCAN_TIMEOUT_MS = 10000; // 10 seconds for reconnection scans (faster than 60s default)
     private int reconnectAttempts = 0;
+    private boolean isReconnecting = false; // Track if we're in reconnection mode
 
     // Keep-alive parameters
     private static final int KEEP_ALIVE_INTERVAL_MS = 5000; // 5 seconds
@@ -357,7 +362,12 @@ public class MentraLive extends SGCManager {
     private byte lc3SequenceNumber = 0;
     private long lc3DecoderPtr = 0;
     private Lc3Player lc3AudioPlayer;
-    private boolean audioPlaybackEnabled = false; // Default to enabled
+    // Audio playback control - allows monitoring glasses microphone through phone speakers
+    // Set to true to enable playback, false to disable. Independent of microphone state.
+    private boolean audioPlaybackEnabled = false;
+    // Rolling recording control - saves last 20 seconds of audio as M4A file every 20 seconds
+    // Set to true to enable rolling recording, false to disable.
+    private boolean rollingRecordingEnabled = false;
 
     // Periodic test message for ACK testing
     private static final int TEST_MESSAGE_INTERVAL_MS = 5000; // 5 seconds
@@ -443,11 +453,23 @@ public class MentraLive extends SGCManager {
         // Initialize scheduler for keep-alive and reconnection
         scheduler = Executors.newScheduledThreadPool(1);
 
-        //setup LC3 player
-        lc3AudioPlayer = new Lc3Player(context);
+        // Setup LC3 player for audio monitoring
+        // Initialize with frame size matching MentraLive LC3_FRAME_SIZE
+        lc3AudioPlayer = new Lc3Player(context, LC3_FRAME_SIZE);
+        lc3AudioPlayer.init();
+        
+        // Enable rolling recording if configured
+        if (rollingRecordingEnabled) {
+            lc3AudioPlayer.enableRollingRecording(true);
+            Bridge.log("LIVE: 🎙️ Rolling audio recording enabled (saves 20-sec files)");
+        }
+        
+        // Start playback only if audioPlaybackEnabled is true
         if (audioPlaybackEnabled) {
-            lc3AudioPlayer.init();
             lc3AudioPlayer.startPlay();
+            Bridge.log("LIVE: 🔊 LC3 audio player started (frame size: " + LC3_FRAME_SIZE + " bytes)");
+        } else {
+            Bridge.log("LIVE: 🔊 LC3 audio player initialized but playback disabled (frame size: " + LC3_FRAME_SIZE + " bytes)");
         }
 
         //setup LC3 decoder for PCM conversion
@@ -522,23 +544,40 @@ public class MentraLive extends SGCManager {
 
         // Start scanning
         try {
-            Bridge.log("LIVE: Starting BLE scan for Mentra Live glasses");
+            // Use different timeout based on whether we're reconnecting
+            long scanTimeout = isReconnecting ? RECONNECT_SCAN_TIMEOUT_MS : 60000;
+            
+            if (isReconnecting) {
+                Log.i(TAG, "🔌 ⚡ FAST RECONNECT SCAN - timeout: " + scanTimeout + "ms (attempt #" + reconnectAttempts + ")");
+                Bridge.log("LIVE: Starting FAST BLE scan for reconnection (timeout: " + scanTimeout + "ms)");
+            } else {
+                Bridge.log("LIVE: Starting BLE scan for Mentra Live glasses (timeout: " + scanTimeout + "ms)");
+            }
+            
             isScanning = true;
             bluetoothScanner.startScan(filters, settings, scanCallback);
 
-            // Set a timeout to stop scanning after 60 seconds (increased from 30 seconds)
-            // After timeout, just stop scanning but DON'T automatically try to connect
+            // Set a timeout to stop scanning
             handler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
                     if (isScanning) {
-                        Bridge.log("LIVE: Scan timeout reached - stopping BLE scan");
+                        if (isReconnecting) {
+                            Log.w(TAG, "🔌 ⏰ RECONNECT SCAN TIMEOUT after " + scanTimeout + "ms - Device not found (attempt #" + reconnectAttempts + ")");
+                            Bridge.log("LIVE: 🔌 ⏰ Reconnect scan timeout - device not found, will retry");
+                        } else {
+                            Bridge.log("LIVE: Scan timeout reached - stopping BLE scan");
+                        }
                         stopScan();
-                        // NOTE: Removed automatic reconnection to last device
-                        // Now waits for explicit connection request from UI
+                        
+                        // If reconnecting and scan timed out, trigger next reconnection attempt
+                        if (isReconnecting) {
+                            Log.i(TAG, "🔌 🔄 Scan timeout - scheduling next reconnection attempt...");
+                            handleReconnection();
+                        }
                     }
                 }
-            }, 60000); // 60 seconds (increased from 30)
+            }, scanTimeout);
         } catch (Exception e) {
             Log.e(TAG, "Error starting BLE scan", e);
             isScanning = false;
@@ -602,7 +641,7 @@ public class MentraLive extends SGCManager {
 
             // Post the discovered device to the event bus ONLY
             // Don't automatically connect - wait for explicit connect request from UI
-            if (deviceName.equals("Xy_A") || deviceName.startsWith("XyBLE_") || deviceName.startsWith("MENTRA_LIVE_BLE") || deviceName.startsWith("MENTRA_LIVE_BT")) {
+            if (deviceName.equals("Xy_A") || deviceName.startsWith("XyBLE_") || deviceName.startsWith("MENTRA_LIVE_BLE") || deviceName.startsWith("MENTRA_LIVE_BT") || deviceName.toLowerCase().startsWith("mentra_live")) {
                 String glassType = deviceName.equals("Xy_A") ? "Standard" : "K900";
                 Bridge.log("LIVE: Found compatible " + glassType + " glasses device: " + deviceName);
                 // EventBus.getDefault().post(new GlassesBluetoothSearchDiscoverEvent(
@@ -616,7 +655,9 @@ public class MentraLive extends SGCManager {
 
                 // If this is the specific device we want to connect to by name, connect to it
                 if (savedDeviceName != null && savedDeviceName.equals(deviceName)) {
-                    Bridge.log("LIVE: Found our remembered device by name, connecting: " + deviceName);
+                    Log.i(TAG, "🔌 🎯 RECONNECT TARGET FOUND - Device: " + deviceName + " (Attempt #" + reconnectAttempts + ")");
+                    Bridge.log("LIVE: 🔌 🎯 Found our remembered device by name, connecting: " + deviceName + 
+                              " (Reconnect attempt #" + reconnectAttempts + ")");
                     stopScan();
                     connectToDevice(result.getDevice());
                 }
@@ -648,7 +689,8 @@ public class MentraLive extends SGCManager {
             @Override
             public void run() {
                 if (isConnecting && !isConnected) {
-                    Bridge.log("LIVE: Connection timeout - closing GATT connection");
+                    Log.w(TAG, "🔌 ⏰ CONNECTION TIMEOUT after " + CONNECTION_TIMEOUT_MS + "ms - Reconnect attempt #" + reconnectAttempts + " TIMED OUT");
+                    Bridge.log("LIVE: 🔌 ⏰ Connection timeout - closing GATT connection and retrying");
                     isConnecting = false;
 
                     if (bluetoothGatt != null) {
@@ -658,6 +700,7 @@ public class MentraLive extends SGCManager {
                     }
 
                     // Try to reconnect with exponential backoff
+                    Log.i(TAG, "🔌 🔄 Scheduling next reconnection attempt after timeout...");
                     handleReconnection();
                 }
             }
@@ -668,17 +711,21 @@ public class MentraLive extends SGCManager {
         // Update connection state
         isConnecting = true;
         updateConnectionState(ConnTypes.CONNECTING);
-        Bridge.log("LIVE: Connecting to device: " + device.getAddress());
+        Log.i(TAG, "🔌 🔗 ATTEMPTING CONNECTION to device: " + device.getAddress() + " (" + device.getName() + ") - Reconnect attempt #" + reconnectAttempts);
+        Bridge.log("LIVE: 🔌 🔗 Connecting to device: " + device.getAddress() + " (Attempt #" + reconnectAttempts + ")");
 
         // Connect to the device
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+                Log.d(TAG, "🔌 GATT connection initiated with TRANSPORT_LE (Android M+)");
             } else {
                 bluetoothGatt = device.connectGatt(context, false, gattCallback);
+                Log.d(TAG, "🔌 GATT connection initiated (legacy Android)");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error connecting to GATT server", e);
+            Log.e(TAG, "🔌 ❌ ERROR connecting to GATT server - Exception: " + e.getMessage(), e);
+            Bridge.log("LIVE: 🔌 ❌ Failed to connect to GATT server: " + e.getMessage());
             isConnecting = false;
             // connectionEvent(SmartGlassesConnectionState.DISCONNECTED);
         }
@@ -710,43 +757,69 @@ public class MentraLive extends SGCManager {
      * Handle reconnection with exponential backoff
      */
     private void handleReconnection() {
-        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            Bridge.log("LIVE: Maximum reconnection attempts reached (" + MAX_RECONNECT_ATTEMPTS + ")");
-            reconnectAttempts = 0;
-            // connectionEvent(SmartGlassesConnectionState.DISCONNECTED);
+        // Don't attempt reconnection if we've been killed/forgotten
+        if (isKilled) {
+            Bridge.log("LIVE: 🔌 RECONNECT ABORTED - device has been killed/forgotten");
+            isReconnecting = false;
             return;
         }
+
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            Log.e(TAG, "🔌 ❌ RECONNECTION FAILED - Maximum attempts reached (" + MAX_RECONNECT_ATTEMPTS + ")");
+            Bridge.log("LIVE: 🔌 ❌ RECONNECTION FAILED - Gave up after " + MAX_RECONNECT_ATTEMPTS + " attempts");
+            reconnectAttempts = 0;
+            isReconnecting = false;
+            return;
+        }
+
+        // Set reconnecting flag for faster scan timeout
+        isReconnecting = true;
 
         // Calculate delay with exponential backoff
         long delay = Math.min(BASE_RECONNECT_DELAY_MS * (1L << reconnectAttempts), MAX_RECONNECT_DELAY_MS);
         reconnectAttempts++;
 
-        Bridge.log("LIVE: Scheduling reconnection attempt " + reconnectAttempts +
-              " in " + delay + "ms (max " + MAX_RECONNECT_ATTEMPTS + ")");
+        Log.i(TAG, "🔌 📅 SCHEDULING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
+              " in " + delay + "ms (base=" + BASE_RECONNECT_DELAY_MS + "ms, max=" + MAX_RECONNECT_DELAY_MS + "ms, scan_timeout=" + RECONNECT_SCAN_TIMEOUT_MS + "ms)");
+        Bridge.log("LIVE: 🔌 📅 Scheduling reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
+              " in " + delay + "ms (fast scan: " + RECONNECT_SCAN_TIMEOUT_MS + "ms)");
 
         // Schedule reconnection attempt
-        // handler.postDelayed(new Runnable() {
-        //     @Override
-        //     public void run() {
-        //         if (!isConnected && !isConnecting && !isKilled) {
-        //             // Check for last known device name to start scan
-        //             SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        //             String lastDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isConnected && !isConnecting && !isKilled) {
+                    // Check for last known device name to start scan
+                    SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    String lastDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
 
-        //             if (lastDeviceName != null && bluetoothAdapter != null) {
-        //                 Bridge.log("LIVE: Reconnection attempt " + reconnectAttempts + " - looking for device with name: " + lastDeviceName);
-        //                 // Start scan to find this device
-        //                 startScan();
-        //                 // The scan will automatically connect if it finds a device with the saved name
-        //             } else {
-        //                 Bridge.log("LIVE: Reconnection attempt " + reconnectAttempts + " - no last device name available");
-        //                 // Note: We don't start scanning here without a name to avoid unexpected behavior
-        //                 // Instead, let the user explicitly trigger a new scan when needed
-        //                 connectionEvent(SmartGlassesConnectionState.DISCONNECTED);
-        //             }
-        //         }
-        //     }
-        // }, delay);
+                    if (lastDeviceName != null && bluetoothAdapter != null) {
+                        Log.i(TAG, "🔌 🔍 STARTING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
+                              " - Fast scan (" + RECONNECT_SCAN_TIMEOUT_MS + "ms) for device: " + lastDeviceName);
+                        Bridge.log("LIVE: 🔌 🔍 Reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
+                              " - Starting FAST BLE scan for: " + lastDeviceName);
+                        // Start scan to find this device (will use fast timeout)
+                        startScan();
+                        // The scan will automatically connect if it finds a device with the saved name
+                    } else {
+                        Log.w(TAG, "🔌 ⚠️ RECONNECT #" + reconnectAttempts + " SKIPPED - No saved device name available");
+                        Bridge.log("LIVE: 🔌 ⚠️ Reconnection attempt " + reconnectAttempts + 
+                              " - No last device name available, scheduling next attempt");
+                        // Schedule another reconnection attempt - maybe the name will be available later
+                        handleReconnection();
+                    }
+                } else if (isConnected) {
+                    Log.i(TAG, "🔌 ✅ RECONNECTION SUCCESSFUL - Already connected (attempt " + reconnectAttempts + ")");
+                    Bridge.log("LIVE: 🔌 ✅ Reconnection successful - Already connected");
+                    reconnectAttempts = 0;
+                    isReconnecting = false;
+                } else {
+                    Log.d(TAG, "🔌 ⏭️ RECONNECT SKIPPED - State changed (connected=" + isConnected + 
+                          ", connecting=" + isConnecting + ", killed=" + isKilled + ")");
+                    isReconnecting = false;
+                }
+            }
+        }, delay);
     }
 
     /**
@@ -763,7 +836,7 @@ public class MentraLive extends SGCManager {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Bridge.log("LIVE: Connected to GATT server, discovering services...");
+                    Bridge.log("LIVE: 🔌 ✅ RECONNECTION SUCCESSFUL - Connected to GATT server, discovering services...");
                     isConnecting = false;
                     isConnected = true;
                     connectedDevice = gatt.getDevice();
@@ -772,6 +845,7 @@ public class MentraLive extends SGCManager {
                     if (connectedDevice != null && connectedDevice.getName() != null) {
                         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                         prefs.edit().putString(PREF_DEVICE_NAME, connectedDevice.getName()).apply();
+                        Log.i(TAG, "🔌 💾 Saved device name for future reconnection: " + connectedDevice.getName());
                         Bridge.log("LIVE: Saved device name for future reconnection: " + connectedDevice.getName());
                     }
 
@@ -793,9 +867,13 @@ public class MentraLive extends SGCManager {
                     gatt.discoverServices();
 
                     // Reset reconnect attempts on successful connection
+                    int previousAttempts = reconnectAttempts;
                     reconnectAttempts = 0;
+                    isReconnecting = false; // Clear reconnection mode
+                    Log.i(TAG, "🔌 ✅ Reconnection counter reset (was at " + previousAttempts + " attempts)");
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Bridge.log("LIVE: Disconnected from GATT server");
+                    Log.w(TAG, "🔌 ⚠️ DISCONNECTED from GATT server - Initiating reconnection sequence");
+                    Bridge.log("LIVE: 🔌 ⚠️ Disconnected from GATT server - Will attempt reconnection");
                     isConnected = false;
                     isConnecting = false;
 
@@ -812,7 +890,8 @@ public class MentraLive extends SGCManager {
                     glassesReadyReceived = false;
                     audioConnected = false;
 
-                    // connectionEvent(SmartGlassesConnectionState.DISCONNECTED);
+                    // Notify frontend and backend of disconnection
+                    updateConnectionState(ConnTypes.DISCONNECTED);
 
                     handler.removeCallbacks(processSendQueueRunnable);
 
@@ -832,6 +911,7 @@ public class MentraLive extends SGCManager {
                     }
 
                     // Attempt reconnection
+                    Log.i(TAG, "🔌 🔄 Starting automatic reconnection procedure...");
                     handleReconnection();
 
                     // Close LC3 audio logging
@@ -844,10 +924,16 @@ public class MentraLive extends SGCManager {
                 }
             } else {
                 // Connection error
-                Log.e(TAG, "GATT connection error: " + status);
+                Log.e(TAG, "🔌 ❌ GATT connection error: status=" + status + " - Reconnect attempt #" + reconnectAttempts + " FAILED");
+                Bridge.log("LIVE: 🔌 ❌ GATT connection error (status=" + status + ") - Will retry reconnection");
                 isConnected = false;
                 isConnecting = false;
-                // connectionEvent(SmartGlassesConnectionState.DISCONNECTED);
+                glassesReady = false;
+                glassesReadyReceived = false;
+                audioConnected = false;
+
+                // Notify frontend and backend of disconnection
+                updateConnectionState(ConnTypes.DISCONNECTED);
 
                 // Stop heartbeat mechanism
                 stopHeartbeat();
@@ -862,6 +948,7 @@ public class MentraLive extends SGCManager {
                 }
 
                 // Attempt reconnection
+                Log.i(TAG, "🔌 🔄 Retrying after GATT error...");
                 handleReconnection();
             }
         }
@@ -877,30 +964,17 @@ public class MentraLive extends SGCManager {
                     txCharacteristic = service.getCharacteristic(TX_CHAR_UUID);
                     rxCharacteristic = service.getCharacteristic(RX_CHAR_UUID);
 
-                    // Only attempt to get LC3 characteristics if device supports LC3 audio
-                    if (supportsLC3Audio) {
-                        lc3ReadCharacteristic = service.getCharacteristic(LC3_READ_UUID);
-                        lc3WriteCharacteristic = service.getCharacteristic(LC3_WRITE_UUID);
-                    } else {
-                        lc3ReadCharacteristic = null;
-                        lc3WriteCharacteristic = null;
-                        Bridge.log("LIVE: ⏭️ Skipping LC3 characteristics - device does not support LC3 audio");
-                    }
+                    // Get LC3 characteristics (always supported)
+                    lc3ReadCharacteristic = service.getCharacteristic(LC3_READ_UUID);
+                    lc3WriteCharacteristic = service.getCharacteristic(LC3_WRITE_UUID);
 
-                    // Check if we have required characteristics based on device capabilities
-                    boolean hasRequiredCharacteristics = (rxCharacteristic != null && txCharacteristic != null);
-                    if (supportsLC3Audio) {
-                        hasRequiredCharacteristics = hasRequiredCharacteristics &&
-                                                   (lc3ReadCharacteristic != null && lc3WriteCharacteristic != null);
-                    }
+                    // Check if we have required characteristics
+                    boolean hasRequiredCharacteristics = (rxCharacteristic != null && txCharacteristic != null) &&
+                                                       (lc3ReadCharacteristic != null && lc3WriteCharacteristic != null);
 
                     if (hasRequiredCharacteristics) {
                         // BLE connection established, but we still need to wait for glasses SOC
-                        if (supportsLC3Audio) {
-                            Bridge.log("LIVE: ✅ Core TX/RX and LC3 TX/RX characteristics found - BLE connection ready");
-                        } else {
-                            Bridge.log("LIVE: ✅ Core TX/RX characteristics found - BLE connection ready (LC3 not supported)");
-                        }
+                        Bridge.log("LIVE: ✅ Core TX/RX and LC3 TX/RX characteristics found - BLE connection ready");
                         Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...");
 
                         // Keep the state as CONNECTING until the glasses SOC responds
@@ -932,14 +1006,12 @@ public class MentraLive extends SGCManager {
                         if (txCharacteristic == null) {
                             Log.e(TAG, "TX characteristic (peripheral's RX) not found");
                         }
-                        // Log LC3 characteristic errors only if device should support LC3
-                        if (supportsLC3Audio) {
-                            if (lc3ReadCharacteristic == null) {
-                                Log.e(TAG, "LC3_READ characteristic not found on LC3-capable device");
-                            }
-                            if (lc3WriteCharacteristic == null) {
-                                Log.e(TAG, "LC3_WRITE characteristic not found on LC3-capable device");
-                            }
+                        // Log LC3 characteristic errors
+                        if (lc3ReadCharacteristic == null) {
+                            Log.e(TAG, "LC3_READ characteristic not found");
+                        }
+                        if (lc3WriteCharacteristic == null) {
+                            Log.e(TAG, "LC3_WRITE characteristic not found");
                         }
                         gatt.disconnect();
                     }
@@ -1001,8 +1073,8 @@ public class MentraLive extends SGCManager {
 
             boolean isRxCharacteristic = uuid.equals(RX_CHAR_UUID);
             boolean isTxCharacteristic = uuid.equals(TX_CHAR_UUID);
-            boolean isLc3ReadCharacteristic = uuid.equals(LC3_READ_UUID) && supportsLC3Audio;
-            boolean isLc3WriteCharacteristic = uuid.equals(LC3_WRITE_UUID) && supportsLC3Audio;
+            boolean isLc3ReadCharacteristic = uuid.equals(LC3_READ_UUID);
+            boolean isLc3WriteCharacteristic = uuid.equals(LC3_WRITE_UUID);
 
             if (isRxCharacteristic) {
                 Bridge.log("LIVE: Received data on RX characteristic");
@@ -1010,11 +1082,7 @@ public class MentraLive extends SGCManager {
                 Bridge.log("LIVE: Received data on TX characteristic");
             } else if (isLc3ReadCharacteristic) {
                 // Bridge.log("LIVE: Received data on LC3_READ characteristic");
-                if (supportsLC3Audio) {
-                    processLc3AudioPacket(characteristic.getValue());
-                } else {
-                    Log.w(TAG, "Received LC3 data on device that doesn't support LC3 audio");
-                }
+                processLc3AudioPacket(characteristic.getValue());
             } else if (isLc3WriteCharacteristic) {
                 Bridge.log("LIVE: Received data on LC3_WRITE characteristic");
             } else {
@@ -1380,12 +1448,6 @@ public class MentraLive extends SGCManager {
     }
 
     @Override
-    public void setMicEnabled(boolean enabled) {
-        Bridge.log("LIVE: setMicEnabled(" + enabled + ")");
-        changeSmartGlassesMicrophoneState(enabled);
-    }
-
-    @Override
     public List<String> sortMicRanking(List<String> list) {
         return list;
     }
@@ -1511,7 +1573,7 @@ public class MentraLive extends SGCManager {
      * Process data received from the glasses
      */
     private void processReceivedData(byte[] data, int size) {
-        Bridge.log("LIVE: Processing received data: " + bytesToHex(data));
+        // Bridge.log("LIVE: Processing received data: " + bytesToHex(data));
 
         // Check if we have enough data
         if (data == null || size < 1) {
@@ -1915,7 +1977,7 @@ public class MentraLive extends SGCManager {
                 startHeartbeat();
 
                 // Start the micbeat mechanism now that glasses are ready
-                startMicBeat();
+                // startMicBeat();
 
                 // Send user settings to glasses
                 sendUserSettings();
@@ -1923,13 +1985,9 @@ public class MentraLive extends SGCManager {
                 // Claim RGB LED control authority
                 sendRgbLedControlAuthority(true);
 
-                // Initialize LC3 audio logging now that glasses are ready (only if supported)
-                if (supportsLC3Audio) {
-                    initializeLc3Logging();
-                    Bridge.log("LIVE: ✅ LC3 audio logging initialized for device");
-                } else {
-                    Bridge.log("LIVE: ⏭️ Skipping LC3 audio logging - device does not support LC3 audio");
-                }
+                // Initialize LC3 audio logging now that glasses are ready
+                initializeLc3Logging();
+                Bridge.log("LIVE: ✅ LC3 audio logging initialized for device");
 
                 // Audio Pairing: Only mark as fully connected if audio is also ready
                 // On Android, CTKD automatically pairs BT Classic when BLE bonds, so audio is always ready
@@ -1960,8 +2018,73 @@ public class MentraLive extends SGCManager {
                 }
                 break;
 
+            case "version_info_1":
+                // Chunk 1 of version info (MTU workaround) - contains basic device info
+                Bridge.log("LIVE: Received version_info_1 (chunk 1/2): " + json.toString());
+                pendingVersionInfoChunk1 = json;
+                // Wait for chunk 2 to arrive before processing
+                break;
+
+            case "version_info_2":
+                // Chunk 2 of version info (MTU workaround) - contains URLs and identifiers
+                Bridge.log("LIVE: Received version_info_2 (chunk 2/2): " + json.toString());
+
+                if (pendingVersionInfoChunk1 != null) {
+                    // Merge both chunks and process as complete version_info
+                    String appVersionChunked = pendingVersionInfoChunk1.optString("app_version", "");
+                    String buildNumberChunked = pendingVersionInfoChunk1.optString("build_number", "");
+                    String deviceModelChunked = pendingVersionInfoChunk1.optString("device_model", "");
+                    String androidVersionChunked = pendingVersionInfoChunk1.optString("android_version", "");
+                    String otaVersionUrlChunked = json.optString("ota_version_url", null);
+                    String firmwareVersionChunked = json.optString("firmware_version", "");
+                    String btMacAddressChunked = json.optString("bt_mac_address", "");
+
+                    // Update parent SGCManager fields
+                    glassesAppVersion = appVersionChunked;
+                    glassesBuildNumber = buildNumberChunked;
+                    glassesDeviceModel = deviceModelChunked;
+                    glassesAndroidVersion = androidVersionChunked;
+                    glassesOtaVersionUrl = otaVersionUrlChunked != null ? otaVersionUrlChunked : "";
+                    glassesFirmwareVersion = firmwareVersionChunked;
+                    glassesBtMacAddress = btMacAddressChunked;
+
+                    // Parse build number as integer for version checks (local field)
+                    try {
+                        glassesBuildNumberInt = Integer.parseInt(buildNumberChunked);
+                        Bridge.log("LIVE: Parsed build number as integer: " + glassesBuildNumberInt);
+                    } catch (NumberFormatException e) {
+                        glassesBuildNumberInt = 0;
+                        Log.e(TAG, "Failed to parse build number as integer: " + buildNumberChunked);
+                    }
+
+                    // Determine LC3 audio support: base K900 doesn't support LC3, variants do
+                    boolean supportsLC3Audio = !"K900".equals(deviceModelChunked);
+                    Bridge.log("LIVE: 📱 LC3 audio support: " + supportsLC3Audio + " (device: " + deviceModelChunked + ")");
+
+                    Bridge.log("LIVE: Glasses Version (from chunks) - App: " + appVersionChunked +
+                          ", Build: " + buildNumberChunked +
+                          ", Device: " + deviceModelChunked +
+                          ", Android: " + androidVersionChunked +
+                          ", Firmware: " + firmwareVersionChunked +
+                          ", BT MAC: " + btMacAddressChunked +
+                          ", OTA URL: " + otaVersionUrlChunked);
+
+                    // Send version info event (matches iOS emitVersionInfo)
+                    Bridge.sendVersionInfo(appVersionChunked, buildNumberChunked, deviceModelChunked, androidVersionChunked,
+                          otaVersionUrlChunked != null ? otaVersionUrlChunked : "", firmwareVersionChunked, btMacAddressChunked);
+
+                    // Notify CoreManager to update status and send to frontend
+                    CoreManager.getInstance().getStatus();
+
+                    // Clear the pending chunk
+                    pendingVersionInfoChunk1 = null;
+                } else {
+                    Bridge.log("LIVE: ⚠️ Received version_info_2 without version_info_1 - ignoring");
+                }
+                break;
+
             case "version_info":
-                // Process version information from ASG client
+                // Process version information from ASG client (legacy single-message format)
                 Bridge.log("LIVE: Received version info from ASG client: " + json.toString());
 
                 // Extract version information
@@ -1970,6 +2093,8 @@ public class MentraLive extends SGCManager {
                 String deviceModel = json.optString("device_model", "");
                 String androidVersion = json.optString("android_version", "");
                 String otaVersionUrl = json.optString("ota_version_url", null);
+                String firmwareVersion = json.optString("firmware_version", "");
+                String btMacAddress = json.optString("bt_mac_address", "");
 
                 // Update parent SGCManager fields
                 glassesAppVersion = appVersion;
@@ -1977,6 +2102,8 @@ public class MentraLive extends SGCManager {
                 glassesDeviceModel = deviceModel;
                 glassesAndroidVersion = androidVersion;
                 glassesOtaVersionUrl = otaVersionUrl != null ? otaVersionUrl : "";
+                glassesFirmwareVersion = firmwareVersion;
+                glassesBtMacAddress = btMacAddress;
 
                 // Parse build number as integer for version checks (local field)
                 try {
@@ -1987,22 +2114,20 @@ public class MentraLive extends SGCManager {
                     Log.e(TAG, "Failed to parse build number as integer: " + buildNumber);
                 }
 
-                // Determine LC3 audio support: base K900 doesn't support LC3, variants do (local field)
-                supportsLC3Audio = !"K900".equals(deviceModel);
-                Bridge.log("LIVE: 📱 LC3 audio support: " + supportsLC3Audio + " (device: " + deviceModel + ")");
-
                 Bridge.log("LIVE: Glasses Version - App: " + appVersion +
                       ", Build: " + buildNumber +
                       ", Device: " + deviceModel +
                       ", Android: " + androidVersion +
+                      ", Firmware: " + firmwareVersion +
+                      ", BT MAC: " + btMacAddress +
                       ", OTA URL: " + otaVersionUrl);
 
                 // Send version info event (matches iOS emitVersionInfo)
                 Bridge.sendVersionInfo(appVersion, buildNumber, deviceModel, androidVersion,
-                      otaVersionUrl != null ? otaVersionUrl : "");
+                      otaVersionUrl != null ? otaVersionUrl : "", firmwareVersion, btMacAddress);
 
                 // Notify CoreManager to update status and send to frontend
-                CoreManager.getInstance().handle_request_status();
+                CoreManager.getInstance().getStatus();
                 break;
 
             case "ota_download_progress":
@@ -2445,7 +2570,7 @@ public class MentraLive extends SGCManager {
         isCharging = charging;  // Local field
 
         // Notify CoreManager to update status and send to frontend
-        CoreManager.getInstance().handle_request_status();
+        CoreManager.getInstance().getStatus();
     }
 
     /**
@@ -2481,7 +2606,7 @@ public class MentraLive extends SGCManager {
         Bridge.sendHotspotStatusChange(enabled, ssid, password, gatewayIp);
 
         // Trigger a full status update so React Native gets the updated glasses_info
-        CoreManager.getInstance().handle_request_status();
+        CoreManager.getInstance().getStatus();
     }
 
     /**
@@ -2653,10 +2778,7 @@ public class MentraLive extends SGCManager {
                 Bridge.log("LIVE: 🎤 Sending micbeat - enabling custom audio TX");
                 
                 
-                // IMPORTANT NOTE: WE ARE DISABLING LC3 MIC UNTIL AFTER RELEASE
-                // DO NOT UNDO THIS HARD DISABLE UNTIL AFTER RELEASE
-                //sendEnableCustomAudioTxMessage(shouldUseGlassesMic);
-                sendEnableCustomAudioTxMessage(false);
+                sendEnableCustomAudioTxMessage(true);
                 micBeatCount++;
 
                 // Schedule next micbeat
@@ -2776,6 +2898,9 @@ public class MentraLive extends SGCManager {
     @Override
     public void findCompatibleDevices() {
         Bridge.log("LIVE: Finding compatible Mentra Live glasses");
+        
+        // Clear reconnection mode when user manually scans
+        isReconnecting = false;
 
         if (bluetoothAdapter == null) {
             Log.e(TAG, "Bluetooth not available");
@@ -2799,6 +2924,16 @@ public class MentraLive extends SGCManager {
 
     public void forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses");
+
+        // Clear saved device name to prevent reconnection to this device
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit().remove(PREF_DEVICE_NAME).apply();
+        Bridge.log("LIVE: Cleared saved device name");
+
+        // Reset reconnection state
+        reconnectAttempts = 0;
+        isReconnecting = false;
+
         stopScan();
         disconnect();
     }
@@ -2839,6 +2974,9 @@ public class MentraLive extends SGCManager {
     public void connectToSmartGlasses() {
         Bridge.log("LIVE: Connecting to Mentra Live glasses");
         updateConnectionState(ConnTypes.CONNECTING);
+        
+        // Clear reconnection mode when user manually initiates connection
+        isReconnecting = false;
 
         if (isConnected) {
             Bridge.log("LIVE: #@32 Already connected to Mentra Live glasses");
@@ -2889,8 +3027,8 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void changeSmartGlassesMicrophoneState(boolean enable) {
-        Bridge.log("LIVE: Microphone state changed: " + enable);
+    public void setMicEnabled(boolean enable) {
+        Bridge.log("LIVE: 🎤 Microphone state changed: " + enable);
 
         // Update the microphone state tracker
         isMicrophoneEnabled = enable;
@@ -2902,14 +3040,14 @@ public class MentraLive extends SGCManager {
 
         // Update the shouldUseGlassesMic flag to reflect the current state
         var m = CoreManager.getInstance();
-        this.shouldUseGlassesMic = enable && m.getSensingEnabled();
-        Bridge.log("LIVE: Updated shouldUseGlassesMic to: " + shouldUseGlassesMic);
+        this.shouldUseGlassesMic = enable;
+        Bridge.log("LIVE: 🎤 Updated shouldUseGlassesMic to: " + shouldUseGlassesMic);
 
         if (this.shouldUseGlassesMic) {
-            Bridge.log("LIVE: Microphone enabled, starting audio input handling");
+            Bridge.log("LIVE: 🎤 Microphone enabled, starting audio input handling");
             startMicBeat();
         } else {
-            Bridge.log("LIVE: Microphone disabled, stopping audio input handling");
+            Bridge.log("LIVE: 🎤 Microphone disabled, stopping audio input handling");
             stopMicBeat();
         }
     }
@@ -3320,6 +3458,7 @@ public class MentraLive extends SGCManager {
 
         // Reset state variables
         reconnectAttempts = 0;
+        isReconnecting = false;
         glassesReady = false;
         ready = false;
         updateConnectionState(ConnTypes.DISCONNECTED);
@@ -3539,16 +3678,25 @@ public class MentraLive extends SGCManager {
 
     /**
      * Enable or disable audio playback through phone speakers when receiving LC3 audio from glasses.
+     * This allows you to hear what the glasses microphone is picking up in real-time.
      * @param enable True to enable audio playback, false to disable.
      */
     public void enableAudioPlayback(boolean enable) {
         audioPlaybackEnabled = enable;
         if (enable) {
-            Bridge.log("LIVE: Audio playback enabled - LC3 audio will be played through phone speakers");
-            // Note: LC3Player is already started during initialization
+            Bridge.log("LIVE: 🔊 Audio playback enabled");
+            if (lc3AudioPlayer != null) {
+                lc3AudioPlayer.startPlay();
+                Bridge.log("LIVE: 🔊 LC3 audio player started");
+            } else {
+                Bridge.log("LIVE: ⚠️ LC3 audio player is null - playback not available");
+            }
         } else {
-            Bridge.log("LIVE: Audio playback disabled - LC3 audio will not be played through phone speakers");
-            // Note: We keep LC3Player running but just stop feeding it data
+            Bridge.log("LIVE: 🔊 Audio playback disabled");
+            if (lc3AudioPlayer != null) {
+                lc3AudioPlayer.stopPlay();
+                Bridge.log("LIVE: 🔊 LC3 audio player stopped");
+            }
         }
     }
 
@@ -3637,6 +3785,29 @@ public class MentraLive extends SGCManager {
             Log.e(TAG, "Error creating audio playback status JSON", e);
         }
         return status;
+    }
+    
+    /**
+     * Enable or disable rolling audio recording
+     * When enabled, saves the last 20 seconds of audio as M4A file every 20 seconds
+     * @param enable True to enable rolling recording, false to disable
+     */
+    public void enableRollingRecording(boolean enable) {
+        rollingRecordingEnabled = enable;
+        if (lc3AudioPlayer != null) {
+            lc3AudioPlayer.enableRollingRecording(enable);
+            Bridge.log("LIVE: 🎙️ Rolling recording " + (enable ? "ENABLED" : "DISABLED"));
+        } else {
+            Bridge.log("LIVE: ⚠️ Cannot enable rolling recording - LC3 player not initialized");
+        }
+    }
+
+    /**
+     * Check if rolling recording is currently enabled.
+     * @return True if rolling recording is enabled, false otherwise.
+     */
+    public boolean isRollingRecordingEnabled() {
+        return rollingRecordingEnabled;
     }
 
     public void requestReadyK900(){
@@ -4849,6 +5020,8 @@ public class MentraLive extends SGCManager {
      * Bytes 2-401: LC3 encoded audio data (400 bytes - 10 frames × 40 bytes per frame)
      */
     private void processLc3AudioPacket(byte[] data) {
+        // Bridge.log("LIVE: Processing LC3 audio packet: " + data.length + " bytes");
+
         if (data == null || data.length < 2) {
             Log.w(TAG, "Invalid LC3 audio packet received: too short");
             return;
@@ -4856,6 +5029,7 @@ public class MentraLive extends SGCManager {
 
         // Check for audio packet header
         if (data[0] == (byte) 0xF1) {
+            // Bridge.log("LIVE: Valid LC3 audio packet received");
             byte sequenceNumber = data[1];
             long receiveTime = System.currentTimeMillis();
 
@@ -4875,39 +5049,49 @@ public class MentraLive extends SGCManager {
 
             // Decode LC3 to PCM and forward to audio processing system
             // if (audioProcessingCallback != null) {
-                if (lc3DecoderPtr != 0) {
-                    // Decode LC3 to PCM using the native decoder with Mentra Live frame size
-                    byte[] pcmData = Lc3Cpp.decodeLC3(lc3DecoderPtr, lc3Data, LC3_FRAME_SIZE);
+            if (lc3DecoderPtr != 0) {
+                // Decode LC3 to PCM using the native decoder with Mentra Live frame size
+                byte[] pcmData = Lc3Cpp.decodeLC3(lc3DecoderPtr, lc3Data, LC3_FRAME_SIZE);
 
-                    if (pcmData != null && pcmData.length > 0) {
-                        // Forward PCM data to audio processing system (like Even Realities G1)
-                        // audioProcessingCallback.onAudioDataAvailable(pcmData);
-                        var m = CoreManager.getInstance();
-                        m.handlePcm(pcmData);
-                        // Bridge.log("LIVE: Decoded and forwarded LC3 to PCM: " + lc3Data.length + " -> " + pcmData.length + " bytes");
-                    } else {
-                        // Log.e(TAG, "Failed to decode LC3 data to PCM - got null or empty result");
-                    }
+                if (pcmData != null && pcmData.length > 0) {
+                    // Forward PCM data to CoreManager which handles:
+                    // 1. Sending to server (if shouldSendPcmData = true)
+                    // 2. Local transcription (if shouldSendTranscript = true)
+                    // See CoreManager.handlePcm() for routing logic
+                    var m = CoreManager.getInstance();
+                    m.handlePcm(pcmData);
+                    // Bridge.log("LIVE: 🎤 Decoded LC3→PCM: " + lc3Data.length + "→" + pcmData.length + " bytes, forwarded to CoreManager");
                 } else {
-                    Log.e(TAG, "LC3 decoder not initialized - cannot decode to PCM");
-
+                    // Log.e(TAG, "❌ Failed to decode LC3 data to PCM - got null or empty result");
                 }
-            // } else {
-                // Log.w(TAG, "No audio processing callback registered - audio data will not be processed");
-            // }
+            } else {
+                Log.e(TAG, "❌ LC3 decoder not initialized - cannot decode to PCM");
+
+            }
+
+            // Bridge.log("LIVE: 🔊 Audio playback enabled: " + audioPlaybackEnabled);
+        // } else {
+            // Log.w(TAG, "No audio processing callback registered - audio data will not be processed");
+        // }
 
             // Play LC3 audio directly through LC3 player if enabled
+            // This allows monitoring of the glasses microphone in real-time
             if (audioPlaybackEnabled && lc3AudioPlayer != null) {
+                // log 1/50th of the time:
+                if (Math.random() < 0.02) {
+                    Bridge.log("LIVE: 🔊 Playing LC3 audio through phone speakers: " + data.length + " bytes");
+                }
                 // The data array already contains the full packet with F1 header and sequence
                 // Just pass it directly to the LC3 player
                 lc3AudioPlayer.write(data, 0, data.length);
-                // Bridge.log("LIVE: Playing LC3 audio directly through LC3 player: " + data.length + " bytes");
-            } else {
-                Bridge.log("LIVE: Audio playback disabled - skipping LC3 audio output");
+                // Bridge.log("LIVE: 🔊 Playing LC3 audio through phone speakers: " + data.length + " bytes");
+            } else if (!audioPlaybackEnabled) {
+                // Audio playback is disabled - only processing for PCM conversion
+                // Bridge.log("LIVE: 🔇 Audio playback disabled - processing for PCM only");
             }
 
         } else {
-            Log.w(TAG, "Received non-audio packet on LC3 characteristic.");
+            Bridge.log("LIVE: ⚠️ Received non-audio packet on LC3 characteristic.");
         }
     }
 
@@ -4916,10 +5100,6 @@ public class MentraLive extends SGCManager {
      * @param lc3Data The raw LC3 encoded audio data (e.g., 400 bytes - 10 frames × 40 bytes per frame).
      */
     public void sendLc3AudioPacket(byte[] lc3Data) {
-        if (!supportsLC3Audio) {
-            Log.w(TAG, "Cannot send LC3 audio packet - device does not support LC3 audio.");
-            return;
-        }
         if (lc3WriteCharacteristic == null) {
             Log.w(TAG, "Cannot send LC3 audio packet, characteristic not available.");
             return;

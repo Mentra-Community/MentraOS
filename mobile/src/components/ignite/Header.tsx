@@ -41,6 +41,16 @@ export interface HeaderProps {
    * Title text to display if not using `tx` or nested components.
    */
   title?: TextProps["text"]
+
+  /**
+   * Subtitle text to display if not using `tx` or nested components.
+   */
+  subtitle?: TextProps["text"]
+
+  /**
+   * Subtitle text which is looked up via i18n.
+   */
+  subtitleTx?: TextProps["tx"]
   /**
    * Title text which is looked up via i18n.
    */
@@ -126,6 +136,8 @@ interface HeaderActionProps {
   backgroundColor?: string
   icon?: IconTypes
   iconColor?: string
+  subtitle?: TextProps["text"]
+  subtitleTx?: TextProps["tx"]
   text?: TextProps["text"]
   tx?: TextProps["tx"]
   txOptions?: TextProps["txOptions"]
@@ -163,6 +175,8 @@ export function Header(props: HeaderProps) {
     titleMode = "flex",
     titleTx,
     titleTxOptions,
+    subtitle,
+    subtitleTx,
     titleContainerStyle: $titleContainerStyleOverride,
     style: $styleOverride,
     titleStyle: $titleStyleOverride,
@@ -172,6 +186,7 @@ export function Header(props: HeaderProps) {
   const $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges, "margin")
 
   const titleContent = titleTx ? translate(titleTx, titleTxOptions) : title
+  const subtitleContent = subtitleTx ? translate(subtitleTx) : subtitle
 
   // const {theme} = useAppTheme()
 
@@ -208,7 +223,8 @@ export function Header(props: HeaderProps) {
               $titleContainerStyleOverride,
             ]}
             pointerEvents="none">
-            <Text weight="medium" size="md" text={titleContent} style={[$title, $titleStyleOverride]} />
+            <Text weight="normal" size="lg" text={titleContent} style={[$title, $titleStyleOverride]} />
+            {!!subtitleContent && <Text weight="normal" size="xs" text={subtitleContent} />}
           </View>
         )}
 
@@ -283,8 +299,10 @@ const $container: ViewStyle = {
 }
 
 const $title: TextStyle = {
+  // textAlign: "center",
+  // fontSize: 15,
   textAlign: "left",
-  fontSize: 15,
+  fontSize: 20,
 }
 
 const $actionTextContainer: ThemedStyle<ViewStyle> = () => ({

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mentra-Community/MentraOS/cloud/packages/cloud-livekit-bridge/logger"
 	pb "github.com/Mentra-Community/MentraOS/cloud/packages/cloud-livekit-bridge/proto"
 	mp3 "github.com/hajimehoshi/go-mp3"
 )
@@ -22,6 +23,7 @@ func (s *LiveKitBridgeService) playAudioFile(
 	session *RoomSession,
 	stream pb.LiveKitBridge_PlayAudioServer,
 	trackName string,
+	lg *logger.ContextLogger,
 ) (int64, error) {
 	// Create cancellable context for playback
 	ctx, cancel := context.WithCancel(stream.Context())
@@ -37,38 +39,81 @@ func (s *LiveKitBridgeService) playAudioFile(
 	session.playbackDone = done
 	session.mu.Unlock()
 
+	lg.Debug("Fetching audio file", logger.LogEntry{
+		AudioURL: req.AudioUrl,
+	})
+
 	// Fetch audio file
+	fetchStart := time.Now()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.AudioUrl, nil)
 	if err != nil {
+		lg.Error("Failed to create HTTP request", err, logger.LogEntry{
+			AudioURL: req.AudioUrl,
+		})
 		return 0, fmt.Errorf("invalid URL: %w", err)
 	}
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
+		lg.Error("Failed to fetch audio file", err, logger.LogEntry{
+			AudioURL:   req.AudioUrl,
+			DurationMs: time.Since(fetchStart).Milliseconds(),
+		})
 		return 0, fmt.Errorf("failed to fetch audio: %w", err)
 	}
 	defer resp.Body.Close()
 
+	fetchDuration := time.Since(fetchStart)
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		lg.Error("HTTP error fetching audio", fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status), logger.LogEntry{
+			AudioURL:   req.AudioUrl,
+			DurationMs: fetchDuration.Milliseconds(),
+			Extra: map[string]interface{}{
+				"http_status":      resp.StatusCode,
+				"http_status_text": resp.Status,
+			},
+		})
 		return 0, fmt.Errorf("HTTP error: %d %s", resp.StatusCode, resp.Status)
 	}
 
 	// Detect content type
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	contentLength := resp.ContentLength
 	url := strings.ToLower(req.AudioUrl)
 
-	log.Printf("Playing audio: url=%s, contentType=%s", req.AudioUrl, contentType)
+	lg.Info("Audio file fetched successfully", logger.LogEntry{
+		AudioURL:    req.AudioUrl,
+		ContentType: contentType,
+		DurationMs:  fetchDuration.Milliseconds(),
+		Extra: map[string]interface{}{
+			"content_length": contentLength,
+			"fetch_ms":       fetchDuration.Milliseconds(),
+		},
+	})
+
+	log.Printf("Playing audio: url=%s, contentType=%s, contentLength=%d", req.AudioUrl, contentType, contentLength)
 
 	// Route to appropriate decoder
 	if strings.Contains(contentType, "audio/mpeg") || strings.HasSuffix(url, ".mp3") {
-		return s.playMP3(ctx, resp.Body, req, session, trackName)
+		lg.Debug("Decoding as MP3", logger.LogEntry{
+			ContentType: contentType,
+		})
+		return s.playMP3(ctx, resp.Body, req, session, trackName, lg)
 	} else if strings.Contains(contentType, "audio/wav") ||
 		strings.Contains(contentType, "audio/x-wav") ||
 		strings.Contains(contentType, "audio/wave") ||
 		strings.HasSuffix(url, ".wav") {
-		return s.playWAV(ctx, resp.Body, req, session, trackName)
+		lg.Debug("Decoding as WAV", logger.LogEntry{
+			ContentType: contentType,
+		})
+		return s.playWAV(ctx, resp.Body, req, session, trackName, lg)
 	}
 
+	lg.Error("Unsupported audio format", fmt.Errorf("unsupported: %s", contentType), logger.LogEntry{
+		ContentType: contentType,
+		AudioURL:    req.AudioUrl,
+	})
 	return 0, fmt.Errorf("unsupported audio format: %s", contentType)
 }
 
@@ -79,35 +124,61 @@ func (s *LiveKitBridgeService) playMP3(
 	req *pb.PlayAudioRequest,
 	session *RoomSession,
 	trackName string,
+	lg *logger.ContextLogger,
 ) (int64, error) {
+	decodeStart := time.Now()
+
 	// Create MP3 decoder
 	dec, err := mp3.NewDecoder(r)
 	if err != nil {
+		lg.Error("Failed to create MP3 decoder", err, logger.LogEntry{
+			AudioURL: req.AudioUrl,
+		})
 		return 0, fmt.Errorf("MP3 decode error: %w", err)
 	}
 
 	srcSR := dec.SampleRate()
 	if srcSR <= 0 {
+		lg.Error("Invalid MP3 sample rate", fmt.Errorf("sample rate: %d", srcSR), logger.LogEntry{
+			SampleRate: srcSR,
+		})
 		return 0, fmt.Errorf("invalid MP3 sample rate")
 	}
+
+	lg.Debug("MP3 decoder initialized", logger.LogEntry{
+		SampleRate: srcSR,
+		Extra: map[string]interface{}{
+			"decode_init_ms": time.Since(decodeStart).Milliseconds(),
+		},
+	})
 
 	const dstSR = 16000
 	resampler := &resampleState{step: float64(srcSR) / float64(dstSR)}
 
 	buf := make([]byte, 4096)
 	var totalSamples int64
+	var totalBytesRead int64
+	var writeErrors int64
 	startTime := time.Now()
+	lastProgressLog := time.Now()
 
 	for {
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
+			lg.Warn("MP3 playback cancelled", logger.LogEntry{
+				TotalSamples: totalSamples,
+				BytesRead:    totalBytesRead,
+				DurationMs:   time.Since(startTime).Milliseconds(),
+			})
 			return 0, ctx.Err()
 		default:
 		}
 
 		n, err := dec.Read(buf)
 		if n > 0 {
+			totalBytesRead += int64(n)
+
 			// Convert bytes to int16 samples
 			samples := bytesToInt16(buf[:n])
 
@@ -131,15 +202,36 @@ func (s *LiveKitBridgeService) playMP3(
 
 				// Write to LiveKit in 10ms chunks
 				if err := session.writeAudioToTrack(int16ToBytes(resampled), trackName); err != nil {
+					writeErrors++
+					lg.Error("Failed to write audio to track", err, logger.LogEntry{
+						TotalSamples: totalSamples,
+						Extra: map[string]interface{}{
+							"write_errors": writeErrors,
+						},
+					})
 					return 0, fmt.Errorf("failed to write audio: %w", err)
 				}
 
 				totalSamples += int64(len(resampled))
 			}
+
+			// Log progress every 5 seconds
+			if time.Since(lastProgressLog) > 5*time.Second {
+				lg.Debug("MP3 playback progress", logger.LogEntry{
+					TotalSamples: totalSamples,
+					BytesRead:    totalBytesRead,
+					DurationMs:   time.Since(startTime).Milliseconds(),
+				})
+				lastProgressLog = time.Now()
+			}
 		}
 
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
+				lg.Error("MP3 read error", err, logger.LogEntry{
+					TotalSamples: totalSamples,
+					BytesRead:    totalBytesRead,
+				})
 				return 0, fmt.Errorf("MP3 read error: %w", err)
 			}
 			break
@@ -147,6 +239,18 @@ func (s *LiveKitBridgeService) playMP3(
 	}
 
 	duration := time.Since(startTime).Milliseconds()
+
+	lg.Info("MP3 playback complete", logger.LogEntry{
+		TotalSamples: totalSamples,
+		BytesRead:    totalBytesRead,
+		DurationMs:   duration,
+		SampleRate:   srcSR,
+		Extra: map[string]interface{}{
+			"target_sample_rate": dstSR,
+			"resample_ratio":     float64(srcSR) / float64(dstSR),
+		},
+	})
+
 	log.Printf("MP3 playback complete: samples=%d, duration=%dms", totalSamples, duration)
 
 	return duration, nil
@@ -159,16 +263,26 @@ func (s *LiveKitBridgeService) playWAV(
 	req *pb.PlayAudioRequest,
 	session *RoomSession,
 	trackName string,
+	lg *logger.ContextLogger,
 ) (int64, error) {
 	br := bufio.NewReader(r)
 
 	// Parse RIFF header
 	header := make([]byte, 12)
 	if _, err := io.ReadFull(br, header); err != nil {
+		lg.Error("Failed to read WAV header", err, logger.LogEntry{
+			AudioURL: req.AudioUrl,
+		})
 		return 0, fmt.Errorf("failed to read WAV header: %w", err)
 	}
 
 	if string(header[0:4]) != "RIFF" || string(header[8:12]) != "WAVE" {
+		lg.Error("Invalid WAV file", fmt.Errorf("not a valid WAV file"), logger.LogEntry{
+			AudioURL: req.AudioUrl,
+			Extra: map[string]interface{}{
+				"magic_bytes": string(header[0:4]),
+			},
+		})
 		return 0, fmt.Errorf("not a valid WAV file")
 	}
 
@@ -184,6 +298,7 @@ func (s *LiveKitBridgeService) playWAV(
 	for {
 		hdr := make([]byte, 8)
 		if _, err := io.ReadFull(br, hdr); err != nil {
+			lg.Error("Failed to read WAV chunk header", err, logger.LogEntry{})
 			return 0, fmt.Errorf("failed to read chunk header: %w", err)
 		}
 
@@ -193,6 +308,7 @@ func (s *LiveKitBridgeService) playWAV(
 		if chunkID == "fmt " {
 			buf := make([]byte, size)
 			if _, err := io.ReadFull(br, buf); err != nil {
+				lg.Error("Failed to read fmt chunk", err, logger.LogEntry{})
 				return 0, fmt.Errorf("failed to read fmt chunk: %w", err)
 			}
 
@@ -202,6 +318,7 @@ func (s *LiveKitBridgeService) playWAV(
 			}
 
 			if size < 16 {
+				lg.Error("WAV fmt chunk too short", fmt.Errorf("size: %d", size), logger.LogEntry{})
 				return 0, fmt.Errorf("fmt chunk too short")
 			}
 
@@ -211,24 +328,56 @@ func (s *LiveKitBridgeService) playWAV(
 			bitsPerSample = binary.LittleEndian.Uint16(buf[14:16])
 
 			if audioFormat != 1 {
+				lg.Error("Unsupported WAV format", fmt.Errorf("format: %d (only PCM supported)", audioFormat), logger.LogEntry{
+					Extra: map[string]interface{}{
+						"audio_format": audioFormat,
+					},
+				})
 				return 0, fmt.Errorf("only PCM WAV supported")
 			}
 			if bitsPerSample != 16 {
+				lg.Error("Unsupported WAV bit depth", fmt.Errorf("bits: %d", bitsPerSample), logger.LogEntry{
+					Extra: map[string]interface{}{
+						"bits_per_sample": bitsPerSample,
+					},
+				})
 				return 0, fmt.Errorf("only 16-bit WAV supported")
 			}
 			if numChannels != 1 && numChannels != 2 {
+				lg.Error("Unsupported WAV channel count", fmt.Errorf("channels: %d", numChannels), logger.LogEntry{
+					Channels: int(numChannels),
+				})
 				return 0, fmt.Errorf("only mono/stereo WAV supported")
 			}
+
+			lg.Debug("WAV format parsed", logger.LogEntry{
+				SampleRate: int(sampleRate),
+				Channels:   int(numChannels),
+				Extra: map[string]interface{}{
+					"bits_per_sample": bitsPerSample,
+					"audio_format":    audioFormat,
+				},
+			})
 
 			haveFmt = true
 
 		} else if chunkID == "data" {
 			dataBytes = size
 			haveData = true
+			lg.Debug("WAV data chunk found", logger.LogEntry{
+				Extra: map[string]interface{}{
+					"data_bytes": dataBytes,
+				},
+			})
 			break
 		} else {
 			// Skip unknown chunk
 			if _, err := io.CopyN(io.Discard, br, int64(size)); err != nil {
+				lg.Error("Failed to skip WAV chunk", err, logger.LogEntry{
+					Extra: map[string]interface{}{
+						"chunk_id": chunkID,
+					},
+				})
 				return 0, fmt.Errorf("failed to skip chunk: %w", err)
 			}
 			if size%2 == 1 {
@@ -238,6 +387,7 @@ func (s *LiveKitBridgeService) playWAV(
 	}
 
 	if !haveFmt || !haveData {
+		lg.Error("WAV missing required chunks", fmt.Errorf("haveFmt=%v, haveData=%v", haveFmt, haveData), logger.LogEntry{})
 		return 0, fmt.Errorf("missing fmt or data chunk")
 	}
 
@@ -246,6 +396,7 @@ func (s *LiveKitBridgeService) playWAV(
 
 	bytesPerFrame := int(bitsPerSample/8) * int(numChannels)
 	if bytesPerFrame <= 0 {
+		lg.Error("Invalid WAV frame size", fmt.Errorf("bytesPerFrame=%d", bytesPerFrame), logger.LogEntry{})
 		return 0, fmt.Errorf("invalid frame size")
 	}
 
@@ -256,12 +407,19 @@ func (s *LiveKitBridgeService) playWAV(
 	}
 
 	var totalSamples int64
+	var totalBytesRead int64
 	startTime := time.Now()
+	lastProgressLog := time.Now()
 
 	for readLeft > 0 {
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
+			lg.Warn("WAV playback cancelled", logger.LogEntry{
+				TotalSamples: totalSamples,
+				BytesRead:    totalBytesRead,
+				DurationMs:   time.Since(startTime).Milliseconds(),
+			})
 			return 0, ctx.Err()
 		default:
 		}
@@ -273,6 +431,9 @@ func (s *LiveKitBridgeService) playWAV(
 
 		n, err := io.ReadFull(br, buf[:toRead])
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			lg.Error("Failed to read WAV audio data", err, logger.LogEntry{
+				BytesRead: totalBytesRead,
+			})
 			return 0, fmt.Errorf("failed to read audio data: %w", err)
 		}
 		if n <= 0 {
@@ -280,6 +441,7 @@ func (s *LiveKitBridgeService) playWAV(
 		}
 
 		readLeft -= int64(n)
+		totalBytesRead += int64(n)
 		data := buf[:n]
 
 		// Convert to mono int16 samples
@@ -313,14 +475,43 @@ func (s *LiveKitBridgeService) playWAV(
 
 			// Write to LiveKit
 			if err := session.writeAudioToTrack(int16ToBytes(output), trackName); err != nil {
+				lg.Error("Failed to write WAV audio to track", err, logger.LogEntry{
+					TotalSamples: totalSamples,
+				})
 				return 0, fmt.Errorf("failed to write audio: %w", err)
 			}
 
 			totalSamples += int64(len(output))
 		}
+
+		// Log progress every 5 seconds
+		if time.Since(lastProgressLog) > 5*time.Second {
+			lg.Debug("WAV playback progress", logger.LogEntry{
+				TotalSamples: totalSamples,
+				BytesRead:    totalBytesRead,
+				DurationMs:   time.Since(startTime).Milliseconds(),
+				Extra: map[string]interface{}{
+					"bytes_remaining": readLeft,
+				},
+			})
+			lastProgressLog = time.Now()
+		}
 	}
 
 	duration := time.Since(startTime).Milliseconds()
+
+	lg.Info("WAV playback complete", logger.LogEntry{
+		TotalSamples: totalSamples,
+		BytesRead:    totalBytesRead,
+		DurationMs:   duration,
+		SampleRate:   int(sampleRate),
+		Channels:     int(numChannels),
+		Extra: map[string]interface{}{
+			"target_sample_rate": dstSR,
+			"data_bytes":         dataBytes,
+		},
+	})
+
 	log.Printf("WAV playback complete: samples=%d, duration=%dms", totalSamples, duration)
 
 	return duration, nil

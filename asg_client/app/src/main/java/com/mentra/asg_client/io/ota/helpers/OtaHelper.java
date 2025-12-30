@@ -68,6 +68,10 @@ public class OtaHelper {
     // This will bypass version checking, downloading, and directly install /storage/emulated/0/asg/mtk_firmware.zip
     private static final boolean DEBUG_FORCE_MTK_INSTALL = false;
 
+    // ⚠️ DEBUG FLAG: Set to true to skip all checks and install BES firmware from local file
+    // This will bypass version checking, downloading, and directly install /storage/emulated/0/asg/bes_firmware.bin
+    private static final boolean DEBUG_FORCE_BES_INSTALL = false;
+
     public OtaHelper(Context context) {
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
@@ -248,9 +252,9 @@ public class OtaHelper {
             }
 
             try {
-                // ⚠️ DEBUG: Mock JSON to skip APK checks and trigger MTK install
+                // ⚠️ DEBUG: Mock JSON to skip APK checks and trigger firmware install
                 String versionInfo;
-                if (DEBUG_FORCE_MTK_INSTALL) {
+                if (DEBUG_FORCE_MTK_INSTALL || DEBUG_FORCE_BES_INSTALL) {
                     Log.w(TAG, "DEBUG: Using mock version.json (APK versions set to 0 to skip updates)");
                     versionInfo = "{"
                         + "\"apps\": {"
@@ -375,7 +379,22 @@ public class OtaHelper {
         }
         
         // PHASE 3: Update BES firmware (only if no APK update and no MTK update)
-        if (!apkUpdateNeeded && !mtkUpdateStarted && rootJson.has("bes_firmware")) {
+        // ⚠️ DEBUG MODE: Force install BES firmware from local file
+        if (DEBUG_FORCE_BES_INSTALL && !apkUpdateNeeded && !mtkUpdateStarted) {
+            Log.w(TAG, "========================================");
+            Log.w(TAG, "⚠️⚠️⚠️ DEBUG MODE ACTIVE ⚠️⚠️⚠️");
+            Log.w(TAG, "Force installing BES firmware from local file");
+            Log.w(TAG, "Skipping version check and download");
+            Log.w(TAG, "========================================");
+            boolean besUpdateStarted = debugInstallBesFirmware(context);
+            if (besUpdateStarted) {
+                Log.i(TAG, "DEBUG: BES firmware install triggered");
+            } else {
+                Log.e(TAG, "DEBUG: BES firmware install failed - check if file exists and BesOtaManager is available");
+            }
+        }
+        // Normal BES update flow
+        else if (!apkUpdateNeeded && !mtkUpdateStarted && rootJson.has("bes_firmware")) {
             Log.i(TAG, "No APK or MTK updates needed - checking BES firmware");
             checkAndUpdateBesFirmware(rootJson.getJSONObject("bes_firmware"), context);
         } else if (apkUpdateNeeded || mtkUpdateStarted) {
@@ -1456,10 +1475,67 @@ public class OtaHelper {
             
             Log.i(TAG, "DEBUG: MTK firmware install command sent - monitor MtkOtaReceiver for progress");
             return true;
-            
+
         } catch (Exception e) {
             Log.e(TAG, "DEBUG: Failed to install MTK firmware", e);
             isMtkOtaInProgress = false;
+            return false;
+        }
+    }
+
+    /**
+     * Debug method to install BES firmware from local file without any checks.
+     * This bypasses:
+     * - Version checking
+     * - Mutual exclusion checks (APK/MTK updates)
+     * - SHA256 verification
+     * - Download step
+     *
+     * The firmware file must already exist at: /storage/emulated/0/asg/bes_firmware.bin
+     * Use for testing only!
+     *
+     * @param context Application context
+     * @return true if install started successfully
+     */
+    public static boolean debugInstallBesFirmware(Context context) {
+        try {
+            // Check if BES OTA is already in progress - don't interrupt it!
+            if (BesOtaManager.isBesOtaInProgress) {
+                Log.w(TAG, "DEBUG: BES OTA already in progress - skipping to avoid interruption");
+                return false;
+            }
+
+            File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
+
+            if (!firmwareFile.exists()) {
+                Log.e(TAG, "DEBUG: BES firmware file not found at: " + OtaConstants.BES_FIRMWARE_PATH);
+                return false;
+            }
+
+            Log.w(TAG, "⚠️ DEBUG: Force installing BES firmware from: " + OtaConstants.BES_FIRMWARE_PATH);
+            Log.w(TAG, "⚠️ DEBUG: File size: " + firmwareFile.length() + " bytes");
+            Log.w(TAG, "⚠️ DEBUG: Skipping all checks - version, mutual exclusion, SHA256");
+
+            // Get BesOtaManager singleton
+            BesOtaManager manager = BesOtaManager.getInstance();
+            if (manager == null) {
+                Log.e(TAG, "DEBUG: BesOtaManager not available - is this a K900 device?");
+                return false;
+            }
+
+            Log.i(TAG, "DEBUG: Starting BES firmware update via BesOtaManager");
+            boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
+
+            if (started) {
+                Log.i(TAG, "DEBUG: BES firmware install initiated - monitor BesOtaProgressEvent for progress");
+                return true;
+            } else {
+                Log.e(TAG, "DEBUG: BesOtaManager.startFirmwareUpdate() returned false");
+                return false;
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "DEBUG: Failed to install BES firmware", e);
             return false;
         }
     }

@@ -1,7 +1,7 @@
+// eslint-disable-next-line import/no-unresolved
 import LogoSvg from "@assets/logo/logo.svg"
 import {FontAwesome} from "@expo/vector-icons"
-import AppleIcon from "assets/icons/component/AppleIcon"
-import GoogleIcon from "assets/icons/component/GoogleIcon"
+import {useLocalSearchParams} from "expo-router"
 import * as WebBrowser from "expo-web-browser"
 import {useEffect, useRef, useState} from "react"
 import {
@@ -29,8 +29,12 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
+import {mapAuthError} from "@/utils/auth/authErrors"
 import {useAppTheme} from "@/utils/useAppTheme"
 import {useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
+
+import AppleIcon from "assets/icons/component/AppleIcon"
+import GoogleIcon from "assets/icons/component/GoogleIcon"
 
 export default function LoginScreen() {
   const [isSigningUp, setIsSigningUp] = useState(false)
@@ -38,10 +42,11 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("")
   const [isFormLoading, setIsFormLoading] = useState(false)
   const [isAuthLoading, setIsAuthLoading] = useState(false)
-  const [formAction, setFormAction] = useState<"signin" | "signup" | null>(null)
+  const [formAction, setFormAction] = useState<"signin" | null>(null)
   const [backPressCount, setBackPressCount] = useState(0)
   const {push, replace} = useNavigationHistory()
   const [isChina] = useSetting(SETTINGS.china_deployment.key)
+  const {authError} = useLocalSearchParams<{authError?: string}>()
 
   // Get theme and safe area insets
   const {theme, themed} = useAppTheme()
@@ -73,6 +78,14 @@ export default function LoginScreen() {
       }),
     ]).start()
   }, [opacity, translateY])
+
+  // Handle auth errors passed via URL params (e.g., from expired reset links)
+  useEffect(() => {
+    if (authError) {
+      const errorMessage = mapAuthError(authError)
+      showAlert(translate("common:error"), errorMessage, [{text: translate("common:ok")}])
+    }
+  }, [authError])
 
   useEffect(() => {
     if (isSigningUp) {
@@ -178,16 +191,38 @@ export default function LoginScreen() {
     authOverlayOpacity.setValue(0)
   }
 
-  const handleEmailSignUp = async (email: string, password: string) => {
+  // Validation helper for login
+  const validateInputs = (): boolean => {
+    if (!email.trim()) {
+      showAlert(translate("common:error"), translate("login:errors.emailRequired"), [{text: translate("common:ok")}])
+      return false
+    }
+    if (!email.includes("@") || !email.includes(".")) {
+      showAlert(translate("common:error"), translate("login:invalidEmail"), [{text: translate("common:ok")}])
+      return false
+    }
+    if (!password) {
+      showAlert(translate("common:error"), translate("login:errors.passwordRequired"), [{text: translate("common:ok")}])
+      return false
+    }
+    return true
+  }
+
+  const handleEmailSignIn = async (emailInput: string, passwordInput: string) => {
     Keyboard.dismiss()
+
+    // Validate inputs before calling API
+    if (!validateInputs()) {
+      return
+    }
+
     setIsFormLoading(true)
-    setFormAction("signup")
+    setFormAction("signin")
 
-    const res = await mentraAuth.signUp({email, password})
-
+    const res = await mentraAuth.signInWithPassword({email: emailInput, password: passwordInput})
     if (res.is_error()) {
-      console.error("Error during sign-up:", res.error)
-      showAlert(translate("common:error"), res.error.toString(), [{text: translate("common:ok")}])
+      console.error("Error during sign-in:", res.error)
+      showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
       setIsFormLoading(false)
       setFormAction(null)
       return
@@ -195,23 +230,6 @@ export default function LoginScreen() {
 
     setIsFormLoading(false)
     setFormAction(null)
-    replace("/")
-  }
-
-  const handleEmailSignIn = async (email: string, password: string) => {
-    Keyboard.dismiss()
-    setIsFormLoading(true)
-    setFormAction("signin")
-    
-    const res = await mentraAuth.signInWithPassword({email, password})
-    if (res.is_error()) {
-      console.error("Error during sign-in:", res.error)
-      showAlert(translate("common:error"), res.error.toString(), [{text: translate("common:ok")}])
-      setIsFormLoading(false)
-      return
-    }
-
-    setIsFormLoading(false)
     replace("/")
   }
 
@@ -335,27 +353,29 @@ export default function LoginScreen() {
                   textStyle={themed($buttonText)}
                   onPress={() => handleEmailSignIn(email, password)}
                   disabled={isFormLoading}
+                  {...(isFormLoading &&
+                    formAction === "signin" && {
+                      LeftAccessory: () => (
+                        <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
+                      ),
+                    })}
                 />
-                <Spacer height={spacing.s3} />
-                <Button
-                  tx="login:createAccount"
-                  style={themed($secondaryButton)}
-                  pressedStyle={themed($pressedButton)}
-                  textStyle={themed($buttonText)}
-                  onPress={() => handleEmailSignUp(email, password)}
-                  disabled={isFormLoading}
-                />
+
+                <Spacer height={spacing.s4} />
+
+                {/* New to MentraOS? Create an Account link */}
+                <View style={themed($createAccountContainer)}>
+                  <Text style={themed($createAccountText)}>{translate("login:signup.newToMentra")}</Text>
+                  <TouchableOpacity onPress={() => push("/auth/signup")}>
+                    <Text style={themed($createAccountLink)}>{translate("login:signup.createAccount")}</Text>
+                  </TouchableOpacity>
+                </View>
 
                 <Spacer height={spacing.s3} />
 
                 <Pressable onPress={() => setIsSigningUp(false)}>
                   <View style={{flexDirection: "row", justifyContent: "center", alignItems: "center"}}>
-                    <FontAwesome
-                      name="arrow-left"
-                      size={16}
-                      color={theme.colors.textDim}
-                      // style={themed($backIcon)}
-                    />
+                    <FontAwesome name="arrow-left" size={16} color={theme.colors.textDim} />
                     <Text style={{marginLeft: 8, color: theme.colors.textDim}}>Back</Text>
                   </View>
                 </Pressable>
@@ -424,7 +444,7 @@ export default function LoginScreen() {
             }}>
             <ActivityIndicator size="large" color={theme.colors.tint} style={{marginBottom: theme.spacing.s4}} />
             <Text preset="bold" style={{color: theme.colors.text}}>
-              {formAction === "signup" ? "Creating your account..." : "Signing in..."}
+              {translate("login:connectingToServer")}
             </Text>
           </View>
         </View>
@@ -446,7 +466,7 @@ const $scrollContent: ThemedStyle<ViewStyle> = () => ({
 const $card: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 1,
   justifyContent: "center",
-  padding: spacing.s6,
+  padding: spacing.s4,
 })
 
 const $authLoadingOverlay: ThemedStyle<ViewStyle> = ({colors}) => ({
@@ -603,8 +623,6 @@ const $appleButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
 
 const $primaryButton: ThemedStyle<ViewStyle> = () => ({})
 
-const $secondaryButton: ThemedStyle<ViewStyle> = () => ({})
-
 const $pressedButton: ThemedStyle<ViewStyle> = ({colors}) => ({
   backgroundColor: colors.background,
   opacity: 0.9,
@@ -637,4 +655,22 @@ const $forgotPasswordText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
   color: colors.tint,
   textDecorationLine: "underline",
+})
+
+const $createAccountContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "center",
+  alignItems: "center",
+  gap: spacing.s1,
+})
+
+const $createAccountText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 14,
+  color: colors.textDim,
+})
+
+const $createAccountLink: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 14,
+  color: colors.tint,
+  fontWeight: "600",
 })

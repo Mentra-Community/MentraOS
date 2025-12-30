@@ -1,14 +1,15 @@
+import * as Clipboard from "expo-clipboard"
+import {useRef} from "react"
+import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import Toast from "react-native-toast-message"
+
+import {Text} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
-import {Text} from "@/components/ignite"
 import {ThemedStyle} from "@/theme"
-import * as Clipboard from "expo-clipboard"
-import Toast from "react-native-toast-message"
 import showAlert from "@/utils/AlertUtils"
-import {useRef} from "react"
 import mentraAuth from "@/utils/auth/authClient"
+import {useAppTheme} from "@/utils/useAppTheme"
 
 export const VersionInfo = () => {
   const {theme, themed} = useAppTheme()

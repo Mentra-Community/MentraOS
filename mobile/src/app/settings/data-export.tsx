@@ -87,8 +87,8 @@ export default function DataExportPage() {
       const filename = DataExportService.generateFilename()
 
       const result = await Share.share({
-        message: Platform.OS === "ios" ? `AugmentOS Data Export - ${filename}\n\n${jsonString}` : jsonString,
-        title: `AugmentOS Data Export - ${filename}`,
+        message: Platform.OS === "ios" ? `MentraOS Data Export - ${filename}\n\n${jsonString}` : jsonString,
+        title: `MentraOS Data Export - ${filename}`,
       })
 
       if (result.action === Share.sharedAction) {
@@ -212,14 +212,14 @@ export default function DataExportPage() {
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+const $container: ThemedStyle<ViewStyle> = ({colors}) => ({
   backgroundColor: colors.background,
   flex: 1,
-  paddingHorizontal: spacing.s6,
 })
 
-const $contentContainer: ThemedStyle<ViewStyle> = () => ({
+const $contentContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 1,
+  paddingHorizontal: spacing.s4,
 })
 
 const $loadingContainer: ThemedStyle<ViewStyle> = () => ({
@@ -259,7 +259,6 @@ const $summaryValue: ThemedStyle<TextStyle> = ({colors}) => ({
 const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   gap: spacing.s3,
-  paddingHorizontal: spacing.s6,
 })
 
 const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({

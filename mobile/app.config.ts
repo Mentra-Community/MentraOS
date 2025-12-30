@@ -26,7 +26,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     android: {
       icon: "./assets/app-icons/ic_launcher.png",
       package: "com.mentra.mentra",
-      versionCode: 63,
+      versionCode: 70,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
         backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -92,7 +92,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             },
           },
         },
-        UIBackgroundModes: ["bluetooth-central", "audio", "location"],
+        UIBackgroundModes: ["bluetooth-central", "audio", "location", "processing", "fetch"],
         NSLocationAlwaysAndWhenInUseUsageDescription:
           "MentraOS requires background location access to deliver continuous updates for apps like navigation and running, even when the app isn't in the foreground.",
         UIRequiresFullScreen: true,
@@ -100,6 +100,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "UIInterfaceOrientationPortrait",
           "UIInterfaceOrientationPortraitUpsideDown",
         ],
+        BGTaskSchedulerPermittedIdentifiers: ["com.mentra.background-timer"],
       },
       config: {
         usesNonExemptEncryption: false,
@@ -121,6 +122,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
       // "./plugins/withSplashScreen.ts",
       // library plugins:
+      "expo-asset",
       "expo-localization",
       "expo-font",
       [

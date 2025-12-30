@@ -8,6 +8,8 @@
  * Notes:
  * - All values are stored as strings (Record<string, string>).
  * - Consumers should enforce authorization and package scoping before calling into this service.
+ * - Value size limit: 100KB per value
+ * - Total storage limit: 1MB per (email, packageName) combination
  *
  * Author: MentraOS Team
  */
@@ -16,6 +18,30 @@ import {
   SimpleStorage,
   SimpleStorageI,
 } from "../../models/simple-storage.model";
+
+// Constants
+const MAX_VALUE_SIZE = 100_000; // 100KB
+const MAX_TOTAL_SIZE = 1_000_000; // 1MB
+
+/**
+ * Calculate total storage size for a document
+ */
+function calculateStorageSize(data: Record<string, string>): number {
+  return Object.values(data).reduce((sum, value) => sum + value.length, 0);
+}
+
+/**
+ * Validate value size
+ */
+function validateValueSize(value: string, key?: string): void {
+  if (value.length > MAX_VALUE_SIZE) {
+    const keyMsg = key ? ` for key "${key}"` : "";
+    throw new Error(
+      `Value${keyMsg} exceeds 100KB limit (${value.length} bytes). ` +
+        `Use your own S3 bucket storage for large files.`,
+    );
+  }
+}
 
 /**
  * Get the entire storage object for a given user and package.
@@ -50,6 +76,7 @@ export async function getKey(
 /**
  * Set a single key to a string value (upsert).
  * Creates the storage document if it does not exist.
+ * Validates value size and total storage limits.
  */
 export async function setKey(
   email: string,
@@ -57,6 +84,27 @@ export async function setKey(
   key: string,
   value: string,
 ): Promise<void> {
+  // Validate value size
+  validateValueSize(value, key);
+
+  // Get current document
+  const doc = await SimpleStorage.findOne({ email, packageName }).exec();
+  const currentData = (doc?.data as Record<string, string>) || {};
+
+  // Calculate new total size
+  const currentSize = calculateStorageSize(currentData);
+  const oldValueSize = currentData[key]?.length || 0;
+  const newTotalSize = currentSize - oldValueSize + value.length;
+
+  if (newTotalSize > MAX_TOTAL_SIZE) {
+    throw new Error(
+      `Total storage exceeds 1MB limit ` +
+        `(current: ${currentSize}, new: ${newTotalSize}). ` +
+        `Delete unused keys or use S3 storage.`,
+    );
+  }
+
+  // Update
   await SimpleStorage.findOneAndUpdate(
     { email, packageName },
     { $set: { [`data.${key}`]: value } },
@@ -67,6 +115,7 @@ export async function setKey(
 /**
  * Upsert multiple key/value pairs at once.
  * No-op when data is empty.
+ * Validates each value size and total storage limit.
  */
 export async function updateMany(
   email: string,
@@ -76,6 +125,30 @@ export async function updateMany(
   const entries = Object.entries(data);
   if (entries.length === 0) return;
 
+  // Validate each value size
+  for (const [key, value] of entries) {
+    validateValueSize(value, key);
+  }
+
+  // Get current document
+  const doc = await SimpleStorage.findOne({ email, packageName }).exec();
+  const currentData = (doc?.data as Record<string, string>) || {};
+
+  // Calculate new total size
+  const newData = { ...currentData, ...data };
+  const newTotalSize = calculateStorageSize(newData);
+
+  if (newTotalSize > MAX_TOTAL_SIZE) {
+    const currentSize = calculateStorageSize(currentData);
+    const addedSize = calculateStorageSize(data);
+    throw new Error(
+      `Total storage would exceed 1MB limit ` +
+        `(current: ${currentSize}, adding: ${addedSize}, total: ${newTotalSize}). ` +
+        `Delete unused keys or use S3 storage.`,
+    );
+  }
+
+  // Update
   const setPayload: Record<string, string> = {};
   for (const [key, value] of entries) {
     setPayload[`data.${key}`] = value;

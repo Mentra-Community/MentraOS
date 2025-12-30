@@ -4,8 +4,7 @@ import {useEffect, useRef, useState, useCallback} from "react"
 import {ActivityIndicator, TextStyle, View, ViewStyle} from "react-native"
 
 import {WifiIcon} from "@/components/icons/WifiIcon"
-import {Button, Header, Icon, Screen} from "@/components/ignite"
-import {Text} from "@/components/ignite"
+import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
 import {$styles, ThemedStyle} from "@/theme"
@@ -237,7 +236,7 @@ export default function WifiConnectingScreen() {
   return (
     <Screen
       preset="fixed"
-      contentContainerStyle={connectionStatus === "connecting" ? themed($styles.screen) : undefined}>
+      contentContainerStyle={connectionStatus === "connecting" ? undefined : undefined}>
       {connectionStatus === "connecting" && (
         <Header title="Connecting" leftIcon="chevron-left" onLeftPress={handleHeaderBack} />
       )}

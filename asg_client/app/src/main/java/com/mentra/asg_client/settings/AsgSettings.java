@@ -22,6 +22,7 @@ public class AsgSettings {
     private static final String KEY_SAVE_IN_GALLERY_MODE = "save_in_gallery_mode";
     private static final String KEY_ZSL_ENABLED = "zsl_enabled";
     private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
+    private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
 
     private final SharedPreferences prefs;
     private final Context context;
@@ -210,5 +211,29 @@ public class AsgSettings {
         Log.d(TAG, "Setting MFNR enabled to: " + enabled);
         // Using commit() for immediate persistence
         prefs.edit().putBoolean(KEY_MFNR_ENABLED, enabled).commit();
+    }
+
+    /**
+     * Get the MCU firmware version (cached from hs_syvr command)
+     * @return MCU firmware version string, or empty string if not yet received
+     */
+    public String getMcuFirmwareVersion() {
+        String version = prefs.getString(KEY_MCU_FIRMWARE_VERSION, "");
+        Log.d(TAG, "Retrieved MCU firmware version: " + version);
+        return version;
+    }
+
+    /**
+     * Set the MCU firmware version (called when hs_syvr is received from MCU)
+     * @param version MCU firmware version string
+     */
+    public void setMcuFirmwareVersion(String version) {
+        if (version == null || version.isEmpty()) {
+            Log.w(TAG, "Attempted to set empty MCU firmware version, ignoring");
+            return;
+        }
+        Log.i(TAG, "📋 Setting MCU firmware version to: " + version);
+        // Using commit() for immediate persistence
+        prefs.edit().putString(KEY_MCU_FIRMWARE_VERSION, version).commit();
     }
 }

@@ -2,11 +2,11 @@ import {EventEmitter} from "events"
 
 import {AuthenticationClient} from "authing-js-sdk"
 import type {AuthenticationClientOptions, User} from "authing-js-sdk"
+import {Result, result as Res, AsyncResult} from "typesafe-ts"
 
+import {AuthClient} from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {storage} from "@/utils/storage/storage"
-import {Result, result as Res, AsyncResult} from "typesafe-ts"
-import {AuthClient} from "@/utils/auth/authClient"
 
 interface Session {
   access_token?: string

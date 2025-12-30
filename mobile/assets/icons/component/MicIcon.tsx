@@ -1,10 +1,8 @@
 import {TouchableOpacity, View} from "react-native"
 import Svg, {ClipPath, Defs, G, Path, Rect} from "react-native-svg"
 
-import {useCoreStatus} from "@/contexts/CoreStatusProvider"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
 interface MicIconProps {
@@ -16,9 +14,8 @@ interface MicIconProps {
 
 const MicIcon = ({color, width = 17, height = 16, withBackground = false}: MicIconProps) => {
   const {theme} = useAppTheme()
-  const {status} = useCoreStatus()
-  const [preferredMic] = useSetting(SETTINGS.preferred_mic.key)
   const glassesConnected = useGlassesStore(state => state.connected)
+  const glassesMicEnabled = useGlassesStore(state => state.micEnabled)
 
   const iconColor = color || theme.colors.icon
 
@@ -35,13 +32,13 @@ const MicIcon = ({color, width = 17, height = 16, withBackground = false}: MicIc
   }
 
   // Don't show mic indicator if:
-  // 1. Mic is not enabled for frontend OR
-  // 2. Preferred mic is glasses but no glasses are connected
-  if (!status.core_info.is_mic_enabled_for_frontend) {
+  // 1. Mic is not enabled
+  // 2. no glasses are connected
+  if (!glassesMicEnabled) {
     return null
   }
 
-  if (preferredMic === "glasses" && !glassesConnected) {
+  if (!glassesConnected) {
     return null
   }
 

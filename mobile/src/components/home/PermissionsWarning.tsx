@@ -1,10 +1,11 @@
 import {useFocusEffect} from "@react-navigation/native"
-import NotificationOn from "assets/icons/component/NotificationOn"
 import {useCallback, useState} from "react"
 import {Platform, TouchableOpacity} from "react-native"
 
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
+
+import NotificationOn from "assets/icons/component/NotificationOn"
 // import {Icon} from "@/components/ignite"
 
 export default function PermissionsWarning() {

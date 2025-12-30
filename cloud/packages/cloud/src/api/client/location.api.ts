@@ -2,33 +2,51 @@
 // API endpoints for location updates from mobile clients
 
 import { Router, Request, Response } from "express";
-import {
-  clientAuthWithUserSession,
-  RequestWithUserSession,
-} from "../middleware/client.middleware";
+
+import { logger as rootLogger } from "../../services/logging/pino-logger";
+import { clientAuthWithUserSession, RequestWithUserSession } from "../middleware/client.middleware";
 
 const router = Router();
+const logger = rootLogger.child({ service: "location.api" });
 
 // API Endpoints // /api/client/location/*
 router.post("/", clientAuthWithUserSession, updateLocation);
-router.post(
-  "/poll-response/:correlationId",
-  clientAuthWithUserSession,
-  updateLocationPollResponse,
-);
+router.post("/poll-response/:correlationId", clientAuthWithUserSession, updateLocationPollResponse);
 
 // Handler functions
 // POST     /api/client/location
-// BODY     { location: { lat, lng, accuracy?, timestamp? } } or Expo LocationObjectCoords
+// BODY     { location: { lat, lng, accuracy?, timestamp? } } or Expo LocationObject directly
 async function updateLocation(req: Request, res: Response) {
   const _req = req as RequestWithUserSession;
   const userSession = _req.userSession;
-  const { location } = req.body;
+
+  // Accept both formats:
+  // 1. { location: { coords: { latitude, longitude, ... } } } - wrapped format
+  // 2. { coords: { latitude, longitude, ... } } - Expo LocationObject directly
+  let location = req.body.location;
+
+  // If no 'location' wrapper but has 'coords', treat the body as the location object itself
+  if (!location && req.body.coords && typeof req.body.coords === "object") {
+    location = req.body;
+    logger.debug(
+      { userId: userSession.userId },
+      "Location API received unwrapped Expo LocationObject format - auto-wrapping",
+    );
+  }
 
   if (!location || typeof location !== "object") {
+    logger.warn(
+      {
+        userId: userSession.userId,
+        bodyKeys: Object.keys(req.body || {}),
+        hasLocation: !!req.body?.location,
+        hasCoords: !!req.body?.coords,
+      },
+      "Location API received invalid payload - missing location object",
+    );
     return res.status(400).json({
       success: false,
-      message: "location object required",
+      message: "location object required. Expected { location: {...} } or Expo LocationObject with coords",
     });
   }
 
@@ -39,10 +57,7 @@ async function updateLocation(req: Request, res: Response) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    _req.logger.error(
-      error,
-      `Error updating location for user ${userSession.userId}:`,
-    );
+    _req.logger.error(error, `Error updating location for user ${userSession.userId}:`);
 
     return res.status(500).json({
       success: false,
@@ -53,17 +68,37 @@ async function updateLocation(req: Request, res: Response) {
 }
 
 // POST     /api/client/location/poll-response/:correlationId
-// BODY     { location: { lat, lng, accuracy?, timestamp? } } or Expo LocationObjectCoords
+// BODY     { location: { lat, lng, accuracy?, timestamp? } } or Expo LocationObject directly
 async function updateLocationPollResponse(req: Request, res: Response) {
   const _req = req as RequestWithUserSession;
   const userSession = _req.userSession;
-  const { location } = req.body;
   const { correlationId } = req.params;
 
+  // Accept both formats (same as updateLocation)
+  let location = req.body.location;
+
+  if (!location && req.body.coords && typeof req.body.coords === "object") {
+    location = req.body;
+    logger.debug(
+      { userId: userSession.userId, correlationId },
+      "Location poll-response API received unwrapped Expo LocationObject format - auto-wrapping",
+    );
+  }
+
   if (!location || typeof location !== "object") {
+    logger.warn(
+      {
+        userId: userSession.userId,
+        correlationId,
+        bodyKeys: Object.keys(req.body || {}),
+        hasLocation: !!req.body?.location,
+        hasCoords: !!req.body?.coords,
+      },
+      "Location poll-response API received invalid payload - missing location object",
+    );
     return res.status(400).json({
       success: false,
-      message: "location object required",
+      message: "location object required. Expected { location: {...} } or Expo LocationObject with coords",
     });
   }
 
@@ -91,10 +126,7 @@ async function updateLocationPollResponse(req: Request, res: Response) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    _req.logger.error(
-      error,
-      `Error updating location poll response for user ${userSession.userId}:`,
-    );
+    _req.logger.error(error, `Error updating location poll response for user ${userSession.userId}:`);
 
     return res.status(500).json({
       success: false,

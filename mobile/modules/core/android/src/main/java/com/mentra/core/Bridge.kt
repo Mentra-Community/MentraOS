@@ -469,7 +469,9 @@ public class Bridge private constructor() {
                 buildNumber: String,
                 deviceModel: String,
                 androidVersion: String,
-                otaVersionUrl: String
+                otaVersionUrl: String,
+                firmwareVersion: String,
+                btMacAddress: String
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["app_version"] = appVersion
@@ -477,6 +479,8 @@ public class Bridge private constructor() {
             eventBody["device_model"] = deviceModel
             eventBody["android_version"] = androidVersion
             eventBody["ota_version_url"] = otaVersionUrl
+            eventBody["firmware_version"] = firmwareVersion
+            eventBody["bt_mac_address"] = btMacAddress
 
             sendTypedMessage("version_info", eventBody as Map<String, Any>)
         }

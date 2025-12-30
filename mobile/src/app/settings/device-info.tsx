@@ -19,6 +19,7 @@ export default function DeviceInfoScreen() {
   const bluetoothName = useGlassesStore(state => state.bluetoothName)
   const buildNumber = useGlassesStore(state => state.buildNumber)
   const fwVersion = useGlassesStore(state => state.fwVersion)
+  const btMacAddress = useGlassesStore(state => state.btMacAddress)
   const appVersion = useGlassesStore(state => state.appVersion)
   const serialNumber = useGlassesStore(state => state.serialNumber)
   const wifiSsid = useGlassesStore(state => state.wifiSsid)
@@ -29,7 +30,7 @@ export default function DeviceInfoScreen() {
   const bluetoothId = bluetoothName?.split("_").pop() || bluetoothName
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header titleTx="deviceInfo:title" leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView style={{flex: 1, gap: theme.spacing.s6, marginTop: theme.spacing.s6}}>
         {/* Device Identity */}
@@ -37,6 +38,7 @@ export default function DeviceInfoScreen() {
           <RouteButton label={translate("deviceInfo:model")} text={modelName || defaultWearable || "Unknown"} />
           {!!bluetoothId && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
           {!!serialNumber && <RouteButton label={translate("deviceInfo:serialNumber")} text={serialNumber} />}
+          {!!btMacAddress && <RouteButton label={translate("deviceInfo:btMacAddress")} text={btMacAddress} />}
         </Group>
 
         {/* Software Version */}

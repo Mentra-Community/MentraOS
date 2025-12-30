@@ -31,7 +31,7 @@ const InfoCard: React.FC<InfoCardProps> = ({label, value, isFirst, isLast}) => {
           marginBottom: isLast ? 0 : theme.spacing.s2,
         },
       ]}>
-      <Text style={themed($infoCardTitle)}>{label}</Text>
+      <Text style={themed($infoCardTitle)} weight="semibold">{label}</Text>
       <Text style={themed($infoCardValue)}>{String(value)}</Text>
     </View>
   )
@@ -80,7 +80,6 @@ const $infoCardContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 const $infoCardTitle: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
   fontSize: 14,
-  fontWeight: "600",
 })
 
 const $infoCardValue: ThemedStyle<TextStyle> = ({colors}) => ({

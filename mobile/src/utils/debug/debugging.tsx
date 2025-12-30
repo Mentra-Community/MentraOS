@@ -444,7 +444,6 @@ const $header: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 const $headerText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
   fontSize: 14,
-  fontWeight: "bold",
 })
 
 const $headerButtons: ThemedStyle<ViewStyle> = ({spacing}) => ({
@@ -516,5 +515,4 @@ const $toggleButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 const $toggleButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
   fontSize: 12,
-  fontWeight: "bold",
 })

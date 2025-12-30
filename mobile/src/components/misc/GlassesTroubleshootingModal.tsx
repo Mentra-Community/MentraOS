@@ -182,7 +182,7 @@ const GlassesTroubleshootingModal: React.FC<TroubleshootingModalProps> = ({isVis
             </View>
 
             {/* Title */}
-            <Text style={themed($title)}>{currentTip.title}</Text>
+            <Text style={themed($title)} weight="semibold" text={currentTip.title} />
 
             {/* Body */}
             <Text style={themed($body)}>{currentTip.body}</Text>
@@ -271,7 +271,6 @@ const $image: ThemedStyle<ImageStyle> = () => ({
 
 const $title: ThemedStyle<any> = ({colors, spacing}) => ({
   fontSize: 20,
-  fontWeight: "600",
   color: colors.text,
   textAlign: "center",
   marginBottom: spacing.s3,
@@ -279,7 +278,6 @@ const $title: ThemedStyle<any> = ({colors, spacing}) => ({
 
 const $body: ThemedStyle<any> = ({colors, spacing}) => ({
   fontSize: 16,
-  fontWeight: "400",
   color: colors.secondary_foreground,
   textAlign: "center",
   marginBottom: spacing.s6,

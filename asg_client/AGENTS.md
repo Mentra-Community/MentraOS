@@ -8,12 +8,6 @@ Android application that runs on Android-based smart glasses like Mentra Live. C
 
 - Mentra Live
 
-**Potential Compatibility** (requires adaptation):
-
-- TCL Rayneo X2/X3
-- INMO Air 2/3
-- Other Android-based smart glasses
-
 ## Build Commands
 
 ### Development
@@ -73,27 +67,54 @@ Android application that runs on Android-based smart glasses like Mentra Live. C
    MENTRAOS_SECURE=false
    ```
 
+## Development on Mentra Live
+
+### Important: Factory App Uninstall Required
+
+Mentra Live glasses ship with `com.mentra.asg_client` signed with our release key. Since this key is not public, **you must uninstall the factory app** before you can install your own debug build.
+
+### Quick Setup Script
+
+After connecting via ADB, run the setup script:
+
+```bash
+./scripts/dev-setup.sh
+```
+
+This script will:
+
+1. Uninstall the factory-signed app
+2. Install your debug APK (if built)
+3. Grant all required runtime permissions
+
+### Manual Setup
+
+```bash
+# 1. Uninstall factory app
+adb uninstall com.mentra.asg_client
+
+# 2. Build and install your debug APK
+./gradlew installDebug
+
+# 3. Grant permissions (run after install)
+adb shell pm grant com.mentra.asg_client android.permission.CAMERA
+adb shell pm grant com.mentra.asg_client android.permission.RECORD_AUDIO
+adb shell pm grant com.mentra.asg_client android.permission.ACCESS_FINE_LOCATION
+adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_CONNECT
+adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_SCAN
+adb shell pm grant com.mentra.asg_client android.permission.POST_NOTIFICATIONS
+```
+
 ## ADB Connection (Mentra Live)
 
-Mentra Live supports ADB over WiFi:
+Connect via the **magnetic USB-C clip-on cable** that comes with your Mentra Live. Just attach the cable and run `adb devices` to confirm connection.
+
+Alternatively, you can use ADB over WiFi:
 
 1. Pair Mentra Live in the MentraOS mobile app
 2. Connect glasses to your local WiFi network (in MentraOS app)
 3. Get the IP address from "Glasses" screen in MentraOS app
-4. Connect from your computer (must be on same WiFi):
-   ```bash
-   adb connect <IP_ADDRESS>:5555
-   ```
-
-**Useful ADB Commands**:
-
-```bash
-adb devices                                    # List connected devices
-adb logcat                                     # View logs
-adb logcat -s ASGClient                        # View app-specific logs
-adb install app/build/outputs/apk/debug/app-debug.apk  # Install APK
-adb shell pm clear com.mentra.asg_client       # Clear app data
-```
+4. Run: `adb connect <IP_ADDRESS>:5555`
 
 ## Project Structure
 

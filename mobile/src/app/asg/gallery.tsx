@@ -25,7 +25,7 @@ export default function AsgGallery() {
   )
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.s6}}>
+    <Screen preset="fixed">
       <GalleryScreen />
     </Screen>
   )

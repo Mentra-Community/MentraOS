@@ -6,12 +6,15 @@
  * This follows the pattern used by other managers like MicrophoneManager and DisplayManager.
  */
 
-import WebSocket from "ws";
-import { StreamType } from "@mentra/sdk";
 import { Logger } from "pino";
+
+import { CloudToGlassesMessageType, ConnectionAck, StreamType } from "@mentra/sdk";
+
 // import subscriptionService from "./subscription.service";
 // import { createLC3Service } from "../lc3/lc3.service";
 import { AudioWriter } from "../debug/audio-writer";
+import { WebSocketReadyState } from "../websocket/types";
+
 import UserSession from "./UserSession";
 
 /**
@@ -53,8 +56,7 @@ export class AudioManager {
   private audioWriter?: AudioWriter;
 
   // Buffer for recent audio (last 10 seconds)
-  private recentAudioBuffer: { data: ArrayBufferLike; timestamp: number }[] =
-    [];
+  private recentAudioBuffer: { data: ArrayBufferLike; timestamp: number }[] = [];
 
   // Ordered buffer for sequenced audio chunks
   // private orderedBuffer: OrderedAudioBuffer;
@@ -70,10 +72,260 @@ export class AudioManager {
   // Carry-over byte to keep PCM16 even-length between frames
   private pcmRemainder: Buffer | null = null;
 
+  // Audio Gap Detection Configuration
+  private readonly AUDIO_GAP_THRESHOLD_MS = 5000; // 5 seconds
+  private readonly AUDIO_GAP_CHECK_INTERVAL_MS = 2000; // Check every 2 seconds
+  private readonly RECONNECT_COOLDOWN_MS = 30000; // 30 seconds between reconnect attempts
+  private audioGapCheckInterval?: NodeJS.Timeout;
+  private lastReconnectAttemptAt?: number;
+  private reconnectAttemptCount = 0;
+
+  // Disposed flag to prevent stale callbacks (follows UserSession pattern)
+  private disposed = false;
+
   constructor(userSession: UserSession) {
     this.userSession = userSession;
     this.logger = userSession.logger.child({ service: "AudioManager" });
     this.logger.info("AudioManager initialized");
+
+    // Start audio gap monitoring
+    this.startAudioGapMonitoring();
+  }
+
+  /**
+   * Start monitoring for audio gaps.
+   * When audio stops arriving for longer than AUDIO_GAP_THRESHOLD_MS
+   * and there are active transcription subscriptions, trigger a reconnect.
+   */
+  private startAudioGapMonitoring(): void {
+    this.audioGapCheckInterval = setInterval(() => {
+      // Guard against stale callback after disposal
+      if (this.disposed) {
+        return;
+      }
+      this.checkForAudioGap();
+    }, this.AUDIO_GAP_CHECK_INTERVAL_MS);
+
+    this.logger.info(
+      {
+        gapThresholdMs: this.AUDIO_GAP_THRESHOLD_MS,
+        checkIntervalMs: this.AUDIO_GAP_CHECK_INTERVAL_MS,
+        cooldownMs: this.RECONNECT_COOLDOWN_MS,
+      },
+      "Audio gap monitoring started",
+    );
+  }
+
+  /**
+   * Check if there's an audio gap that requires intervention.
+   */
+  private checkForAudioGap(): void {
+    // Guard: Don't run if disposed
+    if (this.disposed) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastAudioTimestamp = this.userSession.lastAudioTimestamp;
+
+    // No audio received yet - skip check
+    if (!lastAudioTimestamp) {
+      return;
+    }
+
+    const timeSinceLastAudio = now - lastAudioTimestamp;
+
+    // Audio is flowing normally
+    if (timeSinceLastAudio < this.AUDIO_GAP_THRESHOLD_MS) {
+      return;
+    }
+
+    // Guard: Don't trigger reconnect if session is disconnected (in grace period)
+    // The WebSocket is already closed, so sending CONNECTION_ACK would fail anyway.
+    // When the user reconnects, they'll get a fresh CONNECTION_ACK naturally.
+    if (this.userSession.disconnectedAt !== null) {
+      this.logger.debug(
+        { timeSinceLastAudio, feature: "audio-gap" },
+        "Audio gap detected but session is disconnected (grace period) - skipping reconnect",
+      );
+      return;
+    }
+
+    // Guard: Check WebSocket is actually open before proceeding
+    const websocket = this.userSession.websocket;
+    if (!websocket || websocket.readyState !== WebSocketReadyState.OPEN) {
+      this.logger.debug(
+        { timeSinceLastAudio, readyState: websocket?.readyState, feature: "audio-gap" },
+        "Audio gap detected but WebSocket not open - skipping reconnect",
+      );
+      return;
+    }
+
+    // Check if there are active transcription subscriptions
+    // (we only care about gaps if something is expecting audio)
+    if (!this.hasActiveAudioSubscriptions()) {
+      return;
+    }
+
+    // Check if microphone is enabled (no point reconnecting if mic is off)
+    if (!this.userSession.microphoneManager?.isEnabled()) {
+      this.logger.debug(
+        { timeSinceLastAudio, feature: "audio-gap" },
+        "Audio gap detected but microphone is disabled - skipping reconnect",
+      );
+      return;
+    }
+
+    // Check cooldown to prevent reconnect storms
+    if (this.lastReconnectAttemptAt && now - this.lastReconnectAttemptAt < this.RECONNECT_COOLDOWN_MS) {
+      this.logger.debug(
+        {
+          timeSinceLastAudio,
+          timeSinceLastReconnect: now - this.lastReconnectAttemptAt,
+          cooldownMs: this.RECONNECT_COOLDOWN_MS,
+          feature: "audio-gap",
+        },
+        "Audio gap detected but in cooldown period - skipping reconnect",
+      );
+      return;
+    }
+
+    // Audio gap detected with active subscriptions - trigger reconnect
+    this.logger.warn(
+      {
+        timeSinceLastAudio,
+        lastAudioTimestamp,
+        userId: this.userSession.userId,
+        reconnectAttemptCount: this.reconnectAttemptCount,
+        feature: "audio-gap",
+      },
+      "Audio gap detected with active subscriptions - triggering LiveKit reconnect",
+    );
+
+    this.triggerLiveKitReconnect();
+  }
+
+  /**
+   * Check if there are any active subscriptions that require audio.
+   * This includes transcription, translation, and audio chunk subscriptions.
+   */
+  private hasActiveAudioSubscriptions(): boolean {
+    // Check transcription subscriptions
+    const transcriptionManager = this.userSession.transcriptionManager;
+    if (transcriptionManager && !transcriptionManager.hasHealthyStreams()) {
+      // TranscriptionManager has unhealthy streams - might need reconnect
+      return true;
+    }
+
+    // Check if any apps are subscribed to audio chunks
+    const audioChunkSubscribers = this.userSession.subscriptionManager.getSubscribedApps(StreamType.AUDIO_CHUNK);
+    if (audioChunkSubscribers.length > 0) {
+      return true;
+    }
+
+    // Check translation subscriptions (they also need audio)
+    const translationManager = this.userSession.translationManager;
+    if (translationManager && (translationManager as any).activeSubscriptions?.size > 0) {
+      return true;
+    }
+
+    // Also check if transcription manager has active subscriptions even if streams are healthy
+    // (streams might have closed unexpectedly)
+    if (transcriptionManager && (transcriptionManager as any).activeSubscriptions?.size > 0) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Trigger a LiveKit reconnect by sending a new CONNECTION_ACK to the glasses client.
+   * This causes the mobile client to disconnect and reconnect to LiveKit with a fresh token.
+   */
+  private async triggerLiveKitReconnect(): Promise<void> {
+    // Guard: Don't proceed if disposed
+    if (this.disposed) {
+      this.logger.debug({ feature: "audio-gap" }, "Skipping reconnect - AudioManager disposed");
+      return;
+    }
+
+    this.lastReconnectAttemptAt = Date.now();
+    this.reconnectAttemptCount++;
+
+    try {
+      // First, try to rejoin the server-side bridge
+      this.logger.info({ feature: "audio-gap" }, "Attempting to rejoin LiveKit bridge");
+      await this.userSession.liveKitManager?.rejoinBridge?.();
+
+      // Guard: Check again after async operation
+      if (this.disposed) {
+        this.logger.debug({ feature: "audio-gap" }, "Aborted reconnect - AudioManager disposed during bridge rejoin");
+        return;
+      }
+
+      // Guard: Re-check WebSocket state after async operation (it may have changed)
+      const websocket = this.userSession.websocket;
+      if (!websocket || websocket.readyState !== WebSocketReadyState.OPEN) {
+        this.logger.warn(
+          { feature: "audio-gap", readyState: websocket?.readyState },
+          "Cannot send CONNECTION_ACK - WebSocket not open after bridge rejoin",
+        );
+        return;
+      }
+
+      // Guard: Re-check disconnectedAt after async operation
+      if (this.userSession.disconnectedAt !== null) {
+        this.logger.warn(
+          { feature: "audio-gap" },
+          "Cannot send CONNECTION_ACK - session disconnected during bridge rejoin",
+        );
+        return;
+      }
+
+      // Get fresh LiveKit info for the ACK
+      let livekitInfo: { url: string; roomName: string; token: string } | null = null;
+      try {
+        livekitInfo = await this.userSession.liveKitManager?.handleLiveKitInit();
+      } catch (error) {
+        this.logger.warn({ error, feature: "audio-gap" }, "Failed to get LiveKit info for reconnect ACK");
+      }
+
+      // Guard: Final check before sending
+      if (this.disposed || this.userSession.disconnectedAt !== null) {
+        this.logger.debug({ feature: "audio-gap" }, "Aborted reconnect - state changed during LiveKit init");
+        return;
+      }
+
+      // Build the CONNECTION_ACK message
+      const ackMessage: ConnectionAck & { livekit?: { url: string; roomName: string; token: string } } = {
+        type: CloudToGlassesMessageType.CONNECTION_ACK,
+        sessionId: this.userSession.sessionId,
+        timestamp: new Date(),
+      };
+
+      // Include LiveKit info if available (this triggers client to reconnect LiveKit)
+      if (livekitInfo) {
+        ackMessage.livekit = {
+          url: livekitInfo.url,
+          roomName: livekitInfo.roomName,
+          token: livekitInfo.token,
+        };
+      }
+
+      websocket.send(JSON.stringify(ackMessage));
+
+      this.logger.info(
+        {
+          userId: this.userSession.userId,
+          hasLivekitInfo: !!livekitInfo,
+          reconnectAttemptCount: this.reconnectAttemptCount,
+          feature: "audio-gap",
+        },
+        "Sent CONNECTION_ACK to trigger client LiveKit reconnect",
+      );
+    } catch (error) {
+      this.logger.error({ error, feature: "audio-gap" }, "Failed to trigger LiveKit reconnect");
+    }
   }
 
   /**
@@ -84,6 +336,11 @@ export class AudioManager {
    * @returns Processed audio data
    */
   processAudioData(audioData: ArrayBuffer | any) {
+    // Guard: Don't process if disposed
+    if (this.disposed) {
+      return undefined;
+    }
+
     try {
       // Update the last audio timestamp
       this.userSession.lastAudioTimestamp = Date.now();
@@ -98,11 +355,7 @@ export class AudioManager {
           buf = Buffer.from(audioData as ArrayBuffer);
         } else if (ArrayBuffer.isView(audioData)) {
           const view = audioData as ArrayBufferView;
-          buf = Buffer.from(
-            view.buffer,
-            (view as any).byteOffset || 0,
-            (view as any).byteLength || view.byteLength,
-          );
+          buf = Buffer.from(view.buffer, (view as any).byteOffset || 0, (view as any).byteLength || view.byteLength);
         }
 
         if (!buf) {
@@ -178,17 +431,11 @@ export class AudioManager {
   private relayAudioToApps(audioData: ArrayBuffer | Buffer): void {
     try {
       // Get subscribers using subscriptionService instead of subscriptionManager
-      const subscribedPackageNames =
-        this.userSession.subscriptionManager.getSubscribedApps(
-          StreamType.AUDIO_CHUNK,
-        );
+      const subscribedPackageNames = this.userSession.subscriptionManager.getSubscribedApps(StreamType.AUDIO_CHUNK);
       // Skip if no subscribers
       if (subscribedPackageNames.length === 0) {
         if (this.logAudioChunkCount % 500 === 0) {
-          this.logger.debug(
-            { feature: "livekit" },
-            "AUDIO_CHUNK: no subscribed apps",
-          );
+          this.logger.debug({ feature: "livekit" }, "AUDIO_CHUNK: no subscribed apps");
         }
         this.logAudioChunkCount++;
         return;
@@ -209,13 +456,10 @@ export class AudioManager {
       for (const packageName of subscribedPackageNames) {
         const connection = this.userSession.appWebsockets.get(packageName);
 
-        if (connection && connection.readyState === WebSocket.OPEN) {
+        if (connection && connection.readyState === WebSocketReadyState.OPEN) {
           try {
             if (this.logAudioChunkCount % 500 === 0) {
-              this.logger.debug(
-                { feature: "livekit", packageName, bytes },
-                "AUDIO_CHUNK: sending to app",
-              );
+              this.logger.debug({ feature: "livekit", packageName, bytes }, "AUDIO_CHUNK: sending to app");
             }
 
             // Node ws supports Buffer; ensure we send Buffer for efficiency
@@ -226,17 +470,11 @@ export class AudioManager {
             }
 
             if (this.logAudioChunkCount % 500 === 0) {
-              this.logger.debug(
-                { feature: "livekit", packageName, bytes },
-                "AUDIO_CHUNK: sent to app",
-              );
+              this.logger.debug({ feature: "livekit", packageName, bytes }, "AUDIO_CHUNK: sent to app");
             }
           } catch (sendError) {
             if (this.logAudioChunkCount % 500 === 0) {
-              this.logger.error(
-                sendError,
-                `Error sending audio to ${packageName}:`,
-              );
+              this.logger.error(sendError, `Error sending audio to ${packageName}:`);
             }
           }
         }
@@ -257,11 +495,56 @@ export class AudioManager {
   }
 
   /**
+   * Get audio gap detection statistics for debugging/telemetry
+   */
+  getAudioGapStats(): {
+    lastAudioTimestamp?: number;
+    timeSinceLastAudio?: number;
+    reconnectAttemptCount: number;
+    lastReconnectAttemptAt?: number;
+    hasActiveSubscriptions: boolean;
+  } {
+    const now = Date.now();
+    const lastAudioTimestamp = this.userSession.lastAudioTimestamp;
+
+    return {
+      lastAudioTimestamp,
+      timeSinceLastAudio: lastAudioTimestamp ? now - lastAudioTimestamp : undefined,
+      reconnectAttemptCount: this.reconnectAttemptCount,
+      lastReconnectAttemptAt: this.lastReconnectAttemptAt,
+      hasActiveSubscriptions: this.hasActiveAudioSubscriptions(),
+    };
+  }
+
+  /**
+   * Check if this manager has been disposed
+   */
+  isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /**
    * Clean up all resources
    */
   dispose(): void {
+    // Idempotent - can be called multiple times safely
+    if (this.disposed) {
+      this.logger.debug("AudioManager already disposed, skipping");
+      return;
+    }
+
+    // Set disposed flag FIRST to prevent any new operations or stale callbacks
+    this.disposed = true;
+
     try {
       this.logger.info("Disposing AudioManager");
+
+      // Stop audio gap monitoring
+      if (this.audioGapCheckInterval) {
+        clearInterval(this.audioGapCheckInterval);
+        this.audioGapCheckInterval = undefined;
+        this.logger.info("Audio gap monitoring stopped");
+      }
 
       // Clean up LC3 service
       if (this.lc3Service) {
@@ -272,6 +555,7 @@ export class AudioManager {
 
       // Clear buffers
       this.recentAudioBuffer = [];
+      this.pcmRemainder = null;
 
       // Clean up audio writer
       if (this.audioWriter) {

@@ -49,7 +49,7 @@ struct MicTypes {
 
 enum MicMap {
     static var map: [String: [String]] = [
-        "auto": [MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM, MicTypes.BT, MicTypes.BT_CLASSIC],
+        "auto": [MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BT, MicTypes.BT_CLASSIC],
         "glasses": [MicTypes.GLASSES_CUSTOM],
         "phone": [MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM],
         "bluetooth": [MicTypes.BT, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM],

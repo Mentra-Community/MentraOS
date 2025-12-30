@@ -11,7 +11,7 @@ public class BesOtaUtil {
     public static final byte[] MAGIC_CODE = {0x30, 0x30, 0x39, 0x4b};
     
     // Size constants
-    public static final int MAX_FILE_SIZE = 1100 * 1024; // 1100KB max firmware size
+    public static final int MAX_FILE_SIZE = 2048 * 1024; // 2048KB max firmware size (was 1100KB)
     public static final int PACKET_SIZE = 504; // 504 bytes per packet
     public static final int SEGMENT_SIZE = 16 * 1024; // 16KB per segment for CRC32
     

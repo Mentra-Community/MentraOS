@@ -1,11 +1,10 @@
+import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {useEffect, useState} from "react"
 
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
-
-import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
 
 interface VersionInfo {
   versionCode: number

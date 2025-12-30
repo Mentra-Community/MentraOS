@@ -183,19 +183,20 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
 
   refreshApplets: async () => {
+    let onlineApps: ClientAppletInterface[] = []
     let res = await restComms.getApplets()
     if (res.is_error()) {
       console.error(`Failed to get applets: ${res.error}`)
-      return
+      // continue anyway in case we're just offline:
+    } else {
+      // convert to the client applet interface:
+      onlineApps = res.value.map(app => ({
+        ...app,
+        loading: false,
+        offline: false,
+        offlineRoute: "",
+      }))
     }
-    const appsData = res.value
-
-    const onlineApps: ClientAppletInterface[] = appsData.map(app => ({
-      ...app,
-      loading: false,
-      offline: false,
-      offlineRoute: "",
-    }))
 
     // merge in the offline apps:
     let applets: ClientAppletInterface[] = [...onlineApps, ...(await getOfflineApplets())]

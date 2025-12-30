@@ -120,7 +120,7 @@ export default function GlassesPairingGuideScreen() {
 
   if (pairingInProgress) {
     return (
-      <Screen preset="fixed" style={themed($styles.screen)} safeAreaEdges={["bottom"]}>
+      <Screen preset="fixed" safeAreaEdges={["bottom"]}>
         <Header leftIcon="chevron-left" onLeftPress={goBack} />
         <View style={themed($pairingContainer)}>
           <View style={themed($centerWrapper)}>
@@ -128,7 +128,7 @@ export default function GlassesPairingGuideScreen() {
           </View>
           <Button
             preset="secondary"
-            text="I need more help"
+            tx="pairing:needMoreHelp"
             onPress={() => setShowTroubleshootingModal(true)}
             style={themed($helpButtonBottom)}
           />
@@ -146,7 +146,7 @@ export default function GlassesPairingGuideScreen() {
   // Note: This will only trigger on iOS since the events are only sent from iOS native code
   if (audioPairingNeeded && audioDeviceName) {
     return (
-      <Screen preset="fixed" style={themed($styles.screen)} safeAreaEdges={["bottom"]}>
+      <Screen preset="fixed" safeAreaEdges={["bottom"]}>
         <Header
           leftIcon="chevron-left"
           onLeftPress={goBack}
@@ -176,7 +176,7 @@ export default function GlassesPairingGuideScreen() {
   }
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)} safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
       <Header
         leftIcon="chevron-left"
         onLeftPress={goBack}
@@ -193,7 +193,9 @@ export default function GlassesPairingGuideScreen() {
         <View style={themed($contentContainer)}>
           <TouchableOpacity style={themed($helpButton)} onPress={() => setShowTroubleshootingModal(true)}>
             <Icon name="help-circle" size={16} color="#FFFFFF" style={{marginRight: 8}} />
-            <Text style={themed($helpButtonText)}>Need Help Pairing?</Text>
+            <Text style={themed($helpButtonText)} weight="bold">
+              Need Help Pairing?
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -231,11 +233,9 @@ const $helpButton: ThemedStyle<ViewStyle> = ({isDark}) => ({
   backgroundColor: isDark ? "#3b82f6" : "#007BFF",
 })
 
-const $helpButtonText: ThemedStyle<TextStyle> = ({typography}) => ({
+const $helpButtonText: ThemedStyle<TextStyle> = () => ({
   color: "#FFFFFF",
-  fontFamily: typography.primary.normal,
   fontSize: 16,
-  fontWeight: "600",
 })
 
 const $pairingContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({

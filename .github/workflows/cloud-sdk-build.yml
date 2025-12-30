@@ -1,4 +1,4 @@
-name: SDK build
+name: 🧪 Test SDK build
 
 on:
   pull_request:

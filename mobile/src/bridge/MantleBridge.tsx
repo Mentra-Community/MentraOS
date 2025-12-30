@@ -315,6 +315,8 @@ export class MantleBridge {
             modelName: data.device_model,
             androidVersion: data.android_version,
             otaVersionUrl: data.ota_version_url,
+            fwVersion: data.firmware_version,
+            btMacAddress: data.bt_mac_address,
           })
           break
         default:

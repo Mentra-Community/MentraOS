@@ -29,7 +29,7 @@ export const CoreStatusProvider = ({children}: {children: ReactNode}) => {
     setStatus(prevStatus => {
       const diff = deepCompare(prevStatus, parsedStatus)
       if (diff.length === 0) {
-        console.log("CoreStatus: Status did not change")
+        // console.log("CoreStatus: Status did not change")
         return prevStatus // don't re-render
       }
 

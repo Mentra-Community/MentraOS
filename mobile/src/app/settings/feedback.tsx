@@ -20,7 +20,7 @@ import restComms from "@/services/RestComms"
 import {useAppletStatusStore} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {useAppTheme} from "@/utils/useAppTheme"
@@ -274,10 +274,13 @@ export default function FeedbackPage() {
   }
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header title={translate("feedback:giveFeedback")} leftIcon="chevron-left" onLeftPress={goBack} />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex: 1}}>
-        <ScrollView contentContainerStyle={themed($scrollContainer)} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          className="pt-6"
+          contentContainerStyle={themed($scrollContainer)}
+          keyboardShouldPersistTaps="handled">
           <View style={themed($container)}>
             {isApplePrivateRelay && (
               <View>
@@ -390,9 +393,8 @@ const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
   gap: spacing.s6,
 })
 
-const $scrollContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $scrollContainer: ThemedStyle<ViewStyle> = () => ({
   flexGrow: 1,
-  paddingVertical: spacing.s4,
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors, spacing}) => ({

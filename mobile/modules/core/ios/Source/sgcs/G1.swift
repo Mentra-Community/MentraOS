@@ -113,6 +113,163 @@ enum GlassesError: Error {
     case missingGlasses(String)
 }
 
+// Dedicated actor for timer management
+actor HeartbeatManager {
+    private var task: Task<Void, Never>?
+    private let intervalSeconds: TimeInterval
+
+    init(intervalSeconds: TimeInterval = 20) {
+        self.intervalSeconds = intervalSeconds
+    }
+
+    func start(onTick: @escaping @Sendable () async -> Void) {
+        stop()
+
+        task = Task {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled else { break }
+                await onTick()
+            }
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
+}
+
+// Dedicated actor for command queue (you already have this partially)
+actor CommandQueue {
+    private var commands: [BufferedCommand] = []
+    private var continuation: CheckedContinuation<BufferedCommand, Never>?
+
+    func enqueue(_ command: BufferedCommand) {
+        if let continuation {
+            self.continuation = nil
+            continuation.resume(returning: command)
+        } else {
+            commands.append(command)
+        }
+    }
+
+    func dequeue() async -> BufferedCommand {
+        if let command = commands.first {
+            commands.removeFirst()
+            return command
+        }
+
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+}
+
+// Actor for managing pending ACKs
+actor AckManager {
+    private var pending: [String: CheckedContinuation<Bool, Never>] = [:]
+
+    func waitForAck(
+        key: String,
+        timeoutMs: Int,
+        onRegistered: @escaping @Sendable () -> Void,
+        onTimeout: @escaping @Sendable () -> Void = {}
+    ) async -> Bool {
+        return await withCheckedContinuation { continuation in
+            pending[key] = continuation
+
+            // Now it's safe to send — registration is complete
+            onRegistered()
+
+            // Start timeout
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+
+                guard let self else { return }
+                if let timedOut = await self.removeIfPending(key: key) {
+                    onTimeout()
+                    timedOut.resume(returning: false)
+                }
+            }
+        }
+    }
+
+    func receiveAck(key: String) -> Bool {
+        if let continuation = pending.removeValue(forKey: key) {
+            continuation.resume(returning: true)
+            return true
+        }
+        return false
+    }
+
+    private func removeIfPending(key: String) -> CheckedContinuation<Bool, Never>? {
+        return pending.removeValue(forKey: key)
+    }
+}
+
+// Actor for reconnection logic
+actor ReconnectionManager {
+    private var task: Task<Void, Never>?
+    private let intervalSeconds: TimeInterval
+    private var attempts = 0
+    private let maxAttempts: Int // -1 for unlimited
+
+    init(intervalSeconds: TimeInterval = 30, maxAttempts: Int = -1) {
+        self.intervalSeconds = intervalSeconds
+        self.maxAttempts = maxAttempts
+    }
+
+    var isRunning: Bool {
+        task != nil && task?.isCancelled == false
+    }
+
+    var attemptCount: Int {
+        attempts
+    }
+
+    func start(onAttempt: @escaping @Sendable () async -> Bool) {
+        stop()
+        attempts = 0
+
+        task = Task {
+            while !Task.isCancelled {
+                if maxAttempts > 0, attempts >= maxAttempts {
+                    Bridge.log("G1: Max reconnection attempts (\(maxAttempts)) reached")
+                    break
+                }
+
+                attempts += 1
+                Bridge.log("G1: Reconnection attempt \(attempts)")
+
+                let shouldStop = await onAttempt()
+
+                if shouldStop {
+                    Bridge.log("G1: Reconnection successful, stopping")
+                    break
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
+                } catch {
+                    break
+                }
+            }
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        attempts = 0
+    }
+}
+
+@MainActor
 class G1: NSObject, SGCManager {
     func sendGalleryMode() {}
 
@@ -127,6 +284,10 @@ class G1: NSObject, SGCManager {
     var glassesAndroidVersion: String = ""
 
     var glassesOtaVersionUrl: String = ""
+
+    var glassesFirmwareVersion: String = ""
+
+    var glassesBtMacAddress: String = ""
 
     var glassesSerialNumber: String = ""
 
@@ -261,13 +422,11 @@ class G1: NSObject, SGCManager {
     @Published var caseRemoved = true
 
     var isDisconnecting = false
-    private var reconnectionTimer: DispatchSourceTimer?
-    private let reconnectionQueue = DispatchQueue(
-        label: "com.sample.reconnectionTimerQueue", qos: .background
-    )
-    private var reconnectionAttempts: Int = 0
-    private let maxReconnectionAttempts: Int = -1 // unlimited reconnection attempts
-    private let reconnectionInterval: TimeInterval = 30.0 // Seconds between reconnection attempts
+
+    private let heartbeatManager = HeartbeatManager()
+    private let commandQueue = CommandQueue()
+    private let reconnectionManager = ReconnectionManager()
+    private let ackManager = AckManager()
     private var globalCounter: UInt8 = 0
     private var heartbeatCounter: UInt8 = 0
 
@@ -280,9 +439,6 @@ class G1: NSObject, SGCManager {
     let UART_SERVICE_UUID = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
     let UART_TX_CHAR_UUID = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
     let UART_RX_CHAR_UUID = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
-
-    // synchronization:
-    private let commandQueue = CommandQueue()
 
     // Constants
     var DEVICE_SEARCH_ID = "NOT_SET"
@@ -309,8 +465,6 @@ class G1: NSObject, SGCManager {
     private var rightPeripheral: CBPeripheral?
     private var connectedDevices: [String: (CBPeripheral?, CBPeripheral?)] = [:]
     var lastConnectionTimestamp: Date = .distantPast
-    private var heartbeatTimer: Timer?
-    private var heartbeatQueue: DispatchQueue?
     private var leftInitialized: Bool = false
     private var rightInitialized: Bool = false
     @Published var isHeadUp = false
@@ -349,16 +503,15 @@ class G1: NSObject, SGCManager {
 
     override init() {
         super.init()
-        startHeartbeatTimer()
+        startHeartbeat()
+        startCommandProcessor()
     }
 
     func forget() {
-        // Stop the heartbeat timer
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
-
-        // Stop the reconnection timer if active
-        stopReconnectionTimer()
+        Task {
+            await heartbeatManager.stop()
+            await reconnectionManager.stop()
+        }
 
         // Disconnect BLE peripherals before clearing references
         if let left = leftPeripheral {
@@ -380,28 +533,33 @@ class G1: NSObject, SGCManager {
     }
 
     deinit {
-        // Stop the heartbeat timer
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
-
-        // Stop the reconnection timer if active
-        stopReconnectionTimer()
-
-        // Clean up central manager delegate
+        // Note: Can't call async from deinit, but Tasks will be cancelled
+        // when the class is deallocated anyway
         centralManager?.delegate = nil
-
-        // Clean up peripheral delegates
         leftPeripheral?.delegate = nil
         rightPeripheral?.delegate = nil
-
-        // leftGlassUUID = nil
-        // rightGlassUUID = nil
-
-        Bridge.log("G1: ERG1Manager deinitialized")
+        Bridge.log("G1: Manager deinitialized")
     }
 
     func cleanup() {
         // TODO:
+    }
+
+    private func startHeartbeat() {
+        Task {
+            await heartbeatManager.start { [weak self] in
+                await self?.sendHeartbeat()
+            }
+        }
+    }
+
+    private func startCommandProcessor() {
+        Task {
+            while !Task.isCancelled {
+                let command = await commandQueue.dequeue()
+                await processCommand(command)
+            }
+        }
     }
 
     // MARK: - Serial Number and Color Detection
@@ -497,7 +655,7 @@ class G1: NSObject, SGCManager {
 
                 // Trigger status update to include serial number in status JSON
                 DispatchQueue.main.async {
-                    CoreManager.shared.handle_request_status()
+                    CoreManager.shared.getStatus()
                 }
             }
         } catch {
@@ -507,64 +665,53 @@ class G1: NSObject, SGCManager {
 
     // @@@ REACT NATIVE FUNCTIONS @@@
 
-    @objc func RN_setSearchId(_ searchId: String) {
-        Bridge.log("G1: SETTING SEARCH_ID: \(searchId)")
-        DEVICE_SEARCH_ID = searchId
-    }
-
     // this scans for glasses to connect to and only connnects if SEARCH_ID is set
-    func startScan() {
-        Task {
+    func startScan() -> Bool {
+        if centralManager == nil {
+            centralManager = CBCentralManager(
+                delegate: self, queue: G1._bluetoothQueue,
+                options: ["CBCentralManagerOptionShowPowerAlertKey": 0]
+            )
+        }
 
-            if centralManager == nil {
-                centralManager = CBCentralManager(
-                    delegate: self, queue: G1._bluetoothQueue,
-                    options: ["CBCentralManagerOptionShowPowerAlertKey": 0]
-                )
-                setupCommandQueue()
-                // wait for the central manager to be fully initialized before we start scanning:
-                try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
-            }
+        isDisconnecting = false // reset intentional disconnect flag
+        guard centralManager!.state == .poweredOn else {
+            Bridge.log("G1: Attempting to scan but bluetooth is not powered on.")
+            return false
+        }
 
-            self.isDisconnecting = false // reset intentional disconnect flag
-            guard centralManager!.state == .poweredOn else {
-                Bridge.log("G1: Attempting to scan but bluetooth is not powered on.")
-                return false
-            }
-
-            // send our already connected devices to RN:
-            let devices = getConnectedDevices()
-            Bridge.log("G1: connnectedDevices.count: (\(devices.count))")
-            for device in devices {
-                if let name = device.name {
-                    Bridge.log("G1: Connected to device: \(name)")
-                    if name.contains("_L_") && name.contains(DEVICE_SEARCH_ID) {
-                        leftPeripheral = device
-                        device.delegate = self
-                        device.discoverServices([UART_SERVICE_UUID])
-                    } else if name.contains("_R_") && name.contains(DEVICE_SEARCH_ID) {
-                        rightPeripheral = device
-                        device.delegate = self
-                        device.discoverServices([UART_SERVICE_UUID])
-                    }
-                    emitDiscoveredDevice(name)
+        // send our already connected devices to RN:
+        let devices = getConnectedDevices()
+        Bridge.log("G1: connnectedDevices.count: (\(devices.count))")
+        for device in devices {
+            if let name = device.name {
+                Bridge.log("G1: Connected to device: \(name)")
+                if name.contains("_L_") && name.contains(DEVICE_SEARCH_ID) {
+                    leftPeripheral = device
+                    device.delegate = self
+                    device.discoverServices([UART_SERVICE_UUID])
+                } else if name.contains("_R_") && name.contains(DEVICE_SEARCH_ID) {
+                    rightPeripheral = device
+                    device.delegate = self
+                    device.discoverServices([UART_SERVICE_UUID])
                 }
+                emitDiscoveredDevice(name)
             }
+        }
 
-            // First try: Connect by UUID (works in background)
-            if connectByUUID() {
-                Bridge.log("G1: 🔄 Found and attempting to connect to stored glasses UUIDs")
-                // Wait for connection to complete - no need to scan
-                return true
-            }
-
-            let scanOptions: [String: Any] = [
-                CBCentralManagerScanOptionAllowDuplicatesKey: false, // Don't allow duplicate advertisements
-            ]
-
-            centralManager!.scanForPeripherals(withServices: nil, options: scanOptions)
+        // First try: Connect by UUID (works in background)
+        if connectByUUID() {
+            Bridge.log("G1: 🔄 Found and attempting to connect to stored glasses UUIDs")
+            // Wait for connection to complete - no need to scan
             return true
         }
+
+        let scanOptions: [String: Any] = [
+            CBCentralManagerScanOptionAllowDuplicatesKey: false, // Don't allow duplicate advertisements
+        ]
+
+        centralManager!.scanForPeripherals(withServices: nil, options: scanOptions)
+        return true
     }
 
     func connectById(_ id: String) {
@@ -599,7 +746,7 @@ class G1: NSObject, SGCManager {
         Bridge.log(
             "G1: found both glasses \(leftPeripheral!.name ?? "(unknown)"), \(rightPeripheral!.name ?? "(unknown)") stopping scan"
         )
-        RN_stopScan()
+        stopScan()
 
         // get battery status:
         getBatteryStatus()
@@ -822,12 +969,12 @@ class G1: NSObject, SGCManager {
         }
     }
 
-    @objc func RN_stopScan() {
+    func stopScan() {
         centralManager!.stopScan()
         Bridge.log("G1: Stopped scanning for devices")
     }
 
-    @objc func RN_getSerialNumberInfo() -> [String: Any] {
+    func getSerialNumberInfo() -> [String: Any] {
         return [
             "serialNumber": glassesSerialNumber ?? "",
             "style": glassesStyle ?? "",
@@ -861,66 +1008,6 @@ class G1: NSObject, SGCManager {
         rightPeripheral = nil
         setReadiness(left: false, right: false)
         Bridge.log("G1: Disconnected from glasses")
-    }
-
-    // @@@ END REACT NATIVE FUNCTIONS
-
-    actor CommandQueue {
-        private var commands: [BufferedCommand] = []
-        private var continuations: [CheckedContinuation<BufferedCommand, Never>] = []
-
-        func enqueue(_ command: BufferedCommand) {
-            if let continuation = continuations.first {
-                continuations.removeFirst()
-                continuation.resume(returning: command)
-            } else {
-                commands.append(command)
-            }
-        }
-
-        func dequeue() async -> BufferedCommand {
-            if let command = commands.first {
-                commands.removeFirst()
-                return command
-            }
-
-            return await withCheckedContinuation { continuation in
-                continuations.append(continuation)
-            }
-        }
-    }
-
-    private func setupCommandQueue() {
-        Task.detached { [weak self] in
-            guard let self = self else { return }
-
-            while true {
-                let command = await self.commandQueue.dequeue()
-                await self.processCommand(command)
-            }
-        }
-    }
-
-    func resetSemaphoreToZero(_ semaphore: DispatchSemaphore) {
-        // First, try to acquire the semaphore with a minimal timeout
-        let result = semaphore.wait(timeout: .now() + 0.001)
-        if result == .success {
-            // We acquired it, meaning it was at least 1
-            // Release it to get back to where we were (if it was 1) or to increment it by 1 (if it was >1)
-            semaphore.signal()
-            // Try to acquire it again to see if it's still available (meaning it was >1 before)
-            while semaphore.wait(timeout: .now() + 0.001) == .success {
-                // Keep signaling until we're sure we're at 1
-                semaphore.signal()
-                break
-            }
-        } else {
-            // Timeout occurred, meaning the semaphore was at 0 or less
-            // Signal once to try to bring it to 1
-            semaphore.signal()
-        }
-        // bring it down to 0:
-        semaphore.wait(timeout: .now() + 0.001)
     }
 
     private func attemptSend(cmd: BufferedCommand, side: String) async {
@@ -970,7 +1057,7 @@ class G1: NSObject, SGCManager {
             let firstFewBytes = String(Data(lastChunk).hexEncodedString().prefix(16)).uppercased()
             // don't log if it starts with 25 (heartbeat):
             if lastChunk[0] != Commands.BLE_REQ_HEARTBEAT.rawValue {
-                Bridge.log("SEND (\(side)) \(firstFewBytes)")
+                // Bridge.log("SEND (\(side)) \(firstFewBytes)")
             }
 
             //      if (lastChunk[0] == 0x4E) {
@@ -1049,31 +1136,6 @@ class G1: NSObject, SGCManager {
         return result == .success
     }
 
-    func startHeartbeatTimer() {
-        // Check if a timer is already running
-        if heartbeatTimer != nil, heartbeatTimer!.isValid {
-            Bridge.log("G1: Heartbeat timer already running")
-            return
-        }
-
-        // Create a new queue if needed
-        if heartbeatQueue == nil {
-            heartbeatQueue = DispatchQueue(
-                label: "com.sample.heartbeatTimerQueue", qos: .background
-            )
-        }
-
-        heartbeatQueue!.async { [weak self] in
-            self?.heartbeatTimer = Timer(timeInterval: 20, repeats: true) { [weak self] _ in
-                guard let self = self else { return }
-                self.sendHeartbeat()
-            }
-
-            RunLoop.current.add(self!.heartbeatTimer!, forMode: .default)
-            RunLoop.current.run()
-        }
-    }
-
     private func findCharacteristic(uuid: CBUUID, peripheral: CBPeripheral) -> CBCharacteristic? {
         for service in peripheral.services ?? [] {
             for characteristic in service.characteristics ?? [] {
@@ -1093,30 +1155,16 @@ class G1: NSObject, SGCManager {
     }
 
     private func handleAck(from peripheral: CBPeripheral, success: Bool, sequenceNumber: Int = -1) {
-        //    CoreCommsService.log("G1: handleAck \(success)")
-        if !success { return }
+        guard success else { return }
 
         let side = peripheral == leftPeripheral ? "L" : "R"
         let key = sequenceNumber == -1 ? side : "\(side)-\(sequenceNumber)"
 
-        // CoreCommsService.log("G1: ACK received for \(key)")
-
-        // Resume any pending ACK continuation for this side (thread-safe)
-        var continuation: CheckedContinuation<Bool, Never>?
-        ackCompletionsQueue.sync(flags: .barrier) {
-            continuation = pendingAckCompletions.removeValue(forKey: key)
-        }
-
-        // if peripheral == leftPeripheral {
-        //     setReadiness(left: true, right: nil)
-        // }
-        // if peripheral == rightPeripheral {
-        //     setReadiness(left: nil, right: true)
-        // }
-
-        if let continuation = continuation {
-            continuation.resume(returning: true)
-            // Core.log("✅ ACK received for \(side) side, resuming continuation")
+        Task {
+            let wasWaiting = await ackManager.receiveAck(key: key)
+            if wasWaiting {
+                // Bridge.log("G1: ✅ ACK received for \(key)")
+            }
         }
     }
 
@@ -1162,7 +1210,9 @@ class G1: NSObject, SGCManager {
             handleAck(from: peripheral, success: data[1] == CommandResponse.ACK.rawValue)
         case .BLE_REQ_TRANSFER_MIC_DATA:
             // compressedVoiceData = data
-            CoreManager.shared.handleGlassesMicData(data)
+            // skip the first 2 bytes:
+            let lc3Data = data.subdata(in: 2 ..< data.count)
+            CoreManager.shared.handleGlassesMicData(lc3Data)
         //                CoreCommsService.log("G1: Got voice data: " + String(data.count))
         case .UNK_1:
             handleAck(from: peripheral, success: true)
@@ -1249,21 +1299,21 @@ class G1: NSObject, SGCManager {
             case .CASE_REMOVED:
                 Bridge.log("G1: REMOVED FROM CASE")
                 caseRemoved = true
-                CoreManager.shared.handle_request_status()
+                CoreManager.shared.getStatus()
             case .CASE_REMOVED2:
                 Bridge.log("G1: REMOVED FROM CASE2")
                 caseRemoved = true
-                CoreManager.shared.handle_request_status()
+                CoreManager.shared.getStatus()
             case .CASE_OPEN:
                 caseOpen = true
                 caseRemoved = false
                 Bridge.log("G1: CASE OPEN")
-                CoreManager.shared.handle_request_status()
+                CoreManager.shared.getStatus()
             case .CASE_CLOSED:
                 caseOpen = false
                 caseRemoved = false
                 Bridge.log("G1: CASE CLOSED")
-                CoreManager.shared.handle_request_status()
+                CoreManager.shared.getStatus()
             case .CASE_CHARGING_STATUS:
                 guard data.count >= 3 else { break }
                 let status = data[2]
@@ -1508,67 +1558,45 @@ extension G1 {
         }
     }
 
-    func sendCommandToSide2(
-        _ command: [UInt8], side: String, attemptNumber: Int = 0, sequenceNumber: Int = -1
+    private func sendCommandToSide2(
+        _ command: [UInt8],
+        side: String,
+        attemptNumber: Int = 0,
+        sequenceNumber: Int = -1
     ) async -> Bool {
         let startTime = Date()
-
-        // Convert to Data
         let commandData = Data(command)
 
-        return await withCheckedContinuation { continuation in
-            var peripheral: CBPeripheral? = nil
-            var characteristic: CBCharacteristic? = nil
+        let peripheral: CBPeripheral?
+        let characteristic: CBCharacteristic?
 
-            if side == "L" {
-                // send to left
-                peripheral = leftPeripheral
-                characteristic = leftPeripheral?.services?
-                    .first(where: { $0.uuid == UART_SERVICE_UUID })?
-                    .characteristics?
-                    .first(where: { $0.uuid == UART_TX_CHAR_UUID })
-            } else {
-                // send to right
-                peripheral = rightPeripheral
-                characteristic = rightPeripheral?.services?
-                    .first(where: { $0.uuid == UART_SERVICE_UUID })?
-                    .characteristics?
-                    .first(where: { $0.uuid == UART_TX_CHAR_UUID })
-            }
+        if side == "L" {
+            peripheral = leftPeripheral
+            characteristic = leftPeripheral?.services?
+                .first(where: { $0.uuid == UART_SERVICE_UUID })?
+                .characteristics?
+                .first(where: { $0.uuid == UART_TX_CHAR_UUID })
+        } else {
+            peripheral = rightPeripheral
+            characteristic = rightPeripheral?.services?
+                .first(where: { $0.uuid == UART_SERVICE_UUID })?
+                .characteristics?
+                .first(where: { $0.uuid == UART_TX_CHAR_UUID })
+        }
 
-            if peripheral == nil || characteristic == nil {
-                Bridge.log("G1: ⚠️ peripheral/characteristic not found, resuming immediately")
-                //        continuation.resume()
-                continuation.resume(returning: false)
-                return
-            }
+        guard let peripheral, let characteristic else {
+            Bridge.log("G1: ⚠️ peripheral/characteristic not found, resuming immediately")
+            return false
+        }
 
-            let key = sequenceNumber == -1 ? side : "\(side)-\(sequenceNumber)"
+        let key = sequenceNumber == -1 ? side : "\(side)-\(sequenceNumber)"
+        let waitTimeMs = Int((0.3 + (0.2 * Double(attemptNumber))) * 1000)
 
-            // Store continuation for ACK callback (thread-safe)
-            ackCompletionsQueue.async(flags: .barrier) {
-                self.pendingAckCompletions[key] = continuation
-            }
-
-            peripheral!.writeValue(commandData, for: characteristic!, type: .withResponse)
-
-            let waitTime = 0.3 + (0.2 * Double(attemptNumber))
-
-            // after 200ms, if we haven't received the ack, resume:
-            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                // Check if ACK continuation still exists (if it does, ACK wasn't received)
-                var pendingContinuation: CheckedContinuation<Bool, Never>?
-                self.ackCompletionsQueue.sync(flags: .barrier) {
-                    pendingContinuation = self.pendingAckCompletions.removeValue(forKey: key)
-                }
-
-                if let pendingContinuation = pendingContinuation {
-                    let elapsed = Date().timeIntervalSince(startTime) * 1000
-                    Bridge.log(
-                        "G1: ⚠️ ACK timeout for \(key) after \(String(format: "%.0f", elapsed))ms")
-                    pendingContinuation.resume(returning: false)
-                }
-            }
+        return await ackManager.waitForAck(key: key, timeoutMs: waitTimeMs) {
+            peripheral.writeValue(commandData, for: characteristic, type: .withResponse)
+        } onTimeout: {
+            let elapsed = Date().timeIntervalSince(startTime) * 1000
+            Bridge.log("G1: ⚠️ ACK timeout for \(key) after \(String(format: "%.0f", elapsed))ms")
         }
     }
 
@@ -1617,8 +1645,8 @@ extension G1 {
         }
     }
 
-    @objc func RN_sendWhitelist() {
-        Bridge.log("G1: RN_sendWhitelist()")
+    func sendWhitelist() {
+        Bridge.log("G1: sendWhitelist()")
         let whitelistChunks = getWhitelistChunks()
         queueChunks(whitelistChunks, sendLeft: true, sendRight: true, sleepAfterMs: 100)
     }
@@ -2053,10 +2081,8 @@ extension G1 {
             // For now, assume success (in a real implementation, you'd check for ACK)
             Bridge.log("G1: CRC command sent successfully")
             return true
-
-            Bridge.log("G1: CRC command failed, attempt \(attempt + 1)")
         }
-
+        // Bridge.log("G1: CRC command failed, attempt \(attempt + 1)")
         Bridge.log("G1: Failed to send CRC command after \(maxAttempts) attempts")
         return false
     }
@@ -2176,27 +2202,28 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        Bridge.log(
-            "G1: centralManager(_:didConnect:) device connected!: \(peripheral.name ?? "Unknown")")
+        // BLE operations stay on _bluetoothQueue (where this callback runs)
         peripheral.delegate = self
         peripheral.discoverServices([UART_SERVICE_UUID])
 
-        // Store the UUIDs for future reconnection
-        if peripheral == leftPeripheral || (peripheral.name?.contains("_L_") ?? false) {
-            Bridge.log("G1: 🔵 Storing left glass UUID: \(peripheral.identifier.uuidString)")
-            leftGlassUUID = peripheral.identifier
-            leftPeripheral = peripheral
-        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
 
-        if peripheral == rightPeripheral || (peripheral.name?.contains("_R_") ?? false) {
-            Bridge.log("G1: 🔵 Storing right glass UUID: \(peripheral.identifier.uuidString)")
-            rightGlassUUID = peripheral.identifier
-            rightPeripheral = peripheral
-        }
+            Bridge.log("G1: device connected: \(peripheral.name ?? "Unknown")")
 
-        // Update the last connection timestamp
-        lastConnectionTimestamp = Date()
-        Bridge.log("G1: Connected to peripheral: \(peripheral.name ?? "Unknown")")
+            if peripheral == self.leftPeripheral || (peripheral.name?.contains("_L_") ?? false) {
+                self.leftGlassUUID = peripheral.identifier
+                self.leftPeripheral = peripheral
+            }
+
+            if peripheral == self.rightPeripheral || (peripheral.name?.contains("_R_") ?? false) {
+                self.rightGlassUUID = peripheral.identifier
+                self.rightPeripheral = peripheral
+            }
+
+            self.lastConnectionTimestamp = Date()
+            Bridge.log("G1: Connected to peripheral: \(peripheral.name ?? "Unknown")")
+        }
     }
 
     func centralManager(
@@ -2222,26 +2249,37 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     private func startReconnectionTimer() {
-        Bridge.log("G1: Starting reconnection timer")
-        stopReconnectionTimer()
-        reconnectionAttempts = 0
+        Task {
+            await reconnectionManager.start { [weak self] in
+                guard let self else { return false }
 
-        let timer = DispatchSource.makeTimerSource(queue: reconnectionQueue)
-        timer.schedule(deadline: .now(), repeating: reconnectionInterval)
-        timer.setEventHandler { [weak self] in
-            self?.attemptReconnection()
+                // Check if already connected
+                if await MainActor.run(body: { self.ready }) {
+                    Bridge.log("G1: Already connected, stopping reconnection")
+                    return true // Returning true stops the reconnection loop
+                }
+
+                Bridge.log("G1: Attempting reconnection...")
+
+                // Attempt to reconnect
+                await MainActor.run {
+                    self.startScan()
+                }
+
+                // Return false to keep trying, true if connected
+                return false
+            }
         }
-        reconnectionTimer = timer
-        timer.resume()
     }
 
     private func stopReconnectionTimer() {
-        reconnectionTimer?.cancel()
-        reconnectionTimer = nil
+        Task {
+            await reconnectionManager.stop()
+        }
     }
 
     // Connect by UUID
-    @objc func connectByUUID() -> Bool {
+    func connectByUUID() -> Bool {
         // don't do this if we don't have a search id set:
         if DEVICE_SEARCH_ID == "NOT_SET" || DEVICE_SEARCH_ID.isEmpty {
             Bridge.log("G1: 🔵 No DEVICE_SEARCH_ID set, skipping connect by UUID")
@@ -2292,28 +2330,6 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
 
         return foundAny
-    }
-
-    @objc private func attemptReconnection() {
-        Bridge.log("G1: Attempting reconnection (attempt \(reconnectionAttempts))...")
-        // Check if we're already connected
-        if ready {
-            Bridge.log("G1: G1 is already ready, cancelling reconnection attempt (& timer)")
-            stopReconnectionTimer()
-            return
-        }
-
-        // Check if we've exceeded maximum attempts
-        if maxReconnectionAttempts > 0, reconnectionAttempts >= maxReconnectionAttempts {
-            Bridge.log("G1: Maximum reconnection attempts reached. Stopping reconnection timer.")
-            stopReconnectionTimer()
-            return
-        }
-
-        reconnectionAttempts += 1
-
-        // Start a new scan
-        startScan()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
@@ -2368,15 +2384,19 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     // called whenever bluetooth is initialized / turned on or off:
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state == .poweredOn {
-            Bridge.log("G1: Bluetooth was powered on")
-            setReadiness(left: false, right: false)
-            // only automatically start scanning if we have a SEARCH_ID, otherwise wait for RN to call startScan() itself
-            if DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty {
-                startScan()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            if central.state == .poweredOn {
+                Bridge.log("G1: Bluetooth was powered on")
+                self.setReadiness(left: false, right: false)
+
+                if self.DEVICE_SEARCH_ID != "NOT_SET", !self.DEVICE_SEARCH_ID.isEmpty {
+                    self.startScan()
+                }
+            } else {
+                Bridge.log("G1: Bluetooth was turned off.")
             }
-        } else {
-            Bridge.log("G1: Bluetooth was turned off.")
         }
     }
 
@@ -2396,27 +2416,23 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
 
         // Process the notification data
-        handleNotification(from: peripheral, data: data)
+        DispatchQueue.main.async { [weak self] in
+            self?.handleNotification(from: peripheral, data: data)
+        }
     }
 
     // L/R Synchronization - Handle BLE write completions
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?) {
-        if let error = error {
-            Bridge.log(
-                "G1: ❌ BLE write error for \(peripheral.name ?? "unknown"): \(error.localizedDescription)"
-            )
-        } else {
-            // Only log successful writes every 10th operation to avoid spam
-            // if writeCompletionCount % 10 == 0 {
-            //   CoreCommsService.log("G1: ✅ BLE write \(writeCompletionCount) completed for \(peripheral.name ?? "unknown")")
-            // }
-            writeCompletionCount += 1
-        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
 
-        // Resume continuation to allow sequential execution
-        // TODO: use the ack continuation
-        //    if let continuation = pendingWriteCompletions.removeValue(forKey: characteristic) {
-        //      continuation.resume(returning: false)
-        //    }
+            if let error = error {
+                Bridge.log(
+                    "G1: ❌ BLE write error for \(peripheral.name ?? "unknown"): \(error.localizedDescription)"
+                )
+            } else {
+                self.writeCompletionCount += 1
+            }
+        }
     }
 }

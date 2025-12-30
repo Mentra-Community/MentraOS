@@ -37,10 +37,17 @@ function withAppBuildGradleModifications(config: any) {
       const credentialsAndSentry = `
 /**
  * Release-Store credentials.
+ * Looks for keystore in shared location (~/.mentra/credentials/) first,
+ * then falls back to repo-local credentials/ folder.
  */
 def releaseStorePassword = project.hasProperty("MENTRAOS_UPLOAD_STORE_PASSWORD") ? project.property("MENTRAOS_UPLOAD_STORE_PASSWORD") : ""
 def releaseKeyPassword = project.hasProperty("MENTRAOS_UPLOAD_KEY_PASSWORD") ? project.property("MENTRAOS_UPLOAD_KEY_PASSWORD") : ""
 def releaseKeyAlias = project.hasProperty("MENTRAOS_UPLOAD_KEY_ALIAS") ? project.property("MENTRAOS_UPLOAD_KEY_ALIAS") : "upload"
+
+// Find keystore: check shared location first, then local
+def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/upload-keystore.jks")
+def localKeystore = file('../credentials/upload-keystore.jks')
+def releaseKeystoreFile = sharedKeystore.exists() ? sharedKeystore : localKeystore
 
 // Conditionally apply Sentry gradle script for source map uploads
 if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUploadEnabled").toBoolean()) {
@@ -55,7 +62,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
     }
 
     // 2. Update versionName to 2.2.14
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.2.14"')
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.3.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -117,10 +124,10 @@ configurations.all {
     }
 
     // 6. Add release signing config (from android-signing-config.js)
-    if (!buildGradle.includes("storeFile file('../credentials/upload-keystore.jks')")) {
+    if (!buildGradle.includes("storeFile releaseKeystoreFile")) {
       const releaseSigningConfig = `
         release {
-            storeFile file('../credentials/upload-keystore.jks')
+            storeFile releaseKeystoreFile
             storePassword = releaseStorePassword
             keyAlias = releaseKeyAlias
             keyPassword = releaseKeyPassword

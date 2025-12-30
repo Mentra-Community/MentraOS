@@ -6,6 +6,8 @@
  * - Main: Full dashboard experience with comprehensive information
  * - Expanded: More space for App content while maintaining essential info
  */
+import { Logger } from "pino";
+
 import {
   DashboardMode,
   Layout,
@@ -19,8 +21,9 @@ import {
   DisplayRequest,
   AppToCloudMessage,
 } from "@mentra/sdk";
+
 import { SYSTEM_DASHBOARD_PACKAGE_NAME } from "../../core/app.service";
-import { Logger } from "pino";
+import { WebSocketReadyState } from "../../websocket/types";
 import UserSession from "../UserSession";
 
 /**
@@ -145,10 +148,7 @@ export class DashboardManager {
    * @returns True if the message was handled, false otherwise
    */
   public handleAppMessage(message: AppToCloudMessage): boolean {
-    this.logger.debug(
-      { message },
-      `Received App message of type ${message.type} for user ${this.userSession.userId}`,
-    );
+    this.logger.debug({ message }, `Received App message of type ${message.type} for user ${this.userSession.userId}`);
     try {
       switch (message.type) {
         case AppToCloudMessageType.DASHBOARD_CONTENT_UPDATE:
@@ -183,10 +183,7 @@ export class DashboardManager {
   public handleAppDisconnected(packageName: string): void {
     // Clean up content when a App disconnects
     this.cleanupAppContent(packageName);
-    this.logger.info(
-      { packageName },
-      `Cleaned up dashboard content for disconnected App: ${packageName}`,
-    );
+    this.logger.info({ packageName }, `Cleaned up dashboard content for disconnected App: ${packageName}`);
   }
 
   /**
@@ -196,10 +193,7 @@ export class DashboardManager {
   public onHeadsUp(): void {
     // Only cycle content if we're in main dashboard mode
     if (this.currentMode !== DashboardMode.MAIN) {
-      this.logger.debug(
-        { currentMode: this.currentMode },
-        "Head-up gesture ignored - not in main dashboard mode",
-      );
+      this.logger.debug({ currentMode: this.currentMode }, "Head-up gesture ignored - not in main dashboard mode");
       return;
     }
 
@@ -215,8 +209,7 @@ export class DashboardManager {
     }
 
     // Advance to next item in circular queue
-    this.mainContentRotationIndex =
-      (this.mainContentRotationIndex + 1) % this.mainContent.size;
+    this.mainContentRotationIndex = (this.mainContentRotationIndex + 1) % this.mainContent.size;
 
     this.logger.info(
       {
@@ -293,10 +286,7 @@ export class DashboardManager {
 
     // Only allow system dashboard to change mode
     if (packageName !== SYSTEM_DASHBOARD_PACKAGE_NAME) {
-      this.logger.warn(
-        { packageName },
-        `Unauthorized dashboard mode change attempt from ${packageName}`,
-      );
+      this.logger.warn({ packageName }, `Unauthorized dashboard mode change attempt from ${packageName}`);
       return;
     }
 
@@ -360,10 +350,7 @@ export class DashboardManager {
 
     // Skip if mode is none
     if (this.currentMode === "none") {
-      this.logger.debug(
-        {},
-        `[${this.userSession.userId}] Dashboard update skipped - mode is none`,
-      );
+      this.logger.debug({}, `[${this.userSession.userId}] Dashboard update skipped - mode is none`);
       return;
     }
 
@@ -373,24 +360,15 @@ export class DashboardManager {
 
       switch (this.currentMode) {
         case DashboardMode.MAIN:
-          this.logger.debug(
-            {},
-            `[${this.userSession.userId}] Generating MAIN dashboard layout`,
-          );
+          this.logger.debug({}, `[${this.userSession.userId}] Generating MAIN dashboard layout`);
           layout = this.generateMainLayout();
           break;
         case DashboardMode.EXPANDED:
-          this.logger.debug(
-            {},
-            `[${this.userSession.userId}] Generating EXPANDED dashboard layout`,
-          );
+          this.logger.debug({}, `[${this.userSession.userId}] Generating EXPANDED dashboard layout`);
           layout = this.generateExpandedLayout();
           break;
         default:
-          this.logger.warn(
-            { userId: this.userSession.userId, mode: this.currentMode },
-            "Unknown dashboard mode",
-          );
+          this.logger.warn({ userId: this.userSession.userId, mode: this.currentMode }, "Unknown dashboard mode");
           return;
       }
 
@@ -407,10 +385,7 @@ export class DashboardManager {
       // Send the display request using the session's DisplayManager
       this.sendDisplayRequest(displayRequest);
     } catch (error) {
-      this.logger.error(
-        error,
-        "Error updating dashboard for user session " + this.userSession.userId,
-      );
+      this.logger.error(error, "Error updating dashboard for user session " + this.userSession.userId);
     }
   }
 
@@ -436,12 +411,8 @@ export class DashboardManager {
         const layout = displayRequest.layout as any;
         this.logger.debug(
           {
-            leftSide:
-              layout.topText?.substring(0, 50) +
-              (layout.topText?.length > 50 ? "..." : ""),
-            rightSide:
-              layout.bottomText?.substring(0, 50) +
-              (layout.bottomText?.length > 50 ? "..." : ""),
+            leftSide: layout.topText?.substring(0, 50) + (layout.topText?.length > 50 ? "..." : ""),
+            rightSide: layout.bottomText?.substring(0, 50) + (layout.bottomText?.length > 50 ? "..." : ""),
           },
           `Content for DoubleTextWall layout for user: ${this.userSession.userId} package: ${displayRequest.packageName}`,
         );
@@ -449,32 +420,23 @@ export class DashboardManager {
         const layout = displayRequest.layout as any;
         this.logger.debug(
           {
-            text:
-              layout.text?.substring(0, 100) +
-              (layout.text?.length > 100 ? "..." : ""),
+            text: layout.text?.substring(0, 100) + (layout.text?.length > 100 ? "..." : ""),
           },
           "Content for TextWall",
         );
-      } else if (
-        displayRequest.layout.layoutType === LayoutType.DASHBOARD_CARD
-      ) {
+      } else if (displayRequest.layout.layoutType === LayoutType.DASHBOARD_CARD) {
         const layout = displayRequest.layout as any;
         this.logger.debug(
           {
-            leftText:
-              layout.leftText?.substring(0, 50) +
-              (layout.leftText?.length > 50 ? "..." : ""),
-            rightText:
-              layout.rightText?.substring(0, 50) +
-              (layout.rightText?.length > 50 ? "..." : ""),
+            leftText: layout.leftText?.substring(0, 50) + (layout.leftText?.length > 50 ? "..." : ""),
+            rightText: layout.rightText?.substring(0, 50) + (layout.rightText?.length > 50 ? "..." : ""),
           },
           "Content for DashboardCard",
         );
       }
 
       // Use the DisplayManager to send the display request
-      const sent =
-        this.userSession.displayManager.handleDisplayRequest(displayRequest);
+      const sent = this.userSession.displayManager.handleDisplayRequest(displayRequest);
       if (!sent) {
         this.logger.warn(
           { displayRequest },
@@ -575,14 +537,8 @@ export class DashboardManager {
     // Sort by timestamp to ensure consistent ordering (newest first for stable rotation)
     // Handle both Date objects and timestamp numbers
     contentArray.sort((a, b) => {
-      const aTime =
-        a.timestamp instanceof Date
-          ? a.timestamp.getTime()
-          : new Date(a.timestamp).getTime();
-      const bTime =
-        b.timestamp instanceof Date
-          ? b.timestamp.getTime()
-          : new Date(b.timestamp).getTime();
+      const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
+      const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
       return bTime - aTime;
     });
 
@@ -626,9 +582,7 @@ export class DashboardManager {
       case LayoutType.DOUBLE_TEXT_WALL:
         return [content.topText, content.bottomText].filter(Boolean).join("\n");
       case LayoutType.DASHBOARD_CARD:
-        return [content.leftText, content.rightText]
-          .filter(Boolean)
-          .join(" | ");
+        return [content.leftText, content.rightText].filter(Boolean).join(" | ");
       case LayoutType.REFERENCE_CARD:
         return `${content.title}\n${content.text}`;
       default:
@@ -649,14 +603,8 @@ export class DashboardManager {
     // Get App content from expanded content queue (only the most recent item)
     const content = Array.from(this.expandedContent.values())
       .sort((a, b) => {
-        const aTime =
-          a.timestamp instanceof Date
-            ? a.timestamp.getTime()
-            : new Date(a.timestamp).getTime();
-        const bTime =
-          b.timestamp instanceof Date
-            ? b.timestamp.getTime()
-            : new Date(b.timestamp).getTime();
+        const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
+        const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
         return bTime - aTime;
       })
       .slice(0, 1)[0];
@@ -705,21 +653,12 @@ export class DashboardManager {
    * @param limit Optional limit on number of items to include
    * @returns Combined content string
    */
-  private getCombinedAppContent(
-    contentQueue: Map<string, AppContent>,
-    limit?: number,
-  ): string {
+  private getCombinedAppContent(contentQueue: Map<string, AppContent>, limit?: number): string {
     // Sort by timestamp (newest first)
     const sortedContent = Array.from(contentQueue.values())
       .sort((a, b) => {
-        const aTime =
-          a.timestamp instanceof Date
-            ? a.timestamp.getTime()
-            : new Date(a.timestamp).getTime();
-        const bTime =
-          b.timestamp instanceof Date
-            ? b.timestamp.getTime()
-            : new Date(b.timestamp).getTime();
+        const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
+        const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
         return bTime - aTime;
       })
       .slice(0, limit || this.queueSize);
@@ -748,13 +687,9 @@ export class DashboardManager {
           case LayoutType.TEXT_WALL:
             return item.content.text || "";
           case LayoutType.DOUBLE_TEXT_WALL:
-            return [item.content.topText, item.content.bottomText]
-              .filter(Boolean)
-              .join("\n");
+            return [item.content.topText, item.content.bottomText].filter(Boolean).join("\n");
           case LayoutType.DASHBOARD_CARD:
-            return [item.content.leftText, item.content.rightText]
-              .filter(Boolean)
-              .join(" | ");
+            return [item.content.leftText, item.content.rightText].filter(Boolean).join(" | ");
           case LayoutType.REFERENCE_CARD:
             return `${item.content.title}\n${item.content.text}`;
           default:
@@ -780,13 +715,9 @@ export class DashboardManager {
             case LayoutType.TEXT_WALL:
               return item.content.text || "";
             case LayoutType.DOUBLE_TEXT_WALL:
-              return [item.content.topText, item.content.bottomText]
-                .filter(Boolean)
-                .join("\n");
+              return [item.content.topText, item.content.bottomText].filter(Boolean).join("\n");
             case LayoutType.DASHBOARD_CARD:
-              return [item.content.leftText, item.content.rightText]
-                .filter(Boolean)
-                .join(" | ");
+              return [item.content.leftText, item.content.rightText].filter(Boolean).join(" | ");
             case LayoutType.REFERENCE_CARD:
               return `${item.content.title}\n${item.content.text}`;
             default:
@@ -813,10 +744,7 @@ export class DashboardManager {
       allMainContentPackages: Array.from(this.mainContent.keys()),
     };
 
-    this.logger.info(
-      beforeState,
-      `🧹 Starting dashboard cleanup for App: ${packageName}`,
-    );
+    this.logger.info(beforeState, `🧹 Starting dashboard cleanup for App: ${packageName}`);
 
     // Check if this App had always-on content
     const hadAlwaysOnContent = this.alwaysOnContent.has(packageName);
@@ -875,10 +803,7 @@ export class DashboardManager {
       hadAlwaysOnContent,
     };
 
-    this.logger.info(
-      afterState,
-      `✅ Dashboard cleanup completed for App: ${packageName}`,
-    );
+    this.logger.info(afterState, `✅ Dashboard cleanup completed for App: ${packageName}`);
   }
 
   /**
@@ -913,7 +838,7 @@ export class DashboardManager {
       // this.userSession.appConnections.forEach((ws, packageName) => {
       this.userSession.appWebsockets.forEach((ws, packageName) => {
         try {
-          if (ws && ws.readyState === WebSocket.OPEN) {
+          if (ws && ws.readyState === WebSocketReadyState.OPEN) {
             const appMessage = {
               ...message,
               sessionId: `${this.userSession.sessionId}-${packageName}`,

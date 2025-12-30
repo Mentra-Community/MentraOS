@@ -1,18 +1,16 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useLocalSearchParams} from "expo-router"
 import {View, ViewStyle, Image, ImageStyle, TextStyle} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
-import {Screen, Text} from "@/components/ignite"
-import {Button} from "@/components/ignite"
+import {Screen, Text, Button} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {$styles, ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {useAppTheme} from "@/utils/useAppTheme"
-
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export default function PairingSuccessScreen() {
   const {theme, themed} = useAppTheme()
@@ -37,7 +35,7 @@ export default function PairingSuccessScreen() {
   const glassesImage = getGlassesImage(glassesModelName)
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)} safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
       <View style={{flex: 1}} />
 
       {/* Glasses Image with Logo on top */}
@@ -98,7 +96,6 @@ const $successTitle: ThemedStyle<TextStyle> = ({colors}) => ({
 
 const $successMessage: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 18,
-  fontWeight: "400",
   color: colors.textDim,
   textAlign: "center",
 })

@@ -1,5 +1,3 @@
-import {ArrowLeftIcon} from "assets/icons/component/ArrowLeftIcon"
-import {CloseXIcon} from "assets/icons/component/CloseXIcon"
 import {ImageStyle, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
@@ -10,6 +8,9 @@ import {useActiveForegroundApp, useStopApplet} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
+
+import {ArrowLeftIcon} from "assets/icons/component/ArrowLeftIcon"
+import {CloseXIcon} from "assets/icons/component/CloseXIcon"
 
 export const ActiveForegroundApp: React.FC = () => {
   const {themed, theme} = useAppTheme()

@@ -36,7 +36,8 @@ bun install
 echo ""
 echo "🔍 Step 3: Checking for dependency issues..."
 if command -v npx &> /dev/null; then
-    npx expo-doctor --fix-dependencies 2>&1 | grep -E "checks (passed|failed)|issues detected" || true
+    # Use --yes to auto-accept npx install prompts, run without piping to show full output
+    npx --yes expo-doctor || true
     echo ""
 fi
 
@@ -90,12 +91,8 @@ cd android && ./gradlew clean && cd ..
 echo ""
 echo "✅ Step 7: Final dependency verification..."
 if command -v npx &> /dev/null; then
-    EXPO_CHECK=$(npx expo-doctor 2>&1 | grep -c "checks passed" || echo "0")
-    if [ "$EXPO_CHECK" -gt "0" ]; then
-        echo "✅ Dependencies look good!"
-    else
-        echo "⚠️  Warning: There may still be dependency issues. Check output above."
-    fi
+    # Use --yes to auto-accept npx install prompts
+    npx --yes expo-doctor || echo "⚠️  Warning: There may still be dependency issues. Check output above."
 fi
 
 # Step 8: Build Android

@@ -1,6 +1,4 @@
-import ChevronRight from "assets/icons/component/ChevronRight"
-import MicIcon from "assets/icons/component/MicIcon"
-import SolarLineIconsSet4 from "assets/icons/component/SolarLineIconsSet4"
+import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import CoreModule from "core"
 import {useState} from "react"
 import {ActivityIndicator, Image, ImageStyle, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
@@ -27,7 +25,9 @@ import {
 } from "@/utils/getGlassesImage"
 import {useAppTheme} from "@/utils/useAppTheme"
 
-import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import ChevronRight from "assets/icons/component/ChevronRight"
+import MicIcon from "assets/icons/component/MicIcon"
+import SolarLineIconsSet4 from "assets/icons/component/SolarLineIconsSet4"
 
 const getBatteryIcon = (batteryLevel: number): string => {
   if (batteryLevel >= 75) return "battery-3"

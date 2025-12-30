@@ -11,19 +11,65 @@ on:
       - dev
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build:
     runs-on: self-hosted
 
     steps:
-      - name: Clean workspace
+      - name: Update PR comment - Build started
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- pr-review-helper -->';
+            const comment = comments.data.find(c => c.body.includes(marker));
+            if (!comment) return;
+
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+
+            // Check for existing working build link to preserve
+            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const existingShaMatch = comment.body.match(/✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/);
+
+            let buildStatus = `### 📱 Mobile App Build\n⏳ **Building...** (commit \`${sha}\`)`;
+
+            // If there's a previous working build, show it
+            if (existingDownloadMatch && existingShaMatch && existingShaMatch[1] !== sha) {
+              buildStatus += `\n\n📦 **Previous build:** (commit \`${existingShaMatch[1]}\`) - [📥 **Download APK**](${existingDownloadMatch[1]})`;
+            }
+
+            const newBody = comment.body.replace(
+              /<!-- android-build-status -->[\s\S]*?<!-- \/android-build-status -->/,
+              `<!-- android-build-status -->\n${buildStatus}\n<!-- /android-build-status -->`
+            );
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: comment.id,
+              body: newBody
+            });
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Clean build artifacts (preserve caches)
         run: |
-          # Clean previous build artifacts
-          rm -rf mobile/node_modules mobile/.pnpm-store mobile/.pnpm
-          rm -rf mobile/android/build mobile/android/.gradle
-          rm -rf ~/.pnpm-store 2>/dev/null || true
-          # Clean Gradle caches to avoid corrupted artifacts (especially Kotlin plugin)
-          rm -rf ~/.gradle/caches ~/.gradle/wrapper 2>/dev/null || true
+          # Only clean build outputs, NOT dependency caches
+          rm -rf mobile/android/build mobile/android/app/build mobile/android/.gradle
+          # Clean node_modules to ensure fresh install (bun is fast anyway)
+          rm -rf mobile/node_modules
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,44 +86,45 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
 
-      - name: Install pnpm
-        run: |
-          npm install -g pnpm@8
-          # Verify pnpm is in PATH
-          which pnpm
-          pnpm --version
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.os }}-
 
-      - name: Configure pnpm store
-        working-directory: ./mobile
-        run: |
-          # Use local store to avoid permission issues
-          pnpm config set store-dir .pnpm-store
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
 
       - name: Install dependencies
         working-directory: ./mobile
-        run: pnpm install --no-frozen-lockfile
-        env:
-          PNPM_HOME: ${{ github.workspace }}/mobile/.pnpm
-          PNPM_STORE_PATH: ${{ github.workspace }}/mobile/.pnpm-store
+        run: bun install
 
       - name: Setup environment
         working-directory: ./mobile
         run: |
-          # Create .env from example
+          # Create .env from example (Expo reads from mobile/.env, not android/.env)
           cp .env.example .env
-          # Copy to Android directory
-          cp .env android/.env
 
       - name: Run Expo prebuild
         working-directory: ./mobile
-        run: pnpm expo prebuild --platform android
+        run: bun expo prebuild --platform android
 
       - name: Fix React Native symlinks
         working-directory: ./mobile
@@ -87,12 +134,191 @@ jobs:
             ./fix-react-native-symlinks.sh
           fi
 
-      - name: Build Android Debug APK
+      - name: Build Android Release APK
+        id: gradle-build
         working-directory: ./mobile/android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleRelease --build-cache --parallel
+        continue-on-error: true
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
 
-      - name: Upload Debug APK
+      - name: Retry build with clean cache (if first attempt failed)
+        if: steps.gradle-build.outcome == 'failure'
+        working-directory: ./mobile/android
+        run: |
+          echo "First build failed, cleaning Gradle cache and retrying..."
+          # Stop Gradle daemons first to release file locks
+          ./gradlew --stop || true
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
+          ./gradlew assembleRelease --build-cache --parallel
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+
+      - name: Fail if both builds failed
+        if: steps.gradle-build.outcome == 'failure'
+        run: |
+          # Check if retry succeeded by looking for the APK
+          if [ ! -f "mobile/android/app/build/outputs/apk/release/app-release.apk" ]; then
+            echo "Both build attempts failed"
+            exit 1
+          fi
+
+      - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          name: app-release
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload APK to pr-builds release
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const prNumber = context.payload.pull_request.number;
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const apkName = `mobile-pr-${prNumber}-${sha}.apk`;
+            const apkPath = 'mobile/android/app/build/outputs/apk/release/app-release.apk';
+
+            // Get the pr-builds release
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: 'pr-builds'
+            });
+
+            // Delete existing asset with same name if it exists
+            for (const asset of release.data.assets) {
+              if (asset.name === apkName) {
+                console.log(`Deleting existing asset: ${asset.name}`);
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: asset.id
+                });
+                break;
+              }
+            }
+
+            // Read the APK file
+            const apkData = fs.readFileSync(apkPath);
+
+            // Upload the APK
+            console.log(`Uploading ${apkName} (${apkData.length} bytes)...`);
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.data.id,
+              name: apkName,
+              data: apkData
+            });
+
+            console.log(`Successfully uploaded ${apkName}`);
+
+      - name: Cleanup old release assets
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'pr-builds'
+              });
+
+              for (const asset of release.data.assets) {
+                const createdAt = new Date(asset.created_at);
+                if (createdAt < sevenDaysAgo) {
+                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                }
+              }
+            } catch (error) {
+              console.log('Cleanup skipped:', error.message);
+            }
+
+      - name: Update PR comment - Build succeeded
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- pr-review-helper -->';
+            const comment = comments.data.find(c => c.body.includes(marker));
+            if (!comment) return;
+
+            const prNumber = context.payload.pull_request.number;
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const apkName = `mobile-pr-${prNumber}-${sha}.apk`;
+            const downloadUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds/${apkName}`;
+
+            const buildStatus = `### 📱 Mobile App Build\n✅ **Ready to test!** (commit \`${sha}\`)\n\n[📥 **Download APK**](${downloadUrl})`;
+
+            const newBody = comment.body.replace(
+              /<!-- android-build-status -->[\s\S]*?<!-- \/android-build-status -->/,
+              `<!-- android-build-status -->\n${buildStatus}\n<!-- /android-build-status -->`
+            );
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: comment.id,
+              body: newBody
+            });
+
+      - name: Update PR comment - Build failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- pr-review-helper -->';
+            const comment = comments.data.find(c => c.body.includes(marker));
+            if (!comment) return;
+
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            // Check if there was a previous working build
+            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const previousShaMatch = comment.body.match(/✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/)
+                                  || comment.body.match(/📦 \*\*Previous build:\*\* \(commit `([a-f0-9]+)`\)/);
+
+            let buildStatus = `### 📱 Mobile App Build\n❌ **Build failed** (commit \`${sha}\`) - [View logs](${runUrl})`;
+
+            if (previousDownloadMatch && previousShaMatch && previousShaMatch[1] !== sha) {
+              buildStatus += `\n\n📦 **Previous build:** (commit \`${previousShaMatch[1]}\`) - [📥 **Download APK**](${previousDownloadMatch[1]})`;
+            }
+
+            const newBody = comment.body.replace(
+              /<!-- android-build-status -->[\s\S]*?<!-- \/android-build-status -->/,
+              `<!-- android-build-status -->\n${buildStatus}\n<!-- /android-build-status -->`
+            );
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: comment.id,
+              body: newBody
+            });

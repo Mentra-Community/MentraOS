@@ -12,12 +12,11 @@ import {translate} from "@/i18n"
 import STTModelManager from "@/services/STTModelManager"
 import {useStopAllApplets} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function TranscriptionSettingsScreen() {
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const {goBack} = useNavigationHistory()
 
   const [selectedModelId, setSelectedModelId] = useState(STTModelManager.getCurrentModelId())
@@ -284,7 +283,7 @@ export default function TranscriptionSettingsScreen() {
   }, [])
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header
         title={translate("settings:transcriptionSettings")}
         leftIcon="chevron-left"
@@ -293,9 +292,7 @@ export default function TranscriptionSettingsScreen() {
         titleStyle={{textAlign: "left", paddingLeft: theme.spacing.s3}}
       />
 
-      <ScrollView>
-        <Spacer height={theme.spacing.s4} />
-
+      <ScrollView className="pt-6">
         <ToggleSetting
           label={translate("settings:bypassVAD")}
           subtitle={translate("settings:bypassVADSubtitle")}
@@ -303,7 +300,7 @@ export default function TranscriptionSettingsScreen() {
           onValueChange={setBypassVadForDebugging}
         />
 
-        <Spacer height={theme.spacing.s4} />
+        <Spacer height={theme.spacing.s6} />
 
         <ToggleSetting
           label={"Offline Mode"}
@@ -312,34 +309,30 @@ export default function TranscriptionSettingsScreen() {
           onValueChange={handleToggleOfflineMode}
         />
 
-        {
-          <>
-            <Spacer height={theme.spacing.s4} />
+        <Spacer height={theme.spacing.s6} />
 
-            {isCheckingModel ? (
-              <View style={{alignItems: "center", padding: theme.spacing.s6}}>
-                <ActivityIndicator size="large" color={theme.colors.text} />
-                <Spacer height={theme.spacing.s3} />
-                <Text>Checking model status...</Text>
-              </View>
-            ) : (
-              <>
-                {/* Integrated Model Selector */}
-                <ModelSelector
-                  selectedModelId={selectedModelId}
-                  models={allModels}
-                  onModelChange={handleModelChange}
-                  onDownload={() => handleDownloadModel()}
-                  onDelete={() => handleDeleteModel()}
-                  isDownloading={isDownloading}
-                  downloadProgress={downloadProgress}
-                  extractionProgress={extractionProgress}
-                  currentModelInfo={modelInfo}
-                />
-              </>
-            )}
+        {isCheckingModel ? (
+          <View style={{alignItems: "center", padding: theme.spacing.s6}}>
+            <ActivityIndicator size="large" color={theme.colors.text} />
+            <Spacer height={theme.spacing.s3} />
+            <Text>Checking model status...</Text>
+          </View>
+        ) : (
+          <>
+            {/* Integrated Model Selector */}
+            <ModelSelector
+              selectedModelId={selectedModelId}
+              models={allModels}
+              onModelChange={handleModelChange}
+              onDownload={() => handleDownloadModel()}
+              onDelete={() => handleDeleteModel()}
+              isDownloading={isDownloading}
+              downloadProgress={downloadProgress}
+              extractionProgress={extractionProgress}
+              currentModelInfo={modelInfo}
+            />
           </>
-        }
+        )}
       </ScrollView>
     </Screen>
   )

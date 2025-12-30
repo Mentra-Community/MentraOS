@@ -1,15 +1,15 @@
 import {FontAwesome} from "@expo/vector-icons"
 import {useState} from "react"
 import {View, TextInput, TouchableOpacity, ActivityIndicator, ScrollView, ViewStyle, TextStyle} from "react-native"
-import Toast from "react-native-toast-message"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
-import {$styles, ThemedStyle, spacing} from "@/theme"
+import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
+import {mapAuthError} from "@/utils/auth/authErrors"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function ChangePasswordScreen() {
@@ -41,22 +41,19 @@ export default function ChangePasswordScreen() {
 
     const res = await mentraAuth.updateUserPassword(newPassword)
     if (res.is_error()) {
-      console.error("Error updating password")
-      showAlert(translate("common:error"), res.error.message)
+      console.error("Error updating password:", res.error)
+      showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
       setIsLoading(false)
       return
     }
-    Toast.show({
-      type: "success",
-      text1: translate("profileSettings:passwordUpdatedSuccess"),
-      position: "bottom",
-    })
     setIsLoading(false)
-    goBack()
+    showAlert(translate("common:success"), translate("profileSettings:passwordUpdatedSuccess"), [
+      {text: translate("common:ok"), onPress: () => goBack()},
+    ])
   }
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header title={translate("profileSettings:changePassword")} leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView contentContainerStyle={themed($scrollContent)} showsVerticalScrollIndicator={false}>
         <View style={themed($card)}>
@@ -122,9 +119,11 @@ export default function ChangePasswordScreen() {
               textStyle={themed($buttonText)}
               onPress={handleUpdatePassword}
               disabled={!isFormValid || isLoading}
-              LeftAccessory={() =>
-                isLoading && <ActivityIndicator size="small" color={theme.colors.icon} style={{marginRight: 8}} />
-              }
+              {...(isLoading && {
+                LeftAccessory: () => (
+                  <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
+                ),
+              })}
             />
           </View>
         </View>
@@ -140,7 +139,7 @@ const $scrollContent: ThemedStyle<ViewStyle> = () => ({
 
 const $card: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 1,
-  padding: spacing.s6,
+  padding: spacing.s4,
 })
 
 const $subtitle: ThemedStyle<TextStyle> = ({spacing, colors}) => ({

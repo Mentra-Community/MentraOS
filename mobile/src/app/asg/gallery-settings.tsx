@@ -1,3 +1,4 @@
+import {getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {useState, useEffect} from "react"
 import {View, ViewStyle, TextStyle, ScrollView} from "react-native"
 
@@ -9,12 +10,11 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {gallerySettingsService} from "@/services/asg/gallerySettingsService"
 import {localStorageService} from "@/services/asg/localStorageService"
+import {useGallerySyncStore} from "@/stores/gallerySync"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
-
-import {getModelCapabilities} from "@/../../cloud/packages/types/src"
 
 export default function GallerySettingsScreen() {
   const {goBack, push} = useNavigationHistory()
@@ -100,7 +100,14 @@ export default function GallerySettingsScreen() {
         style: "destructive",
         onPress: async () => {
           try {
+            // console.log("[GallerySettings] 🗑️ Clearing all downloaded files and sync queue")
             await localStorageService.clearAllFiles()
+
+            // Clear the sync queue in Zustand store to remove zombie files
+            const gallerySyncStore = useGallerySyncStore.getState()
+            gallerySyncStore.clearQueue()
+            // console.log("[GallerySettings] ✅ Cleared sync queue from store")
+
             showAlert("Success", "All photos deleted from device storage", [{text: translate("common:ok")}])
             loadStats() // Refresh stats
           } catch {
@@ -122,7 +129,7 @@ export default function GallerySettingsScreen() {
   let features = getModelCapabilities(defaultWearable)
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header title="Gallery Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Camera Settings button for glasses with configurable button */}
@@ -174,7 +181,7 @@ export default function GallerySettingsScreen() {
           <RouteButton
             label={translate("glasses:deleteAllPhotos")}
             onPress={handleDeleteAll}
-            variant="destructive"
+            preset="destructive"
             disabled={isLoadingStats || localPhotoCount + localVideoCount === 0}
           />
         </View>
@@ -193,7 +200,6 @@ const $sectionCompact: ThemedStyle<ViewStyle> = ({spacing}) => ({
 
 const $sectionTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 14,
-  fontWeight: "400",
   color: colors.text,
   lineHeight: 20,
   letterSpacing: 0,

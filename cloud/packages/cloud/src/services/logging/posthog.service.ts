@@ -1,9 +1,18 @@
 // posthog.service.ts
-import { logger } from "./pino-logger";
 import { PostHog } from "posthog-node";
 
-const deploymentRegion = process.env.DEPLOYMENT_REGION;
-const isChina = deploymentRegion === "china";
+import { logger } from "./pino-logger";
+
+// Environment constants (mirroring pino-logger for consistency)
+const NODE_ENV = process.env.NODE_ENV || "development";
+const PORTER_APP_NAME = process.env.PORTER_APP_NAME || "cloud-local";
+const REGION = process.env.REGION || process.env.AZURE_SPEECH_REGION || "";
+const DEPLOYMENT_REGION = process.env.DEPLOYMENT_REGION;
+
+// Beta flag - true only when connected to staging environment
+const isBeta = NODE_ENV === "staging";
+
+const isChina = DEPLOYMENT_REGION === "china";
 
 export const posthog =
   process.env.POSTHOG_PROJECT_API_KEY && !isChina
@@ -31,6 +40,14 @@ interface EventProperties {
   [key: string]: any;
 }
 
+// Base properties included in all PostHog events (mirrors pino-logger base config)
+const baseProperties = {
+  env: NODE_ENV,
+  server: PORTER_APP_NAME,
+  region: REGION,
+  beta: isBeta,
+};
+
 /**
  * Track an event in PostHog.
  * @param eventName - Name of the event to capture.
@@ -49,6 +66,7 @@ async function trackEvent(
       distinctId: userId || properties.sessionId || "anonymous", // use provided user ID or fallback
       event: eventName,
       properties: {
+        ...baseProperties,
         ...properties,
         timestamp: properties.timestamp || new Date().toISOString(),
       },
@@ -75,7 +93,10 @@ async function setPersonProperties(
       distinctId: userId,
       event: "$set",
       properties: {
-        $set: properties,
+        $set: {
+          ...baseProperties,
+          ...properties,
+        },
       },
     });
     // posthog.identify({

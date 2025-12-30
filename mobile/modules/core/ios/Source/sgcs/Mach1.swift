@@ -12,6 +12,7 @@ import React
 import UIKit
 import UltraliteSDK
 
+@MainActor
 class Mach1: UltraliteBaseViewController, SGCManager {
     func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?) {}
 
@@ -34,6 +35,10 @@ class Mach1: UltraliteBaseViewController, SGCManager {
     var glassesAndroidVersion: String = ""
 
     var glassesOtaVersionUrl: String = ""
+
+    var glassesFirmwareVersion: String = ""
+
+    var glassesBtMacAddress: String = ""
 
     var glassesSerialNumber: String = ""
 
@@ -461,7 +466,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
         guard let device = UltraliteManager.shared.currentDevice else {
             Bridge.log("MACH1: No current device")
-            CoreManager.shared.handle_forget()
+            CoreManager.shared.forget()
             return false
         }
 

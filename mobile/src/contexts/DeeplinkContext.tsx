@@ -46,7 +46,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       if (!session?.token) {
         return false
       }
-      return true      
+      return true
     },
     fallbackHandler: (url: string) => {
       console.warn("Fallback handler called for URL:", url)

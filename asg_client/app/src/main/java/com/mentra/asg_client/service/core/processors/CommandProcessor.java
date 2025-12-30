@@ -300,7 +300,7 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new VideoCommandHandler(context, serviceManager, streamingManager, fileManager, stateManager));
             Log.d(TAG, "✅ Registered VideoCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new PingCommandHandler(communicationManager, responseBuilder));
+            commandHandlerRegistry.registerHandler(new PingCommandHandler(communicationManager, responseBuilder, serviceManager));
             Log.d(TAG, "✅ Registered PingCommandHandler");
 
             commandHandlerRegistry.registerHandler(new RtmpCommandHandler(context, stateManager, streamingManager));
@@ -312,7 +312,7 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new BatteryCommandHandler(stateManager));
             Log.d(TAG, "✅ Registered BatteryCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new VersionCommandHandler(context, serviceManager));
+            commandHandlerRegistry.registerHandler(new VersionCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered VersionCommandHandler");
 
             commandHandlerRegistry.registerHandler(new SettingsCommandHandler(serviceManager, communicationManager, responseBuilder));
@@ -404,6 +404,20 @@ public class CommandProcessor {
             Log.d(TAG, "✅ Report swipe status sent successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error sending report swipe status", e);
+        }
+    }
+
+    /**
+     * Request BT MAC address from BES chip.
+     * This should be called after UART connection is established to retrieve the unique device identifier.
+     */
+    public void requestBtMacAddress() {
+        Log.d(TAG, "📤 requestBtMacAddress() called");
+
+        if (k900CommandHandler != null) {
+            k900CommandHandler.requestBtMacAddress();
+        } else {
+            Log.w(TAG, "⚠️ K900CommandHandler not available - cannot request BT MAC address");
         }
     }
 

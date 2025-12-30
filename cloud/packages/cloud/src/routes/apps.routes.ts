@@ -1,22 +1,25 @@
 // cloud/src/routes/apps.routes.ts
+import dotenv from "dotenv";
 import express, { Request, Response, NextFunction } from "express";
-import webSocketService from "../services/websocket/websocket.service";
-import appService, { isUninstallable } from "../services/core/app.service";
-import { User } from "../models/user.model";
-import { AppI } from "../models/app.model";
 import jwt, { JwtPayload } from "jsonwebtoken";
+
 import { DeveloperProfile, AppType } from "@mentra/sdk";
-import { logger as rootLogger } from "../services/logging/pino-logger";
-import * as AppUptimeService from "../services/core/app-uptime.service";
-import UserSession from "../services/session/UserSession";
+
 import {
   authWithOptionalSession,
   optionalAuthWithOptionalSession,
   RequestWithOptionalUserSession,
 } from "../middleware/client/client-auth-middleware";
-import { HardwareCompatibilityService } from "../services/session/HardwareCompatibilityService";
-import dotenv from "dotenv";
+import { AppI } from "../models/app.model";
 import Organization from "../models/organization.model";
+import { User } from "../models/user.model";
+import * as AppUptimeService from "../services/core/app-uptime.service";
+import appService, { isUninstallable } from "../services/core/app.service";
+import { logger as rootLogger } from "../services/logging/pino-logger";
+import { HardwareCompatibilityService } from "../services/session/HardwareCompatibilityService";
+import UserSession from "../services/session/UserSession";
+import { WebSocketReadyState } from "../services/websocket/types";
+import webSocketService from "../services/websocket/websocket.service";
 import { CLIENT_VERSIONS } from "../version";
 dotenv.config(); // Load environment variables from .env file
 
@@ -37,7 +40,6 @@ const ALLOWED_API_KEY_PACKAGES = [
   "com.mentra.mentraai.beta",
   // "com.mentra.mentraai.dev",  //later
   // "com.mentra.mentraai" //later
-
 ];
 
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
@@ -68,11 +70,7 @@ interface EnhancedAppI extends AppI {
  * (1) apiKey + packageName + userId (for allowed Apps), or
  * (2) core token in Authorization header (for user sessions)
  */
-async function unifiedAuthMiddleware(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) {
+async function unifiedAuthMiddleware(req: Request, res: Response, next: NextFunction) {
   // Use req.log from pino-http with middleware context
   const middlewareLogger = req.log.child({
     service: SERVICE_NAME,
@@ -295,8 +293,7 @@ async function getAllApps(req: Request, res: Response) {
         let compatibilityInfo = null;
         const caps = userSession.deviceManager.getCapabilities();
         if (caps) {
-          const compatibilityResult =
-            HardwareCompatibilityService.checkCompatibility(app, caps);
+          const compatibilityResult = HardwareCompatibilityService.checkCompatibility(app, caps);
 
           compatibilityInfo = {
             isCompatible: compatibilityResult.isCompatible,
@@ -308,10 +305,7 @@ async function getAllApps(req: Request, res: Response) {
               type: req.type,
               description: req.description,
             })),
-            message:
-              HardwareCompatibilityService.getCompatibilityMessage(
-                compatibilityResult,
-              ),
+            message: HardwareCompatibilityService.getCompatibilityMessage(compatibilityResult),
           };
         }
 
@@ -323,39 +317,26 @@ async function getAllApps(req: Request, res: Response) {
 
       // Get user data for last active timestamps
       const user = await User.findByEmail(userId);
-      const enhancedApps = enhanceAppsWithSessionState(
-        appsWithCompatibility,
-        userSession,
-        user,
-      );
+      const enhancedApps = enhanceAppsWithSessionState(appsWithCompatibility, userSession, user);
 
       // Enrich with organization/developer profile and display name
       let finalApps = enhancedApps as any[];
       try {
         finalApps = await batchEnrichAppsWithProfiles(enhancedApps as any[]);
       } catch (e) {
-        logger.warn(
-          { e },
-          "Failed to enrich apps with organization/developer profile (apiKey branch)",
-        );
+        logger.warn({ e }, "Failed to enrich apps with organization/developer profile (apiKey branch)");
       }
 
       // Attach latest online status for each app
       try {
         const packageNames = finalApps.map((a: any) => a.packageName);
-        const latestStatuses =
-          await AppUptimeService.getLatestStatusesForPackages(packageNames);
-        const statusMap = new Map<string, boolean>(
-          latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]),
-        );
+        const latestStatuses = await AppUptimeService.getLatestStatusesForPackages(packageNames);
+        const statusMap = new Map<string, boolean>(latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]));
         for (const app of finalApps as any[]) {
           (app as any).isOnline = statusMap.get(app.packageName);
         }
       } catch (e) {
-        logger.warn(
-          { e },
-          "Failed to attach latest online statuses (apiKey branch)",
-        );
+        logger.warn({ e }, "Failed to attach latest online statuses (apiKey branch)");
       }
 
       return res.json({
@@ -370,8 +351,7 @@ async function getAllApps(req: Request, res: Response) {
     if (!authHeader) {
       return res.status(401).json({
         success: false,
-        message:
-          "Authentication required. Please provide valid token or API key.",
+        message: "Authentication required. Please provide valid token or API key.",
       });
     }
 
@@ -394,11 +374,10 @@ async function getAllApps(req: Request, res: Response) {
     const appsWithCompatibility = apps.map((app) => {
       let compatibilityInfo = null;
       if (userSession && userSession.deviceManager.getCapabilities()) {
-        const compatibilityResult =
-          HardwareCompatibilityService.checkCompatibility(
-            app,
-            userSession.deviceManager.getCapabilities(),
-          );
+        const compatibilityResult = HardwareCompatibilityService.checkCompatibility(
+          app,
+          userSession.deviceManager.getCapabilities(),
+        );
 
         compatibilityInfo = {
           isCompatible: compatibilityResult.isCompatible,
@@ -410,10 +389,7 @@ async function getAllApps(req: Request, res: Response) {
             type: req.type,
             description: req.description,
           })),
-          message:
-            HardwareCompatibilityService.getCompatibilityMessage(
-              compatibilityResult,
-            ),
+          message: HardwareCompatibilityService.getCompatibilityMessage(compatibilityResult),
         };
       }
 
@@ -425,31 +401,21 @@ async function getAllApps(req: Request, res: Response) {
 
     // Get user data for last active timestamps
     const user = await User.findByEmail(tokenUserId);
-    const enhancedApps = enhanceAppsWithSessionState(
-      appsWithCompatibility,
-      userSession,
-      user,
-    );
+    const enhancedApps = enhanceAppsWithSessionState(appsWithCompatibility, userSession, user);
 
     // Enrich with organization/developer profile and display name
     let finalApps = enhancedApps as any[];
     try {
       finalApps = await batchEnrichAppsWithProfiles(enhancedApps as any[]);
     } catch (e) {
-      logger.warn(
-        { e },
-        "Failed to enrich apps with organization/developer profile",
-      );
+      logger.warn({ e }, "Failed to enrich apps with organization/developer profile");
     }
 
     // Attach latest online status for each app
     try {
       const packageNames = finalApps.map((a: any) => a.packageName);
-      const latestStatuses =
-        await AppUptimeService.getLatestStatusesForPackages(packageNames);
-      const statusMap = new Map<string, boolean>(
-        latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]),
-      );
+      const latestStatuses = await AppUptimeService.getLatestStatusesForPackages(packageNames);
+      const statusMap = new Map<string, boolean>(latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]));
       for (const app of finalApps as any[]) {
         (app as any).isOnline = statusMap.get(app.packageName);
       }
@@ -525,16 +491,13 @@ async function searchApps(req: Request, res: Response) {
     let searchResults = apps.filter(
       (app) =>
         app.name.toLowerCase().includes(query.toLowerCase()) ||
-        (app.description &&
-          app.description.toLowerCase().includes(query.toLowerCase())),
+        (app.description && app.description.toLowerCase().includes(query.toLowerCase())),
     );
 
     // Then filter by organization if specified
     if (organizationId) {
       searchResults = searchResults.filter(
-        (app) =>
-          app.organizationId &&
-          app.organizationId.toString() === organizationId,
+        (app) => app.organizationId && app.organizationId.toString() === organizationId,
       );
 
       logger.debug(
@@ -582,16 +545,10 @@ async function getAppByPackage(req: Request, res: Response) {
 
     // Convert Mongoose document to plain JavaScript object
     // Use toObject() method if available, otherwise use as is
-    const plainApp =
-      typeof (app as any).toObject === "function"
-        ? (app as any).toObject()
-        : app;
+    const plainApp = typeof (app as any).toObject === "function" ? (app as any).toObject() : app;
 
     // Log permissions for debugging
-    logger.debug(
-      { packageName, permissions: plainApp.permissions },
-      "App permissions",
-    );
+    logger.debug({ packageName, permissions: plainApp.permissions }, "App permissions");
 
     // If the app has an organizationId, get the organization profile information
     let orgProfile = null;
@@ -641,11 +598,8 @@ async function getAppByPackage(req: Request, res: Response) {
 
     // Attach latest online status for this app
     try {
-      const latestStatuses =
-        await AppUptimeService.getLatestStatusesForPackages([packageName]);
-      const statusMap = new Map<string, boolean>(
-        latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]),
-      );
+      const latestStatuses = await AppUptimeService.getLatestStatusesForPackages([packageName]);
+      const statusMap = new Map<string, boolean>(latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]));
       (appObj as any).isOnline = statusMap.get(packageName);
     } catch (e) {
       logger.warn({ e, packageName }, "Failed to attach latest online status");
@@ -687,8 +641,7 @@ async function startApp(req: Request, res: Response) {
   routeLogger.info(
     {
       sessionState: {
-        websocketConnected:
-          userSession.websocket?.readyState === WebSocket.OPEN,
+        websocketConnected: userSession.websocket?.readyState === WebSocketReadyState.OPEN,
         runningAppsCount: userSession.runningApps.size,
         loadingAppsCount: userSession.loadingApps.size,
       },
@@ -770,9 +723,7 @@ async function startApp(req: Request, res: Response) {
       {
         broadcastDuration,
         appStateChangeGenerated: !!appStateChange,
-        appStateChangeSize: appStateChange
-          ? JSON.stringify(appStateChange).length
-          : 0,
+        appStateChangeSize: appStateChange ? JSON.stringify(appStateChange).length : 0,
       },
       `App state broadcast completed in ${broadcastDuration}ms`,
     );
@@ -784,8 +735,7 @@ async function startApp(req: Request, res: Response) {
         {
           totalDuration,
           sessionState: {
-            websocketReady:
-              userSession.websocket?.readyState === WebSocket.OPEN,
+            websocketReady: userSession.websocket?.readyState === WebSocketReadyState.OPEN,
             runningApps: Array.from(userSession.runningApps),
             loadingApps: Array.from(userSession.loadingApps),
           },
@@ -927,8 +877,7 @@ async function stopApp(req: Request, res: Response) {
   routeLogger.debug(
     {
       sessionState: {
-        websocketConnected:
-          userSession.websocket?.readyState === WebSocket.OPEN,
+        websocketConnected: userSession.websocket?.readyState === WebSocketReadyState.OPEN,
         isCurrentlyLoading: userSession.loadingApps.has(packageName),
         hasWebsocketConnection: userSession.appWebsockets.has(packageName),
         runningApps: Array.from(userSession.runningApps),
@@ -972,13 +921,8 @@ async function stopApp(req: Request, res: Response) {
     }
 
     // WARN: App not running (weird but we handle gracefully)
-    if (
-      !userSession.runningApps.has(packageName) &&
-      !userSession.loadingApps.has(packageName)
-    ) {
-      routeLogger.warn(
-        "App not in runningApps or loadingApps but stop requested",
-      );
+    if (!userSession.runningApps.has(packageName) && !userSession.loadingApps.has(packageName)) {
+      routeLogger.warn("App not in runningApps or loadingApps but stop requested");
     }
 
     // DEBUG: AppManager stop call
@@ -1140,7 +1084,7 @@ async function installApp(req: Request, res: Response) {
     }
 
     // Check if app is already installed
-    if (user.installedApps?.some((app) => app.packageName === packageName)) {
+    if (user.installedApps?.some((app: { packageName: string }) => app.packageName === packageName)) {
       return res.status(400).json({
         success: false,
         message: "App is already installed",
@@ -1150,8 +1094,7 @@ async function installApp(req: Request, res: Response) {
     // Log hardware compatibility information if user has active session with connected glasses
     const caps = userSession?.deviceManager.getCapabilities();
     if (userSession && caps) {
-      const compatibilityResult =
-        HardwareCompatibilityService.checkCompatibility(app, caps);
+      const compatibilityResult = HardwareCompatibilityService.checkCompatibility(app, caps);
 
       if (!compatibilityResult.isCompatible) {
         logger.info(
@@ -1181,10 +1124,7 @@ async function installApp(req: Request, res: Response) {
         userSession.appManager.broadcastAppState();
       }
     } catch (error) {
-      logger.warn(
-        { error, email, packageName },
-        "Error sending app state notification",
-      );
+      logger.warn({ error, email, packageName }, "Error sending app state notification");
       // Non-critical error, installation succeeded
     }
   } catch (error) {
@@ -1231,9 +1171,7 @@ async function uninstallApp(req: Request, res: Response) {
       });
     }
 
-    user.installedApps = user.installedApps.filter(
-      (app) => app.packageName !== packageName,
-    );
+    user.installedApps = user.installedApps.filter((app: { packageName: string }) => app.packageName !== packageName);
 
     await user.save();
 
@@ -1249,19 +1187,13 @@ async function uninstallApp(req: Request, res: Response) {
         await userSession.appManager.stopApp(packageName);
         await userSession.appManager.broadcastAppState();
       } else {
-        logger.warn(
-          { email, packageName },
-          "Unable to ensure app is stopped before uninstalling, no active session",
-        );
+        logger.warn({ email, packageName }, "Unable to ensure app is stopped before uninstalling, no active session");
       }
     } catch (error) {
       logger.warn(error, "Error stopping app during uninstall:");
     }
   } catch (error) {
-    logger.error(
-      { error, userId: request.email, packageName },
-      "Error uninstalling app",
-    );
+    logger.error({ error, userId: request.email, packageName }, "Error uninstalling app");
     res.status(500).json({
       success: false,
       message: "Error uninstalling app",
@@ -1287,7 +1219,7 @@ async function getInstalledApps(req: Request, res: Response) {
     // TODO(isaiah): There's a better way to get list of all apps from MongoDB that doesn't spam DB with fetching one at a time.
     // Get details for all installed apps
     const installedApps = await Promise.all(
-      (user.installedApps || []).map(async (installedApp) => {
+      (user.installedApps || []).map(async (installedApp: { packageName: string; installedDate: Date }) => {
         const appDetails = await appService.getApp(installedApp.packageName);
         if (!appDetails) return null;
 
@@ -1295,8 +1227,7 @@ async function getInstalledApps(req: Request, res: Response) {
         let compatibilityInfo = null;
         const caps = request.userSession?.deviceManager.getCapabilities();
         if (request.userSession && caps) {
-          const compatibilityResult =
-            HardwareCompatibilityService.checkCompatibility(appDetails, caps);
+          const compatibilityResult = HardwareCompatibilityService.checkCompatibility(appDetails, caps);
 
           compatibilityInfo = {
             isCompatible: compatibilityResult.isCompatible,
@@ -1308,10 +1239,7 @@ async function getInstalledApps(req: Request, res: Response) {
               type: req.type,
               description: req.description,
             })),
-            message:
-              HardwareCompatibilityService.getCompatibilityMessage(
-                compatibilityResult,
-              ),
+            message: HardwareCompatibilityService.getCompatibilityMessage(compatibilityResult),
           };
         }
 
@@ -1324,7 +1252,7 @@ async function getInstalledApps(req: Request, res: Response) {
     );
 
     // Filter out null entries (in case an app was deleted)
-    const validApps = installedApps.filter((app) => app !== null);
+    const validApps = installedApps.filter((app: any) => app !== null);
 
     res.json({
       success: true,
@@ -1348,15 +1276,9 @@ async function getAvailableApps(req: Request, res: Response) {
 
     // Filter by organization if specified
     if (organizationId) {
-      apps = apps.filter(
-        (app) =>
-          app.organizationId &&
-          app.organizationId.toString() === organizationId,
-      );
+      apps = apps.filter((app) => app.organizationId && app.organizationId.toString() === organizationId);
 
-      logger.debug(
-        `Filtered available apps by organizationId: ${organizationId}, found ${apps.length} apps`,
-      );
+      logger.debug(`Filtered available apps by organizationId: ${organizationId}, found ${apps.length} apps`);
     }
 
     // Filter apps by hardware compatibility if user has connected glasses
@@ -1372,18 +1294,13 @@ async function getAvailableApps(req: Request, res: Response) {
     // Attach latest online status and hide offline published apps for users who haven't installed them
     try {
       const packageNames = apps.map((a) => a.packageName);
-      const latestStatuses =
-        await AppUptimeService.getLatestStatusesForPackages(packageNames);
-      const statusMap = new Map<string, boolean>(
-        latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]),
-      );
+      const latestStatuses = await AppUptimeService.getLatestStatusesForPackages(packageNames);
+      const statusMap = new Map<string, boolean>(latestStatuses.map((s) => [s.packageName, Boolean(s.onlineStatus)]));
 
       // Determine installed apps for authenticated users
       const installedSet = new Set<string>();
       try {
-        const user =
-          request.user ||
-          (request.email ? await User.findByEmail(request.email) : null);
+        const user = request.user || (request.email ? await User.findByEmail(request.email) : null);
         if (user?.installedApps) {
           for (const inst of user.installedApps) {
             installedSet.add(inst.packageName);
@@ -1436,7 +1353,18 @@ router.post("/install/:packageName", authWithOptionalSession, installApp);
 router.post("/uninstall/:packageName", authWithOptionalSession, uninstallApp);
 
 router.get("/version", async (req, res) => {
-  res.json({ version: CLOUD_VERSION });
+  // Disable caching to prevent 304 responses that cause JSON parse errors on mobile
+  // Mobile OkHttp sends If-None-Match, gets 304 with empty body, fails to parse
+  // See: cloud/issues/015-http-304-etag-caching-bug
+  //
+  // We send response manually to avoid Express auto-adding ETag header
+  // res.json() automatically adds ETag which causes 304 responses
+  const body = JSON.stringify({ version: CLOUD_VERSION });
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Content-Type", "application/json; charset=utf-8");
+  res.set("Content-Length", Buffer.byteLength(body).toString());
+  res.status(200).send(body);
 });
 
 router.get("/available", optionalAuthWithOptionalSession, getAvailableApps);
@@ -1456,9 +1384,7 @@ router.post("/:packageName/stop", unifiedAuthMiddleware, stopApp);
  *
  * Returns plain objects with added fields: developerProfile, orgName, developerName.
  */
-async function batchEnrichAppsWithProfiles(
-  appsInput: Array<any>,
-): Promise<Array<any>> {
+async function batchEnrichAppsWithProfiles(appsInput: Array<any>): Promise<Array<any>> {
   // Normalize to plain objects to avoid mutating Mongoose docs
   const apps = appsInput.map((a: any) => (a as any).toObject?.() || a);
 
@@ -1498,9 +1424,7 @@ async function batchEnrichAppsWithProfiles(
       const users = await User.find({
         email: { $in: Array.from(developerEmailSet) },
       }).lean();
-      userMap = new Map(
-        users.map((u: any) => [String(u.email).toLowerCase(), u]),
-      );
+      userMap = new Map(users.map((u: any) => [String(u.email).toLowerCase(), u]));
     }
   } catch (e) {
     logger.warn({ e }, "Failed to batch-load users for app enrichment");
@@ -1521,8 +1445,7 @@ async function batchEnrichAppsWithProfiles(
     } else if (app.developerId) {
       const user = userMap.get(String(app.developerId).toLowerCase());
       if (user && user.profile) {
-        const displayName =
-          user.profile.company || String(user.email).split("@")[0];
+        const displayName = user.profile.company || String(user.email).split("@")[0];
         enriched.developerProfile = user.profile;
         enriched.orgName = displayName;
         enriched.developerName = displayName;
@@ -1538,11 +1461,7 @@ async function batchEnrichAppsWithProfiles(
  * Enhances a list of apps (SDK AppI or local AppI) with running/foreground state and last active timestamp.
  * Accepts AppI[] from either @mentra/sdk or local model.
  */
-function enhanceAppsWithSessionState(
-  apps: AppI[],
-  userSession: UserSession,
-  user?: any,
-): EnhancedAppI[] {
+function enhanceAppsWithSessionState(apps: AppI[], userSession: UserSession, user?: any): EnhancedAppI[] {
   const plainApps = apps.map((app) => {
     return (app as any).toObject?.() || app;
   });
@@ -1562,9 +1481,7 @@ function enhanceAppsWithSessionState(
 
     // Add last active timestamp if user data is available
     if (user && user.installedApps) {
-      const installedApp = user.installedApps.find(
-        (installed: any) => installed.packageName === app.packageName,
-      );
+      const installedApp = user.installedApps.find((installed: any) => installed.packageName === app.packageName);
       if (installedApp && installedApp.lastActiveAt) {
         enhancedApp.lastActiveAt = installedApp.lastActiveAt;
       }

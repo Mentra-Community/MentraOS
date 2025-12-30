@@ -8,8 +8,7 @@ import bridge from "@/bridge/MantleBridge"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore} from "@/stores/glasses"
-import {GlassesInfo} from "@/stores/glasses"
+import {useGlassesStore, GlassesInfo} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import TranscriptProcessor from "@/utils/TranscriptProcessor"
@@ -29,7 +28,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
     return
   }
 
-  console.log("Received new locations", locations)
+  // console.log("Received new locations", locations)
   const first = locs[0]!
   // socketComms.sendLocationUpdate(first.coords.latitude, first.coords.longitude, first.coords.accuracy ?? undefined)
   restComms.sendLocationData(first)
@@ -89,7 +88,7 @@ class MantleManager {
     }, 3000)
 
     // send initial status request:
-    await CoreModule.requestStatus()
+    await CoreModule.getStatus()
 
     this.setupPeriodicTasks()
     this.setupSubscriptions()
@@ -208,7 +207,7 @@ class MantleManager {
         return Location.LocationAccuracy.Lowest
       default:
         // console.error("Mantle: unknown accuracy: " + accuracy)
-        return Location.LocationAccuracy.Balanced
+        return Location.LocationAccuracy.Lowest
     }
   }
 

@@ -1,11 +1,16 @@
-name: Cloud Test ☁️⚡️🚀⛈️
+name: 🧪🚀 Test Cloud Build & Deploy
 
 on:
-  push:
-    branches:
-      - never
+  workflow_dispatch: # Manual trigger fallback
+  pull_request:
     paths:
       - "cloud/**"
+      - ".github/workflows/porter-cloud-test.yml"
+    branches:
+      - main
+      - dev
+      - staging
+
 jobs:
   porter-deploy:
     runs-on: ubuntu-latest

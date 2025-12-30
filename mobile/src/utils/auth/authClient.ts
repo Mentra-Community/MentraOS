@@ -2,7 +2,6 @@ import {AppState} from "react-native"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
-
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {AuthingWrapperClient} from "@/utils/auth/provider/authingClient"
 import {SupabaseWrapperClient} from "@/utils/auth/provider/supabaseClient"
@@ -29,6 +28,10 @@ export abstract class AuthClient {
   }
 
   public updateUserPassword(_password: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  public updateUserEmail(_email: string): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 
@@ -82,9 +85,13 @@ function createLazyAuthClient(): AuthClient {
 
   return new Proxy({} as AuthClient, {
     get(_, prop: keyof AuthClient) {
-      return async (...args: any[]) => {
+      return async (...args: unknown[]) => {
         const c = await ensureInit()
-        return (c[prop] as Function)(...args)
+        const method = c[prop]
+        if (typeof method === "function") {
+          return method.apply(c, args)
+        }
+        return method
       }
     },
   })

@@ -1,6 +1,5 @@
 import {useState, useEffect} from "react"
-import {View, FlatList, TouchableOpacity, Alert} from "react-native"
-import {ViewStyle, TextStyle} from "react-native"
+import {View, FlatList, TouchableOpacity, Alert, ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
 import ActionButton from "@/components/ui/ActionButton"

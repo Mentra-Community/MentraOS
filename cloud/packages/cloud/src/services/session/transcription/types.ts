@@ -145,7 +145,12 @@ export interface StreamOptions {
 export interface StreamCallbacks {
   onReady?: () => void;
   onError?: (error: Error) => void;
-  onClosed?: () => void;
+  /**
+   * Called when stream is closed.
+   * @param code - WebSocket close code (1000 = normal/intentional, 1006 = abnormal/unexpected)
+   *               undefined means close code is not available (e.g., non-WebSocket providers)
+   */
+  onClosed?: (code?: number) => void;
   onData?: (data: TranscriptionData) => void;
 }
 
@@ -191,12 +196,29 @@ export interface StreamMetrics {
   consecutiveFailures: number;
   lastSuccessfulWrite?: number;
 
-  // Latency & Backlog Tracking
+  // Latency & Backlog Tracking (Legacy - kept for backwards compatibility)
   totalAudioBytesSent?: number; // Total bytes sent to provider
   lastTranscriptEndMs?: number; // Last transcript end time (relative to stream start)
-  lastTranscriptLagMs?: number; // Lag between now and when the transcript was spoken
-  maxTranscriptLagMs?: number; // Maximum lag observed
-  transcriptLagWarnings?: number; // Count of lag warnings (>5s)
+  lastTranscriptLagMs?: number; // Real lag: audio sent duration - transcript end (processingDeficit)
+  maxTranscriptLagMs?: number; // Maximum real lag observed
+  processingDeficitMs?: number; // DEPRECATED: Misleading during silence - use realtimeLatencyMs instead
+  wallClockLagMs?: number; // Wall-clock lag: stream age - transcript end (for debugging only, includes VAD gaps)
+  transcriptLagWarnings?: number; // Count of lag warnings (>5s processingDeficit)
+
+  // Activity Tracking (NEW - distinguishes silence from actual lag)
+  lastTokenReceivedAt?: number; // Timestamp when we last received ANY token from provider
+  tokenBatchesReceived?: number; // Count of token batches received
+  lastTokenBatchSize?: number; // Size of last token batch received
+  audioBytesSentAtLastToken?: number; // Audio bytes sent at time of last token (for calculating audio during silence)
+
+  // Silence Detection (NEW)
+  timeSinceLastTokenMs?: number; // Calculated: now - lastTokenReceivedAt
+  audioSentSinceLastTokenMs?: number; // Audio duration (ms) sent since last token received
+  isReceivingTokens?: boolean; // Have we received tokens in the last 30s?
+
+  // True Latency (NEW - only meaningful when isReceivingTokens === true)
+  realtimeLatencyMs?: number; // When tokens ARE received, how far behind is the provider?
+  avgRealtimeLatencyMs?: number; // Rolling average of realtime latency
 
   // Error Tracking
   errorCount: number;
@@ -238,8 +260,17 @@ export interface StreamHealth {
   consecutiveFailures: number;
   lastSuccessfulWrite?: number;
   providerHealth: ProviderHealthStatus;
+  // Legacy metrics (kept for backwards compatibility)
   transcriptLagMs?: number;
   maxTranscriptLagMs?: number;
+  processingDeficitMs?: number;
+  wallClockLagMs?: number;
+  // NEW: Activity tracking - distinguishes silence from actual lag
+  isReceivingTokens?: boolean; // Have we received tokens in the last 30s?
+  realtimeLatencyMs?: number; // TRUE latency when actively receiving tokens
+  avgRealtimeLatencyMs?: number; // Rolling average of realtime latency
+  timeSinceLastTokenMs?: number; // How long since any transcription activity
+  audioSentSinceLastTokenMs?: number; // Audio duration sent during quiet period
 }
 
 //===========================================================

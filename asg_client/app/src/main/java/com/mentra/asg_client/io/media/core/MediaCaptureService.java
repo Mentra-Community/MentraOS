@@ -251,6 +251,9 @@ public class MediaCaptureService {
                 return new BleParams(400, 400, 35, 25);
             case "large":
                 return new BleParams(1024, 1024, 45, 40);
+            case "full":
+                // Full resolution requested - use largest BLE-friendly size
+                return new BleParams(1280, 1280, 50, 45);
             case "medium":
             default:
                 return new BleParams(720, 720, 42, 38);
@@ -1139,15 +1142,17 @@ public class MediaCaptureService {
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_CAPTURE");
 
         // Use the new enqueuePhotoRequest for thread-safe rapid capture
+        // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
         CameraNeo.enqueuePhotoRequest(
                 mContext,
                 photoFilePath,
                 size,
                 enableLed,
+                false,  // isFromSdk - button photo, use high quality resolution
                 new CameraNeo.PhotoCaptureCallback() {
                     @Override
                     public void onPhotoCaptured(String filePath) {
-                        Log.d(TAG, "Offline photo captured successfully at: " + filePath);
+                        Log.d(TAG, "Local photo captured successfully at: " + filePath);
                         
                         // LED is now managed by CameraNeo and will turn off when camera closes
                         
@@ -1263,11 +1268,13 @@ public class MediaCaptureService {
             }
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
+            // isFromSdk=true because this is an SDK-requested photo (take_photo command)
             CameraNeo.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
                     size,
                     enableLed,
+                    true,  // isFromSdk - use optimized resolution for fast transfer
                     new CameraNeo.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {

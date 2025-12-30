@@ -2,6 +2,7 @@ import {DarkTheme, DefaultTheme, useTheme as _useNavTheme} from "@react-navigati
 import * as SystemUI from "expo-system-ui"
 import {createContext, useCallback, useContext, useEffect, useMemo, useState} from "react"
 import {Platform, StyleProp, useColorScheme} from "react-native"
+import {Uniwind} from "uniwind"
 
 import {useSetting, SETTINGS} from "@/stores/settings"
 import {type Theme, type ThemeContexts, type ThemedStyle, type ThemedStyleArray, lightTheme, darkTheme} from "@/theme"
@@ -52,6 +53,7 @@ export const useThemeProvider = (initialTheme: ThemeContexts = undefined) => {
         } else {
           setTheme(savedTheme)
         }
+        Uniwind.setTheme(savedTheme)
       } catch (error) {
         console.error("Error loading theme preference:", error)
       } finally {

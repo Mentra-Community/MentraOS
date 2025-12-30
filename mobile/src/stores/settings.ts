@@ -47,35 +47,37 @@ export const SETTINGS: Record<string, Setting> = {
   },
   backend_url: {
     key: "backend_url",
-    defaultValue: () =>
-      process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
-        ? "https://api.mentraglass.cn:443"
-        : "https://api.mentra.glass",
-    writable: true,
-    override: () => {
+    defaultValue: () => {
       if (process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE) {
         return process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE
       }
-      return undefined
+      if (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china") {
+        return "https://api.mentraglass.cn:443"
+      }
+      return "https://api.mentra.glass"
     },
+    // If env var is set, always use it (on every boot)
+    override: () => process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE,
+    writable: true,
     saveOnServer: false,
-    persist: false,
+    persist: true,
   },
   store_url: {
     key: "store_url",
-    defaultValue: () =>
-      process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
-        ? "https://store.mentraglass.cn"
-        : "https://apps.mentra.glass",
-    writable: true,
-    override: () => {
+    defaultValue: () => {
       if (process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE) {
         return process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE
       }
-      return undefined
+      if (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china") {
+        return "https://store.mentraglass.cn"
+      }
+      return "https://apps.mentra.glass"
     },
-    saveOnServer: true,
-    persist: false,
+    // If env var is set, always use it (on every boot)
+    override: () => process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
   },
   reconnect_on_app_foreground: {
     key: "reconnect_on_app_foreground",
@@ -107,7 +109,7 @@ export const SETTINGS: Record<string, Setting> = {
     key: "theme_preference",
     defaultValue: () => "light",
     // Force light mode - dark mode is not complete yet
-    override: () => "light",
+    // override: () => "light",
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -586,7 +588,7 @@ export const useSettingsStore = create<SettingsState>()(
     },
     getRestUrl: () => {
       const serverUrl = get().getSetting(SETTINGS.backend_url.key)
-      console.log("GET REST URL: serverUrl:", serverUrl)
+      // console.log("GET REST URL: serverUrl:", serverUrl)
       const url = new URL(serverUrl)
       const secure = url.protocol === "https:"
       return `${secure ? "https" : "http"}://${url.hostname}:${url.port || (secure ? 443 : 80)}`

@@ -115,16 +115,7 @@ public class CameraNeo extends LifecycleService {
     private Size jpegSize;
     private String cameraId;
 
-    // Target photo resolution (4:3 landscape orientation)
-    private static final int TARGET_WIDTH = 1440;
-    private static final int TARGET_HEIGHT = 1088;
-    private static final int TARGET_WIDTH_SMALL = 960;
-    private static final int TARGET_HEIGHT_SMALL = 720;
-    private static final int TARGET_WIDTH_LARGE = 3264;
-    private static final int TARGET_HEIGHT_LARGE = 2448;
-
-    // Auto-exposure settings for better photo quality - now dynamic
-    private static final int JPEG_QUALITY = 90; // High quality JPEG
+    // Photo resolution and quality constants are defined in CameraConstants.java
     
     // Dynamic JPEG orientation mapping based on device rotation
     private static final SparseIntArray JPEG_ORIENTATION = new SparseIntArray();
@@ -267,14 +258,16 @@ public class CameraNeo extends LifecycleService {
         String size;
         PhotoCaptureCallback callback;
         boolean enableLed;  // Whether to use LED flash for this photo
+        boolean isFromSdk;  // true = SDK photo (optimized sizes), false = button photo (high quality)
         long timestamp;
         int retryCount;
-        
-        PhotoRequest(String filePath, String size, boolean enableLed, PhotoCaptureCallback callback) {
+
+        PhotoRequest(String filePath, String size, boolean enableLed, boolean isFromSdk, PhotoCaptureCallback callback) {
             this.requestId = "photo_" + System.currentTimeMillis() + "_" + filePath.hashCode();
             this.filePath = filePath;
             this.size = size;
             this.enableLed = enableLed;
+            this.isFromSdk = isFromSdk;
             this.callback = callback;
             this.timestamp = System.currentTimeMillis();
             this.retryCount = 0;
@@ -422,17 +415,18 @@ public class CameraNeo extends LifecycleService {
     /**
      * Primary entry point for photo requests - uses global queue to prevent race conditions
      * This method immediately queues the request and ensures only one service instance exists
-     * 
+     *
      * @param context Application context
      * @param filePath File path to save the photo
      * @param size Photo size (small/medium/large)
      * @param enableLed Whether to enable LED flash for this photo
+     * @param isFromSdk true for SDK photos (optimized sizes), false for button photos (high quality)
      * @param callback Callback to be notified when photo is captured
      */
-    public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, PhotoCaptureCallback callback) {
+    public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
-            PhotoRequest request = new PhotoRequest(filePath, size, enableLed, callback);
+            PhotoRequest request = new PhotoRequest(filePath, size, enableLed, isFromSdk, callback);
             globalRequestQueue.offer(request);
             
             // Store callback in registry for later retrieval
@@ -456,6 +450,7 @@ public class CameraNeo extends LifecycleService {
                         sInstance.sPhotoCallback = queuedRequest.callback;
                         sInstance.pendingPhotoPath = queuedRequest.filePath;
                         sInstance.pendingRequestedSize = queuedRequest.size;
+                        sInstance.pendingIsFromSdk = queuedRequest.isFromSdk;
                         sInstance.shotState = ShotState.WAITING_AE;
                         
                         if (sInstance.backgroundHandler != null) {
@@ -486,22 +481,24 @@ public class CameraNeo extends LifecycleService {
 
     /**
      * Legacy method - redirects to enqueuePhotoRequest for backward compatibility
-     * 
+     * Defaults to SDK photo (isFromSdk=true) for optimized transfer sizes
+     *
      * @deprecated Use enqueuePhotoRequest instead
      */
     @Deprecated
     public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback) {
-        enqueuePhotoRequest(context, filePath, null, false, callback);
+        enqueuePhotoRequest(context, filePath, null, false, true, callback);
     }
 
     /**
      * Legacy method with size parameter - redirects to enqueuePhotoRequest
-     * 
+     * Defaults to SDK photo (isFromSdk=true) for optimized transfer sizes
+     *
      * @deprecated Use enqueuePhotoRequest instead
      */
     @Deprecated
     public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback, String size) {
-        enqueuePhotoRequest(context, filePath, size, false, callback);
+        enqueuePhotoRequest(context, filePath, size, false, true, callback);
     }
 
     /**
@@ -662,7 +659,35 @@ public class CameraNeo extends LifecycleService {
     }
 
     private String pendingRequestedSize;
-    
+    private boolean pendingIsFromSdk;  // true = SDK photo (optimized sizes), false = button photo
+
+    /**
+     * Get the appropriate JPEG quality based on the requested size tier and source.
+     * SDK photos use lower quality for faster transfer; button photos use high quality.
+     */
+    private int getJpegQualityForSize() {
+        if (pendingIsFromSdk) {
+            // SDK photos - optimized for fast transfer
+            if (pendingRequestedSize == null) {
+                return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
+            }
+            switch (pendingRequestedSize) {
+                case CameraConstants.SIZE_SMALL:
+                    return CameraConstants.SDK_JPEG_QUALITY_SMALL;
+                case CameraConstants.SIZE_LARGE:
+                    return CameraConstants.SDK_JPEG_QUALITY_LARGE;
+                case CameraConstants.SIZE_FULL:
+                    return CameraConstants.SDK_JPEG_QUALITY_FULL;
+                case CameraConstants.SIZE_MEDIUM:
+                default:
+                    return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
+            }
+        } else {
+            // Button photos - high quality
+            return CameraConstants.BUTTON_JPEG_QUALITY;
+        }
+    }
+
     /**
      * Process all queued photo requests from the global queue
      * This is called when the service starts with USE_GLOBAL_QUEUE flag
@@ -715,6 +740,7 @@ public class CameraNeo extends LifecycleService {
             if (cameraDevice != null && cameraCaptureSession != null) {
                 Log.d(TAG, "Camera already open, taking next photo from queue");
                 pendingRequestedSize = request.size;
+                pendingIsFromSdk = request.isFromSdk;
                 pendingPhotoPath = request.filePath;
                 
                 // Check if we're already processing a photo
@@ -743,36 +769,50 @@ public class CameraNeo extends LifecycleService {
      */
     private void setupCameraForPhotoRequest(PhotoRequest request) {
         if (request == null) return;
-        
-        // Store the requested size and LED state
+
+        // Check if size or SDK flag has changed BEFORE updating pending values
+        // This is critical for detecting when camera needs to be reopened
+        boolean sizeChanged = false;
+        boolean sdkFlagChanged = false;
+        if (pendingRequestedSize != null && request.size != null) {
+            sizeChanged = !pendingRequestedSize.equals(request.size);
+        } else if (pendingRequestedSize == null && request.size != null) {
+            sizeChanged = true;
+        } else if (pendingRequestedSize != null && request.size == null) {
+            sizeChanged = true;
+        }
+        sdkFlagChanged = (pendingIsFromSdk != request.isFromSdk);
+
+        // Now store the requested size, SDK flag, and LED state
         pendingRequestedSize = request.size;
+        pendingIsFromSdk = request.isFromSdk;
         sPhotoCallback = request.callback;
-        
+
         // Update LED state if any request needs LED
         if (request.enableLed) {
             pendingLedEnabled = true;
         }
-        
+
         // Check if camera is already open and kept alive
         if (isCameraKeptAlive && cameraDevice != null) {
-            Log.d(TAG, "Camera already open, taking photo immediately");
-            
-            // Check if size has changed
-            boolean sizeChanged = false;
-            if (pendingRequestedSize != null && request.size != null) {
-                sizeChanged = !pendingRequestedSize.equals(request.size);
-            }
-            
-            if (sizeChanged) {
-                Log.d(TAG, "Photo size changed, reopening camera");
+            Log.d(TAG, "Camera already open, checking if reconfiguration needed");
+
+            // Need to reopen camera if size changed OR if SDK flag changed
+            // (SDK flag affects resolution selection even for same size tier)
+            boolean needsReopen = sizeChanged || sdkFlagChanged;
+
+            if (needsReopen) {
+                Log.d(TAG, "Camera config changed (sizeChanged=" + sizeChanged +
+                          ", sdkFlagChanged=" + sdkFlagChanged + "), reopening camera");
                 cancelKeepAliveTimer();
                 closeCamera();
                 openCameraInternal(request.filePath, false);
             } else {
-                // Cancel keep-alive timer and take photo
+                // Cancel keep-alive timer and take photo with existing config
+                Log.d(TAG, "Camera config unchanged, taking photo immediately");
                 cancelKeepAliveTimer();
                 pendingPhotoPath = request.filePath;
-                
+
                 // Start capture sequence
                 shotState = ShotState.WAITING_AE;
                 if (backgroundHandler != null) {
@@ -807,7 +847,8 @@ public class CameraNeo extends LifecycleService {
             if (shotState != ShotState.IDLE) {
                 Log.d(TAG, "Camera is busy (state: " + shotState + "), queuing photo request");
                 // Queue this request to be processed after current photo completes
-                photoRequestQueue.offer(new PhotoRequest(filePath, pendingRequestedSize, false, sPhotoCallback));
+                // Inherit isFromSdk from current pending request context
+                photoRequestQueue.offer(new PhotoRequest(filePath, pendingRequestedSize, false, pendingIsFromSdk, sPhotoCallback));
                 return;
             }
             
@@ -1253,27 +1294,62 @@ public class CameraNeo extends LifecycleService {
                     return;
                 }
 
-                int desiredW = TARGET_WIDTH;
-                int desiredH = TARGET_HEIGHT;
-                if (pendingRequestedSize != null) {
-                    switch (pendingRequestedSize) {
-                        case "small":
-                            desiredW = TARGET_WIDTH_SMALL;
-                            desiredH = TARGET_HEIGHT_SMALL;
-                            break;
-                        case "large":
-                            desiredW = TARGET_WIDTH_LARGE;
-                            desiredH = TARGET_HEIGHT_LARGE;
-                            break;
-                        case "medium":
-                        default:
-                            desiredW = TARGET_WIDTH;
-                            desiredH = TARGET_HEIGHT;
-                            break;
+                // Select resolution based on source (SDK vs button) and size tier
+                int desiredW, desiredH;
+                if (pendingIsFromSdk) {
+                    // SDK photos - optimized for fast WiFi transfer
+                    if (pendingRequestedSize == null) {
+                        desiredW = CameraConstants.SDK_WIDTH_MEDIUM;
+                        desiredH = CameraConstants.SDK_HEIGHT_MEDIUM;
+                    } else {
+                        switch (pendingRequestedSize) {
+                            case CameraConstants.SIZE_SMALL:
+                                desiredW = CameraConstants.SDK_WIDTH_SMALL;
+                                desiredH = CameraConstants.SDK_HEIGHT_SMALL;
+                                break;
+                            case CameraConstants.SIZE_LARGE:
+                                desiredW = CameraConstants.SDK_WIDTH_LARGE;
+                                desiredH = CameraConstants.SDK_HEIGHT_LARGE;
+                                break;
+                            case CameraConstants.SIZE_FULL:
+                                desiredW = CameraConstants.SDK_WIDTH_FULL;
+                                desiredH = CameraConstants.SDK_HEIGHT_FULL;
+                                break;
+                            case CameraConstants.SIZE_MEDIUM:
+                            default:
+                                desiredW = CameraConstants.SDK_WIDTH_MEDIUM;
+                                desiredH = CameraConstants.SDK_HEIGHT_MEDIUM;
+                                break;
+                        }
                     }
+                    Log.d(TAG, "SDK photo - using optimized resolution");
+                } else {
+                    // Button photos - high quality for local storage
+                    if (pendingRequestedSize == null) {
+                        desiredW = CameraConstants.BUTTON_WIDTH_MEDIUM;
+                        desiredH = CameraConstants.BUTTON_HEIGHT_MEDIUM;
+                    } else {
+                        switch (pendingRequestedSize) {
+                            case CameraConstants.SIZE_SMALL:
+                                desiredW = CameraConstants.BUTTON_WIDTH_SMALL;
+                                desiredH = CameraConstants.BUTTON_HEIGHT_SMALL;
+                                break;
+                            case CameraConstants.SIZE_LARGE:
+                                desiredW = CameraConstants.BUTTON_WIDTH_LARGE;
+                                desiredH = CameraConstants.BUTTON_HEIGHT_LARGE;
+                                break;
+                            case CameraConstants.SIZE_MEDIUM:
+                            default:
+                                desiredW = CameraConstants.BUTTON_WIDTH_MEDIUM;
+                                desiredH = CameraConstants.BUTTON_HEIGHT_MEDIUM;
+                                break;
+                        }
+                    }
+                    Log.d(TAG, "Button photo - using high quality resolution");
                 }
                 jpegSize = chooseOptimalSize(jpegSizes, desiredW, desiredH);
-                Log.d(TAG, "Selected JPEG size: " + jpegSize.getWidth() + "x" + jpegSize.getHeight());
+                Log.d(TAG, "Selected JPEG size: " + jpegSize.getWidth() + "x" + jpegSize.getHeight() +
+                          " (requested: " + desiredW + "x" + desiredH + ", isFromSdk: " + pendingIsFromSdk + ")");
 
                 // Setup ImageReader for JPEG data
                 // ZSL requires larger buffer (12 images) to cache preview frames for MFNR
@@ -1716,8 +1792,8 @@ public class CameraNeo extends LifecycleService {
             previewBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
 
             if (!forVideo) {
-                // Photo-specific settings
-                previewBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) JPEG_QUALITY);
+                // Photo-specific settings - quality varies by size tier
+                previewBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) getJpegQualityForSize());
                 int displayOrientation = getDisplayRotation();
                 int jpegOrientation = JPEG_ORIENTATION.get(displayOrientation, 90);
                 previewBuilder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
@@ -1765,6 +1841,7 @@ public class CameraNeo extends LifecycleService {
                                     sPhotoCallback = firstRequest.callback;
                                     pendingPhotoPath = firstRequest.filePath;
                                     pendingRequestedSize = firstRequest.size;
+                                    pendingIsFromSdk = firstRequest.isFromSdk;
                                     // Store LED state from request
                                     pendingLedEnabled = firstRequest.enableLed;
                                 }
@@ -2114,14 +2191,15 @@ public class CameraNeo extends LifecycleService {
                     
                     // Update the callback for this request
                     sPhotoCallback = nextRequest.callback;
-                    
+
                     // Cancel any pending keep-alive timer
                     cancelKeepAliveTimer();
-                    
+
                     // Process the queued request
                     pendingPhotoPath = nextRequest.filePath;
                     pendingRequestedSize = nextRequest.size;
-                    
+                    pendingIsFromSdk = nextRequest.isFromSdk;
+
                     // Update LED state if this request needs LED
                     if (nextRequest.enableLed) {
                         pendingLedEnabled = true;
@@ -2155,14 +2233,15 @@ public class CameraNeo extends LifecycleService {
                 
                 // Update the callback for this request
                 sPhotoCallback = nextRequest.callback;
-                
+
                 // Cancel any pending keep-alive timer
                 cancelKeepAliveTimer();
-                
+
                 // Process the queued request
                 pendingPhotoPath = nextRequest.filePath;
                 pendingRequestedSize = nextRequest.size;
-                
+                pendingIsFromSdk = nextRequest.isFromSdk;
+
                 // Start new capture sequence
                 shotState = ShotState.WAITING_AE;
                 if (backgroundHandler != null) {
@@ -2704,10 +2783,10 @@ public class CameraNeo extends LifecycleService {
                 });
             }
 
-            // High quality settings
+            // High quality settings - JPEG quality varies by size tier
             stillBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
             stillBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
-            stillBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) JPEG_QUALITY);
+            stillBuilder.set(CaptureRequest.JPEG_QUALITY, (byte) getJpegQualityForSize());
             int displayOrientation = getDisplayRotation();
             int jpegOrientation = JPEG_ORIENTATION.get(displayOrientation, 90);
             stillBuilder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);

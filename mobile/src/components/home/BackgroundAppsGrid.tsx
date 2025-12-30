@@ -12,6 +12,7 @@ import {
   useStartApplet,
 } from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
+import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 const GRID_COLUMNS = 4
@@ -50,13 +51,19 @@ export const BackgroundAppsGrid = () => {
     return inactiveApps
   }, [inactive])
 
-  const handlePress = (packageName: string) => {
+  const handlePress = async (app: ClientAppletInterface) => {
     const getMoreApplet = getMoreAppsApplet()
-    if (packageName === getMoreApplet.packageName) {
+    if (app.packageName === getMoreApplet.packageName) {
       push(getMoreApplet.offlineRoute)
       return
     }
-    startApplet(packageName)
+
+    const result = await askPermissionsUI(app, theme)
+    if (result !== 1) {
+      return
+    }
+
+    startApplet(app.packageName)
   }
 
   const renderItem = useCallback(
@@ -74,7 +81,7 @@ export const BackgroundAppsGrid = () => {
       }
 
       return (
-        <TouchableOpacity style={themed($gridItem)} onPress={() => handlePress(item.packageName)} activeOpacity={0.7}>
+        <TouchableOpacity style={themed($gridItem)} onPress={() => handlePress(item)} activeOpacity={0.7}>
           <AppIcon app={item} style={themed($appIcon)} />
           <Text
             text={item.name}
@@ -91,7 +98,7 @@ export const BackgroundAppsGrid = () => {
   return (
     <View style={themed($container)}>
       <View style={themed($header)}>
-        <Text tx="home:inactiveApps" style={themed($headerText)} />
+        <Text tx="home:inactiveApps" className="font-semibold text-xl"/>
       </View>
       <FlatList
         data={gridData}
@@ -141,20 +148,18 @@ const $appIcon: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $appName: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 12,
   color: colors.text,
   textAlign: "center",
-  marginTop: spacing.s1,
+  marginTop: spacing.s2,
   lineHeight: 14,
   // overflow: "hidden",
   // wordWrap: "break-word",
 })
 
 const $appNameOffline: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 12,
   color: colors.textDim,
   textAlign: "center",
-  marginTop: spacing.s1,
+  marginTop: spacing.s2,
   textDecorationLine: "line-through",
   lineHeight: 14,
 })

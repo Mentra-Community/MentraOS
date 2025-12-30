@@ -15,6 +15,8 @@ abstract class SGCManager {
     @JvmField var glassesDeviceModel: String = ""
     @JvmField var glassesAndroidVersion: String = ""
     @JvmField var glassesOtaVersionUrl: String = ""
+    @JvmField var glassesFirmwareVersion: String = ""
+    @JvmField var glassesBtMacAddress: String = ""
     @JvmField var glassesSerialNumber: String = ""
     @JvmField var glassesStyle: String = ""
     @JvmField var glassesColor: String = ""

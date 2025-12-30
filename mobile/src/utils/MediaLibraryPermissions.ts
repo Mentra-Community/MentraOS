@@ -1,6 +1,7 @@
-import * as MediaLibrary from "expo-media-library"
 import {Platform} from "react-native"
 import {check, request, PERMISSIONS, RESULTS} from "react-native-permissions"
+
+import CoreModule from "modules/core/src/CoreModule"
 
 /**
  * MediaLibraryPermissions - Handles save-only permissions for camera roll
@@ -72,25 +73,51 @@ export class MediaLibraryPermissions {
   /**
    * Save a file to the device's camera roll/photo library
    * On Android 10+, this works without any permission
+   *
+   * IMPORTANT: This method sets the DATE_TAKEN (Android) or creation date (iOS)
+   * metadata to the original capture time, so gallery apps show the correct date.
+   * Also saves files in chronological order for proper "date added" ordering.
+   *
+   * @param filePath - Path to the file to save
+   * @param creationTime - Optional creation/capture time in milliseconds (Unix timestamp)
    */
-  static async saveToLibrary(filePath: string): Promise<boolean> {
+  static async saveToLibrary(filePath: string, creationTime?: number): Promise<boolean> {
     try {
       // On Android 10+, we can save without permission
       // On iOS and older Android, check permission first
       if (!(Platform.OS === "android" && Platform.Version >= 29)) {
         const hasPermission = await this.checkPermission()
         if (!hasPermission) {
-          console.warn("[MediaLibrary] No permission to save to library")
-          return false
+          // Try requesting permission one more time
+          const granted = await this.requestPermission()
+          if (!granted) {
+            console.warn("[MediaLibrary] No permission to save to library - photos saved to app storage only")
+            return false
+          }
         }
       }
 
       // Remove file:// prefix if present
       const cleanPath = filePath.replace("file://", "")
 
-      await MediaLibrary.createAssetAsync(cleanPath)
-      console.log(`[MediaLibrary] Saved to camera roll: ${cleanPath}`)
-      return true
+      // Use native module to save with proper DATE_TAKEN / creation date metadata
+      // This ensures gallery apps show the correct capture date, not the sync date
+      const result = await CoreModule.saveToGalleryWithDate(cleanPath, creationTime)
+
+      if (result.success) {
+        if (creationTime) {
+          const captureDate = new Date(creationTime)
+          console.log(
+            `[MediaLibrary] Saved to camera roll with DATE_TAKEN: ${cleanPath} (captured: ${captureDate.toISOString()})`,
+          )
+        } else {
+          console.log(`[MediaLibrary] Saved to camera roll: ${cleanPath}`)
+        }
+        return true
+      } else {
+        console.error(`[MediaLibrary] Failed to save to library: ${result.error}`)
+        return false
+      }
     } catch (error) {
       console.error("[MediaLibrary] Error saving to library:", error)
       return false

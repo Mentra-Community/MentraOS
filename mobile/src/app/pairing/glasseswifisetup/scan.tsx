@@ -266,7 +266,7 @@ export default function WifiScanScreen() {
   }
 
   return (
-    <Screen preset="fixed" contentContainerStyle={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header
         title="Wi-Fi"
         leftIcon="chevron-left"

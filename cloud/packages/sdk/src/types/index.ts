@@ -36,6 +36,7 @@ export {
   AppRoomJoin,
   AppRoomLeave,
   RequestWifiSetup,
+  OwnershipReleaseMessage,
   // Type guards - all except isPhotoRequest
   isAppConnectionInit,
   isAppSubscriptionUpdate,
@@ -50,6 +51,7 @@ export {
   isManagedStreamStopRequest,
   isRtmpStreamRequest,
   isRtmpStreamStopRequest,
+  isOwnershipRelease,
   // Export with alias to avoid conflict
   isPhotoRequest as isPhotoRequestFromApp,
 } from "./messages/app-to-cloud"

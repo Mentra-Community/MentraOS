@@ -12,6 +12,7 @@ import {
   useStartApplet,
 } from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
+import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 const GRID_COLUMNS = 4
@@ -57,13 +58,19 @@ export const ForegroundAppsGrid: React.FC = () => {
     return inactiveApps
   }, [foregroundApps])
 
-  const handlePress = (packageName: string) => {
+  const handlePress = async (app: ClientAppletInterface) => {
     const getMoreApplet = getMoreAppsApplet()
-    if (packageName === getMoreApplet.packageName) {
+    if (app.packageName === getMoreApplet.packageName) {
       push(getMoreApplet.offlineRoute)
       return
     }
-    startApplet(packageName)
+
+    const result = await askPermissionsUI(app, theme)
+    if (result !== 1) {
+      return
+    }
+
+    startApplet(app.packageName)
   }
 
   const renderItem = useCallback(
@@ -75,13 +82,13 @@ export const ForegroundAppsGrid: React.FC = () => {
 
       // small hack to help with some long app names:
       const numberOfLines = item.name.split(" ").length > 1 ? 2 : 1
-      let size = 12
+      let size = 14
       if (numberOfLines == 1 && item.name.length > 10) {
-        size = 11
+        size = 14
       }
 
       return (
-        <TouchableOpacity style={themed($gridItem)} onPress={() => handlePress(item.packageName)} activeOpacity={0.7}>
+        <TouchableOpacity style={themed($gridItem)} onPress={() => handlePress(item)} activeOpacity={0.7}>
           <AppIcon app={item} style={themed($appIcon)} />
           <Text
             text={item.name}
@@ -147,18 +154,16 @@ const $appIcon: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $appName: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 12,
-  color: colors.text,
+  color: colors.secondary_foreground,
   textAlign: "center",
-  marginTop: spacing.s1,
+  marginTop: spacing.s2,
   lineHeight: 14,
 })
 
 const $appNameOffline: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 12,
   color: colors.textDim,
   textAlign: "center",
-  marginTop: spacing.s1,
+  marginTop: spacing.s2,
   textDecorationLine: "line-through",
   lineHeight: 14,
 })

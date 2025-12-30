@@ -18,8 +18,10 @@ export default function Layout() {
   const {bottom} = useSafeAreaInsets()
 
   function TabButton({iconName, iconNameFilled, isFocused, label, ...props}: TabButtonProps) {
-    // const iconColor = isFocused ? theme.colors.primary : theme.colors.textDim
-    const iconColor = isFocused ? theme.colors.background : theme.colors.muted_foreground
+    let iconColor = isFocused ? theme.colors.primary_foreground : theme.colors.muted_foreground
+    if (iconName === "house") {
+      iconColor = isFocused ? theme.colors.primary : theme.colors.muted_foreground
+    }
     const textColor = isFocused ? theme.colors.secondary_foreground : theme.colors.muted_foreground
     const iconBgColor = isFocused ? theme.colors.primary : "transparent"
     const displayIcon = isFocused ? iconNameFilled : iconName
@@ -38,7 +40,7 @@ export default function Layout() {
       <TabSlot />
       <TabList style={themed($tabList)}>
         <TabTrigger name="home" href="/home" style={themed($tabTrigger)} asChild>
-          <TabButton iconName="home" iconNameFilled="home-filled" label={translate("navigation:home")} />
+          <TabButton iconName="house" iconNameFilled="house-filled" label={translate("navigation:home")} />
         </TabTrigger>
         <TabTrigger name="store" href="/store" style={themed($tabTrigger)} asChild>
           <TabButton

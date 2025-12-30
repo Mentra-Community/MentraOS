@@ -28,16 +28,6 @@ This is the Android code that runs on Android-based smart glasses (ex: Mentra Li
 
 - Mentra Live
 
-This could be made to be compatible with other Android-based smart glasses with some work, such as:
-
-- TCL Rayneo X2
-- TCL Rayneo X3
-- INMO Air 2
-- INMO Air 3
-- Other Android-based smart glasses
-
-The necessary changes here would involve re-implementing the K900 checks (K900 or other device), and implementing the ability for the glasses to display text using an activity if the glasses have a display. Maybe use buildprop for device detection.
-
 ### Environment Setup
 
 1. Create a `.env` file by copying the provided example:
@@ -61,14 +51,58 @@ The necessary changes here would involve re-implementing the K900 checks (K900 o
    git checkout working
    ```
 
-### How to connect to Mentra Live with ADB
+### Development on Mentra Live
 
-Mentra Live supports ADB over WiFi. The best way to access this is:
+**Important:** Mentra Live glasses ship with `com.mentra.asg_client` signed with our release key. Since this key is not public, you **must uninstall the factory app** before installing your own debug build.
+
+#### Quick Setup
+
+We provide a script that handles uninstalling the factory app and granting permissions:
+
+```bash
+# Connect to your glasses first (see below), then:
+./scripts/dev-setup.sh
+```
+
+#### Manual Setup
+
+If you prefer to do it manually:
+
+1. **Uninstall the factory app:**
+
+   ```bash
+   adb uninstall com.mentra.asg_client
+   ```
+
+2. **Build and install your debug APK:**
+
+   ```bash
+   ./gradlew installDebug
+   ```
+
+3. **Grant runtime permissions:**
+   ```bash
+   # Grant key permissions (some may fail - that's normal)
+   adb shell pm grant com.mentra.asg_client android.permission.CAMERA
+   adb shell pm grant com.mentra.asg_client android.permission.RECORD_AUDIO
+   adb shell pm grant com.mentra.asg_client android.permission.ACCESS_FINE_LOCATION
+   adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_CONNECT
+   adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_SCAN
+   adb shell pm grant com.mentra.asg_client android.permission.POST_NOTIFICATIONS
+   adb shell pm grant com.mentra.asg_client android.permission.READ_MEDIA_IMAGES
+   adb shell pm grant com.mentra.asg_client android.permission.READ_MEDIA_VIDEO
+   ```
+
+### How to Connect to Mentra Live with ADB
+
+Connect via the **magnetic USB-C clip-on cable** that comes with your Mentra Live. Just attach the cable and run `adb devices` to confirm connection.
+
+Alternatively, you can use ADB over WiFi:
 
 1. Pair your Mentra Live in the MentraOS app
 2. Connect it to your local WiFi network in the MentraOS app
 3. Get its IP address from the "Glasses" screen in the MentraOS app
-4. On your computer that's on the same WiFi network, enter `adb connect {IP_ADDRESS}:5555`
+4. Run: `adb connect {IP_ADDRESS}:5555`
 
 ### Build Notes
 

@@ -4,12 +4,25 @@
  * scattered throughout the WebSocket service.
  *
  * This follows the pattern used by other managers like DisplayManager and DashboardManager.
+ *
+ * IMPORTANT: This manager is responsible for telling the mobile app when to send audio.
+ * If the mic state gets out of sync (e.g., mobile thinks mic is off but cloud has subscriptions),
+ * transcription will silently fail with no audio data flowing.
+ *
+ * Key reliability features:
+ * - Keep-alive: Periodically re-sends mic state to ensure mobile stays in sync
+ * - Subscription change handling: Always re-evaluates and sends mic state when subscriptions change
+ * - Glasses reconnect handling: Re-sends mic state when glasses reconnect
+ * - Forced re-sync: Can be called to force mic state re-evaluation
  */
 
-import WebSocket from "ws";
-import { CloudToGlassesMessageType, MicrophoneStateChange } from "@mentra/sdk";
-// import subscriptionService from "./subscription.service";
 import { Logger } from "pino";
+
+import { CloudToGlassesMessageType, MicrophoneStateChange } from "@mentra/sdk";
+
+import { WebSocketReadyState } from "../websocket/types";
+
+// import subscriptionService from "./subscription.service";
 import UserSession from "./UserSession";
 
 /**
@@ -26,12 +39,8 @@ export class MicrophoneManager {
   private debounceTimer: NodeJS.Timeout | null = null;
   private pendingState: boolean | null = null;
   private lastSentState = false;
-  private lastSentRequiredData: Array<
-    "pcm" | "transcription" | "pcm_or_transcription"
-  > = [];
-  private pendingRequiredData: Array<
-    "pcm" | "transcription" | "pcm_or_transcription"
-  > | null = null;
+  private lastSentRequiredData: Array<"pcm" | "transcription" | "pcm_or_transcription"> = [];
+  private pendingRequiredData: Array<"pcm" | "transcription" | "pcm_or_transcription"> | null = null;
 
   // Debounce mechanism for subscription changes
   private subscriptionDebounceTimer: NodeJS.Timeout | null = null;
@@ -47,6 +56,10 @@ export class MicrophoneManager {
   // Unauthorized audio detection
   private unauthorizedAudioTimer: NodeJS.Timeout | null = null;
   private readonly UNAUTHORIZED_AUDIO_DEBOUNCE_MS = 5000; // 5 seconds
+
+  // Track last subscription check time to detect stale cache
+  private lastSubscriptionCheckTime = 0;
+  private readonly SUBSCRIPTION_CACHE_MAX_AGE_MS = 5000; // 5 seconds max cache age
 
   // Cached subscription state to avoid expensive repeated lookups
   private cachedSubscriptionState: {
@@ -66,6 +79,7 @@ export class MicrophoneManager {
 
     // Initialize cached subscription state
     this.updateCachedSubscriptionState();
+    this.lastSubscriptionCheckTime = Date.now();
   }
 
   /**
@@ -81,9 +95,7 @@ export class MicrophoneManager {
     requiredData: Array<"pcm" | "transcription" | "pcm_or_transcription">,
     delay = 1000,
   ): void {
-    this.logger.debug(
-      `Updating microphone state: ${isEnabled}, delay: ${delay}ms`,
-    );
+    this.logger.debug(`Updating microphone state: ${isEnabled}, delay: ${delay}ms`);
 
     if (this.debounceTimer === null) {
       // First call: send immediately and update lastSentState
@@ -109,18 +121,10 @@ export class MicrophoneManager {
       // Also compare that all elements of the array are the same
       if (
         this.pendingState !== this.lastSentState ||
-        this.hasRequiredDataChanged(
-          this.pendingRequiredData!,
-          this.lastSentRequiredData!,
-        )
+        this.hasRequiredDataChanged(this.pendingRequiredData!, this.lastSentRequiredData!)
       ) {
-        this.logger.info(
-          `Sending debounced microphone state change: ${this.pendingState}`,
-        );
-        this.sendStateChangeToGlasses(
-          this.pendingState!,
-          this.pendingRequiredData!,
-        );
+        this.logger.info(`Sending debounced microphone state change: ${this.pendingState}`);
+        this.sendStateChangeToGlasses(this.pendingState!, this.pendingRequiredData!);
         this.lastSentState = this.pendingState!;
         this.lastSentRequiredData = this.pendingRequiredData!;
         this.enabled = this.pendingState!;
@@ -165,13 +169,8 @@ export class MicrophoneManager {
     requiredData: Array<"pcm" | "transcription" | "pcm_or_transcription">,
     isKeepAlive = false,
   ): void {
-    if (
-      !this.session.websocket ||
-      this.session.websocket.readyState !== WebSocket.OPEN
-    ) {
-      this.logger.warn(
-        "Cannot send microphone state change: WebSocket not open",
-      );
+    if (!this.session.websocket || this.session.websocket.readyState !== WebSocketReadyState.OPEN) {
+      this.logger.warn("Cannot send microphone state change: WebSocket not open");
       return;
     }
 
@@ -190,12 +189,10 @@ export class MicrophoneManager {
       };
 
       this.session.websocket.send(JSON.stringify(message));
-      this.logger.debug(
-        { message, isKeepAlive },
-        isKeepAlive
-          ? "Sent microphone keep-alive message"
-          : "Sent microphone state change message",
-      );
+      // Only log actual state changes, not routine keepalives
+      if (!isKeepAlive) {
+        this.logger.debug({ message }, "Sent microphone state change message");
+      }
 
       // Start or update keep-alive timer after successful send
       if (!isKeepAlive) {
@@ -211,17 +208,46 @@ export class MicrophoneManager {
    * This is called when subscriptions change to avoid repeated expensive lookups
    */
   private updateCachedSubscriptionState(): void {
-    const state =
-      this.session.subscriptionManager.hasPCMTranscriptionSubscriptions();
+    const state = this.session.subscriptionManager.hasPCMTranscriptionSubscriptions();
+    const previousState = { ...this.cachedSubscriptionState };
+
     this.cachedSubscriptionState = {
       hasPCM: state.hasPCM,
       hasTranscription: state.hasTranscription,
       hasMedia: state.hasMedia,
     };
-    this.logger.debug(
-      this.cachedSubscriptionState,
-      "Updated cached subscription state",
-    );
+    this.lastSubscriptionCheckTime = Date.now();
+
+    // Log if state changed (important for debugging mic sync issues)
+    if (previousState.hasMedia !== this.cachedSubscriptionState.hasMedia) {
+      this.logger.info(
+        {
+          previous: previousState,
+          current: this.cachedSubscriptionState,
+        },
+        `Subscription state changed: hasMedia ${previousState.hasMedia} -> ${this.cachedSubscriptionState.hasMedia}`,
+      );
+    } else {
+      this.logger.debug(this.cachedSubscriptionState, "Updated cached subscription state");
+    }
+  }
+
+  /**
+   * Check if cached subscription state is stale and needs refresh
+   */
+  private isCacheStale(): boolean {
+    return Date.now() - this.lastSubscriptionCheckTime > this.SUBSCRIPTION_CACHE_MAX_AGE_MS;
+  }
+
+  /**
+   * Get fresh subscription state, refreshing cache if stale
+   */
+  private getFreshSubscriptionState(): { hasPCM: boolean; hasTranscription: boolean; hasMedia: boolean } {
+    if (this.isCacheStale()) {
+      this.logger.debug("Subscription cache is stale, refreshing");
+      this.updateCachedSubscriptionState();
+    }
+    return this.cachedSubscriptionState;
   }
 
   /**
@@ -237,9 +263,7 @@ export class MicrophoneManager {
     hasPCM: boolean,
     hasTranscription: boolean,
   ): Array<"pcm" | "transcription" | "pcm_or_transcription"> {
-    const requiredData: Array<
-      "pcm" | "transcription" | "pcm_or_transcription"
-    > = [];
+    const requiredData: Array<"pcm" | "transcription" | "pcm_or_transcription"> = [];
     // NOTE: For now online apps always need PCM data
     if (hasPCM || hasTranscription) {
       requiredData.push("pcm");
@@ -258,9 +282,7 @@ export class MicrophoneManager {
     // 2. VAD events (via TranscriptionManager.restartFromActiveSubscriptions/stopAndFinalizeAll)
     //
     // The microphone state is informational and doesn't directly start/stop transcription
-    this.logger.debug(
-      "Microphone state updated - transcription handled by TranscriptionManager",
-    );
+    this.logger.debug("Microphone state updated - transcription handled by TranscriptionManager");
   }
 
   /**
@@ -273,22 +295,18 @@ export class MicrophoneManager {
   /**
    * Handle glasses connection state changes
    * This replicates the behavior in the GLASSES_CONNECTION_STATE case
+   *
+   * IMPORTANT: On glasses reconnect, we MUST force a mic state resync.
+   * This is critical because the mobile app may have lost track of mic state
+   * during the reconnection process.
    */
   handleConnectionStateChange(status: string): void {
-    if (status === "CONNECTED") {
-      this.logger.info(
-        { status },
-        "Glasses connected, checking media subscriptions " + status,
-      );
-      // Update cache before using it
-      this.updateCachedSubscriptionState();
+    if (status === "CONNECTED" || status === "RECONNECTED") {
+      this.logger.info({ status, previousMicEnabled: this.enabled }, `Glasses ${status}, forcing mic state resync`);
 
-      const hasMediaSubscriptions = this.cachedSubscriptionState.hasMedia;
-      const requiredData = this.calculateRequiredData(
-        this.cachedSubscriptionState.hasPCM,
-        this.cachedSubscriptionState.hasTranscription,
-      );
-      this.updateState(hasMediaSubscriptions, requiredData);
+      // CRITICAL: Force resync on glasses connect/reconnect
+      // This ensures the mobile app has the correct mic state after any connection event
+      this.forceResync();
     }
   }
 
@@ -313,6 +331,13 @@ export class MicrophoneManager {
         this.cachedSubscriptionState.hasTranscription,
       );
       this.logger.info(
+        {
+          hasMediaSubscriptions,
+          hasPCM: this.cachedSubscriptionState.hasPCM,
+          hasTranscription: this.cachedSubscriptionState.hasTranscription,
+          currentMicEnabled: this.enabled,
+          requiredData,
+        },
         `Subscription changed, media subscriptions: ${hasMediaSubscriptions}`,
       );
       // Inform LiveKitManager (mic state drives subscribe now)
@@ -337,13 +362,54 @@ export class MicrophoneManager {
             this.cachedSubscriptionState.hasTranscription,
           );
           if (stillNoMedia) {
+            this.logger.info("Mic-off holddown complete, still no media subscriptions - turning mic off");
             this.updateState(false, finalRequiredData);
+          } else {
+            this.logger.info("Mic-off holddown complete, but media subscriptions now exist - keeping mic on");
           }
           this.micOffHolddownTimer = null;
         }, this.MIC_OFF_HOLDDOWN_MS);
       }
       this.subscriptionDebounceTimer = null;
     }, 100); // 100ms debounce - short enough to be responsive, long enough to batch rapid calls
+  }
+
+  /**
+   * Force re-synchronization of mic state with mobile
+   * This should be called when there's suspicion that mic state is out of sync
+   * (e.g., after reconnection, after detecting audio when mic should be off)
+   */
+  forceResync(): void {
+    this.logger.info("Forcing mic state re-synchronization");
+
+    // Refresh subscription state from source of truth
+    this.updateCachedSubscriptionState();
+
+    const hasMediaSubscriptions = this.cachedSubscriptionState.hasMedia;
+    const requiredData = this.calculateRequiredData(
+      this.cachedSubscriptionState.hasPCM,
+      this.cachedSubscriptionState.hasTranscription,
+    );
+
+    this.logger.info(
+      {
+        hasMediaSubscriptions,
+        hasPCM: this.cachedSubscriptionState.hasPCM,
+        hasTranscription: this.cachedSubscriptionState.hasTranscription,
+        previousMicEnabled: this.enabled,
+        requiredData,
+      },
+      `Force resync: setting mic to ${hasMediaSubscriptions}`,
+    );
+
+    // Force send the state change (bypass debounce)
+    this.sendStateChangeToGlasses(hasMediaSubscriptions, requiredData);
+    this.enabled = hasMediaSubscriptions;
+    this.lastSentState = hasMediaSubscriptions;
+    this.lastSentRequiredData = requiredData;
+
+    // Update keep-alive timer
+    this.updateKeepAliveTimer();
   }
 
   /**
@@ -363,28 +429,34 @@ export class MicrophoneManager {
    */
   private updateKeepAliveTimer(): void {
     // Check if we should have a keep-alive timer running using cached state
-    const shouldHaveKeepAlive =
-      this.enabled && this.cachedSubscriptionState.hasMedia;
+    const shouldHaveKeepAlive = this.enabled && this.cachedSubscriptionState.hasMedia;
 
     if (shouldHaveKeepAlive && !this.keepAliveTimer) {
-      // Start keep-alive timer
-      this.logger.info("Starting microphone keep-alive timer");
+      // Start keep-alive timer (no logging - routine operation)
       this.keepAliveTimer = setInterval(() => {
-        // Only send if WebSocket is still open and we still have media subscriptions
-        if (
-          this.session.websocket &&
-          this.session.websocket.readyState === WebSocket.OPEN
-        ) {
-          // Use cached state for the check
-          if (this.cachedSubscriptionState.hasMedia && this.enabled) {
-            this.logger.debug("Sending microphone keep-alive");
-            this.sendStateChangeToGlasses(
-              this.lastSentState,
-              this.lastSentRequiredData,
-              true,
+        // Only send if WebSocket is still open
+        if (this.session.websocket && this.session.websocket.readyState === WebSocketReadyState.OPEN) {
+          // IMPORTANT: Refresh subscription state to catch any drift
+          // This prevents issues where cached state becomes stale
+          const freshState = this.getFreshSubscriptionState();
+
+          if (freshState.hasMedia && this.enabled) {
+            // Don't log routine keepalives - they create noise every 10 seconds
+            this.sendStateChangeToGlasses(this.lastSentState, this.lastSentRequiredData, true);
+          } else if (freshState.hasMedia && !this.enabled) {
+            // IMPORTANT: We have media subscriptions but mic is marked as off
+            // This indicates a state drift - force resync
+            this.logger.warn(
+              {
+                enabled: this.enabled,
+                hasMedia: freshState.hasMedia,
+              },
+              "Keep-alive detected state drift: subscriptions exist but mic disabled - forcing resync",
             );
+            this.forceResync();
           } else {
-            // Conditions no longer met, stop the timer
+            // No media subscriptions, stop the timer
+            this.logger.debug("Keep-alive: no media subscriptions, stopping timer");
             this.stopKeepAliveTimer();
           }
         }
@@ -400,7 +472,7 @@ export class MicrophoneManager {
    */
   private stopKeepAliveTimer(): void {
     if (this.keepAliveTimer) {
-      this.logger.info("Stopping microphone keep-alive timer");
+      // No logging - routine operation
       clearInterval(this.keepAliveTimer);
       this.keepAliveTimer = null;
     }
@@ -409,6 +481,7 @@ export class MicrophoneManager {
   /**
    * Called when audio data is received from the glasses
    * Checks if we're receiving unauthorized audio and sends mic off immediately
+   * OR if we should be receiving audio but thought mic was off (state drift)
    */
   onAudioReceived(): void {
     // Skip if we're in the debounce period
@@ -416,40 +489,60 @@ export class MicrophoneManager {
       return;
     }
 
-    // Check if we should NOT be receiving audio using cached state
-    const shouldMicBeOff =
-      !this.enabled || !this.cachedSubscriptionState.hasMedia;
+    // IMPORTANT: Use fresh subscription state, not cached
+    // This catches scenarios where subscriptions changed but mic state wasn't updated
+    const freshState = this.getFreshSubscriptionState();
 
-    if (shouldMicBeOff) {
-      // We're receiving audio when we shouldn't be
-      this.logger.warn(
-        "Receiving unauthorized audio - forcing mic off immediately",
-      );
-
-      // Send mic off immediately
-      const requiredData = this.calculateRequiredData(
-        this.cachedSubscriptionState.hasPCM,
-        this.cachedSubscriptionState.hasTranscription,
-      );
-      this.sendStateChangeToGlasses(false, requiredData);
-
-      // Update internal state
-      this.enabled = false;
-      this.lastSentState = false;
-      this.lastSentRequiredData = requiredData;
-
-      // Stop keep-alive since mic should be off
-      this.stopKeepAliveTimer();
-
-      // Start debounce timer to ignore further unauthorized audio for 5 seconds
-      this.unauthorizedAudioTimer = setTimeout(() => {
-        this.logger.debug("Unauthorized audio debounce period ended");
-        // Update cached subscription state before resuming detection
-        // This ensures we have fresh state in case subscriptions changed during debounce
-        this.updateCachedSubscriptionState();
-        this.unauthorizedAudioTimer = null;
-      }, this.UNAUTHORIZED_AUDIO_DEBOUNCE_MS);
+    // Check if we SHOULD be receiving audio (subscriptions exist)
+    if (freshState.hasMedia) {
+      // We have subscriptions - audio is authorized
+      // But check if our internal state is wrong
+      if (!this.enabled) {
+        this.logger.warn(
+          {
+            enabled: this.enabled,
+            hasMedia: freshState.hasMedia,
+            hasPCM: freshState.hasPCM,
+            hasTranscription: freshState.hasTranscription,
+          },
+          "Receiving audio with subscriptions but mic marked disabled - state drift detected, forcing resync",
+        );
+        // State drift: we have subscriptions but thought mic was off
+        // This can happen if subscription updates didn't properly trigger mic state change
+        this.forceResync();
+      }
+      return;
     }
+
+    // No subscriptions but receiving audio - this is unauthorized
+    this.logger.warn(
+      {
+        enabled: this.enabled,
+        hasMedia: freshState.hasMedia,
+      },
+      "Receiving unauthorized audio (no subscriptions) - forcing mic off immediately",
+    );
+
+    // Send mic off immediately
+    const requiredData = this.calculateRequiredData(freshState.hasPCM, freshState.hasTranscription);
+    this.sendStateChangeToGlasses(false, requiredData);
+
+    // Update internal state
+    this.enabled = false;
+    this.lastSentState = false;
+    this.lastSentRequiredData = requiredData;
+
+    // Stop keep-alive since mic should be off
+    this.stopKeepAliveTimer();
+
+    // Start debounce timer to ignore further unauthorized audio for 5 seconds
+    this.unauthorizedAudioTimer = setTimeout(() => {
+      this.logger.debug("Unauthorized audio debounce period ended");
+      // Update cached subscription state before resuming detection
+      // This ensures we have fresh state in case subscriptions changed during debounce
+      this.updateCachedSubscriptionState();
+      this.unauthorizedAudioTimer = null;
+    }, this.UNAUTHORIZED_AUDIO_DEBOUNCE_MS);
   }
 
   /**

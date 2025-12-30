@@ -38,9 +38,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Build Debug APK
+      - name: Clean and Build Debug APK
         working-directory: ./asg_client/ota_updater
-        run: ./gradlew assembleDebug
+        run: ./gradlew clean assembleDebug
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

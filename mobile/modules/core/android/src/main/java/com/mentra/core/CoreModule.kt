@@ -29,50 +29,50 @@ class CoreModule : Module() {
         // MARK: - Display Commands
 
         AsyncFunction("displayEvent") { params: Map<String, Any> ->
-            coreManager?.handle_display_event(params)
+            coreManager?.displayEvent(params)
         }
 
         AsyncFunction("displayText") { params: Map<String, Any> ->
-            coreManager?.handle_display_text(params)
+            coreManager?.displayText(params)
         }
 
         // MARK: - Connection Commands
 
-        AsyncFunction("requestStatus") { coreManager?.handle_request_status() }
+        AsyncFunction("getStatus") { coreManager?.getStatus() }
 
-        AsyncFunction("connectDefault") { coreManager?.handle_connect_default() }
+        AsyncFunction("connectDefault") { coreManager?.connectDefault() }
 
         AsyncFunction("connectByName") { deviceName: String ->
-            coreManager?.handle_connect_by_name(deviceName)
+            coreManager?.connectByName(deviceName)
         }
 
-        AsyncFunction("connectSimulated") { coreManager?.handle_connect_simulated() }
+        AsyncFunction("connectSimulated") { coreManager?.connectSimulated() }
 
-        AsyncFunction("disconnect") { coreManager?.handle_disconnect() }
+        AsyncFunction("disconnect") { coreManager?.disconnect() }
 
-        AsyncFunction("forget") { coreManager?.handle_forget() }
+        AsyncFunction("forget") { coreManager?.forget() }
 
         AsyncFunction("findCompatibleDevices") { modelName: String ->
-            coreManager?.handle_find_compatible_devices(modelName)
+            coreManager?.findCompatibleDevices(modelName)
         }
 
-        AsyncFunction("showDashboard") { coreManager?.handle_show_dashboard() }
+        AsyncFunction("showDashboard") { coreManager?.showDashboard() }
 
         // MARK: - WiFi Commands
 
-        AsyncFunction("requestWifiScan") { coreManager?.handle_request_wifi_scan() }
+        AsyncFunction("requestWifiScan") { coreManager?.requestWifiScan() }
 
         AsyncFunction("sendWifiCredentials") { ssid: String, password: String ->
-            coreManager?.handle_send_wifi_credentials(ssid, password)
+            coreManager?.sendWifiCredentials(ssid, password)
         }
 
         AsyncFunction("setHotspotState") { enabled: Boolean ->
-            coreManager?.handle_set_hotspot_state(enabled)
+            coreManager?.setHotspotState(enabled)
         }
 
         // MARK: - Gallery Commands
 
-        AsyncFunction("queryGalleryStatus") { coreManager?.handle_query_gallery_status() }
+        AsyncFunction("queryGalleryStatus") { coreManager?.queryGalleryStatus() }
 
         AsyncFunction("photoRequest") {
                 requestId: String,
@@ -81,48 +81,46 @@ class CoreModule : Module() {
                 webhookUrl: String,
                 authToken: String,
                 compress: String ->
-            coreManager?.handle_photo_request(requestId, appId, size, webhookUrl, authToken, compress)
+            coreManager?.photoRequest(requestId, appId, size, webhookUrl, authToken, compress)
         }
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startBufferRecording") { coreManager?.handle_start_buffer_recording() }
+        AsyncFunction("startBufferRecording") { coreManager?.startBufferRecording() }
 
-        AsyncFunction("stopBufferRecording") { coreManager?.handle_stop_buffer_recording() }
+        AsyncFunction("stopBufferRecording") { coreManager?.stopBufferRecording() }
 
         AsyncFunction("saveBufferVideo") { requestId: String, durationSeconds: Int ->
-            coreManager?.handle_save_buffer_video(requestId, durationSeconds)
+            coreManager?.saveBufferVideo(requestId, durationSeconds)
         }
 
         AsyncFunction("startVideoRecording") { requestId: String, save: Boolean ->
-            coreManager?.handle_start_video_recording(requestId, save)
+            coreManager?.startVideoRecording(requestId, save)
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
-            coreManager?.handle_stop_video_recording(requestId)
+            coreManager?.stopVideoRecording(requestId)
         }
 
         // MARK: - RTMP Stream Commands
 
         AsyncFunction("startRtmpStream") { params: Map<String, Any> ->
-            coreManager?.handle_send_rtmp_stream_start(params.toMutableMap())
+            coreManager?.startRtmpStream(params.toMutableMap())
         }
 
-        AsyncFunction("stopRtmpStream") {
-            coreManager?.handle_stop_rtmp_stream()
-        }
+        AsyncFunction("stopRtmpStream") { coreManager?.stopRtmpStream() }
 
         AsyncFunction("keepRtmpStreamAlive") { params: Map<String, Any> ->
-            coreManager?.handle_keep_rtmp_stream_alive(params.toMutableMap())
+            coreManager?.keepRtmpStreamAlive(params.toMutableMap())
         }
 
         // MARK: - Microphone Commands
 
-        AsyncFunction("microphoneStateChange") {
-                requiredDataStrings: List<String>,
+        AsyncFunction("setMicState") {
+                sendPcmData: Boolean,
+                sendTranscript: Boolean,
                 bypassVad: Boolean ->
-            val requiredData = CoreManager.SpeechRequiredDataType.fromStringArray(requiredDataStrings)
-            coreManager?.handle_microphone_state_change(requiredData, bypassVad)
+            coreManager?.setMicState(sendPcmData, sendTranscript, bypassVad)
         }
 
         AsyncFunction("restartTranscriber") { coreManager?.restartTranscriber() }
@@ -137,14 +135,21 @@ class CoreModule : Module() {
                 ontime: Int,
                 offtime: Int,
                 count: Int ->
-            coreManager?.handle_rgb_led_control(requestId, packageName, action,
-                    color, ontime, offtime, count)
+            coreManager?.rgbLedControl(
+                    requestId,
+                    packageName,
+                    action,
+                    color,
+                    ontime,
+                    offtime,
+                    count
+            )
         }
 
         // MARK: - Settings Commands
 
         AsyncFunction("updateSettings") { params: Map<String, Any> ->
-            coreManager?.handle_update_settings(params)
+            coreManager?.updateSettings(params)
         }
 
         // MARK: - STT Commands
@@ -210,8 +215,10 @@ class CoreModule : Module() {
         // MARK: - Settings Navigation
 
         AsyncFunction("openBluetoothSettings") {
-            val context = appContext.reactContext ?: appContext.currentActivity
-                    ?: throw IllegalStateException("No context available")
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
             val intent = android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
@@ -219,9 +226,14 @@ class CoreModule : Module() {
         }
 
         AsyncFunction("openLocationSettings") {
-            val context = appContext.reactContext ?: appContext.currentActivity
-                    ?: throw IllegalStateException("No context available")
-            val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            val intent =
+                    android.content.Intent(
+                            android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                    )
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
             true
@@ -230,24 +242,32 @@ class CoreModule : Module() {
         AsyncFunction("showLocationServicesDialog") {
             val activity = appContext.currentActivity
             if (activity == null) {
-                val context = appContext.reactContext
-                        ?: throw IllegalStateException("No context available")
-                val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                val context =
+                        appContext.reactContext
+                                ?: throw IllegalStateException("No context available")
+                val intent =
+                        android.content.Intent(
+                                android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                        )
                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
                 return@AsyncFunction true
             }
 
-            val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
-                    com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
-                    10000
-            ).build()
+            val locationRequest =
+                    com.google.android.gms.location.LocationRequest.Builder(
+                                    com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+                                    10000
+                            )
+                            .build()
 
-            val builder = com.google.android.gms.location.LocationSettingsRequest.Builder()
-                    .addLocationRequest(locationRequest)
-                    .setAlwaysShow(true)
+            val builder =
+                    com.google.android.gms.location.LocationSettingsRequest.Builder()
+                            .addLocationRequest(locationRequest)
+                            .setAlwaysShow(true)
 
-            val client = com.google.android.gms.location.LocationServices.getSettingsClient(activity)
+            val client =
+                    com.google.android.gms.location.LocationServices.getSettingsClient(activity)
             val task = client.checkLocationSettings(builder.build())
 
             task.addOnSuccessListener { true }
@@ -257,12 +277,18 @@ class CoreModule : Module() {
                         exception.startResolutionForResult(activity, 1001)
                     } catch (sendEx: android.content.IntentSender.SendIntentException) {
                         // Fallback
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                        val intent =
+                                android.content.Intent(
+                                        android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                                )
                         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                         activity.startActivity(intent)
                     }
                 } else {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                    val intent =
+                            android.content.Intent(
+                                    android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                            )
                     intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     activity.startActivity(intent)
                 }
@@ -271,13 +297,130 @@ class CoreModule : Module() {
         }
 
         AsyncFunction("openAppSettings") {
-            val context = appContext.reactContext ?: appContext.currentActivity
-                    ?: throw IllegalStateException("No context available")
-            val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            val intent =
+                    android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                    )
             intent.data = android.net.Uri.parse("package:${context.packageName}")
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
             true
+        }
+
+        // MARK: - Media Library Commands
+
+        AsyncFunction("saveToGalleryWithDate") { filePath: String, captureTimeMillis: Long? ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+
+            try {
+                val file = java.io.File(filePath)
+                if (!file.exists()) {
+                    throw IllegalArgumentException("File does not exist: $filePath")
+                }
+
+                val mimeType =
+                        when (file.extension.lowercase()) {
+                            "jpg", "jpeg" -> "image/jpeg"
+                            "png" -> "image/png"
+                            "mp4" -> "video/mp4"
+                            "mov" -> "video/quicktime"
+                            else -> "application/octet-stream"
+                        }
+
+                val isVideo = mimeType.startsWith("video/")
+                val collection =
+                        if (isVideo) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                            ) {
+                                android.provider.MediaStore.Video.Media.getContentUri(
+                                        android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY
+                                )
+                            } else {
+                                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                            }
+                        } else {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                            ) {
+                                android.provider.MediaStore.Images.Media.getContentUri(
+                                        android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY
+                                )
+                            } else {
+                                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                            }
+                        }
+
+                val values =
+                        android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                            put(android.provider.MediaStore.MediaColumns.SIZE, file.length())
+
+                            // Set the capture time (DATE_TAKEN) if provided
+                            if (captureTimeMillis != null) {
+                                if (isVideo) {
+                                    put(
+                                            android.provider.MediaStore.Video.Media.DATE_TAKEN,
+                                            captureTimeMillis
+                                    )
+                                } else {
+                                    put(
+                                            android.provider.MediaStore.Images.Media.DATE_TAKEN,
+                                            captureTimeMillis
+                                    )
+                                }
+                                android.util.Log.d(
+                                        "CoreModule",
+                                        "Setting DATE_TAKEN to: $captureTimeMillis (${java.util.Date(captureTimeMillis)})"
+                                )
+                            }
+
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                            ) {
+                                put(
+                                        android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                                        if (isVideo) "DCIM/Camera" else "DCIM/Camera"
+                                )
+                                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                            }
+                        }
+
+                val resolver = context.contentResolver
+                val uri =
+                        resolver.insert(collection, values)
+                                ?: throw IllegalStateException("Failed to create MediaStore entry")
+
+                try {
+                    resolver.openOutputStream(uri)?.use { outputStream ->
+                        file.inputStream().use { inputStream -> inputStream.copyTo(outputStream) }
+                    }
+                            ?: throw IllegalStateException("Failed to open output stream")
+
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        values.clear()
+                        values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                        resolver.update(uri, values, null, null)
+                    }
+
+                    android.util.Log.d(
+                            "CoreModule",
+                            "Successfully saved to gallery with proper DATE_TAKEN: ${file.name}"
+                    )
+                    mapOf("success" to true, "uri" to uri.toString())
+                } catch (e: Exception) {
+                    resolver.delete(uri, null, null)
+                    throw e
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CoreModule", "Error saving to gallery: ${e.message}", e)
+                mapOf("success" to false, "error" to e.message)
+            }
         }
     }
 }

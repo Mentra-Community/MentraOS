@@ -1,15 +1,8 @@
 import { Request, Response, NextFunction } from "express";
+
 import { validateApiKey } from "../../services/sdk/sdk.auth.service";
 
-// Extend Request interface to include SDK authentication data
-declare module "express-serve-static-core" {
-  interface Request {
-    sdk?: {
-      packageName: string;
-      apiKey: string;
-    };
-  }
-}
+// Type declarations for req.sdk are in src/types/express.d.ts
 
 /**
  * SDK Authentication Middleware
@@ -21,11 +14,7 @@ declare module "express-serve-static-core" {
  * - Apply to /api/sdk/* routes that require authentication (right now only applied to sdkAuthMiddleware)
  * - Populates req.sdkAuth with packageName and apiKey
  */
-export const authenticateSDK = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
+export const authenticateSDK = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -40,8 +29,7 @@ export const authenticateSDK = async (
     if (!authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         error: "Invalid Authorization format",
-        message:
-          "Authorization header must be in format: Bearer <packageName>:<apiKey>",
+        message: "Authorization header must be in format: Bearer <packageName>:<apiKey>",
       });
     }
 

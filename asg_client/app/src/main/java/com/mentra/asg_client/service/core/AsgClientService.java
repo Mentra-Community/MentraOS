@@ -35,6 +35,7 @@ import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 // Note: AugmentosService removed - legacy dependency no longer needed
 // import com.augmentos.augmentos_core.AugmentosService;
 import com.mentra.asg_client.service.utils.ServiceUtils;
+import com.mentra.asg_client.service.utils.SysProp;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -846,13 +847,17 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         }
     }
 
+    /**
+     * Send version information to phone in two chunks to work around BLE MTU limitations.
+     * Chunk 1 (version_info_1): app_version, build_number, device_model, android_version
+     * Chunk 2 (version_info_2): ota_version_url, firmware_version, bt_mac_address
+     * Phone will accumulate both chunks and process when complete.
+     */
     public void sendVersionInfo() {
-        Log.i(TAG, "📊 Sending version information");
+        Log.i(TAG, "📊 Sending version information (chunked for MTU)");
 
         try {
-            JSONObject versionInfo = new JSONObject();
-            versionInfo.put("type", "version_info");
-            
+            // Gather all version data
             String appVersion = "1.0.0";
             String buildNumber = "1";
             Log.d(TAG, "📋 Default app version: " + appVersion + ", Build number: " + buildNumber);
@@ -864,22 +869,59 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             } catch (Exception e) {
                 Log.e(TAG, "💥 Error getting app version - using defaults", e);
             }
-            
-            versionInfo.put("app_version", appVersion);
-            versionInfo.put("build_number", buildNumber);
-            versionInfo.put("device_model", ServiceUtils.getDeviceTypeString(this));
-            versionInfo.put("android_version", android.os.Build.VERSION.RELEASE);
-            versionInfo.put("ota_version_url", OtaConstants.VERSION_JSON_URL);
 
-            Log.d(TAG, "📋 Version info prepared - Device: " + ServiceUtils.getDeviceTypeString(this) + 
-                      ", Android: " + android.os.Build.VERSION.RELEASE + 
-                      ", OTA URL: " + OtaConstants.VERSION_JSON_URL);
+            String deviceModel = ServiceUtils.getDeviceTypeString(this);
+            String androidVersion = android.os.Build.VERSION.RELEASE;
+            String otaVersionUrl = OtaConstants.VERSION_JSON_URL;
+
+            // Include MCU firmware version if available (cached from hs_syvr command)
+            String mcuFirmwareVersion = "";
+            if (serviceContainer.getServiceManager() != null &&
+                serviceContainer.getServiceManager().getAsgSettings() != null) {
+                mcuFirmwareVersion = serviceContainer.getServiceManager().getAsgSettings().getMcuFirmwareVersion();
+            }
+
+            // Include BES BT MAC address as unique device identifier (stored in system properties)
+            String besBtMac = SysProp.getBesBtMac(this);
+
+            Log.d(TAG, "📋 Version info prepared - Device: " + deviceModel +
+                      ", Android: " + androidVersion +
+                      ", MCU Firmware: " + mcuFirmwareVersion +
+                      ", BT MAC: " + besBtMac +
+                      ", OTA URL: " + otaVersionUrl);
 
             if (serviceContainer.getServiceManager().getBluetoothManager() != null &&
                     serviceContainer.getServiceManager().getBluetoothManager().isConnected()) {
-                Log.d(TAG, "📤 Sending version info via Bluetooth");
-                serviceContainer.getServiceManager().getBluetoothManager().sendData(versionInfo.toString().getBytes(StandardCharsets.UTF_8));
-                Log.i(TAG, "✅ Sent version info to phone successfully");
+
+                // Chunk 1: Basic device info (smaller payload)
+                JSONObject chunk1 = new JSONObject();
+                chunk1.put("type", "version_info_1");
+                chunk1.put("app_version", appVersion);
+                chunk1.put("build_number", buildNumber);
+                chunk1.put("device_model", deviceModel);
+                chunk1.put("android_version", androidVersion);
+
+                Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
+                serviceContainer.getServiceManager().getBluetoothManager().sendData(chunk1.toString().getBytes(StandardCharsets.UTF_8));
+
+                // Small delay between chunks to ensure proper ordering
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+
+                // Chunk 2: Extended info (URLs and identifiers)
+                JSONObject chunk2 = new JSONObject();
+                chunk2.put("type", "version_info_2");
+                chunk2.put("ota_version_url", otaVersionUrl);
+                chunk2.put("firmware_version", mcuFirmwareVersion);
+                chunk2.put("bt_mac_address", besBtMac);
+
+                Log.d(TAG, "📤 Sending version_info_2: " + chunk2.toString());
+                serviceContainer.getServiceManager().getBluetoothManager().sendData(chunk2.toString().getBytes(StandardCharsets.UTF_8));
+
+                Log.i(TAG, "✅ Sent version info chunks to phone successfully");
             } else {
                 Log.w(TAG, "⚠️ Bluetooth manager not available or not connected - cannot send version info");
             }

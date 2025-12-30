@@ -41,7 +41,7 @@ export interface PhotoRequest extends BaseMessage {
   customWebhookUrl?: string // Custom webhook URL to override TPA's default
   authToken?: string // Auth token for custom webhook authentication
   /** Desired photo size sent by App. Defaults to 'medium' if omitted. */
-  size?: "small" | "medium" | "large"
+  size?: "small" | "medium" | "large" | "full"
   /** Image compression level: none, medium, or heavy. Defaults to none. */
   compress?: "none" | "medium" | "heavy"
 }
@@ -184,6 +184,17 @@ export interface RequestWifiSetup extends BaseMessage {
 }
 
 /**
+ * Ownership release message from App
+ * Sent before intentional disconnect to signal clean handoff (no resurrection needed)
+ */
+export interface OwnershipReleaseMessage extends BaseMessage {
+  type: AppToCloudMessageType.OWNERSHIP_RELEASE
+  packageName: string
+  sessionId: string
+  reason: "switching_clouds" | "clean_shutdown" | "user_logout"
+}
+
+/**
  * Union type for all messages from Apps to cloud
  */
 export type AppToCloudMessage =
@@ -204,6 +215,8 @@ export type AppToCloudMessage =
   | DashboardModeChange
   | DashboardSystemUpdate
   | RequestWifiSetup
+  // Session lifecycle
+  | OwnershipReleaseMessage
   // New App-to-App communication messages
   | AppBroadcastMessage
   | AppDirectMessage
@@ -371,4 +384,11 @@ export function isRtmpStreamRequest(message: AppToCloudMessage): message is Rtmp
  */
 export function isRtmpStreamStopRequest(message: AppToCloudMessage): message is RtmpStreamStopRequest {
   return message.type === AppToCloudMessageType.RTMP_STREAM_STOP
+}
+
+/**
+ * Type guard to check if a message is an ownership release message
+ */
+export function isOwnershipRelease(message: AppToCloudMessage): message is OwnershipReleaseMessage {
+  return message.type === AppToCloudMessageType.OWNERSHIP_RELEASE
 }

@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { Logger } from "pino";
 import UserSession from "../UserSession";
+import { ResourceTracker } from "../../../utils/resource-tracker";
 
 export interface BridgeOptions {
   bridgeUrl?: string; // ws://host:8080/ws
@@ -34,6 +35,8 @@ export class LiveKitClient {
   private shouldSwapBytes = false;
   // Optional callback for JSON events from the Go bridge (e.g., play_complete)
   private eventHandler: ((evt: unknown) => void) | null = null;
+  // Resource tracking for automatic cleanup of event listeners
+  private resources = new ResourceTracker();
 
   constructor(userSession: UserSession, opts?: BridgeOptions) {
     this.userSession = userSession;
@@ -118,7 +121,9 @@ export class LiveKitClient {
     let frameCount = 0; // TODO(isaiah): clean up after livekit feature implementation.
 
     // Wire message handler before sending commands
-    this.ws.on("message", (data: WebSocket.RawData, isBinary: boolean) => {
+    // Store reference for proper cleanup
+    const messageHandler = (data: WebSocket.RawData, isBinary: boolean) => {
+      if (this.disposed) return; // Guard against stale callback
       // Rest of logic.
       try {
         // If message is text (JSON), handle as event from Go bridge
@@ -264,20 +269,41 @@ export class LiveKitClient {
       }
 
       frameCount++;
+    };
+
+    this.ws.on("message", messageHandler);
+
+    // Track message handler for cleanup
+    this.resources.track(() => {
+      if (this.ws) this.ws.off("message", messageHandler);
     });
 
-    // Lifecycle: close/error
-    this.ws.on("close", (code: number, reason: Buffer) => {
+    // Lifecycle: close/error - store references for cleanup
+    const closeHandler = (code: number, reason: Buffer) => {
+      if (this.disposed) return; // Guard against stale callback
       this.logger.warn(
         { feature: "livekit", code, reason: reason?.toString() },
         "Bridge WS closed (server)",
       );
       this.connected = false;
       this.scheduleReconnect();
-    });
-    this.ws.on("error", (err) => {
+    };
+
+    const errorHandler = (err: Error) => {
+      if (this.disposed) return; // Guard against stale callback
       this.logger.warn({ feature: "livekit", err }, "Bridge WS error (server)");
       // keep connected flag; close will also trigger in most cases
+    };
+
+    this.ws.on("close", closeHandler);
+    this.ws.on("error", errorHandler);
+
+    // Track close/error handlers for cleanup
+    this.resources.track(() => {
+      if (this.ws) {
+        this.ws.off("close", closeHandler);
+        this.ws.off("error", errorHandler);
+      }
     });
 
     // Join room via bridge
@@ -379,6 +405,8 @@ export class LiveKitClient {
   public dispose(): void {
     // Ensure we do a full, manual-close teardown to prevent auto-reconnect
     this.disposed = true;
+    // Clean up all tracked resources (removes event listeners)
+    this.resources.dispose();
     void this.close();
   }
 

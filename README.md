@@ -32,6 +32,18 @@
   </a>
 </div>
 
+<div align="center">
+  <h4>Nightly Builds</h4>
+  <p>
+    <a href="https://github.com/Mentra-Community/MentraOS/releases/download/nightly-builds/mobile-latest.apk">
+      <img src="https://img.shields.io/badge/Mobile_App-Download_APK-blue?style=for-the-badge&logo=android" alt="Download Mobile APK" />
+    </a>
+    <a href="https://github.com/Mentra-Community/MentraOS/releases/download/nightly-builds/asg-latest.apk">
+      <img src="https://img.shields.io/badge/ASG_Client-Download_APK-green?style=for-the-badge&logo=android" alt="Download ASG APK" />
+    </a>
+  </p>
+</div>
+
 ## Supported Smart Glasses
 
 Works with Even Realities G1, Mentra Mach 1, Mentra Live. See [smart glasses compatibility list here](./glasses-compatibility.md).

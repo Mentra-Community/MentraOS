@@ -2,7 +2,6 @@ import {useFocusEffect, useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {Animated, BackHandler, TextStyle, View, ViewStyle} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
-import Toast from "react-native-toast-message"
 
 import {Header, Icon, PillButton, Screen, Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
@@ -25,7 +24,7 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
 import {useApplets, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage"
@@ -156,20 +155,20 @@ export default function AppSettings() {
               // Then uninstall it
               await restComms.uninstallApp(packageName)
 
-              // Show success message
-              Toast.show({
-                type: "success",
-                text1: translate("appSettings:uninstalledSuccess", {appName: appInfo?.name || appName}),
-              })
-
-              replace("/(tabs)/home")
+              // Show success message and navigate after dismissal
+              showAlert(
+                translate("common:success"),
+                translate("appSettings:uninstalledSuccess", {appName: appInfo?.name || appName}),
+                [{text: translate("common:ok"), onPress: () => replace("/(tabs)/home")}],
+              )
             } catch (error: any) {
               console.error("Error uninstalling app:", error)
               refreshApplets()
-              Toast.show({
-                type: "error",
-                text1: translate("appSettings:uninstallError", {error: error.message || "Unknown error"}),
-              })
+              showAlert(
+                translate("common:error"),
+                translate("appSettings:uninstallError", {error: error.message || "Unknown error"}),
+                [{text: translate("common:ok")}],
+              )
             } finally {
               setIsUninstalling(false)
             }
@@ -553,7 +552,7 @@ export default function AppSettings() {
   }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={[]} style={themed($styles.screen)}>
+    <Screen preset="fixed" safeAreaEdges={[]}>
       {isUninstalling && <LoadingOverlay message={`Uninstalling ${appInfo?.name || appName}...`} />}
 
       <View>
@@ -702,7 +701,7 @@ export default function AppSettings() {
           {/* Uninstall Button at the bottom */}
           <RouteButton
             label={translate("appSettings:uninstall")}
-            variant="destructive"
+            preset="destructive"
             onPress={() => {
               if (serverAppInfo?.uninstallable) {
                 handleUninstallApp()
@@ -820,7 +819,6 @@ const _$groupTitle: ThemedStyle<TextStyle> = () => ({})
 
 const $sectionTitleText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 14,
-  fontWeight: "400",
   color: colors.text,
   lineHeight: 20,
   letterSpacing: 0,

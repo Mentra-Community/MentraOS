@@ -74,7 +74,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({glassesModel
         {/* Title */}
         <Text style={themed($title)}>
           {glassesModelName}
-          {deviceName ? ` - ${deviceName}` : ""}
+          {deviceName && deviceName !== "NOTREQUIREDSKIP" ? ` - ${deviceName}` : ""}
         </Text>
 
         {/* Glasses image */}

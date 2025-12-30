@@ -234,7 +234,7 @@ export default function AppWebView() {
 
   // Render WebView only when finalUrl is ready
   return (
-    <Screen preset="fixed" safeAreaEdges={[]} style={themed($styles.screen)}>
+    <Screen preset="fixed" safeAreaEdges={[]}>
       <Header
         title={appName}
         titleMode="center"

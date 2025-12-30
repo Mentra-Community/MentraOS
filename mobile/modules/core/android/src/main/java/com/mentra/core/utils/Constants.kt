@@ -27,7 +27,7 @@ object MicTypes {
 // convert to kotlin:
 object MicMap {
     val map: Map<String, List<String>> = mapOf(
-        "auto" to listOf(MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM, MicTypes.BT, MicTypes.BT_CLASSIC),
+        "auto" to listOf(MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BT, MicTypes.BT_CLASSIC),
         "glasses" to listOf(MicTypes.GLASSES_CUSTOM),
         "phone" to listOf(MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM),
         "bluetooth" to listOf(MicTypes.BT, MicTypes.BT_CLASSIC, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM),

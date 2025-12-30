@@ -21,7 +21,7 @@ export function ErrorDetails(props: ErrorDetailsProps) {
   return (
     <Screen preset="fixed" safeAreaEdges={["top", "bottom"]} contentContainerStyle={themed($contentContainer)}>
       <View style={$topSection}>
-        <Icon icon="ladybug" size={64} color={theme.colors.palette.angry500} />
+        <Icon name="alert" size={64} color={theme.colors.palette.angry500} />
         <Text style={themed($heading)} preset="subheading" tx="errorScreen:title" />
         <Text tx="errorScreen:friendlySubtitle" />
       </View>

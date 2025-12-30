@@ -11,12 +11,12 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "baseUrl": ".",
+    "types": ["bun-types", "node"],
 
     "paths": {
       "@mentra/sdk": ["../sdk/dist"],
       "@mentra/types": ["./node_modules/@mentra/types/src/index.ts"],
-      "@mentra/types/*": ["./node_modules/@mentra/types/src/*"],
-      "bun-types": ["./node_modules/bun-types"]
+      "@mentra/types/*": ["./node_modules/@mentra/types/src/*"]
     },
 
     "sourceMap": true,

@@ -49,24 +49,10 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
     return photo.url
   })()
 
-  // If URL is a relative path (from server during sync), show shimmer placeholder
-  // These URLs won't work without the server base URL, so don't attempt to load them
+  // Check if URL is a relative path (from server during sync)
   const isRelativeUrl = imageUrl?.startsWith("/")
-  if (isRelativeUrl && showPlaceholder) {
-    const imageStyle = style as ViewStyle
-    return (
-      <ShimmerPlaceholder
-        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
-        shimmerStyle={{
-          width: imageStyle?.width || "100%",
-          height: imageStyle?.height || imageStyle?.width || 100,
-          borderRadius: 0,
-        }}
-        duration={1500}
-      />
-    )
-  }
 
+  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   useEffect(() => {
     // For local files (file:// URLs), skip async validation and load immediately
     // Trust our storage system since these are downloaded files we manage
@@ -127,6 +113,24 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
     if (!photo.name.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/i)) {
       setIsAvif(true)
     }
+  }
+
+  // NOW conditional returns can happen after all hooks are called
+  // If URL is a relative path (from server during sync), show shimmer placeholder
+  // These URLs won't work without the server base URL, so don't attempt to load them
+  if (isRelativeUrl && showPlaceholder) {
+    const imageStyle = style as ViewStyle
+    return (
+      <ShimmerPlaceholder
+        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+        shimmerStyle={{
+          width: imageStyle?.width || "100%",
+          height: imageStyle?.height || imageStyle?.width || 100,
+          borderRadius: 0,
+        }}
+        duration={1500}
+      />
+    )
   }
 
   // Show AVIF placeholder

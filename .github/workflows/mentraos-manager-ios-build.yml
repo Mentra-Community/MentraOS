@@ -13,16 +13,11 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "16.4"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -37,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "pnpm"
           cache-dependency-path: mobile/package.json
 
@@ -51,15 +46,15 @@ jobs:
           # Create .env from example
           cp .env.example .env
 
+      - name: Run Expo prebuild
+        working-directory: ./mobile
+        run: pnpm expo prebuild --platform ios
+
       - name: Setup Sherpa Onnx
         working-directory: ./mobile
         run: |
           chmod +x scripts/setup-sherpa-onnx-optional.sh
           ./scripts/setup-sherpa-onnx-optional.sh
-
-      - name: Run Expo prebuild
-        working-directory: ./mobile
-        run: pnpm expo prebuild --platform ios
 
       - name: Install CocoaPods dependencies
         working-directory: ./mobile/ios
@@ -87,7 +82,7 @@ jobs:
                      -scheme MentraOS \
                      -configuration Debug \
                      -sdk iphonesimulator \
-                     -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+                     -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.0' \
                      -derivedDataPath build
 
       - name: Build iOS app for Device

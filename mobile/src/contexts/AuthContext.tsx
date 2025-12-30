@@ -44,7 +44,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     // 2. Setup auth state change listener
     const setupAuthListener = async () => {
-      const res = mentraAuth.onAuthStateChange((_event, session: any) => {
+      const res = await mentraAuth.onAuthStateChange((_event, session: any) => {
         // console.log("AuthContext: Auth state changed:", event)
         // console.log("AuthContext: Session:", session)
         // console.log("AuthContext: User:", session?.user)

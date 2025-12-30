@@ -1,10 +1,9 @@
+import {useRootNavigationState} from "expo-router"
 import {useState, useEffect} from "react"
-import {View, ActivityIndicator, Platform, Linking} from "react-native"
-import {TextStyle, ViewStyle} from "react-native"
+import {View, ActivityIndicator, Platform, Linking, TextStyle, ViewStyle} from "react-native"
 import semver from "semver"
 
-import {Button, Icon, Screen} from "@/components/ignite"
-import {Text} from "@/components/ignite"
+import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {useAuth} from "@/contexts/AuthContext"
 import {useDeeplink} from "@/contexts/DeeplinkContext"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
@@ -38,6 +37,8 @@ export default function InitScreen() {
   const {user, session, loading: authLoading} = useAuth()
   const {replace, getPendingRoute, setPendingRoute} = useNavigationHistory()
   const {processUrl} = useDeeplink()
+  const rootNavigationState = useRootNavigationState()
+  const isNavigationReady = rootNavigationState?.key != null
 
   // State
   const [state, setState] = useState<ScreenState>("loading")
@@ -90,7 +91,6 @@ export default function InitScreen() {
     }
 
     setTimeout(() => {
-      // clearHistoryAndGoHome()
       replace("/(tabs)/home")
     }, NAVIGATION_DELAY)
   }
@@ -237,17 +237,18 @@ export default function InitScreen() {
 
   // Effects
   useEffect(() => {
-    console.log("INIT: Auth loading:", authLoading)
+    console.log("INIT: Auth loading:", authLoading, "Navigation ready:", isNavigationReady)
     const init = async () => {
       await checkCustomUrl()
       await checkCloudVersion()
     }
-    if (!authLoading) {
-      console.log("INIT: Auth loaded, starting init")
-      // auth is loaded, so we can start:
+    // Wait for both auth to load AND navigation to be ready before initializing
+    // This prevents "navigate before mounting Root Layout" crashes (MENTRA-OS-152)
+    if (!authLoading && isNavigationReady) {
+      console.log("INIT: Auth loaded and navigation ready, starting init")
       init()
     }
-  }, [authLoading])
+  }, [authLoading, isNavigationReady])
 
   // Render
   if (state === "loading") {

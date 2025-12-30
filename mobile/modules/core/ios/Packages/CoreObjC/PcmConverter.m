@@ -66,38 +66,38 @@ static const uint16_t outputByteCount = 20;
     _decoderInitialized = YES;
 }
 
-- (NSMutableData *)decode:(NSData *)lc3data {
+- (NSMutableData *)decode:(NSData *)lc3data frameSize:(NSInteger)frameSize {
     if (lc3data == nil) {
         printf("Failed to decode Base64 data\n");
         return [[NSMutableData alloc] init];
     }
-    
+
     // Setup decoder on first use
     [self setupDecoder];
-    
+
     if (!_decoderInitialized) {
         printf("Decoder not initialized\n");
         return [[NSMutableData alloc] init];
     }
-    
+
     int totalBytes = (int)lc3data.length;
     int bytesRead = 0;
-    
+
     NSMutableData *pcmData = [[NSMutableData alloc] init];
-    
+
     while (bytesRead < totalBytes) {
-        int bytesToRead = MIN(outputByteCount, totalBytes - bytesRead);
+        int bytesToRead = MIN(frameSize, totalBytes - bytesRead);
         NSRange range = NSMakeRange(bytesRead, bytesToRead);
         NSData *subdata = [lc3data subdataWithRange:range];
         unsigned char *inBuf = (unsigned char *)subdata.bytes;
-        
-        lc3_decode(_lc3_decoder, inBuf, outputByteCount, LC3_PCM_FORMAT_S16, _outBuf, 1);
-        
+
+        lc3_decode(_lc3_decoder, inBuf, frameSize, LC3_PCM_FORMAT_S16, _outBuf, 1);
+
         NSData *data = [NSData dataWithBytes:_outBuf length:_bytesOfFrames];
         [pcmData appendData:data];
         bytesRead += bytesToRead;
     }
-    
+
     return pcmData;
 }
 

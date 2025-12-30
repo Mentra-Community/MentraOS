@@ -48,7 +48,7 @@ const fonts = {
     light: "spaceGroteskLight",
     normal: "spaceGroteskRegular",
     medium: "spaceGroteskMedium",
-    semiBold: "spaceGroteskSemiBold",
+    semibold: "spaceGroteskSemiBold",
     bold: "spaceGroteskBold",
   },
   sfProRounded: {
@@ -56,7 +56,7 @@ const fonts = {
     light: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-light"}),
     normal: Platform.select({ios: "SF Pro Rounded", android: "sans-serif"}),
     medium: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-medium"}),
-    semiBold: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-medium"}),
+    semibold: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-medium"}),
     bold: Platform.select({ios: "SF Pro Rounded", android: "sans-serif"}),
   },
   helveticaNeue: {
@@ -89,7 +89,7 @@ const fonts = {
     light: "redHatDisplayLight",
     normal: "redHatDisplayRegular",
     medium: "redHatDisplayMedium",
-    semiBold: "redHatDisplaySemiBold",
+    semibold: "redHatDisplaySemiBold",
     bold: "redHatDisplayBold",
   },
 }

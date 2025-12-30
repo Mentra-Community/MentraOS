@@ -1,10 +1,10 @@
+import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import CoreModule from "core"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import bridge from "@/bridge/MantleBridge"
-import {Text} from "@/components/ignite"
-import {PillButton} from "@/components/ignite"
+import {Text, PillButton} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useCoreStatus} from "@/contexts/CoreStatusProvider"
@@ -17,8 +17,6 @@ import showAlert from "@/utils/AlertUtils"
 import {MOCK_CONNECTION} from "@/utils/Constants"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useAppTheme} from "@/utils/useAppTheme"
-
-import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
 
 // Nex Interface Version - Single source of truth
 export const NEX_INTERFACE_VERSION = "1.0.0"

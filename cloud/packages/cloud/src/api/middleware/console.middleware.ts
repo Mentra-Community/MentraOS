@@ -13,19 +13,9 @@ import jwt from "jsonwebtoken";
  * - process.env.AUGMENTOS_AUTH_JWT_SECRET (fallback)
  */
 
-// Extend Express Request to include console auth context
-declare module "express-serve-static-core" {
-  interface Request {
-    console?: {
-      email: string;
-    };
-  }
-}
+// Type declarations for req.console are in src/types/express.d.ts
 
-const CONSOLE_JWT_SECRET =
-  process.env.CONSOLE_AUTH_JWT_SECRET ||
-  process.env.AUGMENTOS_AUTH_JWT_SECRET ||
-  "";
+const CONSOLE_JWT_SECRET = process.env.CONSOLE_AUTH_JWT_SECRET || process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
 
 /**
  * Minimal console auth middleware:
@@ -33,11 +23,7 @@ const CONSOLE_JWT_SECRET =
  * - Verifies JWT using CONSOLE_JWT_SECRET/AUGMENTOS_AUTH_JWT_SECRET
  * - Extracts `email` from payload and sets `req.console = { email }`
  */
-export const authenticateConsole = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
+export const authenticateConsole = async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!CONSOLE_JWT_SECRET) {
       return res.status(500).json({
@@ -66,10 +52,7 @@ export const authenticateConsole = async (
       });
     }
 
-    const email =
-      typeof payload === "object" && typeof payload.email === "string"
-        ? payload.email.toLowerCase()
-        : null;
+    const email = typeof payload === "object" && typeof payload.email === "string" ? payload.email.toLowerCase() : null;
 
     if (!email) {
       return res.status(401).json({

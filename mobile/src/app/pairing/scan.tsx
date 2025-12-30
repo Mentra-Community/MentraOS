@@ -15,17 +15,16 @@ import {
   ViewStyle,
 } from "react-native"
 import {useSharedValue, withDelay, withTiming} from "react-native-reanimated"
-import Icon from "react-native-vector-icons/FontAwesome"
 
-import {Button, Header, Screen, Text} from "@/components/ignite"
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/misc/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {SearchResultDevice, useSearchResults} from "@/contexts/SearchResultsContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {MOCK_CONNECTION} from "@/utils/Constants"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -33,8 +32,19 @@ import {PermissionFeatures, requestFeaturePermissions} from "@/utils/Permissions
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {useAppTheme} from "@/utils/useAppTheme"
 
+class SearchResultDevice {
+  deviceMode: string
+  deviceName: string
+  deviceAddress: string
+  constructor(deviceMode: string, deviceName: string, deviceAddress: string) {
+    this.deviceMode = deviceMode
+    this.deviceName = deviceName
+    this.deviceAddress = deviceAddress
+  }
+}
+
 export default function SelectGlassesBluetoothScreen() {
-  const {searchResults, setSearchResults} = useSearchResults()
+  const [searchResults, setSearchResults] = useState<SearchResultDevice[]>([])
   const {glassesModelName}: {glassesModelName: string} = useLocalSearchParams()
   const {theme, themed} = useAppTheme()
   const {goBack, replace, clearHistoryAndGoHome} = useNavigationHistory()
@@ -234,12 +244,16 @@ export default function SelectGlassesBluetoothScreen() {
 
   const filterDeviceName = (deviceName: string) => {
     // filter out MENTRA_LIVE from the device name:
-    return deviceName.replace("MENTRA_LIVE_BLE_", "")
+    let newName = deviceName.replace("MENTRA_LIVE_BLE_", "")
+    newName = newName.replace("MENTRA_LIVE_BT_", "")
+    newName = newName.replace("Mentra_Live_", "")
+    newName = newName.replace("MENTRA_LIVE_", "")
+    return newName
   }
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)} safeAreaEdges={["bottom"]}>
-      <Header leftIcon="chevron-left" onLeftPress={goBack} />
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+      <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
       <View style={themed($container)}>
         <View style={themed($centerWrapper)}>
           <View style={themed($contentContainer)}>
@@ -268,7 +282,7 @@ export default function SelectGlassesBluetoothScreen() {
                           numberOfLines={2}
                         />
                       </View>
-                      <Icon name="angle-right" size={24} color={theme.colors.text} />
+                      <Icon name="chevron-right" size={24} color={theme.colors.text} />
                     </TouchableOpacity>
                   ))}
                 </Group>
@@ -288,7 +302,7 @@ export default function SelectGlassesBluetoothScreen() {
         </View>
         <Button
           preset="secondary"
-          text="I need more help"
+          tx="pairing:needMoreHelp"
           onPress={() => setShowTroubleshootingModal(true)}
           style={themed($helpButton)}
         />

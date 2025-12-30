@@ -109,7 +109,7 @@ const HeadUpAngleArcModal = ({visible, initialAngle, maxAngle = 60, onCancel, on
             <View style={themed($modalContent)}>
               <TouchableWithoutFeedback>
                 <View style={themed($modalHeader)}>
-                  <Text text="Adjust Head-Up Angle" style={themed($modalLabel)} />
+                  <Text text="Adjust Head-Up Angle" style={themed($modalLabel)} weight="bold" />
                   <TouchableOpacity
                     hitSlop={10}
                     onPress={() => {
@@ -131,7 +131,7 @@ const HeadUpAngleArcModal = ({visible, initialAngle, maxAngle = 60, onCancel, on
                 </Svg>
               </View>
 
-              <Text text={`${Math.round(angle)}°`} style={themed($angleLabel)} />
+              <Text text={`${Math.round(angle)}°`} style={themed($angleLabel)} weight="bold" />
 
               <View style={themed($buttonRow)}>
                 <PillButton
@@ -153,7 +153,6 @@ export default HeadUpAngleArcModal
 
 const $angleLabel: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 36,
-  fontWeight: "bold",
   marginVertical: 20,
   color: colors.text,
 })
@@ -202,7 +201,6 @@ const $modalHeader: ThemedStyle<ViewStyle> = () => ({
 
 const $modalLabel: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 18,
-  fontWeight: "bold",
   color: colors.text,
 })
 

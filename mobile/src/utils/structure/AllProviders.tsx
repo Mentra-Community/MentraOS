@@ -2,7 +2,7 @@ import {BottomSheetModalProvider} from "@gorhom/bottom-sheet"
 import * as Sentry from "@sentry/react-native"
 import {PostHogProvider} from "posthog-react-native"
 import {Suspense} from "react"
-import {TextStyle, View, ViewStyle} from "react-native"
+import {View} from "react-native"
 import ErrorBoundary from "react-native-error-boundary"
 import {GestureHandlerRootView} from "react-native-gesture-handler"
 import {KeyboardProvider} from "react-native-keyboard-controller"
@@ -14,16 +14,13 @@ import {Text} from "@/components/ignite"
 import BackgroundGradient from "@/components/ui/BackgroundGradient"
 import {AppStoreWebviewPrefetchProvider} from "@/contexts/AppStoreWebviewPrefetchProvider"
 import {AuthProvider} from "@/contexts/AuthContext"
-import {ButtonActionProvider} from "@/contexts/ButtonActionProvider"
 import {CoreStatusProvider} from "@/contexts/CoreStatusProvider"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {NavigationHistoryProvider} from "@/contexts/NavigationHistoryContext"
-import {SearchResultsProvider} from "@/contexts/SearchResultsContext"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
 import {ModalProvider} from "@/utils/AlertUtils"
 import {withWrappers} from "@/utils/structure/with-wrappers"
-import {useAppTheme, useThemeProvider} from "@/utils/useAppTheme"
+import {useThemeProvider} from "@/utils/useAppTheme"
 
 // components at the top wrap everything below them in order:
 export const AllProviders = withWrappers(
@@ -72,9 +69,7 @@ export const AllProviders = withWrappers(
   KeyboardProvider,
   CoreStatusProvider,
   AuthProvider,
-  SearchResultsProvider,
   AppStoreWebviewPrefetchProvider,
-  ButtonActionProvider,
   NavigationHistoryProvider,
   DeeplinkProvider,
   props => {
@@ -111,41 +106,11 @@ export const AllProviders = withWrappers(
     )
   },
   props => {
-    const {themed} = useAppTheme()
-    const toastConfig = {
-      baseToast: ({text1, props}: {text1?: string; props?: {icon?: React.ReactNode}}) => (
-        <View style={themed($toastContainer)}>
-          {props?.icon && <View style={themed($toastIcon)}>{props.icon}</View>}
-          <Text text={text1} style={themed($toastText)} />
-        </View>
-      ),
-    }
     return (
       <>
         {props.children}
-        <Toast config={toastConfig} />
+        <Toast />
       </>
     )
   },
 )
-
-const $toastIcon: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginRight: spacing.s4,
-  justifyContent: "center",
-  alignItems: "center",
-})
-
-const $toastText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  color: colors.text,
-  fontSize: spacing.s4,
-})
-
-const $toastContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  backgroundColor: colors.background,
-  borderRadius: spacing.s4,
-  paddingVertical: spacing.s3,
-  paddingHorizontal: spacing.s4,
-  marginHorizontal: spacing.s4,
-})

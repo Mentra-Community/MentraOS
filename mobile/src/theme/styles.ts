@@ -8,10 +8,10 @@ export const $styles = {
   flex1: {flex: 1} as ViewStyle,
   flexWrap: {flexWrap: "wrap"} as ViewStyle,
 
-  container: {
-    paddingTop: spacing.lg + spacing.xl,
-    paddingHorizontal: spacing.lg,
-  } as ViewStyle,
+  // container: {
+  //   paddingTop: spacing.lg + spacing.xl,
+  //   paddingHorizontal: spacing.lg,
+  // } as ViewStyle,
 
   toggleInner: {
     width: "100%",
@@ -23,4 +23,8 @@ export const $styles = {
   screen: {
     paddingHorizontal: spacing.s6,
   },
+  scrollView: {
+    marginRight: -spacing.s6,
+    paddingRight: spacing.s6,
+  } as ViewStyle,
 }

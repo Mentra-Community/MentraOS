@@ -1,16 +1,14 @@
-import {TouchableOpacity, View, ViewStyle, TextStyle} from "react-native"
-
+import {TouchableOpacity, View, ViewStyle} from "react-native"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
 import {Badge} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {useBackgroundApps} from "@/stores/applets"
-import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 export const BackgroundAppsLink = ({style}: {style?: ViewStyle}) => {
-  const {themed, theme} = useAppTheme()
+  const {theme} = useAppTheme()
   const {push} = useNavigationHistory()
   const {active} = useBackgroundApps()
   const activeCount = active.length
@@ -20,86 +18,36 @@ export const BackgroundAppsLink = ({style}: {style?: ViewStyle}) => {
   }
 
   return (
-    <TouchableOpacity onPress={handlePress} style={[themed($container), style]}>
-      <View style={themed($content)}>
+    <TouchableOpacity
+      onPress={handlePress}
+      style={style}
+      className="bg-primary-foreground py-3 px-2 rounded-2xl flex-row justify-between items-center min-h-[72px]">
+      <View className="flex-row items-center gap-3 flex-1 px-2">
         {/* Stacked app icons */}
-        <View style={themed($iconStack)}>
+        <View className="flex-row items-center">
           {active.slice(0, 3).map((app, index) => (
             <View
               key={app.packageName}
-              style={[
-                {
-                  zIndex: 3 - index,
-                  marginLeft: index > 0 ? -theme.spacing.s8 : 0,
-                },
-              ]}>
-              <AppIcon app={app} style={themed($appIcon)} />
+              style={{
+                zIndex: 3 - index,
+                marginLeft: index > 0 ? -theme.spacing.s8 : 0,
+              }}>
+              <AppIcon app={app} className="w-12 h-12" />
             </View>
           ))}
         </View>
 
         {/* Text and badge */}
-        <View style={themed($textContainer)}>
-          <Text style={themed($label)}>{translate("home:backgroundApps")}</Text>
-          {activeCount > 0 && <Badge text={`${activeCount} ${translate("home:backgroundAppsActive")}`} />}
+        <View className="flex-col gap-1 flex-1">
+          <Text className="font-semibold text-secondary-foreground text-sm">{translate("home:backgroundApps")}</Text>
+          {activeCount > 0 && <Badge text={translate("home:backgroundAppsActiveCount", {count: activeCount})} />}
         </View>
       </View>
 
       {/* Arrow */}
-      <View style={themed($iconContainer)}>
+      <View className="bg-background p-3 w-12 h-12 rounded-full items-center justify-center">
         <Icon name="arrow-right" size={24} color={theme.colors.foreground} />
       </View>
     </TouchableOpacity>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
-  paddingVertical: spacing.s3,
-  paddingHorizontal: spacing.s2,
-  borderRadius: spacing.s4,
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-  minHeight: 72,
-})
-
-const $content: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  gap: spacing.s3,
-  flex: 1,
-  paddingHorizontal: spacing.s2,
-})
-
-const $iconStack: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  alignItems: "center",
-})
-
-const $appIcon: ThemedStyle<ViewStyle> = () => ({
-  width: 56,
-  height: 56,
-})
-
-const $textContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "column",
-  gap: spacing.s1,
-  flex: 1,
-})
-
-const $label: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontWeight: 600,
-  color: colors.secondary_foreground,
-  fontSize: 14,
-})
-
-const $iconContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  padding: spacing.s3,
-  width: spacing.s12,
-  height: spacing.s12,
-  borderRadius: spacing.s12,
-  alignItems: "center",
-  justifyContent: "center",
-})

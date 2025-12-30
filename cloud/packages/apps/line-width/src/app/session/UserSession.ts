@@ -1,0 +1,131 @@
+import { AppSession, TranscriptionData } from "@mentra/sdk";
+
+import { languageToLocale, convertLineWidth } from "../utils";
+
+import { DisplayManager } from "./DisplayManager";
+import { SettingsManager } from "./SettingsManager";
+import { TranscriptsManager } from "./TranscriptsManager";
+
+
+export class UserSession {
+  static readonly userSessions: Map<string, UserSession> = new Map<string, UserSession>();
+  readonly userId: string;
+  readonly sessionId: string;
+  readonly appSession: AppSession;
+  readonly logger: AppSession["logger"];
+  readonly transcripts: TranscriptsManager;
+  readonly settings: SettingsManager;
+  readonly display: DisplayManager;
+
+  private transcriptionCleanup: (() => void) | null = null;
+
+  constructor(appSession: AppSession) {
+    this.appSession = appSession;
+    this.userId = appSession.userId;
+    this.sessionId = appSession.sessionId || "";
+    this.logger = appSession.logger;
+    this.transcripts = new TranscriptsManager(this);
+    this.settings = new SettingsManager(this);
+    this.display = new DisplayManager(this);
+    UserSession.userSessions.set(this.userId, this);
+  }
+
+  /**
+   * Initialize the user session with settings and transcription subscription
+   * This should be called after construction to set up the session
+   */
+  async initialize(): Promise<void> {
+    try {
+      // Initialize settings first (loads from cloud)
+      await this.settings.initialize();
+
+      // Get language configuration from settings
+      const language = await this.settings.getLanguage();
+      const languageHints = await this.settings.getLanguageHints();
+      const locale = languageToLocale(language);
+
+      // Get display settings and update DisplayManager
+      // Visual width calculation handles all languages automatically (no isChineseLanguage needed)
+      let displayWidth = await this.settings.getDisplayWidth();
+      displayWidth = convertLineWidth(displayWidth.toString());
+      const displayLines = await this.settings.getDisplayLines();
+      this.display.updateSettings(displayWidth, displayLines);
+
+      // Subscribe to transcription events with language and hints
+      // If "auto" mode, use "en-US" as fallback for SDK
+      const subscriptionLocale = language === "auto" ? "en-US" : locale;
+
+      this.transcriptionCleanup = this.appSession.events.onTranscriptionForLanguage(
+        subscriptionLocale,
+        (data: TranscriptionData) => {
+          // Route all transcriptions through TranscriptsManager
+          this.transcripts.handleTranscription(data);
+        },
+        {
+          hints: languageHints,
+        },
+      );
+
+      this.logger.info(
+        {
+          language,
+          locale: subscriptionLocale,
+          hints: languageHints,
+          displayLines,
+          displayWidth,
+        },
+        `UserSession initialized with language ${language}`,
+      );
+    } catch (error) {
+      this.logger.error({ error }, "Error initializing UserSession, using fallback subscription");
+
+      // Fallback: subscribe with default language (en-US) and no hints
+      this.transcriptionCleanup = this.appSession.events.onTranscriptionForLanguage(
+        "en-US",
+        (data: TranscriptionData) => {
+          this.transcripts.handleTranscription(data);
+        },
+      );
+    }
+  }
+
+  dispose() {
+    // Clean up transcription subscription
+    if (this.transcriptionCleanup) {
+      this.transcriptionCleanup();
+      this.transcriptionCleanup = null;
+    }
+
+    this.transcripts.dispose();
+    this.settings.dispose();
+    this.display.dispose();
+    UserSession.userSessions.delete(this.userId);
+  }
+
+  /**
+   * Get a user session by userId
+   */
+  public static getUserSession(userId: string): UserSession | undefined {
+    return UserSession.userSessions.get(userId);
+  }
+
+  /**
+   * Get a user session by userId, but only if the sessionId matches.
+   * This prevents cross-cloud contamination where an old cloud's onStop
+   * could dispose a session that has already been replaced by a new cloud.
+   */
+  public static getUserSessionIfMatches(userId: string, sessionId: string): UserSession | undefined {
+    const session = UserSession.userSessions.get(userId);
+    if (session && session.sessionId === sessionId) {
+      return session;
+    }
+    // Session exists but sessionId doesn't match - this is likely a stale onStop from an old cloud
+    if (session) {
+      console.log(
+        `[UserSession] Ignoring request for userId=${userId} - sessionId mismatch: ` +
+          `requested=${sessionId}, current=${session.sessionId}`,
+      );
+    }
+    return undefined;
+  }
+}

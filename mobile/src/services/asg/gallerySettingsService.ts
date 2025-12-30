@@ -23,7 +23,8 @@ export class GallerySettingsService {
   async getSettings(): Promise<GallerySettings> {
     const res = storage.load<GallerySettings>(this.SETTINGS_KEY)
     if (res.is_error()) {
-      console.error("[GallerySettings] Error loading settings:", res.error)
+      // Not an error - just means settings haven't been saved yet (first use)
+      // Return defaults silently
       return this.DEFAULT_SETTINGS
     }
     const stored = res.value

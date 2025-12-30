@@ -13,17 +13,15 @@
  * - Issues device commands (SET_LOCATION_TIER / REQUEST_SINGLE_LOCATION) when appropriate
  */
 
-import WebSocket from "ws";
 import type { Logger } from "pino";
-import type UserSession from "./UserSession";
-import {
-  CloudToAppMessageType,
-  CloudToGlassesMessageType,
-  DataStream,
-  LocationUpdate,
-  StreamType,
-} from "@mentra/sdk";
+
+
+import { CloudToAppMessageType, CloudToGlassesMessageType, DataStream, LocationUpdate, StreamType } from "@mentra/sdk";
+
 import { User } from "../../models/user.model";
+import { WebSocketReadyState } from "../websocket/types";
+
+import type UserSession from "./UserSession";
 
 /**
  * Tier hierarchy for location accuracy (higher index = higher accuracy/frequency)
@@ -67,6 +65,12 @@ type ExpoLocationCoords = {
   timestamp?: string | number | Date | null;
 };
 
+// Full Expo LocationObject (has nested coords)
+type ExpoLocationObject = {
+  coords: ExpoLocationCoords;
+  timestamp?: number | null;
+};
+
 type BasicLocation = {
   lat: number;
   lng: number;
@@ -106,14 +110,9 @@ export class LocationManager {
     this.logger = userSession.logger.child({ service: "LocationManager" });
 
     // Seed from DB cold cache (async, non-blocking)
-    this.seedFromDatabaseCache().catch((err) =>
-      this.logger.warn(err, "Could not seed location from DB cold cache"),
-    );
+    this.seedFromDatabaseCache().catch((err) => this.logger.warn(err, "Could not seed location from DB cold cache"));
 
-    this.logger.info(
-      { userId: userSession.userId },
-      "LocationManager initialized",
-    );
+    this.logger.info({ userId: userSession.userId }, "LocationManager initialized");
   }
 
   /**
@@ -176,10 +175,7 @@ export class LocationManager {
         this.broadcastLocation(normalized);
       }
     } catch (error) {
-      this.logger.error(
-        error as Error,
-        "Error ingesting location update from device WS",
-      );
+      this.logger.error(error as Error, "Error ingesting location update from device WS");
     }
   }
 
@@ -189,38 +185,21 @@ export class LocationManager {
    * - Otherwise, if device WS is connected, forward a REQUEST_SINGLE_LOCATION to device and record the pending poll.
    * - If device is not available, keep pending and rely on REST client to post a correlated response.
    */
-  public async handlePollRequestFromApp(
-    accuracy: string,
-    correlationId: string,
-    packageName: string,
-  ): Promise<void> {
+  public async handlePollRequestFromApp(accuracy: string, correlationId: string, packageName: string): Promise<void> {
     try {
       // If we already have a fresh-enough cached location, respond immediately
-      if (
-        this.lastLocation &&
-        this.isFreshEnough(this.lastLocation, accuracy)
-      ) {
-        this.sendTargetedLocationToApp(
-          this.lastLocation,
-          correlationId,
-          packageName,
-        );
+      if (this.lastLocation && this.isFreshEnough(this.lastLocation, accuracy)) {
+        this.sendTargetedLocationToApp(this.lastLocation, correlationId, packageName);
         return;
       }
 
       // Otherwise, command device if possible
-      if (
-        this.userSession.websocket &&
-        this.userSession.websocket.readyState === WebSocket.OPEN
-      ) {
+      if (this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN) {
         this.pendingPolls.set(correlationId, packageName);
-        this.sendDeviceCommand(
-          CloudToGlassesMessageType.REQUEST_SINGLE_LOCATION,
-          {
-            accuracy,
-            correlationId,
-          },
-        );
+        this.sendDeviceCommand(CloudToGlassesMessageType.REQUEST_SINGLE_LOCATION, {
+          accuracy,
+          correlationId,
+        });
         this.logger.info(
           {
             userId: this.userSession.userId,
@@ -244,10 +223,7 @@ export class LocationManager {
         );
       }
     } catch (error) {
-      this.logger.error(
-        error as Error,
-        "Error handling App location poll request",
-      );
+      this.logger.error(error as Error, "Error handling App location poll request");
     }
   }
 
@@ -263,32 +239,21 @@ export class LocationManager {
    * Handle subscription change: update effective tier in-memory
    * and optionally send a tier command to device if connected.
    */
-  public onSubscriptionChange(
-    newEffectiveTier: string | null | undefined,
-  ): void {
+  public onSubscriptionChange(newEffectiveTier: string | null | undefined): void {
     try {
       const desiredTier = newEffectiveTier ?? "reduced";
       if (this.effectiveTier === desiredTier) {
-        this.logger.debug(
-          { userId: this.userSession.userId, tier: desiredTier },
-          "Location effective tier unchanged",
-        );
+        this.logger.debug({ userId: this.userSession.userId, tier: desiredTier }, "Location effective tier unchanged");
         return;
       }
 
       this.effectiveTier = desiredTier;
       // If device is connected, set the new tier
-      if (
-        this.userSession.websocket &&
-        this.userSession.websocket.readyState === WebSocket.OPEN
-      ) {
+      if (this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN) {
         this.sendDeviceCommand(CloudToGlassesMessageType.SET_LOCATION_TIER, {
           tier: desiredTier,
         });
-        this.logger.info(
-          { userId: this.userSession.userId, tier: desiredTier },
-          "Issued SET_LOCATION_TIER to device",
-        );
+        this.logger.info({ userId: this.userSession.userId, tier: desiredTier }, "Issued SET_LOCATION_TIER to device");
       } else {
         this.logger.warn(
           { userId: this.userSession.userId, tier: desiredTier },
@@ -296,10 +261,7 @@ export class LocationManager {
         );
       }
     } catch (error) {
-      this.logger.error(
-        error as Error,
-        "Error handling location subscription change",
-      );
+      this.logger.error(error as Error, "Error handling location subscription change");
     }
   }
 
@@ -308,14 +270,10 @@ export class LocationManager {
    * Receives raw location subscription data and computes effective tier.
    * Also handles relay to newly subscribed apps.
    */
-  public handleSubscriptionUpdate(
-    subs: Array<{ packageName: string; rate: string }>,
-  ): void {
+  public handleSubscriptionUpdate(subs: Array<{ packageName: string; rate: string }>): void {
     try {
       // Detect and relay to newly subscribed apps
-      const newPackages = subs.filter(
-        (s) => !this.subscribedApps.has(s.packageName),
-      );
+      const newPackages = subs.filter((s) => !this.subscribedApps.has(s.packageName));
 
       for (const sub of newPackages) {
         this.relayToApp(sub.packageName);
@@ -351,10 +309,7 @@ export class LocationManager {
    */
   public handleUnsubscribe(packageName: string): void {
     this.subscribedApps.delete(packageName);
-    this.logger.debug(
-      { packageName },
-      "Removed app from location subscriptions",
-    );
+    this.logger.debug({ packageName }, "Removed app from location subscriptions");
   }
 
   /**
@@ -394,10 +349,7 @@ export class LocationManager {
     this.lastLocation = undefined;
     this.effectiveTier = undefined;
 
-    this.logger.info(
-      { userId: this.userSession.userId },
-      "LocationManager disposed",
-    );
+    this.logger.info({ userId: this.userSession.userId }, "LocationManager disposed");
   }
 
   // ===== Internal helpers =====
@@ -407,19 +359,13 @@ export class LocationManager {
    */
   private relayToApp(packageName: string): void {
     if (!this.lastLocation) {
-      this.logger.debug(
-        { packageName },
-        "No location to relay to newly subscribed app",
-      );
+      this.logger.debug({ packageName }, "No location to relay to newly subscribed app");
       return;
     }
 
     const appWebsocket = this.userSession.appWebsockets.get(packageName);
-    if (!appWebsocket || appWebsocket.readyState !== WebSocket.OPEN) {
-      this.logger.warn(
-        { packageName },
-        "App websocket not available for location relay",
-      );
+    if (!appWebsocket || appWebsocket.readyState !== WebSocketReadyState.OPEN) {
+      this.logger.warn({ packageName }, "App websocket not available for location relay");
       return;
     }
 
@@ -462,9 +408,7 @@ export class LocationManager {
       }
     }
 
-    return highestTierIndex > -1
-      ? TIER_HIERARCHY[highestTierIndex]
-      : defaultTier;
+    return highestTierIndex > -1 ? TIER_HIERARCHY[highestTierIndex] : defaultTier;
   }
 
   /**
@@ -478,10 +422,7 @@ export class LocationManager {
           lat: user.location.lat,
           lng: user.location.lng,
           accuracy: user.location.accuracy ?? null,
-          timestamp:
-            user.location.timestamp instanceof Date
-              ? user.location.timestamp
-              : new Date(),
+          timestamp: user.location.timestamp instanceof Date ? user.location.timestamp : new Date(),
         };
         this.logger.info("Seeded lastLocation from DB cold cache");
       }
@@ -490,10 +431,7 @@ export class LocationManager {
     }
   }
 
-  private isFreshEnough(
-    loc: NormalizedLocation,
-    requestedTier: string,
-  ): boolean {
+  private isFreshEnough(loc: NormalizedLocation, requestedTier: string): boolean {
     const maxAge = TIER_MAX_AGE_MS[requestedTier] ?? TIER_MAX_AGE_MS["reduced"];
     const ageMs = Date.now() - loc.timestamp.getTime();
     return ageMs <= maxAge;
@@ -517,14 +455,10 @@ export class LocationManager {
     }
   }
 
-  private sendTargetedLocationToApp(
-    loc: NormalizedLocation,
-    correlationId: string,
-    packageName: string,
-  ): void {
+  private sendTargetedLocationToApp(loc: NormalizedLocation, correlationId: string, packageName: string): void {
     try {
       const appWs = this.userSession.appWebsockets.get(packageName);
-      if (!appWs || appWs.readyState !== WebSocket.OPEN) {
+      if (!appWs || appWs.readyState !== WebSocketReadyState.OPEN) {
         this.logger.warn(
           { userId: this.userSession.userId, packageName, correlationId },
           "Target App websocket not available for location poll response",
@@ -546,26 +480,14 @@ export class LocationManager {
         "Sent targeted location poll response to App",
       );
     } catch (error) {
-      this.logger.error(
-        error as Error,
-        "Error sending targeted location to App",
-      );
+      this.logger.error(error as Error, "Error sending targeted location to App");
     }
   }
 
-  private sendDeviceCommand(
-    type: CloudToGlassesMessageType,
-    payload: Record<string, unknown>,
-  ): void {
+  private sendDeviceCommand(type: CloudToGlassesMessageType, payload: Record<string, unknown>): void {
     try {
-      if (
-        !this.userSession.websocket ||
-        this.userSession.websocket.readyState !== WebSocket.OPEN
-      ) {
-        this.logger.warn(
-          { userId: this.userSession.userId, type },
-          "Cannot send device command; WS not available",
-        );
+      if (!this.userSession.websocket || this.userSession.websocket.readyState !== WebSocketReadyState.OPEN) {
+        this.logger.warn({ userId: this.userSession.userId, type }, "Cannot send device command; WS not available");
         return;
       }
 
@@ -597,10 +519,7 @@ export class LocationManager {
     }
   }
 
-  private toSdkLocationUpdate(
-    loc: NormalizedLocation,
-    correlationId?: string | null,
-  ): LocationUpdate {
+  private toSdkLocationUpdate(loc: NormalizedLocation, correlationId?: string | null): LocationUpdate {
     // Only include fields supported by current SDK LocationUpdate
     const update: LocationUpdate = {
       type: StreamType.LOCATION_UPDATE,
@@ -613,28 +532,43 @@ export class LocationManager {
     return update;
   }
 
-  private normalizeFromClient(
-    raw: BasicLocation | ExpoLocationCoords,
-  ): NormalizedLocation | null {
+  private normalizeFromClient(raw: BasicLocation | ExpoLocationCoords | ExpoLocationObject): NormalizedLocation | null {
     try {
-      // Expo payload
+      // Expo LocationObject format (with nested coords)
+      if ("coords" in raw && raw.coords && typeof raw.coords === "object") {
+        const coords = raw.coords as ExpoLocationCoords;
+        const lat = Number(coords.latitude);
+        const lng = Number(coords.longitude);
+        if (!isFinite(lat) || !isFinite(lng)) return null;
+
+        // Timestamp can be on the outer object or in coords
+        const timestamp = this.coerceTimestamp(raw.timestamp ?? coords.timestamp);
+        return {
+          lat,
+          lng,
+          timestamp,
+          accuracy: this.toNumberOrNull(coords.accuracy),
+          altitude: this.toNumberOrNull(coords.altitude),
+          altitudeAccuracy: this.toNumberOrNull(coords.altitudeAccuracy),
+          heading: this.toNumberOrNull(coords.heading),
+          speed: this.toNumberOrNull(coords.speed),
+        };
+      }
+
+      // Expo coords directly (latitude/longitude at top level)
       if ("latitude" in raw && "longitude" in raw) {
         const lat = Number(raw.latitude);
         const lng = Number(raw.longitude);
         if (!isFinite(lat) || !isFinite(lng)) return null;
 
-        const timestamp = this.coerceTimestamp(
-          (raw as ExpoLocationCoords).timestamp,
-        );
+        const timestamp = this.coerceTimestamp((raw as ExpoLocationCoords).timestamp);
         return {
           lat,
           lng,
           timestamp,
           accuracy: this.toNumberOrNull((raw as ExpoLocationCoords).accuracy),
           altitude: this.toNumberOrNull((raw as ExpoLocationCoords).altitude),
-          altitudeAccuracy: this.toNumberOrNull(
-            (raw as ExpoLocationCoords).altitudeAccuracy,
-          ),
+          altitudeAccuracy: this.toNumberOrNull((raw as ExpoLocationCoords).altitudeAccuracy),
           heading: this.toNumberOrNull((raw as ExpoLocationCoords).heading),
           speed: this.toNumberOrNull((raw as ExpoLocationCoords).speed),
         };
@@ -646,9 +580,7 @@ export class LocationManager {
         const lng = Number((raw as BasicLocation).lng);
         if (!isFinite(lat) || !isFinite(lng)) return null;
 
-        const timestamp = this.coerceTimestamp(
-          (raw as BasicLocation).timestamp,
-        );
+        const timestamp = this.coerceTimestamp((raw as BasicLocation).timestamp);
         return {
           lat,
           lng,
@@ -666,8 +598,7 @@ export class LocationManager {
   private normalizeFromDevice(update: LocationUpdate): NormalizedLocation {
     const lat = Number(update.lat);
     const lng = Number(update.lng);
-    const accuracy =
-      typeof update.accuracy === "number" ? update.accuracy : null;
+    const accuracy = typeof update.accuracy === "number" ? update.accuracy : null;
     return {
       lat,
       lng,

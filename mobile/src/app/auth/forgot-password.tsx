@@ -1,15 +1,15 @@
 import {FontAwesome} from "@expo/vector-icons"
 import {useState} from "react"
 import {View, TextInput, ActivityIndicator, ScrollView, ViewStyle, TextStyle} from "react-native"
-import Toast from "react-native-toast-message"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
-import {$styles, ThemedStyle, spacing} from "@/theme"
+import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
+import {mapAuthError} from "@/utils/auth/authErrors"
 import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function ForgotPasswordScreen() {
@@ -31,30 +31,22 @@ export default function ForgotPasswordScreen() {
 
     const res = await mentraAuth.resetPasswordForEmail(email)
     if (res.is_error()) {
-      showAlert(translate("common:error"), res.error.message)
-      console.error("Error sending reset email:", res.error.message)
-
+      console.error("Error sending reset email:", res.error)
+      showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
       setIsLoading(false)
       return
     }
 
-    Toast.show({
-      type: "success",
-      text1: translate("login:resetEmailSent"),
-      text2: translate("login:checkEmailForReset"),
-      position: "bottom",
-      visibilityTime: 5000,
-    })
-    // Navigate back to login screen after showing success message
-    setTimeout(() => {
-      goBack()
-    }, 2000)
-
     setIsLoading(false)
+
+    // Show success alert and navigate back after dismissal
+    showAlert(translate("login:resetEmailSent"), translate("login:checkEmailForReset"), [
+      {text: translate("common:ok"), onPress: () => goBack()},
+    ])
   }
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header title={translate("login:forgotPasswordTitle")} leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView
         contentContainerStyle={themed($scrollContent)}
@@ -93,9 +85,11 @@ export default function ForgotPasswordScreen() {
               textStyle={themed($buttonText)}
               onPress={handleSendResetEmail}
               disabled={!isEmailValid || isLoading}
-              LeftAccessory={() =>
-                isLoading && <ActivityIndicator size="small" color={theme.colors.icon} style={{marginRight: 8}} />
-              }
+              {...(isLoading && {
+                LeftAccessory: () => (
+                  <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
+                ),
+              })}
             />
 
             <Spacer height={spacing.s4} />
@@ -121,7 +115,7 @@ const $scrollContent: ThemedStyle<ViewStyle> = () => ({
 
 const $card: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 1,
-  padding: spacing.s6,
+  padding: spacing.s4,
 })
 
 const $subtitle: ThemedStyle<TextStyle> = ({spacing, colors}) => ({

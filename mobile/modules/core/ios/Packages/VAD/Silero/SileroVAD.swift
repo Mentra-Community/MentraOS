@@ -26,21 +26,30 @@ public class SileroVAD: NSObject {
     private class InternalBuffer {
         private let size: Int
         private var buffer: [Bool] = []
+        private let lock = NSLock()
 
         init(size: Int) {
             self.size = size
         }
 
         func append(_ isSpeech: Bool) {
+            lock.lock()
+            defer { lock.unlock() }
             buffer.append(isSpeech)
-            buffer = buffer.suffix(size)
+            if buffer.count > size {
+                buffer.removeFirst(buffer.count - size)
+            }
         }
 
         func isAllSpeech() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
             return buffer.count == size && buffer.allSatisfy { $0 }
         }
 
         func isAllNotSpeech() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
             return buffer.count == size && buffer.allSatisfy { !$0 }
         }
     }

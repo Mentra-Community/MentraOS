@@ -18,9 +18,6 @@ class SocketComms {
   private coreToken: string = ""
   public userid: string = ""
 
-  private reconnecting = false
-  private reconnectionAttempts = 0
-
   private constructor() {
     // Subscribe to WebSocket messages
     this.ws.on("message", message => {
@@ -372,7 +369,19 @@ class SocketComms {
     const bypassVad = msg.bypassVad || false
     const requiredDataStrings = msg.requiredData || []
     // console.log(`SOCKET: requiredData = ${requiredDataStrings}, bypassVad = ${bypassVad}`)
-    CoreModule.microphoneStateChange(requiredDataStrings, bypassVad)
+    let shouldSendPcmData = false
+    let shouldSendTranscript = false
+    if (requiredDataStrings.includes("pcm")) {
+      shouldSendPcmData = true
+    }
+    if (requiredDataStrings.includes("transcription")) {
+      shouldSendTranscript = true
+    }
+    if (requiredDataStrings.includes("pcm_or_transcription")) {
+      shouldSendPcmData = true
+      shouldSendTranscript = true
+    }
+    CoreModule.setMicState(shouldSendPcmData, shouldSendTranscript, bypassVad)
   }
 
   public handle_display_event(msg: any) {

@@ -249,12 +249,13 @@ const $compactIconStyle: StyleProp<ViewStyle> = {
 } as ViewStyle
 
 const $baseTextStyle: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 16,
+  fontSize: 14,
   lineHeight: 20,
   textAlign: "center",
   flexShrink: 1,
   flexGrow: 0,
   zIndex: 2,
+  fontWeight: 500,
   color: colors.primary_foreground,
 })
 

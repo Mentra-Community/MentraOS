@@ -3,6 +3,7 @@
  */
 
 import { Logger } from "pino";
+
 import {
   ExtendedStreamType,
   getLanguageInfo,
@@ -12,8 +13,14 @@ import {
   TranscriptSegment,
   LocalTranscription,
 } from "@mentra/sdk";
-import UserSession from "../UserSession";
+
 import { PosthogService } from "../../logging/posthog.service";
+import UserSession from "../UserSession";
+
+import { AlibabaTranscriptionProvider } from "./providers/AlibabaTranscriptionProvider";
+import { AzureTranscriptionProvider } from "./providers/AzureTranscriptionProvider";
+import { SonioxTranscriptionProvider } from "./providers/SonioxTranscriptionProvider";
+import { ProviderSelector } from "./ProviderSelector";
 import {
   TranscriptionConfig,
   TranscriptionProvider,
@@ -27,10 +34,6 @@ import {
   StreamInitializationError,
   DEFAULT_TRANSCRIPTION_CONFIG,
 } from "./types";
-import { ProviderSelector } from "./ProviderSelector";
-import { AzureTranscriptionProvider } from "./providers/AzureTranscriptionProvider";
-import { SonioxTranscriptionProvider } from "./providers/SonioxTranscriptionProvider";
-import { AlibabaTranscriptionProvider } from "./providers/AlibabaTranscriptionProvider";
 // import subscriptionService from "../subscription.service";
 
 export class TranscriptionManager {
@@ -119,9 +122,7 @@ export class TranscriptionManager {
   /**
    * Update active subscriptions (main entry point)
    */
-  async updateSubscriptions(
-    subscriptions: ExtendedStreamType[],
-  ): Promise<void> {
+  async updateSubscriptions(subscriptions: ExtendedStreamType[]): Promise<void> {
     // Ensure we're initialized before processing subscriptions
     await this.ensureInitialized();
 
@@ -258,9 +259,7 @@ export class TranscriptionManager {
    */
   async stopAndFinalizeAll(): Promise<void> {
     try {
-      this.logger.info(
-        "Stopping all transcription streams and finalizing pending tokens",
-      );
+      this.logger.info("Stopping all transcription streams and finalizing pending tokens");
 
       // First finalize any pending tokens
       this.finalizePendingTokens();
@@ -271,10 +270,7 @@ export class TranscriptionManager {
       // Then stop all streams
       await this.updateSubscriptions([]);
     } catch (error) {
-      this.logger.error(
-        error,
-        "Error stopping and finalizing all transcription streams",
-      );
+      this.logger.error(error, "Error stopping and finalizing all transcription streams");
     }
   }
 
@@ -332,26 +328,17 @@ export class TranscriptionManager {
       const existingStream = this.streams.get(subscription);
 
       if (existingStream && this.isStreamHealthy(existingStream)) {
-        this.logger.debug(
-          { subscription },
-          "Stream already exists and is healthy - no action needed",
-        );
+        this.logger.debug({ subscription }, "Stream already exists and is healthy - no action needed");
         continue;
       }
 
       if (existingStream) {
-        this.logger.info(
-          { subscription },
-          "Stream exists but is unhealthy - will create new stream",
-        );
+        this.logger.info({ subscription }, "Stream exists but is unhealthy - will create new stream");
         await this.cleanupStream(subscription, "unhealthy_stream_replacement");
       }
 
       // Create new stream
-      this.logger.info(
-        { subscription },
-        "Creating new stream for subscription",
-      );
+      this.logger.info({ subscription }, "Creating new stream for subscription");
       createPromises.push(this.startStreamFast(subscription));
     }
 
@@ -444,18 +431,14 @@ export class TranscriptionManager {
       // Defaulting to true as we don't have any stats
       return true;
     }
-    return Object.values(stats).every(
-      (provider) => provider.isHealthy === false,
-    );
+    return Object.values(stats).every((provider) => provider.isHealthy === false);
   }
 
   /**
    * @deprecated Use ensureStreamsExist() instead
    */
   async restartFromActiveSubscriptions(): Promise<void> {
-    this.logger.warn(
-      "restartFromActiveSubscriptions is deprecated - use ensureStreamsExist",
-    );
+    this.logger.warn("restartFromActiveSubscriptions is deprecated - use ensureStreamsExist");
     await this.ensureStreamsExist();
   }
 
@@ -539,9 +522,7 @@ export class TranscriptionManager {
    * Fast stream startup optimized for VAD scenarios
    * Uses shorter timeout and skips some non-critical checks
    */
-  private async startStreamFast(
-    subscription: ExtendedStreamType,
-  ): Promise<void> {
+  private async startStreamFast(subscription: ExtendedStreamType): Promise<void> {
     // Use a longer timeout for VAD scenarios (5 seconds vs 2 seconds)
     // 2 seconds was too short and causing stream creation failures
     const VAD_TIMEOUT_MS = 5000;
@@ -550,10 +531,7 @@ export class TranscriptionManager {
       // Check if stream already exists and is healthy
       const existingStream = this.streams.get(subscription);
       if (existingStream && this.isStreamHealthy(existingStream)) {
-        this.logger.debug(
-          { subscription },
-          "Stream already exists and healthy - no restart needed",
-        );
+        this.logger.debug({ subscription }, "Stream already exists and healthy - no restart needed");
         return;
       }
 
@@ -587,10 +565,7 @@ export class TranscriptionManager {
   /**
    * Start stream with custom timeout
    */
-  private async startStreamWithTimeout(
-    subscription: ExtendedStreamType,
-    timeoutMs: number,
-  ): Promise<void> {
+  private async startStreamWithTimeout(subscription: ExtendedStreamType, timeoutMs: number): Promise<void> {
     this.logger.debug(
       {
         subscription,
@@ -600,17 +575,12 @@ export class TranscriptionManager {
     );
     // Ensure we're initialized before starting streams
     await this.ensureInitialized();
-    this.logger.debug(
-      "TranscriptionManager is initialized, proceeding with stream start",
-    );
+    this.logger.debug("TranscriptionManager is initialized, proceeding with stream start");
 
     // Check if there's already a creation in progress - if so, wait for it
     const existingCreation = this.streamCreationPromises.get(subscription);
     if (existingCreation) {
-      this.logger.debug(
-        { subscription },
-        "Stream creation already in progress, waiting for existing creation",
-      );
+      this.logger.debug({ subscription }, "Stream creation already in progress, waiting for existing creation");
       await existingCreation;
       return;
     }
@@ -628,10 +598,7 @@ export class TranscriptionManager {
     }
 
     // Create the actual creation promise and store it
-    const creationPromise = this._performStreamCreation(
-      subscription,
-      timeoutMs,
-    );
+    const creationPromise = this._performStreamCreation(subscription, timeoutMs);
     this.streamCreationPromises.set(subscription, creationPromise);
 
     try {
@@ -644,28 +611,17 @@ export class TranscriptionManager {
   /**
    * Internal method to perform actual stream creation
    */
-  private async _performStreamCreation(
-    subscription: ExtendedStreamType,
-    timeoutMs: number,
-  ): Promise<void> {
+  private async _performStreamCreation(subscription: ExtendedStreamType, timeoutMs: number): Promise<void> {
     try {
       // Provider selector should be initialized now
       if (!this.providerSelector) {
-        throw new Error(
-          "TranscriptionManager initialization failed - no provider selector",
-        );
+        throw new Error("TranscriptionManager initialization failed - no provider selector");
       }
 
       // Validate subscription (cached after first validation)
-      const validation = await this.providerSelector.validateSubscription(
-        subscription,
-      );
+      const validation = await this.providerSelector.validateSubscription(subscription);
       if (!validation.valid) {
-        throw new InvalidSubscriptionError(
-          validation.error!,
-          subscription,
-          validation.suggestions,
-        );
+        throw new InvalidSubscriptionError(validation.error!, subscription, validation.suggestions);
       }
 
       // Skip resource limits check for VAD scenarios - we need speed
@@ -777,6 +733,15 @@ export class TranscriptionManager {
         totalTranscriptEndMs: 0,
         processingDeficitMs: 0,
       },
+      // NEW: Activity tracking metrics - distinguishes silence from actual lag
+      activity: {
+        isReceivingTokens: false,
+        realtimeLatencyMs: 0,
+        avgRealtimeLatencyMs: 0,
+        timeSinceLastTokenMs: 0,
+        audioSentSinceLastTokenMs: 0,
+        tokenBatchesReceived: 0,
+      },
     };
 
     let totalLag = 0;
@@ -798,10 +763,7 @@ export class TranscriptionManager {
       metrics.byState[stream.state]++;
 
       // Active count
-      if (
-        stream.state === StreamState.READY ||
-        stream.state === StreamState.ACTIVE
-      ) {
+      if (stream.state === StreamState.READY || stream.state === StreamState.ACTIVE) {
         metrics.activeStreams++;
       }
 
@@ -810,27 +772,52 @@ export class TranscriptionManager {
         totalLag += stream.metrics.lastTranscriptLagMs;
         lagCount++;
       }
-      if (
-        stream.metrics.maxTranscriptLagMs &&
-        stream.metrics.maxTranscriptLagMs > metrics.latency.maxTranscriptLagMs
-      ) {
+      if (stream.metrics.maxTranscriptLagMs && stream.metrics.maxTranscriptLagMs > metrics.latency.maxTranscriptLagMs) {
         metrics.latency.maxTranscriptLagMs = stream.metrics.maxTranscriptLagMs;
       }
       if (stream.metrics.transcriptLagWarnings) {
-        metrics.latency.totalLagWarnings +=
-          stream.metrics.transcriptLagWarnings;
+        metrics.latency.totalLagWarnings += stream.metrics.transcriptLagWarnings;
       }
 
       // Aggregate backlog metrics
       if (stream.metrics.totalAudioBytesSent) {
-        metrics.backlog.totalAudioBytesSent +=
-          stream.metrics.totalAudioBytesSent;
+        metrics.backlog.totalAudioBytesSent += stream.metrics.totalAudioBytesSent;
       }
       if (stream.metrics.lastTranscriptEndMs) {
         metrics.backlog.totalTranscriptEndMs = Math.max(
           metrics.backlog.totalTranscriptEndMs,
           stream.metrics.lastTranscriptEndMs,
         );
+      }
+
+      // NEW: Aggregate activity metrics
+      // Use the "worst case" values across all streams for monitoring
+      if (stream.metrics.isReceivingTokens) {
+        metrics.activity.isReceivingTokens = true;
+      }
+      if (stream.metrics.realtimeLatencyMs && stream.metrics.realtimeLatencyMs > metrics.activity.realtimeLatencyMs) {
+        metrics.activity.realtimeLatencyMs = stream.metrics.realtimeLatencyMs;
+      }
+      if (
+        stream.metrics.avgRealtimeLatencyMs &&
+        stream.metrics.avgRealtimeLatencyMs > metrics.activity.avgRealtimeLatencyMs
+      ) {
+        metrics.activity.avgRealtimeLatencyMs = stream.metrics.avgRealtimeLatencyMs;
+      }
+      if (
+        stream.metrics.timeSinceLastTokenMs &&
+        stream.metrics.timeSinceLastTokenMs > metrics.activity.timeSinceLastTokenMs
+      ) {
+        metrics.activity.timeSinceLastTokenMs = stream.metrics.timeSinceLastTokenMs;
+      }
+      if (
+        stream.metrics.audioSentSinceLastTokenMs &&
+        stream.metrics.audioSentSinceLastTokenMs > metrics.activity.audioSentSinceLastTokenMs
+      ) {
+        metrics.activity.audioSentSinceLastTokenMs = stream.metrics.audioSentSinceLastTokenMs;
+      }
+      if (stream.metrics.tokenBatchesReceived) {
+        metrics.activity.tokenBatchesReceived += stream.metrics.tokenBatchesReceived;
       }
     }
 
@@ -842,9 +829,7 @@ export class TranscriptionManager {
     // Calculate processing deficit
     if (metrics.backlog.totalAudioBytesSent > 0) {
       const audioSentDurationMs = metrics.backlog.totalAudioBytesSent / 32; // 16kHz * 2 bytes
-      metrics.backlog.processingDeficitMs = Math.round(
-        audioSentDurationMs - metrics.backlog.totalTranscriptEndMs,
-      );
+      metrics.backlog.processingDeficitMs = Math.round(audioSentDurationMs - metrics.backlog.totalTranscriptEndMs);
     }
 
     return metrics;
@@ -865,28 +850,17 @@ export class TranscriptionManager {
     const closePromises = Array.from(this.streams.values()).map((stream) =>
       stream
         .close()
-        .catch((error) =>
-          this.logger.warn(
-            { error, streamId: stream.id },
-            "Error closing stream during disposal",
-          ),
-        ),
+        .catch((error) => this.logger.warn({ error, streamId: stream.id }, "Error closing stream during disposal")),
     );
 
     await Promise.allSettled(closePromises);
     this.streams.clear();
 
     // Dispose providers
-    const providerDisposePromises = Array.from(this.providers.values()).map(
-      (provider) =>
-        provider
-          .dispose()
-          .catch((error) =>
-            this.logger.warn(
-              { error, provider: provider.name },
-              "Error disposing provider",
-            ),
-          ),
+    const providerDisposePromises = Array.from(this.providers.values()).map((provider) =>
+      provider
+        .dispose()
+        .catch((error) => this.logger.warn({ error, provider: provider.name }, "Error disposing provider")),
     );
 
     await Promise.allSettled(providerDisposePromises);
@@ -923,16 +897,10 @@ export class TranscriptionManager {
     // Count transcript segments across languages
     const transcriptLanguages =
       this.transcriptHistory.languageSegments.size +
-      (this.transcriptHistory.segments.length > 0 &&
-      !this.transcriptHistory.languageSegments.has("en-US")
-        ? 1
-        : 0);
+      (this.transcriptHistory.segments.length > 0 && !this.transcriptHistory.languageSegments.has("en-US") ? 1 : 0);
     const transcriptSegments =
       this.transcriptHistory.segments.length +
-      Array.from(this.transcriptHistory.languageSegments.values()).reduce(
-        (sum, arr) => sum + arr.length,
-        0,
-      );
+      Array.from(this.transcriptHistory.languageSegments.values()).reduce((sum, arr) => sum + arr.length, 0);
 
     return {
       vadBufferChunks,
@@ -997,10 +965,7 @@ export class TranscriptionManager {
       // try to initialize Alibaba provider
       try {
         if (this.IS_CHINA) {
-          const alibabaProvider = new AlibabaTranscriptionProvider(
-            this.config.alibaba,
-            this.logger,
-          );
+          const alibabaProvider = new AlibabaTranscriptionProvider(this.config.alibaba, this.logger);
           await alibabaProvider.initialize();
           this.providers.set(ProviderType.ALIBABA, alibabaProvider);
           availableProviders.push(ProviderType.ALIBABA);
@@ -1018,10 +983,7 @@ export class TranscriptionManager {
         if (this.IS_CHINA) {
           this.logger.info("Azure provider not initialized for China");
         } else {
-          const azureProvider = new AzureTranscriptionProvider(
-            this.config.azure,
-            this.logger,
-          );
+          const azureProvider = new AzureTranscriptionProvider(this.config.azure, this.logger);
           await azureProvider.initialize();
           this.providers.set(ProviderType.AZURE, azureProvider);
           availableProviders.push(ProviderType.AZURE);
@@ -1037,10 +999,7 @@ export class TranscriptionManager {
         if (this.IS_CHINA) {
           this.logger.info("Soniox provider not initialized for China");
         } else {
-          const sonioxProvider = new SonioxTranscriptionProvider(
-            this.config.soniox,
-            this.logger,
-          );
+          const sonioxProvider = new SonioxTranscriptionProvider(this.config.soniox, this.logger);
           await sonioxProvider.initialize();
           this.providers.set(ProviderType.SONIOX, sonioxProvider);
           availableProviders.push(ProviderType.SONIOX);
@@ -1072,11 +1031,7 @@ export class TranscriptionManager {
       }
 
       // Initialize provider selector with available providers
-      this.providerSelector = new ProviderSelector(
-        this.providers,
-        this.config,
-        this.logger,
-      );
+      this.providerSelector = new ProviderSelector(this.providers, this.config, this.logger);
 
       // Mark as initialized
       this.isInitialized = true;
@@ -1105,10 +1060,7 @@ export class TranscriptionManager {
       // Process any pending operations
       await this.processPendingOperations();
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Critical failure in provider initialization",
-      );
+      this.logger.error({ error }, "Critical failure in provider initialization");
       throw error;
     }
   }
@@ -1120,10 +1072,7 @@ export class TranscriptionManager {
     // Check if there's already a creation in progress - if so, wait for it
     const existingCreation = this.streamCreationPromises.get(subscription);
     if (existingCreation) {
-      this.logger.debug(
-        { subscription },
-        "Stream creation already in progress, waiting for existing creation",
-      );
+      this.logger.debug({ subscription }, "Stream creation already in progress, waiting for existing creation");
       await existingCreation;
       return;
     }
@@ -1141,8 +1090,7 @@ export class TranscriptionManager {
     }
 
     // Create the actual creation promise and store it
-    const creationPromise =
-      this._performStreamCreationForStartStream(subscription);
+    const creationPromise = this._performStreamCreationForStartStream(subscription);
     this.streamCreationPromises.set(subscription, creationPromise);
 
     try {
@@ -1155,27 +1103,17 @@ export class TranscriptionManager {
   /**
    * Internal method to perform actual stream creation for startStream
    */
-  private async _performStreamCreationForStartStream(
-    subscription: ExtendedStreamType,
-  ): Promise<void> {
+  private async _performStreamCreationForStartStream(subscription: ExtendedStreamType): Promise<void> {
     try {
       // Provider selector should be initialized now
       if (!this.providerSelector) {
-        throw new Error(
-          "TranscriptionManager initialization failed - no provider selector",
-        );
+        throw new Error("TranscriptionManager initialization failed - no provider selector");
       }
 
       // Validate subscription
-      const validation = await this.providerSelector.validateSubscription(
-        subscription,
-      );
+      const validation = await this.providerSelector.validateSubscription(subscription);
       if (!validation.valid) {
-        throw new InvalidSubscriptionError(
-          validation.error!,
-          subscription,
-          validation.suggestions,
-        );
+        throw new InvalidSubscriptionError(validation.error!, subscription, validation.suggestions);
       }
 
       // Check resource limits
@@ -1188,10 +1126,7 @@ export class TranscriptionManager {
       const stream = await this.createStreamInstance(subscription, provider);
 
       // Wait for ready (with timeout)
-      await this.waitForStreamReady(
-        stream,
-        this.config.performance.streamTimeoutMs,
-      );
+      await this.waitForStreamReady(stream, this.config.performance.streamTimeoutMs);
 
       // Success!
       this.streams.set(subscription, stream);
@@ -1209,15 +1144,11 @@ export class TranscriptionManager {
       );
 
       // Track success
-      PosthogService.trackEvent(
-        "transcription_stream_created",
-        this.userSession.userId,
-        {
-          subscription,
-          provider: provider.name,
-          sessionId: this.userSession.sessionId,
-        },
-      );
+      PosthogService.trackEvent("transcription_stream_created", this.userSession.userId, {
+        subscription,
+        provider: provider.name,
+        sessionId: this.userSession.sessionId,
+      });
     } catch (error) {
       const logger = this.logger.child({ subscription });
       logger.error(error, "Stream creation failed");
@@ -1229,10 +1160,7 @@ export class TranscriptionManager {
   private async stopStream(subscription: ExtendedStreamType): Promise<void> {
     const stream = this.streams.get(subscription);
     if (stream) {
-      this.logger.info(
-        { subscription, streamId: stream.id },
-        "Stopping stream",
-      );
+      this.logger.info({ subscription, streamId: stream.id }, "Stopping stream");
 
       try {
         await stream.close();
@@ -1262,10 +1190,7 @@ export class TranscriptionManager {
     };
 
     // Only create transcription streams
-    return await provider.createTranscriptionStream(
-      languageInfo.transcribeLanguage,
-      options,
-    );
+    return await provider.createTranscriptionStream(languageInfo.transcribeLanguage, options);
   }
 
   private createStreamCallbacks(subscription: ExtendedStreamType) {
@@ -1281,18 +1206,29 @@ export class TranscriptionManager {
         }
       },
 
-      onClosed: () => {
-        this.logger.info({ subscription }, "Stream closed by provider");
+      onClosed: (code?: number) => {
+        this.logger.info({ subscription, closeCode: code }, "Stream closed by provider");
         this.streams.delete(subscription);
+
+        // Only reconnect on abnormal close (not code 1000 which is intentional)
+        // Code 1000 = normal/intentional close (VAD silence, explicit stop, etc.)
+        // Code 1006 = abnormal close (network issue, provider crash, etc.)
+        // undefined = provider doesn't support close codes, treat as normal
+        const isAbnormalClose = code !== undefined && code !== 1000;
+
+        if (isAbnormalClose && this.activeSubscriptions.has(subscription)) {
+          this.logger.info(
+            { subscription, closeCode: code },
+            "Abnormal close detected with active subscription - scheduling reconnect",
+          );
+          this.scheduleStreamReconnect(subscription);
+        }
       },
 
       onData: (data: any) => {
         // Relay to apps that are subscribed (async but don't await to avoid blocking)
         this.relayDataToApps(subscription, data).catch((error) => {
-          this.logger.error(
-            { error, subscription, data },
-            "Error in async relayDataToApps",
-          );
+          this.logger.error({ error, subscription, data }, "Error in async relayDataToApps");
         });
       },
     };
@@ -1326,23 +1262,16 @@ export class TranscriptionManager {
     const attempts = this.streamRetryAttempts.get(subscription) || 0;
 
     if (attempts >= this.config.retries.maxStreamRetries) {
-      this.logger.error(
-        { subscription, attempts },
-        "Maximum retry attempts reached",
-      );
+      this.logger.error({ subscription, attempts }, "Maximum retry attempts reached");
       this.streamRetryAttempts.delete(subscription);
 
       // Track final failure
-      PosthogService.trackEvent(
-        "transcription_stream_permanent_failure",
-        this.userSession.userId,
-        {
-          subscription,
-          totalAttempts: attempts,
-          finalError: error.message,
-          sessionId: this.userSession.sessionId,
-        },
-      );
+      PosthogService.trackEvent("transcription_stream_permanent_failure", this.userSession.userId, {
+        subscription,
+        totalAttempts: attempts,
+        finalError: error.message,
+        sessionId: this.userSession.sessionId,
+      });
       return;
     }
 
@@ -1360,10 +1289,7 @@ export class TranscriptionManager {
         }
       } else if (this.isRetryableError(error)) {
         // Other retryable Soniox errors - retry Soniox first
-        this.logger.info(
-          { subscription, error: error.message },
-          "Retrying Soniox for retryable error",
-        );
+        this.logger.info({ subscription, error: error.message }, "Retrying Soniox for retryable error");
         this.scheduleStreamRetry(subscription, attempts + 1, error);
         return;
       }
@@ -1372,19 +1298,13 @@ export class TranscriptionManager {
       // 1. Rate limit and Azure failed, OR
       // 2. Non-retryable Soniox error
       // Try Azure as fallback
-      this.logger.info(
-        { subscription },
-        "Trying Azure as fallback after Soniox failure",
-      );
+      this.logger.info({ subscription }, "Trying Azure as fallback after Soniox failure");
       if (await this.trySpecificProvider(subscription, ProviderType.AZURE)) {
         return; // Success with Azure
       }
     } else if (currentProvider === ProviderType.AZURE) {
       // Azure failed - cycle back to Soniox since it's preferred
-      this.logger.info(
-        { subscription },
-        "Azure failed - cycling back to preferred Soniox provider",
-      );
+      this.logger.info({ subscription }, "Azure failed - cycling back to preferred Soniox provider");
       if (await this.trySpecificProvider(subscription, ProviderType.SONIOX)) {
         return; // Success with Soniox
       }
@@ -1393,55 +1313,37 @@ export class TranscriptionManager {
     // If we reach here, both providers have been tried and failed
     // Try one more retry with the same provider if it's retryable
     if (this.isRetryableError(error)) {
-      this.logger.info(
-        { subscription, currentProvider },
-        "Final retry attempt with current provider",
-      );
+      this.logger.info({ subscription, currentProvider }, "Final retry attempt with current provider");
       this.scheduleStreamRetry(subscription, attempts + 1, error);
     } else {
-      this.logger.error(
-        { subscription, currentProvider },
-        "Non-retryable error - giving up",
-      );
+      this.logger.error({ subscription, currentProvider }, "Non-retryable error - giving up");
       this.streamRetryAttempts.delete(subscription);
 
       // Track final failure
-      PosthogService.trackEvent(
-        "transcription_stream_permanent_failure",
-        this.userSession.userId,
-        {
-          subscription,
-          totalAttempts: attempts,
-          finalError: error.message,
-          sessionId: this.userSession.sessionId,
-        },
-      );
+      PosthogService.trackEvent("transcription_stream_permanent_failure", this.userSession.userId, {
+        subscription,
+        totalAttempts: attempts,
+        finalError: error.message,
+        sessionId: this.userSession.sessionId,
+      });
     }
   }
 
-  private async tryDifferentProvider(
-    subscription: ExtendedStreamType,
-    failedProvider: ProviderType,
-  ): Promise<boolean> {
+  private async tryDifferentProvider(subscription: ExtendedStreamType, failedProvider: ProviderType): Promise<boolean> {
     try {
       // Ensure we're initialized before trying different provider
       await this.ensureInitialized();
 
       // Provider selector should be initialized now
       if (!this.providerSelector) {
-        this.logger.warn(
-          "Provider selector not initialized after ensureInitialized, cannot failover",
-        );
+        this.logger.warn("Provider selector not initialized after ensureInitialized, cannot failover");
         return false;
       }
 
       // Select alternative provider (excluding the failed one)
-      const newProvider = await this.providerSelector.selectProvider(
-        subscription,
-        {
-          excludeProviders: [failedProvider],
-        },
-      );
+      const newProvider = await this.providerSelector.selectProvider(subscription, {
+        excludeProviders: [failedProvider],
+      });
 
       this.logger.info(
         {
@@ -1454,10 +1356,7 @@ export class TranscriptionManager {
 
       // Create stream with new provider
       const stream = await this.createStreamInstance(subscription, newProvider);
-      await this.waitForStreamReady(
-        stream,
-        this.config.performance.streamTimeoutMs,
-      );
+      await this.waitForStreamReady(stream, this.config.performance.streamTimeoutMs);
 
       // Success!
       this.streams.set(subscription, stream);
@@ -1472,16 +1371,12 @@ export class TranscriptionManager {
       );
 
       // Track successful failover
-      PosthogService.trackEvent(
-        "transcription_provider_failover",
-        this.userSession.userId,
-        {
-          fromProvider: failedProvider,
-          toProvider: newProvider.name,
-          subscription,
-          sessionId: this.userSession.sessionId,
-        },
-      );
+      PosthogService.trackEvent("transcription_provider_failover", this.userSession.userId, {
+        fromProvider: failedProvider,
+        toProvider: newProvider.name,
+        subscription,
+        sessionId: this.userSession.sessionId,
+      });
 
       return true;
     } catch (error) {
@@ -1502,10 +1397,7 @@ export class TranscriptionManager {
    * Try to create a stream with a specific provider
    * Used for smart provider cycling
    */
-  private async trySpecificProvider(
-    subscription: ExtendedStreamType,
-    targetProvider: ProviderType,
-  ): Promise<boolean> {
+  private async trySpecificProvider(subscription: ExtendedStreamType, targetProvider: ProviderType): Promise<boolean> {
     try {
       // Ensure we're initialized
       await this.ensureInitialized();
@@ -1533,10 +1425,7 @@ export class TranscriptionManager {
 
       // Create stream with the specific provider
       const stream = await this.createStreamInstance(subscription, provider);
-      await this.waitForStreamReady(
-        stream,
-        this.config.performance.streamTimeoutMs,
-      );
+      await this.waitForStreamReady(stream, this.config.performance.streamTimeoutMs);
 
       // Success!
       this.streams.set(subscription, stream);
@@ -1550,15 +1439,11 @@ export class TranscriptionManager {
       );
 
       // Track successful provider selection
-      PosthogService.trackEvent(
-        "transcription_provider_specific_success",
-        this.userSession.userId,
-        {
-          provider: targetProvider,
-          subscription,
-          sessionId: this.userSession.sessionId,
-        },
-      );
+      PosthogService.trackEvent("transcription_provider_specific_success", this.userSession.userId, {
+        provider: targetProvider,
+        subscription,
+        sessionId: this.userSession.sessionId,
+      });
 
       return true;
     } catch (error) {
@@ -1592,11 +1477,43 @@ export class TranscriptionManager {
     return false;
   }
 
-  private scheduleStreamRetry(
-    subscription: ExtendedStreamType,
-    attempt: number,
-    lastError?: Error,
-  ): void {
+  /**
+   * Schedule a stream reconnect after provider disconnect (e.g., WebSocket close)
+   * This is different from scheduleStreamRetry which handles errors with backoff.
+   * This method is for clean disconnects where we just need to recreate the stream.
+   */
+  private scheduleStreamReconnect(subscription: ExtendedStreamType, delayMs: number = 1000): void {
+    this.logger.info({ subscription, delayMs }, "Scheduling stream reconnect after provider disconnect");
+
+    setTimeout(async () => {
+      // Double-check subscription is still active
+      if (!this.activeSubscriptions.has(subscription)) {
+        this.logger.debug({ subscription }, "Subscription no longer active - skipping reconnect");
+        return;
+      }
+
+      // Check if stream was recreated by something else
+      const existingStream = this.streams.get(subscription);
+      if (existingStream && this.isStreamHealthy(existingStream)) {
+        this.logger.debug({ subscription }, "Stream already recreated - skipping reconnect");
+        return;
+      }
+
+      try {
+        await this.startStream(subscription);
+        this.logger.info({ subscription }, "Stream reconnected successfully after provider disconnect");
+      } catch (error) {
+        this.logger.error(
+          { subscription, error },
+          "Failed to reconnect stream after provider disconnect - will retry via health check or next ensureStreamsExist call",
+        );
+        // Don't schedule another retry here - let the health monitoring or
+        // next subscription update handle it to avoid potential infinite loops
+      }
+    }, delayMs);
+  }
+
+  private scheduleStreamRetry(subscription: ExtendedStreamType, attempt: number, lastError?: Error): void {
     this.streamRetryAttempts.set(subscription, attempt);
 
     // Calculate delay with exponential backoff for Soniox rate limiting
@@ -1609,10 +1526,7 @@ export class TranscriptionManager {
 
         // Use exponential backoff for rate limits (429)
         if (errorCode === 429) {
-          delay = Math.min(
-            this.config.retries.retryDelayMs * Math.pow(2, attempt - 1),
-            60000,
-          ); // Cap at 1 minute
+          delay = Math.min(this.config.retries.retryDelayMs * Math.pow(2, attempt - 1), 60000); // Cap at 1 minute
           this.logger.warn(
             {
               subscription,
@@ -1658,10 +1572,7 @@ export class TranscriptionManager {
         this.logger.info({ subscription, attempt }, "Stream retry successful");
       } catch (error) {
         // Will trigger another retry cycle if attempts remaining
-        this.logger.warn(
-          { subscription, attempt, error },
-          "Stream retry failed",
-        );
+        this.logger.warn({ subscription, attempt, error }, "Stream retry failed");
       }
     }, delay);
   }
@@ -1685,42 +1596,25 @@ export class TranscriptionManager {
 
         // Don't retry authentication/authorization errors (typically 401, 403)
         if (errorCode === 401 || errorCode === 403) {
-          this.logger.warn(
-            { errorCode, message: error.message },
-            "Soniox authentication error - not retrying",
-          );
+          this.logger.warn({ errorCode, message: error.message }, "Soniox authentication error - not retrying");
           return false;
         }
 
         // Retry 400 error (usually just timed out if the stream reaches 65 minutes. on soniox)
         if (errorCode === 400) {
-          this.logger.warn(
-            { errorCode, message: error.message },
-            "Soniox error - retrying",
-          );
+          this.logger.warn({ errorCode, message: error.message }, "Soniox error - retrying");
           return true;
         }
 
         // Don't retry client errors (4xx range except rate limits and timeouts)
-        if (
-          errorCode >= 400 &&
-          errorCode < 500 &&
-          errorCode !== 429 &&
-          errorCode !== 408
-        ) {
-          this.logger.warn(
-            { errorCode, message: error.message },
-            "Soniox client error - not retrying",
-          );
+        if (errorCode >= 400 && errorCode < 500 && errorCode !== 429 && errorCode !== 408) {
+          this.logger.warn({ errorCode, message: error.message }, "Soniox client error - not retrying");
           return false;
         }
 
         // Retry rate limits (429), timeouts (408), and server errors (5xx range)
         if (errorCode === 429 || errorCode === 408 || errorCode >= 500) {
-          this.logger.info(
-            { errorCode, message: error.message },
-            "Soniox retryable error detected",
-          );
+          this.logger.info({ errorCode, message: error.message }, "Soniox retryable error detected");
           return true;
         }
       }
@@ -1745,16 +1639,10 @@ export class TranscriptionManager {
     return true;
   }
 
-  private async waitForStreamReady(
-    stream: StreamInstance,
-    timeoutMs: number,
-  ): Promise<void> {
+  private async waitForStreamReady(stream: StreamInstance, timeoutMs: number): Promise<void> {
     const startTime = Date.now();
 
-    while (
-      stream.state === StreamState.INITIALIZING &&
-      Date.now() - startTime < timeoutMs
-    ) {
+    while (stream.state === StreamState.INITIALIZING && Date.now() - startTime < timeoutMs) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
@@ -1770,16 +1658,11 @@ export class TranscriptionManager {
     }
 
     if (stream.state !== StreamState.READY) {
-      throw new StreamInitializationError(
-        `Stream in unexpected state: ${stream.state}`,
-      );
+      throw new StreamInitializationError(`Stream in unexpected state: ${stream.state}`);
     }
   }
 
-  private async cleanupStream(
-    subscription: ExtendedStreamType,
-    reason: string,
-  ): Promise<void> {
+  private async cleanupStream(subscription: ExtendedStreamType, reason: string): Promise<void> {
     const stream = this.streams.get(subscription);
     if (stream) {
       this.logger.debug({ subscription, reason }, "Cleaning up stream");
@@ -1787,10 +1670,7 @@ export class TranscriptionManager {
       try {
         await stream.close();
       } catch (error) {
-        this.logger.warn(
-          { error, subscription },
-          "Error closing stream during cleanup",
-        );
+        this.logger.warn({ error, subscription }, "Error closing stream during cleanup");
       }
 
       this.streams.delete(subscription);
@@ -1808,8 +1688,7 @@ export class TranscriptionManager {
 
     // Check memory usage
     const memoryUsage = process.memoryUsage();
-    const memoryThreshold =
-      this.config.performance.maxMemoryUsageMB * 1024 * 1024;
+    const memoryThreshold = this.config.performance.maxMemoryUsageMB * 1024 * 1024;
 
     if (memoryUsage.heapUsed > memoryThreshold) {
       this.logger.warn({ memoryUsage }, "High memory usage detected");
@@ -1826,50 +1705,16 @@ export class TranscriptionManager {
 
   /**
    * Log latency and backlog metrics for monitoring
+   *
+   * NOTE: We use processingDeficitMs as the PRIMARY lag metric.
+   * This measures how far behind Soniox is on processing audio we've sent.
+   * The old "transcriptLagMs" compared wall-clock time vs transcript position,
+   * which gave false positives during VAD gaps (silence periods).
    */
+  // Latency logging removed - calculation was unreliable and spamming 15K+ logs/hour
+  // Metrics are still tracked internally via getMetrics() for debugging if needed
   private logLatencyMetrics(): void {
-    const metrics = this.getMetrics();
-
-    // Only log if we have active streams
-    if (metrics.activeStreams === 0) {
-      return;
-    }
-
-    // Log summary of latency metrics
-    if (metrics.latency.avgTranscriptLagMs > 0) {
-      const logLevel =
-        metrics.latency.maxTranscriptLagMs > 5000 ? "warn" : "info";
-      const logData = {
-        activeStreams: metrics.activeStreams,
-        avgLagMs: metrics.latency.avgTranscriptLagMs,
-        maxLagMs: metrics.latency.maxTranscriptLagMs,
-        lagWarnings: metrics.latency.totalLagWarnings,
-        processingDeficitMs: metrics.backlog.processingDeficitMs,
-        audioSentBytes: metrics.backlog.totalAudioBytesSent,
-        transcriptEndMs: metrics.backlog.totalTranscriptEndMs,
-      };
-
-      if (logLevel === "warn") {
-        this.logger.warn(
-          logData,
-          "⚠️ HIGH LATENCY: Transcription is significantly lagging",
-        );
-      } else {
-        this.logger.debug(logData, "Transcription latency metrics");
-      }
-    }
-
-    // Alert if processing deficit is high (audio sent but not transcribed)
-    if (metrics.backlog.processingDeficitMs > 10000) {
-      this.logger.warn(
-        {
-          deficitMs: metrics.backlog.processingDeficitMs,
-          audioSentBytes: metrics.backlog.totalAudioBytesSent,
-          transcriptEndMs: metrics.backlog.totalTranscriptEndMs,
-        },
-        "⚠️ PROCESSING BACKLOG: Provider is falling behind on transcription",
-      );
-    }
+    // No-op: latency warnings were giving false positives and not actionable
   }
 
   private async cleanupDeadStreams(): Promise<void> {
@@ -1918,9 +1763,7 @@ export class TranscriptionManager {
   }
 
   private generateStreamId(subscription: ExtendedStreamType): string {
-    return `${
-      this.userSession.sessionId
-    }-${subscription}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `${this.userSession.sessionId}-${subscription}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
   /**
@@ -1935,10 +1778,7 @@ export class TranscriptionManager {
     return [effectiveSubscription];
   }
 
-  private async relayDataToApps(
-    subscription: ExtendedStreamType,
-    data: any,
-  ): Promise<void> {
+  private async relayDataToApps(subscription: ExtendedStreamType, data: any): Promise<void> {
     try {
       // CONSTRUCT EFFECTIVE SUBSCRIPTION like the old system
       let streamType = data.type;
@@ -1960,16 +1800,12 @@ export class TranscriptionManager {
       this.addToTranscriptHistory(data, streamType);
 
       // Handle optimized subscription routing
-      const targetSubscriptions = this.getTargetSubscriptions(
-        subscription,
-        effectiveSubscription,
-      );
+      const targetSubscriptions = this.getTargetSubscriptions(subscription, effectiveSubscription);
       const allSubscribedApps = new Set<string>();
 
       // Get subscribed apps for all target subscriptions
       for (const targetSub of targetSubscriptions) {
-        const subscribedApps =
-          this.userSession.subscriptionManager.getSubscribedApps(targetSub);
+        const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(targetSub);
         subscribedApps.forEach((app) => allSubscribedApps.add(app));
       }
 
@@ -2002,10 +1838,7 @@ export class TranscriptionManager {
 
         try {
           // USE APP MANAGER instead of direct WebSocket (restores resurrection)
-          const result = await this.userSession.appManager.sendMessageToApp(
-            packageName,
-            dataStream,
-          );
+          const result = await this.userSession.appManager.sendMessageToApp(packageName, dataStream);
 
           if (!result.sent) {
             this.logger.warn(
@@ -2045,11 +1878,7 @@ export class TranscriptionManager {
           effectiveSubscription,
           provider: data.provider || "unknown",
           dataType: data.type,
-          text: data.text
-            ? `"${data.text.substring(0, 100)}${
-                data.text.length > 100 ? "..." : ""
-              }"`
-            : "no text",
+          text: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
           isFinal: data.isFinal,
           confidence: data.confidence,
           appsNotified: subscribedApps.length,
@@ -2089,17 +1918,13 @@ export class TranscriptionManager {
       // Get segments for specific language
       if (language === "en-US") {
         // For English, prefer languageSegments but fallback to legacy segments
-        segments =
-          this.transcriptHistory.languageSegments.get(language) ||
-          this.transcriptHistory.segments;
+        segments = this.transcriptHistory.languageSegments.get(language) || this.transcriptHistory.segments;
       } else {
         segments = this.transcriptHistory.languageSegments.get(language) || [];
       }
     } else {
       // Get all segments from all languages
-      segments = Array.from(
-        this.transcriptHistory.languageSegments.values(),
-      ).flat();
+      segments = Array.from(this.transcriptHistory.languageSegments.values()).flat();
       // Also include legacy segments if not already included
       if (!this.transcriptHistory.languageSegments.has("en-US")) {
         segments = segments.concat(this.transcriptHistory.segments);
@@ -2131,10 +1956,7 @@ export class TranscriptionManager {
     }
 
     // Sort by timestamp
-    segments.sort(
-      (a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-    );
+    segments.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     return segments;
   }
@@ -2166,19 +1988,13 @@ export class TranscriptionManager {
    */
   private addToTranscriptHistory(data: any, streamType: StreamType): void {
     // Only process transcription data
-    if (
-      streamType !== StreamType.TRANSCRIPTION ||
-      !data.text ||
-      !data.transcribeLanguage
-    ) {
+    if (streamType !== StreamType.TRANSCRIPTION || !data.text || !data.transcribeLanguage) {
       return;
     }
 
     const language = data.transcribeLanguage;
     const segment: TranscriptSegment = {
-      resultId:
-        data.resultId ||
-        `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      resultId: data.resultId || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       speakerId: data.speakerId,
       text: data.text,
       timestamp: new Date(),
@@ -2190,17 +2006,13 @@ export class TranscriptionManager {
       this.transcriptHistory.languageSegments.set(language, []);
     }
 
-    const languageSegments =
-      this.transcriptHistory.languageSegments.get(language)!;
+    const languageSegments = this.transcriptHistory.languageSegments.get(language)!;
     const legacySegments = this.transcriptHistory.segments;
 
     // Handle interim vs final segments (same logic as old system)
     const hasInterimLastLanguage =
-      languageSegments.length > 0 &&
-      !languageSegments[languageSegments.length - 1].isFinal;
-    const hasInterimLastLegacy =
-      legacySegments.length > 0 &&
-      !legacySegments[legacySegments.length - 1].isFinal;
+      languageSegments.length > 0 && !languageSegments[languageSegments.length - 1].isFinal;
+    const hasInterimLastLegacy = legacySegments.length > 0 && !legacySegments[legacySegments.length - 1].isFinal;
 
     if (data.isFinal) {
       // Final segment - replace interim if exists
@@ -2280,14 +2092,10 @@ export class TranscriptionManager {
     let totalPruned = 0;
 
     // Prune language-specific segments
-    for (const [
-      language,
-      segments,
-    ] of this.transcriptHistory.languageSegments.entries()) {
+    for (const [language, segments] of this.transcriptHistory.languageSegments.entries()) {
       const originalCount = segments.length;
       const filteredSegments = segments.filter(
-        (segment) =>
-          segment.timestamp && new Date(segment.timestamp) >= cutoffTime,
+        (segment) => segment.timestamp && new Date(segment.timestamp) >= cutoffTime,
       );
 
       this.transcriptHistory.languageSegments.set(language, filteredSegments);
@@ -2309,11 +2117,9 @@ export class TranscriptionManager {
     // Prune legacy segments
     const originalLegacyCount = this.transcriptHistory.segments.length;
     this.transcriptHistory.segments = this.transcriptHistory.segments.filter(
-      (segment) =>
-        segment.timestamp && new Date(segment.timestamp) >= cutoffTime,
+      (segment) => segment.timestamp && new Date(segment.timestamp) >= cutoffTime,
     );
-    const legacyPruned =
-      originalLegacyCount - this.transcriptHistory.segments.length;
+    const legacyPruned = originalLegacyCount - this.transcriptHistory.segments.length;
     totalPruned += legacyPruned;
 
     if (totalPruned > 0) {
@@ -2334,10 +2140,7 @@ export class TranscriptionManager {
   clearTranscriptHistory(): void {
     const totalSegments =
       this.transcriptHistory.segments.length +
-      Array.from(this.transcriptHistory.languageSegments.values()).reduce(
-        (sum, segments) => sum + segments.length,
-        0,
-      );
+      Array.from(this.transcriptHistory.languageSegments.values()).reduce((sum, segments) => sum + segments.length, 0);
 
     this.transcriptHistory.segments = [];
     this.transcriptHistory.languageSegments.clear();

@@ -25,7 +25,7 @@ export function RatingButtons({value, onValueChange, min = 1, max = 5, style}: R
           style={themed($button(value === rating))}
           onPress={() => onValueChange(rating)}
           activeOpacity={0.7}>
-          <Text style={themed($buttonText(value === rating))}>{rating}</Text>
+          <Text style={themed($buttonText(value === rating))} weight="semibold" text={rating.toString()} />
         </TouchableOpacity>
       ))}
     </View>
@@ -56,6 +56,5 @@ const $buttonText: (selected: boolean) => ThemedStyle<TextStyle> =
   selected =>
   ({colors}) => ({
     fontSize: 16,
-    fontWeight: "600",
     color: selected ? colors.background : colors.text,
   })

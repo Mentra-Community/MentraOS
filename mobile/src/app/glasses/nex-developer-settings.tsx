@@ -11,7 +11,7 @@ export default function NexDeveloperSettingsPage() {
   const {goBack} = useNavigationHistory()
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Stack.Screen
         options={{
           headerShown: false,

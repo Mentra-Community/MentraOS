@@ -1,24 +1,27 @@
 import {Image} from "expo-image"
 import {SquircleView} from "expo-squircle-view"
 import {memo} from "react"
-import {ActivityIndicator, ImageStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {ActivityIndicator, ImageStyle, StyleProp, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Icon} from "@/components/ignite"
 import {ClientAppletInterface, getMoreAppsApplet} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/utils/useAppTheme"
+import {withUniwind} from "uniwind"
+import {StyleSheet} from "react-native"
 
 interface AppIconProps {
   app: ClientAppletInterface
   onClick?: () => void
-  style?: ViewStyle
+  style?: StyleProp<ViewStyle>
 }
 
 const AppIcon = ({app, onClick, style}: AppIconProps) => {
   const {themed, theme} = useAppTheme()
   const [enableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const WrapperComponent = onClick ? TouchableOpacity : View
+  const flatStyle = StyleSheet.flatten(style)
 
   return (
     <View style={{alignItems: "center"}}>
@@ -36,9 +39,9 @@ const AppIcon = ({app, onClick, style}: AppIconProps) => {
               overflow: "hidden", // use as a mask
               alignItems: "center",
               justifyContent: "center",
-              width: style?.width ?? 56,
-              height: style?.height ?? 56,
-              borderRadius: style?.borderRadius ?? theme.spacing.s4,
+              width: flatStyle?.width ?? 64,
+              height: flatStyle?.height ?? 64,
+              borderRadius: flatStyle?.borderRadius ?? theme.spacing.s4,
             }}>
             {app.loading && (
               <View style={themed($loadingContainer)}>
@@ -62,7 +65,10 @@ const AppIcon = ({app, onClick, style}: AppIconProps) => {
             )}
             <Image
               source={app.logoUrl}
-              style={[themed($icon), {borderRadius: 60, width: style?.width ?? 56, height: style?.height ?? 56}]}
+              style={[
+                themed($icon),
+                {borderRadius: 60, width: flatStyle?.width ?? 64, height: flatStyle?.height ?? 64},
+              ]}
               contentFit="cover"
               transition={200}
               cachePolicy="memory-disk"
@@ -127,4 +133,4 @@ const $offlineBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   borderColor: colors.primary_foreground,
 })
 
-export default memo(AppIcon)
+export default withUniwind(memo(AppIcon))

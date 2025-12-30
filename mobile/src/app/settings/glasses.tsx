@@ -27,7 +27,7 @@ export default function Glasses() {
   }
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.s6}}>
+    <Screen preset="fixed">
       <Header title={pageTitle} leftIcon="chevron-left" onLeftPress={() => goBack()} />
       <ScrollView
         style={{marginRight: -theme.spacing.s4, paddingRight: theme.spacing.s4}}

@@ -103,7 +103,7 @@ docs/_build/
 eggs
 htmlcov
 #include/
-lib/
+.lib/
 man/
 nosetests.xml
 parts
@@ -166,7 +166,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+.lib/
 lib64/
 parts/
 sdist/

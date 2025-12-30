@@ -464,6 +464,10 @@ public class AsgClientServiceManager {
         return context;
     }
 
+    public AsgClientService getService() {
+        return service;
+    }
+
     public AsgSettings getAsgSettings() {
         Log.d(TAG, "📋 getAsgSettings() called - returning: " + (asgSettings != null ? "valid" : "null"));
         return asgSettings;

@@ -10,20 +10,12 @@
 
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+
 import { CLITokenPayload } from "@mentra/types";
+
 import { validateToken } from "../../services/console/cli-keys.service";
 
-// Extend Express Request to include CLI auth context
-declare module "express-serve-static-core" {
-  interface Request {
-    cli?: {
-      email: string;
-      keyId: string;
-      keyName: string;
-      type: "cli";
-    };
-  }
-}
+// Type declarations for req.cli are in src/types/express.d.ts
 
 /**
  * Get CLI JWT secret dynamically to support testing with env vars
@@ -44,11 +36,7 @@ const getCLIJWTSecret = (): string => {
  * - Checks database for revocation
  * - Attaches req.cli = { email, keyId, keyName, type }
  */
-export const authenticateCLI = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
+export const authenticateCLI = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const CLI_JWT_SECRET = getCLIJWTSecret();
 
@@ -91,9 +79,7 @@ export const authenticateCLI = async (
     // Check if key is still active in database (revocation check)
     // Skip validation in test mode to avoid database dependency
     // TODO: Replace with proper test database setup
-    const isTestMode =
-      process.env.NODE_ENV === "test" ||
-      process.env.SKIP_CLI_DB_VALIDATION === "true";
+    const isTestMode = process.env.NODE_ENV === "test" || process.env.SKIP_CLI_DB_VALIDATION === "true";
 
     if (!isTestMode) {
       const isValid = await validateToken(token, payload);

@@ -1,8 +1,11 @@
+import path from "path";
+
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import { Logger } from "pino";
+
+import { ResourceTracker } from "../../../utils/resource-tracker";
 import UserSession from "../UserSession";
-import path from "path";
 
 /**
  * LiveKitGrpcClient - gRPC client for Go livekit-bridge
@@ -50,6 +53,7 @@ export class LiveKitGrpcClient {
   private joinedRoom = false;
   private currentParams: JoinRoomParams | null = null;
   private eventHandlers: Map<string, (evt: PlayAudioEvent) => void> = new Map();
+  private resources = new ResourceTracker();
 
   // Endianness handling: "swap" to force byte swapping, "off" for no swapping (default)
   private readonly shouldSwapBytes: boolean;
@@ -67,10 +71,7 @@ export class LiveKitGrpcClient {
     if (socketPath) {
       this.bridgeUrl = `unix:${socketPath}`;
     } else {
-      this.bridgeUrl =
-        bridgeUrl ||
-        process.env.LIVEKIT_GRPC_BRIDGE_URL ||
-        "livekit-bridge:9090";
+      this.bridgeUrl = bridgeUrl || process.env.LIVEKIT_GRPC_BRIDGE_URL || "livekit-bridge:9090";
     }
 
     // Initialize endianness mode from environment: "swap" or "off" (default)
@@ -83,10 +84,7 @@ export class LiveKitGrpcClient {
         "Endianness: SWAP mode enabled - will convert big-endian to little-endian",
       );
     } else {
-      this.logger.info(
-        { feature: "livekit-grpc" },
-        "Endianness: OFF mode - no byte swapping",
-      );
+      this.logger.info({ feature: "livekit-grpc" }, "Endianness: OFF mode - no byte swapping");
     }
 
     // Load proto and create gRPC client
@@ -97,10 +95,7 @@ export class LiveKitGrpcClient {
     try {
       // Path to proto file (relative to this file or absolute)
       // Proto file is copied to cloud/packages/cloud/proto/
-      const PROTO_PATH = path.resolve(
-        __dirname,
-        "../../../../proto/livekit_bridge.proto",
-      );
+      const PROTO_PATH = path.resolve(__dirname, "../../../../proto/livekit_bridge.proto");
 
       // Load proto definition
       const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -116,10 +111,7 @@ export class LiveKitGrpcClient {
 
       // Create insecure client (internal network or Unix socket)
       // gRPC-JS automatically handles unix: prefix for Unix domain sockets
-      this.client = new livekitProto.LiveKitBridge(
-        this.bridgeUrl,
-        grpc.credentials.createInsecure(),
-      );
+      this.client = new livekitProto.LiveKitBridge(this.bridgeUrl, grpc.credentials.createInsecure());
 
       this.logger.info(
         {
@@ -130,10 +122,7 @@ export class LiveKitGrpcClient {
         "gRPC client initialized",
       );
     } catch (error) {
-      this.logger.error(
-        { error, bridgeUrl: this.bridgeUrl },
-        "Failed to initialize gRPC client",
-      );
+      this.logger.error({ error, bridgeUrl: this.bridgeUrl }, "Failed to initialize gRPC client");
       throw error;
     }
   }
@@ -144,9 +133,7 @@ export class LiveKitGrpcClient {
     }
 
     if (this.connecting) {
-      this.logger.warn(
-        "Connection already in progress, skipping duplicate call",
-      );
+      this.logger.warn("Connection already in progress, skipping duplicate call");
       return;
     }
 
@@ -199,45 +186,42 @@ export class LiveKitGrpcClient {
         "Calling JoinRoom RPC",
       );
 
-      this.client.joinRoom(
-        request,
-        (error: grpc.ServiceError | null, response: any) => {
-          if (error) {
-            this.logger.error(
-              {
-                error,
-                feature: "livekit-grpc",
-              },
-              "JoinRoom RPC failed",
-            );
-            handleError(error);
-            return;
-          }
-
-          if (!response.success) {
-            this.logger.error(
-              {
-                response,
-                feature: "livekit-grpc",
-              },
-              "JoinRoom returned failure",
-            );
-            handleError(new Error(response.error || "Failed to join room"));
-            return;
-          }
-
-          this.joinedRoom = true;
-          this.logger.info(
+      this.client.joinRoom(request, (error: grpc.ServiceError | null, response: any) => {
+        if (error) {
+          this.logger.error(
             {
-              participantId: response.participant_id,
-              participantCount: response.participant_count,
+              error,
               feature: "livekit-grpc",
             },
-            "Joined LiveKit room",
+            "JoinRoom RPC failed",
           );
-          resolve();
-        },
-      );
+          handleError(error);
+          return;
+        }
+
+        if (!response.success) {
+          this.logger.error(
+            {
+              response,
+              feature: "livekit-grpc",
+            },
+            "JoinRoom returned failure",
+          );
+          handleError(new Error(response.error || "Failed to join room"));
+          return;
+        }
+
+        this.joinedRoom = true;
+        this.logger.info(
+          {
+            participantId: response.participant_id,
+            participantCount: response.participant_count,
+            feature: "livekit-grpc",
+          },
+          "Joined LiveKit room",
+        );
+        resolve();
+      });
     });
   }
 
@@ -268,7 +252,8 @@ export class LiveKitGrpcClient {
 
     // Handle incoming audio from LiveKit → TypeScript
     let receivedChunks = 0;
-    this.audioStream?.on("data", (chunk: any) => {
+    const dataHandler = (chunk: any) => {
+      if (this.disposed) return;
       try {
         let pcmData = Buffer.from(chunk.pcm_data);
 
@@ -281,11 +266,7 @@ export class LiveKitGrpcClient {
         if (receivedChunks % 100 === 0) {
           // Log sample values to verify endianness
           const sampleCount = Math.min(8, Math.floor(pcmData.length / 2));
-          const i16 = new Int16Array(
-            pcmData.buffer,
-            pcmData.byteOffset,
-            Math.floor(pcmData.byteLength / 2),
-          );
+          const i16 = new Int16Array(pcmData.buffer, pcmData.byteOffset, Math.floor(pcmData.byteLength / 2));
           const headSamples: number[] = Array.from(i16.slice(0, sampleCount));
 
           this.logger.debug(
@@ -312,10 +293,11 @@ export class LiveKitGrpcClient {
           "Failed to process audio chunk from bridge",
         );
       }
-    });
+    };
 
     // Handle stream errors
-    this.audioStream?.on("error", (error: Error) => {
+    const errorHandler = (error: Error) => {
+      if (this.disposed) return;
       this.logger.error(
         {
           error,
@@ -347,10 +329,11 @@ export class LiveKitGrpcClient {
           }
         }, 2000);
       }
-    });
+    };
 
     // Handle stream end
-    this.audioStream?.on("end", () => {
+    const endHandler = () => {
+      if (this.disposed) return;
       this.logger.info(
         {
           feature: "livekit-grpc",
@@ -359,6 +342,20 @@ export class LiveKitGrpcClient {
       );
       this.connected = false;
       this.audioStream = null;
+    };
+
+    // Attach handlers
+    this.audioStream?.on("data", dataHandler);
+    this.audioStream?.on("error", errorHandler);
+    this.audioStream?.on("end", endHandler);
+
+    // Track handlers for cleanup
+    this.resources.track(() => {
+      if (this.audioStream) {
+        this.audioStream.off("data", dataHandler);
+        this.audioStream.off("error", errorHandler);
+        this.audioStream.off("end", endHandler);
+      }
     });
 
     this.logger.info(
@@ -384,11 +381,7 @@ export class LiveKitGrpcClient {
     );
 
     // Interpret as little-endian int16
-    const asLE = new Int16Array(
-      pcmData.buffer,
-      pcmData.byteOffset,
-      Math.min(16, Math.floor(pcmData.byteLength / 2)),
-    );
+    const asLE = new Int16Array(pcmData.buffer, pcmData.byteOffset, Math.min(16, Math.floor(pcmData.byteLength / 2)));
     const samplesLE = Array.from(asLE);
 
     // Interpret as big-endian int16 (manually swap)
@@ -496,6 +489,7 @@ export class LiveKitGrpcClient {
     const stream = this.client.playAudio(request);
 
     stream.on("data", (event: any) => {
+      if (this.disposed) return;
       const playEvent: PlayAudioEvent = {
         type: this.mapEventType(event.type),
         requestId: event.request_id,
@@ -526,6 +520,7 @@ export class LiveKitGrpcClient {
     });
 
     stream.on("error", (error: Error) => {
+      if (this.disposed) return;
       this.logger.error(
         {
           error,
@@ -547,6 +542,7 @@ export class LiveKitGrpcClient {
     });
 
     stream.on("end", () => {
+      if (this.disposed) return;
       this.logger.debug(
         {
           requestId: params.requestId,
@@ -571,38 +567,32 @@ export class LiveKitGrpcClient {
       reason: "User requested stop",
     };
 
-    this.client.stopAudio(
-      request,
-      (error: grpc.ServiceError | null, response: any) => {
-        if (error) {
-          this.logger.error(
-            {
-              error,
-              feature: "livekit-grpc",
-            },
-            "StopAudio RPC failed",
-          );
-          return;
-        }
-
-        this.logger.info(
+    this.client.stopAudio(request, (error: grpc.ServiceError | null, response: any) => {
+      if (error) {
+        this.logger.error(
           {
-            stoppedRequestId: response.stopped_request_id,
+            error,
             feature: "livekit-grpc",
           },
-          "Audio playback stopped",
+          "StopAudio RPC failed",
         );
-      },
-    );
+        return;
+      }
+
+      this.logger.info(
+        {
+          stoppedRequestId: response.stopped_request_id,
+          feature: "livekit-grpc",
+        },
+        "Audio playback stopped",
+      );
+    });
   }
 
   /**
    * Register event handler for PlayAudio events
    */
-  public onPlayAudioEvent(
-    requestId: string,
-    handler: (evt: PlayAudioEvent) => void,
-  ): void {
+  public onPlayAudioEvent(requestId: string, handler: (evt: PlayAudioEvent) => void): void {
     this.eventHandlers.set(requestId, handler);
   }
 
@@ -667,30 +657,23 @@ export class LiveKitGrpcClient {
       }
       const req = { user_id: this.userSession.userId };
       try {
-        this.client.getStatus(
-          req,
-          (err: grpc.ServiceError | null, res: any) => {
-            if (err) {
-              this.logger
-                .child({ feature: "livekit-grpc" })
-                .error(err, "GetStatus RPC failed");
-              resolve({
-                connected: false,
-                participant_id: "",
-                participant_count: 0,
-                last_disconnect_at: 0,
-                last_disconnect_reason: "rpc_error",
-                server_version: "",
-              });
-              return;
-            }
-            resolve(res);
-          },
-        );
+        this.client.getStatus(req, (err: grpc.ServiceError | null, res: any) => {
+          if (err) {
+            this.logger.child({ feature: "livekit-grpc" }).error(err, "GetStatus RPC failed");
+            resolve({
+              connected: false,
+              participant_id: "",
+              participant_count: 0,
+              last_disconnect_at: 0,
+              last_disconnect_reason: "rpc_error",
+              server_version: "",
+            });
+            return;
+          }
+          resolve(res);
+        });
       } catch (e) {
-        this.logger
-          .child({ feature: "livekit-grpc" })
-          .error(e, "GetStatus threw");
+        this.logger.child({ feature: "livekit-grpc" }).error(e, "GetStatus threw");
         resolve({
           connected: false,
           participant_id: "",
@@ -710,9 +693,7 @@ export class LiveKitGrpcClient {
   public async rejoin(params?: JoinRoomParams): Promise<void> {
     const p = params ?? this.currentParams;
     if (!p) {
-      throw new Error(
-        "rejoin called without params and no previous room params",
-      );
+      throw new Error("rejoin called without params and no previous room params");
     }
     // If already joined, perform a clean disconnect first
     if (this.joinedRoom) {
@@ -752,32 +733,29 @@ export class LiveKitGrpcClient {
           reason: "User disconnected",
         };
 
-        this.client.leaveRoom(
-          request,
-          (error: grpc.ServiceError | null, _response: any) => {
-            if (error) {
-              this.logger.error(
-                {
-                  error,
-                  feature: "livekit-grpc",
-                },
-                "LeaveRoom RPC failed",
-              );
-            } else {
-              this.logger.info(
-                {
-                  feature: "livekit-grpc",
-                },
-                "Left LiveKit room",
-              );
-            }
+        this.client.leaveRoom(request, (error: grpc.ServiceError | null, _response: any) => {
+          if (error) {
+            this.logger.error(
+              {
+                error,
+                feature: "livekit-grpc",
+              },
+              "LeaveRoom RPC failed",
+            );
+          } else {
+            this.logger.info(
+              {
+                feature: "livekit-grpc",
+              },
+              "Left LiveKit room",
+            );
+          }
 
-            this.joinedRoom = false;
-            this.connected = false;
-            this.currentParams = null;
-            resolve();
-          },
-        );
+          this.joinedRoom = false;
+          this.connected = false;
+          this.currentParams = null;
+          resolve();
+        });
       });
     }
 
@@ -790,7 +768,12 @@ export class LiveKitGrpcClient {
    * Dispose of client (cleanup)
    */
   public dispose(): void {
+    if (this.disposed) return; // Idempotent
     this.disposed = true;
+
+    // Clean up all tracked resources (removes event listeners)
+    this.resources.dispose();
+
     void this.disconnect();
     this.eventHandlers.clear();
 
@@ -803,9 +786,7 @@ export class LiveKitGrpcClient {
   /**
    * Map proto event type to TypeScript enum
    */
-  private mapEventType(
-    protoType: number,
-  ): "STARTED" | "PROGRESS" | "COMPLETED" | "FAILED" {
+  private mapEventType(protoType: number): "STARTED" | "PROGRESS" | "COMPLETED" | "FAILED" {
     switch (protoType) {
       case 0:
         return "STARTED";

@@ -7,6 +7,9 @@ import {isRTL, translate, TxKeyPath} from "@/i18n"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {typography} from "@/theme/typography"
 import {useAppTheme} from "@/utils/useAppTheme"
+import {withUniwind} from "uniwind"
+import {StyleSheet} from "react-native"
+// import { flatten } from 'react-native/Libraries/StyleSheet/';
 
 type Sizes = keyof typeof $sizeStyles
 type Weights = keyof typeof typography.primary
@@ -55,7 +58,7 @@ export interface TextProps extends RNTextProps {
  * @param {TextProps} props - The props for the `Text` component.
  * @returns {JSX.Element} The rendered `Text` component.
  */
-export const Text = forwardRef(function Text(props: TextProps, ref: ForwardedRef<RNText>) {
+export const TextBase = forwardRef(function Text(props: TextProps, ref: ForwardedRef<RNText>) {
   const {weight, size, tx, txOptions, text, children, style: $styleOverride, ...rest} = props
   const {themed} = useAppTheme()
 
@@ -63,11 +66,65 @@ export const Text = forwardRef(function Text(props: TextProps, ref: ForwardedRef
   const content = i18nText || text || children
 
   const preset: Presets = props.preset ?? "default"
+
+  // map style.weight to $fontWeightStyles:
+  // let styleWeight = $styleOverride?["fon"]
+
+  // console.log("styleOverride: ", $styleOverride)
+  // if ($styleOverride?.valueOf())
+
+  // extract fontWeight from the styleOverride:
+  let weightOverride: Weights | undefined = undefined;
+  const mStyles = StyleSheet.flatten($styleOverride) as TextStyle | undefined;
+  if (mStyles?.fontWeight) {
+    switch (mStyles.fontWeight) {
+      case 100:
+        // weightOverride = "thin"
+        weightOverride = "light"
+        break
+      case 200:
+        // weightOverride = "extraLight"
+        weightOverride = "light"
+        break
+      case 300:
+        weightOverride = "light"
+        break
+      case 400:
+        weightOverride = "normal"
+        break
+      case 500:
+        weightOverride = "medium"
+        break
+      case 600:
+        weightOverride = "semibold"
+        break
+      case 700:
+        weightOverride = "bold"
+        break
+      case 800:
+        // weightOverride = "extrabold"
+        weightOverride = "bold"
+        break
+      case 900:
+        // weightOverride = "black"
+        weightOverride = "bold"
+        break
+      default:
+        break
+    }
+  }
+  // const merged = Object.assign({}, ...($styleOverride as any));
+  // merge the styleOverrideArrays into a single object:
+  // const styleOverrideObject = styleOverrideArray.reduce((acc, curr) => {
+  //   return {...acc, ...curr}
+  // }, {})
+
   const $styles: StyleProp<TextStyle> = [
     $rtlStyle,
     themed($presets[preset]),
     weight && $fontWeightStyles[weight],
     size && $sizeStyles[size],
+    weightOverride && $fontWeightStyles[weightOverride],
     $styleOverride,
   ]
 
@@ -78,12 +135,21 @@ export const Text = forwardRef(function Text(props: TextProps, ref: ForwardedRef
   )
 })
 
+export const Text = withUniwind(TextBase)
+
 const $sizeStyles = {
+  // xxl: {fontSize: 36, lineHeight: 44} satisfies TextStyle,
+  // xl: {fontSize: 24, lineHeight: 34} satisfies TextStyle,
+  // lg: {fontSize: 20, lineHeight: 32} satisfies TextStyle,
+  // md: {fontSize: 18, lineHeight: 26} satisfies TextStyle,
+  // sm: {fontSize: 16, lineHeight: 24} satisfies TextStyle,
+  // xs: {fontSize: 14, lineHeight: 21} satisfies TextStyle,
+  // xxs: {fontSize: 12, lineHeight: 18} satisfies TextStyle,
   xxl: {fontSize: 36, lineHeight: 44} satisfies TextStyle,
   xl: {fontSize: 24, lineHeight: 34} satisfies TextStyle,
   lg: {fontSize: 20, lineHeight: 32} satisfies TextStyle,
-  md: {fontSize: 18, lineHeight: 26} satisfies TextStyle,
-  sm: {fontSize: 16, lineHeight: 24} satisfies TextStyle,
+  // md: {fontSize: 18, lineHeight: 26} satisfies TextStyle,
+  md: {fontSize: 16, lineHeight: 24} satisfies TextStyle,
   xs: {fontSize: 14, lineHeight: 21} satisfies TextStyle,
   xxs: {fontSize: 12, lineHeight: 18} satisfies TextStyle,
 }
@@ -95,7 +161,7 @@ const $fontWeightStyles = Object.entries(typography.primary).reduce((acc, [weigh
 const $baseStyle: ThemedStyle<TextStyle> = theme => ({
   ...$sizeStyles.sm,
   ...$fontWeightStyles.normal,
-  color: theme.colors.text,
+  color: theme.colors.secondary_foreground,
 })
 
 const $presets: Record<Presets, ThemedStyleArray<TextStyle>> = {

@@ -47,24 +47,34 @@ func NewLiveKitBridgeService(config *Config, bsLogger *logger.BetterStackLogger)
 	}
 }
 
+// createLogger creates a context logger for a user
+func (s *LiveKitBridgeService) createLogger(userId, roomName, feature string) *logger.ContextLogger {
+	return s.bsLogger.WithContext(logger.LogContext{
+		UserID:   userId,
+		RoomName: roomName,
+		Feature:  feature,
+	})
+}
+
 // JoinRoom handles room join requests
 func (s *LiveKitBridgeService) JoinRoom(
 	ctx context.Context,
 	req *pb.JoinRoomRequest,
 ) (*pb.JoinRoomResponse, error) {
+	lg := s.createLogger(req.UserId, req.RoomName, "livekit-grpc")
+
 	log.Printf("JoinRoom request: userId=%s, room=%s", req.UserId, req.RoomName)
-	s.bsLogger.LogInfo("JoinRoom request received", map[string]interface{}{
-		"user_id":     req.UserId,
-		"room_name":   req.RoomName,
-		"livekit_url": req.LivekitUrl,
+	lg.Info("JoinRoom request received", logger.LogEntry{
+		LiveKitURL:     req.LivekitUrl,
+		TargetIdentity: req.TargetIdentity,
 	})
 
 	// Always replace existing session if present (handles reconnections, crashes, zombie sessions)
 	if existingVal, exists := s.sessions.Load(req.UserId); exists {
-		s.bsLogger.LogInfo("Replacing existing bridge session", map[string]interface{}{
-			"user_id":   req.UserId,
-			"room_name": req.RoomName,
-			"reason":    "new_join_request",
+		lg.Info("Replacing existing bridge session", logger.LogEntry{
+			Extra: map[string]interface{}{
+				"reason": "new_join_request",
+			},
 		})
 
 		existingSession := existingVal.(*RoomSession)
@@ -73,7 +83,7 @@ func (s *LiveKitBridgeService) JoinRoom(
 	}
 
 	// Create new session
-	session := NewRoomSession(req.UserId)
+	session := NewRoomSession(req.UserId, s.bsLogger)
 
 	// Setup callbacks for LiveKit room
 	var receivedPackets int64
@@ -112,12 +122,10 @@ func (s *LiveKitBridgeService) JoinRoom(
 				case session.audioFromLiveKit <- pcmData:
 					// Log periodically to show audio is flowing
 					if receivedPackets%100 == 0 {
-						s.bsLogger.LogDebug("Audio flowing from LiveKit", map[string]interface{}{
-							"user_id":     req.UserId,
-							"received":    receivedPackets,
-							"dropped":     droppedPackets,
-							"channel_len": len(session.audioFromLiveKit),
-							"room_name":   req.RoomName,
+						lg.Debug("Audio flowing from LiveKit", logger.LogEntry{
+							ReceivedPackets: receivedPackets,
+							DroppedPackets:  droppedPackets,
+							ChannelLen:      len(session.audioFromLiveKit),
 						})
 						log.Printf("Audio flowing for %s: received=%d, dropped=%d, channelLen=%d",
 							req.UserId, receivedPackets, droppedPackets, len(session.audioFromLiveKit))
@@ -126,11 +134,9 @@ func (s *LiveKitBridgeService) JoinRoom(
 					// Drop frame if channel full (backpressure)
 					droppedPackets++
 					if droppedPackets%50 == 0 {
-						s.bsLogger.LogWarn("Dropping audio frames", map[string]interface{}{
-							"user_id":       req.UserId,
-							"total_dropped": droppedPackets,
-							"channel_full":  len(session.audioFromLiveKit),
-							"room_name":     req.RoomName,
+						lg.Warn("Dropping audio frames due to backpressure", logger.LogEntry{
+							DroppedPackets: droppedPackets,
+							ChannelLen:     len(session.audioFromLiveKit),
 						})
 						log.Printf("Dropping audio frames for %s: total_dropped=%d, channel_full=%d",
 							req.UserId, droppedPackets, len(session.audioFromLiveKit))
@@ -140,9 +146,10 @@ func (s *LiveKitBridgeService) JoinRoom(
 		},
 		OnDisconnected: func() {
 			log.Printf("Disconnected from LiveKit room: %s", req.RoomName)
-			s.bsLogger.LogWarn("Disconnected from LiveKit room", map[string]interface{}{
-				"user_id":   req.UserId,
-				"room_name": req.RoomName,
+			lg.Warn("Disconnected from LiveKit room", logger.LogEntry{
+				Extra: map[string]interface{}{
+					"disconnect_reason": "livekit_disconnect_callback",
+				},
 			})
 
 			// Mark session as disconnected for status RPC
@@ -167,10 +174,8 @@ func (s *LiveKitBridgeService) JoinRoom(
 		lksdk.WithAutoSubscribe(false),
 	)
 	if err != nil {
-		s.bsLogger.LogError("Failed to connect to LiveKit room", err, map[string]interface{}{
-			"user_id":     req.UserId,
-			"room_name":   req.RoomName,
-			"livekit_url": req.LivekitUrl,
+		lg.Error("Failed to connect to LiveKit room", err, logger.LogEntry{
+			LiveKitURL: req.LivekitUrl,
 		})
 		return &pb.JoinRoomResponse{
 			Success: false,
@@ -197,11 +202,9 @@ func (s *LiveKitBridgeService) JoinRoom(
 	log.Printf("Successfully joined room: userId=%s, participantId=%s",
 		req.UserId, room.LocalParticipant.Identity())
 
-	s.bsLogger.LogInfo("Successfully joined LiveKit room", map[string]interface{}{
-		"user_id":           req.UserId,
-		"room_name":         req.RoomName,
-		"participant_id":    string(room.LocalParticipant.Identity()),
-		"participant_count": len(room.GetRemoteParticipants()) + 1,
+	lg.Info("Successfully joined LiveKit room", logger.LogEntry{
+		ParticipantID:    string(room.LocalParticipant.Identity()),
+		ParticipantCount: len(room.GetRemoteParticipants()) + 1,
 	})
 
 	return &pb.JoinRoomResponse{
@@ -216,13 +219,14 @@ func (s *LiveKitBridgeService) LeaveRoom(
 	ctx context.Context,
 	req *pb.LeaveRoomRequest,
 ) (*pb.LeaveRoomResponse, error) {
+	lg := s.createLogger(req.UserId, "", "livekit-grpc")
+
 	log.Printf("LeaveRoom request: userId=%s", req.UserId)
-	s.bsLogger.LogInfo("LeaveRoom request received", map[string]interface{}{
-		"user_id": req.UserId,
-	})
+	lg.Info("LeaveRoom request received", logger.LogEntry{})
 
 	sessionVal, ok := s.sessions.Load(req.UserId)
 	if !ok {
+		lg.Warn("LeaveRoom: session not found", logger.LogEntry{})
 		return &pb.LeaveRoomResponse{
 			Success: false,
 			Error:   "session not found",
@@ -233,7 +237,7 @@ func (s *LiveKitBridgeService) LeaveRoom(
 	session.Close()
 	s.sessions.Delete(req.UserId)
 
-	log.Printf("Successfully left room: userId=%s", req.UserId)
+	lg.Info("LeaveRoom completed successfully", logger.LogEntry{})
 
 	return &pb.LeaveRoomResponse{
 		Success: true,
@@ -244,185 +248,192 @@ func (s *LiveKitBridgeService) LeaveRoom(
 func (s *LiveKitBridgeService) StreamAudio(
 	stream pb.LiveKitBridge_StreamAudioServer,
 ) error {
-	// Get userId from first message
-	firstChunk, err := stream.Recv()
+	// First message should contain connection info
+	firstMsg, err := stream.Recv()
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "failed to receive initial chunk: %v", err)
+		s.bsLogger.LogError("StreamAudio: failed to receive first message", err, nil)
+		return status.Errorf(codes.InvalidArgument, "failed to receive first message: %v", err)
 	}
 
-	userId := firstChunk.UserId
-	if userId == "" {
-		return status.Errorf(codes.InvalidArgument, "userId required in first chunk")
-	}
+	userId := firstMsg.UserId
+	lg := s.createLogger(userId, "", "livekit-grpc")
 
-	log.Printf("StreamAudio started: userId=%s", userId)
+	lg.Info("StreamAudio started", logger.LogEntry{})
+	log.Printf("StreamAudio started for userId=%s", userId)
 
-	// Get session
 	sessionVal, ok := s.sessions.Load(userId)
 	if !ok {
+		lg.Error("StreamAudio: session not found", nil, logger.LogEntry{})
 		return status.Errorf(codes.NotFound, "session not found for user %s", userId)
 	}
 	session := sessionVal.(*RoomSession)
 
-	// Error channel for goroutine communication
-	errChan := make(chan error, 2)
-
-	// Goroutine 1: Receive from client → LiveKit
+	// Start goroutine to send audio FROM LiveKit TO client
 	go func() {
-		defer log.Printf("StreamAudio receive goroutine ended: userId=%s", userId)
-
-		// Process first chunk with track ID
-		trackName := trackIDToName(firstChunk.TrackId)
-		if err := session.writeAudioToTrack(firstChunk.PcmData, trackName); err != nil {
-			errChan <- fmt.Errorf("failed to write first chunk: %w", err)
-			return
-		}
-
-		// Continue receiving
-		for {
-			chunk, err := stream.Recv()
-			if err == io.EOF {
-				return
-			}
-			if err != nil {
-				errChan <- fmt.Errorf("receive error: %w", err)
-				return
-			}
-
-			// Convert track_id to track name
-			trackName := trackIDToName(chunk.TrackId)
-			if err := session.writeAudioToTrack(chunk.PcmData, trackName); err != nil {
-				errChan <- fmt.Errorf("failed to write audio: %w", err)
-				return
-			}
-		}
-	}()
-
-	// Goroutine 2: Send from LiveKit → client
-	go func() {
-		defer log.Printf("StreamAudio send goroutine ended: userId=%s", userId)
-
-		var sentPackets int64
-		var sendErrors int64
-
 		for {
 			select {
-			case audioData, ok := <-session.audioFromLiveKit:
+			case pcmData, ok := <-session.audioFromLiveKit:
 				if !ok {
+					lg.Debug("StreamAudio: audio channel closed", logger.LogEntry{})
 					return
 				}
-
-				// Send to client with timeout to prevent blocking forever
-				sendDone := make(chan error, 1)
-				go func() {
-					sendDone <- stream.Send(&pb.AudioChunk{
-						PcmData:     audioData,
-						SampleRate:  16000,
-						Channels:    1,
-						TimestampMs: 0,
-					})
-				}()
-
-				select {
-				case err := <-sendDone:
-					if err != nil {
-						sendErrors++
-						log.Printf("StreamAudio send error for %s: %v (errors=%d)", userId, err, sendErrors)
-						errChan <- fmt.Errorf("send error: %w", err)
-						return
-					}
-					sentPackets++
-					if sentPackets%100 == 0 {
-						s.bsLogger.LogDebug("Sent audio chunks to TypeScript", map[string]interface{}{
-							"user_id":     userId,
-							"sent":        sentPackets,
-							"channel_len": len(session.audioFromLiveKit),
-						})
-						log.Printf("Sent %d audio chunks to TypeScript for user %s (channelLen=%d)",
-							sentPackets, userId, len(session.audioFromLiveKit))
-					}
-				case <-time.After(2 * time.Second):
-					s.bsLogger.LogError("StreamAudio send timeout", fmt.Errorf("timeout after 2s"), map[string]interface{}{
-						"user_id": userId,
-					})
-					log.Printf("StreamAudio send timeout for %s after 2s, client may be stuck", userId)
-					errChan <- fmt.Errorf("send timeout after 2s")
-					return
-				case <-session.ctx.Done():
+				if err := stream.Send(&pb.AudioChunk{
+					PcmData:     pcmData,
+					SampleRate:  16000,
+					Channels:    1,
+					TimestampMs: time.Now().UnixMilli(),
+				}); err != nil {
+					lg.Error("StreamAudio: failed to send audio chunk", err, logger.LogEntry{})
 					return
 				}
-
 			case <-session.ctx.Done():
+				lg.Debug("StreamAudio: session context cancelled", logger.LogEntry{})
 				return
 			}
 		}
 	}()
 
-	// Wait for error or cancellation
-	select {
-	case err := <-errChan:
-		s.bsLogger.LogError("StreamAudio error", err, map[string]interface{}{
-			"user_id": userId,
-		})
-		log.Printf("StreamAudio error for userId=%s: %v", userId, err)
+	// Receive audio FROM client (currently unused but keeps stream open)
+	for {
+		_, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				lg.Info("StreamAudio: client closed stream", logger.LogEntry{})
+				return nil
+			}
+			lg.Error("StreamAudio error", err, logger.LogEntry{})
+			log.Printf("StreamAudio error for %s: %v", userId, err)
 
-		// CRITICAL: Clean up session on stream error
-		// This prevents zombie sessions and "channel full" errors after reconnection issues
-		s.bsLogger.LogWarn("Cleaning up session due to stream error", map[string]interface{}{
-			"user_id": userId,
-		})
-		log.Printf("Cleaning up session for %s due to stream error", userId)
-		session.Close()
-		s.sessions.Delete(userId)
+			// Clean up session on error
+			lg.Warn("Cleaning up session due to stream error", logger.LogEntry{})
+			session.Close()
+			s.sessions.Delete(userId)
 
-		return err
-	case <-session.ctx.Done():
-		log.Printf("StreamAudio context done: userId=%s", userId)
-		return nil
+			return err
+		}
 	}
 }
 
-// PlayAudio handles server-side audio playback
+// PlayAudio handles playing audio from a URL to the LiveKit room
 func (s *LiveKitBridgeService) PlayAudio(
 	req *pb.PlayAudioRequest,
 	stream pb.LiveKitBridge_PlayAudioServer,
 ) error {
-	log.Printf("PlayAudio request: userId=%s, url=%s", req.UserId, req.AudioUrl)
+	trackName := trackIDToName(req.TrackId)
+
+	lg := s.bsLogger.WithContext(logger.LogContext{
+		UserID:    req.UserId,
+		RequestID: req.RequestId,
+		TrackID:   req.TrackId,
+		TrackName: trackName,
+		Feature:   "livekit-grpc",
+	})
+
+	log.Printf("PlayAudio request: userId=%s, url=%s, requestId=%s, trackId=%d",
+		req.UserId, req.AudioUrl, req.RequestId, req.TrackId)
+
+	lg.Info("PlayAudio request received", logger.LogEntry{
+		AudioURL: req.AudioUrl,
+		Extra: map[string]interface{}{
+			"volume":     req.Volume,
+			"stop_other": req.StopOther,
+		},
+	})
+
+	// Validate URL
+	if req.AudioUrl == "" {
+		lg.Error("PlayAudio: empty audio URL", nil, logger.LogEntry{})
+		stream.Send(&pb.PlayAudioEvent{
+			Type:      pb.PlayAudioEvent_FAILED,
+			RequestId: req.RequestId,
+			Error:     "audio URL is empty",
+		})
+		return status.Errorf(codes.InvalidArgument, "audio URL is empty")
+	}
+
+	// Check for invalid URL schemes
+	if req.AudioUrl == "nothing" || (!hasValidScheme(req.AudioUrl)) {
+		err := fmt.Errorf("invalid audio URL: %s (must start with http:// or https://)", req.AudioUrl)
+		lg.Error("PlayAudio: invalid audio URL scheme", err, logger.LogEntry{
+			AudioURL: req.AudioUrl,
+		})
+		stream.Send(&pb.PlayAudioEvent{
+			Type:      pb.PlayAudioEvent_FAILED,
+			RequestId: req.RequestId,
+			Error:     err.Error(),
+		})
+		return status.Errorf(codes.InvalidArgument, "%s", err.Error())
+	}
 
 	sessionVal, ok := s.sessions.Load(req.UserId)
 	if !ok {
+		lg.Error("PlayAudio: session not found", nil, logger.LogEntry{})
+		stream.Send(&pb.PlayAudioEvent{
+			Type:      pb.PlayAudioEvent_FAILED,
+			RequestId: req.RequestId,
+			Error:     fmt.Sprintf("session not found for user %s", req.UserId),
+		})
 		return status.Errorf(codes.NotFound, "session not found for user %s", req.UserId)
 	}
 	session := sessionVal.(*RoomSession)
 
-	// Convert track_id to track name FIRST (before any stopping logic)
-	trackName := trackIDToName(req.TrackId)
+	// Check if room is connected
+	session.mu.RLock()
+	isConnected := session.connected
+	session.mu.RUnlock()
+
+	if !isConnected {
+		lg.Error("PlayAudio: LiveKit room not connected", nil, logger.LogEntry{
+			Extra: map[string]interface{}{
+				"session_state": "disconnected",
+			},
+		})
+		stream.Send(&pb.PlayAudioEvent{
+			Type:      pb.PlayAudioEvent_FAILED,
+			RequestId: req.RequestId,
+			Error:     "LiveKit room not connected",
+		})
+		return status.Errorf(codes.FailedPrecondition, "LiveKit room not connected for user %s", req.UserId)
+	}
 
 	// Handle stopping logic based on StopOther flag
 	if req.StopOther {
 		// StopOther=true: Stop ALL tracks (interrupt mode)
 		log.Printf("StopOther flag set, stopping ALL tracks for user %s", req.UserId)
+		lg.Debug("Stopping all tracks (interrupt mode)", logger.LogEntry{})
 		session.stopPlayback()
 	} else {
 		// StopOther=false: Only stop THIS specific track to avoid conflicts (mixing mode)
-		// This allows different tracks (speaker, tts, app_audio) to play simultaneously
 		log.Printf("Audio mixing mode: stopping only track '%s' for user %s", trackName, req.UserId)
+		lg.Debug("Stopping single track (mixing mode)", logger.LogEntry{})
 		session.stopTrackPlayback(trackName)
 	}
 
 	// Send STARTED event
+	lg.Debug("Sending STARTED event", logger.LogEntry{})
 	if err := stream.Send(&pb.PlayAudioEvent{
 		Type:      pb.PlayAudioEvent_STARTED,
 		RequestId: req.RequestId,
 	}); err != nil {
+		lg.Error("Failed to send STARTED event", err, logger.LogEntry{})
 		return err
 	}
 
 	// Play audio file synchronously - MUST wait to keep gRPC stream open
-	// Multiple PlayAudio RPC calls can run concurrently on different tracks
-	// This is the key to audio mixing: concurrent RPC calls = concurrent tracks
-	duration, err := s.playAudioFile(req, session, stream, trackName)
+	lg.Info("Starting audio playback", logger.LogEntry{
+		AudioURL: req.AudioUrl,
+	})
+
+	startTime := time.Now()
+	duration, err := s.playAudioFile(req, session, stream, trackName, lg)
+	playbackDuration := time.Since(startTime)
+
 	if err != nil {
+		lg.Error("PlayAudio playback failed", err, logger.LogEntry{
+			AudioURL:   req.AudioUrl,
+			DurationMs: playbackDuration.Milliseconds(),
+		})
+
 		// Send FAILED event
 		stream.Send(&pb.PlayAudioEvent{
 			Type:      pb.PlayAudioEvent_FAILED,
@@ -436,20 +447,32 @@ func (s *LiveKitBridgeService) PlayAudio(
 	}
 
 	// Send COMPLETED event
+	lg.Info("PlayAudio completed successfully", logger.LogEntry{
+		AudioURL:   req.AudioUrl,
+		DurationMs: duration,
+		Extra: map[string]interface{}{
+			"actual_playback_ms": playbackDuration.Milliseconds(),
+		},
+	})
+
 	if err := stream.Send(&pb.PlayAudioEvent{
 		Type:       pb.PlayAudioEvent_COMPLETED,
 		RequestId:  req.RequestId,
 		DurationMs: duration,
 	}); err != nil {
+		lg.Error("Failed to send COMPLETED event", err, logger.LogEntry{})
 		return err
 	}
 
 	// DON'T close the track after playback - keep it alive for reuse
-	// Tracks are only closed when explicitly stopped via StopAudio or session cleanup
-	// This prevents the "no audio after first play" issue
 	log.Printf("Playback completed for track '%s', keeping track alive for reuse", trackName)
 
 	return nil
+}
+
+// hasValidScheme checks if URL has a valid HTTP(S) scheme
+func hasValidScheme(url string) bool {
+	return len(url) > 7 && (url[:7] == "http://" || url[:8] == "https://")
 }
 
 // StopAudio handles stopping audio playback
@@ -457,10 +480,20 @@ func (s *LiveKitBridgeService) StopAudio(
 	ctx context.Context,
 	req *pb.StopAudioRequest,
 ) (*pb.StopAudioResponse, error) {
+	trackName := trackIDToName(req.TrackId)
+	lg := s.bsLogger.WithContext(logger.LogContext{
+		UserID:    req.UserId,
+		TrackID:   req.TrackId,
+		TrackName: trackName,
+		Feature:   "livekit-grpc",
+	})
+
 	log.Printf("StopAudio request: userId=%s, trackId=%d", req.UserId, req.TrackId)
+	lg.Info("StopAudio request received", logger.LogEntry{})
 
 	sessionVal, ok := s.sessions.Load(req.UserId)
 	if !ok {
+		lg.Warn("StopAudio: session not found", logger.LogEntry{})
 		return &pb.StopAudioResponse{
 			Success: false,
 			Error:   "session not found",
@@ -469,21 +502,20 @@ func (s *LiveKitBridgeService) StopAudio(
 
 	session := sessionVal.(*RoomSession)
 
-	// Cancel any ongoing playback (this stops the audio without closing tracks)
-	session.stopPlayback()
-	log.Printf("Stopped playback for user %s", req.UserId)
+	if req.TrackId == -1 {
+		// Stop all playback
+		lg.Info("Stopping all audio playback", logger.LogEntry{})
+		session.stopPlayback()
+	} else {
+		// Stop specific track
+		lg.Info("Stopping specific track", logger.LogEntry{})
+		session.stopTrackPlayback(trackName)
+	}
 
-	// NOTE: We do NOT close tracks here anymore!
-	// Tracks should remain alive for reuse to prevent "no audio after stop" issues.
-	// Tracks are only closed during:
-	// 1. Session cleanup (session.Close())
-	// 2. PlayAudio errors
-	//
-	// If you need to explicitly close tracks, use a different RPC or add a flag to this request.
+	lg.Info("StopAudio completed successfully", logger.LogEntry{})
 
 	return &pb.StopAudioResponse{
-		Success:          true,
-		StoppedRequestId: req.RequestId,
+		Success: true,
 	}, nil
 }
 
@@ -504,6 +536,12 @@ func (s *LiveKitBridgeService) HealthCheck(
 		return true
 	})
 
+	s.bsLogger.LogDebug("HealthCheck called", map[string]interface{}{
+		"feature":         "livekit-grpc",
+		"active_sessions": activeSessions,
+		"active_streams":  activeStreams,
+	})
+
 	return &pb.HealthCheckResponse{
 		Status:         pb.HealthCheckResponse_SERVING,
 		ActiveSessions: activeSessions,
@@ -512,64 +550,61 @@ func (s *LiveKitBridgeService) HealthCheck(
 	}, nil
 }
 
-// getSession is a helper to safely get a session
-func (s *LiveKitBridgeService) getSession(userId string) (*RoomSession, error) {
+// getSession retrieves a session by user ID
+func (s *LiveKitBridgeService) getSession(userId string) (*RoomSession, bool) {
 	sessionVal, ok := s.sessions.Load(userId)
 	if !ok {
-		return nil, fmt.Errorf("session not found for user %s", userId)
+		return nil, false
 	}
-	return sessionVal.(*RoomSession), nil
+	return sessionVal.(*RoomSession), true
 }
 
-// GetStatus returns room connectivity state for a given user session
-func (s *LiveKitBridgeService) GetStatus(ctx context.Context, req *pb.BridgeStatusRequest) (*pb.BridgeStatusResponse, error) {
-	// Default response if no session
-	resp := &pb.BridgeStatusResponse{
-		Connected:            false,
-		ParticipantId:        "",
-		ParticipantCount:     0,
-		LastDisconnectAt:     0,
-		LastDisconnectReason: "",
-		ServerVersion:        "1.0.0",
-	}
+// GetStatus returns the current status of a user's session
+func (s *LiveKitBridgeService) GetStatus(
+	ctx context.Context,
+	req *pb.BridgeStatusRequest,
+) (*pb.BridgeStatusResponse, error) {
+	lg := s.createLogger(req.UserId, "", "livekit-grpc")
+	lg.Debug("GetStatus request received", logger.LogEntry{})
 
-	if req == nil || req.UserId == "" {
-		return resp, nil
-	}
-
-	val, ok := s.sessions.Load(req.UserId)
+	sessionVal, ok := s.sessions.Load(req.UserId)
 	if !ok {
-		// No session found: return defaults (connected=false)
-		return resp, nil
+		lg.Debug("GetStatus: session not found", logger.LogEntry{})
+		return &pb.BridgeStatusResponse{
+			Connected: false,
+		}, nil
 	}
 
-	session := val.(*RoomSession)
-
-	// Collect state under lock
+	session := sessionVal.(*RoomSession)
 	session.mu.RLock()
-	connected := session.connected
-	participantID := session.participantID
-	participantCount := session.participantCount
-	lastDiscAt := session.lastDisconnectAt
-	lastDiscReason := session.lastDisconnectReason
-	room := session.room
-	session.mu.RUnlock()
+	defer session.mu.RUnlock()
 
-	// If we have a room, prefer live counts/ids
-	if room != nil {
-		if participantID == "" {
-			participantID = string(room.LocalParticipant.Identity())
-		}
-		participantCount = len(room.GetRemoteParticipants()) + 1
+	// Count active tracks
+	trackCount := len(session.tracks)
+
+	// Convert disconnect time to milliseconds
+	var lastDisconnectAtMs int64
+	if !session.lastDisconnectAt.IsZero() {
+		lastDisconnectAtMs = session.lastDisconnectAt.UnixMilli()
 	}
 
-	resp.Connected = connected
-	resp.ParticipantId = participantID
-	resp.ParticipantCount = int32(participantCount)
-	if !lastDiscAt.IsZero() {
-		resp.LastDisconnectAt = lastDiscAt.UnixMilli()
-	}
-	resp.LastDisconnectReason = lastDiscReason
+	lg.Debug("GetStatus response", logger.LogEntry{
+		ParticipantID:    session.participantID,
+		ParticipantCount: session.participantCount,
+		Extra: map[string]interface{}{
+			"connected":              session.connected,
+			"track_count":            trackCount,
+			"last_disconnect_reason": session.lastDisconnectReason,
+			"last_disconnect_at_ms":  lastDisconnectAtMs,
+		},
+	})
 
-	return resp, nil
+	return &pb.BridgeStatusResponse{
+		Connected:            session.connected,
+		ParticipantId:        session.participantID,
+		ParticipantCount:     int32(session.participantCount),
+		LastDisconnectAt:     lastDisconnectAtMs,
+		LastDisconnectReason: session.lastDisconnectReason,
+		ServerVersion:        "1.0.0",
+	}, nil
 }

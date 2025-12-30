@@ -4,6 +4,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import android.content.Context;
+
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
@@ -12,6 +14,7 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
+import com.mentra.asg_client.service.utils.SysProp;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -106,6 +109,16 @@ public class K900CommandHandler {
                     handleVoiceActivityDetection(bData);
                     break;
 
+                case "hs_syvr":
+                    // System version report from BES chip
+                    handleSystemVersionReport(bData);
+                    break;
+
+                case "sr_btaddr":
+                    // BT MAC address response from BES chip
+                    handleBtAddrResponse(bData);
+                    break;
+
                 default:
                     Log.d(TAG, "📦 Unknown K900 command: " + command);
                     break;
@@ -171,6 +184,112 @@ public class K900CommandHandler {
             Log.d(TAG, "🎤 Voice Activity Detection event received - VAD " + (on == 1 ? "ON" : "OFF"));
         } else {
             Log.d(TAG, "🎤 Voice Activity Detection event received");
+        }
+    }
+
+    /**
+     * Handle system version report from MCU
+     * Logs firmware version and Bluetooth information, caches firmware version for sending to phone
+     */
+    private void handleSystemVersionReport(JSONObject bData) {
+        if (bData != null) {
+            String version = bData.optString("version", "unknown");
+            String bleName = bData.optString("ble", "unknown");
+            String btName = bData.optString("bt", "unknown");
+            String btAddr = bData.optString("btaddr", "unknown");
+            String bleAddr = bData.optString("bleaddr", "unknown");
+
+            Log.i(TAG, "📋 System Version Report - Firmware: " + version);
+            Log.i(TAG, "📋 BLE Name: " + bleName + ", BT Name: " + btName);
+            Log.i(TAG, "📋 BT Address: " + btAddr + ", BLE Address: " + bleAddr);
+
+            // Cache the MCU firmware version so it can be sent to phone when connected
+            if (serviceManager != null && serviceManager.getAsgSettings() != null &&
+                !version.equals("unknown") && !version.isEmpty()) {
+                serviceManager.getAsgSettings().setMcuFirmwareVersion(version);
+            }
+
+            // Request BT MAC address from BES chip (if not already saved)
+            // This is a good time to request since we know UART is working
+            Context context = serviceManager != null ? serviceManager.getContext() : null;
+            if (context != null) {
+                String existingMac = SysProp.getBesBtMac(context);
+                if (existingMac == null || existingMac.isEmpty()) {
+                    Log.i(TAG, "📋 No BT MAC address cached - requesting from BES chip");
+                    // Delay request slightly to allow BES to finish startup
+                    mainHandler.postDelayed(() -> requestBtMacAddress(), 500);
+                } else {
+                    Log.d(TAG, "📋 BT MAC address already cached: " + existingMac);
+                }
+            }
+        } else {
+            Log.d(TAG, "📋 System version report received but no B field data");
+        }
+    }
+
+    /**
+     * Handle BT MAC address response from BES chip (sr_btaddr)
+     * Saves the MAC address to system properties for persistent storage
+     */
+    private void handleBtAddrResponse(JSONObject bData) {
+        if (bData != null) {
+            String btAddr = bData.optString("btaddr", "");
+
+            if (!btAddr.isEmpty()) {
+                Log.i(TAG, "📋 BT MAC Address received from BES: " + btAddr);
+
+                // Save to system properties (persistent across reboots)
+                Context context = serviceManager != null ? serviceManager.getContext() : null;
+                if (context != null) {
+                    SysProp.setBesBtMac(context, btAddr);
+                    Log.i(TAG, "✅ BT MAC Address saved to system properties");
+                } else {
+                    Log.w(TAG, "⚠️ Context not available - cannot save BT MAC to system properties");
+                }
+            } else {
+                Log.w(TAG, "⚠️ BT MAC Address response received but btaddr field is empty");
+            }
+        } else {
+            Log.d(TAG, "📋 BT MAC Address response received but no B field data");
+        }
+    }
+
+    /**
+     * Send request to BES chip to get BT MAC address (cs_btaddr)
+     * Call this on startup/UART connection to retrieve the unique device identifier
+     */
+    public void requestBtMacAddress() {
+        Log.i(TAG, "📋 Requesting BT MAC address from BES chip");
+
+        try {
+            JSONObject k900Command = new JSONObject();
+            k900Command.put("C", "cs_btaddr");
+            k900Command.put("V", 1);
+            k900Command.put("B", "");
+
+            String commandStr = k900Command.toString();
+            Log.d(TAG, "📤 Sending BT MAC request: " + commandStr);
+
+            if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
+                Log.w(TAG, "⚠️ ServiceManager or Bluetooth manager unavailable");
+                return;
+            }
+
+            if (!serviceManager.getBluetoothManager().isConnected()) {
+                Log.w(TAG, "⚠️ Bluetooth not connected; cannot request BT MAC address");
+                return;
+            }
+
+            boolean sent = serviceManager.getBluetoothManager().sendData(
+                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            if (sent) {
+                Log.i(TAG, "✅ BT MAC address request sent");
+            } else {
+                Log.e(TAG, "❌ Failed to send BT MAC address request");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error creating BT MAC address request", e);
         }
     }
 

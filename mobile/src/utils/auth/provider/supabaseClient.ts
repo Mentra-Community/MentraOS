@@ -206,6 +206,14 @@ export class SupabaseWrapperClient extends AuthClient {
         throw error
       }
 
+      // Detect duplicate signup - user exists but is unverified
+      // Supabase returns a user with empty identities array for duplicate signups
+      // This prevents showing "success" when no new verification email was sent
+      if (data.user && data.user.identities?.length === 0) {
+        console.log("Supabase: Duplicate signup detected - user exists but unverified")
+        throw new Error("DUPLICATE_SIGNUP")
+      }
+
       return {
         user: data.user
           ? {
@@ -241,9 +249,25 @@ export class SupabaseWrapperClient extends AuthClient {
     })
   }
 
+  public updateUserEmail(email: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      const {error} = await this.supabase.auth.updateUser({
+        email,
+      })
+      if (error) {
+        throw error
+      }
+      // Supabase will send a verification email to the new address
+      // The user must click the link to confirm the email change
+      return undefined
+    })
+  }
+
   public resetPasswordForEmail(email: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      const {error} = await this.supabase.auth.resetPasswordForEmail(email)
+      const {error} = await this.supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: "https://mentra.glass/reset-password",
+      })
       if (error) {
         throw error
       }

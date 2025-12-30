@@ -17,6 +17,7 @@ import Animated, {
   Easing,
 } from "react-native-reanimated"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
+// eslint-disable-next-line import/no-unresolved
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 
 import {spacing} from "@/theme"
@@ -53,7 +54,28 @@ export function ImageViewer({visible, photo, onClose, onShare}: ImageViewerProps
   const dismissScale = useSharedValue(1)
   const backgroundOpacity = useSharedValue(1)
 
+  // Animated styles - must be declared before any conditional returns
+  const animatedImageStyle = useAnimatedStyle(() => ({
+    transform: [
+      {translateX: translationX.value},
+      {translateY: translationY.value + dismissTranslationY.value},
+      {scale: scale.value * dismissScale.value},
+    ],
+  }))
+
+  const animatedBackgroundStyle = useAnimatedStyle(() => ({
+    opacity: backgroundOpacity.value,
+  }))
+
   if (!photo) return null
+
+  // Use local file path if available, otherwise use URL
+  // This allows viewing photos immediately after download during sync
+  const imageUri = photo.filePath
+    ? photo.filePath.startsWith("file://")
+      ? photo.filePath
+      : `file://${photo.filePath}`
+    : photo.url
 
   const resetZoom = () => {
     "worklet"
@@ -180,18 +202,6 @@ export function ImageViewer({visible, photo, onClose, onShare}: ImageViewerProps
     dismissGesture,
   )
 
-  const animatedImageStyle = useAnimatedStyle(() => ({
-    transform: [
-      {translateX: translationX.value},
-      {translateY: translationY.value + dismissTranslationY.value},
-      {scale: scale.value * dismissScale.value},
-    ],
-  }))
-
-  const animatedBackgroundStyle = useAnimatedStyle(() => ({
-    opacity: backgroundOpacity.value,
-  }))
-
   return (
     <Modal visible={visible} transparent={false} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <GestureHandlerRootView style={$container}>
@@ -203,7 +213,7 @@ export function ImageViewer({visible, photo, onClose, onShare}: ImageViewerProps
         {/* Image */}
         <GestureDetector gesture={composed}>
           <AnimatedImage
-            source={{uri: photo.url}}
+            source={{uri: imageUri}}
             style={[$image, animatedImageStyle]}
             contentFit="contain"
             transition={200}

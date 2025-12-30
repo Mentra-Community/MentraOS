@@ -48,7 +48,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   keepRtmpStreamAlive(params: Record<string, any>): Promise<void>
 
   // Microphone Commands
-  microphoneStateChange(requiredDataStrings: string[], bypassVad: boolean): Promise<void>
+  setMicState(sendPcmData: boolean, sendTranscript: boolean, bypassVad: boolean): Promise<void>
   restartTranscriber(): Promise<void>
 
   // RGB LED Control
@@ -85,6 +85,17 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
       icon: string | null
     }>
   >
+
+  // Media Library Commands
+  saveToGalleryWithDate(
+    filePath: string,
+    captureTimeMillis?: number,
+  ): Promise<{
+    success: boolean
+    uri?: string
+    identifier?: string
+    error?: string
+  }>
 }
 
 // This call loads the native module object from the JSI.

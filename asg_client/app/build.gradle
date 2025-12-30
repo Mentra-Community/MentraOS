@@ -25,6 +25,72 @@ def asgStorePassword = project.hasProperty("ASG_STORE_PASSWORD") ? project.prope
 def asgKeyPassword = project.hasProperty("ASG_KEY_PASSWORD") ? project.property("ASG_KEY_PASSWORD") : ""
 def asgKeyAlias = project.hasProperty("ASG_KEY_ALIAS") ? project.property("ASG_KEY_ALIAS") : "asg"
 
+// Find keystore: check shared location first, then local
+def sharedKeystoreFile = new File(System.getProperty("user.home"), ".mentra/credentials/asg-keystore.jks")
+def localKeystoreFile = file("../credentials/asg-keystore.jks")
+def productionKeystoreFile = sharedKeystoreFile.exists() ? sharedKeystoreFile : localKeystoreFile
+def useReleaseKey = productionKeystoreFile.exists() && asgStorePassword ? true : false
+
+// Print signing configuration status during build
+gradle.taskGraph.whenReady { taskGraph ->
+    def isReleaseBuild = taskGraph.allTasks.any { it.name.toLowerCase().contains('release') }
+    def isDebugBuild = taskGraph.allTasks.any { it.name.toLowerCase().contains('debug') }
+
+    if (isReleaseBuild || isDebugBuild) {
+        println ""
+        println "╔════════════════════════════════════════════════════════════════╗"
+        println "║                    ASG CLIENT SIGNING INFO                     ║"
+        println "╠════════════════════════════════════════════════════════════════╣"
+
+        if (isReleaseBuild) {
+            if (useReleaseKey) {
+                println "║  ✅ RELEASE BUILD: Using PRODUCTION signing key               ║"
+                println "║     Keystore: ${productionKeystoreFile.absolutePath.take(50).padRight(50)}║"
+                println "║     Key Alias: ${asgKeyAlias.padRight(48)}║"
+            } else {
+                println "║  ⚠️  RELEASE BUILD: Using DEBUG signing key (FALLBACK!)       ║"
+                println "║                                                               ║"
+                if (!productionKeystoreFile.exists()) {
+                    println "║  WARNING: Production keystore not found!                      ║"
+                    println "║  Missing: credentials/asg-keystore.jks                        ║"
+                } else if (!asgStorePassword) {
+                    println "║  WARNING: ASG_STORE_PASSWORD not set!                         ║"
+                }
+                println "║  This APK will NOT work for production distribution.          ║"
+                println "║                                                               ║"
+                println "║  To fix:                                                      ║"
+                println "║  1. Place asg-keystore.jks in credentials/ directory          ║"
+                println "║  2. Add to ~/.gradle/gradle.properties:                       ║"
+                println "║     ASG_STORE_PASSWORD=xxx                                    ║"
+                println "║     ASG_KEY_PASSWORD=xxx                                      ║"
+                println "║     ASG_KEY_ALIAS=asg                                         ║"
+            }
+        }
+
+        if (isDebugBuild && !isReleaseBuild) {
+            if (useReleaseKey) {
+                println "║  🔧 DEBUG BUILD: Using PRODUCTION signing key                 ║"
+                println "║     Keystore: ${productionKeystoreFile.absolutePath.take(50).padRight(50)}║"
+                println "║     Key Alias: ${asgKeyAlias.padRight(48)}║"
+                println "║     ⚠️  Same signature as release builds                      ║"
+            } else {
+                println "║  🔧 DEBUG BUILD: Using default debug keystore (fallback)      ║"
+                println "║     Keystore: ~/.android/debug.keystore                       ║"
+                if (!productionKeystoreFile.exists()) {
+                    println "║                                                               ║"
+                    println "║  ℹ️  Production keystore not found (optional for debug)      ║"
+                } else if (!asgStorePassword) {
+                    println "║                                                               ║"
+                    println "║  ℹ️  Production credentials not set (optional for debug)     ║"
+                }
+            }
+        }
+
+        println "╚════════════════════════════════════════════════════════════════╝"
+        println ""
+    }
+}
+
 android {
     namespace 'com.mentra.asg_client'
     compileSdk 34
@@ -37,12 +103,13 @@ android {
 
     signingConfigs {
         debug {
-            def debugKeystoreFile = file("../credentials/debug.keystore")
-            if (debugKeystoreFile.exists()) {
-                storeFile debugKeystoreFile
-                storePassword "android"
-                keyAlias "androiddebugkey"
-                keyPassword "android"
+            // Use production keystore for debug builds if available (maintains app identity)
+            // Otherwise fall back to default debug keystore
+            if (productionKeystoreFile.exists() && asgStorePassword) {
+                storeFile productionKeystoreFile
+                storePassword = asgStorePassword
+                keyAlias = asgKeyAlias
+                keyPassword = asgKeyPassword
             } else {
                 // Fall back to Android's default debug keystore
                 def userHome = System.getProperty("user.home")
@@ -53,10 +120,21 @@ android {
             }
         }
         release {
-            storeFile file("../credentials/asg-keystore.jks")
-            storePassword = asgStorePassword
-            keyAlias = asgKeyAlias
-            keyPassword = asgKeyPassword
+            // Use production keystore for release builds if available
+            // Otherwise fall back to debug keystore (with warning)
+            if (productionKeystoreFile.exists() && asgStorePassword) {
+                storeFile productionKeystoreFile
+                storePassword = asgStorePassword
+                keyAlias = asgKeyAlias
+                keyPassword = asgKeyPassword
+            } else {
+                // Fall back to debug keystore (release will not be production-ready)
+                def userHome = System.getProperty("user.home")
+                storeFile file("${userHome}/.android/debug.keystore")
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
         }
     }
 
@@ -75,8 +153,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 16
-        versionName "16.0"
+        versionCode 21
+        versionName "21.0"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"

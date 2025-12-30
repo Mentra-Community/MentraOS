@@ -40,6 +40,7 @@ export interface Glasses {
   glasses_device_model?: string
   glasses_android_version?: string
   glasses_ota_version_url?: string
+  glasses_firmware_version?: string
   glasses_serial_number?: string
   glasses_style?: string
   glasses_color?: string
@@ -86,7 +87,6 @@ export interface CoreInfo {
   core_token: string | null
   cloud_connection_status: string
   default_wearable: string | null
-  is_mic_enabled_for_frontend: boolean
   is_searching: boolean
   // protobuf_schema_version: string
   // glasses_protobuf_version: string
@@ -107,7 +107,6 @@ export class CoreStatusParser {
     core_info: {
       cloud_connection_status: "DISCONNECTED",
       core_token: null,
-      is_mic_enabled_for_frontend: false,
       default_wearable: null,
       is_searching: false,
     },
@@ -140,7 +139,6 @@ export class CoreStatusParser {
     core_info: {
       cloud_connection_status: "CONNECTED",
       core_token: "1234567890",
-      is_mic_enabled_for_frontend: false,
       default_wearable: "evenrealities_g1",
       is_searching: false,
     },
@@ -207,7 +205,6 @@ export class CoreStatusParser {
             hasConnectedGlasses && !coreInfo.default_wearable
               ? status.connected_glasses.model_name
               : (coreInfo.default_wearable ?? null),
-          is_mic_enabled_for_frontend: coreInfo.is_mic_enabled_for_frontend ?? false,
           is_searching: coreInfo.is_searching ?? false,
         },
         glasses_info: status.connected_glasses
@@ -233,6 +230,7 @@ export class CoreStatusParser {
               glasses_android_version: glassesInfo.glasses_android_version,
               glasses_ota_version_url:
                 glassesInfo.glasses_ota_version_url || "https://ota.mentraglass.com/live_version.json",
+              glasses_firmware_version: glassesInfo.glasses_firmware_version,
               glasses_serial_number: glassesInfo.glasses_serial_number,
               glasses_style: glassesInfo.glasses_style,
               glasses_color: glassesInfo.glasses_color,

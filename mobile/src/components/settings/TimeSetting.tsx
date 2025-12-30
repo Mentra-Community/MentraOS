@@ -150,7 +150,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({
 
   return (
     <View style={[themed($container), groupedStyle, containerStyle]}>
-      <Text style={themed($label)}>{label}</Text>
+      <Text style={themed($label)} weight="semibold" text={label} />
 
       <Pressable
         style={themed($timeButton)}
@@ -164,7 +164,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({
         <View style={themed($modalOverlay)}>
           <View style={themed($modalContent)}>
             <View style={themed($modalHeader)}>
-              <Text style={themed($modalTitle)}>{label}</Text>
+              <Text style={themed($modalTitle)} weight="semibold" text={label} />
             </View>
 
             <View style={themed($pickerContainer)}>
@@ -313,7 +313,6 @@ const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 
 const $label: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 14,
-  fontWeight: "600",
   color: colors.text,
   marginBottom: spacing.s2,
 })
@@ -365,7 +364,6 @@ const $modalHeader: ThemedStyle<ViewStyle> = ({spacing}) => ({
 
 const $modalTitle: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 18,
-  fontWeight: "600",
   color: colors.text,
 })
 

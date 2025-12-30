@@ -2,6 +2,7 @@ import {Platform, View} from "react-native"
 import {ScrollView} from "react-native-gesture-handler"
 
 import {ProfileCard} from "@/components/account/ProfileCard"
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {VersionInfo} from "@/components/dev/VersionInfo"
 import {Header, Icon, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
@@ -11,20 +12,19 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useAppTheme} from "@/utils/useAppTheme"
+import {$styles} from "@/theme"
 
 export default function AccountPage() {
-  const {theme} = useAppTheme()
+  const {theme, themed} = useAppTheme()
   const {push} = useNavigationHistory()
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.s6}}>
-      <Header leftTx="settings:title" />
+    <Screen preset="fixed">
+      <Header leftTx="settings:title" RightActionComponent={<MentraLogoStandalone />} />
 
-      <ScrollView
-        style={{marginRight: -theme.spacing.s6, paddingRight: theme.spacing.s6}}
-        contentInsetAdjustmentBehavior="automatic">
+      <ScrollView style={themed($styles.scrollView)} contentInsetAdjustmentBehavior="automatic">
         <ProfileCard />
 
         <View style={{flex: 1, gap: theme.spacing.s6}}>
@@ -52,17 +52,17 @@ export default function AccountPage() {
           )}
 
           <Group title={translate("account:appSettings")}>
-            {/* App appearance temporarily disabled - forcing light mode
-            <RouteButton
-              icon={<Icon name="sun" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:appAppearance")}
-              onPress={() => push("/settings/theme")}
-            />
-            */}
+            {devMode && (
+              <RouteButton
+                icon={<Icon name="sun" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:appAppearance")}
+                onPress={() => push("/settings/theme")}
+              />
+            )}
             {(Platform.OS === "android" || devMode) && (
               <RouteButton
                 icon={<Icon name="bell" size={24} color={theme.colors.secondary_foreground} />}
-                label="Notification Settings"
+                label={translate("settings:notificationsSettings")}
                 onPress={() => push("/settings/notifications")}
               />
             )}

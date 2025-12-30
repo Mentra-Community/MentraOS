@@ -1,8 +1,7 @@
 import {useLocalSearchParams} from "expo-router"
 import {View} from "react-native"
 
-import {Text} from "@/components/ignite"
-import {Screen, Header} from "@/components/ignite"
+import {Text, Screen, Header} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/utils/useAppTheme"
 

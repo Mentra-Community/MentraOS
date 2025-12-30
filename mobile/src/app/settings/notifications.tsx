@@ -192,7 +192,7 @@ export default function NotificationSettingsScreen() {
 
   if (loading) {
     return (
-      <Screen preset="fixed" style={themed($styles.screen)}>
+      <Screen preset="fixed">
         <Header title="Notification Settings" leftIcon="chevron-left" onLeftPress={goBack} />
         <View style={{flex: 1, justifyContent: "center", alignItems: "center"}}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -205,7 +205,7 @@ export default function NotificationSettingsScreen() {
   // Show iOS message if on iOS
   if (Platform.OS === "ios") {
     return (
-      <Screen preset="fixed" style={themed($styles.screen)}>
+      <Screen preset="fixed">
         <Header title="Notification Settings" leftIcon="chevron-left" onLeftPress={goBack} />
         <View style={{flex: 1, justifyContent: "center", alignItems: "center", padding: theme.spacing.s6}}>
           <Text
@@ -227,7 +227,7 @@ export default function NotificationSettingsScreen() {
   }
 
   return (
-    <Screen preset="fixed" style={themed($styles.screen)}>
+    <Screen preset="fixed">
       <Header title="Notification Settings" leftIcon="chevron-left" onLeftPress={goBack} />
 
       {/* Explanatory Text */}

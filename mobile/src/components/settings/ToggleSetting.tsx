@@ -54,7 +54,7 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
       <View style={themed($textContainer)}>
         <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4, justifyContent: "center"}}>
           {icon && icon}
-          <Text text={label} style={[themed($label), compact && {fontSize: 12}]} />
+          <Text text={label} weight="semibold" style={[themed($label), compact && {fontSize: 12}]} />
         </View>
         {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
@@ -87,7 +87,6 @@ const $textContainer: ThemedStyle<ViewStyle> = () => ({
 
 const $label: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
-  fontWeight: 600,
   color: colors.text,
 })
 

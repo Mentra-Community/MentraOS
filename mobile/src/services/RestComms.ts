@@ -74,7 +74,7 @@ class RestComms {
 
     const baseUrl = useSettingsStore.getState().getRestUrl()
     const url = `${baseUrl}${endpoint}`
-    console.log(`REST ${method}:${url}`)
+    // console.log(`REST: ${method}:${url}`)
 
     const headers = requiresAuth ? this.createAuthHeaders() : {"Content-Type": "application/json"}
 

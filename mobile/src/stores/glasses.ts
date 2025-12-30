@@ -1,13 +1,18 @@
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
+export type GlassesConnectionState = "disconnected" | "connected" | "connecting"
+
 export interface GlassesInfo {
   // state:
   connected: boolean
+  micEnabled: boolean
+  connectionState: GlassesConnectionState
   // device info
   modelName: string
   androidVersion: string
   fwVersion: string
+  btMacAddress: string
   buildNumber: string
   otaVersionUrl: string
   appVersion: string
@@ -45,10 +50,13 @@ interface GlassesState extends GlassesInfo {
 const initialState: GlassesInfo = {
   // state:
   connected: false,
+  micEnabled: false,
+  connectionState: "disconnected",
   // device info
   modelName: "",
   androidVersion: "",
   fwVersion: "",
+  btMacAddress: "",
   buildNumber: "",
   otaVersionUrl: "",
   appVersion: "",
