@@ -20,7 +20,6 @@ Thank you for your interest in contributing to MentraOS! This guide will help yo
 - **nvm**: Strongly recommended for managing Node.js versions
 - **bun**: Required package manager and runtime (preferred over npm/yarn)
 - **Platform-specific**:
-  - Android: Android Studio with Java SDK 17
   - iOS: Xcode (macOS only)
   - Cloud: Docker and Docker Compose
 
@@ -65,9 +64,6 @@ cd mobile
 # Start development server
 bun start
 
-# Run on Android
-bun android
-
 # Run on iOS (macOS only)
 bun ios
 
@@ -81,20 +77,31 @@ bun lint
 bun compile
 ```
 
-**IMPORTANT**: Never use `--clean` or `--clear` flags with `bun expo prebuild`. This project uses custom native code that would be deleted.
+#### iOS Development
 
-#### Port Forwarding (Android)
+The `ios/` directory is **generated** by Expo prebuild from your `app.config.ts`. Custom native code lives in `modules/core/` and is linked automatically.
 
 ```bash
-bun adb
+# Regenerate iOS project from scratch (if needed)
+bun expo prebuild --platform ios --clean
+
+# Run on device/simulator
+bun ios
 ```
 
-This sets up port forwarding for local development:
+**Development Build** (`bun ios`):
 
-- tcp:9090 (cloud backend)
-- tcp:3000 (additional services)
-- tcp:9001 (debugging)
-- tcp:8081 (Metro bundler)
+- Sets build env vars (commit, branch, timestamp)
+- Runs prebuild to sync native files
+- Installs debug build on device
+
+**Release Build** (`bun ios:release`):
+
+- Sets build env vars
+- Runs prebuild
+- Creates distributable `.xcarchive` for App Store
+- Archive saved to `~/Library/Developer/Xcode/Archives/{date}/`
+- Open Xcode → Window → Organizer to upload
 
 ### Cloud Development
 
@@ -195,17 +202,6 @@ irm bun.sh/install.ps1 | iex
 - **Imports**: Group external/internal, alphabetize within groups
 - **Error Handling**: Try/catch with meaningful error messages
 
-### Java/Android
-
-- **Java SDK 17** required
-- **Classes**: PascalCase
-- **Methods**: camelCase
-- **Member variables**: mCamelCase (with m prefix)
-- **Constants**: UPPER_SNAKE_CASE
-- **Javadoc**: Required for public methods and classes
-- **Indentation**: 2 spaces
-- **Communication**: EventBus for component communication
-
 ### Swift
 
 - Use `swiftformat` for consistent formatting
@@ -234,30 +230,15 @@ bun test:maestro
 
 ## Building for Release
 
-### Android
-
-```bash
-cd mobile
-
-# Build release APK
-bun build:android:release
-
-# Build AAB for Google Play
-bun build:google:play
-
-# Upload to Google Play
-bun upload:google:play
-```
-
 ### iOS (macOS only)
 
 ```bash
 cd mobile
 
-# Build archive
-bun build:ios:archive
+# Build release archive
+bun ios:release
 
-# Or use Xcode:
+# Or use Xcode directly:
 open ios/MentraOS.xcworkspace
 ```
 
