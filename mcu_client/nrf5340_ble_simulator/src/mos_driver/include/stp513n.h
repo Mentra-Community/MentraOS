@@ -18,24 +18,24 @@
 #include <zephyr/kernel.h>
 
 /**
- * @brief STP513N I2C address
+ * @brief SPT513N I2C address
  */
 #define STP513N_I2C_ADDR 0x60
 
 /**
- * @brief Initialize STP513N driver
+ * @brief Initialize SPT513N driver
  * @return 0 on success, negative error code on failure
  */
 int stp513n_init(void);
 
 /**
- * @brief Check if STP513N is initialized
+ * @brief Check if SPT513N is initialized
  * @return true if initialized, false otherwise
  */
 bool stp513n_is_initialized(void);
 
 /**
- * @brief Reset STP513N chip via reset GPIO and connect within 100ms
+ * @brief Reset SPT513N chip via reset GPIO and connect within 100ms
  * @note Reset sequence: pull low 20ms, then pull high 10ms
  * @note Must call stp513n_connect() within 100ms after reset to enter test mode
  * @return 0 on success, negative error code on failure
@@ -43,14 +43,14 @@ bool stp513n_is_initialized(void);
 int stp513n_reset_and_connect(void);
 
 /**
- * @brief Soft reset STP513N via I2C command
+ * @brief Soft reset SPT513N via I2C command
  * @note Only works in upgrade window or test mode
  * @return 0 on success, negative error code on failure
  */
 int stp513n_soft_reset(void);
 
 /**
- * @brief Connect to STP513N in test mode
+ * @brief Connect to SPT513N in test mode
  * @note Must be called within 100ms after reset to enter test mode
  * @return 0 on success, 1 on failure
  */
@@ -93,7 +93,7 @@ int stp513n_write_eeprom(uint8_t addr, uint8_t data);
 uint8_t stp513n_get_eeprom_status(void);
 
 /**
- * @brief Update STP513N configuration
+ * @brief Update SPT513N configuration
  * @param config_buffer Configuration data (64 bytes)
  * @param config_len Configuration length (should be 64)
  * @return 0 on success, negative error code on failure
@@ -125,3 +125,4 @@ int stp513n_read_config(uint8_t* buffer, uint8_t length);
 int stp513n_scan_i2c(uint8_t *found_addr);
 
 #endif /* _STP513N_H_ */
+

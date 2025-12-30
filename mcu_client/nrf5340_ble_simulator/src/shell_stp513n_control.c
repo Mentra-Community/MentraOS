@@ -1,6 +1,6 @@
 /**
  * @file shell_stp513n_control.c
- * @brief STP513N Shell Control Commands
+ * @brief SPT513N Shell Control Commands
  * 
  * @author MentraOS Team
  * @date 2025-12-24
@@ -20,20 +20,20 @@
 LOG_MODULE_REGISTER(shell_stp513n, LOG_LEVEL_INF);
 
 /**
- * @brief STP513N help command
+ * @brief SPT513N help command
  */
 static int cmd_stp513n_help(const struct shell *shell, size_t argc, char **argv)
 {
     shell_print(shell, "");
-    shell_print(shell, "📱 STP513N Touch Panel Control Commands:");
+    shell_print(shell, "📱 SPT513N Touch Panel Control Commands:");
     shell_print(shell, "");
     shell_print(shell, "📋 Available Commands:");
     shell_print(shell, "  stp513n help                    - Show this help menu");
-    shell_print(shell, "  stp513n init                    - Initialize STP513N driver");
+    shell_print(shell, "  stp513n init                    - Initialize SPT513N driver");
     shell_print(shell, "  stp513n status                  - Check initialization status");
     shell_print(shell, "  stp513n reset_connect          - Reset and connect (within 100ms)");
-    shell_print(shell, "  stp513n soft_reset             - Soft reset STP513N (I2C command)");
-    shell_print(shell, "  stp513n connect                - Connect to STP513N test mode");
+    shell_print(shell, "  stp513n soft_reset             - Soft reset SPT513N (I2C command)");
+    shell_print(shell, "  stp513n connect                - Connect to SPT513N test mode");
     shell_print(shell, "  stp513n test_i2c               - Test I2C communication (scans bus)");
     shell_print(shell, "  stp513n read_eeprom <addr>     - Read EEPROM byte (0-63)");
     shell_print(shell, "  stp513n read_config            - Read full configuration (64 bytes)");
@@ -45,98 +45,98 @@ static int cmd_stp513n_help(const struct shell *shell, size_t argc, char **argv)
 }
 
 /**
- * @brief Initialize STP513N
+ * @brief Initialize SPT513N
  */
 static int cmd_stp513n_init(const struct shell *shell, size_t argc, char **argv)
 {
     if (stp513n_is_initialized())
     {
-        shell_print(shell, "ℹ️  STP513N already initialized");
+        shell_print(shell, "ℹ️  SPT513N already initialized");
         return 0;
     }
 
     int ret = stp513n_init();
     if (ret == 0)
     {
-        shell_print(shell, "✅ STP513N initialized successfully");
+        shell_print(shell, "✅ SPT513N initialized successfully");
     }
     else
     {
-        shell_error(shell, "❌ Failed to initialize STP513N: %d", ret);
+        shell_error(shell, "❌ Failed to initialize SPT513N: %d", ret);
     }
     return ret;
 }
 
 /**
- * @brief Get STP513N initialization status
+ * @brief Get SPT513N initialization status
  */
 static int cmd_stp513n_status(const struct shell *shell, size_t argc, char **argv)
 {
     if (stp513n_is_initialized())
     {
-        shell_print(shell, "✅ STP513N is initialized");
+        shell_print(shell, "✅ SPT513N is initialized");
     }
     else
     {
-        shell_print(shell, "❌ STP513N is not initialized");
+        shell_print(shell, "❌ SPT513N is not initialized");
         shell_print(shell, "💡 Use 'stp513n init' to initialize");
     }
     return 0;
 }
 
 /**
- * @brief Reset and connect STP513N (within 100ms window)
+ * @brief Reset and connect SPT513N (within 100ms window)
  */
 static int cmd_stp513n_reset_connect(const struct shell *shell, size_t argc, char **argv)
 {
-    shell_print(shell, "🔄 Resetting STP513N and connecting (within 100ms window)...");
+    shell_print(shell, "🔄 Resetting SPT513N and connecting (within 100ms window)...");
     int ret = stp513n_reset_and_connect();
     if (ret == 0)
     {
-        shell_print(shell, "✅ STP513N reset and connect successful");
+        shell_print(shell, "✅ SPT513N reset and connect successful");
     }
     else
     {
-        shell_error(shell, "❌ Failed to reset and connect STP513N: %d", ret);
+        shell_error(shell, "❌ Failed to reset and connect SPT513N: %d", ret);
     }
     return ret;
 }
 
 /**
- * @brief Soft reset STP513N
+ * @brief Soft reset SPT513N
  */
 static int cmd_stp513n_soft_reset(const struct shell *shell, size_t argc, char **argv)
 {
-    shell_print(shell, "🔄 Soft resetting STP513N (I2C command)...");
+    shell_print(shell, "🔄 Soft resetting SPT513N (I2C command)...");
     int ret = stp513n_soft_reset();
     if (ret == 0)
     {
-        shell_print(shell, "✅ STP513N soft reset completed");
+        shell_print(shell, "✅ SPT513N soft reset completed");
     }
     else
     {
-        shell_error(shell, "❌ Failed to soft reset STP513N: %d", ret);
+        shell_error(shell, "❌ Failed to soft reset SPT513N: %d", ret);
     }
     return ret;
 }
 
 /**
- * @brief Connect to STP513N test mode
+ * @brief Connect to SPT513N test mode
  */
 static int cmd_stp513n_connect(const struct shell *shell, size_t argc, char **argv)
 {
-    shell_print(shell, "🔗 Connecting to STP513N test mode...");
+    shell_print(shell, "🔗 Connecting to SPT513N test mode...");
     shell_print(shell, "💡 Note: Chip must be in upgrade window (100ms after reset)");
     shell_print(shell, "💡 Try 'stp513n soft_reset' first if connection fails");
     
     uint8_t ret = stp513n_connect();
     if (ret == 0)
     {
-        shell_print(shell, "✅ STP513N connected successfully");
+        shell_print(shell, "✅ SPT513N connected successfully");
     }
     else
     {
-        shell_error(shell, "❌ Failed to connect to STP513N");
+        shell_error(shell, "❌ Failed to connect to SPT513N");
         shell_error(shell, "💡 Possible causes:");
         shell_error(shell, "   - I2C communication failure (check wiring)");
         shell_error(shell, "   - Chip not powered on");
@@ -183,7 +183,7 @@ static int cmd_stp513n_read_config(const struct shell *shell, size_t argc, char 
 {
     uint8_t config[64];
     
-    shell_print(shell, "📖 Reading STP513N configuration...");
+    shell_print(shell, "📖 Reading SPT513N configuration...");
     int ret = stp513n_read_config(config, 64);
     if (ret != 0)
     {
@@ -211,7 +211,7 @@ static int cmd_stp513n_read_config(const struct shell *shell, size_t argc, char 
  */
 static int cmd_stp513n_update_config(const struct shell *shell, size_t argc, char **argv)
 {
-    shell_print(shell, "🔄 Updating STP513N configuration...");
+    shell_print(shell, "🔄 Updating SPT513N configuration...");
     shell_print(shell, "⚠️  This will reset the chip and enter test mode");
     
     // Use default configuration
@@ -264,7 +264,7 @@ static int cmd_stp513n_eeprom_status(const struct shell *shell, size_t argc, cha
  */
 static int cmd_stp513n_test_i2c(const struct shell *shell, size_t argc, char **argv)
 {
-    shell_print(shell, "🔍 Testing I2C communication with STP513N (address 0x%02X)...", STP513N_I2C_ADDR);
+    shell_print(shell, "🔍 Testing I2C communication with SPT513N (address 0x%02X)...", STP513N_I2C_ADDR);
     
     // First, scan I2C bus to see if device exists
     shell_print(shell, "Scanning I2C1 bus for devices...");
@@ -273,20 +273,20 @@ static int cmd_stp513n_test_i2c(const struct shell *shell, size_t argc, char **a
     
     if (scan_ret != 0)
     {
-        shell_error(shell, "❌ STP513N not found on I2C1 bus");
+        shell_error(shell, "❌ SPT513N not found on I2C1 bus");
         if (found_addr != 0)
         {
             shell_error(shell, "⚠️  Found device at 0x%02X (expected 0x%02X)", found_addr, STP513N_I2C_ADDR);
         }
         shell_error(shell, "💡 Troubleshooting:");
         shell_error(shell, "   1. Check I2C1 bus wiring (SDA, SCL)");
-        shell_error(shell, "   2. Verify STP513N power supply");
+        shell_error(shell, "   2. Verify SPT513N power supply");
         shell_error(shell, "   3. Check I2C pull-up resistors (typically 4.7kΩ)");
         shell_error(shell, "   4. Verify I2C address (should be 0x%02X)", STP513N_I2C_ADDR);
         return scan_ret;
     }
     
-    shell_print(shell, "✅ STP513N device found on I2C1 bus");
+    shell_print(shell, "✅ SPT513N device found on I2C1 bus");
     
     // Try to read register 0xF0 (should be 0x80 in upgrade/test mode)
     shell_print(shell, "Reading register 0xF0 (expected 0x80 in test mode)...");
@@ -316,11 +316,11 @@ static int cmd_stp513n_test_i2c(const struct shell *shell, size_t argc, char **a
 SHELL_STATIC_SUBCMD_SET_CREATE(
     sub_stp513n,
     SHELL_CMD(help, NULL, "Show stp513n commands help", cmd_stp513n_help),
-    SHELL_CMD(init, NULL, "Initialize STP513N driver", cmd_stp513n_init),
-    SHELL_CMD(status, NULL, "Check STP513N initialization status", cmd_stp513n_status),
-    SHELL_CMD(reset_connect, NULL, "Reset and connect STP513N (within 100ms)", cmd_stp513n_reset_connect),
-    SHELL_CMD(soft_reset, NULL, "Soft reset STP513N (I2C command)", cmd_stp513n_soft_reset),
-    SHELL_CMD(connect, NULL, "Connect to STP513N test mode", cmd_stp513n_connect),
+    SHELL_CMD(init, NULL, "Initialize SPT513N driver", cmd_stp513n_init),
+    SHELL_CMD(status, NULL, "Check SPT513N initialization status", cmd_stp513n_status),
+    SHELL_CMD(reset_connect, NULL, "Reset and connect SPT513N (within 100ms)", cmd_stp513n_reset_connect),
+    SHELL_CMD(soft_reset, NULL, "Soft reset SPT513N (I2C command)", cmd_stp513n_soft_reset),
+    SHELL_CMD(connect, NULL, "Connect to SPT513N test mode", cmd_stp513n_connect),
     SHELL_CMD_ARG(read_eeprom, NULL, "Read EEPROM: <addr> (0-63)", cmd_stp513n_read_eeprom, 2, 0),
     SHELL_CMD(read_config, NULL, "Read full configuration (64 bytes)", cmd_stp513n_read_config),
     SHELL_CMD(update_config, NULL, "Update configuration from default", cmd_stp513n_update_config),
@@ -329,4 +329,5 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_SUBCMD_SET_END
 );  
 
-SHELL_CMD_REGISTER(stp513n, &sub_stp513n, "STP513N touch panel control commands", cmd_stp513n_help);
+SHELL_CMD_REGISTER(stp513n, &sub_stp513n, "SPT513N touch panel control commands", cmd_stp513n_help);
+

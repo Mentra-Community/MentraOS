@@ -925,17 +925,17 @@ int main(void)
 		LOG_INF("📱 Mobile app can enable/disable microphone via MicStateConfig (Tag 20)");
 	}
 
-	// Initialize STP513N touch panel driver (default enabled)
-	LOG_INF("📱 Initializing STP513N touch panel driver...");
+	// Initialize SPT513N touch panel driver (default enabled)
+	LOG_INF("📱 Initializing SPT513N touch panel driver...");
 	err = stp513n_init();
 	if (err)
 	{
-		LOG_WRN("Failed to initialize STP513N touch panel (err: %d)", err);
+		LOG_WRN("Failed to initialize SPT513N touch panel (err: %d)", err);
 		LOG_WRN("💡 You can try to initialize it later via shell: stp513n init");
 	}
 	else
 	{
-		LOG_INF("✅ STP513N touch panel driver initialized");
+		LOG_INF("✅ SPT513N touch panel driver initialized");
 		LOG_INF("💡 Use 'stp513n help' for available commands");
 	}
 

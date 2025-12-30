@@ -20,11 +20,11 @@
 #include <string.h>
 #include "bal_os.h"
 
-LOG_MODULE_REGISTER(STP513N, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(SPT513N, LOG_LEVEL_INF);
 
 
 
-// STP513N I2C GPIO pins (software I2C only)
+// SPT513N I2C GPIO pins (software I2C only)
 #if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && DT_NODE_HAS_PROP(DT_PATH(zephyr_user), stp513n_sda_gpios)
 #define STP513N_SOFT_I2C_AVAILABLE 1
 static const struct gpio_dt_spec stp513n_i2c_sda = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), stp513n_sda_gpios);
@@ -33,7 +33,7 @@ static const struct gpio_dt_spec stp513n_i2c_scl = GPIO_DT_SPEC_GET(DT_PATH(zeph
 #define STP513N_SOFT_I2C_AVAILABLE 0
 #endif
 
-// STP513N reset GPIO from device tree (zephyr,user node)
+// SPT513N reset GPIO from device tree (zephyr,user node)
 // Note: Reset GPIO uses the same pin as SDA (P0.02) - this is why software I2C is required
 #if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && DT_NODE_HAS_PROP(DT_PATH(zephyr_user), stp513n_reset_gpios)
 #define STP513N_RESET_GPIO_AVAILABLE 1
@@ -276,13 +276,13 @@ static int stp513n_i2c_init(void)
 
     if (!STP513N_SOFT_I2C_AVAILABLE)
     {
-        LOG_ERR("STP513N software I2C GPIO not available in device tree");
+        LOG_ERR("SPT513N software I2C GPIO not available in device tree");
         return -ENODEV;
     }
 
     if (!gpio_is_ready_dt(&stp513n_i2c_sda) || !gpio_is_ready_dt(&stp513n_i2c_scl))
     {
-        LOG_ERR("STP513N I2C GPIO devices not ready");
+        LOG_ERR("SPT513N I2C GPIO devices not ready");
         return -ENODEV;
     }
 
@@ -307,19 +307,19 @@ static int stp513n_i2c_init(void)
     mos_busy_wait(STP513N_SW_I2C_DELAY_US);
 
     stp513n_i2c_initialized = true;
-    LOG_INF("STP513N software I2C initialized (SDA: P0.02, SCL: P0.03)");
+    LOG_INF("SPT513N software I2C initialized (SDA: P0.02, SCL: P0.03)");
     return 0;
 }
 #else
 /**
- * @brief Initialize software I2C for STP513N (fallback - should not be reached)
+ * @brief Initialize software I2C for SPT513N (fallback - should not be reached)
  * 
  * Note: This should never be reached if device tree is configured correctly.
- * Software I2C is required for STP513N due to pin multiplexing requirements.
+ * Software I2C is required for SPT513N due to pin multiplexing requirements.
  */
 static int stp513n_i2c_init(void)
 {
-    LOG_ERR("STP513N software I2C GPIO not available in device tree");
+    LOG_ERR("SPT513N software I2C GPIO not available in device tree");
     LOG_ERR("Please configure stp513n_sda-gpios and stp513n_scl-gpios in device tree");
     return -ENODEV;
 }
@@ -331,7 +331,7 @@ bool stp513n_is_initialized(void)
 }
 
 /**
- * @brief Initialize STP513N reset GPIO
+ * @brief Initialize SPT513N reset GPIO
  * 
  * Note: Reset GPIO uses the same pin as SDA (P0.02). With software I2C,
  * the SDA pin is already configured in stp513n_i2c_init(), so no separate
@@ -342,10 +342,10 @@ static int stp513n_gpio_init(void)
 #if STP513N_RESET_GPIO_AVAILABLE
     // With software I2C, SDA pin is already configured in stp513n_i2c_init()
     // Reset GPIO uses the same pin (P0.02), so no separate configuration needed
-    LOG_INF("STP513N reset GPIO configured (P0.02, shared with software I2C SDA)");
+    LOG_INF("SPT513N reset GPIO configured (P0.02, shared with software I2C SDA)");
     return 0;
 #else
-    LOG_WRN("STP513N reset GPIO not configured in device tree");
+    LOG_WRN("SPT513N reset GPIO not configured in device tree");
     return -ENODEV;
 #endif
 }
@@ -364,7 +364,7 @@ int stp513n_init(void)
     if (ret != 0)
     {
         // GPIO init failure is not critical, soft reset can still work
-        LOG_WRN("STP513N GPIO init failed, soft reset only mode");
+        LOG_WRN("SPT513N GPIO init failed, soft reset only mode");
     }
 
     stp513n_driver_initialized = true;
@@ -372,7 +372,7 @@ int stp513n_init(void)
 }
 
 /**
- * @brief Hardware reset STP513N via GPIO
+ * @brief Hardware reset SPT513N via GPIO
  * 
  * FAE specification: SPT513N IC reset function is set on GPIO01 (P0.02), falling edge active
  * FAE specification: SPT513N IC 复位功能设置在 GPIO01 (P0.02) 上，下降沿有效
@@ -392,7 +392,7 @@ void stp513n_reset(void)
     // FAE: GPIO01 (P0.02) falling edge active
     // FAE: GPIO01 (P0.02) 下降沿有效
     // With software I2C, we have full control over SDA pin (P0.02)
-    LOG_INF("Resetting STP513N via GPIO01 (P0.02) - falling edge active (下降沿有效)...");
+    LOG_INF("Resetting SPT513N via GPIO01 (P0.02) - falling edge active (下降沿有效)...");
     
     // Configure SDA as GPIO output for reset
     stp513n_sda_out();
@@ -416,9 +416,9 @@ void stp513n_reset(void)
     k_sleep(K_MSEC(10));
     
     // SDA is already configured for software I2C, no need to reinitialize
-    LOG_INF("STP513N hardware reset completed (falling edge triggered)");
+    LOG_INF("SPT513N hardware reset completed (falling edge triggered)");
 #else
-    LOG_WRN("STP513N reset GPIO not available, using soft reset");
+    LOG_WRN("SPT513N reset GPIO not available, using soft reset");
     stp513n_soft_reset();
 #endif
 }
@@ -430,7 +430,7 @@ int stp513n_reset_and_connect(void)
     // FAE: GPIO01 (P0.02) falling edge active, pull LOW for 20ms, pull HIGH for 10ms, complete connect command within 100ms
     // FAE: GPIO01 (P0.02) 下降沿有效，拉低20ms，拉高10ms，100ms内跑完connect指令
     // With software I2C, we have full control over SDA pin (P0.02)
-    LOG_INF("Resetting STP513N via GPIO01 (P0.02) and connecting - falling edge active (下降沿有效)...");
+    LOG_INF("Resetting SPT513N via GPIO01 (P0.02) and connecting - falling edge active (下降沿有效)...");
     
     // Ensure software I2C is initialized
     if (!stp513n_i2c_initialized)
@@ -471,18 +471,18 @@ int stp513n_reset_and_connect(void)
     uint8_t ret = stp513n_connect();
     if (ret == 0)
     {
-        LOG_INF("✅ STP513N reset and connect successful (within 100ms window)");
+        LOG_INF("✅ SPT513N reset and connect successful (within 100ms window)");
         LOG_INF("   Reset: 31ms (falling edge triggered, 20ms LOW + 10ms HIGH)");
         LOG_INF("   Connect: completed within remaining 69ms");
         return 0;
     }
     else
     {
-        LOG_ERR("❌ STP513N connect failed after reset (may have exceeded 100ms window)");
+        LOG_ERR("❌ SPT513N connect failed after reset (may have exceeded 100ms window)");
         return -EIO;
     }
 #else
-    LOG_WRN("STP513N reset GPIO not available, using soft reset");
+    LOG_WRN("SPT513N reset GPIO not available, using soft reset");
     int ret = stp513n_soft_reset();
     if (ret != 0)
     {
@@ -513,12 +513,12 @@ int stp513n_soft_reset(void)
         return ret;
     }
 
-    LOG_INF("STP513N soft reset command sent");
+    LOG_INF("SPT513N soft reset command sent");
     return 0;
 }
 
 /**
- * @brief Read a register from STP513N via software I2C
+ * @brief Read a register from SPT513N via software I2C
  * 
  * @param addr Register address to read
  * @return Register value, or 0xFF on error
@@ -552,7 +552,7 @@ uint8_t stp513n_read_reg(uint8_t addr)
     {
         LOG_ERR("Failed to read register 0x%02X from I2C address 0x%02X: %d", 
                 addr, STP513N_I2C_ADDR, ret);
-        LOG_ERR("Check I2C bus connection, STP513N power supply, and pull-up resistors");
+        LOG_ERR("Check I2C bus connection, SPT513N power supply, and pull-up resistors");
         return 0xFF;
     }
 #else
@@ -565,7 +565,7 @@ uint8_t stp513n_read_reg(uint8_t addr)
 }
 
 /**
- * @brief Write a register to STP513N via software I2C
+ * @brief Write a register to SPT513N via software I2C
  * 
  * @param addr Register address to write
  * @param value Value to write
@@ -601,7 +601,7 @@ int stp513n_write_reg(uint8_t addr, uint8_t value)
 }
 
 /**
- * @brief Read data from STP513N internal EEPROM
+ * @brief Read data from SPT513N internal EEPROM
  * @param addr EEPROM address (0-63, 64 bytes total)
  * @return EEPROM data byte, or 0xFF on error
  */
@@ -626,7 +626,7 @@ uint8_t stp513n_read_eeprom(uint8_t addr)
 }
 
 /**
- * @brief Write data to STP513N internal EEPROM
+ * @brief Write data to SPT513N internal EEPROM
  * 
  * Note: EEPROM write requires time. After writing, check bit 1 of status register (0xE1)
  * 注意：EEPROM 写入需要时间，写入后需要检查状态寄存器 (0xE1) 的 bit 1
@@ -691,14 +691,14 @@ uint8_t stp513n_connect(void)
             reg_temp = stp513n_read_reg(0xF0);
             if (reg_temp == 0x80)
             {
-                LOG_INF("STP513N I2C connect OK (retry %d)", i + 1);
+                LOG_INF("SPT513N I2C connect OK (retry %d)", i + 1);
                 break;
             }
         }
 
         if (reg_temp != 0x80)
         {
-            LOG_ERR("STP513N I2C connect failed (reg 0xF0 = 0x%02X)", reg_temp);
+            LOG_ERR("SPT513N I2C connect failed (reg 0xF0 = 0x%02X)", reg_temp);
             LOG_ERR("   Check: 1) Reset sequence completed (20ms low + 10ms high)");
             LOG_ERR("         2) Connect started within 100ms after reset");
             LOG_ERR("         3) I2C bus connection (SDA, SCL)");
@@ -706,7 +706,7 @@ uint8_t stp513n_connect(void)
         }
     }
     
-    LOG_INF("STP513N I2C connect test success (reg 0xF0 = 0x%02X)", reg_temp);
+    LOG_INF("SPT513N I2C connect test success (reg 0xF0 = 0x%02X)", reg_temp);
     
     // Connect hold - configure system control register
     reg_temp = stp513n_read_reg(0xC8);  // Read sys ctrl reg
@@ -724,11 +724,11 @@ uint8_t stp513n_connect(void)
     reg_temp = stp513n_read_reg(0xCA);
     if (reg_temp != 0x80)
     {
-        LOG_ERR("STP513N I2C hold failed (reg 0xCA = 0x%02X)", reg_temp);
+        LOG_ERR("SPT513N I2C hold failed (reg 0xCA = 0x%02X)", reg_temp);
         return 1;
     }
     
-    LOG_INF("STP513N I2C hold success (reg 0xCA = 0x%02X)", reg_temp);
+    LOG_INF("SPT513N I2C hold success (reg 0xCA = 0x%02X)", reg_temp);
     
     // PRST MASK - mask reset pin
     reg_temp = stp513n_read_reg(0x18);
@@ -788,7 +788,7 @@ int stp513n_read_config(uint8_t *buffer, uint8_t length)
 }
 
 /**
- * @brief Update STP513N touch panel configuration in EEPROM
+ * @brief Update SPT513N touch panel configuration in EEPROM
  * @param config_buffer Pointer to 64-byte configuration data
  * @param config_len Configuration data length (max 64 bytes)
  * @return 0 on success, negative error code on failure
@@ -810,13 +810,13 @@ int stp513n_update_config(const uint8_t *config_buffer, uint8_t config_len)
     uint8_t eep_config_update;
     uint8_t over_time_cnt = 0;
 
-    LOG_INF("STP513N touch panel configuration update started");
+    LOG_INF("SPT513N touch panel configuration update started");
 
     // Connect to test mode (must be within 100ms after reset)
     reg_temp = stp513n_connect();
     if (reg_temp != 0)
     {
-        LOG_ERR("STP513N connect failed, performing soft reset");
+        LOG_ERR("SPT513N connect failed, performing soft reset");
         stp513n_soft_reset();
         k_sleep(K_MSEC(30));
         return -EIO;
@@ -905,7 +905,7 @@ int stp513n_update_config(const uint8_t *config_buffer, uint8_t config_len)
     reg_temp = stp513n_connect();
     if (reg_temp != 0)
     {
-        LOG_ERR("STP513N connect failed after EEPROM write");
+        LOG_ERR("SPT513N connect failed after EEPROM write");
         stp513n_soft_reset();
         k_sleep(K_MSEC(30));
         return -EIO;
@@ -942,10 +942,10 @@ int stp513n_update_config(const uint8_t *config_buffer, uint8_t config_len)
 }
 
 /**
- * @brief Scan I2C bus for STP513N device (software I2C only)
+ * @brief Scan I2C bus for SPT513N device (software I2C only)
  * 
  * @param found_addr Pointer to store found address (optional)
- * @return 0 if STP513N found, negative error code otherwise
+ * @return 0 if SPT513N found, negative error code otherwise
  */
 int stp513n_scan_i2c(uint8_t *found_addr)
 {
@@ -966,8 +966,8 @@ int stp513n_scan_i2c(uint8_t *found_addr)
 #if STP513N_SOFT_I2C_AVAILABLE
     LOG_INF("Scanning I2C bus for devices (software I2C mode)...");
     
-    // First, try to read from STP513N expected address directly
-    LOG_INF("Checking STP513N at address 0x%02X...", STP513N_I2C_ADDR);
+    // First, try to read from SPT513N expected address directly
+    LOG_INF("Checking SPT513N at address 0x%02X...", STP513N_I2C_ADDR);
     
     // Use software I2C to read register
     int ret = stp513n_sw_i2c_write(STP513N_I2C_ADDR, &test_reg, 1);
@@ -1011,7 +1011,7 @@ int stp513n_scan_i2c(uint8_t *found_addr)
             
             if (addr == STP513N_I2C_ADDR)
             {
-                LOG_INF("✅ STP513N found at expected address 0x%02X", addr);
+                LOG_INF("✅ SPT513N found at expected address 0x%02X", addr);
                 if (found_addr != NULL)
                 {
                     *found_addr = addr;
@@ -1023,7 +1023,7 @@ int stp513n_scan_i2c(uint8_t *found_addr)
         // Also try read operation for devices that don't respond to write
         if (ret != 0 && addr == STP513N_I2C_ADDR)
         {
-            // For STP513N, try reading a register
+            // For SPT513N, try reading a register
             uint8_t dummy = 0;
             ret = stp513n_sw_i2c_write(addr, &test_reg, 1);
             if (ret == 0)
@@ -1032,7 +1032,7 @@ int stp513n_scan_i2c(uint8_t *found_addr)
                 ret = stp513n_sw_i2c_read(addr, &dummy, 1);
                 if (ret == 0)
                 {
-                    LOG_INF("✅ STP513N found at 0x%02X (via read test)", addr);
+                    LOG_INF("✅ SPT513N found at 0x%02X (via read test)", addr);
                     if (found_addr != NULL)
                     {
                         *found_addr = addr;
@@ -1053,13 +1053,13 @@ int stp513n_scan_i2c(uint8_t *found_addr)
         LOG_ERR("Possible issues:");
         LOG_ERR("  1. I2C bus wiring problem (SDA, SCL)");
         LOG_ERR("  2. Missing pull-up resistors (typically 4.7kΩ on SDA and SCL)");
-        LOG_ERR("  3. STP513N not powered on");
+        LOG_ERR("  3. SPT513N not powered on");
         LOG_ERR("  4. I2C pins configured incorrectly in device tree");
         LOG_ERR("  5. I2C bus speed/configuration issue");
     }
     else
     {
-        LOG_WRN("Found %d I2C device(s) but STP513N (0x%02X) not found", found_count, STP513N_I2C_ADDR);
+        LOG_WRN("Found %d I2C device(s) but SPT513N (0x%02X) not found", found_count, STP513N_I2C_ADDR);
         if (found_addr != NULL && found != 0)
         {
             *found_addr = found;
@@ -1068,3 +1068,4 @@ int stp513n_scan_i2c(uint8_t *found_addr)
 
     return -ENODEV;
 }
+
