@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dylib
+
+# Build artifacts
+lib/*.so
+lib/*.dylib
+src/liblc3/*.o
+*.o
+
+# Output directories
+output/lc3/*.lc3
+output/decoded/*.wav
+output/decoded/*.mp3
+
+# Legacy test files (if any in root)
+test.lc3
+decoded.wav
+decoded.mp3
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+

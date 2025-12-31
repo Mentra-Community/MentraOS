@@ -1,0 +1,13 @@
+# Optional dependencies for LC3 Converter
+# These are only needed for MP3 format support
+# WAV format works with Python standard library only
+
+# Audio manipulation for MP3 support
+pydub>=0.25.1
+
+# Note: pydub also requires ffmpeg to be installed on your system
+# Install ffmpeg via your system package manager:
+#   macOS: brew install ffmpeg
+#   Ubuntu/Debian: sudo apt-get install ffmpeg
+#   Fedora: sudo dnf install ffmpeg
+
