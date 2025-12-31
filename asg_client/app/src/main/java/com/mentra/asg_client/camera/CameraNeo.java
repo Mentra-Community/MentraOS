@@ -215,7 +215,11 @@ public class CameraNeo extends LifecycleService {
     private boolean mWaitingForAeConvergence = false;  // Flag to track if waiting for AE (XyCamera2 pattern)
     private boolean mAeLockRequested = false;  // Flag to track if AE lock requested (XyCamera2 pattern)
     private long aeStartTimeNs;
-    private static final long AE_WAIT_NS = 1_000_000_000L; // 1 second max wait for AE (matching XyCamera2)
+    private static final long AE_WAIT_NS = 2_000_000_000L; // 1 second max wait for AE (matching XyCamera2)
+    
+    // Feature flag: Toggle between immediate capture on convergence vs waiting for lock confirmation
+    // true = capture immediately on AE_CONVERGED (~650ms), false = wait for AE_LOCKED confirmation (~1085ms)
+    private static final boolean USE_IMMEDIATE_CAPTURE_ON_CONVERGENCE = true;
 
     // Simple AE callback - autofocus handled automatically
     private final SimplifiedAeCallback aeCallback = new SimplifiedAeCallback();
@@ -2601,9 +2605,11 @@ public class CameraNeo extends LifecycleService {
             }
 
             // Check for timeout
-            boolean timeout = (System.nanoTime() - aeStartTimeNs) > AE_WAIT_NS;
+            long elapsedNs = System.nanoTime() - aeStartTimeNs;
+            boolean timeout = elapsedNs > AE_WAIT_NS;
             if (timeout) {
-                Log.w(TAG, "🔍 AE convergence timeout after 3 seconds, forcing capture");
+                long elapsedMs = elapsedNs / 1_000_000;
+                Log.w(TAG, "🔍 ⚠️ AE CONVERGENCE TIMEOUT after " + elapsedMs + "ms (limit: " + (AE_WAIT_NS / 1_000_000) + "ms), forcing capture");
                 mWaitingForAeConvergence = false;
                 mAeLockRequested = false;
                 capturePhoto();
@@ -2614,7 +2620,8 @@ public class CameraNeo extends LifecycleService {
             if (mAeLockRequested) {
                 if (aeState == CaptureResult.CONTROL_AE_STATE_LOCKED || 
                     aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED) {
-                    Log.d(TAG, "🔍 AE locked! State: " + getAeStateName(aeState) + ", capturing photo");
+                    long totalElapsedMs = (System.nanoTime() - aeStartTimeNs) / 1_000_000;
+                    Log.i(TAG, "🔍 ✅ AE LOCKED in " + totalElapsedMs + "ms total! State: " + getAeStateName(aeState) + ", capturing photo");
                     mAeLockRequested = false;
                     mWaitingForAeConvergence = false;
                     shotState = ShotState.SHOOTING;
@@ -2625,13 +2632,25 @@ public class CameraNeo extends LifecycleService {
                 return;
             }
 
-            // Check if AE has converged - if so, request AE lock
+            // Check if AE has converged
             boolean isAeConverged = (aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED ||
                                     aeState == CaptureResult.CONTROL_AE_STATE_LOCKED);
 
             if (isAeConverged) {
-                Log.d(TAG, "🔍 AE converged! Requesting AE lock, state: " + getAeStateName(aeState));
-                requestAeLock(session);
+                long elapsedMs = (System.nanoTime() - aeStartTimeNs) / 1_000_000;
+                
+                if (USE_IMMEDIATE_CAPTURE_ON_CONVERGENCE) {
+                    // OPTIMIZED PATH: Capture immediately on convergence (~650ms)
+                    Log.i(TAG, "🔍 ✅ AE CONVERGED in " + elapsedMs + "ms! State: " + getAeStateName(aeState) + ", capturing immediately [FAST MODE]");
+                    mWaitingForAeConvergence = false;
+                    mAeLockRequested = false;
+                    shotState = ShotState.SHOOTING;
+                    capturePhoto();
+                } else {
+                    // LEGACY PATH: Request lock and wait for confirmation (~1085ms)
+                    Log.i(TAG, "🔍 ✅ AE CONVERGED in " + elapsedMs + "ms! State: " + getAeStateName(aeState) + ", requesting AE lock [LEGACY MODE]");
+                    requestAeLock(session);
+                }
             } else if (callbackCount % 10 == 0) {
                 // Log periodically to track convergence
                 Integer iso = result.get(CaptureResult.SENSOR_SENSITIVITY);

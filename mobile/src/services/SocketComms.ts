@@ -2,6 +2,7 @@ import CoreModule from "core"
 import {router} from "expo-router"
 
 import {push} from "@/contexts/NavigationRef"
+import audioPlaybackService from "@/services/AudioPlaybackService"
 import livekit from "@/services/Livekit"
 import mantle from "@/services/MantleManager"
 import wsManager from "@/services/WebSocketManager"
@@ -545,6 +546,46 @@ class SocketComms {
     )
   }
 
+  /**
+   * Handle audio play request from cloud.
+   * Downloads and plays audio from the provided URL using expo-av.
+   */
+  private handle_audio_play_request(msg: any) {
+    const requestId = msg.requestId
+    const audioUrl = msg.audioUrl
+    const appId = msg.appId || msg.packageName // Optional - may be undefined
+    const volume = msg.volume ?? 1.0
+    const stopOtherAudio = msg.stopOtherAudio ?? true
+
+    if (!requestId || !audioUrl) {
+      console.log("SOCKET: Invalid audio_play_request - missing requestId or audioUrl")
+      if (requestId) {
+        this.sendAudioPlayResponse(requestId, false, "Missing audioUrl", null)
+      }
+      return
+    }
+
+    console.log(`SOCKET: Received audio_play_request: ${requestId}${appId ? ` from ${appId}` : ""}, url: ${audioUrl}`)
+
+    // Play audio and send response when complete
+    audioPlaybackService.play(
+      {requestId, audioUrl, appId, volume, stopOtherAudio},
+      (respRequestId, success, error, duration) => {
+        this.sendAudioPlayResponse(respRequestId, success, error, duration)
+      },
+    )
+  }
+
+  /**
+   * Handle audio stop request from cloud.
+   * Stops audio playback for the specified app.
+   */
+  private handle_audio_stop_request(msg: any) {
+    const appId = msg.appId || msg.packageName // Optional - may be undefined
+    console.log(`SOCKET: Received audio_stop_request${appId ? ` for app: ${appId}` : ""}`)
+    audioPlaybackService.stopForApp(appId)
+  }
+
   // Message Handling
   private handle_message(msg: any) {
     const type = msg.type
@@ -634,6 +675,14 @@ class SocketComms {
 
       case "show_wifi_setup":
         this.handle_show_wifi_setup(msg)
+        break
+
+      case "audio_play_request":
+        this.handle_audio_play_request(msg)
+        break
+
+      case "audio_stop_request":
+        this.handle_audio_stop_request(msg)
         break
 
       default:

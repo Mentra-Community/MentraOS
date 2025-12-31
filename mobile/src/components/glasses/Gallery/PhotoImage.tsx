@@ -5,8 +5,7 @@
 
 import LinearGradient from "expo-linear-gradient"
 import {useState, useEffect} from "react"
-import {View, Image} from "react-native"
-import {ViewStyle, ImageStyle, TextStyle} from "react-native"
+import {View, Image, ViewStyle, ImageStyle, TextStyle} from "react-native"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 
 import {Text} from "@/components/ignite"
@@ -45,15 +44,26 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
           ? photo.thumbnail_data
           : `data:image/jpeg;base64,${photo.thumbnail_data}`
       }
+      // No thumbnail available - return null to show video placeholder
+      return null
     }
     return photo.url
   })()
 
+  // Check if this is a video without a thumbnail
+  const isVideoWithoutThumbnail = photo.is_video && !imageUrl
+
   // Check if URL is a relative path (from server during sync)
-  const isRelativeUrl = imageUrl?.startsWith("/")
+  const isRelativeUrl = imageUrl?.startsWith("/") ?? false
 
   // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   useEffect(() => {
+    // If no imageUrl (e.g., video without thumbnail), skip validation
+    if (!imageUrl) {
+      setIsLoading(false)
+      return
+    }
+
     // For local files (file:// URLs), skip async validation and load immediately
     // Trust our storage system since these are downloaded files we manage
     if (imageUrl.startsWith("file://")) {
@@ -116,6 +126,21 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
   }
 
   // NOW conditional returns can happen after all hooks are called
+  // Show video placeholder for videos without thumbnails
+  if (isVideoWithoutThumbnail && showPlaceholder) {
+    return (
+      <View style={[themed($placeholderContainer), style as ViewStyle]}>
+        <View style={themed($videoBadge)}>
+          <Text style={themed($videoBadgeText)}>VIDEO</Text>
+        </View>
+        <Text style={themed($placeholderText)}>🎬</Text>
+        <Text style={themed($placeholderSubtext)}>
+          {photo.name.length > 15 ? photo.name.substring(0, 12) + "..." : photo.name}
+        </Text>
+      </View>
+    )
+  }
+
   // If URL is a relative path (from server during sync), show shimmer placeholder
   // These URLs won't work without the server base URL, so don't attempt to load them
   if (isRelativeUrl && showPlaceholder) {
@@ -165,12 +190,27 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
   }
 
   // URL determined and ready to use
+  // Safety check: if no URL available, show error placeholder
+  if (!imageUrl && showPlaceholder) {
+    const imageStyle = style as ViewStyle
+    return (
+      <ShimmerPlaceholder
+        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+        shimmerStyle={{
+          width: imageStyle?.width || "100%",
+          height: imageStyle?.height || imageStyle?.width || 100,
+          borderRadius: 0,
+        }}
+        duration={1500}
+      />
+    )
+  }
 
   return (
     <View style={style as ViewStyle}>
       {isLoading && <View style={[themed($loadingOverlay), style as ViewStyle]} />}
       <Image
-        source={{uri: imageUrl}}
+        source={{uri: imageUrl || ""}}
         style={[style, isLoading && {opacity: 0}]}
         onLoadEnd={handleLoadEnd}
         onError={handleError}
@@ -199,6 +239,22 @@ const $avifBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 })
 
 const $avifBadgeText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 10,
+  fontWeight: "bold",
+  color: colors.background,
+})
+
+const $videoBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  position: "absolute",
+  top: spacing.s2,
+  right: spacing.s2,
+  backgroundColor: colors.palette.secondary500 || colors.palette.primary500,
+  paddingHorizontal: spacing.s2,
+  paddingVertical: 2,
+  borderRadius: 4,
+})
+
+const $videoBadgeText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 10,
   fontWeight: "bold",
   color: colors.background,

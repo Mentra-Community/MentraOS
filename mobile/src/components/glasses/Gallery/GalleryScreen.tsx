@@ -6,18 +6,18 @@
 import {getModelCapabilities} from "@/../../cloud/packages/types/src"
 import LinearGradient from "expo-linear-gradient"
 import {useFocusEffect} from "expo-router"
-import {useCallback, useEffect, useMemo, useRef, useState} from "react"
+import {useCallback, useEffect, useMemo, useState} from "react"
 import {
   ActivityIndicator,
   BackHandler,
   Dimensions,
   FlatList,
   ImageStyle,
+  Pressable,
   TextStyle,
   TouchableOpacity,
   View,
   ViewStyle,
-  ViewToken,
 } from "react-native"
 import RNFS from "react-native-fs"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
@@ -29,6 +29,7 @@ import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {localStorageService} from "@/services/asg/localStorageService"
@@ -40,7 +41,7 @@ import {PhotoInfo} from "@/types/asg"
 import showAlert from "@/utils/AlertUtils"
 // import {shareFile} from "@/utils/FileUtils"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
-import {useAppTheme} from "@/contexts/ThemeContext"
+import {TEST_GALLERY_ITEMS, ENABLE_TEST_GALLERY_DATA} from "@/utils/testGalleryData"
 
 // @ts-ignore
 const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)
@@ -149,7 +150,14 @@ export function GalleryScreen() {
         console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name}`)
       })
 
-      setDownloadedPhotos(validPhotoInfos)
+      // Add test data in development mode
+      if (ENABLE_TEST_GALLERY_DATA) {
+        console.log(`[GalleryScreen] 🧪 Adding ${TEST_GALLERY_ITEMS.length} test items for development`)
+        const allPhotos = [...TEST_GALLERY_ITEMS, ...validPhotoInfos]
+        setDownloadedPhotos(allPhotos)
+      } else {
+        setDownloadedPhotos(validPhotoInfos)
+      }
     } catch (err) {
       console.error("Error loading downloaded photos:", err)
     }
@@ -235,61 +243,74 @@ export function GalleryScreen() {
     }
   }, [syncState, loadDownloadedPhotos])
 
-  // Handle photo selection
-  const handlePhotoPress = (item: GalleryItem) => {
-    if (!item.photo) return
-
-    // If in selection mode, toggle selection
-    if (isSelectionMode) {
-      togglePhotoSelection(item.photo.name)
-      return
-    }
-
-    // Prevent opening photos that are currently being downloaded (but allow completed ones)
-    const itemSyncState = photoSyncStates.get(item.photo.name)
-    if (itemSyncState && (itemSyncState.status === "downloading" || itemSyncState.status === "pending")) {
-      console.log(`[GalleryScreen] Photo ${item.photo.name} is being synced, preventing open`)
-      return
-    }
-    // Allow opening photos with status "completed" - they're already downloaded and accessible
-
-    if (item.photo.is_video && item.isOnServer) {
-      showAlert("Video Not Downloaded", "Please sync this video to your device to watch it", [
-        {text: translate("common:ok")},
-      ])
-      return
-    }
-    setSelectedPhoto(item.photo)
-  }
-
-  // Toggle photo selection
-  const togglePhotoSelection = (photoName: string) => {
-    setSelectedPhotos(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(photoName)) {
-        newSet.delete(photoName)
-        // Exit selection mode if no photos are selected
-        if (newSet.size === 0) {
-          setTimeout(() => exitSelectionMode(), 0)
-        }
-      } else {
-        newSet.add(photoName)
-      }
-      return newSet
-    })
-  }
-
-  // Enter selection mode
-  const enterSelectionMode = (photoName: string) => {
-    setIsSelectionMode(true)
-    setSelectedPhotos(new Set([photoName]))
-  }
-
   // Exit selection mode
-  const exitSelectionMode = () => {
+  // Memoized for stable reference in other callbacks
+  const exitSelectionMode = useCallback(() => {
     setIsSelectionMode(false)
     setSelectedPhotos(new Set())
-  }
+  }, [])
+
+  // Toggle photo selection
+  // Memoized for stable reference in handlePhotoPress
+  const togglePhotoSelection = useCallback(
+    (photoName: string) => {
+      setSelectedPhotos(prev => {
+        const newSet = new Set(prev)
+        if (newSet.has(photoName)) {
+          newSet.delete(photoName)
+          // Exit selection mode if no photos are selected
+          if (newSet.size === 0) {
+            setTimeout(() => exitSelectionMode(), 0)
+          }
+        } else {
+          newSet.add(photoName)
+        }
+        return newSet
+      })
+    },
+    [exitSelectionMode],
+  )
+
+  // Enter selection mode
+  // Memoized for stable reference in renderPhotoItem
+  const enterSelectionMode = useCallback((photoName: string) => {
+    setIsSelectionMode(true)
+    setSelectedPhotos(new Set([photoName]))
+  }, [])
+
+  // Handle photo selection - direct open (no fancy transition)
+  // Memoized for stable reference to prevent FlatList re-renders
+  const handlePhotoPress = useCallback(
+    (item: GalleryItem) => {
+      if (!item.photo) return
+
+      // If in selection mode, toggle selection
+      if (isSelectionMode) {
+        togglePhotoSelection(item.photo.name)
+        return
+      }
+
+      // Prevent opening photos that are currently being downloaded (but allow completed ones)
+      const itemSyncState = photoSyncStates.get(item.photo.name)
+      if (itemSyncState && (itemSyncState.status === "downloading" || itemSyncState.status === "pending")) {
+        console.log(`[GalleryScreen] Photo ${item.photo.name} is being synced, preventing open`)
+        return
+      }
+
+      if (item.photo.is_video && item.isOnServer) {
+        showAlert("Video Not Downloaded", "Please sync this video to your device to watch it", [
+          {text: translate("common:ok")},
+        ])
+        return
+      }
+
+      // Open MediaViewer directly (no floating transition)
+      // Index will be calculated from photo name when rendering MediaViewer
+      console.log("[GalleryScreen] 🚀 Opening MediaViewer for photo:", item.photo.name)
+      setSelectedPhoto(item.photo)
+    },
+    [isSelectionMode, photoSyncStates, togglePhotoSelection],
+  )
 
   // Handle photo sharing
   // const handleSharePhoto = async (photo: PhotoInfo) => {
@@ -465,14 +486,17 @@ export function GalleryScreen() {
           exitSelectionMode()
           return true
         }
-        if (!selectedPhoto) return false
-        setSelectedPhoto(null)
-        return true
+        // Handle modal viewer dismissal
+        if (selectedPhoto) {
+          setSelectedPhoto(null)
+          return true
+        }
+        return false
       }
 
       const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress)
       return () => subscription.remove()
-    }, [selectedPhoto, isSelectionMode]),
+    }, [selectedPhoto, isSelectionMode, exitSelectionMode]),
   )
 
   // Combine syncing photos with downloaded photos
@@ -567,15 +591,33 @@ export function GalleryScreen() {
     return items
   }, [syncState, syncQueue, downloadedPhotos])
 
-  // Viewability tracking (not needed for background sync, but kept for future lazy loading)
-  const onViewableItemsChanged = useRef(({viewableItems: _viewableItems}: {viewableItems: ViewToken[]}) => {
-    // Could be used for lazy loading thumbnails in the future
-  }).current
+  // Viewability tracking - DISABLED for performance
+  // onViewableItemsChanged callbacks block touch input when scroll stops (~0.5s delay)
+  // FlatList calculates viewable items even if callback is empty, blocking main thread
+  // We don't need this for current functionality, so commenting out entirely
+  //
+  // const onViewableItemsChanged = useRef(({viewableItems: _viewableItems}: {viewableItems: ViewToken[]}) => {
+  //   // Could be used for lazy loading thumbnails in the future
+  // }).current
+  //
+  // const viewabilityConfig = useRef({
+  //   itemVisiblePercentThreshold: 10,
+  //   minimumViewTime: 100,
+  // }).current
 
-  const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 10,
-    minimumViewTime: 100,
-  }).current
+  // NOTE: getItemLayout is intentionally REMOVED for multi-column grids
+  // While it provides performance benefits, it causes critical scroll bugs at edges:
+  // - Scroll gets stuck at bottom when trying to scroll back up
+  // - Last row calculation errors when row isn't fully filled
+  // - React Native's FlatList has known issues with getItemLayout + numColumns > 1
+  //
+  // Without getItemLayout, FlatList measures items dynamically, which is:
+  // - Slightly slower initial render
+  // - But MUCH more reliable for edge scrolling
+  // - Handles partial last rows correctly
+  // - No scroll position miscalculations
+  //
+  // The performance trade-off is acceptable for correct scrolling behavior.
 
   // UI state
   const isLoading = syncState === "connecting_wifi" || syncState === "requesting_hotspot"
@@ -688,7 +730,7 @@ export function GalleryScreen() {
 
     return (
       <TouchableOpacity
-        style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s4}]}
+        style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s12}]}
         onPress={isTappable ? handleSyncPress : undefined}
         activeOpacity={isTappable ? 0.8 : 1}
         disabled={!isTappable}>
@@ -697,103 +739,117 @@ export function GalleryScreen() {
     )
   }
 
-  const renderPhotoItem = ({item}: {item: GalleryItem}) => {
-    if (!item.photo) {
+  // Memoize renderPhotoItem to prevent FlatList scroll interruptions
+  // CRITICAL: Without useCallback, this function is recreated on every render,
+  // causing FlatList to lose scroll momentum
+  const renderPhotoItem = useCallback(
+    ({item}: {item: GalleryItem}) => {
+      if (!item.photo) {
+        return (
+          <View style={[themed($photoItem), {width: itemWidth}]}>
+            <ShimmerPlaceholder
+              shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+              shimmerStyle={{
+                width: itemWidth,
+                height: itemWidth, // Square aspect ratio like Google/Apple Photos
+                borderRadius: 0,
+              }}
+              duration={1500}
+            />
+          </View>
+        )
+      }
+
+      const itemSyncState = photoSyncStates.get(item.photo.name)
+      const isDownloading =
+        itemSyncState && (itemSyncState.status === "downloading" || itemSyncState.status === "pending")
+      // Don't include "completed" - those are accessible and should allow interaction
+      const isSelected = selectedPhotos.has(item.photo.name)
+
       return (
-        <View style={[themed($photoItem), {width: itemWidth}]}>
-          <ShimmerPlaceholder
-            shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
-            shimmerStyle={{
-              width: itemWidth,
-              height: itemWidth, // Square aspect ratio like Google/Apple Photos
-              borderRadius: 0,
-            }}
-            duration={1500}
-          />
-        </View>
-      )
-    }
-
-    const itemSyncState = photoSyncStates.get(item.photo.name)
-    const isDownloading =
-      itemSyncState && (itemSyncState.status === "downloading" || itemSyncState.status === "pending")
-    // Don't include "completed" - those are accessible and should allow interaction
-    const isSelected = selectedPhotos.has(item.photo.name)
-
-    return (
-      <TouchableOpacity
-        style={[themed($photoItem), {width: itemWidth}, isDownloading && themed($photoItemDisabled)]}
-        onPress={() => handlePhotoPress(item)}
-        onLongPress={() => {
-          if (item.photo && !isDownloading) {
-            enterSelectionMode(item.photo.name)
-          }
-        }}
-        disabled={isDownloading}
-        activeOpacity={isDownloading ? 1 : 0.8}>
-        <View style={{position: "relative"}}>
-          <PhotoImage photo={item.photo} style={{...themed($photoImage), width: itemWidth, height: itemWidth}} />
-          {isDownloading && <View style={themed($photoDimmingOverlay)} />}
-        </View>
-        {item.isOnServer && !isSelectionMode && (
-          <View style={themed($serverBadge)}>
-            <Icon name="glasses" size={14} color="white" />
+        <Pressable
+          style={[themed($photoItem), {width: itemWidth}, isDownloading && themed($photoItemDisabled)]}
+          onPress={() => handlePhotoPress(item)}
+          onLongPress={() => {
+            if (item.photo && !isDownloading) {
+              enterSelectionMode(item.photo.name)
+            }
+          }}
+          disabled={isDownloading}>
+          <View style={{position: "relative"}}>
+            <PhotoImage photo={item.photo} style={{...themed($photoImage), width: itemWidth, height: itemWidth}} />
+            {isDownloading && <View style={themed($photoDimmingOverlay)} />}
           </View>
-        )}
-        {item.photo.is_video && !isSelectionMode && (
-          <View style={themed($videoIndicator)}>
-            <Icon name="video" size={14} color="white" />
-          </View>
-        )}
-        {isSelectionMode &&
-          (isSelected ? (
-            <View style={themed($selectionCheckbox)}>
-              <Icon name={"check"} size={24} color={"white"} />
+          {item.isOnServer && !isSelectionMode && (
+            <View style={themed($serverBadge)}>
+              <Icon name="glasses" size={14} color="white" />
             </View>
-          ) : (
-            <View style={themed($unselectedCheckbox)}>
-              <Icon name={"checkbox-blank-circle-outline"} size={24} color={"white"} />
+          )}
+          {item.photo.is_video && !isSelectionMode && (
+            <View style={themed($videoIndicator)}>
+              <Icon name="video" size={14} color="white" />
             </View>
-          ))}
-        {(() => {
-          const syncStateForItem = photoSyncStates.get(item.photo.name)
-          if (
-            syncStateForItem &&
-            (syncStateForItem.status === "pending" ||
-              syncStateForItem.status === "downloading" ||
-              syncStateForItem.status === "failed")
-          ) {
-            const isFailed = syncStateForItem.status === "failed"
-
-            return (
-              <View style={themed($progressRingOverlay)}>
-                <ProgressRing
-                  progress={Math.max(0, Math.min(100, syncStateForItem.progress || 0))}
-                  size={50}
-                  strokeWidth={4}
-                  showPercentage={!isFailed}
-                  progressColor={isFailed ? theme.colors.error : theme.colors.primary}
-                />
-                {isFailed && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      width: 50,
-                      height: 50,
-                    }}>
-                    <Icon name="alert-circle" size={20} color={theme.colors.error} />
-                  </View>
-                )}
+          )}
+          {isSelectionMode &&
+            (isSelected ? (
+              <View style={themed($selectionCheckbox)}>
+                <Icon name={"check"} size={24} color={"white"} />
               </View>
-            )
-          }
-          return null
-        })()}
-      </TouchableOpacity>
-    )
-  }
+            ) : (
+              <View style={themed($unselectedCheckbox)}>
+                <Icon name={"checkbox-blank-circle-outline"} size={24} color={"white"} />
+              </View>
+            ))}
+          {(() => {
+            const syncStateForItem = photoSyncStates.get(item.photo.name)
+            if (
+              syncStateForItem &&
+              (syncStateForItem.status === "pending" ||
+                syncStateForItem.status === "downloading" ||
+                syncStateForItem.status === "failed")
+            ) {
+              const isFailed = syncStateForItem.status === "failed"
+
+              return (
+                <View style={themed($progressRingOverlay)}>
+                  <ProgressRing
+                    progress={Math.max(0, Math.min(100, syncStateForItem.progress || 0))}
+                    size={50}
+                    strokeWidth={4}
+                    showPercentage={!isFailed}
+                    progressColor={isFailed ? theme.colors.error : theme.colors.primary}
+                  />
+                  {isFailed && (
+                    <View
+                      style={{
+                        position: "absolute",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        width: 50,
+                        height: 50,
+                      }}>
+                      <Icon name="alert-circle" size={20} color={theme.colors.error} />
+                    </View>
+                  )}
+                </View>
+              )
+            }
+            return null
+          })()}
+        </Pressable>
+      )
+    },
+    [
+      itemWidth,
+      theme.colors,
+      photoSyncStates,
+      selectedPhotos,
+      isSelectionMode,
+      themed,
+      handlePhotoPress,
+      enterSelectionMode,
+    ],
+  )
 
   return (
     <>
@@ -862,19 +918,20 @@ export function GalleryScreen() {
                     themed($photoGridContent),
                     {
                       paddingBottom: shouldShowSyncButton
-                        ? 100 + insets.bottom + spacing.s6
+                        ? 100 + insets.bottom + spacing.s12
                         : spacing.s6 + insets.bottom,
                     },
                   ]}
                   columnWrapperStyle={numColumns > 1 ? themed($columnWrapper) : undefined}
-                  ItemSeparatorComponent={() => <View style={{height: ITEM_SPACING}} />}
-                  initialNumToRender={10}
-                  maxToRenderPerBatch={10}
-                  windowSize={10}
-                  removeClippedSubviews={true}
+                  initialNumToRender={21}
+                  maxToRenderPerBatch={7}
+                  windowSize={7}
+                  removeClippedSubviews={false}
                   updateCellsBatchingPeriod={50}
-                  onViewableItemsChanged={onViewableItemsChanged}
-                  viewabilityConfig={viewabilityConfig}
+                  scrollEventThrottle={16}
+                  bounces={false}
+                  overScrollMode="never"
+                  decelerationRate="fast"
                 />
               )
             }
@@ -883,12 +940,36 @@ export function GalleryScreen() {
 
         {renderStatusBar()}
 
-        <MediaViewer
-          visible={!!selectedPhoto}
-          photo={selectedPhoto}
-          onClose={() => setSelectedPhoto(null)}
-          // onShare={() => selectedPhoto && handleSharePhoto(selectedPhoto)}
-        />
+        {/* Gallery viewer - direct open (no floating transition) */}
+        {selectedPhoto &&
+          (() => {
+            // Calculate the actual index in the flattened photos array
+            // GalleryItem.index includes sync queue offsets, so we need to find the real position
+            const flatPhotos = allPhotos.map(item => item.photo).filter((p): p is PhotoInfo => p !== undefined)
+            const actualIndex = flatPhotos.findIndex(p => p?.name === selectedPhoto.name)
+
+            if (actualIndex === -1) {
+              console.error("[GalleryScreen] ❌ Selected photo not found in photos array:", selectedPhoto.name)
+              return null
+            }
+
+            console.log("[GalleryScreen] 🎬 Rendering MediaViewer with", flatPhotos.length, "photos")
+            console.log("[GalleryScreen] 🎬 actualIndex for", selectedPhoto.name, ":", actualIndex)
+
+            return (
+              <MediaViewer
+                visible={true}
+                photo={selectedPhoto}
+                photos={flatPhotos}
+                initialIndex={actualIndex}
+                onClose={() => {
+                  console.log("[GalleryScreen] 🎬 MediaViewer closed by user")
+                  setSelectedPhoto(null)
+                }}
+                // onShare={() => selectedPhoto && handleSharePhoto(selectedPhoto)}
+              />
+            )
+          })()}
       </View>
     </>
   )
@@ -937,6 +1018,7 @@ const $photoItem: ThemedStyle<ViewStyle> = () => ({
   borderRadius: 0,
   overflow: "hidden",
   backgroundColor: "rgba(0,0,0,0.05)",
+  marginBottom: 2, // Vertical spacing between rows (matches ITEM_SPACING)
 })
 
 const $photoImage: ThemedStyle<ImageStyle> = () => ({
@@ -984,7 +1066,7 @@ const $syncButtonFixed: ThemedStyle<ViewStyle> = ({colors, spacing, isDark}) => 
   borderRadius: spacing.s4,
   borderWidth: 1,
   borderColor: colors.border,
-  paddingVertical: spacing.s4,
+  paddingVertical: spacing.s6,
   paddingHorizontal: spacing.s6,
   ...(isDark
     ? {}
