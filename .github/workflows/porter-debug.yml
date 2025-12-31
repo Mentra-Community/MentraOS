@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger fallback
   push:
     branches:
-      - glass-state-sdk-cloud
+      - udp-audio-sending
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

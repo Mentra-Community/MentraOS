@@ -9,7 +9,6 @@
 import axios, { AxiosError } from "axios";
 import { Logger } from "pino";
 
-
 import {
   CloudToAppMessageType,
   CloudToGlassesMessageType,

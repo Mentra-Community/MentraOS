@@ -10,7 +10,6 @@
 
 import type { Logger } from "pino";
 
-
 import {
   AppToCloudMessage,
   AppToCloudMessageType,
@@ -163,6 +162,10 @@ export async function handleAppMessage(
 
 /**
  * Handle subscription update
+ *
+ * Note: Serialization of per-app subscription updates is handled by
+ * AppSession.enqueue() in SubscriptionManager.updateSubscriptions().
+ * See Issue 008 for details on the race condition this prevents.
  */
 async function handleSubscriptionUpdate(
   appWebsocket: IWebSocket,

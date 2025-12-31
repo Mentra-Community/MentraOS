@@ -362,6 +362,15 @@ async function handleGlassesConnectionInit(
     timestamp: new Date(),
   };
 
+  // Include UDP endpoint if configured
+  const udpHost = process.env.UDP_HOST;
+  const udpPort = process.env.UDP_PORT ? parseInt(process.env.UDP_PORT, 10) : 8000;
+  if (udpHost) {
+    (ackMessage as any).udpHost = udpHost;
+    (ackMessage as any).udpPort = udpPort;
+    userSession.logger.info({ udpHost, udpPort, feature: "udp-audio" }, "Included UDP endpoint in CONNECTION_ACK");
+  }
+
   // Include LiveKit info if requested
   if (livekitRequested) {
     try {

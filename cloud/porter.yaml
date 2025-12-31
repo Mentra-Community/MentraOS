@@ -53,3 +53,7 @@ services:
     #   enabled: true
     #   path: "/health" # Assuming your Bun service has a health endpoint
     #   port: 80
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio

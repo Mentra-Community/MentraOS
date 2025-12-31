@@ -36,6 +36,9 @@ RUN echo "🚀 Starting build process..." && \
 # Skip running tests in CI for now
 RUN echo "⚠️ Skipping tests in CI build"
 
+# Expose both ports
+EXPOSE 80 8000
+
 # Use Bun to run the application
 ENV NODE_ENV=production
 CMD ["echo", "Ready to run services"]

@@ -2,12 +2,14 @@ import CoreModule from "core"
 import Toast from "react-native-toast-message"
 
 import {translate} from "@/i18n"
-import livekit from "@/services/Livekit"
+// NOTE: LiveKit audio path disabled - using UDP or WebSocket instead
+// import livekit from "@/services/Livekit"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
+import udpAudioService from "@/services/UdpAudioService"
 import {useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {useSettingsStore} from "@/stores/settings"
 import {INTENSE_LOGGING} from "@/utils/Constants"
 import {CoreStatusParser} from "@/utils/CoreStatusParser"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -280,19 +282,27 @@ export class MantleBridge {
           socketComms.sendBinary(bytes)
           break
         case "mic_data":
-          binaryString = atob(data.base64)
-          bytes = new Uint8Array(binaryString.length)
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i)
-          }
-
-          if (__DEV__ && Math.random() < 0.03) {
-            console.log("MantleBridge: Received mic data:", bytes.length, "bytes")
-          }
-          const isChinaDeployment = await useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
-          if (!isChinaDeployment && livekit.isRoomConnected()) {
-            livekit.addPcm(bytes)
+          // Route audio to: UDP (if enabled) -> WebSocket (fallback)
+          if (socketComms.isUdpAudioEnabled() && udpAudioService.isConfiguredAndReady()) {
+            // UDP audio is enabled and ready - send directly via UDP
+            udpAudioService.sendAudio(data.base64)
           } else {
+            // Fallback to WebSocket
+            binaryString = atob(data.base64)
+            bytes = new Uint8Array(binaryString.length)
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i)
+            }
+            if (__DEV__ && Math.random() < 0.03) {
+              console.log("MantleBridge: Received mic data:", bytes.length, "bytes")
+            }
+            // NOTE: LiveKit audio path disabled - using UDP or WebSocket instead
+            // const isChinaDeployment = await useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+            // if (!isChinaDeployment && livekit.isRoomConnected()) {
+            //   livekit.addPcm(bytes)
+            // } else {
+            //   socketComms.sendBinary(bytes)
+            // }
             socketComms.sendBinary(bytes)
           }
           break

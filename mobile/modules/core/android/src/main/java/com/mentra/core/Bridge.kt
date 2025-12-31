@@ -117,7 +117,11 @@ public class Bridge private constructor() {
             sendTypedMessage("audio_disconnected", data as Map<String, Any>)
         }
 
-        /** Send microphone data */
+        /**
+         * Send microphone data to React Native.
+         * React Native handles the decision of whether to send via UDP or WebSocket.
+         * This keeps the native layer simple and UDP logic centralized in React Native.
+         */
         @JvmStatic
         fun sendMicData(data: ByteArray) {
             val base64String = Base64.encodeToString(data, Base64.NO_WRAP)

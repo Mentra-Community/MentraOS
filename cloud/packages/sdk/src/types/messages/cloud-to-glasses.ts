@@ -1,8 +1,9 @@
 // src/messages/cloud-to-glasses.ts
 
-import {BaseMessage} from "./base"
-import {CloudToGlassesMessageType, ResponseTypes, UpdateTypes} from "../message-types"
-import {Layout} from "../layouts"
+import { Layout } from "../layouts";
+import { CloudToGlassesMessageType, ResponseTypes, UpdateTypes } from "../message-types";
+
+import { BaseMessage } from "./base";
 // import { UserSession } from "../user-session";
 
 //===========================================================
@@ -13,31 +14,31 @@ import {Layout} from "../layouts"
  * Connection acknowledgment to glasses
  */
 export interface ConnectionAck extends BaseMessage {
-  type: CloudToGlassesMessageType.CONNECTION_ACK
+  type: CloudToGlassesMessageType.CONNECTION_ACK;
   // userSession: Partial<UserSession>;
-  sessionId: string
+  sessionId: string;
   livekit?: {
-    url: string
-    roomName: string
-    token: string
-  }
+    url: string;
+    roomName: string;
+    token: string;
+  };
 }
 
 /**
  * Connection error to glasses
  */
 export interface ConnectionError extends BaseMessage {
-  type: CloudToGlassesMessageType.CONNECTION_ERROR
-  code?: string
-  message: string
+  type: CloudToGlassesMessageType.CONNECTION_ERROR;
+  code?: string;
+  message: string;
 }
 
 /**
  * Authentication error to glasses
  */
 export interface AuthError extends BaseMessage {
-  type: CloudToGlassesMessageType.AUTH_ERROR
-  message: string
+  type: CloudToGlassesMessageType.AUTH_ERROR;
+  message: string;
 }
 
 //===========================================================
@@ -48,65 +49,65 @@ export interface AuthError extends BaseMessage {
  * Display update to glasses
  */
 export interface DisplayEvent extends BaseMessage {
-  type: CloudToGlassesMessageType.DISPLAY_EVENT
-  layout: Layout
-  durationMs?: number
+  type: CloudToGlassesMessageType.DISPLAY_EVENT;
+  layout: Layout;
+  durationMs?: number;
 }
 
 /**
  * App state change to glasses
  */
 export interface AppStateChange extends BaseMessage {
-  type: CloudToGlassesMessageType.APP_STATE_CHANGE
+  type: CloudToGlassesMessageType.APP_STATE_CHANGE;
   // userSession: Partial<UserSession>;
-  error?: string
+  error?: string;
 }
 
 /**
  * Microphone state change to glasses
  */
 export interface MicrophoneStateChange extends BaseMessage {
-  type: CloudToGlassesMessageType.MICROPHONE_STATE_CHANGE
+  type: CloudToGlassesMessageType.MICROPHONE_STATE_CHANGE;
   // userSession: Partial<UserSession>;
-  isMicrophoneEnabled: boolean
-  requiredData: Array<"pcm" | "transcription" | "pcm_or_transcription">
-  bypassVad?: boolean // NEW: PCM subscription bypass
+  isMicrophoneEnabled: boolean;
+  requiredData: Array<"pcm" | "transcription" | "pcm_or_transcription">;
+  bypassVad?: boolean; // NEW: PCM subscription bypass
 }
 
 /**
  * Photo request to glasses
  */
 export interface PhotoRequestToGlasses extends BaseMessage {
-  type: CloudToGlassesMessageType.PHOTO_REQUEST
+  type: CloudToGlassesMessageType.PHOTO_REQUEST;
   // userSession: Partial<UserSession>;
-  requestId: string
-  appId: string
-  saveToGallery?: boolean
-  webhookUrl?: string // URL where ASG should send the photo directly
-  authToken?: string // Auth token for webhook authentication
+  requestId: string;
+  appId: string;
+  saveToGallery?: boolean;
+  webhookUrl?: string; // URL where ASG should send the photo directly
+  authToken?: string; // Auth token for webhook authentication
   /** Desired capture size to guide device resolution selection */
-  size?: "small" | "medium" | "large" | "full"
+  size?: "small" | "medium" | "large" | "full";
   /** Image compression level: none, medium, or heavy */
-  compress?: "none" | "medium" | "heavy"
+  compress?: "none" | "medium" | "heavy";
 }
 
 /**
  * LED color type for RGB LED control
  */
-export type LedColor = "red" | "green" | "blue" | "orange" | "white"
+export type LedColor = "red" | "green" | "blue" | "orange" | "white";
 
 /**
  * RGB LED control request to glasses
  */
 export interface RgbLedControlToGlasses extends BaseMessage {
-  type: CloudToGlassesMessageType.RGB_LED_CONTROL
-  requestId: string
-  appId: string
-  action: "on" | "off" // Only low-level on/off actions
-  color?: LedColor // LED color name
-  ontime?: number
-  offtime?: number
-  count?: number
+  type: CloudToGlassesMessageType.RGB_LED_CONTROL;
+  requestId: string;
+  appId: string;
+  action: "on" | "off"; // Only low-level on/off actions
+  color?: LedColor; // LED color name
+  ontime?: number;
+  offtime?: number;
+  count?: number;
 }
 
 // TODO(isaiah): Deprecated, remove this after new mobile client refactor complete, and we migrate to SettingsStateChange.
@@ -114,30 +115,30 @@ export interface RgbLedControlToGlasses extends BaseMessage {
  * Settings update to glasses
  */
 export interface SettingsUpdate extends BaseMessage {
-  type: CloudToGlassesMessageType.SETTINGS_UPDATE
-  sessionId: string
+  type: CloudToGlassesMessageType.SETTINGS_UPDATE;
+  sessionId: string;
   settings: {
-    useOnboardMic: boolean
-    contextualDashboard: boolean
-    metricSystemEnabled: boolean
-    headUpAngle: number
-    brightness: number
-    autoBrightness: boolean
-    sensingEnabled: boolean
-    alwaysOnStatusBar: boolean
-    bypassVad: boolean
-    bypassAudioEncoding: boolean
-  }
+    useOnboardMic: boolean;
+    contextualDashboard: boolean;
+    metricSystemEnabled: boolean;
+    headUpAngle: number;
+    brightness: number;
+    autoBrightness: boolean;
+    sensingEnabled: boolean;
+    alwaysOnStatusBar: boolean;
+    bypassVad: boolean;
+    bypassAudioEncoding: boolean;
+  };
 }
 
 /**
  * LiveKit info for client to connect & publish
  */
 export interface LiveKitInfo extends BaseMessage {
-  type: CloudToGlassesMessageType.LIVEKIT_INFO
-  url: string
-  roomName: string
-  token: string
+  type: CloudToGlassesMessageType.LIVEKIT_INFO;
+  url: string;
+  roomName: string;
+  token: string;
 }
 
 //===========================================================
@@ -148,31 +149,31 @@ export interface LiveKitInfo extends BaseMessage {
  * Start RTMP stream command to glasses
  */
 export interface StartRtmpStream extends BaseMessage {
-  type: CloudToGlassesMessageType.START_RTMP_STREAM
-  rtmpUrl: string
-  appId: string
-  streamId?: string
-  video?: any // Video configuration
-  audio?: any // Audio configuration
-  stream?: any // Stream configuration
+  type: CloudToGlassesMessageType.START_RTMP_STREAM;
+  rtmpUrl: string;
+  appId: string;
+  streamId?: string;
+  video?: any; // Video configuration
+  audio?: any; // Audio configuration
+  stream?: any; // Stream configuration
 }
 
 /**
  * Stop RTMP stream command to glasses
  */
 export interface StopRtmpStream extends BaseMessage {
-  type: CloudToGlassesMessageType.STOP_RTMP_STREAM
-  appId: string
-  streamId?: string
+  type: CloudToGlassesMessageType.STOP_RTMP_STREAM;
+  appId: string;
+  streamId?: string;
 }
 
 /**
  * Keep RTMP stream alive command to glasses
  */
 export interface KeepRtmpStreamAlive extends BaseMessage {
-  type: CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE
-  streamId: string
-  ackId: string
+  type: CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE;
+  streamId: string;
+  ackId: string;
 }
 
 //===========================================================
@@ -183,48 +184,56 @@ export interface KeepRtmpStreamAlive extends BaseMessage {
  * Sets the continuous location update tier on the device.
  */
 export interface SetLocationTier extends BaseMessage {
-  type: CloudToGlassesMessageType.SET_LOCATION_TIER
-  tier: "realtime" | "high" | "tenMeters" | "hundredMeters" | "kilometer" | "threeKilometers" | "reduced" | "standard"
+  type: CloudToGlassesMessageType.SET_LOCATION_TIER;
+  tier: "realtime" | "high" | "tenMeters" | "hundredMeters" | "kilometer" | "threeKilometers" | "reduced" | "standard";
 }
 
 /**
  * Requests a single, on-demand location fix from the device.
  */
 export interface RequestSingleLocation extends BaseMessage {
-  type: CloudToGlassesMessageType.REQUEST_SINGLE_LOCATION
-  accuracy: string // The accuracy tier requested by the app
-  correlationId: string // To match the response with the poll request
+  type: CloudToGlassesMessageType.REQUEST_SINGLE_LOCATION;
+  accuracy: string; // The accuracy tier requested by the app
+  correlationId: string; // To match the response with the poll request
 }
 
 /**
  * Audio play request to glasses
  */
 export interface AudioPlayRequestToGlasses extends BaseMessage {
-  type: CloudToGlassesMessageType.AUDIO_PLAY_REQUEST
+  type: CloudToGlassesMessageType.AUDIO_PLAY_REQUEST;
   // userSession: Partial<UserSession>;
-  requestId: string
-  appId: string
-  audioUrl: string // URL to audio file for download and play
-  volume?: number // Volume level 0.0-1.0, defaults to 1.0
-  stopOtherAudio?: boolean // Whether to stop other audio playback, defaults to true
+  requestId: string;
+  appId: string;
+  audioUrl: string; // URL to audio file for download and play
+  volume?: number; // Volume level 0.0-1.0, defaults to 1.0
+  stopOtherAudio?: boolean; // Whether to stop other audio playback, defaults to true
 }
 
 /**
  * Audio stop request to glasses
  */
 export interface AudioStopRequestToGlasses extends BaseMessage {
-  type: CloudToGlassesMessageType.AUDIO_STOP_REQUEST
+  type: CloudToGlassesMessageType.AUDIO_STOP_REQUEST;
   // userSession: Partial<UserSession>;
-  appId: string
+  appId: string;
 }
 
 /**
  * WiFi setup request to glasses/mobile
  */
 export interface ShowWifiSetup extends BaseMessage {
-  type: CloudToGlassesMessageType.SHOW_WIFI_SETUP
-  reason?: string
-  appPackageName?: string
+  type: CloudToGlassesMessageType.SHOW_WIFI_SETUP;
+  reason?: string;
+  appPackageName?: string;
+}
+
+/**
+ * UDP ping acknowledgment from cloud to mobile
+ * Sent when the Go UDP listener receives a ping from the mobile client
+ */
+export interface UdpPingAck extends BaseMessage {
+  type: CloudToGlassesMessageType.UDP_PING_ACK;
 }
 
 /**
@@ -249,72 +258,73 @@ export type CloudToGlassesMessage =
   | RequestSingleLocation
   | LiveKitInfo
   | ShowWifiSetup
+  | UdpPingAck;
 
 //===========================================================
 // Type guards
 //===========================================================
 
 export function isResponse(message: CloudToGlassesMessage): boolean {
-  return ResponseTypes.includes(message.type as any)
+  return ResponseTypes.includes(message.type as any);
 }
 
 export function isUpdate(message: CloudToGlassesMessage): boolean {
-  return UpdateTypes.includes(message.type as any)
+  return UpdateTypes.includes(message.type as any);
 }
 
 // Individual type guards
 export function isConnectionAck(message: CloudToGlassesMessage): message is ConnectionAck {
-  return message.type === CloudToGlassesMessageType.CONNECTION_ACK
+  return message.type === CloudToGlassesMessageType.CONNECTION_ACK;
 }
 
 export function isConnectionError(message: CloudToGlassesMessage): message is ConnectionError {
-  return message.type === CloudToGlassesMessageType.CONNECTION_ERROR
+  return message.type === CloudToGlassesMessageType.CONNECTION_ERROR;
 }
 
 export function isAuthError(message: CloudToGlassesMessage): message is AuthError {
-  return message.type === CloudToGlassesMessageType.AUTH_ERROR
+  return message.type === CloudToGlassesMessageType.AUTH_ERROR;
 }
 
 export function isDisplayEvent(message: CloudToGlassesMessage): message is DisplayEvent {
-  return message.type === CloudToGlassesMessageType.DISPLAY_EVENT
+  return message.type === CloudToGlassesMessageType.DISPLAY_EVENT;
 }
 
 export function isAppStateChange(message: CloudToGlassesMessage): message is AppStateChange {
-  return message.type === CloudToGlassesMessageType.APP_STATE_CHANGE
+  return message.type === CloudToGlassesMessageType.APP_STATE_CHANGE;
 }
 
 export function isMicrophoneStateChange(message: CloudToGlassesMessage): message is MicrophoneStateChange {
-  return message.type === CloudToGlassesMessageType.MICROPHONE_STATE_CHANGE
+  return message.type === CloudToGlassesMessageType.MICROPHONE_STATE_CHANGE;
 }
 
 export function isPhotoRequest(message: CloudToGlassesMessage): message is PhotoRequestToGlasses {
-  return message.type === CloudToGlassesMessageType.PHOTO_REQUEST
+  return message.type === CloudToGlassesMessageType.PHOTO_REQUEST;
 }
 
 export function isRgbLedControl(message: CloudToGlassesMessage): message is RgbLedControlToGlasses {
-  return message.type === CloudToGlassesMessageType.RGB_LED_CONTROL
+  return message.type === CloudToGlassesMessageType.RGB_LED_CONTROL;
 }
 
 export function isSettingsUpdate(message: CloudToGlassesMessage): message is SettingsUpdate {
-  return message.type === CloudToGlassesMessageType.SETTINGS_UPDATE
+  return message.type === CloudToGlassesMessageType.SETTINGS_UPDATE;
 }
 
 export function isStartRtmpStream(message: CloudToGlassesMessage): message is StartRtmpStream {
-  return message.type === CloudToGlassesMessageType.START_RTMP_STREAM
+  return message.type === CloudToGlassesMessageType.START_RTMP_STREAM;
 }
 
 export function isStopRtmpStream(message: CloudToGlassesMessage): message is StopRtmpStream {
-  return message.type === CloudToGlassesMessageType.STOP_RTMP_STREAM
+  return message.type === CloudToGlassesMessageType.STOP_RTMP_STREAM;
 }
 
 export function isKeepRtmpStreamAlive(message: CloudToGlassesMessage): message is KeepRtmpStreamAlive {
-  return message.type === CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE
+  return message.type === CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE;
 }
 
 export function isAudioPlayRequestToGlasses(message: CloudToGlassesMessage): message is AudioPlayRequestToGlasses {
-  return message.type === CloudToGlassesMessageType.AUDIO_PLAY_REQUEST
+  return message.type === CloudToGlassesMessageType.AUDIO_PLAY_REQUEST;
 }
 
 export function isAudioStopRequestToGlasses(message: CloudToGlassesMessage): message is AudioStopRequestToGlasses {
-  return message.type === CloudToGlassesMessageType.AUDIO_STOP_REQUEST
+  return message.type === CloudToGlassesMessageType.AUDIO_STOP_REQUEST;
 }

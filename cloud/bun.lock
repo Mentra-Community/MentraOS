@@ -257,10 +257,10 @@
     },
     "packages/sdk": {
       "name": "@mentra/sdk",
-      "version": "2.1.31-beta.2",
+      "version": "2.1.31-beta.4",
       "dependencies": {
         "@logtail/pino": "^0.5.4",
-        "@mentra/types": "workspace:*",
+        "@mentra/types": "^1.0.0-beta.1",
         "axios": "^1.8.1",
         "boxen": "^8.0.1",
         "chalk": "^5.6.2",
@@ -288,7 +288,7 @@
     },
     "packages/types": {
       "name": "@mentra/types",
-      "version": "1.0.0",
+      "version": "1.0.0-beta.1",
       "devDependencies": {
         "typescript": "^5.0.0",
       },

@@ -18,6 +18,7 @@ import honoApp from "./hono-app";
 import * as AppUptimeService from "./services/core/app-uptime.service";
 import { memoryTelemetryService } from "./services/debug/MemoryTelemetryService";
 import { logger as rootLogger } from "./services/logging/pino-logger";
+import { udpAudioServer } from "./services/udp/UdpAudioServer";
 import { handleUpgrade, websocketHandlers } from "./services/websocket/bun-websocket";
 import generateCoreToken from "./utils/generateCoreToken";
 
@@ -58,6 +59,16 @@ mongoConnection
   })
   .catch((error) => {
     logger.error("MongoDB connection failed:", error);
+  });
+
+// Start UDP Audio Server
+udpAudioServer
+  .start()
+  .then(() => {
+    logger.info("UDP Audio Server started successfully on port 8000");
+  })
+  .catch((error) => {
+    logger.error({ error }, "UDP Audio Server failed to start (continuing without UDP audio support)");
   });
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;

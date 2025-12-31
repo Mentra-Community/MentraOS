@@ -49,6 +49,10 @@ export class AudioManager {
   private userSession: UserSession;
   private logger: Logger;
 
+  // UDP audio tracking
+  private udpPacketsReceived = 0;
+  private lastUdpLogAt = 0;
+
   // LC3 decoding service
   private lc3Service?: any;
 
@@ -335,10 +339,40 @@ export class AudioManager {
    * @param isLC3 Whether the audio is LC3 encoded
    * @returns Processed audio data
    */
-  processAudioData(audioData: ArrayBuffer | any) {
+  processAudioData(audioData: ArrayBuffer | any, source: "livekit" | "udp" = "livekit") {
     // Guard: Don't process if disposed
     if (this.disposed) {
       return undefined;
+    }
+
+    // Track UDP packets
+    if (source === "udp") {
+      this.udpPacketsReceived++;
+
+      // Log first UDP packet and then every 100
+      if (this.udpPacketsReceived === 1) {
+        this.logger.info(
+          {
+            feature: "udp-audio",
+            userId: this.userSession.userId,
+            audioDataLength: audioData?.length || audioData?.byteLength || 0,
+          },
+          "First UDP audio packet received in AudioManager",
+        );
+      } else if (this.udpPacketsReceived % 100 === 0) {
+        const now = Date.now();
+        const dt = this.lastUdpLogAt ? now - this.lastUdpLogAt : 0;
+        this.lastUdpLogAt = now;
+        this.logger.info(
+          {
+            feature: "udp-audio",
+            udpPacketsReceived: this.udpPacketsReceived,
+            msSinceLast100: dt,
+            audioDataLength: audioData?.length || audioData?.byteLength || 0,
+          },
+          "UDP audio stats in AudioManager",
+        );
+      }
     }
 
     try {

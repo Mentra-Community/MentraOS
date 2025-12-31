@@ -20,7 +20,6 @@ import { ExtendedStreamType, StreamType, isLanguageStream, parseLanguageStream }
 import { ResourceTracker } from "../../utils/resource-tracker";
 import { IWebSocket, WebSocketReadyState, hasEventEmitter } from "../websocket/types";
 
-
 /**
  * Location rate/accuracy tier for location subscriptions
  */
@@ -137,6 +136,11 @@ export class AppSession {
 
   // ===== Subscriptions =====
   private _subscriptions: Set<ExtendedStreamType> = new Set();
+
+  // ===== Update Queue (Issue 008) =====
+  // Serializes async operations to prevent race conditions when multiple
+  // subscription updates arrive rapidly during app startup.
+  private updateQueue: Promise<void> = Promise.resolve();
   private subscriptionHistory: SubscriptionHistoryEntry[] = [];
   private readonly onSubscriptionsChanged?: (
     appSession: AppSession,
@@ -222,6 +226,39 @@ export class AppSession {
 
   get ownershipReleaseInfo(): OwnershipReleaseInfo | null {
     return this._ownershipReleased;
+  }
+
+  // ===== Update Queue API =====
+
+  /**
+   * Queue an async operation to be serialized with other updates for this app.
+   * Ensures operations complete in the order they arrive.
+   *
+   * Used to prevent race conditions when multiple subscription updates
+   * arrive rapidly (e.g., during app startup). See Issue 008.
+   *
+   * @param operation - Async function to execute
+   * @returns Promise that resolves with the operation's result
+   */
+  async enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    let result!: T;
+    let operationError: Error | null = null;
+
+    this.updateQueue = this.updateQueue.then(async () => {
+      try {
+        result = await operation();
+      } catch (e) {
+        operationError = e as Error;
+        this.logger.error({ error: e, packageName: this.packageName }, "Queued operation failed");
+      }
+    });
+
+    await this.updateQueue;
+
+    if (operationError) {
+      throw operationError;
+    }
+    return result;
   }
 
   // ===== State Machine =====

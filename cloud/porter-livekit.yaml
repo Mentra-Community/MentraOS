@@ -24,3 +24,9 @@ services:
       # Better Stack logging for Go bridge
       BETTERSTACK_SOURCE_TOKEN: "${BETTERSTACK_SOURCE_TOKEN}"
       BETTERSTACK_INGESTING_HOST: "s1311181.eu-nbg-2.betterstackdata.com"
+    # Additional ports for internal services
+    # UDP audio listener on port 8000
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio

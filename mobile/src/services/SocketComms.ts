@@ -5,6 +5,7 @@ import {push} from "@/contexts/NavigationRef"
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import livekit from "@/services/Livekit"
 import mantle from "@/services/MantleManager"
+import udpAudioService, {fnv1aHash} from "@/services/UdpAudioService"
 import wsManager from "@/services/WebSocketManager"
 import {useAppletStatusStore} from "@/stores/applets"
 import {useDisplayStore} from "@/stores/display"
@@ -18,6 +19,7 @@ class SocketComms {
   private ws = wsManager
   private coreToken: string = ""
   public userid: string = ""
+  private udpAudioEnabled = false
 
   private constructor() {
     // Subscribe to WebSocket messages
@@ -342,6 +344,105 @@ class SocketComms {
     }
   }
 
+  // MARK: - UDP Audio Methods
+
+  /**
+   * Register this user for UDP audio with the server and probe availability.
+   * Uses the React Native UDP service (react-native-udp) instead of native modules.
+   * UDP endpoint is provided by server in the connection_ack message.
+   *
+   * Flow:
+   * 1. Configure UDP service with host, port, userId (from connection_ack)
+   * 2. Send registration to server via WebSocket (so server knows our hash for routing)
+   * 3. Probe UDP with multiple pings (UDP is lossy, single ping unreliable)
+   * 4. Wait for WebSocket ack from server
+   * 5. If ack received, enable UDP audio; otherwise fallback to WebSocket/LiveKit
+   *
+   * @param udpHost UDP server host (provided by server in connection_ack)
+   * @param udpPort UDP server port (default 8000)
+   */
+  public async registerUdpAudio(udpHost: string, udpPort: number = 8000): Promise<boolean> {
+    try {
+      console.log(`UDP: Using server-provided endpoint ${udpHost}:${udpPort}`)
+
+      // Configure the React Native UDP service
+      udpAudioService.configure(udpHost, udpPort, this.userid)
+
+      // Get the hash from the service (uses UTF-8 encoding, matches Go/server)
+      const userIdHash = udpAudioService.getUserIdHash()
+
+      // Send registration to server via WebSocket (so server knows our hash for routing)
+      const msg = {
+        type: "udp_register",
+        userIdHash: userIdHash,
+      }
+      this.ws.sendText(JSON.stringify(msg))
+      console.log(`UDP: Sent registration with hash ${userIdHash}`)
+
+      // Probe UDP with multiple retries (UDP is lossy, single ping unreliable)
+      // probeWithRetries sends 3 pings at 200ms intervals, times out at 2000ms
+      const udpAvailable = await udpAudioService.probeWithRetries(2000)
+
+      if (udpAvailable) {
+        console.log("UDP: Probe successful - UDP audio enabled")
+        this.udpAudioEnabled = true
+        return true
+      } else {
+        console.log("UDP: Probe failed - stopping UDP service, using WebSocket fallback")
+        // CRITICAL: Stop the UDP service when probe fails to prevent audio loss
+        // This fixes issue #1: native sender not stopped on probe failure
+        udpAudioService.stop()
+        this.udpAudioEnabled = false
+        return false
+      }
+    } catch (error) {
+      console.log(`UDP: Registration error: ${error}`)
+      // Ensure UDP is stopped on any error
+      udpAudioService.stop()
+      this.udpAudioEnabled = false
+      return false
+    }
+  }
+
+  /**
+   * Unregister UDP audio and fall back to WebSocket/LiveKit.
+   */
+  public async unregisterUdpAudio(): Promise<void> {
+    try {
+      if (this.udpAudioEnabled) {
+        // Send unregister message
+        const userIdHash = fnv1aHash(this.userid)
+        const msg = {
+          type: "udp_unregister",
+          userIdHash: userIdHash,
+        }
+        this.ws.sendText(JSON.stringify(msg))
+
+        // Stop UDP service
+        udpAudioService.stop()
+        this.udpAudioEnabled = false
+        console.log("UDP: Audio disabled")
+      }
+    } catch (error) {
+      console.log(`UDP: Unregister error: ${error}`)
+    }
+  }
+
+  /**
+   * Check if UDP audio is currently enabled.
+   */
+  public isUdpAudioEnabled(): boolean {
+    return this.udpAudioEnabled
+  }
+
+  /**
+   * Get the UDP audio service instance for sending audio data.
+   * Returns the service if UDP is enabled, null otherwise.
+   */
+  public getUdpAudioService(): typeof udpAudioService | null {
+    return this.udpAudioEnabled ? udpAudioService : null
+  }
+
   // message handlers, these should only ever be called from handle_message / the server:
   private async handle_connection_ack(msg: any) {
     console.log("SOCKET: connection ack, connecting to livekit")
@@ -349,6 +450,20 @@ class SocketComms {
     if (!isChina) {
       await livekit.connect()
     }
+
+    // Try to register for UDP audio (non-blocking)
+    // UDP endpoint is provided by server in connection_ack message
+    const udpHost = msg.udpHost || msg.udp_host
+    const udpPort = msg.udpPort || msg.udp_port || 8000
+
+    if (udpHost) {
+      this.registerUdpAudio(udpHost, udpPort).catch(err => {
+        console.log("SOCKET: UDP registration failed (will use WebSocket fallback):", err)
+      })
+    } else {
+      console.log("SOCKET: No UDP endpoint in connection_ack, skipping UDP audio")
+    }
+
     GlobalEventEmitter.emit("APP_STATE_CHANGE", msg)
   }
 
@@ -547,6 +662,17 @@ class SocketComms {
   }
 
   /**
+   * Handle UDP ping acknowledgement from server.
+   * This is sent via WebSocket when the Go bridge receives our UDP ping.
+   */
+  private handle_udp_ping_ack(_msg: any) {
+    console.log("UDP: Received ping ack from server")
+
+    // Notify the React Native UDP service that ping was acknowledged
+    udpAudioService.onPingAckReceived()
+  }
+
+  /**
    * Handle audio play request from cloud.
    * Downloads and plays audio from the provided URL using expo-av.
    */
@@ -683,6 +809,10 @@ class SocketComms {
 
       case "audio_stop_request":
         this.handle_audio_stop_request(msg)
+        break
+
+      case "udp_ping_ack":
+        this.handle_udp_ping_ack(msg)
         break
 
       default:

@@ -43,6 +43,9 @@ class Bridge {
         Bridge.sendTypedMessage("pair_failure", body: data)
     }
 
+    /// Send microphone data to React Native.
+    /// React Native handles the decision of whether to send via UDP or WebSocket.
+    /// This keeps the native layer simple and UDP logic centralized in React Native.
     static func sendMicData(_ data: Data) {
         let base64String = data.base64EncodedString()
         let body = ["base64": base64String]
