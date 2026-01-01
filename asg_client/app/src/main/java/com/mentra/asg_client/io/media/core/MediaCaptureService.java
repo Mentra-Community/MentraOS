@@ -1602,6 +1602,9 @@ public class MediaCaptureService {
                         .writeTimeout(10, java.util.concurrent.TimeUnit.SECONDS)   // Time to upload photo data
                         .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)     // Time to get response
                         .build();
+                
+                long clientBuildTime = System.currentTimeMillis() - requestPrepStartTime;
+                Log.d(TAG, "⏱️ [TIMING] HTTP client built in " + clientBuildTime + "ms");
 
                 RequestBody fileBody = RequestBody.create(okhttp3.MediaType.parse("image/jpeg"), photoFile);
                 RequestBody requestBody = new MultipartBody.Builder()
@@ -1626,18 +1629,26 @@ public class MediaCaptureService {
                 }
 
                 Request request = requestBuilder.build();
-                Log.d(TAG, "🚀 Executing HTTP request...");
+                long requestBuildTime = System.currentTimeMillis() - requestPrepStartTime;
+                Log.d(TAG, "⏱️ [TIMING] Total request preparation took " + requestBuildTime + "ms");
+                
+                Log.d(TAG, "🚀 Executing HTTP request (DNS resolution + connection + upload)...");
+                long dnsAndConnectionStartTime = System.currentTimeMillis();
                 
                 long uploadStartTime = System.currentTimeMillis();
                 Response response = client.newCall(request).execute();
                 long uploadTime = System.currentTimeMillis() - uploadStartTime;
                 
+                Log.d(TAG, "⏱️ [TIMING] DNS + connection + upload + response took " + uploadTime + "ms");
+                
                 Log.d(TAG, "⏱️ Upload completed in: " + uploadTime + "ms");
                 Log.d(TAG, "📈 Response code: " + response.code());
 
                 if (response.isSuccessful()) {
+                    long totalOperationTime = System.currentTimeMillis() - requestPrepStartTime;
                     String responseBody = response.body() != null ? response.body().string() : "";
                     Log.d(TAG, "✅ Photo uploaded successfully to webhook");
+                    Log.d(TAG, "⏱️ [TIMING] Total operation time (prep + DNS + upload): " + totalOperationTime + "ms");
                     Log.d(TAG, "📄 Response body: " + responseBody);
 
                     // Check if we should save the photo
@@ -1742,8 +1753,10 @@ public class MediaCaptureService {
                 response.close();
 
             } catch (Exception e) {
+                long timeToFailure = System.currentTimeMillis() - requestPrepStartTime;
                 Log.e(TAG, "❌ Error uploading photo to webhook: " + e.getMessage());
                 Log.e(TAG, "❌ Exception type: " + e.getClass().getSimpleName());
+                Log.e(TAG, "⏱️ [TIMING] Request failed after " + timeToFailure + "ms (includes DNS resolution time)");
 
                 // Check if we can fallback to BLE on exception
                 String bleImgId = photoBleIds.get(requestId);
