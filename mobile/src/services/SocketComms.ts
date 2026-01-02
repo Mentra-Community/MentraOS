@@ -13,6 +13,11 @@ import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {BackgroundTimer} from "@/utils/timers"
+
+// UDP probe configuration
+const UDP_INITIAL_DELAY_MS = 500 // Wait before first probe to let server register user
+const UDP_RETRY_INTERVAL_MS = 5000 // Retry probe every 5s if not connected
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -20,6 +25,9 @@ class SocketComms {
   private coreToken: string = ""
   public userid: string = ""
   private udpAudioEnabled = false
+  private udpRetryIntervalId: number | null = null
+  private udpProbeInProgress = false
+  private udpConfig: {host: string; port: number} | null = null
 
   private constructor() {
     // Subscribe to WebSocket messages
@@ -37,6 +45,13 @@ class SocketComms {
   }
 
   public cleanup() {
+    // Stop UDP retry interval and reset state
+    this.stopUdpRetryInterval()
+    this.udpConfig = null
+    this.udpProbeInProgress = false
+    udpAudioService.stop()
+    this.udpAudioEnabled = false
+
     // Cleanup WebSocket
     this.ws.cleanup()
 
@@ -352,18 +367,54 @@ class SocketComms {
    * UDP endpoint is provided by server in the connection_ack message.
    *
    * Flow:
-   * 1. Configure UDP service with host, port, userId (from connection_ack)
-   * 2. Send registration to server via WebSocket (so server knows our hash for routing)
-   * 3. Probe UDP with multiple pings (UDP is lossy, single ping unreliable)
-   * 4. Wait for WebSocket ack from server
-   * 5. If ack received, enable UDP audio; otherwise fallback to WebSocket/LiveKit
+   * 1. Wait initial delay to let server register user
+   * 2. Configure UDP service with host, port, userId (from connection_ack)
+   * 3. Send registration to server via WebSocket (so server knows our hash for routing)
+   * 4. Probe UDP with multiple pings (UDP is lossy, single ping unreliable)
+   * 5. Wait for WebSocket ack from server
+   * 6. If ack received, enable UDP audio; otherwise start periodic retry
    *
    * @param udpHost UDP server host (provided by server in connection_ack)
    * @param udpPort UDP server port (default 8000)
+   * @param isRetry Whether this is a retry attempt (skip initial delay)
    */
-  public async registerUdpAudio(udpHost: string, udpPort: number = 8000): Promise<boolean> {
+  public async registerUdpAudio(
+    udpHost: string,
+    udpPort: number = 8000,
+    isRetry: boolean = false,
+  ): Promise<boolean> {
+    // Prevent overlapping probes
+    if (this.udpProbeInProgress) {
+      console.log("UDP: Probe already in progress, skipping")
+      return false
+    }
+
+    // Skip if WebSocket disconnected
+    if (!this.ws.isConnected()) {
+      console.log("UDP: WebSocket disconnected, skipping probe")
+      return false
+    }
+
+    this.udpProbeInProgress = true
+
     try {
-      console.log(`UDP: Using server-provided endpoint ${udpHost}:${udpPort}`)
+      // Store config for retries
+      this.udpConfig = {host: udpHost, port: udpPort}
+
+      // Wait initial delay on first attempt to let server register user
+      if (!isRetry) {
+        console.log(`UDP: Waiting ${UDP_INITIAL_DELAY_MS}ms before first probe...`)
+        await new Promise(resolve => BackgroundTimer.setTimeout(resolve, UDP_INITIAL_DELAY_MS))
+
+        // Re-check WebSocket after delay
+        if (!this.ws.isConnected()) {
+          console.log("UDP: WebSocket disconnected during delay, aborting probe")
+          this.udpProbeInProgress = false
+          return false
+        }
+      }
+
+      console.log(`UDP: ${isRetry ? "Retry" : "Initial"} probe for ${udpHost}:${udpPort}`)
 
       // Configure the React Native UDP service
       udpAudioService.configure(udpHost, udpPort, this.userid)
@@ -383,24 +434,74 @@ class SocketComms {
       // probeWithRetries sends 3 pings at 200ms intervals, times out at 2000ms
       const udpAvailable = await udpAudioService.probeWithRetries(2000)
 
+      this.udpProbeInProgress = false
+
       if (udpAvailable) {
         console.log("UDP: Probe successful - UDP audio enabled")
         this.udpAudioEnabled = true
+        this.stopUdpRetryInterval() // Stop retrying, we're connected
         return true
       } else {
-        console.log("UDP: Probe failed - stopping UDP service, using WebSocket fallback")
-        // CRITICAL: Stop the UDP service when probe fails to prevent audio loss
-        // This fixes issue #1: native sender not stopped on probe failure
+        console.log("UDP: Probe failed - using WebSocket fallback, will retry in background")
+        // Stop the UDP service when probe fails to prevent audio loss
         udpAudioService.stop()
         this.udpAudioEnabled = false
+
+        // Start periodic retry if not already running
+        this.startUdpRetryInterval()
         return false
       }
     } catch (error) {
       console.log(`UDP: Registration error: ${error}`)
+      this.udpProbeInProgress = false
       // Ensure UDP is stopped on any error
       udpAudioService.stop()
       this.udpAudioEnabled = false
+
+      // Start periodic retry if not already running
+      this.startUdpRetryInterval()
       return false
+    }
+  }
+
+  /**
+   * Start periodic UDP retry interval (uses BackgroundTimer for Android background support)
+   */
+  private startUdpRetryInterval(): void {
+    // Don't start if already running or no config
+    if (this.udpRetryIntervalId !== null || !this.udpConfig) {
+      return
+    }
+
+    console.log(`UDP: Starting periodic retry every ${UDP_RETRY_INTERVAL_MS / 1000}s`)
+    this.udpRetryIntervalId = BackgroundTimer.setInterval(() => {
+      // Skip if already connected or no config
+      if (this.udpAudioEnabled || !this.udpConfig) {
+        this.stopUdpRetryInterval()
+        return
+      }
+
+      // Skip if WebSocket is disconnected
+      if (!this.ws.isConnected()) {
+        console.log("UDP: Skipping retry - WebSocket disconnected")
+        return
+      }
+
+      console.log("UDP: Periodic retry attempt...")
+      this.registerUdpAudio(this.udpConfig.host, this.udpConfig.port, true).catch(err => {
+        console.log("UDP: Periodic retry failed:", err)
+      })
+    }, UDP_RETRY_INTERVAL_MS)
+  }
+
+  /**
+   * Stop periodic UDP retry interval
+   */
+  private stopUdpRetryInterval(): void {
+    if (this.udpRetryIntervalId !== null) {
+      console.log("UDP: Stopping periodic retry")
+      BackgroundTimer.clearInterval(this.udpRetryIntervalId)
+      this.udpRetryIntervalId = null
     }
   }
 
@@ -409,6 +510,11 @@ class SocketComms {
    */
   public async unregisterUdpAudio(): Promise<void> {
     try {
+      // Stop retry interval and reset state
+      this.stopUdpRetryInterval()
+      this.udpConfig = null
+      this.udpProbeInProgress = false
+
       if (this.udpAudioEnabled) {
         // Send unregister message
         const userIdHash = fnv1aHash(this.userid)

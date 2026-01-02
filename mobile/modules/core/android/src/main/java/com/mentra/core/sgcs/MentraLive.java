@@ -2250,7 +2250,8 @@ public class MentraLive extends SGCManager {
                 sendUserSettings();
 
                 // Claim RGB LED control authority
-                sendRgbLedControlAuthority(true);
+                // DISABLED: MentraLive is not supposed to send this command
+                // sendRgbLedControlAuthority(true);
 
                 // Initialize LC3 audio logging now that glasses are ready
                 initializeLc3Logging();
@@ -3708,9 +3709,10 @@ public class MentraLive extends SGCManager {
         Bridge.log("LIVE: Cleared pending message tracking");
 
         // Release RGB LED control authority before disconnecting
-        if (rgbLedAuthorityClaimed) {
-            sendRgbLedControlAuthority(false);
-        }
+        // DISABLED: MentraLive is not supposed to send this command
+        // if (rgbLedAuthorityClaimed) {
+        //     sendRgbLedControlAuthority(false);
+        // }
 
         // Disconnect from GATT if connected
         if (bluetoothGatt != null) {
