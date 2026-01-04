@@ -331,3 +331,4 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 
 SHELL_CMD_REGISTER(stp513n, &sub_stp513n, "SPT513N touch panel control commands", cmd_stp513n_help);
 
+

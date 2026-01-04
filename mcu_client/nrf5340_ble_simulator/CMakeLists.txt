@@ -18,6 +18,7 @@ include(nanopb)
 # Custom driver module picked up via ZEPHYR_EXTRA_MODULES (module.yml)
 add_subdirectory(src/mos_components/mos_pdm)
 add_subdirectory(src/mos_components/mos_interrupt)
+add_subdirectory(src/mos_components/mos_cvt2135)
 add_subdirectory(src/mos_driver)
 
 target_sources(app PRIVATE
@@ -33,6 +34,7 @@ target_sources(app PRIVATE
     src/shell_display_control.c
     src/shell_gx8002_control.c
     src/shell_stp513n_control.c
+    src/shell_cvt213x_control.c
     src/mos_components/mos_sysport/src/bal_os.c
     src/mos_components/mos_lvgl_display/src/mos_lvgl_display.c
     src/mos_components/mos_lvgl_display/src/display_config.c

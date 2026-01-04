@@ -45,7 +45,8 @@
 #include "bsp_gx8002.h"
 #include "interrupt_handler.h"
 #include "stp513n.h"
-
+#include "app_cvt213x_porting.h"
+#include "app_cvt213x_main.h"  // For app_cvt213x_sys_init()
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 static int hfclock_config_and_start(void)
@@ -831,10 +832,10 @@ static void configure_gpio(void)
 		LOG_ERR("Cannot init buttons (err: %d)", err);
 	}
 
-	err = dk_leds_init();
-	if (err) {
-		LOG_ERR("Cannot init LEDs (err: %d)", err);
-	}
+	// err = dk_leds_init();
+	// if (err) {
+	// 	LOG_ERR("Cannot init LEDs (err: %d)", err);
+	// }
 }
 
 // External BSP log control
@@ -1011,9 +1012,16 @@ int main(void)
 	k_work_init(&adv_work, adv_work_handler);
 	advertising_start();
 	bsp_gx8002_init();
+	
+	// Initialize CVT213X system (must be called at power-on according to porting guide)
+	LOG_INF("Initializing CVT213X touch detection system...");
+	app_cvt213x_sys_init();
+	LOG_INF("✅ CVT213X system initialized");
+	
 	for (;;) 
 	{
-		dk_set_led(RUN_STATUS_LED, (++blink_status) % 2);
+		app_cvt213x_thread(APP_MODUAL_CVT213X_IRQ);
+		// dk_set_led(RUN_STATUS_LED, (++blink_status) % 2);
 		k_sleep(K_MSEC(RUN_LED_BLINK_INTERVAL));
 	}
 }

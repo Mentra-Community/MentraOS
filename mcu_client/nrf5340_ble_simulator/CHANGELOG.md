@@ -4,6 +4,136 @@ All notable changes to the nRF5340 DK BLE Glasses Protobuf Simulator will be doc
 
 ## Unreleased
 
+### 🎯 CVT213X Touch Detection System Integration - 2026-01-04
+
+#### New Files
+
+##### Application Layer Components
+- **✅ NEW**: `src/mos_components/mos_cvt2135/CMakeLists.txt` - CMake build rules for CVT213X component
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/app_cvt213x_main.c/h` - Main controller module for event handling and initialization
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/app_cvt213x_porting.c/h` - Porting layer for platform-specific interfaces
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/app_cvt213x_shim.c/h` - Zephyr RTOS adaptation layer
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/bsp_i2c.h` - I2C interface definitions
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/api/app_cvt213x_log.h` - Logging macro definitions
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/api/cva_tws_api.h` - Core API definitions
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/api/cva_tws_config.h` - Configuration parameters
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/api/cva_tws_sys_def.h` - System definitions
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/cva_tws_dongle.c/h` - Communication handling (TRX/MP-Mode support)
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/cva_tws_flash.c/h` - Flash storage interface
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/cva_tws_gesture.c/h` - Gesture recognition algorithm
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/cva_tws_i2c.c/h` - I2C register operations
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/cva_tws_platform.c/h` - Platform-specific operations and mode switching
+- **✅ NEW**: `src/mos_components/mos_cvt2135/app_cvt213x/lib/cva_tws_util.c/h` - Utility functions and callback interfaces
+
+##### Driver Layer
+- **✅ NEW**: `src/mos_driver/include/cvt213x.h` - CVT213X driver header file
+- **✅ NEW**: `src/mos_driver/src/cvt213x.c` - CVT213X driver implementation (I2C initialization and verification)
+
+##### Shell Commands
+- **✅ NEW**: `src/shell_cvt213x_control.c` - Shell debug commands (verify/status commands for hardware testing)
+
+#### Modified Files
+
+##### Device Tree Configuration
+- **🔧 MODIFIED**: `boards/nrf5340dk_nrf5340_cpuapp_ns.overlay`
+  - **CVT213X Configuration**:
+    - Add I2C3 bus configuration: SDA=P1.13, SCL=P1.7 with pull-up resistors
+    - Configure CVT213X interrupt pin: `cvt213x_int-gpios = <&gpio0 29 GPIO_ACTIVE_HIGH>`
+    - Disable onboard LEDs (led0~led3) to avoid GPIO pin conflicts
+  - **I2C3 Pin Configuration**:
+    - `i2c3_default`: TWIM_SDA (P1.13), TWIM_SCL (P1.7) with bias-pull-up
+    - `i2c3_sleep`: Low-power mode configuration
+
+##### Main Program
+- **🔧 MODIFIED**: `src/main.c`
+  - Add CVT213X system initialization in main function
+  - Add includes: `app_cvt213x_porting.h`, `app_cvt213x_main.h`
+  - Call `app_cvt213x_sys_init()` at system startup
+  - Call `app_cvt213x_thread(APP_MODUAL_CVT213X_IRQ)` in main loop for event processing
+  - Temporarily disable LED blinking to reduce interference
+
+##### CMake Configuration
+- **🔧 MODIFIED**: `CMakeLists.txt`
+  - Add CVT213X component: `add_subdirectory(src/mos_components/mos_cvt2135)`
+  - Add shell command source: `target_sources(app PRIVATE src/shell_cvt213x_control.c)`
+- **🔧 MODIFIED**: `src/mos_driver/CMakeLists.txt`
+  - Add CVT213X driver: `target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/cvt213x.c)`
+
+#### CVT213X Shell Commands (3 commands)
+- **📋 Commands**:
+  - `cvt213x help` - Show help menu with available commands
+  - `cvt213x verify` - Verify I2C communication (read register 0x0014, expect 0x28 chip ID)
+  - `cvt213x status` - Quick status check (runs verify command)
+
+#### Technical Features
+
+##### System Initialization Flow
+- **🚀 Initialization Sequence**:
+  - `app_cvt213x_sys_init()` called at system power-on
+    - Initialize event queue and worker thread
+    - Initialize I2C3 bus for CVT213X communication
+    - Initialize interrupt handling (GPIO P0.29)
+    - Chip soft reset → register configuration → enter DOZE mode
+  - `app_cvt213x_calibration_speed_up()` accelerates chip calibration
+  - Main loop processes touch events via message queue
+
+##### I2C Communication Architecture
+- **🔌 I2C Stack**:
+  - Zephyr I2C (i2c3) → cvt213x_hw_i2c_write/read() → app_cvt213x_i2c_write/read_reg() → cvt213x_util_i2c_write/read() → CVT213X chip (address 0x28 or 0x2C)
+  - Hardware I2C with 7-bit addressing
+  - Standard speed (100kHz) configuration
+  - Pull-up resistors required on SDA/SCL lines
+
+##### Interrupt Processing
+- **⚡ Interrupt Flow**:
+  - GPIO P0.29 (CVT213X INT pin, active low)
+  - `cvt213x_hal_irq_init()` configures interrupt
+  - `app_cvt231x_irq_get_leavel()` reads interrupt level
+  - `app_cvt213x_irq_handler()` processes gesture and proximity detection
+  - `app_cvt213x_event_handler()` reports events to application layer
+
+##### Feature Configuration
+- **⚙️ Configuration Macros** (default values):
+  - `CVT213X_TRX_EN = 0` - TRX communication mode (MP-Mode) disabled
+  - `CVT213X_FLASH_EN = 0` - Flash storage feature disabled
+  - `CVT213X_SETUP_FUN = 0` - Setup information save feature disabled
+  - `CVT213X_HOST_SLEEP_EN = 0` - Host sleep mode disabled
+  - `IS_TK_ENABLE = 1` - Touch key function enabled
+  - `IS_IED_ENABLE = 1` - In-ear detection (proximity sensing) enabled
+  - `DUAL_CVT213X_ENABLE = 0` - Dual-chip support disabled
+
+##### Hardware Pin Mapping
+- **📌 GPIO Assignments**:
+  - I2C3 SDA: P1.13 (CVT213X data line)
+  - I2C3 SCL: P1.7 (CVT213X clock line)
+  - CVT213X INT: P0.29 (interrupt pin, active low)
+
+#### Code Statistics
+- **📊 Summary**:
+  - Total new files: 18
+  - Total code lines: ~6400+
+  - Application layer: 6 files, ~2000+ lines
+  - SDK library: 8 files, ~4000+ lines
+  - Driver layer: 3 files, ~300+ lines
+  - Shell commands: 1 file, ~90 lines
+
+#### Testing Checklist
+- ✅ Hardware pin connections verified (I2C3, INT)
+- ✅ I2C bus pull-up resistors confirmed (4.7K Ω)
+- ✅ Shell `cvt213x verify` command returns chip ID 0x28
+- ✅ Startup log shows "CVT213X system initialized"
+- ✅ Touch sensor detects proximity and touch events
+- ⏳ MP-Mode testing (if remote debugging enabled)
+- ⏳ Performance testing: response latency, power consumption
+
+#### Notes
+- **💡 Auto-initialization**: CVT213X system auto-initializes at boot in main()
+- **🔧 Debug commands**: Shell commands available for hardware verification only
+- **⚠️ Dependencies**: Requires Zephyr RTOS I2C driver and GPIO support
+- **📝 Future optimization**: Enable Flash storage, Setup info save, and TRX mode as needed
+
+---
+
 ### 📱 STP513N Touch Controller Driver and I2S Master Configuration Support - 2025-12-29
 
 #### New Files

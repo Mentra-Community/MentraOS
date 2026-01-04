@@ -14,6 +14,8 @@
         stp513n_reset-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;  /* P0.02 STP513N reset pin (GPIO01, falling edge active: 下降沿有效, shared with I2C SDA) */
         stp513n_sda-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;  /* P0.02 STP513N I2C SDA (software I2C) */
         stp513n_scl-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;  /* P0.03 STP513N I2C SCL (software I2C) */
+
+        cvt213x_int-gpios = <&gpio0 29 GPIO_ACTIVE_HIGH>;
     };
 };
 
@@ -34,7 +36,7 @@
             low-power-enable;
         };
     };
-    
+
     pwm1_default: pwm1_default {
         group1 {
             psels = <NRF_PSEL(PWM_OUT0, 0, 13)>;  /* P0.13 */
@@ -46,14 +48,14 @@
             low-power-enable;
         };
     };
-    
+
     pdm0_default: pdm0_default {
         group1 {
             psels = <NRF_PSEL(PDM_CLK, 1, 12)>,
                     <NRF_PSEL(PDM_DIN, 1, 11)>;
         };
     };
-    
+
     i2c2_default: i2c2_default {
         group1 {
             psels = <NRF_PSEL(TWIM_SDA, 1, 14)>,
@@ -64,6 +66,20 @@
         group1 {
             psels = <NRF_PSEL(TWIM_SDA, 1, 14)>,
                     <NRF_PSEL(TWIM_SCL, 1, 15)>;
+            low-power-enable;
+        };
+    };
+    i2c3_default: i2c3_default {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SDA, 1, 13)>,
+                    <NRF_PSEL(TWIM_SCL, 1, 7)>;
+            bias-pull-up;
+        };
+    };
+    i2c3_sleep: i2c3_sleep {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SDA, 1, 13)>,
+                    <NRF_PSEL(TWIM_SCL, 1, 7)>;
             low-power-enable;
         };
     };
@@ -83,18 +99,18 @@
     };
     i2s0_default: i2s0_default {
         group1 {
-            psels = <NRF_PSEL(I2S_SDIN, 1, 9)>,    /* P1.09: Serial Data Input (from I2S microphones) */
-                    <NRF_PSEL(I2S_SDOUT, 1, 10)>,  /* P1.10: Serial Data Output (to I2S headphones) */
-                    <NRF_PSEL(I2S_SCK_M, 1, 8)>,   /* P1.08: Bit Clock Output (Master) */
+            psels = <NRF_PSEL(I2S_SDIN, 1, 9)>, /* P1.09: Serial Data Input (from I2S microphones) */
+                    <NRF_PSEL(I2S_SDOUT, 1, 10)>, /* P1.10: Serial Data Output (to I2S headphones) */
+                    <NRF_PSEL(I2S_SCK_M, 1, 8)>, /* P1.08: Bit Clock Output (Master) */
                     <NRF_PSEL(I2S_LRCK_M, 1, 6)>;  /* P1.06: Word Select Output (Master) */
         };
     };
-    
+
     i2s0_sleep: i2s0_sleep {
         group1 {
-            psels = <NRF_PSEL(I2S_SDIN, 1, 9)>,    /* P1.09: Serial Data Input */
+            psels = <NRF_PSEL(I2S_SDIN, 1, 9)>, /* P1.09: Serial Data Input */
                     <NRF_PSEL(I2S_SDOUT, 1, 10)>, /* P1.10: Serial Data Output */
-                    <NRF_PSEL(I2S_SCK_M, 1, 8)>,   /* P1.08: Bit Clock Output */
+                    <NRF_PSEL(I2S_SCK_M, 1, 8)>, /* P1.08: Bit Clock Output */
                     <NRF_PSEL(I2S_LRCK_M, 1, 6)>;  /* P1.06: Word Select Output */
             low-power-enable;
         };
@@ -121,14 +137,14 @@
         spi-max-frequency = <32000000>;
 
         /* CS pins moved to P1.04 and P1.05 to avoid Arduino connector conflicts */
-        left_cs-gpios  = <&gpio1 4 GPIO_ACTIVE_HIGH>;  /* P1.04 - avoid conflicts */
+        left_cs-gpios = <&gpio1 4 GPIO_ACTIVE_HIGH>;  /* P1.04 - avoid conflicts */
         right_cs-gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;  /* P1.05 - avoid conflicts */
 
         /* Power enables and reset */
-        v0_9-gpios     = <&gpio0 5 GPIO_ACTIVE_HIGH>;  /* P0.05 */
-        v1_8-gpios     = <&gpio0 6 GPIO_ACTIVE_HIGH>;  /* P0.06 */
-        vcom-gpios     = <&gpio0 7 GPIO_ACTIVE_HIGH>;  /* P0.07 */
-        reset-gpios    = <&gpio1 1 GPIO_ACTIVE_HIGH>;  /* P1.01 */
+        v0_9-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;  /* P0.05 */
+        v1_8-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;  /* P0.06 */
+        vcom-gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;  /* P0.07 */
+        reset-gpios = <&gpio1 1 GPIO_ACTIVE_HIGH>;  /* P1.01 */
 
         width = <640>;
         height = <480>;
@@ -161,10 +177,10 @@
     pinctrl-names = "default", "sleep";
     clock-frequency = <I2C_BITRATE_FAST_PLUS>;
     zephyr,concat-buf-size = <4096>;
-    
+
     ssd1306: ssd1306@3c {
-        compatible = "solomon,ssd1306fb";  
-        reg = <0x3c>;    
+        compatible = "solomon,ssd1306fb";
+        reg = <0x3c>;
         width = <128>;
         height = <64>;
         segment-offset = <0>;
@@ -192,7 +208,7 @@ zephyr_udc0: &usbd {
     status = "okay";
 
     cdc_acm_uart0: cdc_acm_uart0 {
-            compatible = "zephyr,cdc-acm-uart";
+        compatible = "zephyr,cdc-acm-uart";
     };
 };
 
@@ -204,8 +220,33 @@ zephyr_udc0: &usbd {
     pinctrl-1 = <&i2c1_sleep>;
     pinctrl-names = "default", "sleep";
 };
+&i2c3 {
+    compatible = "nordic,nrf-twim";
+    status = "okay";
+    pinctrl-0 = <&i2c3_default>;
+    pinctrl-1 = <&i2c3_sleep>;
+    pinctrl-names = "default", "sleep";
+};
 &uart0_sleep {
     group1 {
-        psels = <NRF_PSEL(UART_TX, 0, 20)>, <NRF_PSEL(UART_RX, 0, 22)>, <NRF_PSEL(UART_RTS, 0, 19)>;
+        psels = <NRF_PSEL(UART_TX, 0, 20)>,
+                <NRF_PSEL(UART_RX, 0, 22)>,
+                <NRF_PSEL(UART_RTS, 0, 19)>;
     };
+};
+
+
+&led0 {
+    status = "disabled";
+};
+
+&led1 {
+    status = "disabled";
+};
+&led2 {
+    status = "disabled";
+};
+
+&led3 {
+    status = "disabled";
 };
