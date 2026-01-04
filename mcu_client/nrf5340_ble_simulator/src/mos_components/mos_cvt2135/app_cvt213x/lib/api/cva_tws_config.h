@@ -360,7 +360,7 @@ extern "C" {
 // 扫描周期
 // 取值范围：0x0000~0x07FF,scan period时长。大约2ms的步长。最长不能超过4s，假如超过4s，会自动固定到4s。
 #define DEFAULT_SCAN                0x0005U             //Default mode scan period
-#define DOZE_SCAN                   0x0005U             //Doze mode scan period
+#define DOZE_SCAN                   0x0019U// 0x0005U             //Doze mode scan period
 #define HOST_SLEEP_SCAN             0x00FAU             //Host sleep mode scan period 250*2ms = 500ms
 
 // reference function
