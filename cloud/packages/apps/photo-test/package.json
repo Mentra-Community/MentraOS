@@ -1,0 +1,30 @@
+{
+  "name": "@mentra/photo-test",
+  "version": "0.1.0",
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build:webview": "bun run build.ts",
+    "prebuild": "bun run build:webview",
+    "start": "bun run build:webview && NODE_ENV=development bun src/index.ts"
+  },
+  "dependencies": {
+    "@mentra/sdk": "workspace:*",
+    "@radix-ui/react-slot": "^1.2.3",
+    "bun-plugin-tailwind": "^0.1.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.545.0",
+    "react": "^19",
+    "react-dom": "^19",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5"
+  }
+}
