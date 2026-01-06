@@ -75,7 +75,7 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display fill                     - Fill entire display (white)");
     shell_print(shell, "");
     shell_print(shell, "🔆 Brightness Control:");
-    shell_print(shell, "  display brightness <20|40|60|80|100> - Set display brightness (5 levels)");
+    shell_print(shell, "  display brightness <0-100>       - Set display brightness (0-100%)");
     shell_print(shell, "");
     shell_print(shell, "🎨 Pattern Control:");
     shell_print(shell, "  display pattern <0-5>            - Select specific pattern:");
@@ -200,60 +200,46 @@ static int cmd_display_info(const struct shell *shell, size_t argc, char **argv)
  * Shell命令将0-100%映射到实际寄存器值 | Shell command maps 0-100% to actual register value
  */
 /**
- * @brief 设置显示亮度 (5档位) | Set display brightness (5 levels)
+ * @brief 设置显示亮度 (0-100%) | Set display brightness (0-100%)
  * 
- * 支持的亮度档位 | Supported brightness levels:
- * - 20%  (0x33)
- * - 40%  (0x66)
- * - 60%  (0x99)
- * - 80%  (0xCC)
- * - 100% (0xFF)
+ * 亮度映射 | Brightness mapping:
+ * - 0-100% 线性映射到 0x00-0xFF | 0-100% linearly mapped to 0x00-0xFF
+ * - Formula: reg_value = (percentage * 255) / 100
+ * - 0%   -> 0x00 (最暗 | Dimmest)
+ * - 50%  -> 0x80 (中等 | Medium)
+ * - 100% -> 0xFF (最亮 | Brightest)
  */
 static int cmd_display_brightness(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc != 2)
     {
-        shell_error(shell, "❌ Usage: display brightness <20|40|60|80|100>");
+        shell_error(shell, "❌ Usage: display brightness <0-100>");
         shell_print(shell, "");
-        shell_print(shell, "亮度档位 | Brightness Levels:");
-        shell_print(shell, "  20%%  - 最暗 | Dimmest (0x33)");
-        shell_print(shell, "  40%%  - 较暗 | Darker (0x66)");
-        shell_print(shell, "  60%%  - 中等 | Medium (0x99)");
-        shell_print(shell, "  80%%  - 较亮 | Brighter (0xCC)");
-        shell_print(shell, "  100%% - 最亮 | Brightest (0xFF)");
+        shell_print(shell, "亮度设置 | Brightness Setting:");
+        shell_print(shell, "  0-100%% continuous range");
+        shell_print(shell, "  Linear mapping: (percentage * 255) / 100");
         shell_print(shell, "");
         shell_print(shell, "Examples:");
-        shell_print(shell, "  display brightness 20   - Set to 20%%");
-        shell_print(shell, "  display brightness 60   - Set to 60%%");
-        shell_print(shell, "  display brightness 100  - Set to 100%%");
+        shell_print(shell, "  display brightness 0    - Set to 0%% (0x00 - darkest)");
+        shell_print(shell, "  display brightness 25   - Set to 25%% (0x40)");
+        shell_print(shell, "  display brightness 50   - Set to 50%% (0x80)");
+        shell_print(shell, "  display brightness 75   - Set to 75%% (0xBF)");
+        shell_print(shell, "  display brightness 100  - Set to 100%% (0xFF - brightest)");
         return -EINVAL;
     }
     
     int brightness_pct = atoi(argv[1]);
     
-    // 支持的亮度档位映射 | Supported brightness level mapping
-    uint8_t reg_value;
-    switch (brightness_pct)
+    // 验证范围 | Validate range
+    if (brightness_pct < 0 || brightness_pct > 100)
     {
-        case 20:
-            reg_value = 0x33;  // 20%
-            break;
-        case 40:
-            reg_value = 0x66;  // 40%
-            break;
-        case 60:
-            reg_value = 0x99;  // 60%
-            break;
-        case 80:
-            reg_value = 0xCC;  // 80%
-            break;
-        case 100:
-            reg_value = 0xFF;  // 100%
-            break;
-        default:
-            shell_error(shell, "❌ Invalid brightness. Use: 20, 40, 60, 80, or 100");
-            return -EINVAL;
+        shell_error(shell, "❌ Brightness must be 0-100%%");
+        return -EINVAL;
     }
+    
+    // 线性映射到寄存器值 | Linear mapping to register value
+    // Formula: reg_value = (percentage * 255) / 100
+    uint8_t reg_value = (brightness_pct * 255) / 100;
     
     // 设置亮度 | Set brightness
     LOG_INF("🔍 DEBUG: About to call a6n_set_brightness(0x%02X) from SHELL path", reg_value);

@@ -803,15 +803,16 @@ void protobuf_set_brightness_level(uint32_t level)
 		}
 	}
 	
-	// Update display projector brightness (0-100% -> 0-9 levels)
-	// Map 0-100% to 0-9 brightness levels for the projector
-	uint8_t projector_level = (level * 9) / 100;  // Linear mapping: 0%->0, 100%->9
+	// Update display projector brightness (0-100% -> 0x00-0xFF)
+	// Map 0-100% to 0x00-0xFF (0-255) register values for the projector
+	// Formula: brightness_hex = (percentage * 255) / 100
+	uint8_t brightness_hex = (level * 255) / 100;  // Linear mapping: 0%->0x00, 100%->0xFF
 	
-	LOG_INF("Setting projector brightness: %u%% -> level %u (0-9)", level, projector_level);
+	LOG_INF("Setting projector brightness: %u%% -> 0x%02X (%u/255)", level, brightness_hex, brightness_hex);
 	
-	int ret = a6n_set_brightness(projector_level);
+	int ret = a6n_set_brightness(brightness_hex);
 	if (ret == 0) {
-		LOG_INF("✅ Display projector brightness set to level %u/9", projector_level);
+		LOG_INF("✅ Display projector brightness set to 0x%02X (%u%%)", brightness_hex, level);
 	} else {
 		LOG_ERR("❌ Failed to set display projector brightness: %d", ret);
 	}
@@ -848,13 +849,14 @@ void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig *bri
 	uint32_t clamped_level = (new_level > 100) ? 100 : new_level;
 	uint32_t period_ns = 20 * 1000 * 1000;  // 20ms in nanoseconds
 	uint32_t duty_ns = (period_ns * clamped_level) / 100;
+	uint8_t brightness_hex = (clamped_level * 255) / 100;  // Map to 0x00-0xFF
 	
 	LOG_INF("PWM Configuration Preview:");
 	LOG_INF("  - PWM Period: %u ns (50Hz)", period_ns);
 	LOG_INF("  - PWM Duty Cycle: %u%% (%u ns)", clamped_level, duty_ns);
 	LOG_INF("  - PWM Polarity: INVERTED (higher duty = brighter)");
 	LOG_INF("  - Target LED: LED3 (GPIO P0.31)");
-	LOG_INF("  - Projector Brightness: %u%% -> level %u/9", clamped_level, (clamped_level * 9) / 100);
+	LOG_INF("  - Projector Brightness: %u%% -> 0x%02X (%u/255)", clamped_level, brightness_hex, brightness_hex);
 	
 	// Protocol compliance
 	LOG_INF("Protocol Compliance:");
@@ -864,8 +866,8 @@ void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig *bri
 	LOG_INF("  - Implementation: Hardware PWM control (LED3) + Projector brightness (A6N) + Auto brightness disable");
 	
 	// Print to UART
-	LOG_INF("\n[Phone->Glasses BRIGHTNESS] %u%% -> LED3: %u%%, Projector: %u/9, Auto: %s->OFF\n", 
-	       current_brightness_level, clamped_level, (clamped_level * 9) / 100, auto_brightness_enabled ? "ON" : "OFF");
+	LOG_INF("\n[Phone->Glasses BRIGHTNESS] %u%% -> LED3: %u%%, Projector: 0x%02X, Auto: %s->OFF\n", 
+	       current_brightness_level, clamped_level, brightness_hex, auto_brightness_enabled ? "ON" : "OFF");
 	
 	// Clamp and set the new brightness level (this will disable auto brightness)
 	protobuf_set_brightness_level(new_level);
