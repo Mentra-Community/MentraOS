@@ -119,50 +119,6 @@ extern TWS_U8 cvt213x_get_test_mode_status(void);
 extern void i2c_init(u32 cfg);
 
 /*****************************************************************
- * @brief CVT213X interrupt disable - call before sensitive I2C ops
- * @note Called from porting layer, typically before init/calibration
- ****************************************************************/
-void app_cvt213x_irq_disable(void)
-{
-    CVT213X_APP_LOG_D(0, "app_cvt213x_irq_disable(): disabling CVT213X interrupt");
-    cvt213x_hal_irq_disable();
-}
-
-/*****************************************************************
- * @brief CVT213X interrupt enable - call after sensitive I2C ops
- * @note Called from porting layer, typically after init/calibration
- ****************************************************************/
-void app_cvt213x_irq_enable(void)
-{
-    CVT213X_APP_LOG_D(0, "app_cvt213x_irq_enable(): enabling CVT213X interrupt");
-    cvt213x_hal_irq_enable();
-}
-
-
-static void app_cvt213x_interrupt_callback(interrupt_event_t* event)
-{
-    ARG_UNUSED(event);
-
-    CVT213X_APP_LOG_D(0, "CVT213X interrupt callback: checking pin and starting recheck timer");
-
-    if (!app_cvt231x_irq_get_leavel(TWS_CHIP_0))
-    {
-        extern struct k_timer app_cvt213x_recheck_timer;
-        k_timer_stop(&app_cvt213x_recheck_timer);
-        k_timer_start(&app_cvt213x_recheck_timer, K_MSEC(50), K_NO_WAIT);
-    }
-
-    if (!app_cvt231x_irq_get_leavel(TWS_CHIP_0))
-    {
-        g_cvt213x_irq_flag = 1;
-        if (!cvt213x_ied_get_last_prox_state())
-        {
-            g_cvt213x_polling_flag = 1;
-        }
-        app_cvt213x_scheduler_put_event(APP_MODUAL_CVT213X_IRQ);
-    }
-}
-/*****************************************************************
  * @brief
  * @param[in]
  * @param[out]
@@ -567,6 +523,34 @@ void app_cvt213x_irq_callback(void)
     //     {
     //         app_cvt213x_scheduler_put_event(APP_MODUAL_CVT213X_IRQ);
     //     }
+}
+
+/*****************************************************************
+  * @brief
+  * @param[in]
+  * @param[out]
+  * @retval
+  * @note
+  ****************************************************************/
+void app_cvt213x_irq_enable(void)
+{
+    CVT213X_APP_LOG_D(0, "app_cvt213x_irq_enable(): enter");
+
+    //porting TODO:(optional) host platform peripheral driver
+}
+
+/*****************************************************************
+  * @brief
+  * @param[in]
+  * @param[out]
+  * @retval
+  * @note
+  ****************************************************************/
+void app_cvt213x_irq_disable(void)
+{
+    CVT213X_APP_LOG_D(0, "app_cvt213x_irq_disable(): enter");
+
+    //porting TODO:(optional) host platform peripheral driver
 }
 
 /*****************************************************************
