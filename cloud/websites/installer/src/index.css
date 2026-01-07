@@ -1,0 +1,78 @@
+@import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300;400;500;600;700;800;900&display=swap");
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  font-family: "Red Hat Display", system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0 !important;
+
+  /* Dark mode (default) */
+  --bg-primary: #171717;
+  --bg-secondary: #1f1f1f;
+  --bg-tertiary: #292929;
+  --background: #0a0a0a;
+
+  --text-primary: #e4e4e7;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+
+  --border-color: #27272a;
+  --border: #27272a;
+  --border-btn: #525252;
+
+  --foreground: #fafafa;
+  --muted-foreground: #a3a3a3;
+
+  --button-bg: #ffffff;
+  --button-text: #000000;
+  --button-hover: #e5e5e5;
+
+  --accent-primary: #22c55e;
+  --accent-hover: #16a34a;
+}
+
+:root[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f1f1f1;
+  --bg-tertiary: #e9ecef;
+  --background: #ffffff;
+
+  --text-primary: #000000;
+  --text-secondary: #6c757d;
+  --text-muted: #adb5bd;
+
+  --border-color: #dee2e6;
+  --border: #e5e5e5;
+  --border-btn: #e5e5e5;
+
+  --foreground: #0a0a0a;
+  --muted-foreground: #737373;
+
+  --button-bg: #000000;
+  --button-text: #ffffff;
+  --button-hover: #333333;
+
+  --accent-primary: #242454;
+  --accent-hover: #2d2f5a;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+* {
+  letter-spacing: 0 !important;
+}

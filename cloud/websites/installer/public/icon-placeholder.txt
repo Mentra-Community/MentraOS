@@ -1,0 +1,18 @@
+Icon Placeholder Instructions
+============================
+
+This directory should contain the following PWA icons:
+
+Required icons:
+- icon-192.png (192x192 pixels)
+- icon-512.png (512x512 pixels)
+- icon-192-maskable.png (192x192 pixels with safe zone)
+- icon-512-maskable.png (512x512 pixels with safe zone)
+
+The icon.svg file is used as the favicon.
+
+For maskable icons, ensure the important content is within the safe zone
+(center 80% of the icon) as the edges may be clipped on some devices.
+
+You can generate these icons from the icon.svg or replace with your own designs.
+Tools like https://realfavicongenerator.net/ can help generate all required sizes.
