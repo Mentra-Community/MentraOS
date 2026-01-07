@@ -99,9 +99,9 @@ export default function DeviceSettings() {
         {defaultWearable && (features?.display?.count ?? 0 > 1) && (
           <RouteButton
             icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}
-            label={translate("settings:screenSettings")}
+            label={translate("settings:positionSettings")}
             // subtitle={translate("settings:screenDescription")}
-            onPress={() => push("/settings/screen")}
+            onPress={() => push("/settings/position")}
           />
         )}
         {/* Only show dashboard settings if glasses have display capability */}

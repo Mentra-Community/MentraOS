@@ -7,7 +7,7 @@ import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import udpAudioService from "@/services/UdpAudioService"
+import udp from "@/services/UdpManager"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore} from "@/stores/settings"
 import {INTENSE_LOGGING} from "@/utils/Constants"
@@ -283,9 +283,9 @@ export class MantleBridge {
           break
         case "mic_data":
           // Route audio to: UDP (if enabled) -> WebSocket (fallback)
-          if (socketComms.isUdpAudioEnabled() && udpAudioService.isConfiguredAndReady()) {
+          if (socketComms.udpEnabledAndReady()) {
             // UDP audio is enabled and ready - send directly via UDP
-            udpAudioService.sendAudio(data.base64)
+            udp.sendAudio(data.base64)
           } else {
             // Fallback to WebSocket
             binaryString = atob(data.base64)

@@ -25,6 +25,7 @@ export type NavObject = {
 interface NavigationHistoryContextType {
   goBack: () => void
   getHistory: () => string[]
+  getPreviousRoute: () => string | null
   clearHistory: () => void
   push: (path: string, params?: any) => void
   replace: (path: string, params?: any) => void
@@ -40,6 +41,7 @@ interface NavigationHistoryContextType {
   pushUnder: (path: string, params?: any) => void
   incPreventBack: () => void
   decPreventBack: () => void
+  setAndroidBackFn: (fn: () => void) => void
 }
 
 const NavigationHistoryContext = createContext<NavigationHistoryContextType | undefined>(undefined)
@@ -54,6 +56,10 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
   const navigation = useNavigation()
   const [preventBack, setPreventBack] = useState(false)
   const preventBackCountRef = useRef(0)
+  const androidBackFnRef = useRef<() => void | undefined>(undefined)
+  const setAndroidBackFn = (fn: () => void) => {
+    androidBackFnRef.current = fn
+  }
 
   useEffect(() => {
     // Add current path to history if it's different from the last entry
@@ -68,6 +74,20 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     }
   }, [pathname])
 
+  // block the back button on android when preventBack is true:
+  useEffect(() => {
+    if (!preventBack) return
+    console.log("REGISTERING BACK HANDLER =========================")
+    const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
+      console.log("BACK HANDLER CALLED =========================")
+      if (androidBackFnRef.current) {
+        androidBackFnRef.current()
+      }
+      return true
+    })
+    return () => backHandler.remove()
+  }, [preventBack])
+
   const incPreventBack = useCallback(() => {
     preventBackCountRef.current++
     setPreventBack(true)
@@ -78,6 +98,7 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     if (preventBackCountRef.current <= 0) {
       preventBackCountRef.current = 0
       setPreventBack(false)
+      androidBackFnRef.current = undefined
     }
   }, [])
 
@@ -132,6 +153,13 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
 
   const getHistory = () => {
     return [...historyRef.current]
+  }
+
+  const getPreviousRoute = () => {
+    if (historyRef.current.length < 2) {
+      return null
+    }
+    return historyRef.current[historyRef.current.length - 2]
   }
 
   const clearHistory = () => {
@@ -245,14 +273,13 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     // clearHistory()
     // push(previousPath as any, previousParams as any)
 
-
     const last = index + 2
     const lastRouteIndex = historyRef.current.length - last
     // the route we want to later "push" onto the stack:
     const lastRoute = historyRef.current[lastRouteIndex]
     console.log("NAV: lastRoute", lastRoute)
     const lastRouteParams = historyParamsRef.current[lastRouteIndex]
-    
+
     // Build routes WITHOUT n routes (removing current and last n routes)
     const n = index + 2
     let updatedRoutes = historyRef.current.slice(0, -n)
@@ -260,15 +287,16 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     // // add ghost route:
     // updatedRoutes.push("/")
     // updatedRoutesParams.push(undefined)
-    
+
     const newRouteState = updatedRoutes.map((path, index) => ({
       name: path,
       params: historyParamsRef.current[index],
     }))
 
-
-
-    console.log("NAV: newRouteState", newRouteState.map(route => route.name))
+    console.log(
+      "NAV: newRouteState",
+      newRouteState.map((route) => route.name),
+    )
 
     navigation.dispatch(
       CommonActions.reset({
@@ -283,7 +311,7 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
 
     console.log("NAV: updated historyRef.current", historyRef.current)
     console.log("NAV: updated historyParamsRef.current", historyParamsRef.current)
-    
+
     // push the last route onto the stack:
     // dumb edge case, if the route is home, we need to clearHistoryAndGoHome()
     if (lastRoute === "/(tabs)/home" || lastRoute === "/home") {
@@ -323,6 +351,7 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
       value={{
         goBack,
         getHistory,
+        getPreviousRoute,
         clearHistory,
         push,
         replace,
@@ -338,6 +367,7 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
         pushUnder,
         incPreventBack,
         decPreventBack,
+        setAndroidBackFn,
       }}>
       {children}
     </NavigationHistoryContext.Provider>
@@ -366,12 +396,15 @@ export function useNavigationHistory() {
 // }
 
 // screens that call this function will prevent the back button from being pressed:
-export const focusEffectPreventBack = () => {
-  const {incPreventBack, decPreventBack} = useNavigationHistory()
+export const focusEffectPreventBack = (androidBackFn?: () => void) => {
+  const {incPreventBack, decPreventBack, setAndroidBackFn} = useNavigationHistory()
 
   useFocusEffect(
     useCallback(() => {
       incPreventBack()
+      if (androidBackFn) {
+        setAndroidBackFn(androidBackFn)
+      }
       return () => {
         decPreventBack()
       }

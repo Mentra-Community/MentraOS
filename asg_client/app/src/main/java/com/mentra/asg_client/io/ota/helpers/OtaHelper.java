@@ -100,6 +100,12 @@ public class OtaHelper {
     // This will bypass version checking, downloading, and directly install /storage/emulated/0/asg/bes_firmware.bin
     private static final boolean DEBUG_FORCE_BES_INSTALL = false;
 
+    // ========== Autonomous OTA Mode ==========
+    // When false, OTA updates only happen when initiated by the phone app.
+    // When true, glasses will also check for updates autonomously (initial check, periodic checks, WiFi callback).
+    // Disabled by default since phone-initiated OTA is the preferred flow.
+    private static final boolean AUTONOMOUS_OTA_ENABLED = false;
+
     // ========== Phone-Controlled OTA State ==========
 
     // Provider for phone connection status and messaging
@@ -151,21 +157,30 @@ public class OtaHelper {
     public OtaHelper(Context context) {
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
-        
+
         // Register for EventBus to receive battery status updates
         EventBus.getDefault().register(this);
-        
-        // Schedule initial check after 15 seconds
-        handler.postDelayed(() -> {
-            Log.d(TAG, "Performing initial OTA check after 15 seconds");
-            startVersionCheck(this.context);
-        }, 15000);
-        
-        // Start periodic checks
-        startPeriodicChecks();
 
-        // Register network callback to check for updates when WiFi becomes available
-        registerNetworkCallback(this.context);
+        if (AUTONOMOUS_OTA_ENABLED) {
+            // Delay all autonomous checks by 30 seconds to ensure PhoneConnectionProvider
+            // is set up (happens at ~6s) so isPhoneConnected() works correctly
+            handler.postDelayed(() -> {
+                Log.d(TAG, "Starting autonomous OTA checks after 30 second delay");
+
+                // Perform initial check
+                startVersionCheck(this.context);
+
+                // Start periodic checks
+                startPeriodicChecks();
+
+                // Register network callback to check for updates when WiFi becomes available
+                registerNetworkCallback(this.context);
+            }, 30000);
+
+            Log.i(TAG, "Autonomous OTA mode ENABLED - checks will start in 30 seconds");
+        } else {
+            Log.i(TAG, "Autonomous OTA mode DISABLED - updates only via phone app");
+        }
     }
 
     public void cleanup() {

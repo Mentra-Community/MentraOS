@@ -19,14 +19,14 @@ export function GalleryModeSync() {
   const applets = useApplets()
 
   useEffect(() => {
-    console.log(`📸 [GalleryModeSync] Effect triggered, ${applets.length} applets loaded`)
+    // console.log(`📸 [GalleryModeSync] Effect triggered, ${applets.length} applets loaded`)
 
     // Debug: log all running apps
     const runningApps = applets.filter((app) => app.running)
-    console.log(
-      `📸 [GalleryModeSync] Running apps (${runningApps.length}):`,
-      runningApps.map((app) => `${app.name} (${app.type}, ${app.packageName})`).join(", ") || "NONE",
-    )
+    // console.log(
+    //   `[GalleryModeSync] Running apps (${runningApps.length}):`,
+    //   runningApps.map((app) => `${app.name} (${app.type}, ${app.packageName})`).join(", ") || "NONE",
+    // )
 
     // Find camera app if running
     const cameraApp = applets.find((app) => app.packageName === cameraPackageName && app.running)
@@ -42,12 +42,12 @@ export function GalleryModeSync() {
     // - If no apps running: TRUE (allow capture anyway)
     const shouldEnableCapture = !!cameraApp || !otherForegroundApp
 
-    console.log(
-      `📸 [GalleryModeSync] Camera: ${cameraApp ? `RUNNING` : "NOT RUNNING"}, ` +
-        `OtherApp: ${otherForegroundApp ? `RUNNING (${otherForegroundApp.name}, ${otherForegroundApp.packageName})` : "NOT RUNNING"}, ` +
-        `Capture: ${shouldEnableCapture ? "ENABLED" : "DISABLED"} ` +
-        `(Setting gallery_mode to ${shouldEnableCapture})`,
-    )
+    // console.log(
+    //   `[GalleryModeSync] Camera: ${cameraApp ? `RUNNING` : "NOT RUNNING"}, ` +
+    //     `OtherApp: ${otherForegroundApp ? `RUNNING (${otherForegroundApp.name}, ${otherForegroundApp.packageName})` : "NOT RUNNING"}, ` +
+    //     `Capture: ${shouldEnableCapture ? "ENABLED" : "DISABLED"} ` +
+    //     `(Setting gallery_mode to ${shouldEnableCapture})`,
+    // )
 
     useSettingsStore.getState().setSetting(SETTINGS.gallery_mode.key, shouldEnableCapture)
   }, [applets])

@@ -186,15 +186,13 @@ export default function OtaProgressScreen() {
       )
     }
 
-    // Installing state
+    // Installing state - no percentage shown since APK installation doesn't report progress
     if (progressState === "installing") {
       return (
         <View className="flex-1 items-center justify-center px-6">
           <Icon name="settings" size={64} color={theme.colors.primary} />
           <View className="h-6" />
           <Text tx="ota:installing" className="font-semibold text-xl text-center" />
-          <View className="h-4" />
-          <Text text={`${progress}%`} className="text-3xl font-bold" style={{color: theme.colors.primary}} />
           <View className="h-4" />
           <ActivityIndicator size="large" color={theme.colors.secondary_foreground} />
           <View className="h-4" />

@@ -1,16 +1,15 @@
 import {Image} from "expo-image"
 import {SquircleView} from "expo-squircle-view"
 import {memo} from "react"
-import {ActivityIndicator, ImageStyle, StyleProp, TouchableOpacity, View, ViewStyle} from "react-native"
+import {ActivityIndicator, StyleProp, TouchableOpacity, View, ViewStyle} from "react-native"
 import {withUniwind} from "uniwind"
 
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ClientAppletInterface, cameraPackageName, getMoreAppsApplet} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
 
-// Helper to extract style properties without using StyleSheet
+// Helper to extract style properties for width/height override
 const extractStyleProps = (style: StyleProp<ViewStyle>): Partial<ViewStyle> => {
   if (!style) return {}
   if (typeof style === "number") return {}
@@ -27,39 +26,44 @@ interface AppIconProps {
 }
 
 const AppIcon = ({app, onClick, style}: AppIconProps) => {
-  const {themed, theme} = useAppTheme()
+  const {theme} = useAppTheme()
   const [enableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const WrapperComponent = onClick ? TouchableOpacity : View
   const flatStyle = extractStyleProps(style)
 
+  const iconSize = {
+    width: flatStyle?.width ?? 64,
+    height: flatStyle?.height ?? 64,
+    borderRadius: flatStyle?.borderRadius ?? theme.spacing.s4,
+  }
+
   return (
-    <View style={{alignItems: "center"}}>
+    <View className="items-center">
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
-        style={[themed($container), style]}
+        style={style}
         accessibilityLabel={onClick ? `Launch ${app.name}` : undefined}
-        accessibilityRole={onClick ? "button" : undefined}>
+        accessibilityRole={onClick ? "button" : undefined}
+        className="overflow-hidden">
         {enableSquircles ? (
           <SquircleView
             cornerSmoothing={100}
             preserveSmoothing={true}
             style={{
-              overflow: "hidden", // use as a mask
+              overflow: "hidden",
               alignItems: "center",
               justifyContent: "center",
-              width: flatStyle?.width ?? 64,
-              height: flatStyle?.height ?? 64,
-              borderRadius: flatStyle?.borderRadius ?? theme.spacing.s4,
+              ...iconSize,
             }}>
             {app.loading && (
-              <View style={themed($loadingContainer)}>
-                <ActivityIndicator size="small" color={theme.colors.palette.white} />
+              <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
+                <ActivityIndicator size="large" color={theme.colors.palette.white} />
               </View>
             )}
             <Image
               source={app.logoUrl}
-              style={themed($icon)}
+              style={{width: "100%", height: "100%", resizeMode: "cover"}}
               contentFit="cover"
               transition={200}
               cachePolicy="memory-disk"
@@ -68,16 +72,18 @@ const AppIcon = ({app, onClick, style}: AppIconProps) => {
         ) : (
           <>
             {app.loading && (
-              <View style={themed($loadingContainer)}>
+              <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
                 <ActivityIndicator size="large" color={theme.colors.tint} />
               </View>
             )}
             <Image
               source={app.logoUrl}
-              style={[
-                themed($icon),
-                {borderRadius: 60, width: flatStyle?.width ?? 64, height: flatStyle?.height ?? 64},
-              ]}
+              style={{
+                borderRadius: 60,
+                width: flatStyle?.width ?? 64,
+                height: flatStyle?.height ?? 64,
+                resizeMode: "cover",
+              }}
               contentFit="cover"
               transition={200}
               cachePolicy="memory-disk"
@@ -86,60 +92,18 @@ const AppIcon = ({app, onClick, style}: AppIconProps) => {
         )}
       </WrapperComponent>
       {!app.healthy && (
-        <View style={themed($unhealthyBadge)}>
+        <View className="absolute -right-1 -top-1 bg-primary-foreground border-primary-foreground border-1 rounded-full">
           <Icon name="alert" size={theme.spacing.s4} color={theme.colors.error} />
         </View>
       )}
       {/* Show wifi-off badge for offline apps (excluding camera app) */}
       {app.offline && app.packageName !== getMoreAppsApplet().packageName && app.packageName !== cameraPackageName && (
-        <View style={themed($offlineBadge)}>
+        <View className="absolute -right-1 -bottom-1 bg-primary-foreground border-primary-foreground border-1 rounded-full">
           <Icon name="wifi-off" size={theme.spacing.s4} color={theme.colors.text} />
         </View>
       )}
     </View>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = () => ({
-  overflow: "hidden",
-})
-
-const $loadingContainer: ThemedStyle<ViewStyle> = () => ({
-  position: "absolute",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 10,
-  backgroundColor: "rgba(0, 0, 0, 0.2)", // Much more subtle overlay
-})
-
-const $icon: ThemedStyle<ImageStyle> = () => ({
-  width: "100%",
-  height: "100%",
-  resizeMode: "cover",
-})
-
-const $unhealthyBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  position: "absolute",
-  top: -spacing.s1,
-  right: -spacing.s1,
-  backgroundColor: colors.primary_foreground,
-  borderRadius: spacing.s4,
-  borderWidth: spacing.s1,
-  borderColor: colors.primary_foreground,
-})
-
-const $offlineBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  position: "absolute",
-  right: -spacing.s1,
-  bottom: -spacing.s1,
-  backgroundColor: colors.primary_foreground,
-  borderRadius: spacing.s4,
-  borderWidth: spacing.s1,
-  borderColor: colors.primary_foreground,
-})
 
 export default withUniwind(memo(AppIcon))

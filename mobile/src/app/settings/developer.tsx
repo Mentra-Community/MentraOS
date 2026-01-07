@@ -13,16 +13,19 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
+import wsManager from "@/services/WebSocketManager"
+import socketComms from "@/services/SocketComms"
 
 export default function DeveloperSettingsScreen() {
   const {theme, themed} = useAppTheme()
-  const {goBack, push, replaceAll, setPreventBack} = useNavigationHistory()
+  const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationHistory()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
+  const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
 
   return (
     <Screen preset="fixed">
@@ -48,27 +51,27 @@ export default function DeveloperSettingsScreen() {
               label="Developer Mode"
               subtitle="Enable developer mode"
               value={devMode}
-              onValueChange={value => setDevMode(value)}
+              onValueChange={(value) => setDevMode(value)}
             />
             <ToggleSetting
               label={translate("settings:reconnectOnAppForeground")}
               subtitle={translate("settings:reconnectOnAppForegroundSubtitle")}
               value={reconnectOnAppForeground}
-              onValueChange={value => setReconnectOnAppForeground(value)}
+              onValueChange={(value) => setReconnectOnAppForeground(value)}
             />
 
             <ToggleSetting
               label={translate("devSettings:debugConsole")}
               subtitle={translate("devSettings:debugConsoleSubtitle")}
               value={debugConsole}
-              onValueChange={value => setDebugConsole(value)}
+              onValueChange={(value) => setDebugConsole(value)}
             />
 
             <ToggleSetting
               label="Enable Squircles"
               subtitle="Use iOS-style squircle app icons instead of circles"
               value={enableSquircles}
-              onValueChange={value => setEnableSquircles(value)}
+              onValueChange={(value) => setEnableSquircles(value)}
             />
           </Group>
 
@@ -77,7 +80,10 @@ export default function DeveloperSettingsScreen() {
             <RouteButton
               label="Pairing Success"
               subtitle="Open the pairing success screen"
-              onPress={() => replaceAll("/pairing/success")}
+              onPress={() => {
+                setOnboardingOsCompleted(false)
+                replaceAll("/pairing/success")
+              }}
             />
 
             <RouteButton
@@ -85,21 +91,25 @@ export default function DeveloperSettingsScreen() {
               subtitle="Open the OTA check for updates screen"
               onPress={() => {
                 push("/ota/check-for-updates")
-                // setPreventBack(true)
-                // push("/ota/check-for-updates")
               }}
             />
 
             <RouteButton
               label="Mentra Live Onboarding"
               subtitle="Start the Mentra Live onboarding"
-              onPress={() => replaceAll("/onboarding/live")}
+              onPress={() => {
+                clearHistoryAndGoHome()
+                push("/onboarding/live")
+              }}
             />
 
             <RouteButton
               label="Mentra OS Onboarding"
               subtitle="Start the Mentra Live onboarding"
-              onPress={() => replaceAll("/onboarding/os")}
+              onPress={() => {
+                clearHistoryAndGoHome()
+                push("/onboarding/os")
+              }}
             />
           </Group>
 
@@ -110,6 +120,19 @@ export default function DeveloperSettingsScreen() {
               label="Buffer Recording Debug"
               subtitle="Control 30-second video buffer on glasses"
               onPress={() => push("/settings/buffer-debug")}
+            />
+
+            <RouteButton
+              label="Clear Websocket"
+              subtitle="Clear the Websocket"
+              onPress={async () => {
+                wsManager.cleanup()
+                socketComms.cleanup()
+                console.log("SOCKET: CLEANED")
+                await new Promise((resolve) => setTimeout(resolve, 3000))
+                socketComms.restartConnection()
+                console.log("SOCKET: RESTARTED")
+              }}
             />
           </Group>
 
@@ -138,7 +161,7 @@ export default function DeveloperSettingsScreen() {
                 label={translate("settings:powerSavingMode")}
                 subtitle={translate("settings:powerSavingModeSubtitle")}
                 value={powerSavingMode}
-                onValueChange={async value => {
+                onValueChange={async (value) => {
                   await setPowerSavingMode(value)
                 }}
               />

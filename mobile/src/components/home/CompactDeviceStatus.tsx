@@ -137,8 +137,8 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
           }}>
           {!isSearching ? (
             <>
-              <Button compact flex tx="home:getSupport" preset="primary" />
-              <Button compact flex tx="home:connectGlasses" preset="alternate" onPress={connectGlasses} />
+              <Button compact tx="home:getSupport" preset="alternate" />
+              <Button compact flex tx="home:connectGlasses" preset="primary" onPress={connectGlasses} />
             </>
           ) : (
             <>

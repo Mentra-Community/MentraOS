@@ -26,10 +26,8 @@ export default function Homepage() {
 
   useFocusEffect(
     useCallback(() => {
-      setTimeout(() => {
-        refreshApplets()
-      }, 1000)
-    }, []),
+      refreshApplets()
+    }, [refreshApplets]),
   )
 
   return (

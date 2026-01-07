@@ -186,8 +186,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 21
-        versionName "21.0"
+        versionCode 24
+        versionName "24.0"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"

@@ -61,11 +61,6 @@ export default function OtaProgressSection({otaProgress}: OtaProgressSectionProp
   const showInstallation = installation && (installation.status !== "FINISHED" || download?.status === "FINISHED")
   const showDownload = download && !showInstallation
 
-  console.log("installation", installation)
-  console.log("download", download)
-  console.log("showInstallation", showInstallation)
-  console.log("showDownload", showDownload)
-
   return (
     <View style={themed($container)}>
       <Text style={[themed($subtitle), {marginBottom: theme.spacing.s2}]}>Mentra Live Software Update</Text>

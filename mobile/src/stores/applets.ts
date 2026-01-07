@@ -57,7 +57,6 @@ export const DUMMY_APPLET: ClientAppletInterface = {
 export const cameraPackageName = "com.mentra.camera"
 export const captionsPackageName = "com.mentra.captions"
 
-
 // get offline applets:
 const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
   const offlineCameraRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_camera_running.key)
@@ -185,11 +184,11 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
 
   refreshApplets: async () => {
-    console.log(`📸 [refreshApplets] Starting refresh...`)
+    console.log(`APPLETS: refreshApplets()`)
     let onlineApps: ClientAppletInterface[] = []
     let res = await restComms.getApplets()
     if (res.is_error()) {
-      console.error(`Failed to get applets: ${res.error}`)
+      console.error(`APPLETS: Failed to get applets: ${res.error}`)
       // continue anyway in case we're just offline:
     } else {
       // convert to the client applet interface:
@@ -199,11 +198,6 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
         offline: false,
         offlineRoute: "",
       }))
-      console.log(`📸 [refreshApplets] Fetched ${onlineApps.length} online apps from backend`)
-      const runningOnline = onlineApps.filter((app) => app.running)
-      console.log(
-        `📸 [refreshApplets] Running online apps: ${runningOnline.map((a) => `${a.name} (${a.packageName})`).join(", ") || "NONE"}`,
-      )
     }
 
     // merge in the offline apps:
@@ -228,11 +222,6 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
       let result = HardwareCompatibility.checkCompatibility(applet.hardwareRequirements, capabilities)
       applet.compatibility = result
     }
-
-    const finalRunning = applets.filter((app) => app.running)
-    console.log(
-      `📸 [refreshApplets] Setting state with ${applets.length} total apps, ${finalRunning.length} running: ${finalRunning.map((a) => `${a.name} (${a.packageName})`).join(", ") || "NONE"}`,
-    )
     set({apps: applets})
   },
 
@@ -247,7 +236,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
 
     // do nothing if any applet is currently loading:
     if (get().apps.some((a) => a.loading)) {
-      console.log(`APPLET: Skipping start applet ${packageName} because another applet is currently loading`)
+      console.log(`APPLETS: Skipping start applet ${packageName} because another applet is currently loading`)
       return
     }
 

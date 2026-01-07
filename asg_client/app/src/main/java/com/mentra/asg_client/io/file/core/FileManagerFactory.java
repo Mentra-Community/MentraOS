@@ -68,9 +68,20 @@ public class FileManagerFactory {
         );
 
         platformConfig = config;
-        platformConfig.getLogger().info(TAG,
-                "FileManagerFactory initialized for platform: " + config.getPlatformName() +
-                        " with base directory: " + config.getBaseDirectory().getAbsolutePath());
+
+        if (config.getBaseDirectory() == null) {
+            platformConfig.getLogger().info(TAG,
+                    "FileManagerFactory initialized for platform: " + config.getPlatformName() +
+                            " with base directory: NOT=LOADED=YET=1");
+        } else {
+            platformConfig.getLogger().info(TAG,
+                    "FileManagerFactory initialized for platform: " + config.getPlatformName() +
+                            " with base directory: " + config.getBaseDirectory().getAbsolutePath());
+        }
+
+//        platformConfig.getLogger().info(TAG,
+//                "FileManagerFactory initialized for platform: " + config.getPlatformName() +
+//                        " with base directory: " + config.getBaseDirectory().getAbsolutePath());
     }
 
 
@@ -97,9 +108,15 @@ public class FileManagerFactory {
         );
 
         platformConfig = config;
-        platformConfig.getLogger().info(TAG,
-                "FileManagerFactory initialized for platform: " + config.getPlatformName() +
-                        " with base directory: " + config.getBaseDirectory().getAbsolutePath());
+        if (config.getBaseDirectory() == null) {
+            platformConfig.getLogger().info(TAG,
+                    "FileManagerFactory initialized for platform: " + config.getPlatformName() +
+                            " with base directory: NOT=LOADED=YET=2");
+        } else {
+            platformConfig.getLogger().info(TAG,
+                    "FileManagerFactory initialized for platform: " + config.getPlatformName() +
+                            " with base directory: " + config.getBaseDirectory().getAbsolutePath());
+        }
     }
 
     /**

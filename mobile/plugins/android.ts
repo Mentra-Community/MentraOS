@@ -123,32 +123,6 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 5. Add configurations.all block for ExoPlayer exclusions and Media3 resolution
-    if (!buildGradle.includes("configurations.all")) {
-      const configurationsBlock = `
-configurations.all {
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-core'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-ui'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-hls'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-smoothstreaming'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-dash'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-rtsp'
-
-    resolutionStrategy {
-        // Force androidx Media3 versions
-        force 'androidx.media3:media3-exoplayer:1.4.0'
-        force 'androidx.media3:media3-ui:1.4.0'
-        force 'androidx.media3:media3-common:1.4.0'
-        force 'androidx.media3:media3-session:1.4.0'
-        force 'androidx.media3:media3-datasource:1.4.0'
-    }
-}
-`
-
-      buildGradle = buildGradle.replace(/(dependencies\s*{)/, `${configurationsBlock}\n$1`)
-    }
-
     // 6. Add release signing config with fallback to debug keystore (from android-signing-config.js)
     if (!buildGradle.includes("storeFile releaseKeystoreFile")) {
       const releaseSigningConfig = `

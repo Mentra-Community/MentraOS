@@ -123,7 +123,7 @@ export const colors = {
 
   // Primary colors
   tint: palette.primary500,
-  tintInactive: palette.neutral700,
+  // tintInactive: palette.neutral700,
   buttonIconBackground: palette.neutral700, // Icon pill buttons - same as tintInactive for light theme
   separator: palette.neutral700,
 

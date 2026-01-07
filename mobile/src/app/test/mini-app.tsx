@@ -31,6 +31,15 @@ export default function MiniApp() {
       console.log(`SUPERAPP: Native received: ${message.type}`)
     }
 
+
+    setInterval(() => {
+      console.log("KEEPING ALIVE")
+      webViewRef.current?.injectJavaScript(`
+        typeof keepAlive === 'function' && keepAlive();
+        true;
+      `);
+    }, 1000);
+
     miniComms.on("message", handleMessage)
 
     return () => {
@@ -147,6 +156,16 @@ export default function MiniApp() {
       <script>
         // Initialize the bridge
         window.messageLog = [];
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const oscillator = audioCtx.createOscillator();
+
+oscillator.type = 'sine';
+oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4 note
+oscillator.connect(audioCtx.destination);
+oscillator.start();
+
+// To stop: oscillator.stop();
 
         // Function to send messages to React Native
         function sendToNative(message) {

@@ -4,6 +4,8 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 
+const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentraos/light"
+
 export default function MentraOSOnboarding() {
   const {pushPrevious} = useNavigationHistory()
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
@@ -13,7 +15,8 @@ export default function MentraOSOnboarding() {
     {
       type: "video",
       name: "Start and stop apps",
-      source: require("@assets/onboarding/os/start_stop_apps.mov"),
+      source: `${CDN_BASE}/start_stop_apps.mov`,
+      poster: require("@assets/onboarding/os/thumbnails/start_stop_apps.jpg"),
       containerClassName: "bg-background",
       transition: false,
       playCount: 2,
@@ -26,7 +29,8 @@ export default function MentraOSOnboarding() {
     {
       type: "video",
       name: "Open an app",
-      source: require("@assets/onboarding/os/open_an_app.mov"),
+      source: `${CDN_BASE}/open_an_app.mov`,
+      poster: require("@assets/onboarding/os/thumbnails/open_an_app.jpg"),
       containerClassName: "bg-background",
       transition: false,
       playCount: 2,
@@ -39,7 +43,8 @@ export default function MentraOSOnboarding() {
     {
       type: "video",
       name: "Background apps",
-      source: require("@assets/onboarding/os/background_apps.mov"),
+      source: `${CDN_BASE}/background_apps.mov`,
+      poster: require("@assets/onboarding/os/thumbnails/background_apps.jpg"),
       containerClassName: "bg-background",
       transition: false,
       playCount: 2,
@@ -52,7 +57,7 @@ export default function MentraOSOnboarding() {
     // {
     //   type: "video",
     //   name: "Foreground and Background Apps",
-    //   source: require("@assets/onboarding/os/foreground_background_apps.mov"),
+    //   source: `${CDN_BASE}/foreground_background_apps.mov`,
     //   containerClassName: "bg-background",
     //   transition: false,
     //   playCount: 2,
@@ -65,7 +70,7 @@ export default function MentraOSOnboarding() {
     // {
     //   type: "video",
     //   name: "Mentra AI",
-    //   source: require("@assets/onboarding/os/mentra_ai.mov"),
+    //   source: `${CDN_BASE}/mentra_ai.mov`,
     //   containerClassName: "bg-background",
     //   transition: false,
     //   playCount: 2,

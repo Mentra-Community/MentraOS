@@ -373,6 +373,14 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // OTA update dismissal - stores the version code user dismissed (not persisted so resets on app restart)
+  dismissed_ota_version: {
+    key: "dismissed_ota_version",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+  },
 } as const
 
 export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra.camera"]

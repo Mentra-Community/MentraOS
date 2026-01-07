@@ -1,4 +1,4 @@
-import {ScrollView} from "react-native"
+import {ScrollView, View} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
@@ -8,22 +8,20 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles} from "@/theme"
 
 export default function DeviceInfoScreen() {
-  const {theme, themed} = useAppTheme()
   const {goBack} = useNavigationHistory()
 
   // Get all available device info from the glasses store
-  const modelName = useGlassesStore(state => state.modelName)
-  const bluetoothName = useGlassesStore(state => state.bluetoothName)
-  const buildNumber = useGlassesStore(state => state.buildNumber)
-  const fwVersion = useGlassesStore(state => state.fwVersion)
-  const btMacAddress = useGlassesStore(state => state.btMacAddress)
-  const appVersion = useGlassesStore(state => state.appVersion)
-  const serialNumber = useGlassesStore(state => state.serialNumber)
-  const wifiSsid = useGlassesStore(state => state.wifiSsid)
-  const wifiLocalIp = useGlassesStore(state => state.wifiLocalIp)
+  const modelName = useGlassesStore((state) => state.modelName)
+  const bluetoothName = useGlassesStore((state) => state.bluetoothName)
+  const buildNumber = useGlassesStore((state) => state.buildNumber)
+  const fwVersion = useGlassesStore((state) => state.fwVersion)
+  const btMacAddress = useGlassesStore((state) => state.btMacAddress)
+  const appVersion = useGlassesStore((state) => state.appVersion)
+  const serialNumber = useGlassesStore((state) => state.serialNumber)
+  const wifiSsid = useGlassesStore((state) => state.wifiSsid)
+  const wifiLocalIp = useGlassesStore((state) => state.wifiLocalIp)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   // Extract short bluetooth ID from full name (e.g., "MentraLive_664ebf" -> "664ebf")
@@ -32,27 +30,29 @@ export default function DeviceInfoScreen() {
   return (
     <Screen preset="fixed">
       <Header titleTx="deviceInfo:title" leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView style={{flex: 1, gap: theme.spacing.s6, marginTop: theme.spacing.s6}}>
-        {/* Device Identity */}
-        <Group title={translate("deviceInfo:deviceIdentity")}>
-          <RouteButton label={translate("deviceInfo:model")} text={modelName || defaultWearable || "Unknown"} />
-          {!!bluetoothId && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
-          {!!serialNumber && <RouteButton label={translate("deviceInfo:serialNumber")} text={serialNumber} />}
-          {!!btMacAddress && <RouteButton label={translate("deviceInfo:btMacAddress")} text={btMacAddress} />}
-        </Group>
+      <ScrollView>
+        <View className="flex flex-col gap-6 pt-6">
+          {/* Device Identity */}
+          <Group title={translate("deviceInfo:deviceIdentity")}>
+            <RouteButton label={translate("deviceInfo:model")} text={modelName || defaultWearable || "Unknown"} />
+            {!!bluetoothId && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
+            {!!serialNumber && <RouteButton label={translate("deviceInfo:serialNumber")} text={serialNumber} />}
+            {!!btMacAddress && <RouteButton label={translate("deviceInfo:btMacAddress")} text={btMacAddress} />}
+          </Group>
 
-        {/* Software Version */}
-        <Group title={translate("deviceInfo:softwareVersion")}>
-          {!!buildNumber && <RouteButton label={translate("deviceInfo:buildNumber")} text={buildNumber} />}
-          {!!fwVersion && <RouteButton label={translate("deviceInfo:firmwareVersion")} text={fwVersion} />}
-          {!!appVersion && <RouteButton label={translate("deviceInfo:appVersion")} text={appVersion} />}
-        </Group>
+          {/* Software Version */}
+          <Group title={translate("deviceInfo:softwareVersion")}>
+            {!!buildNumber && <RouteButton label={translate("deviceInfo:buildNumber")} text={buildNumber} />}
+            {!!fwVersion && <RouteButton label={translate("deviceInfo:firmwareVersion")} text={fwVersion} />}
+            {!!appVersion && <RouteButton label={translate("deviceInfo:appVersion")} text={appVersion} />}
+          </Group>
 
-        {/* Network Info - only show if connected to WiFi */}
-        <Group title={translate("deviceInfo:networkInfo")}>
-          {!!wifiSsid && <RouteButton label={translate("deviceInfo:wifiNetwork")} text={wifiSsid} />}
-          {!!wifiLocalIp && <RouteButton label={translate("deviceInfo:localIpAddress")} text={wifiLocalIp} />}
-        </Group>
+          {/* Network Info - only show if connected to WiFi */}
+          <Group title={translate("deviceInfo:networkInfo")}>
+            {!!wifiSsid && <RouteButton label={translate("deviceInfo:wifiNetwork")} text={wifiSsid} />}
+            {!!wifiLocalIp && <RouteButton label={translate("deviceInfo:localIpAddress")} text={wifiLocalIp} />}
+          </Group>
+        </View>
       </ScrollView>
     </Screen>
   )

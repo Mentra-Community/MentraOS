@@ -1,9 +1,9 @@
 import {useRootNavigationState} from "expo-router"
 import {useState, useEffect} from "react"
-import {Platform, Linking} from "react-native"
+import {View, ActivityIndicator, Platform, Linking, TextStyle, ViewStyle} from "react-native"
 import semver from "semver"
 
-import {CloudConnectionError} from "@/components/misc/CloudConnectionError"
+import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {useAuth} from "@/contexts/AuthContext"
 import {useDeeplink} from "@/contexts/DeeplinkContext"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
@@ -35,7 +35,7 @@ export default function InitScreen() {
   // Hooks
   const {theme, themed} = useAppTheme()
   const {user, session, loading: authLoading} = useAuth()
-  const {replace, replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome} = useNavigationHistory()
+  const {replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome} = useNavigationHistory()
   const {processUrl} = useDeeplink()
   const rootNavigationState = useRootNavigationState()
   const isNavigationReady = rootNavigationState?.key != null
@@ -202,7 +202,7 @@ export default function InitScreen() {
       case "auth":
         return {
           icon: "account-alert",
-          iconColor: theme.colors.error,
+          iconColor: theme.colors.destructive,
           title: "Authentication Error",
           description: "Unable to authenticate. Please sign in again.",
         }
@@ -220,7 +220,7 @@ export default function InitScreen() {
       case "outdated":
         return {
           icon: "update",
-          iconColor: theme.colors.tint,
+          iconColor: theme.colors.destructive,
           title: "Update Required",
           description: "MentraOS is outdated. Please update to continue using the application.",
         }
@@ -228,7 +228,7 @@ export default function InitScreen() {
       default:
         return {
           icon: "check-circle",
-          iconColor: theme.colors.palette.primary500,
+          iconColor: theme.colors.primary,
           title: "Up to Date",
           description: "MentraOS is up to date. Returning to home...",
         }
@@ -250,26 +250,158 @@ export default function InitScreen() {
     }
   }, [authLoading, isNavigationReady])
 
-  // Prepare props for CloudConnectionError
+  // Render
+  if (state === "loading") {
+    return (
+      <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+        <View style={themed($centerContainer)}>
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <Text style={themed($loadingText)}>{loadingStatus}</Text>
+        </View>
+      </Screen>
+    )
+  }
+
   const statusConfig = getStatusConfig()
 
   return (
-    <CloudConnectionError
-      state={state}
-      theme={theme}
-      themed={themed}
-      statusConfig={statusConfig}
-      localVersion={localVersion}
-      cloudVersion={cloudVersion}
-      isUpdating={isUpdating}
-      isRetrying={isRetrying}
-      isUsingCustomUrl={isUsingCustomUrl}
-      canSkipUpdate={canSkipUpdate}
-      loadingStatus={loadingStatus}
-      onRetry={() => checkCloudVersion(true)}
-      onUpdate={handleUpdate}
-      onResetUrl={handleResetUrl}
-      onContinueAnyway={navigateToDestination}
-    />
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+      <View style={themed($mainContainer)}>
+        <View style={themed($infoContainer)}>
+          <View style={themed($iconContainer)}>
+            <Icon name={statusConfig.icon} size={80} color={statusConfig.iconColor} />
+          </View>
+
+          <Text style={themed($title)}>{statusConfig.title}</Text>
+          <Text style={themed($description)}>{statusConfig.description}</Text>
+
+          {state === "outdated" && (
+            <>
+              {localVersion && <Text style={themed($versionText)}>Local: v{localVersion}</Text>}
+              {cloudVersion && <Text style={themed($versionText)}>Latest: v{cloudVersion}</Text>}
+            </>
+          )}
+
+          <View style={themed($buttonContainer)}>
+            {state === "connection" ||
+              (state === "auth" && (
+                <Button
+                  flexContainer
+                  onPress={() => checkCloudVersion(true)}
+                  style={themed($primaryButton)}
+                  text={isRetrying ? translate("versionCheck:retrying") : translate("versionCheck:retryConnection")}
+                  disabled={isRetrying}
+                  LeftAccessory={
+                    isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.textAlt} /> : undefined
+                  }
+                />
+              ))}
+
+            {state === "outdated" && (
+              <Button
+                flexContainer
+                preset="primary"
+                onPress={handleUpdate}
+                disabled={isUpdating}
+                tx="versionCheck:update"
+              />
+            )}
+
+            {(state === "connection" || state === "auth") && isUsingCustomUrl && (
+              <Button
+                flexContainer
+                onPress={handleResetUrl}
+                style={themed($secondaryButton)}
+                tx={isRetrying ? "versionCheck:resetting" : "versionCheck:resetUrl"}
+                preset="secondary"
+                disabled={isRetrying}
+                LeftAccessory={
+                  isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.text} /> : undefined
+                }
+              />
+            )}
+
+            {(state === "connection" || state == "auth" || (state === "outdated" && canSkipUpdate)) && (
+              <Button
+                flex
+                flexContainer
+                preset="warning"
+                RightAccessory={() => <Icon name="arrow-right" size={24} color={theme.colors.text} />}
+                onPress={navigateToDestination}
+                tx="versionCheck:continueAnyway"
+              />
+            )}
+          </View>
+        </View>
+      </View>
+    </Screen>
   )
 }
+
+// Styles
+const $centerContainer: ThemedStyle<ViewStyle> = () => ({
+  flex: 1,
+  justifyContent: "center",
+  alignItems: "center",
+})
+
+const $loadingText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  marginTop: spacing.s4,
+  fontSize: 16,
+  color: colors.text,
+})
+
+const $mainContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flex: 1,
+  padding: spacing.s6,
+})
+
+const $infoContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flex: 1,
+  justifyContent: "center",
+  alignItems: "center",
+  paddingTop: spacing.s8,
+})
+
+const $iconContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  marginBottom: spacing.s8,
+})
+
+const $title: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 28,
+  fontWeight: "bold",
+  textAlign: "center",
+  marginBottom: spacing.s4,
+  color: colors.text,
+})
+
+const $description: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 16,
+  textAlign: "center",
+  marginBottom: spacing.s8,
+  lineHeight: 24,
+  paddingHorizontal: spacing.s6,
+  color: colors.textDim,
+})
+
+const $versionText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 14,
+  textAlign: "center",
+  marginBottom: spacing.s2,
+  color: colors.textDim,
+})
+
+const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  width: "100%",
+  alignItems: "center",
+  paddingBottom: spacing.s8,
+  gap: spacing.s8,
+})
+
+const $primaryButton: ThemedStyle<ViewStyle> = () => ({
+  width: "100%",
+})
+
+const $secondaryButton: ThemedStyle<ViewStyle> = () => ({
+  width: "100%",
+})

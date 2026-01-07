@@ -868,8 +868,7 @@ async function checkConnectivityRequirements(): Promise<{
       console.log("Location permission missing, showing error")
       return {
         isReady: false,
-        message:
-          "Location permission is required to scan for glasses on Android. Please grant location permission and try again.",
+        message: translate("connectivity:locationPermissionRequiredMessage"),
         requirement: "location",
       }
     }

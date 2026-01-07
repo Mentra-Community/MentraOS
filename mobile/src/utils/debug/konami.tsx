@@ -8,6 +8,8 @@ import {BackgroundTimer} from "@/utils/timers"
 type Direction = "up" | "down" | "left" | "right"
 
 const KONAMI_CODE: Direction[] = ["up", "up", "down", "down", "left", "right", "left", "right"]
+const MINI_CODE: Direction[] = ["up", "up", "down", "down", "left", "left", "right", "right", "up", "up"]
+const MAX_CODE_LENGTH = Math.max(KONAMI_CODE.length, MINI_CODE.length)
 
 export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
   const [sequence, setSequence] = useState<Direction[]>([])
@@ -20,6 +22,13 @@ export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
       if (matches) {
         console.log("KONAMI: Konami code activated!")
         goHomeAndPush("/settings/developer")
+        setSequence([])
+      }
+    }
+    if (sequence.length === MINI_CODE.length) {
+      const matches = sequence.every((dir, i) => dir === MINI_CODE[i])
+      if (matches) {
+        console.log("KONAMI: Mini code activated!")
         setSequence([])
       }
     }
@@ -36,9 +45,9 @@ export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
   const addDirection = (direction: Direction) => {
     console.log("KONAMI: Swipe detected:", direction)
 
-    setSequence(prev => {
+    setSequence((prev) => {
       const newSequence = [...prev, direction]
-      return newSequence.slice(-KONAMI_CODE.length)
+      return newSequence.slice(-MAX_CODE_LENGTH)
     })
 
     if (resetTimeoutRef.current) {
