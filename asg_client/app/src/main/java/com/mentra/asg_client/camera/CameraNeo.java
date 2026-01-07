@@ -230,6 +230,9 @@ public class CameraNeo extends LifecycleService {
     // User-settable exposure compensation (apply BEFORE capture, not during)
     private int userExposureCompensation = 0;
 
+    // Electronic Image Stabilization (EIS) state
+    private boolean eisEnabled = true; // Enabled by default
+
     // Callback and execution handling
     private final Executor executor = Executors.newSingleThreadExecutor();
 
@@ -414,6 +417,11 @@ public class CameraNeo extends LifecycleService {
         hardwareManager = HardwareManagerFactory.getInstance(this);
         // Initialize camera settings for vendor-specific features (ZSL, MFNR)
         mCameraSettings = new CameraSettings(this);
+        
+        // Initialize EIS (Electronic Image Stabilization)
+        Log.i(TAG, "📹 Initializing EIS (Electronic Image Stabilization) - Default state: " + 
+                  (eisEnabled ? "ENABLED" : "DISABLED"));
+        
         createNotificationChannel();
         showNotification("Camera Service", "Service is running");
         startBackgroundThread();
@@ -1767,6 +1775,14 @@ public class CameraNeo extends LifecycleService {
                 Log.d(TAG, "Photo: Using dynamic FPS range " + selectedFpsRange + " for exposure flexibility");
             }
 
+            // Apply EIS (Electronic Image Stabilization) - VIDEO ONLY
+            if (forVideo && eisEnabled) {
+                enableEIS(previewBuilder, true);
+                Log.d(TAG, "📹 EIS applied to video capture request");
+            } else if (forVideo) {
+                Log.d(TAG, "📹 EIS disabled for video");
+            }
+
             // Apply user exposure compensation BEFORE capture (not during)
             previewBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, userExposureCompensation);
 
@@ -2947,6 +2963,53 @@ public class CameraNeo extends LifecycleService {
             case CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED: return "FOCUSED_LOCKED";
             case CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED: return "NOT_FOCUSED_LOCKED";
             default: return "UNKNOWN(" + afState + ")";
+        }
+    }
+
+    // ========== EIS (Electronic Image Stabilization) ==========
+    
+    /**
+     * Enable or disable Electronic Image Stabilization (EIS) for camera capture.
+     * This method configures hardware-level image stabilization using vendor-specific
+     * capture request parameters (Pixsmart EIS feature).
+     * 
+     * @param builder The CaptureRequest.Builder to configure
+     * @param bEnable true to enable EIS, false to disable
+     */
+    private void enableEIS(CaptureRequest.Builder builder, boolean bEnable) {
+        Log.i(TAG, "📹 ========== enableEIS ========== Enable: " + bEnable);
+        
+        try {
+            CaptureRequest.Key<Integer> PIXSMART_EISFEATURE_EISENABLE = null;
+            
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                PIXSMART_EISFEATURE_EISENABLE = new CaptureRequest.Key<>(
+                        "com.pixsmart.eisfeature.eisEnable", Integer.class);
+                Log.d(TAG, "📹 EIS feature key created for API " + android.os.Build.VERSION.SDK_INT);
+            } else {
+                Log.w(TAG, "📹 EIS not supported on API " + android.os.Build.VERSION.SDK_INT + " (requires Q+)");
+            }
+            
+            if (bEnable) {
+                Log.d(TAG, "📹 Enabling EIS - Setting SPORTS scene mode");
+                builder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_SPORTS);
+                if (PIXSMART_EISFEATURE_EISENABLE != null) {
+                    builder.set(PIXSMART_EISFEATURE_EISENABLE, 1);
+                    Log.d(TAG, "📹 EIS hardware feature enabled");
+                }
+            } else {
+                Log.d(TAG, "📹 Disabling EIS - Setting DISABLED scene mode");
+                builder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED);
+                if (PIXSMART_EISFEATURE_EISENABLE != null) {
+                    builder.set(PIXSMART_EISFEATURE_EISENABLE, 0);
+                    Log.d(TAG, "📹 EIS hardware feature disabled");
+                }
+            }
+            
+            Log.i(TAG, "📹 EIS configured successfully: " + (bEnable ? "ENABLED" : "DISABLED"));
+            
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error configuring EIS", e);
         }
     }
 

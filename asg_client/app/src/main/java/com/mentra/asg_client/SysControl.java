@@ -427,6 +427,22 @@ public class SysControl {
     }
     
     /**
+     * Enable or disable EIS (Electronic Image Stabilization) via vendor debug property.
+     * Sets vendor.debug.pixsmart.vs to "1" (enabled) or "0" (disabled).
+     * @param context Application context
+     * @param enable true to enable EIS, false to disable
+     */
+    public static void setEisEnable(Context context, boolean enable) {
+        Log.d(TAG, "🎥 Setting EIS (vendor.debug.pixsmart.vs) to: " + (enable ? "1" : "0"));
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "setProperty");
+        nn.putExtra("name", "vendor.debug.pixsmart.vs");
+        nn.putExtra("value", enable ? "1": "0");
+        sendBroadcast(context, nn);
+        Log.d(TAG, "✅ EIS property broadcast sent");
+    }
+    
+    /**
      * Get system OTA version (MTK firmware version)
      * Reads the ro.custom.ota.version system property which contains the MTK OTA version.
      * @param context Application context

@@ -3,6 +3,8 @@
 **Last Analysis**: 2025-12-16  
 **Total Errors Analyzed**: ~250K+ in 6-hour window
 
+> **See Also**: [Issue 024: REST API Observability](../../024-rest-api-observability/README.md) - HTTP request logs missing `userId`, preventing user-centric debugging. Separated into dedicated issue due to scope.
+
 ## Error Landscape Overview
 
 | Category                   | Error Count (6h) | Priority    | Status                             |
@@ -141,3 +143,4 @@ Metrics still tracked internally via `getMetrics()` for debugging.
 - [../README.md](../README.md) - Parent issue overview
 - [../logging-standards.md](../logging-standards.md) - Logging standards
 - [../quick-wins.md](../quick-wins.md) - Quick win implementation details
+- [../../024-rest-api-observability/README.md](../../024-rest-api-observability/README.md) - REST API observability gaps (userId in HTTP logs, reqId propagation)

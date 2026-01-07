@@ -408,6 +408,9 @@ async function handleGlassesConnectionInit(
     }
   }
 
+  // Log when we send CONNECTION_ACK, and if it's a reconnection or not.
+  const _logger = userSession.logger.child({ function: "sendConnectionAck" });
+  _logger.info({ feature: "websocket", ackMessage, reconnection }, "Sending CONNECTION_ACK");
   ws.send(JSON.stringify(ackMessage));
 }
 
