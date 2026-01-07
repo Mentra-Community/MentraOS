@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-12-30 17:55:46
- * @LastEditTime : 2026-01-04 10:58:00
+ * @LastEditTime : 2026-01-05 13:57:19
  * @FilePath     : cvt213x.c
  * @Description  :
  *
@@ -38,7 +38,7 @@ static const struct device* i2c3_dev = NULL;
  * The device is expected to return its i2c id (0x28 or 0x2C) in that register.
  * Try each possible 7-bit address and retry a few times.
  */
-int app_cvt213x_i2c_verify(void)
+int cvt213x_i2c_verify(void)
 {
     const uint16_t reg   = 0x0014;
     uint8_t        tx[2] = {(uint8_t)((reg >> 8) & 0xFF), (uint8_t)(reg & 0xFF)};
@@ -80,7 +80,7 @@ int app_cvt213x_i2c_verify(void)
 /* runtime bus switching removed — only i2c3 is used */
 /* app_cvt213x_i2c_set_bus removed to keep implementation simple */
 
-int app_cvt213x_i2c_init(void)
+int cvt213x_i2c_init(void)
 {
     if (!i2c3_dev || !device_is_ready(i2c3_dev))
     {

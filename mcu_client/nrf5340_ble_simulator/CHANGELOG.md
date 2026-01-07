@@ -4,6 +4,45 @@ All notable changes to the nRF5340 DK BLE Glasses Protobuf Simulator will be doc
 
 ## Unreleased
 
+### 🚀 CVT213X Debounce Timer & IED Detection Integration - 2026-01-07
+
+#### Key Features
+
+**1️⃣ Debounce Timer Implementation (shim layer)**
+- `recheck_timer` (50ms): Re-check after INT pin falling edge to ensure debouncing
+- `inear_debounce_timer` (50ms): Called by IED process, supports restart/stop interface
+- Timer callbacks trigger polling flags and drive scheduler events
+
+**2️⃣ IED Gesture Detection Integration (cva_tws_gesture.c)**
+- Call `restart()` during ON/OFF debounce phases to restart timer
+- Call `stop()` when debounce counter reaches threshold
+- Support both normal mode and calibration mode paths
+
+**3️⃣ Platform Adaptation Layer Refactoring**
+- Add I2C HAL interfaces to `cvt213x.c` (cvt213x_i2c_init/verify)
+- Unify I2C initialization in driver layer (i2c3 dedicated)
+- Standardize app_cvt213x_* alias forwarding
+
+**4️⃣ Code Cleanup**
+- Remove app_cvt213x_log.h and bsp_i2c.h
+- Remove app_cvt213x_thread() polling in main.c
+- porting.c: Remove periodic timer and worker thread
+- Migrate scheduler to shim layer (app_hal_cvt213x_scheduler_init)
+
+#### Modified Files
+- `app_cvt213x_shim.{c,h}`: Add Zephyr timers, GPIO ISR, message queue
+- `app_cvt213x_porting.{c,h}`: HAL function migration, periodic timer removal
+- `cva_tws_gesture.c`: Integrate debounce restart/stop hooks
+- `interrupt_handler.{c,h}`: Remove CVT213X interrupt type
+- `cvt213x.{c,h}`: I2C HAL implementation
+- `main.c`: Remove CVT213X thread polling
+
+#### Deleted Files
+- `app_cvt213x/bsp_i2c.h`
+- `app_cvt213x/lib/api/app_cvt213x_log.h`
+
+---
+
 ### 🎯 CVT213X Touch Detection System Integration - 2026-01-04
 
 #### New Files

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-12-30 18:57:41
- * @LastEditTime : 2026-01-04 15:26:56
+ * @LastEditTime : 2026-01-05 10:19:19
  * @FilePath     : shell_cvt213x_control.c
  * @Description  :
  *
@@ -29,8 +29,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 
-#include "cvt213x.h"
 #include "app_cvt213x_main.h"
+#include "cvt213x.h"
 
 LOG_MODULE_REGISTER(shell_cvt213x, LOG_LEVEL_INF);
 
@@ -76,7 +76,7 @@ static int cmd_cvt213x_sleep(const struct shell* shell, size_t argc, char** argv
 {
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
-    
+
     shell_print(shell, "😴 Putting CVT213X into sleep mode...");
     app_cvt213x_sleep();
     shell_print(shell, "✅ CVT213X sleep mode activated");
@@ -88,7 +88,7 @@ static int cmd_cvt213x_wakeup(const struct shell* shell, size_t argc, char** arg
 {
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
-    
+
     shell_print(shell, "⏰ Waking up CVT213X from sleep mode...");
     app_cvt213x_wakeup();
     shell_print(shell, "✅ CVT213X wakeup complete");

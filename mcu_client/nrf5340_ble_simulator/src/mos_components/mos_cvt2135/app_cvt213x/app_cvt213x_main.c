@@ -11,15 +11,11 @@
 /*******************************************************************************
  * 1.Included header files
  *******************************************************************************/
+#include "app_cvt213x_main.h"
+
 #include <zephyr/logging/log.h>
 
-/* Register Zephyr log module used by the CVT213X app shim. Define a guard
- * so the header's LOG_MODULE_DECLARE doesn't re-declare the module variables
- * in this same translation unit. */
-#define APP_CVT213X_REGISTER_LOG_MODULE
-
 #include "./lib/api/cva_tws_api.h"
-#include "app_cvt213x_main.h"
 #include "app_cvt213x_porting.h"
 
 LOG_MODULE_REGISTER(app_cvt213x_main, LOG_LEVEL_INF);
@@ -131,7 +127,7 @@ TWS_S32 app_cvt213x_polling_handler(tws_chip_index_e chipIndex)
     tws_event_e event = TWS_EVENT_NONE;
 
     event = cvt213x_ied_process(chipIndex);
-
+    CVT213X_APP_LOG_D(0, "app_cvt213x_polling_handler: event = %d", event);
     if (event != TWS_EVENT_NONE)
     {
 #if CVT213X_TRX_EN
@@ -679,8 +675,7 @@ void app_cvt213x_wakeup(void)
         g_cvt213x_sleep_flag = 0;
 #if CVT213X_SETUP_FUN
         TWS_U8 init_state = 0;
-        cvt213x_is_earphone_in_box_state_set(
-            app_cvt213x_get_inbox_state_det_gpio());  // get ephone state if in chargebox
+        cvt213x_is_earphone_in_box_state_set(app_cvt213x_get_inbox_state_det_gpio());//get ephone state if in chargebox
         init_state = cvt213x_is_earphone_in_box_state_get();
         CVT213X_APP_LOG_E(1, "start cvt213x wakeup inbox_state =%d", init_state);
 #endif

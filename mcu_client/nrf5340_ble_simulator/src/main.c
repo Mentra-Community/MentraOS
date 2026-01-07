@@ -1020,7 +1020,6 @@ int main(void)
 	
 	for (;;) 
 	{
-		app_cvt213x_thread(APP_MODUAL_CVT213X_IRQ);
 		// dk_set_led(RUN_STATUS_LED, (++blink_status) % 2);
 		k_sleep(K_MSEC(RUN_LED_BLINK_INTERVAL));
 	}

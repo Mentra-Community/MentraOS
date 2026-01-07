@@ -1,14 +1,13 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-12-04 19:34:06
- * @LastEditTime : 2025-12-05 10:32:15
+ * @LastEditTime : 2026-01-07 12:08:31
  * @FilePath     : interrupt_handler.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2025 
+ * @Description  :
+ *
+ *  Copyright (c) MentraOS Contributors 2025
  *  SPDX-License-Identifier: Apache-2.0
  */
-
 
 #include "interrupt_handler.h"
 
@@ -27,7 +26,7 @@ LOG_MODULE_REGISTER(interrupt_handler, LOG_LEVEL_INF);
 // Interrupt processing thread configuration
 #define INTERRUPT_THREAD_STACK_SIZE 2048
 #define INTERRUPT_THREAD_PRIORITY   5
-#define INTERRUPT_QUEUE_SIZE       5
+#define INTERRUPT_QUEUE_SIZE        5
 
 // Interrupt processing thread
 K_THREAD_STACK_DEFINE(interrupt_thread_stack, INTERRUPT_THREAD_STACK_SIZE);
@@ -39,34 +38,22 @@ K_MSGQ_DEFINE(interrupt_queue, sizeof(interrupt_event_t), INTERRUPT_QUEUE_SIZE, 
 // Interrupt metadata structure
 typedef struct
 {
-    const char* name;        // Interrupt name
-    const char* description; // Interrupt description
+    const char* name;         // Interrupt name
+    const char* description;  // Interrupt description
 } interrupt_metadata_t;
 
 // Interrupt metadata table (static data for each interrupt type)
 static const interrupt_metadata_t interrupt_metadata[INTERRUPT_TYPE_MAX_COUNT] = {
-    [INTERRUPT_TYPE_UNKNOWN] = 
-    {
-        "UNKNOWN", 
-        "Unknown or invalid interrupt"
-    },
-    
-    [INTERRUPT_TYPE_VAD_FALLING_EDGE] = 
-    {
-        "VAD_FALLING_EDGE", 
-        "VAD interrupt falling edge (P0.12)"
-    },
-    
-    [INTERRUPT_TYPE_VAD_TIMEOUT] = 
-    {
-        "VAD_TIMEOUT", 
-        "VAD timeout event (from timer callback)"
-    },
-    
+    [INTERRUPT_TYPE_UNKNOWN] = {"UNKNOWN", "Unknown or invalid interrupt"},
+
+    [INTERRUPT_TYPE_VAD_FALLING_EDGE] = {"VAD_FALLING_EDGE", "VAD interrupt falling edge (P0.12)"},
+
+    [INTERRUPT_TYPE_VAD_TIMEOUT] = {"VAD_TIMEOUT", "VAD timeout event (from timer callback)"},
+
     // Add more interrupt metadata here as needed
-    // [INTERRUPT_TYPE_KEY_PRESS] = 
+    // [INTERRUPT_TYPE_KEY_PRESS] =
     // {
-    //     "KEY_PRESS", 
+    //     "KEY_PRESS",
     //     "Key press interrupt"
     // },
 };
@@ -74,7 +61,7 @@ static const interrupt_metadata_t interrupt_metadata[INTERRUPT_TYPE_MAX_COUNT] =
 // Callback registry (array indexed by interrupt type enum)
 // Each interrupt type can have one callback registered
 static interrupt_callback_entry_t callback_registry[INTERRUPT_TYPE_MAX_COUNT];
-static bool initialized = false;
+static bool                       initialized = false;
 
 // Forward declaration
 static void interrupt_thread(void* p1, void* p2, void* p3);
@@ -110,7 +97,7 @@ static void interrupt_thread(void* p1, void* p2, void* p3)
                     else
                     {
                         // No callback registered - re-enable interrupt to prevent permanent disable
-                        LOG_WRN("No callback registered for %s interrupt, re-enabling interrupt anyway", 
+                        LOG_WRN("No callback registered for %s interrupt, re-enabling interrupt anyway",
                                 interrupt_metadata[INTERRUPT_TYPE_VAD_FALLING_EDGE].name);
                         int ret = bsp_gx8002_vad_int_re_enable();
                         if (ret != 0)
@@ -130,21 +117,21 @@ static void interrupt_thread(void* p1, void* p2, void* p3)
                     }
                     else
                     {
-                        LOG_WRN("No callback registered for %s interrupt", 
+                        LOG_WRN("No callback registered for %s interrupt",
                                 interrupt_metadata[INTERRUPT_TYPE_VAD_TIMEOUT].name);
                     }
                 }
                 break;
 
-                // Add more interrupt types here as needed
-                // case INTERRUPT_TYPE_KEY_PRESS:
-                // {
-                //     if (callback_registry[INTERRUPT_TYPE_KEY_PRESS] != NULL)
-                //     {
-                //         callback_registry[INTERRUPT_TYPE_KEY_PRESS](&event);
-                //     }
-                // }
-                // break;
+                    // Add more interrupt types here as needed
+                    // case INTERRUPT_TYPE_KEY_PRESS:
+                    // {
+                    //     if (callback_registry[INTERRUPT_TYPE_KEY_PRESS] != NULL)
+                    //     {
+                    //         callback_registry[INTERRUPT_TYPE_KEY_PRESS](&event);
+                    //     }
+                    // }
+                    // break;
 
                 case INTERRUPT_TYPE_UNKNOWN:
                 default:
@@ -176,17 +163,15 @@ int interrupt_handler_init(void)
     }
 
     // Start interrupt processing thread
-    k_thread_create(&interrupt_thread_data, interrupt_thread_stack,
-                    K_THREAD_STACK_SIZEOF(interrupt_thread_stack),
-                    interrupt_thread, NULL, NULL, NULL,
-                    INTERRUPT_THREAD_PRIORITY, 0, K_NO_WAIT);
+    k_thread_create(&interrupt_thread_data, interrupt_thread_stack, K_THREAD_STACK_SIZEOF(interrupt_thread_stack),
+                    interrupt_thread, NULL, NULL, NULL, INTERRUPT_THREAD_PRIORITY, 0, K_NO_WAIT);
     k_thread_name_set(&interrupt_thread_data, "process_interrupt");
 
     initialized = true;
 
     LOG_INF("✅ Interrupt handler framework initialized");
-    LOG_INF("💡 Thread name: process_interrupt, stack: %d bytes, queue: %d events",
-            INTERRUPT_THREAD_STACK_SIZE, INTERRUPT_QUEUE_SIZE);
+    LOG_INF("💡 Thread name: process_interrupt, stack: %d bytes, queue: %d events", INTERRUPT_THREAD_STACK_SIZE,
+            INTERRUPT_QUEUE_SIZE);
 
     return 0;
 }
@@ -219,8 +204,7 @@ int interrupt_handler_register_callback(interrupt_event_type_t event_type, inter
     // Check if callback already registered
     if (entry->registered)
     {
-        LOG_WRN("Callback already registered for %s (%s), overwriting", 
-                entry->name, entry->description);
+        LOG_WRN("Callback already registered for %s (%s), overwriting", entry->name, entry->description);
     }
 
     // Register callback with metadata
@@ -303,4 +287,3 @@ bool interrupt_handler_is_initialized(void)
 {
     return initialized;
 }
-

@@ -52,10 +52,6 @@ extern "C" {
 
 #define CVT213X_TRX_LOG_EN          1
 
-
-/* Map legacy CVT213X_APP_LOG_* macros to Zephyr logging */
-#include "app_cvt213x_log.h"
-
 /*******************************TRX enable/disable*****************************/
 #define CVT213X_TRX_EN              1
 
@@ -82,7 +78,7 @@ extern "C" {
 
 /*******************************setup func*************************************/
 //use save ear offset value calc ear detect
-#define CVT213X_SETUP_FUN            0//1
+#define CVT213X_SETUP_FUN            0//1 
 #define CVT213X_SETUP_PH3_THR        (((PH3_THRE*PH3_THRE)<<PH3_FACT)>>1)
 #define CVT213X_SETUP_PH4_THR        (((PH4_THRE*PH4_THRE)<<PH4_FACT)>>1)
 #define CVT213X_BOX_RAW_FIXED_EN     0

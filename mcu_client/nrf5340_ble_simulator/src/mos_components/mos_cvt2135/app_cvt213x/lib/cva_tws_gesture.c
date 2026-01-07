@@ -17,6 +17,7 @@
 #include "cva_tws_util.h"
 #include "cva_tws_platform.h"
 #include "cva_tws_dongle.h"
+#include "app_cvt213x_shim.h" /* debounce helpers */
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(cva_tws_gesture, LOG_LEVEL_INF);
@@ -805,7 +806,7 @@ tws_event_e cvt213x_gesture_process(tws_chip_index_e chipIndex)
         proximity_state[0] = s_proximity_state_last[chipIndex];
     }
 
-    CVT213X_LIB_LOG_D(4, "chip%d, scan mode:%d, irq[0]:0x%02x, iqr[1]:0x%02x", chipIndex, cvt213x_get_scan_mode(chipIndex), rd_irq[0], rd_irq[1]);
+    CVT213X_LIB_LOG_D(4, "chip:%d, scan mode:%d, irq[0]:0x%02x, iqr[1]:0x%02x", chipIndex, cvt213x_get_scan_mode(chipIndex), rd_irq[0], rd_irq[1]);
     switch (cvt213x_get_scan_mode(chipIndex))
     {
     case DEFAULT_MODE:
@@ -851,7 +852,7 @@ tws_event_e cvt213x_ied_process(tws_chip_index_e chipIndex)
 {
     tws_event_e event = TWS_EVENT_NONE;
 
-    CVT213X_LIB_LOG_D(0, "cvt213x_ied_process() enter");
+    // CVT213X_LIB_LOG_D(0, "cvt213x_ied_process() enter");
 #if IS_IED_ENABLE
     TWS_U8 proximity_state[1] = {0};
     cvt213x_i2c_read_touch_state(chipIndex, proximity_state);
@@ -869,6 +870,10 @@ tws_event_e cvt213x_ied_process(tws_chip_index_e chipIndex)
         if (((g_chip_func[chipIndex] & FUNC_DOU_IED) && ((state2 & g_last_prox_state) == g_last_prox_state))
             || ((g_chip_func[chipIndex] & FUNC_SIG_IED) && ((state2 & g_last_prox_state) == TWS_STAT_PH4)))
         {
+            if (g_cvt213x_on_cnt == 0)
+            {
+                app_cvt213x_inear_debounce_restart();
+            }
             g_cvt213x_on_cnt++;
             g_cvt213x_off_cnt = 0;
 
@@ -894,11 +899,16 @@ tws_event_e cvt213x_ied_process(tws_chip_index_e chipIndex)
                     g_cvt213x_outbox_flag = FALSE;
                 }
                 g_cvt213x_on_cnt = 0;
+                app_cvt213x_inear_debounce_stop();
             }
         }
         else if (((g_chip_func[chipIndex] & FUNC_DOU_IED) && ((state2 & g_last_prox_state) == 0x00))
             ||((g_chip_func[chipIndex] & FUNC_SIG_IED) && (state2 & TWS_STAT_PH4) == 0x00))
         {
+            if (g_cvt213x_off_cnt == 0)
+            {
+                app_cvt213x_inear_debounce_restart();
+            }
             g_cvt213x_off_cnt++;
             g_cvt213x_on_cnt = 0;
 
@@ -914,6 +924,7 @@ tws_event_e cvt213x_ied_process(tws_chip_index_e chipIndex)
                     isInEar[chipIndex] = FALSE;
                 }
                 g_cvt213x_off_cnt = 0;
+                app_cvt213x_inear_debounce_stop();
             }
 
             #if CVT213X_DROP_STEP_FUN
@@ -1006,12 +1017,14 @@ tws_event_e cvt213x_ied_process(tws_chip_index_e chipIndex)
 
         if (!isInEar[chipIndex])
         {
+            app_cvt213x_inear_debounce_restart();
             g_cvt213x_on_cnt++;
             if(g_cvt213x_on_cnt == IED_ON_DEBOUNCE_NUM)
             {
                 event |= TWS_EVENT_IED_ON;
                 isInEar[chipIndex] = TRUE;
                 g_cvt213x_on_cnt = 0;
+                app_cvt213x_inear_debounce_stop();
             }
         }
         if(g_cvt213x_outbox_flag)
@@ -1036,12 +1049,14 @@ tws_event_e cvt213x_ied_process(tws_chip_index_e chipIndex)
 
         if (isInEar[chipIndex])
         {
+            app_cvt213x_inear_debounce_restart();
             g_cvt213x_off_cnt++;
             if(g_cvt213x_off_cnt == IED_OFF_DEBOUNCE_NUM)
             {
                 event |= TWS_EVENT_IED_OFF;
                 isInEar[chipIndex] = FALSE;
                 g_cvt213x_off_cnt = 0;
+                app_cvt213x_inear_debounce_stop();
             }
         }
 

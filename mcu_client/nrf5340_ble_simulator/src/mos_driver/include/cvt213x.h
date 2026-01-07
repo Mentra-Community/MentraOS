@@ -9,6 +9,10 @@
  * @ SPDX-License-Identifier: Apache-2.0
  */
 
+/* Zephyr-backed CVT213X I2C helpers (use i2c3 only) */
+int cvt213x_i2c_init(void);
+int cvt213x_i2c_verify(void);
+
+/* Backwards-compatible app-level aliases */
 int app_cvt213x_i2c_init(void);
 int app_cvt213x_i2c_verify(void);
-/* Note: Only i2c3 is used for CVT213X in this build; no runtime bus switching */
