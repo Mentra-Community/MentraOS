@@ -1,5 +1,5 @@
 export function generateManifest(redirectUrl?: string) {
-  const startUrl = redirectUrl ? `/?url=${encodeURIComponent(redirectUrl)}` : "/"
+  const startUrl = redirectUrl ? `/redirect?url=${encodeURIComponent(redirectUrl)}` : "/"
 
   return {
     name: "MentraOS",

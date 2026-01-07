@@ -8,6 +8,7 @@ import {Platform} from "react-native"
 import {NavObject, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import mentraAuth from "@/utils/auth/authClient"
 import {BackgroundTimer} from "@/utils/timers"
+import {useAppletStatusStore} from "@/stores/applets"
 
 export interface DeepLinkRoute {
   pattern: string
@@ -340,7 +341,22 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     pattern: "/apps/:packageName",
     handler: async (url: string, params: Record<string, string>, navObject: NavObject) => {
       const {packageName} = params
-      navObject.push(`/applet/webview?packageName=${packageName}`)
+
+      // get the webviewURL from the app list, and see if it matches an app we have installed:
+      const apps = await useAppletStatusStore.getState().apps
+      const applet = apps.find((a) => a.packageName === packageName)
+      if (applet) {
+        console.log("@@@@@@@@@@@@@ APPLET FOUND @@@@@@@@@@@@@@@", applet)
+        navObject.clearHistoryAndGoHome()
+        navObject.push("/applet/webview", {
+          webviewURL: applet.webviewUrl,
+          appName: applet.name,
+          packageName: applet.packageName,
+        })
+        return
+      }
+      // we don't have the app installed, so route to the store instead:
+      navObject.push(`/store?packageName=${packageName}`)
     },
     requiresAuth: true,
   },
@@ -363,8 +379,8 @@ const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContext
 export const useDeeplink = () => useContext(DeeplinkContext)
 
 export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
-  const {push, replace, goBack, setPendingRoute, getPendingRoute, navigate, replaceAll, preventBack} =
-    useNavigationHistory()
+  const navHistory = useNavigationHistory()
+
   const config = {
     scheme: "com.mentra",
     host: "apps.mentra.glass",
@@ -384,10 +400,11 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     fallbackHandler: (url: string) => {
       console.warn("Fallback handler called for URL:", url)
       setTimeout(() => {
-        replaceAll("/auth/login")
+        navHistory.replaceAll("/auth/login")
       }, 100)
     },
-    navObject: {push, replace, goBack, setPendingRoute, getPendingRoute, navigate, replaceAll, preventBack},
+    // navObject: {push, replace, goBack, setPendingRoute, getPendingRoute, navigate, replaceAll, preventBack},
+    navObject: {...navHistory},
   }
 
   const handleUrlRaw = async ({url}: {url: string}) => {
@@ -396,7 +413,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
 
   useEffect(() => {
     Linking.addEventListener("url", handleUrlRaw)
-    Linking.getInitialURL().then(url => {
+    Linking.getInitialURL().then((url) => {
       console.log("@@@@@@@@@@@@@ INITIAL URL @@@@@@@@@@@@@@@", url)
       if (url) {
         processUrl(url, true)
@@ -464,7 +481,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     try {
       // Add delay to ensure Root Layout is mounted
       if (initial) {
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise((resolve) => setTimeout(resolve, 1000))
       }
 
       console.log("[LOGIN DEBUG] Deep link received:", url)
@@ -489,10 +506,10 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       if (matchedRoute.requiresAuth && !authed) {
         console.warn("Authentication required for route:", matchedRoute.pattern)
         // Store the URL for after authentication
-        setPendingRoute(url)
+        navHistory.setPendingRoute(url)
         setTimeout(() => {
           try {
-            replace("/auth/login")
+            navHistory.replace("/auth/login")
           } catch (error) {
             console.warn("Navigation failed, router may not be ready:", error)
           }
@@ -512,15 +529,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         console.log("@@@@@@@@@@@@@ MATCHED ROUTE @@@@@@@@@@@@@@@", matchedRoute)
         console.log("@@@@@@@@@@@@@ PARAMS @@@@@@@@@@@@@@@", params)
         console.log("@@@@@@@@@@@@@ URL @@@@@@@@@@@@@@@", url)
-        const navObject: NavObject = {
-          push,
-          replace,
-          goBack,
-          setPendingRoute,
-          getPendingRoute,
-          navigate,
-          replaceAll,
-        }
+        const navObject = {...navHistory} as NavObject
         await matchedRoute.handler(url, params, navObject)
       } catch (error) {
         console.warn("Route handler failed, router may not be ready:", error)

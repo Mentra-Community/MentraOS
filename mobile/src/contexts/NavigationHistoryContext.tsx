@@ -10,6 +10,7 @@ export type NavigationHistoryPush = (path: string, params?: any) => void
 export type NavigationHistoryReplace = (path: string, params?: any) => void
 export type NavigationHistoryReplaceAll = (path: string, params?: any) => void
 export type NavigationHistoryGoBack = () => void
+export type NavigationHistoryClearHistoryAndGoHome = () => void
 
 export type NavObject = {
   push: NavigationHistoryPush
@@ -20,6 +21,7 @@ export type NavObject = {
   getPendingRoute: () => string | null
   navigate: (path: string, params?: any) => void
   preventBack: boolean
+  clearHistoryAndGoHome: NavigationHistoryClearHistoryAndGoHome
 }
 
 interface NavigationHistoryContextType {
@@ -339,6 +341,7 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     getPendingRoute,
     navigate,
     preventBack,
+    clearHistoryAndGoHome,
   }
 
   // Set the ref so we can use it from outside the context:

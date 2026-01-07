@@ -192,9 +192,10 @@ const InstallGuide: FC = () => {
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    let custom = "com.mentra://" + customUrl.trim()
     if (customUrl.trim()) {
       const currentUrl = window.location.origin + window.location.pathname
-      const newUrl = `${currentUrl}?url=${encodeURIComponent(customUrl.trim())}`
+      const newUrl = `${currentUrl}?url=${encodeURIComponent(custom)}`
       window.location.href = newUrl
     }
   }
@@ -262,7 +263,7 @@ const InstallGuide: FC = () => {
             <CardHeader>
               <CardTitle>Set App Destination</CardTitle>
               <CardDescription>
-                Enter a URL to redirect to after installation (e.g., com.mentra.mentra://com.mentra.captions)
+                Enter a Mentra App URL to redirect to after installation (e.g., com.mentra.captions)
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -272,7 +273,7 @@ const InstallGuide: FC = () => {
                     type="text"
                     value={customUrl}
                     onChange={(e) => setCustomUrl(e.target.value)}
-                    placeholder="com.mentra://com.mentra.captions"
+                    placeholder="com.mentra.captions"
                     className="flex-1 px-3 py-2 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
                   />
                   <Button type="submit" disabled={!customUrl.trim()}>

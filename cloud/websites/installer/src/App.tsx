@@ -1,6 +1,7 @@
 import {useEffect, type FC} from "react"
 import {BrowserRouter, Routes, Route, Navigate} from "react-router-dom"
 import InstallGuide from "./pages/InstallGuide"
+import Redirect from "./pages/Redirect"
 import {generateManifest} from "./manifest"
 
 const App: FC = () => {
@@ -9,37 +10,42 @@ const App: FC = () => {
     const params = new URLSearchParams(window.location.search)
     const redirectUrl = params.get("url")
 
-    // Update manifest dynamically
+    // Generate and inject dynamic manifest
     const manifest = generateManifest(redirectUrl || undefined)
-    const manifestBlob = new Blob([JSON.stringify(manifest)], {type: "application/json"})
-    const manifestUrl = URL.createObjectURL(manifestBlob)
+    const manifestJson = JSON.stringify(manifest)
+    const manifestBlob = new Blob([manifestJson], {type: "application/json"})
+    const manifestURL = URL.createObjectURL(manifestBlob)
 
-    // Update the manifest link
+    // Update or create manifest link
     let manifestLink = document.querySelector('link[rel="manifest"]') as HTMLLinkElement
     if (!manifestLink) {
       manifestLink = document.createElement("link")
       manifestLink.rel = "manifest"
       document.head.appendChild(manifestLink)
     }
-    manifestLink.href = manifestUrl
+    manifestLink.href = manifestURL
 
-    // Check if running as installed PWA and redirect
-    const isStandalone = window.matchMedia("(display-mode: standalone)").matches
-    if (isStandalone && redirectUrl) {
+    // If we have a redirect URL and are in standalone mode, redirect immediately
+    if (redirectUrl) {
+      // const isStandalone = window.matchMedia("(display-mode: standalone)").matches
+      // if (isStandalone) {
       try {
-        // Validate URL format
         new URL(redirectUrl)
         window.location.href = redirectUrl
       } catch (e) {
         console.error("Invalid redirect URL:", redirectUrl)
       }
+      // }
     }
+
+    // window.alert(redirectUrl)
   }, [])
 
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<InstallGuide />} />
+        <Route path="/redirect" element={<Redirect />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
