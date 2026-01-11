@@ -1,8 +1,9 @@
 // src/messages/cloud-to-glasses.ts
 
-import {BaseMessage} from "./base"
-import {CloudToGlassesMessageType, ResponseTypes, UpdateTypes} from "../message-types"
 import {Layout} from "../layouts"
+import {CloudToGlassesMessageType, ResponseTypes, UpdateTypes} from "../message-types"
+
+import {BaseMessage} from "./base"
 // import { UserSession } from "../user-session";
 
 //===========================================================
@@ -88,6 +89,8 @@ export interface PhotoRequestToGlasses extends BaseMessage {
   size?: "small" | "medium" | "large" | "full"
   /** Image compression level: none, medium, or heavy */
   compress?: "none" | "medium" | "heavy"
+  /** Silent mode: disables LED flash and shutter sound when true. Cloud-controlled based on packageName. */
+  silent?: boolean
 }
 
 /**
@@ -228,6 +231,14 @@ export interface ShowWifiSetup extends BaseMessage {
 }
 
 /**
+ * UDP ping acknowledgment from cloud to mobile
+ * Sent when the Go UDP listener receives a ping from the mobile client
+ */
+export interface UdpPingAck extends BaseMessage {
+  type: CloudToGlassesMessageType.UDP_PING_ACK
+}
+
+/**
  * Union type for all messages from cloud to glasses
  */
 export type CloudToGlassesMessage =
@@ -249,6 +260,7 @@ export type CloudToGlassesMessage =
   | RequestSingleLocation
   | LiveKitInfo
   | ShowWifiSetup
+  | UdpPingAck
 
 //===========================================================
 // Type guards

@@ -1,24 +1,11 @@
 // pages/EditApp.tsx
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -38,7 +25,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import { useAppStore } from "@/stores/apps.store";
 import { useOrgStore } from "@/stores/orgs.store";
 import { App, Permission, Setting, Tool } from "@/types/app";
-import { HardwareRequirement } from "@mentra/sdk";
+import { HardwareRequirement, PreviewImage, PhotoOrientation } from "@mentra/sdk";
 import { toast } from "sonner";
 import ApiKeyDialog from "../components/dialogs/ApiKeyDialog";
 import SharingDialog from "../components/dialogs/SharingDialog";
@@ -56,6 +43,7 @@ import ImageUpload from "../components/forms/ImageUpload";
 import AppTypeTooltip from "../components/forms/AppTypeTooltip";
 import api, { Organization } from "@/services/api.service";
 import { useAccountStore } from "@/stores/account.store";
+import { MultiPhotoUpload, PhotoUploadItem } from "@/components/ui/multi-photo-upload";
 // import { AppType } from '@mentra/sdk';
 
 enum AppType {
@@ -79,6 +67,11 @@ interface ImportConfigData {
   settings?: Setting[];
   tools?: Tool[];
   version?: string;
+  previewImages?: Array<{
+    url: string;
+    orientation: "landscape" | "portrait";
+    order: number;
+  }>;
 }
 
 export default function EditApp() {
@@ -119,6 +112,8 @@ export default function EditApp() {
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false);
   const [isSharingDialogOpen, setIsSharingDialogOpen] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
+  const [previewPhotos, setPreviewPhotos] = useState<PhotoUploadItem[]>([]);
+  const [originalPreviewPhotos, setOriginalPreviewPhotos] = useState<PhotoUploadItem[]>([]); // Track original images for deletion
   const [apiKey, setApiKey] = useState("");
   const [shareLink, setShareLink] = useState("");
   const [isRegeneratingKey, setIsRegeneratingKey] = useState(false);
@@ -130,11 +125,10 @@ export default function EditApp() {
 
   // State for import functionality
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
-  const [importConfigData, setImportConfigData] =
-    useState<ImportConfigData | null>(null);
+  const [importConfigData, setImportConfigData] = useState<ImportConfigData | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [sameValueWarning , setSameValueWarning] = useState(false);
+  const [sameValueWarning, setSameValueWarning] = useState(false);
 
   // File input ref for import
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,8 +142,7 @@ export default function EditApp() {
       if (!packageName || !selectedOrgId) return;
 
       // If organization changed from a previous one, we're switching orgs
-      const isOrgSwitch =
-        prevOrgRef.current && prevOrgRef.current !== selectedOrgId;
+      const isOrgSwitch = prevOrgRef.current && prevOrgRef.current !== selectedOrgId;
       prevOrgRef.current = selectedOrgId || null;
 
       try {
@@ -188,6 +181,25 @@ export default function EditApp() {
 
         setFormData(app);
 
+        // Load preview images if they exist
+        if (appData.previewImages && Array.isArray(appData.previewImages)) {
+          const loadedPhotos: PhotoUploadItem[] = appData.previewImages
+            .sort((a: PreviewImage, b: PreviewImage) => a.order - b.order) // Sort by order
+            .map((img: PreviewImage) => ({
+              id: img.imageId || `${Date.now()}-${Math.random()}`,
+              url: img.url,
+              imageId: img.imageId,
+              preview: img.url, // Use R2 URL as preview
+              orientation: img.orientation,
+              uploading: false,
+            }));
+          setPreviewPhotos(loadedPhotos);
+          setOriginalPreviewPhotos(loadedPhotos); // Store original for comparison
+        } else {
+          setPreviewPhotos([]);
+          setOriginalPreviewPhotos([]);
+        }
+
         // Fetch all orgs where the user has admin access
         try {
           const allOrgs = await api.orgs.list();
@@ -199,12 +211,8 @@ export default function EditApp() {
             return org.members.some((member) => {
               const role = member.role;
               const memberEmail =
-                typeof member.user === "object" && member.user?.email
-                  ? member.user.email.toLowerCase()
-                  : null;
-              return (
-                memberEmail === email && (role === "admin" || role === "member")
-              );
+                typeof member.user === "object" && member.user?.email ? member.user.email.toLowerCase() : null;
+              return memberEmail === email && (role === "admin" || role === "member");
             });
           });
           setEligibleOrgs(adminOrgs);
@@ -225,20 +233,15 @@ export default function EditApp() {
         const isNotFoundError =
           status === 404 ||
           (typeof respError === "string" &&
-            (respError.includes("not found") ||
-              respError.includes("does not exist"))) ||
+            (respError.includes("not found") || respError.includes("does not exist"))) ||
           (typeof msg === "string" && msg.includes("not found"));
 
         if (isNotFoundError) {
-          console.log(
-            "App not found in current organization, redirecting to app list...",
-          );
+          console.log("App not found in current organization, redirecting to app list...");
 
           // Only display toast on org switch
           if (!isOrgSwitch) {
-            toast.error(
-              `App "${packageName}" not found. Redirecting to app list...`,
-            );
+            toast.error(`App "${packageName}" not found. Redirecting to app list...`);
           }
 
           // Redirect to app list
@@ -256,9 +259,7 @@ export default function EditApp() {
   }, [packageName, selectedOrgId, getApp, navigate, accountEmail]);
 
   // Handle form changes
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target as HTMLInputElement | HTMLTextAreaElement;
 
     // For URL fields, normalize on blur instead of on every keystroke
@@ -314,9 +315,7 @@ export default function EditApp() {
   };
 
   // Handle hardware requirements changes
-  const handleHardwareRequirementsChange = (
-    hardwareRequirements: HardwareRequirement[],
-  ) => {
+  const handleHardwareRequirementsChange = (hardwareRequirements: HardwareRequirement[]) => {
     setFormData((prev) => ({
       ...prev,
       hardwareRequirements,
@@ -338,17 +337,12 @@ export default function EditApp() {
    * @param isSettingsArray - Whether we're currently processing the settings array
    * @returns The cleaned object without unwanted fields and empty options/enum arrays
    */
-  const removeIdFields = (
-    obj: unknown,
-    isSettingsArray: boolean = false,
-  ): unknown => {
+  const removeIdFields = (obj: unknown, isSettingsArray: boolean = false): unknown => {
     if (Array.isArray(obj)) {
       return obj.map((item) => removeIdFields(item, isSettingsArray));
     } else if (obj !== null && typeof obj === "object") {
       const cleaned: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(
-        obj as Record<string, unknown>,
-      )) {
+      for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
         // Always skip _id fields
         // Skip id fields only if we're in a settings array
         if (key === "_id" || (key === "id" && isSettingsArray)) {
@@ -356,11 +350,7 @@ export default function EditApp() {
         }
 
         // Skip empty options or enum arrays
-        if (
-          (key === "options" || key === "enum") &&
-          Array.isArray(value) &&
-          value.length === 0
-        ) {
+        if ((key === "options" || key === "enum") && Array.isArray(value) && value.length === 0) {
           continue;
         }
 
@@ -395,6 +385,17 @@ export default function EditApp() {
       config.webviewURL = formData.webviewURL;
     }
 
+    // Include preview images if they exist
+    if (previewPhotos.length > 0) {
+      config.previewImages = previewPhotos
+        .filter((photo) => photo.url && photo.imageId) // Only include uploaded photos
+        .map((photo, index) => ({
+          url: photo.url,
+          orientation: photo.orientation || "landscape",
+          order: index,
+        }));
+    }
+
     const blob = new Blob([JSON.stringify(config, null, 2)], {
       type: "application/json",
     });
@@ -420,25 +421,81 @@ export default function EditApp() {
       if (!currentOrg) throw new Error("No organization selected");
       if (sameValueWarning) throw new Error("Please resolve duplicate option values in settings before saving.");
 
-      // Normalize URLs before submission
+      // Step 1: Upload new images (those with file but no url)
+      const uploadedPhotos = [...previewPhotos];
+      for (let i = 0; i < uploadedPhotos.length; i++) {
+        const photo = uploadedPhotos[i];
+        if (photo.file && !photo.url) {
+          try {
+            console.log("Uploading new image to R2:", photo.preview);
+            const result = await api.images.upload(photo.file, {
+              appPackageName: packageName,
+            });
+
+            // Update the photo with cloud storage URL and imageId
+            uploadedPhotos[i] = {
+              ...photo,
+              url: result.url,
+              imageId: result.imageId,
+              file: undefined,
+            };
+          } catch (uploadError) {
+            console.error("Failed to upload image:", uploadError);
+            throw new Error("Failed to upload one or more images. Please try again.");
+          }
+        }
+      }
+
+      // Update state with uploaded photos
+      setPreviewPhotos(uploadedPhotos);
+
+      // Step 2: Determine which images to delete from R2
+      // Images that were in originalPreviewPhotos but are NOT in uploadedPhotos
+      const imagesToDelete = originalPreviewPhotos.filter(
+        (originalPhoto) => !uploadedPhotos.some((currentPhoto) => currentPhoto.imageId === originalPhoto.imageId),
+      );
+
+      // Step 3: Delete removed images from R2
+      for (const photoToDelete of imagesToDelete) {
+        if (photoToDelete.imageId) {
+          try {
+            console.log("Deleting image from R2:", photoToDelete.imageId);
+            await api.images.delete(photoToDelete.imageId);
+          } catch (deleteError) {
+            console.error("Failed to delete image from R2:", deleteError);
+            // Continue even if deletion fails - image might already be deleted
+          }
+        }
+      }
+
+      // Step 4: Normalize URLs before submission
       const normalizedData = {
         name: formData.name,
         description: formData.description,
         onboardingInstructions: formData.onboardingInstructions,
         publicUrl: formData.publicUrl ? normalizeUrl(formData.publicUrl) : "",
         logoURL: formData.logoURL ? normalizeUrl(formData.logoURL) : "",
-        webviewURL: formData.webviewURL
-          ? normalizeUrl(formData.webviewURL)
-          : "",
+        webviewURL: formData.webviewURL ? normalizeUrl(formData.webviewURL) : "",
         appType: formData.appType,
         settings: formData.settings || [],
         tools: formData.tools || [],
         hardwareRequirements: formData.hardwareRequirements || [],
         permissions: formData.permissions || [],
+        previewImages: uploadedPhotos
+          .filter((photo) => photo.url && photo.imageId) // Only include uploaded photos
+          .map((photo, index) => ({
+            url: photo.url,
+            imageId: photo.imageId || "",
+            orientation: photo.orientation || "landscape",
+            order: index,
+          })),
       };
 
-      // Update App data via store action (server resolves org/admin)
+      // Step 5: Update App data via store action (server resolves org/admin)
       await updateApp(packageName, normalizedData);
+
+      // Step 6: Update originalPreviewPhotos to match current state
+      setOriginalPreviewPhotos([...uploadedPhotos]);
 
       // Show success message
       setIsSaved(true);
@@ -456,9 +513,7 @@ export default function EditApp() {
 
       // Safely narrow common HTTP error shapes
       if (typeof err === "object" && err !== null) {
-        const maybeResponse = (
-          err as { response?: { data?: { error?: string } } }
-        ).response;
+        const maybeResponse = (err as { response?: { data?: { error?: string } } }).response;
         const maybeMessage = (err as { message?: string }).message;
 
         if (maybeResponse?.data?.error) {
@@ -594,9 +649,7 @@ export default function EditApp() {
       }, 1500);
     } catch (err) {
       console.error("Error moving App to new organization:", err);
-      throw new Error(
-        "Failed to move app to the new organization. Please try again.",
-      );
+      throw new Error("Failed to move app to the new organization. Please try again.");
     }
   };
 
@@ -605,9 +658,7 @@ export default function EditApp() {
    * @param config - Object to validate
    * @returns Object with validation result and specific error message
    */
-  const validateAppConfig = (
-    config: Partial<ImportConfigData>,
-  ): { isValid: boolean; error?: string } => {
+  const validateAppConfig = (config: Partial<ImportConfigData>): { isValid: boolean; error?: string } => {
     console.log("Validating config:", config);
 
     if (!config || typeof config !== "object") {
@@ -621,10 +672,7 @@ export default function EditApp() {
     // All fields are now optional - validate types only if they are provided
 
     // Name is optional but if present, must be a non-empty string
-    if (
-      config.name !== undefined &&
-      (typeof config.name !== "string" || config.name.trim() === "")
-    ) {
+    if (config.name !== undefined && (typeof config.name !== "string" || config.name.trim() === "")) {
       console.log("Validation failed: name is present but invalid");
       return {
         isValid: false,
@@ -635,14 +683,12 @@ export default function EditApp() {
     // Description is optional but if present, must be a non-empty string
     if (
       config.description !== undefined &&
-      (typeof config.description !== "string" ||
-        config.description.trim() === "")
+      (typeof config.description !== "string" || config.description.trim() === "")
     ) {
       console.log("Validation failed: description is present but invalid");
       return {
         isValid: false,
-        error:
-          'Optional field "description" must be a non-empty string if provided.',
+        error: 'Optional field "description" must be a non-empty string if provided.',
       };
     }
 
@@ -673,10 +719,7 @@ export default function EditApp() {
       };
     }
 
-    if (
-      config.permissions !== undefined &&
-      !Array.isArray(config.permissions)
-    ) {
+    if (config.permissions !== undefined && !Array.isArray(config.permissions)) {
       console.log("Validation failed: permissions is present but not an array");
       return {
         isValid: false,
@@ -684,35 +727,24 @@ export default function EditApp() {
       };
     }
 
-    if (
-      config.publicUrl !== undefined &&
-      (typeof config.publicUrl !== "string" || config.publicUrl.trim() === "")
-    ) {
+    if (config.publicUrl !== undefined && (typeof config.publicUrl !== "string" || config.publicUrl.trim() === "")) {
       console.log("Validation failed: publicUrl is present but invalid");
       return {
         isValid: false,
-        error:
-          'Optional field "publicUrl" must be a non-empty string if provided.',
+        error: 'Optional field "publicUrl" must be a non-empty string if provided.',
       };
     }
 
-    if (
-      config.logoURL !== undefined &&
-      (typeof config.logoURL !== "string" || config.logoURL.trim() === "")
-    ) {
+    if (config.logoURL !== undefined && (typeof config.logoURL !== "string" || config.logoURL.trim() === "")) {
       console.log("Validation failed: logoURL is present but invalid");
       return {
         isValid: false,
-        error:
-          'Optional field "logoURL" must be a non-empty string if provided.',
+        error: 'Optional field "logoURL" must be a non-empty string if provided.',
       };
     }
 
     // webviewURL can be empty string (treated as "not there"), but if present must be a string
-    if (
-      config.webviewURL !== undefined &&
-      typeof config.webviewURL !== "string"
-    ) {
+    if (config.webviewURL !== undefined && typeof config.webviewURL !== "string") {
       console.log("Validation failed: webviewURL is present but not a string");
       return {
         isValid: false,
@@ -727,8 +759,7 @@ export default function EditApp() {
         console.log("Validation failed: appType is present but invalid");
         return {
           isValid: false,
-          error:
-            'Optional field "appType" must be either "background" or "standard" if provided.',
+          error: 'Optional field "appType" must be either "background" or "standard" if provided.',
         };
       }
     }
@@ -741,9 +772,7 @@ export default function EditApp() {
         // Group settings just need a title
         if (setting.type === "group") {
           if (typeof setting.title !== "string") {
-            console.log(
-              `Validation failed: setting ${index} is a group but has invalid title`,
-            );
+            console.log(`Validation failed: setting ${index} is a group but has invalid title`);
             return {
               isValid: false,
               error: `Setting ${index + 1}: Group type requires a "title" field with a string value.`,
@@ -760,18 +789,14 @@ export default function EditApp() {
         };
         if (s.type === "titleValue") {
           if (typeof s.label !== "string") {
-            console.log(
-              `Validation failed: setting ${index} is titleValue but has invalid label`,
-            );
+            console.log(`Validation failed: setting ${index} is titleValue but has invalid label`);
             return {
               isValid: false,
               error: `Setting ${index + 1}: TitleValue type requires a "label" field with a string value.`,
             };
           }
           if (!("value" in s)) {
-            console.log(
-              `Validation failed: setting ${index} is titleValue but has no value`,
-            );
+            console.log(`Validation failed: setting ${index} is titleValue but has no value`);
             return {
               isValid: false,
               error: `Setting ${index + 1}: TitleValue type requires a "value" field.`,
@@ -781,14 +806,8 @@ export default function EditApp() {
         }
 
         // Regular settings need key and label and type
-        if (
-          typeof setting.key !== "string" ||
-          typeof setting.label !== "string" ||
-          typeof setting.type !== "string"
-        ) {
-          console.log(
-            `Validation failed: setting ${index} is missing key, label, or type`,
-          );
+        if (typeof setting.key !== "string" || typeof setting.label !== "string" || typeof setting.type !== "string") {
+          console.log(`Validation failed: setting ${index} is missing key, label, or type`);
           return {
             isValid: false,
             error: `Setting ${index + 1}: Missing required fields "key", "label", or "type" (all must be strings).`,
@@ -798,13 +817,8 @@ export default function EditApp() {
         // Type-specific validation
         switch (setting.type) {
           case "toggle":
-            if (
-              setting.defaultValue !== undefined &&
-              typeof setting.defaultValue !== "boolean"
-            ) {
-              console.log(
-                `Validation failed: setting ${index} is toggle but defaultValue is not boolean`,
-              );
+            if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "boolean") {
+              console.log(`Validation failed: setting ${index} is toggle but defaultValue is not boolean`);
               return {
                 isValid: false,
                 error: `Setting ${index + 1}: Toggle type requires "defaultValue" to be a boolean if provided.`,
@@ -814,13 +828,8 @@ export default function EditApp() {
 
           case "text":
           case "text_no_save_button":
-            if (
-              setting.defaultValue !== undefined &&
-              typeof setting.defaultValue !== "string"
-            ) {
-              console.log(
-                `Validation failed: setting ${index} is text but defaultValue is not string`,
-              );
+            if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "string") {
+              console.log(`Validation failed: setting ${index} is text but defaultValue is not string`);
               return {
                 isValid: false,
                 error: `Setting ${index + 1}: Text type requires "defaultValue" to be a string if provided.`,
@@ -831,24 +840,16 @@ export default function EditApp() {
           case "select":
           case "select_with_search":
             if (!Array.isArray(setting.options)) {
-              console.log(
-                `Validation failed: setting ${index} is select but options is not an array`,
-              );
+              console.log(`Validation failed: setting ${index} is select but options is not an array`);
               return {
                 isValid: false,
                 error: `Setting ${index + 1}: Select type requires an "options" array.`,
               };
             }
-            for (
-              let optIndex = 0;
-              optIndex < setting.options.length;
-              optIndex++
-            ) {
+            for (let optIndex = 0; optIndex < setting.options.length; optIndex++) {
               const opt = setting.options[optIndex];
               if (typeof opt.label !== "string" || !("value" in opt)) {
-                console.log(
-                  `Validation failed: setting ${index} option ${optIndex} is invalid`,
-                );
+                console.log(`Validation failed: setting ${index} option ${optIndex} is invalid`);
                 return {
                   isValid: false,
                   error: `Setting ${index + 1}, Option ${optIndex + 1}: Each option must have "label" (string) and "value" fields.`,
@@ -859,37 +860,24 @@ export default function EditApp() {
 
           case "multiselect":
             if (!Array.isArray(setting.options)) {
-              console.log(
-                `Validation failed: setting ${index} is multiselect but options is not an array`,
-              );
+              console.log(`Validation failed: setting ${index} is multiselect but options is not an array`);
               return {
                 isValid: false,
                 error: `Setting ${index + 1}: Multiselect type requires an "options" array.`,
               };
             }
-            for (
-              let optIndex = 0;
-              optIndex < setting.options.length;
-              optIndex++
-            ) {
+            for (let optIndex = 0; optIndex < setting.options.length; optIndex++) {
               const opt = setting.options[optIndex];
               if (typeof opt.label !== "string" || !("value" in opt)) {
-                console.log(
-                  `Validation failed: setting ${index} option ${optIndex} is invalid`,
-                );
+                console.log(`Validation failed: setting ${index} option ${optIndex} is invalid`);
                 return {
                   isValid: false,
                   error: `Setting ${index + 1}, Option ${optIndex + 1}: Each option must have "label" (string) and "value" fields.`,
                 };
               }
             }
-            if (
-              setting.defaultValue !== undefined &&
-              !Array.isArray(setting.defaultValue)
-            ) {
-              console.log(
-                `Validation failed: setting ${index} is multiselect but defaultValue is not array`,
-              );
+            if (setting.defaultValue !== undefined && !Array.isArray(setting.defaultValue)) {
+              console.log(`Validation failed: setting ${index} is multiselect but defaultValue is not array`);
               return {
                 isValid: false,
                 error: `Setting ${index + 1}: Multiselect type requires "defaultValue" to be an array if provided.`,
@@ -904,9 +892,7 @@ export default function EditApp() {
               typeof setting.max !== "number" ||
               setting.min > setting.max
             ) {
-              console.log(
-                `Validation failed: setting ${index} is slider but has invalid numeric properties`,
-              );
+              console.log(`Validation failed: setting ${index} is slider but has invalid numeric properties`);
               return {
                 isValid: false,
                 error: `Setting ${index + 1}: Slider type requires "defaultValue", "min", and "max" to be numbers, with min ≤ max.`,
@@ -915,9 +901,7 @@ export default function EditApp() {
             break;
 
           default:
-            console.log(
-              `Validation failed: setting ${index} has unknown type: ${setting.type}`,
-            );
+            console.log(`Validation failed: setting ${index} has unknown type: ${setting.type}`);
             return {
               isValid: false,
               error: `Setting ${index + 1}: Unknown setting type "${setting.type}". Supported types: toggle, text, text_no_save_button, select, select_with_search, multiselect, slider, group, titleValue.`,
@@ -1037,20 +1021,16 @@ export default function EditApp() {
           // Always update name and description if provided
           name: importConfigData.name || prev.name,
           description: importConfigData.description || prev.description,
-          onboardingInstructions:
-            importConfigData.onboardingInstructions ||
-            prev.onboardingInstructions,
+          onboardingInstructions: importConfigData.onboardingInstructions || prev.onboardingInstructions,
 
           // Update URLs only if they are provided and not empty
           publicUrl:
-            importConfigData.publicUrl !== undefined &&
-            importConfigData.publicUrl.trim() !== ""
+            importConfigData.publicUrl !== undefined && importConfigData.publicUrl.trim() !== ""
               ? importConfigData.publicUrl.trim()
               : prev.publicUrl,
           // Note: logoURL from import will be a Cloudflare Images URL or other hosted URL
           logoURL:
-            importConfigData.logoURL !== undefined &&
-            importConfigData.logoURL.trim() !== ""
+            importConfigData.logoURL !== undefined && importConfigData.logoURL.trim() !== ""
               ? importConfigData.logoURL.trim()
               : prev.logoURL,
           // For webviewURL, treat empty strings as &quot;not there at all&quot; - only update if it has actual content
@@ -1062,16 +1042,11 @@ export default function EditApp() {
               : prev.webviewURL,
 
           // Update appType if provided, otherwise keep existing (defaults to BACKGROUND in form)
-          appType:
-            importConfigData.appType !== undefined
-              ? (importConfigData.appType as AppType)
-              : prev.appType,
+          appType: importConfigData.appType !== undefined ? (importConfigData.appType as AppType) : prev.appType,
 
           // Replace permissions if provided, otherwise keep existing
           permissions:
-            importConfigData.permissions !== undefined
-              ? importConfigData.permissions
-              : prev.permissions || [],
+            importConfigData.permissions !== undefined ? importConfigData.permissions : prev.permissions || [],
 
           // Always replace settings and tools with imported data (can be empty arrays)
           settings: importConfigData.settings || [],
@@ -1082,12 +1057,25 @@ export default function EditApp() {
         return newData;
       });
 
+      // Import preview images if provided
+      if (importConfigData.previewImages && Array.isArray(importConfigData.previewImages)) {
+        const importedPhotos: PhotoUploadItem[] = importConfigData.previewImages
+          .sort((a, b) => a.order - b.order) // Sort by order
+          .map((img) => ({
+            id: `imported-${Date.now()}-${Math.random()}`,
+            url: img.url,
+            imageId: "", // imageId not in exported config
+            preview: img.url, // Use URL as preview
+            orientation: img.orientation,
+            uploading: false,
+          }));
+        setPreviewPhotos(importedPhotos);
+      }
+
       // Close dialog and show success message
       setIsImportDialogOpen(false);
       setImportConfigData(null);
-      toast.success(
-        "Configuration imported successfully! Remember to save changes.",
-      );
+      toast.success("Configuration imported successfully! Remember to save changes.");
     } catch (error) {
       console.error("Error importing configuration:", error);
       toast.error("Failed to import configuration. Please try again.");
@@ -1100,10 +1088,7 @@ export default function EditApp() {
     <DashboardLayout>
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center mb-6">
-          <Link
-            to="/apps"
-            className="flex items-center text-sm text-gray-500 hover:text-gray-700"
-          >
+          <Link to="/apps" className="flex items-center text-sm text-gray-500 hover:text-gray-700">
             <ArrowLeftIcon className="mr-1 h-4 w-4" />
             Back to apps
           </Link>
@@ -1119,9 +1104,7 @@ export default function EditApp() {
             <form onSubmit={handleSubmit}>
               <CardHeader>
                 <CardTitle className="text-2xl">Edit App</CardTitle>
-                <CardDescription>
-                  Update your app&apos;s configuration.
-                </CardDescription>
+                <CardDescription>Update your app&apos;s configuration.</CardDescription>
                 {currentOrg && (
                   <div className="mt-2 mb-2 text-sm flex items-center justify-between">
                     <div>
@@ -1136,8 +1119,7 @@ export default function EditApp() {
                         className="gap-2"
                         type="button"
                         variant="outline"
-                        size="sm"
-                      >
+                        size="sm">
                         <MoveIcon className="h-4 w-4" />
                         Switch Organization
                       </Button>
@@ -1156,9 +1138,7 @@ export default function EditApp() {
                 {isSaved && (
                   <Alert className="bg-green-50 text-green-800 border-green-200">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <AlertDescription className="text-green-700">
-                      App updated successfully!
-                    </AlertDescription>
+                    <AlertDescription className="text-green-700">App updated successfully!</AlertDescription>
                   </Alert>
                 )}
 
@@ -1171,9 +1151,7 @@ export default function EditApp() {
                     disabled
                     className="bg-gray-50"
                   />
-                  <p className="text-xs text-gray-500">
-                    Package names cannot be changed after creation.
-                  </p>
+                  <p className="text-xs text-gray-500">Package names cannot be changed after creation.</p>
                 </div>
 
                 <div className="space-y-2">
@@ -1186,8 +1164,7 @@ export default function EditApp() {
                     placeholder="e.g., My Awesome App"
                   />
                   <p className="text-xs text-gray-500">
-                    The name that will be displayed to users in the MentraOS app
-                    store.
+                    The name that will be displayed to users in the MentraOS app store.
                   </p>
                 </div>
 
@@ -1202,16 +1179,13 @@ export default function EditApp() {
                     rows={3}
                   />
                   <p className="text-xs text-gray-500">
-                    Provide a clear, concise description of your
-                    application&apos;s functionality.
+                    Provide a clear, concise description of your application&apos;s functionality.
                   </p>
                 </div>
 
                 {/* Onboarding Instructions Section */}
                 <div className="space-y-2">
-                  <Label htmlFor="onboardingInstructions">
-                    Onboarding Instructions (Optional)
-                  </Label>
+                  <Label htmlFor="onboardingInstructions">Onboarding Instructions (Optional)</Label>
                   <Textarea
                     id="onboardingInstructions"
                     name="onboardingInstructions"
@@ -1223,8 +1197,8 @@ export default function EditApp() {
                     style={{ maxHeight: "8em", overflowY: "auto" }}
                   />
                   <p className="text-xs text-gray-500">
-                    Provide onboarding instructions that will be shown to users
-                    the first time they launch your app. Maximum 5 lines.
+                    Provide onboarding instructions that will be shown to users the first time they launch your app.
+                    Maximum 5 lines.
                   </p>
                 </div>
 
@@ -1239,12 +1213,10 @@ export default function EditApp() {
                     placeholder="yourserver.com"
                   />
                   <p className="text-xs text-gray-500">
-                    The base URL of your server where MentraOS will communicate
-                    with your app. We&apos;ll automatically append
-                    &quot;/webhook&quot; to handle events when your app is
-                    activated. HTTPS is required and will be added automatically
-                    if not specified. Do not include a trailing slash - it will
-                    be automatically removed.
+                    The base URL of your server where MentraOS will communicate with your app. We&apos;ll automatically
+                    append &quot;/webhook&quot; to handle events when your app is activated. HTTPS is required and will
+                    be added automatically if not specified. Do not include a trailing slash - it will be automatically
+                    removed.
                   </p>
                 </div>
 
@@ -1263,8 +1235,21 @@ export default function EditApp() {
                   />
                   {/* Note: The actual Cloudflare URL is stored in logoURL but not displayed to the user */}
                   <p className="text-xs text-gray-500">
-                    Upload an image that will be used as your app&apos;s icon
-                    (recommended: 512x512 PNG).
+                    Upload an image that will be used as your app&apos;s icon (recommended: 512x512 PNG).
+                  </p>
+                </div>
+                {/* Preview Images */}
+                <div className="space-y-2">
+                  <Label>Preview Images</Label>
+                  <MultiPhotoUpload
+                    photos={previewPhotos}
+                    onChange={setPreviewPhotos}
+                    packageName={formData.packageName}
+                    maxPhotos={8}
+                    disabled={isSaving}
+                  />
+                  <p className="text-xs text-gray-500">
+                    Upload up to 8 images for your app preview (recommended: 16:9 aspect ratio).
                   </p>
                 </div>
 
@@ -1279,9 +1264,8 @@ export default function EditApp() {
                     placeholder="yourserver.com/webview"
                   />
                   <p className="text-xs text-gray-500">
-                    If your app has a companion mobile interface, provide the
-                    URL here. HTTPS is required and will be added automatically
-                    if not specified.
+                    If your app has a companion mobile interface, provide the URL here. HTTPS is required and will be
+                    added automatically if not specified.
                   </p>
                 </div>
 
@@ -1297,13 +1281,9 @@ export default function EditApp() {
                     <br />
                     Only 1 foreground app can run at a time.
                     <br />
-                    foreground apps yield the display to background apps when
-                    displaying content.
+                    foreground apps yield the display to background apps when displaying content.
                   </p>
-                  <Select
-                    value={formData.appType}
-                    onValueChange={handleAppTypeChange}
-                  >
+                  <Select value={formData.appType} onValueChange={handleAppTypeChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select app type" />
                     </SelectTrigger>
@@ -1326,10 +1306,7 @@ export default function EditApp() {
 
                 {/* Permissions Section */}
                 <div className="border rounded-md p-4 mt-6">
-                  <PermissionsForm
-                    permissions={formData.permissions || []}
-                    onChange={handlePermissionsChange}
-                  />
+                  <PermissionsForm permissions={formData.permissions || []} onChange={handlePermissionsChange} />
                 </div>
 
                 {/* Hardware Requirements Section */}
@@ -1346,16 +1323,13 @@ export default function EditApp() {
                     settings={formData.settings || []}
                     onChange={handleSettingsChange}
                     setSameValueWarning={setSameValueWarning}
-                    toast = {toast}
+                    toast={toast}
                   />
                 </div>
 
                 {/* Tools Section */}
                 <div className="border rounded-md p-4 mt-6">
-                  <ToolsEditor
-                    tools={formData.tools || []}
-                    onChange={handleToolsChange}
-                  />
+                  <ToolsEditor tools={formData.tools || []} onChange={handleToolsChange} />
                 </div>
 
                 {/* Share with Testers Section */}
@@ -1365,8 +1339,7 @@ export default function EditApp() {
                     Share with Testers
                   </h3>
                   <p className="text-sm text-gray-600 mb-4">
-                    Anyone with this link can access and test the app (read-only
-                    access).
+                    Anyone with this link can access and test the app (read-only access).
                   </p>
                   <div className="flex items-center justify-end">
                     <Button
@@ -1374,8 +1347,7 @@ export default function EditApp() {
                       className="gap-2"
                       type="button"
                       variant="outline"
-                      disabled={isLoadingShareLink}
-                    >
+                      disabled={isLoadingShareLink}>
                       {isLoadingShareLink ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -1392,9 +1364,7 @@ export default function EditApp() {
                   {shareLink && (
                     <div className="mt-3 p-2 bg-gray-50 rounded border">
                       <p className="text-xs text-gray-500 mb-1">Share Link:</p>
-                      <span className="text-xs text-blue-600 break-all">
-                        {shareLink}
-                      </span>
+                      <span className="text-xs text-blue-600 break-all">{shareLink}</span>
                     </div>
                   )}
                 </div>
@@ -1407,8 +1377,8 @@ export default function EditApp() {
                   </h3>
 
                   <p className="text-sm text-gray-600 mb-4">
-                    Your API key is used to authenticate your app with MentraOS
-                    cloud services. Keep it secure and never share it publicly.
+                    Your API key is used to authenticate your app with MentraOS cloud services. Keep it secure and never
+                    share it publicly.
                   </p>
 
                   <div className="flex items-center justify-end">
@@ -1467,37 +1437,24 @@ export default function EditApp() {
                           : "Your app is published and available to all MentraOS users in the App Store."}
                   </p>
 
-                  {formData.appStoreStatus === "REJECTED" &&
-                    formData.reviewNotes && (
-                      <div className="bg-red-50 border border-red-200 rounded-md p-3 mt-2 mb-4">
-                        <h4 className="text-sm font-medium text-red-800 mb-1">
-                          Rejection Reason:
-                        </h4>
-                        <p className="text-sm text-red-700">
-                          {formData.reviewNotes}
+                  {formData.appStoreStatus === "REJECTED" && formData.reviewNotes && (
+                    <div className="bg-red-50 border border-red-200 rounded-md p-3 mt-2 mb-4">
+                      <h4 className="text-sm font-medium text-red-800 mb-1">Rejection Reason:</h4>
+                      <p className="text-sm text-red-700">{formData.reviewNotes}</p>
+                      {formData.reviewedAt && (
+                        <p className="text-xs text-red-500 mt-2">
+                          Reviewed on {new Date(formData.reviewedAt).toLocaleDateString()} by{" "}
+                          {formData.reviewedBy?.split("@")[0] || "Admin"}
                         </p>
-                        {formData.reviewedAt && (
-                          <p className="text-xs text-red-500 mt-2">
-                            Reviewed on{" "}
-                            {new Date(formData.reviewedAt).toLocaleDateString()}{" "}
-                            by {formData.reviewedBy?.split("@")[0] || "Admin"}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  )}
 
-                  {(formData.appStoreStatus === "DEVELOPMENT" ||
-                    formData.appStoreStatus === "REJECTED") && (
+                  {(formData.appStoreStatus === "DEVELOPMENT" || formData.appStoreStatus === "REJECTED") && (
                     <div className="flex items-center justify-end">
-                      <Button
-                        onClick={handleOpenPublishDialog}
-                        className="gap-2"
-                        type="button"
-                      >
+                      <Button onClick={handleOpenPublishDialog} className="gap-2" type="button">
                         <Upload className="h-4 w-4" />
-                        {formData.appStoreStatus === "REJECTED"
-                          ? "Resubmit to App Store"
-                          : "Publish to App Store"}
+                        {formData.appStoreStatus === "REJECTED" ? "Resubmit to App Store" : "Publish to App Store"}
                       </Button>
                     </div>
                   )}
@@ -1510,9 +1467,8 @@ export default function EditApp() {
                     Configuration Management
                   </h3>
                   <p className="text-sm text-gray-600 mb-4">
-                    Import or export your app configuration (name, description,
-                    URLs, permissions, settings, and tools) as a app_config.json
-                    file
+                    Import or export your app configuration (name, description, URLs, permissions, settings, and tools)
+                    as a app_config.json file
                   </p>
 
                   {/* Show import error if there is one and no dialog is open */}
@@ -1524,20 +1480,11 @@ export default function EditApp() {
                   )}
 
                   <div className="flex items-center justify-end">
-                    <Button
-                      onClick={handleImportClick}
-                      variant="outline"
-                      type="button"
-                      className="mr-2"
-                    >
+                    <Button onClick={handleImportClick} variant="outline" type="button" className="mr-2">
                       <Download className="h-4 w-4 mr-2" />
                       Import app_config.json
                     </Button>
-                    <Button
-                      onClick={handleExportConfig}
-                      variant="outline"
-                      type="button"
-                    >
+                    <Button onClick={handleExportConfig} variant="outline" type="button">
                       <Upload className="h-4 w-4 mr-2" />
                       Export app_config.json
                     </Button>
@@ -1554,11 +1501,7 @@ export default function EditApp() {
                 </div>
               </CardContent>
               <CardFooter className="flex justify-between border-t p-6">
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={() => navigate("/apps")}
-                >
+                <Button variant="outline" type="button" onClick={() => navigate("/apps")}>
                   Back
                 </Button>
                 <Button type="submit" disabled={isSaving}>

@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger fallback
   push:
     branches:
-      - cloud/livekit-mentra-live-bugs
+      - cloud/sdk-photo-timeout
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

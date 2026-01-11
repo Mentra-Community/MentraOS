@@ -6,7 +6,9 @@ import android.util.Log;
 
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManagerFactory;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
+import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.communication.managers.CommunicationManager;
 import com.mentra.asg_client.service.communication.managers.ResponseBuilder;
@@ -159,7 +161,33 @@ public class ServiceContainer {
         // Initialize lifecycle manager first
         lifecycleManager.initialize();
 
+        // Wire up phone-controlled OTA after OtaService has started (delayed)
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            wireUpPhoneControlledOta();
+        }, 6000); // After OtaService starts (5s delay + 1s buffer)
+
         Log.d("ServiceContainer", "Service container initialized successfully");
+    }
+
+    /**
+     * Wire up phone-controlled OTA connections.
+     * Called after OtaService has started and OtaHelper singleton is available.
+     */
+    private void wireUpPhoneControlledOta() {
+        Log.d("ServiceContainer", "Wiring up phone-controlled OTA...");
+
+        OtaHelper otaHelper = OtaHelper.getInstance();
+        if (otaHelper != null) {
+            // Set CommunicationManager as the PhoneConnectionProvider
+            otaHelper.setPhoneConnectionProvider((CommunicationManager) communicationManager);
+            Log.i("ServiceContainer", "✅ PhoneConnectionProvider set on OtaHelper");
+
+            // Set OtaHelper on OtaCommandHandler for handling ota_start commands
+            OtaCommandHandler.setOtaHelper(otaHelper);
+            Log.i("ServiceContainer", "✅ OtaHelper set on OtaCommandHandler");
+        } else {
+            Log.w("ServiceContainer", "⚠️ OtaHelper not yet initialized - phone-controlled OTA not available");
+        }
     }
 
     /**

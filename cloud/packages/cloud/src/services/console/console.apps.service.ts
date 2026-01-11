@@ -3,6 +3,7 @@ import App from "../../models/app.model";
 import { User, UserI } from "../../models/user.model";
 import { OrganizationService } from "../core/organization.service";
 import { generateApiKey, hashApiKey } from "../core/developer.service";
+import { slackService } from "../notifications/slack.service";
 import { logger as rootLogger } from "../logging/pino-logger";
 const logger = rootLogger.child({ service: "console.apps.service" });
 
@@ -203,6 +204,18 @@ export async function createApp(
   try {
     const created = await App.create(doc);
     const leanCreated = (await App.findById(created._id).lean()) || doc;
+
+    // Notify Slack about the new mini app submission (fire-and-forget)
+    slackService.notifyMiniAppSubmission(
+      {
+        name: leanCreated.name,
+        packageName: leanCreated.packageName,
+        appType: leanCreated.appType,
+        description: leanCreated.description,
+      },
+      email,
+    ).catch(() => {});
+
     return {
       app: sanitizeApp(leanCreated),
       apiKey, // return plaintext once

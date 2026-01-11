@@ -21,6 +21,7 @@ import Divider from "@/components/ui/Divider"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
 import {useApplets, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
@@ -28,13 +29,12 @@ import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function AppSettings() {
   const {packageName, appName: appNameParam} = useLocalSearchParams()
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
-  const {goBack, replace} = useNavigationHistory()
+  const {goBack, replaceAll} = useNavigationHistory()
   const insets = useSafeAreaInsets()
   const hasLoadedData = useRef(false)
 
@@ -159,7 +159,7 @@ export default function AppSettings() {
               showAlert(
                 translate("common:success"),
                 translate("appSettings:uninstalledSuccess", {appName: appInfo?.name || appName}),
-                [{text: translate("common:ok"), onPress: () => replace("/(tabs)/home")}],
+                [{text: translate("common:ok"), onPress: () => replaceAll("/(tabs)/home")}],
               )
             } catch (error: any) {
               console.error("Error uninstalling app:", error)

@@ -66,8 +66,18 @@ class CoreModule : Module() {
             coreManager?.sendWifiCredentials(ssid, password)
         }
 
+        AsyncFunction("forgetWifiNetwork") { ssid: String ->
+            coreManager?.forgetWifiNetwork(ssid)
+        }
+
         AsyncFunction("setHotspotState") { enabled: Boolean ->
             coreManager?.setHotspotState(enabled)
+        }
+
+        // MARK: - User Context Commands
+
+        AsyncFunction("setUserEmail") { email: String ->
+            coreManager?.setUserEmail(email)
         }
 
         // MARK: - Gallery Commands
@@ -80,9 +90,14 @@ class CoreModule : Module() {
                 size: String,
                 webhookUrl: String,
                 authToken: String,
-                compress: String ->
-            coreManager?.photoRequest(requestId, appId, size, webhookUrl, authToken, compress)
+                compress: String,
+                silent: Boolean ->
+            coreManager?.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, silent)
         }
+
+        // MARK: - OTA Commands
+
+        AsyncFunction("sendOtaStart") { coreManager?.sendOtaStart() }
 
         // MARK: - Video Recording Commands
 
@@ -94,8 +109,8 @@ class CoreModule : Module() {
             coreManager?.saveBufferVideo(requestId, durationSeconds)
         }
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean ->
-            coreManager?.startVideoRecording(requestId, save)
+        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, silent: Boolean ->
+            coreManager?.startVideoRecording(requestId, save, silent)
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
@@ -124,6 +139,12 @@ class CoreModule : Module() {
         }
 
         AsyncFunction("restartTranscriber") { coreManager?.restartTranscriber() }
+
+        // MARK: - Audio Encoding Commands
+
+        AsyncFunction("setLC3FrameSize") { frameSize: Int ->
+            coreManager?.setLC3FrameSize(frameSize)
+        }
 
         // MARK: - RGB LED Control
 

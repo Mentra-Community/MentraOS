@@ -39,6 +39,7 @@ import PhotoManager from "./PhotoManager";
 import SubscriptionManager from "./SubscriptionManager";
 import { TranscriptionManager } from "./transcription/TranscriptionManager";
 import { TranslationManager } from "./translation/TranslationManager";
+import UdpAudioManager from "./UdpAudioManager";
 import UnmanagedStreamingExtension from "./UnmanagedStreamingExtension";
 import UserSettingsManager from "./UserSettingsManager";
 
@@ -118,6 +119,7 @@ export class UserSession {
   public locationManager: LocationManager;
   public userSettingsManager: UserSettingsManager;
   public deviceManager: DeviceManager;
+  public udpAudioManager: UdpAudioManager;
 
   public streamRegistry: StreamRegistry;
   public unmanagedStreamingExtension: UnmanagedStreamingExtension;
@@ -181,6 +183,7 @@ export class UserSession {
     this.userSettingsManager = new UserSettingsManager(this);
     this.speakerManager = new SpeakerManager(this);
     this.deviceManager = new DeviceManager(this);
+    this.udpAudioManager = new UdpAudioManager(this);
 
     // Set up heartbeat for glasses connection
     this.setupGlassesHeartbeat();
@@ -712,6 +715,9 @@ export class UserSession {
 
     // Clear audio play request mappings
     this.audioPlayRequestMapping.clear();
+
+    // Dispose UDP audio manager
+    if (this.udpAudioManager) this.udpAudioManager.dispose();
 
     // Remove from static session map
     UserSession.sessions.delete(this.userId);

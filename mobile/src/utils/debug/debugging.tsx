@@ -4,10 +4,10 @@ import {useEffect, useRef, useState} from "react"
 import {ScrollView, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite/Text"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
-export const DebugHitSlop = ({children, hitSlop, style, ..._props}) => {
+export const DebugHitSlop = ({children, hitSlop, style, ...props}) => {
   if (!__DEV__ || !hitSlop) return children
 
   const hitSlopStyle = {

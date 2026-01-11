@@ -62,6 +62,7 @@ CLOUD_PUBLIC_HOST_NAME=localhost:8002
 CLOUD_LOCAL_HOST_NAME=cloud
 
 # MongoDB (required)
+# If running MongoDB locally, ensure it's bound to 127.0.0.1 only (see MongoDB Setup section below)
 MONGO_URL=mongodb://localhost:27017/mentraos
 # For MongoDB Atlas (cloud):
 # MONGO_URL=mongodb+srv://username:password@cluster.mongodb.net/mentraos?retryWrites=true&w=majority
@@ -170,13 +171,18 @@ Internal team members can skip this section and get the configured `.env` from S
 #### MongoDB Setup
 
 **Option 1: Local MongoDB with Docker**
+
+<Warning>
+**Security Critical**: Always bind MongoDB to localhost only (`127.0.0.1`) to prevent exposure to the public internet. Automated ransomware scanners actively search for exposed MongoDB instances.
+</Warning>
+
 ```bash
 # Add to docker-compose.dev.yml
 services:
   mongodb:
     image: mongo:7.0
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"  # IMPORTANT: Bind to localhost only!
     volumes:
       - mongo_data:/data/db
     environment:
@@ -612,10 +618,17 @@ db.apps.insertOne({
 
 ## Security Reminders
 
+<Warning>
+**Database Security**: Never expose MongoDB to the public internet. Automated ransomware scanners actively target open database ports. Always use `127.0.0.1:PORT:PORT` instead of `PORT:PORT` in Docker port bindings for databases.
+</Warning>
+
+- **Always bind databases to localhost**: Use `127.0.0.1:27017:27017` not `27017:27017`
 - **Never commit .env files**
 - **Don't share ngrok URLs** with sensitive data
 - **Use strong JWT secrets** in production
 - **Rotate secrets regularly**
+- **Use MongoDB Atlas** for cloud deployments (handles security automatically)
+- **Enable authentication** on any exposed services
 
 ## Next Steps
 

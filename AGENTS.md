@@ -117,6 +117,18 @@ Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") an
 
 Cloud services require `.env` files copied from `.env.example` that stay local. Mobile secrets belong in `mobile/app.config.ts` or the secure config service—avoid committing device-specific tokens. Rebuild native projects after modifying BLE or camera modules to keep generated code in sync, and install Java 17, Android Studio, Xcode, Docker, and Bun/Node before the first build.
 
+### Database Security
+
+**CRITICAL**: When running MongoDB locally with Docker, always bind to localhost only:
+
+```yaml
+ports:
+  - "127.0.0.1:27017:27017"  # Correct - localhost only
+  # NOT "27017:27017" which exposes to all interfaces
+```
+
+Automated ransomware scanners actively target exposed MongoDB instances. Use MongoDB Atlas for production deployments.
+
 ## Project Resources
 
 - [GitHub Project Board - General Tasks](https://github.com/orgs/Mentra-Community/projects/2)

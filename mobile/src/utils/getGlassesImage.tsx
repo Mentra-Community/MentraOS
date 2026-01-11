@@ -1,4 +1,5 @@
 import {Platform} from "react-native"
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export const getGlassesImage = (glasses: string | null) => {
   switch (glasses) {
@@ -26,7 +27,7 @@ export const getGlassesImage = (glasses: string | null) => {
     case "virtual-wearable":
     case "Audio Wearable":
       return require("../../assets/glasses/audio_wearable.png")
-    case "Simulated Glasses":
+    case DeviceTypes.SIMULATED:
       if (Platform.OS === "ios") {
         return require("../../assets/guide/iphone.png")
       } else {

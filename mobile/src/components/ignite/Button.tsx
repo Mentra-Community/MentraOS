@@ -9,11 +9,12 @@ import {
   View,
 } from "react-native"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {$styles, spacing} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 import {Text, TextProps} from "./Text"
+import {withUniwind} from "uniwind"
 
 type Presets = "default" | "primary" | "secondary" | "accent" | "warning" | "destructive" | "outlined" | "alternate"
 
@@ -127,7 +128,7 @@ export interface ButtonProps extends PressableProps {
  *   onPress={handleButtonPress}
  * />
  */
-export function Button(props: ButtonProps) {
+function OriginalButton(props: ButtonProps) {
   const {
     tx,
     text,
@@ -160,12 +161,12 @@ export function Button(props: ButtonProps) {
   function $viewStyle({pressed}: PressableStateCallbackType): StyleProp<ViewStyle> {
     return [
       themed($viewPresets[preset]),
-      $viewStyleOverride,
       !!pressed && themed([$pressedViewPresets[preset], $pressedViewStyleOverride]),
-      !!disabled && $disabledViewStyleOverride,
       !!flex && {flex: 1},
-      (!!compact || !!compactIcon) && $compactViewStyle,
-      !!compactIcon && $compactIconStyle,
+      (!!compact || !!compactIcon) && themed($compactViewStyle),
+      !!compactIcon && themed($compactIconStyle),
+      !!disabled && themed($disabledViewStyleOverride),
+      themed($viewStyleOverride),
     ]
   }
   /**
@@ -190,7 +191,7 @@ export function Button(props: ButtonProps) {
       accessibilityState={{disabled: !!disabled}}
       {...rest}
       disabled={disabled}>
-      {state => (
+      {(state) => (
         <View
           style={[{position: "relative", justifyContent: "center", alignItems: "center"}, flexContainer && {flex: 1}]}>
           {!!LeftAccessory && (
@@ -223,6 +224,8 @@ export function Button(props: ButtonProps) {
   )
 }
 
+export const Button = withUniwind(OriginalButton)
+
 const $baseViewStyle: ThemedStyle<ViewStyle> = ({spacing, colors, isDark}) => ({
   minHeight: 44,
   borderRadius: 50,
@@ -240,12 +243,12 @@ const $compactViewStyle: StyleProp<ViewStyle> = {
   minHeight: 0,
   maxHeight: 36,
   paddingVertical: spacing.s2,
-  paddingHorizontal: spacing.s2,
-  // flex: 1,
+  paddingHorizontal: spacing.s4,
 } as ViewStyle
 
 const $compactIconStyle: StyleProp<ViewStyle> = {
   maxWidth: 36,
+  paddingHorizontal: spacing.s2,
 } as ViewStyle
 
 const $baseTextStyle: ThemedStyle<TextStyle> = ({colors}) => ({

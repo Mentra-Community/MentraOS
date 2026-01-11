@@ -1,8 +1,8 @@
 import {View, ViewStyle, TextStyle} from "react-native"
 
 import {Switch, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 type ToggleSettingProps = {
   label: string

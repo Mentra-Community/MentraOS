@@ -15,12 +15,12 @@ import {
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {spacing, ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {isDuplicateSignupError, mapAuthError} from "@/utils/auth/authErrors"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function SignupScreen() {
   const [step, setStep] = useState<1 | 2>(1)
@@ -31,7 +31,7 @@ export default function SignupScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
-  const {goBack, replace} = useNavigationHistory()
+  const {goBack, replace, push} = useNavigationHistory()
   const {theme, themed} = useAppTheme()
 
   const passwordsMatch = password === confirmPassword && password.length > 0
@@ -84,9 +84,9 @@ export default function SignupScreen() {
     if (res.is_error()) {
       console.error("Error during sign-up:", res.error)
 
-      // Handle duplicate signup specially - show as info, not error
+      // Handle duplicate signup - email already registered
       if (isDuplicateSignupError(res.error)) {
-        showAlert(translate("login:success"), translate("login:errors.alreadySentEmail"), [
+        showAlert(translate("common:error"), translate("login:errors.emailAlreadyRegistered"), [
           {text: translate("common:ok")},
         ])
       } else {
@@ -99,10 +99,8 @@ export default function SignupScreen() {
 
     setIsLoading(false)
 
-    // Show success alert and navigate after dismissal
-    showAlert(translate("login:success"), translate("login:checkEmailVerification"), [
-      {text: translate("common:ok"), onPress: () => replace("/")},
-    ])
+    // Navigate to verification page
+    push("/auth/verification", {email})
   }
 
   const handleBack = () => {
@@ -114,10 +112,14 @@ export default function SignupScreen() {
     }
   }
 
+  const handleEditEmail = () => {
+    setStep(1)
+  }
+
   return (
     <Screen preset="fixed" style={themed($container)}>
       <Header
-        title={step === 1 ? translate("login:signup.title") : translate("login:signup.createPassword")}
+        title={translate("login:signup.title")}
         leftIcon="chevron-left"
         onLeftPress={handleBack}
       />
@@ -129,14 +131,12 @@ export default function SignupScreen() {
           {step === 1 ? (
             // Step 1: Email input
             <>
-              <Text style={themed($subtitle)}>{translate("login:signup.subtitle")}</Text>
+              <Text preset="heading" style={themed($heading)}>{translate("login:signup.subtitle")}</Text>
 
               <View style={themed($form)}>
                 <View style={themed($inputGroup)}>
                   <Text tx="login:email" style={themed($inputLabel)} />
                   <View style={themed($enhancedInputContainer)}>
-                    <FontAwesome name="envelope" size={16} color={theme.colors.text} />
-                    <Spacer width={spacing.s1} />
                     <TextInput
                       hitSlop={{top: 16, bottom: 16}}
                       style={themed($enhancedInput)}
@@ -164,24 +164,28 @@ export default function SignupScreen() {
                   onPress={handleContinue}
                   disabled={!email.trim()}
                 />
+
+                <Spacer height={spacing.s3} />
+
+                <Text style={themed($termsText)}>{translate("login:termsText")}</Text>
               </View>
             </>
           ) : (
             // Step 2: Password + Confirm password
             <>
-              <Text style={themed($subtitle)}>{translate("login:signup.createPasswordSubtitle")}</Text>
+              <Text preset="heading" style={themed($heading)}>{translate("login:signup.createPasswordSubtitle")}</Text>
 
-              <View style={themed($emailBadge)}>
-                <FontAwesome name="envelope" size={14} color={theme.colors.textDim} />
-                <Text style={themed($emailBadgeText)}>{email}</Text>
+              <View style={themed($emailRow)}>
+                <Text style={themed($emailText)}>{email}</Text>
+                <TouchableOpacity onPress={handleEditEmail}>
+                  <Text style={themed($editLink)}>{translate("login:signup.edit")}</Text>
+                </TouchableOpacity>
               </View>
 
               <View style={themed($form)}>
                 <View style={themed($inputGroup)}>
                   <Text tx="login:password" style={themed($inputLabel)} />
                   <View style={themed($enhancedInputContainer)}>
-                    <FontAwesome name="lock" size={16} color={theme.colors.text} />
-                    <Spacer width={spacing.s1} />
                     <TextInput
                       hitSlop={{top: 16, bottom: 16}}
                       style={themed($enhancedInput)}
@@ -196,7 +200,7 @@ export default function SignupScreen() {
                     <TouchableOpacity
                       hitSlop={{top: 16, bottom: 16, left: 16, right: 16}}
                       onPress={() => setShowPassword(!showPassword)}>
-                      <FontAwesome name={showPassword ? "eye" : "eye-slash"} size={18} color={theme.colors.text} />
+                      <FontAwesome name={showPassword ? "eye" : "eye-slash"} size={18} color={theme.colors.textDim} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -204,8 +208,6 @@ export default function SignupScreen() {
                 <View style={themed($inputGroup)}>
                   <Text tx="login:signup.confirmPassword" style={themed($inputLabel)} />
                   <View style={themed($enhancedInputContainer)}>
-                    <FontAwesome name="lock" size={16} color={theme.colors.text} />
-                    <Spacer width={spacing.s1} />
                     <TextInput
                       hitSlop={{top: 16, bottom: 16}}
                       style={themed($enhancedInput)}
@@ -222,7 +224,7 @@ export default function SignupScreen() {
                       <FontAwesome
                         name={showConfirmPassword ? "eye" : "eye-slash"}
                         size={18}
-                        color={theme.colors.text}
+                        color={theme.colors.textDim}
                       />
                     </TouchableOpacity>
                   </View>
@@ -240,9 +242,9 @@ export default function SignupScreen() {
 
                 <Button
                   tx="login:signup.createAccount"
-                  style={themed($primaryButton)}
-                  pressedStyle={themed($pressedButton)}
-                  textStyle={themed($buttonText)}
+                  style={themed($createAccountButton)}
+                  pressedStyle={themed($createAccountButtonPressed)}
+                  textStyle={themed($createAccountButtonText)}
                   onPress={handleSignup}
                   disabled={!isStep2Valid || isLoading}
                   {...(isLoading && {
@@ -286,11 +288,11 @@ const $card: ThemedStyle<ViewStyle> = ({spacing}) => ({
   padding: spacing.s4,
 })
 
-const $subtitle: ThemedStyle<TextStyle> = ({spacing, colors}) => ({
-  fontSize: 16,
+const $heading: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 24,
+  fontWeight: "bold",
   color: colors.text,
-  textAlign: "left",
-  marginBottom: spacing.s6,
+  marginBottom: spacing.s4,
 })
 
 const $form: ThemedStyle<ViewStyle> = () => ({
@@ -336,21 +338,22 @@ const $enhancedInput: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
 })
 
-const $emailBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+const $emailRow: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   alignItems: "center",
-  backgroundColor: colors.primary_foreground,
-  paddingHorizontal: spacing.s3,
-  paddingVertical: spacing.s2,
-  borderRadius: 8,
   marginBottom: spacing.s4,
-  alignSelf: "flex-start",
+  gap: spacing.s2,
 })
 
-const $emailBadgeText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+const $emailText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
-  color: colors.textDim,
-  marginLeft: spacing.s2,
+  color: colors.text,
+})
+
+const $editLink: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 14,
+  color: colors.tint,
+  fontWeight: "500",
 })
 
 const $errorText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
@@ -368,14 +371,35 @@ const $hintText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
 const $primaryButton: ThemedStyle<ViewStyle> = () => ({})
 
 const $pressedButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.primary_foreground,
+  backgroundColor: colors.background,
   opacity: 0.9,
 })
 
 const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.textAlt,
   fontSize: 16,
-  fontWeight: "bold",
+  fontWeight: "500",
+})
+
+const $createAccountButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.text,
+})
+
+const $createAccountButtonPressed: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.text,
+  opacity: 0.8,
+})
+
+const $createAccountButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.background,
+  fontSize: 16,
+  fontWeight: "500",
+})
+
+const $termsText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 12,
+  color: colors.textDim,
+  textAlign: "center",
 })
 
 const $modalOverlay: ThemedStyle<ViewStyle> = () => ({

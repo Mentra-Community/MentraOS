@@ -39,6 +39,7 @@ function withAppBuildGradleModifications(config: any) {
  * Release-Store credentials.
  * Looks for keystore in shared location (~/.mentra/credentials/) first,
  * then falls back to repo-local credentials/ folder.
+ * If no keystore is found, falls back to debug keystore for local development.
  */
 def releaseStorePassword = project.hasProperty("MENTRAOS_UPLOAD_STORE_PASSWORD") ? project.property("MENTRAOS_UPLOAD_STORE_PASSWORD") : ""
 def releaseKeyPassword = project.hasProperty("MENTRAOS_UPLOAD_KEY_PASSWORD") ? project.property("MENTRAOS_UPLOAD_KEY_PASSWORD") : ""
@@ -46,8 +47,33 @@ def releaseKeyAlias = project.hasProperty("MENTRAOS_UPLOAD_KEY_ALIAS") ? project
 
 // Find keystore: check shared location first, then local
 def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/upload-keystore.jks")
-def localKeystore = file('../credentials/upload-keystore.jks')
-def releaseKeystoreFile = sharedKeystore.exists() ? sharedKeystore : localKeystore
+def localKeystore = file('../../credentials/upload-keystore.jks')
+def releaseKeystoreFile = sharedKeystore.exists() ? sharedKeystore : (localKeystore.exists() ? localKeystore : null)
+
+// Check if we have valid release signing credentials
+def hasReleaseSigningConfig = releaseKeystoreFile != null && releaseStorePassword
+
+// Print signing configuration being used
+println ""
+println "=============================================="
+println "[MentraOS] Signing Configuration"
+println "=============================================="
+if (hasReleaseSigningConfig) {
+    println "  Using RELEASE keystore: \${releaseKeystoreFile.absolutePath}"
+    println "  Key alias: \${releaseKeyAlias}"
+} else {
+    println "  Using DEBUG keystore (no release credentials found)"
+    println "  Checked locations:"
+    println "    - \${sharedKeystore.absolutePath} (\${sharedKeystore.exists() ? 'exists' : 'not found'})"
+    println "    - \${localKeystore.absolutePath} (\${localKeystore.exists() ? 'exists' : 'not found'})"
+    if (releaseKeystoreFile != null && !releaseStorePassword) {
+        println "  NOTE: Keystore found but MENTRAOS_UPLOAD_STORE_PASSWORD not set"
+    }
+    println ""
+    println "  Release builds will be signed with debug key (NOT for production!)"
+}
+println "=============================================="
+println ""
 
 // Conditionally apply Sentry gradle script for source map uploads
 if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUploadEnabled").toBoolean()) {
@@ -97,54 +123,36 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 5. Add configurations.all block for ExoPlayer exclusions and Media3 resolution
-    if (!buildGradle.includes("configurations.all")) {
-      const configurationsBlock = `
-configurations.all {
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-core'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-ui'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-hls'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-smoothstreaming'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-dash'
-    exclude group: 'com.google.android.exoplayer', module: 'exoplayer-rtsp'
-
-    resolutionStrategy {
-        // Force androidx Media3 versions
-        force 'androidx.media3:media3-exoplayer:1.4.0'
-        force 'androidx.media3:media3-ui:1.4.0'
-        force 'androidx.media3:media3-common:1.4.0'
-        force 'androidx.media3:media3-session:1.4.0'
-        force 'androidx.media3:media3-datasource:1.4.0'
-    }
-}
-`
-
-      buildGradle = buildGradle.replace(/(dependencies\s*{)/, `${configurationsBlock}\n$1`)
-    }
-
-    // 6. Add release signing config (from android-signing-config.js)
+    // 6. Add release signing config with fallback to debug keystore (from android-signing-config.js)
     if (!buildGradle.includes("storeFile releaseKeystoreFile")) {
       const releaseSigningConfig = `
         release {
-            storeFile releaseKeystoreFile
-            storePassword = releaseStorePassword
-            keyAlias = releaseKeyAlias
-            keyPassword = releaseKeyPassword
+            if (hasReleaseSigningConfig) {
+                storeFile releaseKeystoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            } else {
+                // Fall back to debug keystore for local development
+                storeFile file('debug.keystore')
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
         }`
 
       buildGradle = buildGradle.replace(/(signingConfigs\s*{\s*debug\s*{[^}]*})/, `$1${releaseSigningConfig}`)
     }
 
-    // 7. Update release build type to use release signing conditionally (from android-signing-config.js)
+    // 7. Update release build type to always use release signing config (which has fallback built-in)
     if (
       buildGradle.includes("signingConfig signingConfigs.debug") &&
       buildGradle.includes("release {") &&
-      !buildGradle.includes("releaseStorePassword ? signingConfigs.release")
+      !buildGradle.includes("signingConfig signingConfigs.release")
     ) {
       buildGradle = buildGradle.replace(
         /release\s*{[^{}]*signingConfig signingConfigs\.debug/,
-        "release {\n            signingConfig releaseStorePassword ? signingConfigs.release : signingConfigs.debug",
+        "release {\n            // signingConfigs.release has built-in fallback to debug keystore\n            signingConfig signingConfigs.release",
       )
     }
 

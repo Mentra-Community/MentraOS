@@ -26,6 +26,9 @@ import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
+import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
+import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
+import com.mentra.asg_client.reporting.core.ReportManager;
 
 import org.json.JSONObject;
 
@@ -294,6 +297,9 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new AuthTokenCommandHandler(communicationManager, configurationManager));
             Log.d(TAG, "✅ Registered AuthTokenCommandHandler");
 
+            commandHandlerRegistry.registerHandler(new UserEmailCommandHandler(configurationManager, ReportManager.getInstance(context)));
+            Log.d(TAG, "✅ Registered UserEmailCommandHandler");
+
             commandHandlerRegistry.registerHandler(new PhotoCommandHandler(context, serviceManager, fileManager, stateManager));
             Log.d(TAG, "✅ Registered PhotoCommandHandler");
 
@@ -338,6 +344,9 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered ServiceHeartbeatCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new BleConfigCommandHandler());
+            Log.d(TAG, "✅ Registered BleConfigCommandHandler");
 
             Log.i(TAG, "✅ Successfully registered " + commandHandlerRegistry.getHandlerCount() + " command handlers");
 

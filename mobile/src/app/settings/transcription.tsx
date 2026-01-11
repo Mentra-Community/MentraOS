@@ -8,6 +8,7 @@ import ModelSelector from "@/components/settings/ModelSelector"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import STTModelManager from "@/services/STTModelManager"
 import {modelDownloadService} from "@/services/modelDownloadService"
@@ -15,7 +16,6 @@ import {useStopAllApplets} from "@/stores/applets"
 import {useModelDownloadStore, selectIsDownloading} from "@/stores/modelDownload"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function TranscriptionSettingsScreen() {
   const {theme} = useAppTheme()

@@ -6,8 +6,9 @@ import {Alert, BackHandler, Platform, Animated} from "react-native"
 import {Icon, IconTypes} from "@/components/ignite"
 import BasicDialog from "@/components/ui/BasicDialog"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
+
 import {SettingsNavigationUtils} from "./SettingsNavigationUtils"
-import {useAppTheme} from "./useAppTheme"
 
 // eslint-disable-next-line
 import {StyleSheet} from "react-native"
@@ -231,7 +232,8 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
           zIndex: 10,
           justifyContent: "center",
           alignItems: "center",
-          backgroundColor: theme.colors.background + "B3",
+          // backgroundColor: theme.colors.secondary_foreground + "C3",
+          backgroundColor: "#0a0a0ac3",
           paddingHorizontal: 24,
           opacity: fadeAnim,
         }}>
@@ -302,7 +304,7 @@ export interface ConnectivityAlertOptions extends AlertOptions {
 /**
  * Shows a standard alert with custom buttons
  */
-const showAlert = (title: string, message: string, buttons: AlertButton[], options?: AlertOptions) => {
+const showAlert = (title: string, message: string, buttons: AlertButton[] = [], options?: AlertOptions) => {
   if (modalRef) {
     // because a previous modal might be still fading out
     setTimeout(() => {

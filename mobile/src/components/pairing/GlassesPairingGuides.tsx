@@ -18,10 +18,10 @@ import {Button, Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import GlassesTroubleshootingModal from "@/components/misc/GlassesTroubleshootingModal"
 import {Spacer} from "@/components/ui/Spacer"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export function MentraNextGlassesPairingGuide() {
   const {theme, themed} = useAppTheme()

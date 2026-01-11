@@ -79,4 +79,21 @@ public final class AudioAssets {
      * Same as audio recording stop for consistency
      */
     public static final String VIDEO_RECORDING_STOP = RECORDING_STOP;
+
+    /**
+     * Battery level announcement audio folder prefix
+     */
+    public static final String BATTERY_LEVEL_PREFIX = "battery/";
+
+    /**
+     * Get battery level announcement audio file path.
+     * Rounds to nearest 10% (10, 20, 30... 100).
+     *
+     * @param percent Battery level 0-100
+     * @return Asset path like "battery/50.mp3"
+     */
+    public static String getBatteryLevelAsset(int percent) {
+        int rounded = Math.max(10, Math.min(100, ((percent + 5) / 10) * 10));
+        return BATTERY_LEVEL_PREFIX + rounded + ".mp3";
+    }
 }

@@ -4,9 +4,9 @@ import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
 import {Badge} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useBackgroundApps} from "@/stores/applets"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export const BackgroundAppsLink = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()

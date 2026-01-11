@@ -3,9 +3,9 @@ import {View, TouchableOpacity, Modal, Image, ImageStyle, Animated} from "react-
 import MaterialIcons from "react-native-vector-icons/MaterialIcons"
 
 import {Button, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface TroubleshootingModalProps {
   isVisible: boolean

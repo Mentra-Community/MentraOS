@@ -7,6 +7,7 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {gallerySettingsService} from "@/services/asg/gallerySettingsService"
 import {localStorageService} from "@/services/asg/localStorageService"
@@ -14,7 +15,6 @@ import {useGallerySyncStore} from "@/stores/gallerySync"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function GallerySettingsScreen() {
   const {goBack, push} = useNavigationHistory()

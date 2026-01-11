@@ -8,27 +8,27 @@
  *        and only show start/complete notifications to avoid spam
  */
 
-import * as Notifications from "expo-notifications"
+// import * as Notifications from "expo-notifications"
 import {Platform} from "react-native"
 
 // Notification IDs
-const SYNC_NOTIFICATION_ID = "gallery-sync-progress"
-const CHANNEL_ID = "gallery-sync"
+const _SYNC_NOTIFICATION_ID = "gallery-sync-progress"
+const _CHANNEL_ID = "gallery-sync"
 
 // iOS throttling - only update every N seconds to avoid banner spam
 const IOS_UPDATE_THROTTLE_MS = 10000 // 10 seconds between updates on iOS
 
 // Configure notification handler
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-    // On iOS, minimize banner popups for progress updates
-    shouldShowBanner: Platform.OS === "android",
-    shouldShowList: true,
-  }),
-})
+// Notifications.setNotificationHandler({
+//   handleNotification: async () => ({
+//     shouldShowAlert: true,
+//     shouldPlaySound: false,
+//     shouldSetBadge: false,
+//     // On iOS, minimize banner popups for progress updates
+//     shouldShowBanner: Platform.OS === "android",
+//     shouldShowList: true,
+//   }),
+// })
 
 class GallerySyncNotifications {
   private static instance: GallerySyncNotifications
@@ -49,22 +49,22 @@ class GallerySyncNotifications {
    * Initialize notification channel (Android only)
    */
   private async ensureChannel(): Promise<void> {
-    if (this.channelCreated) return
+    // if (this.channelCreated) return
 
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-        name: "Gallery Sync",
-        description: "Shows progress when syncing photos from your glasses",
-        importance: Notifications.AndroidImportance.LOW, // Low = no sound, shows in shade
-        vibrationPattern: [0], // No vibration
-        lightColor: "#4A90D9",
-        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-        bypassDnd: false,
-        enableLights: false,
-        enableVibrate: false,
-        showBadge: false,
-      })
-    }
+    // if (Platform.OS === "android") {
+    //   await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+    //     name: "Gallery Sync",
+    //     description: "Shows progress when syncing photos from your glasses",
+    //     importance: Notifications.AndroidImportance.LOW, // Low = no sound, shows in shade
+    //     vibrationPattern: [0], // No vibration
+    //     lightColor: "#4A90D9",
+    //     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    //     bypassDnd: false,
+    //     enableLights: false,
+    //     enableVibrate: false,
+    //     showBadge: false,
+    //   })
+    // }
 
     this.channelCreated = true
   }
@@ -73,14 +73,15 @@ class GallerySyncNotifications {
    * Request notification permissions
    */
   async requestPermissions(): Promise<boolean> {
-    const {status: existingStatus} = await Notifications.getPermissionsAsync()
+    // const {status: existingStatus} = await Notifications.getPermissionsAsync()
 
-    if (existingStatus === "granted") {
-      return true
-    }
+    // if (existingStatus === "granted") {
+    //   return true
+    // }
 
-    const {status} = await Notifications.requestPermissionsAsync()
-    return status === "granted"
+    // const {status} = await Notifications.requestPermissionsAsync()
+    // return status === "granted"
+    return true // Always return true when notifications disabled
   }
 
   /**
@@ -95,20 +96,20 @@ class GallerySyncNotifications {
       return
     }
 
-    await Notifications.scheduleNotificationAsync({
-      identifier: SYNC_NOTIFICATION_ID,
-      content: {
-        title: "Syncing photos from glasses",
-        body: `Preparing to download ${totalFiles} ${totalFiles === 1 ? "file" : "files"}...`,
-        data: {type: "gallery-sync"},
-        sticky: Platform.OS === "android", // Ongoing notification on Android
-      },
-      trigger: null, // Show immediately
-    })
+    // await Notifications.scheduleNotificationAsync({
+    //   identifier: SYNC_NOTIFICATION_ID,
+    //   content: {
+    //     title: "Syncing photos from glasses",
+    //     body: `Preparing to download ${totalFiles} ${totalFiles === 1 ? "file" : "files"}...`,
+    //     data: {type: "gallery-sync"},
+    //     sticky: Platform.OS === "android", // Ongoing notification on Android
+    //   },
+    //   trigger: null, // Show immediately
+    // })
 
     this.notificationActive = true
     this.lastUpdateTime = Date.now() // Reset throttle timer
-    console.log(`[SyncNotifications] Started sync notification for ${totalFiles} files`)
+    console.log(`[SyncNotifications] Started sync notification for ${totalFiles} files (notifications disabled)`)
   }
 
   /**
@@ -154,25 +155,25 @@ class GallerySyncNotifications {
     const overallProgress = Math.round(((currentFile - 1 + fileProgress / 100) / totalFiles) * 100)
 
     // Build notification body - progress bar only on Android
-    let body: string
+    let _body: string
     if (Platform.OS === "android") {
       const progressBar = this.createProgressBar(overallProgress)
-      body = `${progressBar} ${overallProgress}%\nDownloading ${currentFile} of ${totalFiles}`
+      _body = `${progressBar} ${overallProgress}%\nDownloading ${currentFile} of ${totalFiles}`
     } else {
       // iOS: simple text only, no progress bar
-      body = `Downloading ${currentFile} of ${totalFiles} (${overallProgress}%)`
+      _body = `Downloading ${currentFile} of ${totalFiles} (${overallProgress}%)`
     }
 
-    await Notifications.scheduleNotificationAsync({
-      identifier: SYNC_NOTIFICATION_ID,
-      content: {
-        title: "Syncing photos from glasses",
-        body,
-        data: {type: "gallery-sync", progress: overallProgress},
-        sticky: Platform.OS === "android", // Keep notification visible on Android
-      },
-      trigger: null,
-    })
+    // await Notifications.scheduleNotificationAsync({
+    //   identifier: SYNC_NOTIFICATION_ID,
+    //   content: {
+    //     title: "Syncing photos from glasses",
+    //     body,
+    //     data: {type: "gallery-sync", progress: overallProgress},
+    //     sticky: Platform.OS === "android", // Keep notification visible on Android
+    //   },
+    //   trigger: null,
+    // })
   }
 
   /**
@@ -181,37 +182,39 @@ class GallerySyncNotifications {
   async showSyncComplete(downloadedCount: number, failedCount: number = 0): Promise<void> {
     await this.ensureChannel()
 
-    let title: string
-    let body: string
+    let _title: string
+    let _body: string
 
     if (failedCount === 0) {
-      title = "Sync complete"
-      body = `Downloaded ${downloadedCount} ${downloadedCount === 1 ? "file" : "files"} from your glasses`
+      _title = "Sync complete"
+      _body = `Downloaded ${downloadedCount} ${downloadedCount === 1 ? "file" : "files"} from your glasses`
     } else if (downloadedCount === 0) {
-      title = "Sync failed"
-      body = `Failed to download ${failedCount} ${failedCount === 1 ? "file" : "files"}`
+      _title = "Sync failed"
+      _body = `Failed to download ${failedCount} ${failedCount === 1 ? "file" : "files"}`
     } else {
-      title = "Sync complete with errors"
-      body = `Downloaded ${downloadedCount}, failed ${failedCount}`
+      _title = "Sync complete with errors"
+      _body = `Downloaded ${downloadedCount}, failed ${failedCount}`
     }
 
-    await Notifications.scheduleNotificationAsync({
-      identifier: SYNC_NOTIFICATION_ID,
-      content: {
-        title,
-        body,
-        data: {type: "gallery-sync-complete"},
-      },
-      trigger: null,
-    })
+    // await Notifications.scheduleNotificationAsync({
+    //   identifier: SYNC_NOTIFICATION_ID,
+    //   content: {
+    //     title,
+    //     body,
+    //     data: {type: "gallery-sync-complete"},
+    //   },
+    //   trigger: null,
+    // })
 
     this.notificationActive = false
-    console.log(`[SyncNotifications] Sync complete: ${downloadedCount} downloaded, ${failedCount} failed`)
+    console.log(
+      `[SyncNotifications] Sync complete: ${downloadedCount} downloaded, ${failedCount} failed (notifications disabled)`,
+    )
 
     // Auto-dismiss after 5 seconds
-    setTimeout(() => {
-      this.dismiss()
-    }, 5000)
+    // setTimeout(() => {
+    //   this.dismiss()
+    // }, 5000)
   }
 
   /**
@@ -220,23 +223,23 @@ class GallerySyncNotifications {
   async showSyncError(errorMessage: string): Promise<void> {
     await this.ensureChannel()
 
-    await Notifications.scheduleNotificationAsync({
-      identifier: SYNC_NOTIFICATION_ID,
-      content: {
-        title: "Sync failed",
-        body: errorMessage,
-        data: {type: "gallery-sync-error"},
-      },
-      trigger: null,
-    })
+    // await Notifications.scheduleNotificationAsync({
+    //   identifier: SYNC_NOTIFICATION_ID,
+    //   content: {
+    //     title: "Sync failed",
+    //     body: errorMessage,
+    //     data: {type: "gallery-sync-error"},
+    //   },
+    //   trigger: null,
+    // })
 
     this.notificationActive = false
-    console.log(`[SyncNotifications] Sync error: ${errorMessage}`)
+    console.log(`[SyncNotifications] Sync error: ${errorMessage} (notifications disabled)`)
 
     // Auto-dismiss after 5 seconds
-    setTimeout(() => {
-      this.dismiss()
-    }, 5000)
+    // setTimeout(() => {
+    //   this.dismiss()
+    // }, 5000)
   }
 
   /**
@@ -253,7 +256,7 @@ class GallerySyncNotifications {
    */
   async dismiss(): Promise<void> {
     try {
-      await Notifications.dismissNotificationAsync(SYNC_NOTIFICATION_ID)
+      // await Notifications.dismissNotificationAsync(SYNC_NOTIFICATION_ID)
       this.notificationActive = false
     } catch (error) {
       // Notification may already be dismissed

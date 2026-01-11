@@ -5,18 +5,18 @@ import {ActivityIndicator, View} from "react-native"
 import {Button, Icon} from "@/components/ignite"
 import {useCoreStatus} from "@/contexts/CoreStatusProvider"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export const ConnectDeviceButton = () => {
   const {status} = useCoreStatus()
   const {theme} = useAppTheme()
   const {push} = useNavigationHistory()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore(state => state.connected)
+  const glassesConnected = useGlassesStore((state) => state.connected)
   const isSearching = status.core_info.is_searching
 
   if (glassesConnected) {
@@ -64,22 +64,13 @@ export const ConnectDeviceButton = () => {
   const defaultWearableEmpty = defaultWearable === ""
 
   if (defaultWearableNull || defaultWearableStringNull || defaultWearableEmpty) {
-    return (
-      <Button
-        // textStyle={[{marginLeft: spacing.s12}]}
-        // textAlignment="left"
-        // LeftAccessory={() => <SolarLineIconsSet4 color={theme.colors.textAlt} />}
-        // RightAccessory={() => <ChevronRight color={theme.colors.textAlt} />}
-        onPress={() => push("/pairing/select-glasses-model")}
-        tx="home:pairGlasses"
-      />
-    )
+    return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairGlasses" />
   }
 
   if (isSearching) {
     return (
       <View style={{flexDirection: "row", gap: theme.spacing.s2}}>
-        <Button compactIcon flexContainer={false} preset="alternate" onPress={handleConnectOrDisconnect}>
+        <Button compactIcon preset="alternate" onPress={handleConnectOrDisconnect}>
           <Icon name="x" size={20} color={theme.colors.foreground} />
         </Button>
         <Button

@@ -117,7 +117,11 @@ public class Bridge private constructor() {
             sendTypedMessage("audio_disconnected", data as Map<String, Any>)
         }
 
-        /** Send microphone data */
+        /**
+         * Send microphone data to React Native.
+         * React Native handles the decision of whether to send via UDP or WebSocket.
+         * This keeps the native layer simple and UDP logic centralized in React Native.
+         */
         @JvmStatic
         fun sendMicData(data: ByteArray) {
             val base64String = Base64.encodeToString(data, Base64.NO_WRAP)
@@ -492,6 +496,46 @@ public class Bridge private constructor() {
             eventBody["message"] = message
             eventBody["timestamp"] = System.currentTimeMillis()
             sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
+        }
+
+        /** Send OTA update available notification - glasses have detected an available update (background mode) */
+        @JvmStatic
+        fun sendOtaUpdateAvailable(
+                versionCode: Long,
+                versionName: String,
+                updates: List<String>,
+                totalSize: Long
+        ) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["version_code"] = versionCode
+            eventBody["version_name"] = versionName
+            eventBody["updates"] = updates
+            eventBody["total_size"] = totalSize
+
+            sendTypedMessage("ota_update_available", eventBody as Map<String, Any>)
+        }
+
+        /** Send OTA progress update - glasses are downloading/installing an update */
+        @JvmStatic
+        fun sendOtaProgress(
+                stage: String,
+                status: String,
+                progress: Int,
+                bytesDownloaded: Long,
+                totalBytes: Long,
+                currentUpdate: String,
+                errorMessage: String?
+        ) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["stage"] = stage
+            eventBody["status"] = status
+            eventBody["progress"] = progress
+            eventBody["bytes_downloaded"] = bytesDownloaded
+            eventBody["total_bytes"] = totalBytes
+            eventBody["current_update"] = currentUpdate
+            errorMessage?.let { eventBody["error_message"] = it }
+
+            sendTypedMessage("ota_progress", eventBody as Map<String, Any>)
         }
 
         /** Send RTMP stream status - forwards to websocket system (matches iOS) */

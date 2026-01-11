@@ -88,8 +88,37 @@ func (s *LiveKitBridgeService) JoinRoom(
 	// Setup callbacks for LiveKit room
 	var receivedPackets int64
 	var droppedPackets int64
+	var lastPacketTime = time.Now()
 
 	roomCallback := &lksdk.RoomCallback{
+		OnParticipantConnected: func(p *lksdk.RemoteParticipant) {
+			log.Printf("Participant connected to room %s: identity=%s, sid=%s",
+				req.RoomName, p.Identity(), p.SID())
+			lg.Info("Participant connected", logger.LogEntry{
+				Extra: map[string]interface{}{
+					"participant_identity": string(p.Identity()),
+					"participant_sid":      string(p.SID()),
+				},
+			})
+		},
+		OnParticipantDisconnected: func(p *lksdk.RemoteParticipant) {
+			log.Printf("Participant disconnected from room %s: identity=%s, sid=%s",
+				req.RoomName, p.Identity(), p.SID())
+			lg.Info("Participant disconnected", logger.LogEntry{
+				Extra: map[string]interface{}{
+					"participant_identity": string(p.Identity()),
+					"participant_sid":      string(p.SID()),
+				},
+			})
+		},
+		OnReconnecting: func() {
+			log.Printf("Room %s is reconnecting for user %s", req.RoomName, req.UserId)
+			lg.Warn("LiveKit room is reconnecting", logger.LogEntry{})
+		},
+		OnReconnected: func() {
+			log.Printf("Room %s reconnected for user %s", req.RoomName, req.UserId)
+			lg.Info("LiveKit room reconnected", logger.LogEntry{})
+		},
 		ParticipantCallback: lksdk.ParticipantCallback{
 			OnDataPacket: func(packet lksdk.DataPacket, params lksdk.DataReceiveParams) {
 				// Only process packets from target identity if specified
@@ -104,6 +133,16 @@ func (s *LiveKitBridgeService) JoinRoom(
 				}
 
 				receivedPackets++
+				now := time.Now()
+				gapMs := now.Sub(lastPacketTime).Milliseconds()
+				lastPacketTime = now
+
+				// Log first 10 packets and then every 100 to catch early flow issues
+				// Also log if there was a gap > 500ms between packets
+				if receivedPackets <= 10 || receivedPackets%100 == 0 || gapMs > 500 {
+					log.Printf("OnDataPacket for %s: packet #%d, sender=%s, size=%d bytes, gapMs=%d",
+						req.UserId, receivedPackets, params.SenderIdentity, len(userPacket.Payload), gapMs)
+				}
 
 				// Match old bridge behavior exactly
 				pcmData := userPacket.Payload

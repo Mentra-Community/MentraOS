@@ -3,11 +3,34 @@ import {subscribeWithSelector} from "zustand/middleware"
 
 export type GlassesConnectionState = "disconnected" | "connected" | "connecting"
 
+// OTA update status types
+export type OtaStage = "download" | "install"
+export type OtaStatus = "STARTED" | "PROGRESS" | "FINISHED" | "FAILED"
+
+export interface OtaUpdateInfo {
+  available: boolean
+  versionCode: number
+  versionName: string
+  updates: string[] // ["apk", "mtk", "bes"]
+  totalSize: number
+}
+
+export interface OtaProgress {
+  stage: OtaStage
+  status: OtaStatus
+  progress: number
+  bytesDownloaded: number
+  totalBytes: number
+  currentUpdate: string
+  errorMessage?: string
+}
+
 export interface GlassesInfo {
   // state:
   connected: boolean
   micEnabled: boolean
   connectionState: GlassesConnectionState
+  btcConnected: boolean
   // device info
   modelName: string
   androidVersion: string
@@ -36,6 +59,10 @@ export interface GlassesInfo {
   hotspotSsid: string
   hotspotPassword: string
   hotspotGatewayIp: string
+  // OTA update info
+  otaUpdateAvailable: OtaUpdateInfo | null
+  otaProgress: OtaProgress | null
+  otaInProgress: boolean
 }
 
 interface GlassesState extends GlassesInfo {
@@ -44,6 +71,11 @@ interface GlassesState extends GlassesInfo {
   setBatteryInfo: (batteryLevel: number, charging: boolean, caseBatteryLevel: number, caseCharging: boolean) => void
   setWifiInfo: (connected: boolean, ssid: string) => void
   setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) => void
+  // OTA methods
+  setOtaUpdateAvailable: (info: OtaUpdateInfo | null) => void
+  setOtaProgress: (progress: OtaProgress | null) => void
+  setOtaInProgress: (inProgress: boolean) => void
+  clearOtaState: () => void
   reset: () => void
 }
 
@@ -52,6 +84,7 @@ const initialState: GlassesInfo = {
   connected: false,
   micEnabled: false,
   connectionState: "disconnected",
+  btcConnected: false,
   // device info
   modelName: "",
   androidVersion: "",
@@ -80,6 +113,23 @@ const initialState: GlassesInfo = {
   hotspotSsid: "",
   hotspotPassword: "",
   hotspotGatewayIp: "",
+  // OTA update info
+  otaUpdateAvailable: null,
+  otaProgress: null,
+  otaInProgress: false,
+}
+
+export const getGlasesInfoPartial = (state: GlassesInfo) => {
+  return {
+    batteryLevel: state.batteryLevel,
+    charging: state.charging,
+    caseBatteryLevel: state.caseBatteryLevel,
+    caseCharging: state.caseCharging,
+    connected: state.connected,
+    wifiConnected: state.wifiConnected,
+    wifiSsid: state.wifiSsid,
+    modelName: state.modelName,
+  }
 }
 
 export const useGlassesStore = create<GlassesState>()(
@@ -112,6 +162,54 @@ export const useGlassesStore = create<GlassesState>()(
         hotspotGatewayIp: ip,
       }),
 
+    // OTA methods
+    setOtaUpdateAvailable: (info: OtaUpdateInfo | null) => set({otaUpdateAvailable: info}),
+
+    setOtaProgress: (progress: OtaProgress | null) =>
+      set(_state => {
+        // Auto-detect otaInProgress from status
+        const otaInProgress = progress !== null && progress.status !== "FINISHED" && progress.status !== "FAILED"
+        return {otaProgress: progress, otaInProgress}
+      }),
+
+    setOtaInProgress: (inProgress: boolean) => set({otaInProgress: inProgress}),
+
+    clearOtaState: () =>
+      set({
+        otaUpdateAvailable: null,
+        otaProgress: null,
+        otaInProgress: false,
+      }),
+
     reset: () => set(initialState),
   })),
 )
+
+export const waitForGlassesState = <K extends keyof GlassesInfo>(
+  key: K,
+  predicate: (value: GlassesInfo[K]) => boolean,
+  timeoutMs = 1000,
+): Promise<boolean> => {
+  return new Promise(resolve => {
+    const state = useGlassesStore.getState()
+    if (predicate(state[key])) {
+      resolve(true)
+      return
+    }
+
+    const unsubscribe = useGlassesStore.subscribe(
+      s => s[key],
+      value => {
+        if (predicate(value)) {
+          unsubscribe()
+          resolve(true)
+        }
+      },
+    )
+
+    setTimeout(() => {
+      unsubscribe()
+      resolve(predicate(useGlassesStore.getState()[key]))
+    }, timeoutMs)
+  })
+}

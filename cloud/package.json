@@ -10,9 +10,9 @@
     "@types/express-serve-static-core": "4.19.6"
   },
   "scripts": {
-    "build": "cd packages/sdk && bun run build",
-    "build:console": "cd packages/sdk && bun run build && cd ../.. && cd websites/console && bun run build",
-    "postinstall": "cd packages/sdk && bun run build",
+    "build": "cd packages/types && bun run build && cd ../sdk && bun run build",
+    "build:console": "cd packages/types && bun run build && cd ../sdk && bun run build && cd ../.. && cd websites/console && bun run build",
+    "postinstall": "cd packages/types && bun run build && cd ../sdk && bun run build",
     "setup-deps": "bun install --no-link",
     "start": "bun packages/cloud/src/index.ts",
     "dev": "bun run dev:stop && bun run dev:rebuild && docker compose -f docker-compose.dev.yml -p dev up",
@@ -26,7 +26,7 @@
     "test:bun": "bun test",
     "console": "cd websites/console && bun run dev",
     "store": "cd websites/store && bun run dev",
-    "ngrok:isaiah": "ngrok http --url=isaiah.augmentos.cloud 8002",
+    "ngrok:isaiah": "ngrok http --url=isaiah.augmentos.cloud 0.0.0.0:8002",
     "ngrok:isaiah2": "ngrok http --url=isaiah.mentra.glass 8002",
     "ngrok:israelov": "ngrok http --url=israelovpuddle.ngrok.app 8002",
     "captions": "bun run --cwd packages/apps/captions/ start"

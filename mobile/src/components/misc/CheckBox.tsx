@@ -3,7 +3,7 @@
 import {Pressable, View} from "react-native"
 
 import {Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface CheckBoxProps {
   checked: boolean

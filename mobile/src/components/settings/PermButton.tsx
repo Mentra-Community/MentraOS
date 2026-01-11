@@ -1,8 +1,8 @@
 import {TouchableOpacity, View, ViewStyle, TextStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 type ToggleSettingProps = {
   label: string

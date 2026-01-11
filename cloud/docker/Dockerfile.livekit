@@ -71,8 +71,8 @@ RUN echo "🚀 Starting build process..." && \
     echo "✅ Built packages/cloud..." && \
     echo "🎉 All packages built successfully! 🎉"
 
-# Expose both ports
-EXPOSE 80 8080
+# Expose HTTP ports and UDP audio port
+EXPOSE 80 8080 8000/udp
 
 # Set production environment
 ENV NODE_ENV=production

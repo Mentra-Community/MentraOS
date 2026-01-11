@@ -5,8 +5,7 @@ import {writeFile} from "fs/promises"
 export async function setBuildEnv() {
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
   const gitBranch = (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
-  const gitUsername = (await $`git config user.name`).stdout.trim()
-  // format: 2025-11-18_12-00
+  const gitUsername = (await $`git config user.name`).stdout.trim().replace(/ /g, "_")  // format: 2025-11-18_12-00
   const buildTime = new Date()
     .toLocaleString("en-US", {
       timeZone: "America/Los_Angeles",

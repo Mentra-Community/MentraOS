@@ -5,6 +5,7 @@
 
 // Client APIs (mobile app and glasses client)
 export {
+  audioConfigApi,
   calendarApi,
   clientAppsApi,
   deviceStateApi,
@@ -24,3 +25,6 @@ export { publicPermissionsApi } from "./public";
 
 // Console APIs (developer console)
 export { consoleAccountApi, consoleOrgsApi, consoleAppsApi, cliKeysApi } from "./console";
+
+// Store APIs (MentraOS Store website)
+export { storeAppsApi, storeAuthApi, storeUserApi } from "./store";

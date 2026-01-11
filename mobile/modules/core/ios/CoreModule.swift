@@ -93,9 +93,23 @@ public class CoreModule: Module {
             }
         }
 
+        AsyncFunction("forgetWifiNetwork") { (ssid: String) in
+            await MainActor.run {
+                CoreManager.shared.forgetWifiNetwork(ssid)
+            }
+        }
+
         AsyncFunction("setHotspotState") { (enabled: Bool) in
             await MainActor.run {
                 CoreManager.shared.setHotspotState(enabled)
+            }
+        }
+
+        // MARK: - User Context Commands
+
+        AsyncFunction("setUserEmail") { (email: String) in
+            await MainActor.run {
+                CoreManager.shared.setUserEmail(email)
             }
         }
 
@@ -110,12 +124,20 @@ public class CoreModule: Module {
         AsyncFunction("photoRequest") {
             (
                 requestId: String, appId: String, size: String, webhookUrl: String?,
-                authToken: String?, compress: String?
+                authToken: String?, compress: String?, silent: Bool
             ) in
             await MainActor.run {
                 CoreManager.shared.photoRequest(
-                    requestId, appId, size, webhookUrl, authToken, compress
+                    requestId, appId, size, webhookUrl, authToken, compress, silent
                 )
+            }
+        }
+
+        // MARK: - OTA Commands
+
+        AsyncFunction("sendOtaStart") {
+            await MainActor.run {
+                CoreManager.shared.sendOtaStart()
             }
         }
 
@@ -139,9 +161,9 @@ public class CoreModule: Module {
             }
         }
 
-        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool) in
+        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool, silent: Bool) in
             await MainActor.run {
-                CoreManager.shared.startVideoRecording(requestId, save)
+                CoreManager.shared.startVideoRecording(requestId, save, silent)
             }
         }
 
@@ -182,6 +204,14 @@ public class CoreModule: Module {
         AsyncFunction("restartTranscriber") {
             await MainActor.run {
                 CoreManager.shared.restartTranscriber()
+            }
+        }
+
+        // MARK: - Audio Encoding Commands
+
+        AsyncFunction("setLC3FrameSize") { (frameSize: Int) in
+            await MainActor.run {
+                CoreManager.shared.setLC3FrameSize(frameSize)
             }
         }
 

@@ -10,9 +10,8 @@ import { Logger } from "pino";
 
 import { CloudToGlassesMessageType, ConnectionAck, StreamType } from "@mentra/sdk";
 
-// import subscriptionService from "./subscription.service";
-// import { createLC3Service } from "../lc3/lc3.service";
 import { AudioWriter } from "../debug/audio-writer";
+import { createLC3Service, LC3Service } from "../lc3/lc3.service";
 import { WebSocketReadyState } from "../websocket/types";
 
 import UserSession from "./UserSession";
@@ -42,6 +41,21 @@ export interface OrderedAudioBuffer {
 }
 
 /**
+ * Audio format configuration for client audio streams.
+ * Clients can send audio as PCM or LC3.
+ */
+export type AudioFormat = "pcm" | "lc3";
+
+/**
+ * LC3 codec configuration - matches canonical config from mobile
+ */
+export interface LC3Config {
+  sampleRate: number; // 16000 Hz
+  frameDurationMs: number; // 10ms
+  frameSizeBytes: number; // 20 bytes per frame
+}
+
+/**
  * Manages audio data processing, buffering, and relaying
  * for a user session
  */
@@ -49,8 +63,16 @@ export class AudioManager {
   private userSession: UserSession;
   private logger: Logger;
 
+  // UDP audio tracking
+  private udpPacketsReceived = 0;
+  private lastUdpLogAt = 0;
+
   // LC3 decoding service
-  private lc3Service?: any;
+  private lc3Service?: LC3Service;
+
+  // Audio format configuration
+  private audioFormat: AudioFormat = "pcm"; // Default PCM for backwards compat
+  private lc3Config?: LC3Config;
 
   // Audio debugging writer
   private audioWriter?: AudioWriter;
@@ -89,7 +111,88 @@ export class AudioManager {
     this.logger.info("AudioManager initialized");
 
     // Start audio gap monitoring
-    this.startAudioGapMonitoring();
+    // this.startAudioGapMonitoring(); // Disable audio gap detection. (we no longer use livekit, and VAD breaks / ruin this)
+  }
+
+  // ============================================================================
+  // Audio Format Configuration
+  // ============================================================================
+
+  /**
+   * Set the audio format for this session.
+   * Called when client configures audio via REST endpoint.
+   */
+  setAudioFormat(format: AudioFormat, lc3Config?: LC3Config): void {
+    this.audioFormat = format;
+    this.lc3Config = lc3Config;
+
+    this.logger.info(
+      {
+        audioFormat: format,
+        lc3Config,
+      },
+      "Audio format configured",
+    );
+
+    // Initialize LC3 decoder if needed
+    if (format === "lc3" && lc3Config) {
+      this.initializeLc3Decoder();
+    }
+  }
+
+  /**
+   * Get the current audio format.
+   */
+  getAudioFormat(): AudioFormat {
+    return this.audioFormat;
+  }
+
+  /**
+   * Get the current LC3 config.
+   */
+  getLc3Config(): LC3Config | undefined {
+    return this.lc3Config;
+  }
+
+  /**
+   * Check if audio format is LC3.
+   */
+  isLC3(): boolean {
+    return this.audioFormat === "lc3";
+  }
+
+  /**
+   * Initialize LC3 decoder for incoming audio.
+   */
+  private async initializeLc3Decoder(): Promise<void> {
+    try {
+      // Clean up existing service if any
+      if (this.lc3Service) {
+        this.lc3Service.cleanup();
+        this.lc3Service = undefined;
+      }
+
+      // Get frame size from config, default to 20 bytes (16kbps)
+      const frameSizeBytes = this.lc3Config?.frameSizeBytes ?? 20;
+
+      // Create new LC3 service for this session with the configured frame size
+      this.lc3Service = createLC3Service(this.userSession.sessionId, frameSizeBytes);
+      await this.lc3Service.initialize();
+
+      this.logger.info(
+        {
+          sessionId: this.userSession.sessionId,
+          lc3Config: this.lc3Config,
+          frameSizeBytes,
+        },
+        "LC3 decoder initialized successfully",
+      );
+    } catch (error) {
+      this.logger.error(error, "Failed to initialize LC3 decoder");
+      // Reset to PCM format if LC3 initialization fails
+      this.audioFormat = "pcm";
+      this.lc3Service = undefined;
+    }
   }
 
   /**
@@ -303,6 +406,18 @@ export class AudioManager {
         timestamp: new Date(),
       };
 
+      // Include UDP endpoint if configured
+      const udpHost = process.env.UDP_HOST;
+      const udpPort = process.env.UDP_PORT ? parseInt(process.env.UDP_PORT, 10) : 8000;
+      if (udpHost) {
+        (ackMessage as any).udpHost = udpHost;
+        (ackMessage as any).udpPort = udpPort;
+        this.logger.info(
+          { udpHost, udpPort, feature: "udp-audio" },
+          "[livekit reconnect] Included UDP endpoint in CONNECTION_ACK",
+        );
+      }
+
       // Include LiveKit info if available (this triggers client to reconnect LiveKit)
       if (livekitInfo) {
         ackMessage.livekit = {
@@ -331,14 +446,44 @@ export class AudioManager {
   /**
    * Process incoming audio data
    *
-   * @param audioData The audio data to process
-   * @param isLC3 Whether the audio is LC3 encoded
-   * @returns Processed audio data
+   * @param audioData The audio data to process (LC3 or PCM depending on configured format)
+   * @param source The source of the audio data ("livekit" or "udp")
+   * @returns Processed audio data (as PCM)
    */
-  processAudioData(audioData: ArrayBuffer | any) {
+  async processAudioData(audioData: ArrayBuffer | any, source: "livekit" | "udp" = "livekit") {
     // Guard: Don't process if disposed
     if (this.disposed) {
       return undefined;
+    }
+
+    // Track UDP packets
+    if (source === "udp") {
+      this.udpPacketsReceived++;
+
+      // Log first UDP packet and then every 100
+      if (this.udpPacketsReceived === 1) {
+        this.logger.info(
+          {
+            feature: "udp-audio",
+            userId: this.userSession.userId,
+            audioDataLength: audioData?.length || audioData?.byteLength || 0,
+          },
+          "First UDP audio packet received in AudioManager",
+        );
+      } else if (this.udpPacketsReceived % 100 === 0) {
+        const now = Date.now();
+        const dt = this.lastUdpLogAt ? now - this.lastUdpLogAt : 0;
+        this.lastUdpLogAt = now;
+        this.logger.info(
+          {
+            feature: "udp-audio",
+            udpPacketsReceived: this.udpPacketsReceived,
+            msSinceLast100: dt,
+            audioDataLength: audioData?.length || audioData?.byteLength || 0,
+          },
+          "UDP audio stats in AudioManager",
+        );
+      }
     }
 
     try {
@@ -347,21 +492,55 @@ export class AudioManager {
 
       // Send to transcription and translation services
       if (audioData) {
-        // Normalize to Buffer and enforce even-length PCM16 by carrying a remainder byte
-        let buf: Buffer | null = null;
+        // Normalize incoming data to Buffer
+        let incomingBuf: Buffer | null = null;
         if (typeof Buffer !== "undefined" && Buffer.isBuffer(audioData)) {
-          buf = audioData as Buffer;
+          incomingBuf = audioData as Buffer;
         } else if (audioData instanceof ArrayBuffer) {
-          buf = Buffer.from(audioData as ArrayBuffer);
+          incomingBuf = Buffer.from(audioData as ArrayBuffer);
         } else if (ArrayBuffer.isView(audioData)) {
           const view = audioData as ArrayBufferView;
-          buf = Buffer.from(view.buffer, (view as any).byteOffset || 0, (view as any).byteLength || view.byteLength);
+          incomingBuf = Buffer.from(
+            view.buffer,
+            (view as any).byteOffset || 0,
+            (view as any).byteLength || view.byteLength,
+          );
         }
 
-        if (!buf) {
+        if (!incomingBuf) {
           return undefined;
         }
 
+        // Decode LC3 to PCM if audio format is LC3
+        let buf: Buffer;
+        if (this.audioFormat === "lc3" && this.lc3Service) {
+          try {
+            // IMPORTANT: Buffer.buffer returns the ENTIRE underlying ArrayBuffer, not just the slice.
+            // For UDP audio, the buffer is sliced (buf.slice(6) to skip header), so byteOffset > 0.
+            // We must extract only the relevant portion using slice() to avoid reading header bytes.
+            const lc3ArrayBuffer = incomingBuf.buffer.slice(
+              incomingBuf.byteOffset,
+              incomingBuf.byteOffset + incomingBuf.byteLength,
+            );
+            const pcmArrayBuffer = await this.lc3Service.decodeAudioChunk(lc3ArrayBuffer);
+            if (!pcmArrayBuffer || pcmArrayBuffer.byteLength === 0) {
+              // LC3 decode failed or returned empty - skip this chunk
+              if (this.processedFrameCount % 100 === 0) {
+                this.logger.warn({ feature: "lc3-decode" }, "LC3 decode returned empty data");
+              }
+              return undefined;
+            }
+            buf = Buffer.from(pcmArrayBuffer);
+          } catch (decodeError) {
+            this.logger.error(decodeError, "LC3 decode error");
+            return undefined;
+          }
+        } else {
+          // PCM format - use incoming buffer directly
+          buf = incomingBuf;
+        }
+
+        // Apply PCM remainder logic (for PCM16 alignment)
         if (this.pcmRemainder && this.pcmRemainder.length > 0) {
           buf = Buffer.concat([this.pcmRemainder, buf]);
           this.pcmRemainder = null;
@@ -386,9 +565,10 @@ export class AudioManager {
               frames: this.processedFrameCount,
               bytes: buf.length,
               msSinceLast: dt,
+              audioFormat: this.audioFormat,
               head10: Array.from(buf.subarray(0, Math.min(10, buf.length))),
             },
-            "AudioManager received PCM chunk",
+            "AudioManager received audio chunk (decoded to PCM)",
           );
         }
 

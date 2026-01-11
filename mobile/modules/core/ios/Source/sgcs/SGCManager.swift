@@ -55,7 +55,7 @@ protocol SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?
+        compress: String?, silent: Bool
     )
     func startRtmpStream(_ message: [String: Any])
     func stopRtmpStream()
@@ -63,7 +63,7 @@ protocol SGCManager {
     func startBufferRecording()
     func stopBufferRecording()
     func saveBufferVideo(requestId: String, durationSeconds: Int)
-    func startVideoRecording(requestId: String, save: Bool)
+    func startVideoRecording(requestId: String, save: Bool, silent: Bool)
     func stopVideoRecording(requestId: String)
 
     // MARK: - Button Settings
@@ -108,7 +108,12 @@ protocol SGCManager {
 
     func requestWifiScan()
     func sendWifiCredentials(_ ssid: String, _ password: String)
+    func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
+
+    // MARK: - User Context (for crash reporting)
+
+    func sendUserEmailToGlasses(_ email: String)
 
     // MARK: - Gallery
 

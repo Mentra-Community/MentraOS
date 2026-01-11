@@ -1,21 +1,42 @@
 import * as Clipboard from "expo-clipboard"
-import {useRef} from "react"
+import {useEffect, useRef, useState} from "react"
 import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import socketComms from "@/services/SocketComms"
+import udp from "@/services/UdpManager"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export const VersionInfo = () => {
   const {theme, themed} = useAppTheme()
   const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
   const [storeUrl] = useSetting(SETTINGS.store_url.key)
   const [backendUrl] = useSetting(SETTINGS.backend_url.key)
+  const [audioTransport, setAudioTransport] = useState<string>("websocket")
+
+  // Update audio transport info periodically (since it can change)
+  useEffect(() => {
+    if (!devMode) return
+
+    const updateAudioTransport = () => {
+      if (socketComms.udpEnabledAndReady()) {
+        const endpoint = udp.getEndpoint()
+        setAudioTransport(endpoint ? `udp @ ${endpoint}` : "udp")
+      } else {
+        setAudioTransport("websocket")
+      }
+    }
+
+    updateAudioTransport()
+    const interval = setInterval(updateAudioTransport, 2000)
+    return () => clearInterval(interval)
+  }, [devMode])
 
   const pressCount = useRef(0)
   const lastPressTime = useRef(0)
@@ -78,6 +99,7 @@ export const VersionInfo = () => {
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
       `store_url: ${storeUrl}`,
       `backend_url: ${backendUrl}`,
+      `audio: ${audioTransport}`,
     ]
 
     if (user) {
@@ -115,6 +137,9 @@ export const VersionInfo = () => {
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`${backendUrl}`} />
+          </View>
+          <View className="flex-row gap-2">
+            <Text style={themed($buildInfo)} text={`audio: ${audioTransport}`} />
           </View>
         </View>
       </TouchableOpacity>

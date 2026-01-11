@@ -2,12 +2,14 @@ import CoreModule from "core"
 import Toast from "react-native-toast-message"
 
 import {translate} from "@/i18n"
-import livekit from "@/services/Livekit"
+// NOTE: LiveKit audio path disabled - using UDP or WebSocket instead
+// import livekit from "@/services/Livekit"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
+import udp from "@/services/UdpManager"
 import {useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {useSettingsStore} from "@/stores/settings"
 import {INTENSE_LOGGING} from "@/utils/Constants"
 import {CoreStatusParser} from "@/utils/CoreStatusParser"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -107,14 +109,14 @@ export class MantleBridge {
       switch (data.type) {
         case "core_status_update":
           useGlassesStore.getState().setGlassesInfo(data.core_status.glasses_info)
-          GlobalEventEmitter.emit("CORE_STATUS_UPDATE", data)
+          GlobalEventEmitter.emit("core_status_update", data)
           return
         case "wifi_status_change":
           useGlassesStore.getState().setWifiInfo(data.connected, data.ssid)
           break
         case "hotspot_status_change":
           useGlassesStore.getState().setHotspotInfo(data.enabled, data.ssid, data.password, data.local_ip)
-          GlobalEventEmitter.emit("HOTSPOT_STATUS_CHANGE", {
+          GlobalEventEmitter.emit("hotspot_status_change", {
             enabled: data.enabled,
             ssid: data.ssid,
             password: data.password,
@@ -122,13 +124,13 @@ export class MantleBridge {
           })
           break
         case "hotspot_error":
-          GlobalEventEmitter.emit("HOTSPOT_ERROR", {
+          GlobalEventEmitter.emit("hotspot_error", {
             error_message: data.error_message,
             timestamp: data.timestamp,
           })
           break
         case "gallery_status":
-          GlobalEventEmitter.emit("GALLERY_STATUS", {
+          GlobalEventEmitter.emit("gallery_status", {
             photos: data.photos,
             videos: data.videos,
             total: data.total,
@@ -138,14 +140,14 @@ export class MantleBridge {
           break
         case "compatible_glasses_search_result":
           console.log("Received compatible_glasses_search_result event from Core", data)
-          GlobalEventEmitter.emit("COMPATIBLE_GLASSES_SEARCH_RESULT", {
+          GlobalEventEmitter.emit("compatible_glasses_search_result", {
             modelName: data.model_name,
             deviceName: data.device_name,
             deviceAddress: data.device_address,
           })
           break
         case "compatible_glasses_search_stop":
-          GlobalEventEmitter.emit("COMPATIBLE_GLASSES_SEARCH_STOP", {
+          GlobalEventEmitter.emit("compatible_glasses_search_stop", {
             model_name: data.model_name,
           })
           break
@@ -176,7 +178,7 @@ export class MantleBridge {
           const deviceModel = data.device_model ?? "Mentra Live"
           const gestureName = data.gesture_name ?? "unknown"
           const timestamp = typeof data.timestamp === "number" ? data.timestamp : Date.now()
-          GlobalEventEmitter.emit("TOUCH_EVENT", {
+          GlobalEventEmitter.emit("touch_event", {
             deviceModel,
             gestureName,
             timestamp,
@@ -208,29 +210,29 @@ export class MantleBridge {
           const success = !!data.success
           const errorMessage = typeof data.error === "string" ? data.error : null
           socketComms.sendRgbLedControlResponse(requestId, success, errorMessage)
-          GlobalEventEmitter.emit("RGB_LED_CONTROL_RESPONSE", {requestId, success, error: errorMessage})
+          GlobalEventEmitter.emit("rgb_led_control_response", {requestId, success, error: errorMessage})
           break
         }
         case "wifi_scan_results":
-          GlobalEventEmitter.emit("WIFI_SCAN_RESULTS", {
+          GlobalEventEmitter.emit("wifi_scan_results", {
             networks: data.networks,
           })
           break
         case "pair_failure":
-          GlobalEventEmitter.emit("PAIR_FAILURE", data.error)
+          GlobalEventEmitter.emit("pair_failure", data.error)
           break
         case "audio_pairing_needed":
-          GlobalEventEmitter.emit("AUDIO_PAIRING_NEEDED", {
+          GlobalEventEmitter.emit("audio_pairing_needed", {
             deviceName: data.device_name,
           })
           break
         case "audio_connected":
-          GlobalEventEmitter.emit("AUDIO_CONNECTED", {
+          GlobalEventEmitter.emit("audio_connected", {
             deviceName: data.device_name,
           })
           break
         case "audio_disconnected":
-          GlobalEventEmitter.emit("AUDIO_DISCONNECTED", {})
+          GlobalEventEmitter.emit("audio_disconnected", {})
           break
         case "save_setting":
           await useSettingsStore.getState().setSetting(data.key, data.value)
@@ -280,15 +282,27 @@ export class MantleBridge {
           socketComms.sendBinary(bytes)
           break
         case "mic_data":
-          binaryString = atob(data.base64)
-          bytes = new Uint8Array(binaryString.length)
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i)
-          }
-          const isChinaDeployment = await useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
-          if (!isChinaDeployment && livekit.isRoomConnected()) {
-            livekit.addPcm(bytes)
+          // Route audio to: UDP (if enabled) -> WebSocket (fallback)
+          if (socketComms.udpEnabledAndReady()) {
+            // UDP audio is enabled and ready - send directly via UDP
+            udp.sendAudio(data.base64)
           } else {
+            // Fallback to WebSocket
+            binaryString = atob(data.base64)
+            bytes = new Uint8Array(binaryString.length)
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i)
+            }
+            if (__DEV__ && Math.random() < 0.03) {
+              console.log("MantleBridge: Received mic data:", bytes.length, "bytes")
+            }
+            // NOTE: LiveKit audio path disabled - using UDP or WebSocket instead
+            // const isChinaDeployment = await useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+            // if (!isChinaDeployment && livekit.isRoomConnected()) {
+            //   livekit.addPcm(bytes)
+            // } else {
+            //   socketComms.sendBinary(bytes)
+            // }
             socketComms.sendBinary(bytes)
           }
           break
@@ -302,10 +316,51 @@ export class MantleBridge {
           break
         case "mtk_update_complete":
           console.log("MantleBridge: MTK firmware update complete:", data.message)
-          GlobalEventEmitter.emit("MTK_UPDATE_COMPLETE", {
+          GlobalEventEmitter.emit("mtk_update_complete", {
             message: data.message,
             timestamp: data.timestamp,
           })
+          break
+        case "ota_update_available":
+          console.log("📱 MantleBridge: OTA update available from glasses:", data)
+          useGlassesStore.getState().setOtaUpdateAvailable({
+            available: true,
+            versionCode: data.version_code ?? 0,
+            versionName: data.version_name ?? "",
+            updates: data.updates ?? [],
+            totalSize: data.total_size ?? 0,
+          })
+          GlobalEventEmitter.emit("ota_update_available", {
+            versionCode: data.version_code,
+            versionName: data.version_name,
+            updates: data.updates,
+            totalSize: data.total_size,
+          })
+          break
+        case "ota_progress":
+          console.log("📱 MantleBridge: OTA progress:", data.stage, data.status, data.progress + "%")
+          useGlassesStore.getState().setOtaProgress({
+            stage: data.stage ?? "download",
+            status: data.status ?? "PROGRESS",
+            progress: data.progress ?? 0,
+            bytesDownloaded: data.bytes_downloaded ?? 0,
+            totalBytes: data.total_bytes ?? 0,
+            currentUpdate: data.current_update ?? "apk",
+            errorMessage: data.error_message,
+          })
+          GlobalEventEmitter.emit("ota_progress", {
+            stage: data.stage,
+            status: data.status,
+            progress: data.progress,
+            bytesDownloaded: data.bytes_downloaded,
+            totalBytes: data.total_bytes,
+            currentUpdate: data.current_update,
+            errorMessage: data.error_message,
+          })
+          // Clear OTA update available when finished or failed
+          if (data.status === "FINISHED" || data.status === "FAILED") {
+            useGlassesStore.getState().setOtaUpdateAvailable(null)
+          }
           break
         case "version_info":
           console.log("MantleBridge: Received version_info:", data)
@@ -325,7 +380,7 @@ export class MantleBridge {
       }
     } catch (e) {
       console.error("Error parsing data from Core:", e)
-      GlobalEventEmitter.emit("CORE_STATUS_UPDATE", CoreStatusParser.defaultStatus)
+      GlobalEventEmitter.emit("core_status_update", CoreStatusParser.defaultStatus)
     }
   }
 

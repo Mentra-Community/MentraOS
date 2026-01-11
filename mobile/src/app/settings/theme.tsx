@@ -3,10 +3,10 @@ import {View, TouchableOpacity, ViewStyle, TextStyle, ScrollView} from "react-na
 import {Screen, Header, Text, Icon} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {type ThemeType} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {type ThemeType} from "@/utils/useAppTheme"
 
 export default function ThemeSettingsPage() {
   const {theme, themed} = useAppTheme()

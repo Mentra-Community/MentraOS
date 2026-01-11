@@ -1,10 +1,10 @@
 import {TouchableOpacity, View} from "react-native"
 import Svg, {ClipPath, Defs, G, Path, Rect} from "react-native-svg"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 interface MicIconProps {
   color?: string
   height?: number

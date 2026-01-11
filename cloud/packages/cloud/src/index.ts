@@ -18,8 +18,9 @@ import honoApp from "./hono-app";
 import * as AppUptimeService from "./services/core/app-uptime.service";
 import { memoryTelemetryService } from "./services/debug/MemoryTelemetryService";
 import { logger as rootLogger } from "./services/logging/pino-logger";
+import { udpAudioServer } from "./services/udp/UdpAudioServer";
 import { handleUpgrade, websocketHandlers } from "./services/websocket/bun-websocket";
-import generateCoreToken from "./utils/generateCoreToken";
+// import generateCoreToken from "./utils/generateCoreToken";
 
 // Hono app with all routes
 
@@ -60,6 +61,16 @@ mongoConnection
     logger.error("MongoDB connection failed:", error);
   });
 
+// Start UDP Audio Server
+udpAudioServer
+  .start()
+  .then(() => {
+    logger.info("UDP Audio Server started successfully on port 8000");
+  })
+  .catch((error) => {
+    logger.error({ error }, "UDP Audio Server failed to start (continuing without UDP audio support)");
+  });
+
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
 
 // Optional: Create legacy Express handler for routes not yet migrated
@@ -89,12 +100,12 @@ const LEGACY_EXPRESS_PATHS = [
 /**
  * Check if a path should fall back to Express
  */
-function shouldUseLegacyExpress(pathname: string): boolean {
+function _shouldUseLegacyExpress(pathname: string): boolean {
   return LEGACY_EXPRESS_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
 }
 
 // Start Bun.serve() with native WebSocket support
-const server = Bun.serve({
+const _server = Bun.serve({
   port: PORT,
 
   // Native Bun WebSocket handlers

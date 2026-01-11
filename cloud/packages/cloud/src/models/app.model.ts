@@ -14,11 +14,7 @@ import {
   HardwareRequirementLevel,
 } from "@mentra/sdk";
 
-export type AppStoreStatus =
-  | "DEVELOPMENT"
-  | "SUBMITTED"
-  | "REJECTED"
-  | "PUBLISHED";
+export type AppStoreStatus = "DEVELOPMENT" | "SUBMITTED" | "REJECTED" | "PUBLISHED";
 
 // Extend the AppI interface for our MongoDB document
 export interface AppI extends _AppI, Document {
@@ -74,6 +70,16 @@ export interface AppI extends _AppI, Document {
   onboardingInstructions?: string;
 
   onboardingStatus?: Map<string, boolean>;
+
+  /**
+   * Preview images for the app store
+   */
+  previewImages?: Array<{
+    url: string;
+    imageId: string;
+    orientation: "landscape" | "portrait";
+    order: number;
+  }>;
 }
 
 // Using existing schema with flexible access
@@ -273,6 +279,29 @@ const AppSchema = new Schema(
       of: Boolean,
       default: {},
     },
+
+    // Preview Images for App Store
+    previewImages: [
+      {
+        url: {
+          type: String,
+          required: true,
+        },
+        imageId: {
+          type: String,
+          required: true,
+        },
+        orientation: {
+          type: String,
+          enum: ["landscape", "portrait"],
+          required: true,
+        },
+        order: {
+          type: Number,
+          required: true,
+        },
+      },
+    ],
   },
   {
     strict: false,
@@ -283,5 +312,4 @@ const AppSchema = new Schema(
 // Add index for organizationId
 AppSchema.index({ organizationId: 1 });
 
-export default mongoose.models.App ||
-  mongoose.model<AppI>("App", AppSchema, "apps");
+export default mongoose.models.App || mongoose.model<AppI>("App", AppSchema, "apps");

@@ -1,6 +1,6 @@
 // src/message-types.ts
 
-import {StreamType} from "./streams"
+import { StreamType } from "./streams";
 
 /**
  * Types of messages from glasses to cloud
@@ -57,6 +57,10 @@ export enum GlassesToCloudMessageType {
 
   // LiveKit handshake
   LIVEKIT_INIT = "livekit_init",
+
+  // UDP audio
+  UDP_REGISTER = "udp_register",
+  UDP_UNREGISTER = "udp_unregister",
 }
 
 /**
@@ -98,6 +102,9 @@ export enum CloudToGlassesMessageType {
 
   // LiveKit info (URL, room, token)
   LIVEKIT_INFO = "livekit_info",
+
+  // UDP audio
+  UDP_PING_ACK = "udp_ping_ack",
 }
 
 /**
@@ -157,6 +164,7 @@ export enum CloudToAppMessageType {
   APP_STOPPED = "app_stopped",
   SETTINGS_UPDATE = "settings_update",
   CAPABILITIES_UPDATE = "capabilities_update",
+  DEVICE_STATE_UPDATE = "device_state_update",
 
   // Dashboard updates
   DASHBOARD_MODE_CHANGED = "dashboard_mode_changed",
@@ -199,7 +207,7 @@ export const ControlActionTypes = [
   GlassesToCloudMessageType.STOP_APP,
   GlassesToCloudMessageType.DASHBOARD_STATE,
   GlassesToCloudMessageType.OPEN_DASHBOARD,
-] as const
+] as const;
 
 /**
  * Event message types (subset of GlassesToCloudMessageType)
@@ -219,7 +227,7 @@ export const EventTypes = [
   GlassesToCloudMessageType.MENTRAOS_SETTINGS_UPDATE_REQUEST,
   GlassesToCloudMessageType.CORE_STATUS_UPDATE,
   GlassesToCloudMessageType.LOCAL_TRANSCRIPTION,
-] as const
+] as const;
 
 /**
  * Response message types (subset of CloudToGlassesMessageType)
@@ -228,7 +236,7 @@ export const ResponseTypes = [
   CloudToGlassesMessageType.CONNECTION_ACK,
   CloudToGlassesMessageType.CONNECTION_ERROR,
   CloudToGlassesMessageType.AUTH_ERROR,
-] as const
+] as const;
 
 /**
  * Update message types (subset of CloudToGlassesMessageType)
@@ -248,7 +256,7 @@ export const UpdateTypes = [
   CloudToGlassesMessageType.STOP_RTMP_STREAM,
   CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE,
   CloudToGlassesMessageType.LIVEKIT_INFO,
-] as const
+] as const;
 
 /**
  * Dashboard message types
@@ -259,4 +267,4 @@ export const DashboardMessageTypes = [
   AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE,
   CloudToAppMessageType.DASHBOARD_MODE_CHANGED,
   CloudToAppMessageType.DASHBOARD_ALWAYS_ON_CHANGED,
-] as const
+] as const;

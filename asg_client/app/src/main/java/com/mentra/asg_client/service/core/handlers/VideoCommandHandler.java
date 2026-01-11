@@ -139,7 +139,9 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
             // Start recording with settings
             boolean save = data.optBoolean("save", false);
-            boolean enableLed = data.optBoolean("enable_led", true); // Default true for phone commands
+            // silent: true = no sound/LED, false (default) = normal behavior with sound/LED
+            boolean silent = data.optBoolean("silent", false);
+            boolean enableLed = !silent; // Convert to internal enableLed (inverted logic)
             String requestId = data.optString("requestId", "video_" + System.currentTimeMillis());
             
             if (videoSettings != null) {

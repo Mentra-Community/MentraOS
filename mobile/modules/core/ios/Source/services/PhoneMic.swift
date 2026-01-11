@@ -557,7 +557,10 @@ class PhoneMic {
         // See: MENTRA-OS-YM, MENTRA-OS-137
         inputNode.removeTap(onBus: 0)
 
-        inputNode.installTap(onBus: 0, bufferSize: 256, format: nil) {
+        // Buffer size of 1024 at 48kHz = ~21ms of audio
+        // After downsampling to 16kHz = ~341 samples = ~2 LC3 frames (160 samples each)
+        // Larger buffers reduce callback frequency and timing jitter which can cause audio blips
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) {
             [weak self] buffer, _ in
             guard let self = self else { return }
 

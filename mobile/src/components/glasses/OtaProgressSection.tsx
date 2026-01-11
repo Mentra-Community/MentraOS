@@ -1,9 +1,9 @@
 import {View} from "react-native"
 
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {OtaProgress} from "@/utils/CoreStatusParser"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface OtaProgressSectionProps {
   otaProgress?: OtaProgress
@@ -60,11 +60,6 @@ export default function OtaProgressSection({otaProgress}: OtaProgressSectionProp
   // Priority: Installation > Download
   const showInstallation = installation && (installation.status !== "FINISHED" || download?.status === "FINISHED")
   const showDownload = download && !showInstallation
-
-  console.log("installation", installation)
-  console.log("download", download)
-  console.log("showInstallation", showInstallation)
-  console.log("showDownload", showDownload)
 
   return (
     <View style={themed($container)}>

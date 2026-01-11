@@ -1,13 +1,14 @@
 import {TOptions} from "i18next"
 import {ReactNode, forwardRef, ForwardedRef} from "react"
 // eslint-disable-next-line no-restricted-imports
-import {StyleProp, Text as RNText, TextProps as RNTextProps, TextStyle, StyleSheet} from "react-native"
+import {StyleProp, Text as RNText, TextProps as RNTextProps, TextStyle} from "react-native"
+import {StyleSheet} from "react-native"
 import {withUniwind} from "uniwind"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {isRTL, translate, TxKeyPath} from "@/i18n"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {typography} from "@/theme/typography"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 // import { flatten } from 'react-native/Libraries/StyleSheet/';
 

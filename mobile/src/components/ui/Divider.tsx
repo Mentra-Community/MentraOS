@@ -1,7 +1,7 @@
 import {View, ViewStyle} from "react-native"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface DividerProps {
   variant?: "full" | "inset"

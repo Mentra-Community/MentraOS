@@ -5,7 +5,7 @@
  * Defines the hardware and software features available on this device.
  */
 
-import type { Capabilities } from "@mentra/sdk";
+import type { Capabilities } from "../hardware";
 
 /**
  * Vuzix Z100 capability profile

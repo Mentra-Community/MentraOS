@@ -16,6 +16,7 @@ services:
       dockerfile: ./docker/Dockerfile.dev
     ports:
       - "8002:80"
+      - "8000:8000/udp"
     environment:
       - HOST=0.0.0.0
       - SERVICE_NAME=cloud

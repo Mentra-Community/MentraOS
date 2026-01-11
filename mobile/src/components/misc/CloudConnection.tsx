@@ -4,13 +4,13 @@ import LinearGradient from "react-native-linear-gradient"
 import Animated, {useSharedValue, withTiming} from "react-native-reanimated"
 
 import {Icon, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
 import {useRefreshApplets} from "@/stores/applets"
 import {useConnectionStore} from "@/stores/connection"
 import {ThemedStyle} from "@/theme"
 import {BackgroundTimer} from "@/utils/timers"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function CloudConnection() {
   const connectionStatus = useConnectionStore(state => state.status)

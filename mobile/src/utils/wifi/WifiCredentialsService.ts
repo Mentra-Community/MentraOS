@@ -1,13 +1,13 @@
 import {storage} from "@/utils/storage/storage"
 
-export interface WifiCredential {
+interface WifiCredential {
   ssid: string
   password: string
   lastConnected?: number
   autoConnect?: boolean
 }
 
-export interface WifiCredentialsData {
+interface WifiCredentialsData {
   credentials: WifiCredential[]
   version: string
 }
@@ -155,7 +155,7 @@ class WifiCredentialsService {
   private static loadCredentialsData(): WifiCredentialsData {
     const res = storage.load<WifiCredentialsData>(this.STORAGE_KEY)
     if (res.is_error()) {
-      console.error("Error loading WiFi credentials:", res.error)
+      console.log("No saved WiFi credentials found, using defaults")
       return this.getDefaultData()
     }
     const data = res.value

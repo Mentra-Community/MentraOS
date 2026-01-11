@@ -1,3 +1,5 @@
+import { Logger } from "pino";
+
 import {
   StreamType,
   ExtendedStreamType,
@@ -6,11 +8,13 @@ import {
   createTranscriptionStream,
   SubscriptionRequest,
 } from "@mentra/sdk";
-import { Logger } from "pino";
-import UserSession from "./UserSession";
+
+
 import App from "../../models/app.model";
 import { SimplePermissionChecker } from "../permissions/simple-permission-checker";
+
 import { AppSession, LocationRate } from "./AppSession";
+import UserSession from "./UserSession";
 
 /**
  * SubscriptionManager coordinates subscriptions across all apps in a user session.
@@ -43,10 +47,7 @@ export class SubscriptionManager {
   constructor(userSession: UserSession) {
     this.userSession = userSession;
     this.logger = userSession.logger.child({ service: "SubscriptionManager" });
-    this.logger.info(
-      { userId: userSession.userId },
-      "SubscriptionManager initialized",
-    );
+    this.logger.info({ userId: userSession.userId }, "SubscriptionManager initialized");
   }
 
   // ===== Public API =====
@@ -83,11 +84,7 @@ export class SubscriptionManager {
     for (const [packageName, appSession] of this.getAppSessionEntries()) {
       const subs = appSession.subscriptions;
       for (const sub of subs) {
-        if (
-          sub === subscription ||
-          sub === StreamType.ALL ||
-          sub === StreamType.WILDCARD
-        ) {
+        if (sub === subscription || sub === StreamType.ALL || sub === StreamType.WILDCARD) {
           subscribedApps.push(packageName);
           break;
         }
@@ -106,10 +103,7 @@ export class SubscriptionManager {
         }
 
         // Back-compat: location_stream implies location_update
-        if (
-          subscription === StreamType.LOCATION_UPDATE &&
-          sub === StreamType.LOCATION_STREAM
-        ) {
+        if (subscription === StreamType.LOCATION_UPDATE && sub === StreamType.LOCATION_STREAM) {
           subscribedApps.push(packageName);
           break;
         }
@@ -128,11 +122,7 @@ export class SubscriptionManager {
     for (const [packageName, appSession] of this.getAppSessionEntries()) {
       const subs = appSession.subscriptions;
       for (const sub of subs) {
-        if (
-          sub === target ||
-          sub === ("augmentos:*" as any) ||
-          sub === ("augmentos:all" as any)
-        ) {
+        if (sub === target || sub === ("augmentos:*" as any) || sub === ("augmentos:all" as any)) {
           subscribed.push(packageName);
           break;
         }
@@ -201,24 +191,37 @@ export class SubscriptionManager {
   /**
    * Update subscriptions for an app
    * Validates permissions, then delegates storage to AppSession
+   *
+   * Uses AppSession.enqueue() to serialize updates per-app, preventing race
+   * conditions when multiple subscription updates arrive rapidly. See Issue 008.
    */
-  async updateSubscriptions(
-    packageName: string,
-    subscriptions: SubscriptionRequest[],
-  ): Promise<void> {
+  async updateSubscriptions(packageName: string, subscriptions: SubscriptionRequest[]): Promise<void> {
     // Get or create AppSession for this app
-    const appSession =
-      this.userSession.appManager.getOrCreateAppSession(packageName);
+    const appSession = this.userSession.appManager.getOrCreateAppSession(packageName);
 
     // If AppManager is disposed, we can't update subscriptions
     if (!appSession) {
-      this.logger.warn(
-        { packageName },
-        "Cannot update subscriptions - AppManager disposed",
-      );
+      this.logger.warn({ packageName }, "Cannot update subscriptions - AppManager disposed");
       return;
     }
 
+    // Serialize subscription updates per-app to prevent race conditions.
+    // Multiple updates can arrive rapidly during startup and would otherwise
+    // process concurrently, causing the wrong final state. See Issue 008.
+    await appSession.enqueue(async () => {
+      await this.processSubscriptionUpdate(appSession, packageName, subscriptions);
+    });
+  }
+
+  /**
+   * Internal implementation of subscription update processing.
+   * Called from the serialized queue to ensure updates are processed in order.
+   */
+  private async processSubscriptionUpdate(
+    appSession: AppSession,
+    packageName: string,
+    subscriptions: SubscriptionRequest[],
+  ): Promise<void> {
     // Process incoming subscriptions array (strings and special location objects)
     const streamSubscriptions: ExtendedStreamType[] = [];
     let locationRate: LocationRate | null = null;
@@ -239,9 +242,7 @@ export class SubscriptionManager {
 
     // Convert bare TRANSCRIPTION to language-specific stream
     const processed: ExtendedStreamType[] = streamSubscriptions.map((sub) =>
-      sub === StreamType.TRANSCRIPTION
-        ? createTranscriptionStream("en-US")
-        : sub,
+      sub === StreamType.TRANSCRIPTION ? createTranscriptionStream("en-US") : sub,
     );
 
     // Validate permissions (best-effort)
@@ -249,8 +250,7 @@ export class SubscriptionManager {
     try {
       const app = await App.findOne({ packageName });
       if (app) {
-        const { allowed, rejected } =
-          SimplePermissionChecker.filterSubscriptions(app, processed);
+        const { allowed, rejected } = SimplePermissionChecker.filterSubscriptions(app, processed);
         if (rejected.length > 0) {
           this.logger.warn(
             {
@@ -265,17 +265,11 @@ export class SubscriptionManager {
         allowedProcessed = allowed;
       }
     } catch (error) {
-      this.logger.error(
-        { packageName, error },
-        "Error validating subscriptions; continuing with all requested",
-      );
+      this.logger.error({ packageName, error }, "Error validating subscriptions; continuing with all requested");
     }
 
     // Delegate to AppSession for storage and grace period handling
-    const updateResult = appSession.updateSubscriptions(
-      allowedProcessed,
-      locationRate,
-    );
+    const updateResult = appSession.updateSubscriptions(allowedProcessed, locationRate);
 
     if (!updateResult.applied) {
       this.logger.info(
@@ -311,10 +305,7 @@ export class SubscriptionManager {
     const appSession = this.userSession.appManager.getAppSession(packageName);
     if (appSession && appSession.subscriptions.size > 0) {
       appSession.clearSubscriptions();
-      this.logger.info(
-        { userId: this.userSession.userId, packageName },
-        "Removed subscriptions for app",
-      );
+      this.logger.info({ userId: this.userSession.userId, packageName }, "Removed subscriptions for app");
     }
 
     // Notify managers about unsubscribe
@@ -360,11 +351,7 @@ export class SubscriptionManager {
 
     if (isLanguageStream(sub as string)) {
       const info = parseLanguageStream(sub as string);
-      if (
-        info &&
-        (info.type === StreamType.TRANSCRIPTION ||
-          info.type === StreamType.TRANSLATION)
-      ) {
+      if (info && (info.type === StreamType.TRANSCRIPTION || info.type === StreamType.TRANSLATION)) {
         return true;
       }
     }
@@ -417,11 +404,7 @@ export class SubscriptionManager {
 
     for (const [, appSession] of this.getAppSessionEntries()) {
       for (const sub of appSession.subscriptions) {
-        if (
-          typeof sub === "string" &&
-          sub.includes("transcription") &&
-          !sub.includes("translation")
-        ) {
+        if (typeof sub === "string" && sub.includes("transcription") && !sub.includes("translation")) {
           subs.push(sub);
         }
       }
@@ -454,15 +437,11 @@ export class SubscriptionManager {
     try {
       // Sync transcription
       const transcriptionSubs = this.getTranscriptionSubscriptions();
-      await this.userSession.transcriptionManager.updateSubscriptions(
-        transcriptionSubs,
-      );
+      await this.userSession.transcriptionManager.updateSubscriptions(transcriptionSubs);
 
       // Sync translation
       const translationSubs = this.getTranslationSubscriptions();
-      await this.userSession.translationManager.updateSubscriptions(
-        translationSubs,
-      );
+      await this.userSession.translationManager.updateSubscriptions(translationSubs);
 
       // Ensure streams exist
       await Promise.all([
@@ -478,10 +457,7 @@ export class SubscriptionManager {
       const calendarSubs = this.getCalendarSubscriptions();
       this.userSession.calendarManager.handleSubscriptionUpdate(calendarSubs);
     } catch (error) {
-      this.logger.error(
-        { userId: this.userSession.userId, error },
-        "Error syncing managers with subscriptions",
-      );
+      this.logger.error({ userId: this.userSession.userId, error }, "Error syncing managers with subscriptions");
     }
   }
 }

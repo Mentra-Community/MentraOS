@@ -53,6 +53,18 @@ public class SysControl {
         nn.putExtra("cmd", "reboot");
         sendBroadcast(context, nn);
     }
+
+    /**
+     * Perform a graceful shutdown of the device.
+     * Sends a broadcast to the system to initiate power off.
+     * @param context Application context
+     */
+    public static void shut(Context context) {
+        Log.i(TAG, "🔌 Initiating device shutdown");
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "shutdown");
+        sendBroadcast(context, nn);
+    }
     
     // NEW METHODS - Key Events & Interaction
     public static void clickPosition(Context context, int x, int y) {
@@ -214,6 +226,46 @@ public class SysControl {
         nn.setPackage("com.android.systemui");
         nn.putExtra("cmd", "disconnectwifi");
         context.sendBroadcast(nn);
+    }
+
+    public static void disconnectFromWifi(Context context, String ssid) {
+        Log.d(TAG, "📶 Disconnecting from WiFi SSID: " + ssid);
+        Intent nn = new Intent("com.xy.xsetting.action");
+        nn.setPackage("com.android.systemui");
+        nn.putExtra("cmd", "disconnectwifi");
+        nn.putExtra("ssid", ssid);
+        context.sendBroadcast(nn);
+    }
+
+    /**
+     * Connect to WiFi with credential refresh - clears cached credentials first.
+     * This fixes the K900 bug where wrong passwords get cached and reused.
+     *
+     * The K900 SystemUI only removes cached credentials when disconnecting from
+     * an active connection attempt. So we: start connect -> disconnect -> reconnect.
+     */
+    public static void connectToWifiWithRefresh(Context context, String ssid, String password) {
+        if (ssid == null || ssid.isEmpty()) {
+            Log.e(TAG, "Cannot connect to WiFi with empty SSID");
+            return;
+        }
+
+        Log.d(TAG, "🔧 Connecting to WiFi with credential refresh: " + ssid);
+
+        // Step 1: Start a connection attempt (this makes the SSID "active")
+        connectToWifi(context, ssid, password);
+
+        // Step 2: After a short delay, disconnect to clear any cached wrong credentials
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            Log.d(TAG, "🔧 Clearing cached credentials for: " + ssid);
+            disconnectFromWifi(context, ssid);
+
+            // Step 3: After disconnect clears the cache, connect with fresh credentials
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                Log.d(TAG, "🔧 Reconnecting with fresh credentials: " + ssid);
+                connectToWifi(context, ssid, password);
+            }, 500);
+        }, 300);
     }
 
     public static void scanWifi(Context context) {
@@ -384,6 +436,22 @@ public class SysControl {
         } catch (Exception e) {
             Log.e(TAG, "Failed to flash recording LED", e);
         }
+    }
+    
+    /**
+     * Enable or disable EIS (Electronic Image Stabilization) via vendor debug property.
+     * Sets vendor.debug.pixsmart.vs to "1" (enabled) or "0" (disabled).
+     * @param context Application context
+     * @param enable true to enable EIS, false to disable
+     */
+    public static void setEisEnable(Context context, boolean enable) {
+        Log.d(TAG, "🎥 Setting EIS (vendor.debug.pixsmart.vs) to: " + (enable ? "1" : "0"));
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "setProperty");
+        nn.putExtra("name", "vendor.debug.pixsmart.vs");
+        nn.putExtra("value", enable ? "1": "0");
+        sendBroadcast(context, nn);
+        Log.d(TAG, "✅ EIS property broadcast sent");
     }
     
     /**

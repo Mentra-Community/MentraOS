@@ -2,9 +2,9 @@ import {useEffect, useRef, useState} from "react"
 import {View, Animated, Easing, ViewStyle, TextStyle, Image, ImageStyle} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 import {getModelSpecificTips} from "./GlassesTroubleshootingModal"
 
@@ -38,7 +38,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({glassesModel
     // Set up fact rotator
     const rotateTips = () => {
       tipTimerRef.current = setTimeout(() => {
-        setCurrentTipIndex(prevIndex => (prevIndex + 1) % tips.length)
+        setCurrentTipIndex((prevIndex) => (prevIndex + 1) % tips.length)
         rotateTips()
       }, 8000) // Change tip every 8 seconds
     }
@@ -110,8 +110,6 @@ const $outerContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s6,
-  borderWidth: 1,
-  borderColor: colors.border,
   padding: spacing.s6,
   gap: spacing.s4,
 })

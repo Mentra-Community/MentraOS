@@ -5,12 +5,12 @@ import {ActivityIndicator, ScrollView, TextInput, TextStyle, TouchableOpacity, V
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function ResetPasswordScreen() {
   const [email, setEmail] = useState("")
@@ -22,7 +22,7 @@ export default function ResetPasswordScreen() {
   const [isValidToken, setIsValidToken] = useState(false)
 
   const {theme, themed} = useAppTheme()
-  const {goBack, replace} = useNavigationHistory()
+  const {goBack, replaceAll} = useNavigationHistory()
 
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0
   const isFormValid = passwordsMatch && newPassword.length >= 6
@@ -37,7 +37,7 @@ export default function ResetPasswordScreen() {
     if (res.is_error()) {
       // No valid session, redirect back to login
       showAlert(translate("common:error"), translate("login:invalidResetLink"))
-      replace("/auth/login")
+      replaceAll("/auth/start")
       return
     }
     const session = res.value
@@ -75,7 +75,7 @@ export default function ResetPasswordScreen() {
       setIsLoading(false)
       await mentraAuth.signOut()
       showAlert(translate("login:passwordResetSuccess"), translate("login:redirectingToLogin"), [
-        {text: translate("common:ok"), onPress: () => replace("/auth/login")},
+        {text: translate("common:ok"), onPress: () => replaceAll("/auth/start")},
       ])
       return
     }
@@ -89,14 +89,14 @@ export default function ResetPasswordScreen() {
       console.error("Error auto-logging in after password reset:", res2.error)
       await mentraAuth.signOut()
       showAlert(translate("login:passwordResetSuccess"), translate("login:redirectingToLogin"), [
-        {text: translate("common:ok"), onPress: () => replace("/auth/login")},
+        {text: translate("common:ok"), onPress: () => replaceAll("/auth/start")},
       ])
       return
     }
 
     // Auto-login succeeded
     showAlert(translate("login:passwordResetSuccess"), translate("login:loggingYouIn"), [
-      {text: translate("common:ok"), onPress: () => replace("/")},
+      {text: translate("common:ok"), onPress: () => replaceAll("/")},
     ])
   }
 

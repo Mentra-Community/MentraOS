@@ -227,7 +227,7 @@ export const mapAuthError = (error: Error | string): string => {
  * Special error codes that we throw from our auth client
  * that need special handling (e.g., showing success instead of error)
  */
-export const AUTH_ERROR_CODES = {
+const AUTH_ERROR_CODES = {
   DUPLICATE_SIGNUP: "DUPLICATE_SIGNUP",
 } as const
 

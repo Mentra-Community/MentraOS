@@ -64,26 +64,8 @@ export default [
       "@typescript-eslint/no-empty-object-type": "warn",
       "@typescript-eslint/no-require-imports": "off",
 
-      // Import ordering - matches client config
-      "import/order": [
-        "error",
-        {
-          "groups": ["builtin", "external", "internal", "parent", "sibling", "index"],
-          "pathGroups": [
-            {
-              pattern: "@mentra/**",
-              group: "internal",
-              position: "before",
-            },
-          ],
-          "pathGroupsExcludedImportTypes": ["builtin"],
-          "newlines-between": "always",
-          "alphabetize": {
-            order: "asc",
-            caseInsensitive: true,
-          },
-        },
-      ],
+      // Disabled: import/order causes mass file changes across PRs
+      // "import/order": "off",
 
       // Note: import/no-restricted-paths removed - was causing issues with flat config
       // The rule from old .eslintrc.js needs different format for flat config

@@ -14,8 +14,8 @@ import {
 } from "react-native"
 import {KeyboardAwareScrollView} from "react-native-keyboard-controller"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 import {ExtendedEdge, useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
 
 export const DEFAULT_BOTTOM_OFFSET = 50
@@ -252,11 +252,12 @@ export function Screen(props: ScreenProps) {
   } = props
 
   const $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
-
+  const {theme} = useAppTheme()
+  
   return (
     <View
       style={[
-        $styles.screen,
+        {paddingHorizontal: theme.spacing.s6},
         $containerStyle,
         {backgroundColor: backgroundColor || colors.background} /*, $containerInsets*/,
       ]}>

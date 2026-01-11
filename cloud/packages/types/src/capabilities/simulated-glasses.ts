@@ -6,7 +6,7 @@
  * This profile matches the Vuzix Z100 capabilities for testing purposes.
  */
 
-import type { Capabilities } from "@mentra/sdk";
+import type { Capabilities } from "../hardware";
 
 /**
  * Simulated Glasses capability profile

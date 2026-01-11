@@ -73,10 +73,7 @@ export class CloudflareStorageService {
 
     this.logger.info(
       {
-        cloudflareUrl: this.cloudflareImageUploadUrl.replace(
-          this.cloudflareAccountId,
-          "[ACCOUNT_ID]",
-        ),
+        cloudflareUrl: this.cloudflareImageUploadUrl.replace(this.cloudflareAccountId, "[ACCOUNT_ID]"),
         fileSize: image.length,
         fileName: filename,
       },
@@ -88,24 +85,50 @@ export class CloudflareStorageService {
     let deliveryUrl: string | undefined;
 
     if (imageData.variants && Array.isArray(imageData.variants)) {
-      // Look for a square variant in the response
-      const squareVariant = imageData.variants.find((url: string) =>
-        url.includes("/square"),
-      );
-      if (squareVariant) {
-        deliveryUrl = squareVariant;
+      // For preview images, use highest quality available
+      // Priority: original (uncompressed) > public (high quality) > square (thumbnail)
+      let preferredVariants: string[];
+
+      if (appPackageName) {
+        // Preview images: try original first, then public
+        preferredVariants = ["original", "public"];
       } else {
-        // Replace the last variant part with 'square'
+        // App logos: use square for smaller file size
+        preferredVariants = ["square"];
+      }
+
+      // Try to find preferred variants in order
+      for (const variant of preferredVariants) {
+        const foundVariant = imageData.variants.find((url: string) => url.includes(`/${variant}`));
+
+        if (foundVariant) {
+          deliveryUrl = foundVariant;
+          this.logger.debug(
+            {
+              variant,
+              url: deliveryUrl,
+            },
+            `Using ${variant} variant`,
+          );
+          break;
+        }
+      }
+
+      // If no preferred variant found, construct URL with first preference
+      if (!deliveryUrl) {
         const firstVariant = imageData.variants[0];
+        const targetVariant = preferredVariants[0];
+
         if (firstVariant && typeof firstVariant === "string") {
           // eslint-disable-next-line no-useless-escape
-          deliveryUrl = firstVariant.replace(/\/[^\/]+$/, "/square");
+          deliveryUrl = firstVariant.replace(/\/[^\/]+$/, `/${targetVariant}`);
           this.logger.debug(
             {
               originalVariant: firstVariant,
-              squareUrl: deliveryUrl,
+              newUrl: deliveryUrl,
+              variant: targetVariant,
             },
-            "Replaced variant with square",
+            `Replaced variant with ${targetVariant}`,
           );
         } else {
           this.logger.error("No cloudflare variants found");
@@ -126,18 +149,12 @@ export class CloudflareStorageService {
     if (replaceImageId) {
       try {
         await this.deleteImage(replaceImageId);
-        this.logger.info(
-          { deletedImageId: replaceImageId },
-          "Successfully deleted old image",
-        );
+        this.logger.info({ deletedImageId: replaceImageId }, "Successfully deleted old image");
       } catch (deleteError) {
         this.logger.error(
           {
             replaceImageId,
-            deleteError:
-              deleteError instanceof Error
-                ? deleteError.message
-                : String(deleteError),
+            deleteError: deleteError instanceof Error ? deleteError.message : String(deleteError),
             deleteStatus: (deleteError as any)?.response?.status,
           },
           "Failed to delete old image - continuing anyway",
@@ -194,10 +211,7 @@ export class CloudflareStorageService {
       if (cfError.response?.status === 404) {
         throw new Error("Image not found");
       }
-      throw new Error(
-        cfError.response?.data?.errors?.[0]?.message ||
-          "Failed to delete image",
-      );
+      throw new Error(cfError.response?.data?.errors?.[0]?.message || "Failed to delete image");
     }
   }
 }

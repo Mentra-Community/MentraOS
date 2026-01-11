@@ -7,7 +7,7 @@ import {Screen, Header, Text} from "@/components/ignite"
 import ActionButton from "@/components/ui/ActionButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function BufferDebugPage() {
   const {theme} = useAppTheme()

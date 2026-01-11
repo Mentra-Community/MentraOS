@@ -12,7 +12,6 @@
 
 import type { Logger } from "pino";
 
-
 import {
   GlassesToCloudMessage,
   GlassesToCloudMessageType,
@@ -28,6 +27,8 @@ import {
   TouchEvent,
   StreamType,
   CloudToAppMessageType,
+  UdpRegister,
+  UdpUnregister,
 } from "@mentra/sdk";
 
 import { PosthogService } from "../../logging/posthog.service";
@@ -139,6 +140,15 @@ export async function handleGlassesMessage(userSession: UserSession, message: Gl
       // Touch events
       case GlassesToCloudMessageType.TOUCH_EVENT:
         await handleTouchEvent(userSession, message as TouchEvent, logger);
+        break;
+
+      // UDP audio registration
+      case GlassesToCloudMessageType.UDP_REGISTER:
+        handleUdpRegister(userSession, message as UdpRegister);
+        break;
+
+      case GlassesToCloudMessageType.UDP_UNREGISTER:
+        handleUdpUnregister(userSession, message as UdpUnregister);
         break;
 
       // Default - relay to apps based on subscriptions
@@ -315,6 +325,20 @@ async function handleTouchEvent(userSession: UserSession, touchEvent: TouchEvent
       );
     }
   }
+}
+
+/**
+ * Handle UDP audio registration - delegate to UdpAudioManager
+ */
+function handleUdpRegister(userSession: UserSession, message: UdpRegister): void {
+  userSession.udpAudioManager.handleRegister(message);
+}
+
+/**
+ * Handle UDP audio unregistration - delegate to UdpAudioManager
+ */
+function handleUdpUnregister(userSession: UserSession, message: UdpUnregister): void {
+  userSession.udpAudioManager.handleUnregister(message);
 }
 
 export default handleGlassesMessage;

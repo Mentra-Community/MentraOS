@@ -2,8 +2,8 @@ import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/sr
 import {View, ViewStyle, TextStyle, ImageStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface GlassesFeatureListProps {
   glassesModel: string
@@ -11,7 +11,7 @@ interface GlassesFeatureListProps {
 
 export type GlassesFeature = "camera" | "microphone" | "speakers" | "display"
 
-export const featureLabels: Record<GlassesFeature, string> = {
+const featureLabels: Record<GlassesFeature, string> = {
   camera: "Camera",
   microphone: "Microphone",
   speakers: "Speakers",

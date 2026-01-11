@@ -24,7 +24,8 @@ export const SentrySetup = () => {
   const dist = `${process.env.EXPO_PUBLIC_BUILD_TIME}-${process.env.EXPO_PUBLIC_BUILD_COMMIT}`
   const branch = process.env.EXPO_PUBLIC_BUILD_BRANCH
   const isProd = branch == "main" || branch == "staging"
-  const sampleRate = isProd ? 0.1 : 1.0
+  // const sampleRate = isProd ? 0.1 : 1.0
+  const sampleRate = 1.0
 
   Sentry.init({
     dsn: sentryDsn,

@@ -17,15 +17,28 @@ class Bridge {
         eventCallback = callback
     }
 
+    /// Thread-safe event dispatch - ensures callback is invoked on main thread
+    /// to avoid React Native bridge threading issues that can cause EXC_BREAKPOINT
+    private static func dispatchEvent(_ eventName: String, _ data: [String: Any]) {
+        guard let callback = eventCallback else { return }
+        if Thread.isMainThread {
+            callback(eventName, data)
+        } else {
+            DispatchQueue.main.async {
+                callback(eventName, data)
+            }
+        }
+    }
+
     static func log(_ message: String) {
         let msg = "CORE:\(message)"
         let data: [String: Any] = ["body": msg]
-        eventCallback?("CoreMessageEvent", data)
+        dispatchEvent("CoreMessageEvent", data)
     }
 
     static func sendEvent(withName: String, body: String) {
         let data: [String: Any] = ["body": body]
-        eventCallback?(withName, data)
+        dispatchEvent(withName, data)
     }
 
     static func showBanner(type: String, message: String) {
@@ -43,6 +56,9 @@ class Bridge {
         Bridge.sendTypedMessage("pair_failure", body: data)
     }
 
+    /// Send microphone data to React Native.
+    /// React Native handles the decision of whether to send via UDP or WebSocket.
+    /// This keeps the native layer simple and UDP logic centralized in React Native.
     static func sendMicData(_ data: Data) {
         let base64String = data.base64EncodedString()
         let body = ["base64": base64String]
@@ -265,6 +281,46 @@ class Bridge {
         Bridge.sendTypedMessage("mtk_update_complete", body: eventBody)
     }
 
+    /// Send OTA update available notification - glasses have detected an available update (background mode)
+    static func sendOtaUpdateAvailable(
+        versionCode: Int64,
+        versionName: String,
+        updates: [String],
+        totalSize: Int64
+    ) {
+        let eventBody: [String: Any] = [
+            "version_code": versionCode,
+            "version_name": versionName,
+            "updates": updates,
+            "total_size": totalSize,
+        ]
+        Bridge.sendTypedMessage("ota_update_available", body: eventBody)
+    }
+
+    /// Send OTA progress update - glasses are downloading/installing an update
+    static func sendOtaProgress(
+        stage: String,
+        status: String,
+        progress: Int,
+        bytesDownloaded: Int64,
+        totalBytes: Int64,
+        currentUpdate: String,
+        errorMessage: String?
+    ) {
+        var eventBody: [String: Any] = [
+            "stage": stage,
+            "status": status,
+            "progress": progress,
+            "bytes_downloaded": bytesDownloaded,
+            "total_bytes": totalBytes,
+            "current_update": currentUpdate,
+        ]
+        if let error = errorMessage {
+            eventBody["error_message"] = error
+        }
+        Bridge.sendTypedMessage("ota_progress", body: eventBody)
+    }
+
     // Arbitrary WS Comms (dont use these, make a dedicated function for your use case):
     static func sendWSText(_ msg: String) {
         let data = ["text": msg]
@@ -285,6 +341,6 @@ class Bridge {
         let jsonData = try! JSONSerialization.data(withJSONObject: body)
         let jsonString = String(data: jsonData, encoding: .utf8)
         let data: [String: Any] = ["body": jsonString!]
-        eventCallback?("CoreMessageEvent", data)
+        dispatchEvent("CoreMessageEvent", data)
     }
 }

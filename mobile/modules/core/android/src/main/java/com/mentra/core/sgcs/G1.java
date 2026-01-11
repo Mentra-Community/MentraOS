@@ -515,28 +515,11 @@ public class G1 extends SGCManager {
                             // }
 
                             if (deviceName.contains("R_")) {
-                                // decode the LC3 audio
-                                if (lc3DecoderPtr != 0) {
-                                    byte[] pcmData = Lc3Cpp.decodeLC3(lc3DecoderPtr, lc3);
-                                    // send the PCM out
-                                    if (shouldUseGlassesMic) {
-                                        if (pcmData != null && pcmData.length > 0) {
-                                            // audioProcessingCallback.onAudioDataAvailable(pcmData);
-                                            CoreManager.getInstance().handlePcm(pcmData);
-                                        }
-                                    }
-
-                                    // if (shouldUseGlassesMic) { TODO: add this back if needed
-                                    // EventBus.getDefault().post(new AudioChunkNewEvent(pcmData));
-                                    // } else {
-                                    // Log.e(TAG, "Failed to decode LC3 frame, got null or empty result");
-                                    // }
+                                // Forward raw LC3 to CoreManager (matches iOS behavior)
+                                // G1 uses 20-byte LC3 frames (default canonical config)
+                                if (shouldUseGlassesMic) {
+                                    CoreManager.getInstance().handleGlassesMicData(lc3, 20);
                                 }
-
-                                // send through the LC3
-                                // audioProcessingCallback.onLC3AudioDataAvailable(lc3);
-                                // CoreManager.getInstance().handleGlassesMicData(lc3);
-
                             } else {
                                 // Bridge.log("G1: Lc3 Audio data received. Seq: " + seq + ", Data: " +
                                 // Arrays.toString(lc3) + ", from: " + deviceName);
@@ -1536,7 +1519,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean silent) {
 
     }
 
@@ -1571,7 +1554,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void startVideoRecording(String requestId, boolean save) {
+    public void startVideoRecording(String requestId, boolean save, boolean silent) {
 
     }
 
@@ -1731,8 +1714,18 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void sendHotspotState(boolean enabled) {
+    public void forgetWifiNetwork(String ssid) {
+        // G1 doesn't support WiFi
+    }
 
+    @Override
+    public void sendHotspotState(boolean enabled) {
+        // G1 doesn't support hotspot
+    }
+
+    @Override
+    public void sendUserEmailToGlasses(String email) {
+        // G1 doesn't support user email (no ASG client)
     }
 
     @Override

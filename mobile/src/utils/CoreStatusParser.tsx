@@ -287,5 +287,3 @@ export class CoreStatusParser {
     return CoreStatusParser.defaultStatus
   }
 }
-
-export default CoreStatusParser

@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { AccessToken, VideoGrant, RoomServiceClient } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient, VideoGrant } from "livekit-server-sdk";
 import { Logger } from "pino";
 
 import { logger as rootLogger } from "../../logging/pino-logger";
@@ -309,6 +309,52 @@ export class LiveKitManager {
   }
 
   /**
+   * Rejoin the LiveKit room when the bridge was kicked/disconnected.
+   * Applies a small backoff window to avoid rejoin storms.
+   */
+  public async rejoinBridge(): Promise<void> {
+    const now = Date.now();
+    const backoffMs = parseInt(process.env.LIVEKIT_REJOIN_BACKOFF_MS || "2000", 10) || 2000;
+
+    if (this.lastRejoinAttemptAt && now - this.lastRejoinAttemptAt < backoffMs) {
+      this.logger.warn(
+        {
+          feature: "livekit",
+          backoffMs,
+          sinceLast: now - this.lastRejoinAttemptAt,
+        },
+        "Skipping rejoin due to backoff window",
+      );
+      return;
+    }
+    this.lastRejoinAttemptAt = now;
+
+    if (!this.bridgeClient) {
+      this.bridgeClient = new LiveKitGrpcClient(this.session);
+    }
+
+    const token = await this.mintAgentBridgeToken();
+    if (!token) {
+      this.logger.warn({ feature: "livekit" }, "Failed to mint bridge token for rejoin");
+      return;
+    }
+
+    const params = {
+      url: this.getUrl(),
+      roomName: this.getRoomName(),
+      token,
+      targetIdentity: this.session.userId,
+    };
+
+    try {
+      await (this.bridgeClient as any).rejoin(params);
+      this.logger.info({ feature: "livekit", room: params.roomName }, "Bridge rejoined LiveKit room");
+    } catch (err) {
+      this.logger.error({ feature: "livekit", err }, "Bridge rejoin failed");
+    }
+  }
+
+  /**
    * Get the HTTP URL for LiveKit API calls (converts wss:// to https://)
    */
   private getHttpUrl(): string {
@@ -393,52 +439,6 @@ export class LiveKitManager {
 
     this.logger.info({ feature: "livekit", ...status }, "Room status");
     return status;
-  }
-
-  /**
-   * Rejoin the LiveKit room when the bridge was kicked/disconnected.
-   * Applies a small backoff window to avoid rejoin storms.
-   */
-  public async rejoinBridge(): Promise<void> {
-    const now = Date.now();
-    const backoffMs = parseInt(process.env.LIVEKIT_REJOIN_BACKOFF_MS || "2000", 10) || 2000;
-
-    if (this.lastRejoinAttemptAt && now - this.lastRejoinAttemptAt < backoffMs) {
-      this.logger.warn(
-        {
-          feature: "livekit",
-          backoffMs,
-          sinceLast: now - this.lastRejoinAttemptAt,
-        },
-        "Skipping rejoin due to backoff window",
-      );
-      return;
-    }
-    this.lastRejoinAttemptAt = now;
-
-    if (!this.bridgeClient) {
-      this.bridgeClient = new LiveKitGrpcClient(this.session);
-    }
-
-    const token = await this.mintAgentBridgeToken();
-    if (!token) {
-      this.logger.warn({ feature: "livekit" }, "Failed to mint bridge token for rejoin");
-      return;
-    }
-
-    const params = {
-      url: this.getUrl(),
-      roomName: this.getRoomName(),
-      token,
-      targetIdentity: this.session.userId,
-    };
-
-    try {
-      await (this.bridgeClient as any).rejoin(params);
-      this.logger.info({ feature: "livekit", room: params.roomName }, "Bridge rejoined LiveKit room");
-    } catch (err) {
-      this.logger.error({ feature: "livekit", err }, "Bridge rejoin failed");
-    }
   }
 }
 

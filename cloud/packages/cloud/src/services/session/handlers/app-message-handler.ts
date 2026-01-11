@@ -10,7 +10,6 @@
 
 import type { Logger } from "pino";
 
-
 import {
   AppToCloudMessage,
   AppToCloudMessageType,
@@ -163,6 +162,10 @@ export async function handleAppMessage(
 
 /**
  * Handle subscription update
+ *
+ * Note: Serialization of per-app subscription updates is handled by
+ * AppSession.enqueue() in SubscriptionManager.updateSubscriptions().
+ * See Issue 008 for details on the race condition this prevents.
  */
 async function handleSubscriptionUpdate(
   appWebsocket: IWebSocket,
@@ -441,8 +444,8 @@ async function handleAudioPlayRequest(
     if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
       userSession.websocket.send(JSON.stringify(glassesAudioRequest));
       logger.debug(`🔊 Forwarded audio request ${message.requestId} to glasses`);
-      // Also request server-side playback via Go bridge when enabled
-      void userSession.speakerManager.start(message);
+      // Disabled: Server-side playback via Go bridge/LiveKit - now handled client-side via expo-av
+      // void userSession.speakerManager.start(message);
     } else {
       userSession.audioPlayRequestMapping.delete(message.requestId);
       sendError(appWebsocket, AppErrorCode.INTERNAL_ERROR, "Glasses not connected", logger);
@@ -480,7 +483,8 @@ async function handleAudioStopRequest(
     if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
       userSession.websocket.send(JSON.stringify(glassesAudioStopRequest));
       logger.debug(`🔇 Forwarded audio stop request from ${message.packageName} to glasses`);
-      void userSession.speakerManager.stop(message);
+      // Disabled: Server-side stop via Go bridge/LiveKit - now handled client-side via expo-av
+      // void userSession.speakerManager.stop(message);
     } else {
       sendError(appWebsocket, AppErrorCode.INTERNAL_ERROR, "Glasses not connected", logger);
     }

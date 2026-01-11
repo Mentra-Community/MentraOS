@@ -2,8 +2,8 @@ import {TextStyle, View, ViewStyle} from "react-native"
 
 import {Button} from "@/components/ignite"
 import {Text} from "@/components/ignite/Text"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface BasicDialogProps {
   title: string
@@ -68,8 +68,6 @@ const BasicDialog = ({
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s4,
-  borderWidth: 1,
-  borderColor: colors.border,
   overflow: "hidden",
   elevation: 4,
   justifyContent: "center",

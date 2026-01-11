@@ -3,10 +3,10 @@ import {View, ViewStyle, TextStyle} from "react-native"
 import Canvas, {Image as CanvasImage} from "react-native-canvas"
 
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string

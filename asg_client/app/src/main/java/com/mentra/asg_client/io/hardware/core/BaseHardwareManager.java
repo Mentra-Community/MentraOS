@@ -164,6 +164,22 @@ public class BaseHardwareManager implements IHardwareManager {
         Log.d(TAG, "setRgbLedSolidWhite(" + durationMs + ") called - no-op on base hardware");
     }
 
+    // ============================================
+    // Battery Status (Not Supported)
+    // ============================================
+
+    @Override
+    public int getBatteryLevel() {
+        Log.d(TAG, "getBatteryLevel() called - returning -1 on base hardware");
+        return -1;
+    }
+
+    @Override
+    public boolean getChargingStatus() {
+        Log.d(TAG, "getChargingStatus() called - returning false on base hardware");
+        return false;
+    }
+
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down BaseHardwareManager");

@@ -1,5 +1,4 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import {useLocalSearchParams} from "expo-router"
 import {View, ViewStyle, Image, ImageStyle, TextStyle} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
@@ -7,15 +6,21 @@ import {MentraLogo} from "@/components/brands/MentraLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {Screen, Text, Button} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {$styles, ThemedStyle} from "@/theme"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {ThemedStyle} from "@/theme"
+import {waitForGlassesState} from "@/stores/glasses"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function PairingSuccessScreen() {
   const {theme, themed} = useAppTheme()
-  const {clearHistoryAndGoHome} = useNavigationHistory()
-  const {glassesModelName} = useLocalSearchParams<{glassesModelName: string}>()
+  const {clearHistoryAndGoHome, pushUnder} = useNavigationHistory()
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const {replaceAll, push} = useNavigationHistory()
+  const [onboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
+  
+  focusEffectPreventBack()
 
   // Get manufacturer logo component
   const getManufacturerLogo = (modelName: string) => {
@@ -32,7 +37,58 @@ export default function PairingSuccessScreen() {
     }
   }
 
-  const glassesImage = getGlassesImage(glassesModelName)
+  const glassesImage = getGlassesImage(defaultWearable)
+
+  const handleContinue = async () => {
+    if (defaultWearable === DeviceTypes.LIVE) {
+      const stack = []
+      const order = ["/pairing/btclassic", "/wifi/scan", "/ota/check-for-updates", "/onboarding/live", "/onboarding/os"]
+
+      let btcConnected = await waitForGlassesState("btcConnected", (value) => value === true, 1000)
+      console.log("PAIR_SUCCESS: btcConnected", btcConnected)
+      
+      if (!btcConnected) {
+        stack.push("/pairing/btclassic")
+      }
+      // check if the glasses are already connected:
+      // wait for the glasses to be connected to wifi for up to 1 second:
+      let wifiConnected = await waitForGlassesState("wifiConnected", (value) => value === true, 1000)
+      if (!wifiConnected) {
+        stack.push("/wifi/scan")
+      }
+      stack.push("/ota/check-for-updates")
+      if (!onboardingOsCompleted) {
+        stack.push("/onboarding/os")
+      }
+      stack.push("/onboarding/live")
+
+      // sort the stack by the order:
+      stack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
+
+      // console.log("PAIR_SUCCESS: stack", stack)
+
+      // clear the history and go home so that we don't navigate back here:
+      clearHistoryAndGoHome()
+      // push the first element in the stack (removing it from the list):
+      const first = stack.shift()
+      push(first!)
+      // go bottom to top and pushUnder the rest (in reverse order):
+      for (let i = stack.length - 1; i >= 0; i--) {
+        pushUnder(stack[i])
+      }
+
+      return
+    }
+
+    if (defaultWearable === DeviceTypes.G1) {
+      if (!onboardingOsCompleted) {
+        replaceAll("/onboarding/os")
+        return
+      }
+    }
+
+    clearHistoryAndGoHome()
+  }
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]}>
@@ -41,7 +97,7 @@ export default function PairingSuccessScreen() {
       {/* Glasses Image with Logo on top */}
       <View style={themed($imageContainer)}>
         {/* Manufacturer Logo */}
-        <View style={themed($logoContainer)}>{getManufacturerLogo(glassesModelName)}</View>
+        <View style={themed($logoContainer)}>{getManufacturerLogo(defaultWearable)}</View>
 
         <Spacer height={theme.spacing.s4} />
 
@@ -59,7 +115,7 @@ export default function PairingSuccessScreen() {
       <View style={{flex: 1}} />
 
       {/* Continue Button */}
-      <Button preset="primary" text="Go to home" onPress={clearHistoryAndGoHome} style={themed($continueButton)} />
+      <Button preset="primary" tx="common:continue" onPress={handleContinue} style={themed($continueButton)} />
     </Screen>
   )
 }

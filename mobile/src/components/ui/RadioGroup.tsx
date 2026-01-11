@@ -1,8 +1,8 @@
 import {View, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export interface RadioOption {
   value: string

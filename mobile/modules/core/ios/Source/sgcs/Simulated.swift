@@ -66,7 +66,7 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?) {
+    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, silent _: Bool) {
         Bridge.log("requestPhoto")
     }
 
@@ -94,7 +94,7 @@ class Simulated: SGCManager {
         Bridge.log("saveBufferVideo")
     }
 
-    func startVideoRecording(requestId _: String, save _: Bool) {
+    func startVideoRecording(requestId _: String, save _: Bool, silent _: Bool) {
         Bridge.log("startVideoRecording")
     }
 
@@ -213,8 +213,16 @@ class Simulated: SGCManager {
         Bridge.log("sendWifiCredentials")
     }
 
+    func forgetWifiNetwork(_ ssid: String) {
+        Bridge.log("forgetWifiNetwork: \(ssid)")
+    }
+
     func sendHotspotState(_: Bool) {
         Bridge.log("sendHotspotState")
+    }
+
+    func sendUserEmailToGlasses(_ email: String) {
+        Bridge.log("sendUserEmailToGlasses: \(email)")
     }
 
     // MARK: - Gallery

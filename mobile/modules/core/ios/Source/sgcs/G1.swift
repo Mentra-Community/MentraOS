@@ -315,7 +315,7 @@ class G1: NSObject, SGCManager {
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?
+        compress _: String?, silent _: Bool
     ) {}
 
     func startRtmpStream(_: [String: Any]) {}
@@ -330,7 +330,7 @@ class G1: NSObject, SGCManager {
 
     func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, silent _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -352,7 +352,11 @@ class G1: NSObject, SGCManager {
 
     func sendWifiCredentials(_: String, _: String) {}
 
+    func forgetWifiNetwork(_: String) {}
+
     func sendHotspotState(_: Bool) {}
+
+    func sendUserEmailToGlasses(_: String) {}
 
     func queryGalleryStatus() {}
 

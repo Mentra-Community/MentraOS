@@ -2,9 +2,9 @@ import {View, ViewStyle, TextStyle, Platform} from "react-native"
 
 import {Button, Icon, Text} from "@/components/ignite"
 import Divider from "@/components/ui/Divider"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {BluetoothSettingsHelper} from "@/utils/BluetoothSettingsHelper"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
 interface AudioPairingPromptProps {
   deviceName: string
@@ -24,7 +24,7 @@ export function AudioPairingPrompt({deviceName, onSkip}: AudioPairingPromptProps
   }
 
   const handleOpenSettings = async () => {
-    const success = await BluetoothSettingsHelper.openBluetoothSettings()
+    const success = await SettingsNavigationUtils.openBluetoothSettings()
     if (!success) {
       console.error("Failed to open Bluetooth settings")
     }
@@ -87,7 +87,6 @@ const $centerWrapper: ThemedStyle<ViewStyle> = () => ({
 const $contentContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s6,
-  borderWidth: 1,
   borderColor: colors.border,
   padding: spacing.s6,
   gap: spacing.s4,

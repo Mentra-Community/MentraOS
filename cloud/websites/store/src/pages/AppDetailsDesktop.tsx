@@ -1,7 +1,7 @@
-import {Info, Share2, Smartphone, ChevronLeft} from "lucide-react"
-import {Button} from "@/components/ui/button"
-import GetMentraOSButton from "../components/GetMentraOSButton"
-import {HardwareRequirementLevel, HardwareType} from "../types"
+import { Info, Share2, Smartphone, ChevronLeft, X, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import GetMentraOSButton from "../components/GetMentraOSButton";
+import { HardwareRequirementLevel, HardwareType } from "../types";
 import {
   APP_TAGS,
   hardwareIcons,
@@ -9,7 +9,8 @@ import {
   getPermissionDescription,
   getAppTypeDisplay,
   AppDetailsDesktopProps,
-} from "./AppDetailsShared"
+} from "./AppDetailsShared";
+import { useState } from "react";
 
 const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
   app,
@@ -20,6 +21,8 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
   handleInstall,
   navigateToLogin,
 }) => {
+  const [selectedImage, setSelectedImage] = useState<{ url: string; index: number } | null>(null);
+
   return (
     <div className="min-h-screen flex justify-center">
       {/* Desktop Close Button */}
@@ -34,7 +37,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
       </button> */}
 
       {/* Content wrapper with responsive padding - matches Header_v2 exactly */}
-      <div className="px-4 sm:px-8 md:px-16 lg:px-25 pt-[24px] pb-16 w-full">
+      <div className="px-4 sm:px-8 md:px-16 lg:px-25 pt-[24px] pb-16 w-full max-w-[1400px]">
         {/* Back Button */}
         <button
           onClick={handleBackNavigation}
@@ -147,7 +150,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                         title: app.name,
                         text: app.description || `Check out ${app.name}`,
                         url: window.location.href,
-                      })
+                      });
                     }
                   }}>
                   <Share2 className="w-[18px] h-[18px] bg-[var(--share-button)] border-[var(--border-btn)]" />
@@ -174,7 +177,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                 alt={`${app.name} logo`}
                 className="w-[220px] h-[220px] object-cover rounded-[60px] shadow-md"
                 onError={(e) => {
-                  ;(e.target as HTMLImageElement).src = "https://placehold.co/140x140/gray/white?text=App"
+                  (e.target as HTMLImageElement).src = "https://placehold.co/140x140/gray/white?text=App";
                 }}
               />
             </div>
@@ -221,6 +224,58 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
               }}>
               About this app
             </h2>
+
+            {/* Preview Images Carousel */}
+            {app.previewImages && app.previewImages.length > 0 && (
+              <div className="mb-8  z-1">
+                <div
+                  className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory"
+                  style={{
+                    scrollbarWidth: "none",
+                    msOverflowStyle: "none",
+                  }}>
+                  {app.previewImages
+                    .sort((a, b) => a.order - b.order)
+                    .map((image, index) => {
+                      const isPortrait = image.orientation === "portrait";
+                      return (
+                        <div
+                          key={image.imageId || index}
+                          className=" flex-shrink-0 rounded-lg overflow-hidden snap-start cursor-pointer transition-opacity "
+                          style={{
+                            maxHeight: "422px",
+                            height: "422px",
+                            width: isPortrait ? "195px" : "750px", // Portrait: 195:422 ratio, Landscape: 16:9 ratio
+                            backgroundColor: "var(--bg-secondary)",
+                          }}
+                          onClick={() => setSelectedImage({ url: image.url, index })}>
+                          <img
+                            src={image.url}
+                            alt={`${app.name} preview ${index + 1}`}
+                            className="w-full h-full object-cover"
+                            style={{
+                              objectPosition: "center",
+                            }}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                </div>
+                <style
+                  dangerouslySetInnerHTML={{
+                    __html: `
+                    .overflow-x-auto::-webkit-scrollbar {
+                      display: none;
+                    }
+                  `,
+                  }}
+                />
+              </div>
+            )}
+
             <p
               className="text-[20px] font-normal leading-[1.6]"
               style={{
@@ -524,8 +579,75 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
           </div>
         )}
       </div>
-    </div>
-  )
-}
 
-export default AppDetailsDesktop
+      {/* Image Modal */}
+      {selectedImage && app.previewImages && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+          onClick={() => setSelectedImage(null)}>
+          <button
+            onClick={() => setSelectedImage(null)}
+            className="absolute top-6 right-6 p-2 rounded-full transition-colors hover:bg-white/10"
+            style={{ color: "white" }}
+            aria-label="Close">
+            <X className="h-6 w-6" />
+          </button>
+
+          {/* Previous Button */}
+          {selectedImage.index > 0 && app.previewImages && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const prevIndex = selectedImage.index - 1;
+                const sortedImages = app.previewImages ? [...app.previewImages].sort((a, b) => a.order - b.order) : [];
+                setSelectedImage({ url: sortedImages[prevIndex].url, index: prevIndex });
+              }}
+              className="absolute left-6 p-3 rounded-full transition-colors hover:bg-white/10"
+              style={{ color: "white" }}
+              aria-label="Previous image">
+              <ChevronLeft className="h-8 w-8" />
+            </button>
+          )}
+
+          {/* Next Button */}
+          {app.previewImages && selectedImage.index < app.previewImages.length - 1 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextIndex = selectedImage.index + 1;
+                const sortedImages = app.previewImages ? [...app.previewImages].sort((a, b) => a.order - b.order) : [];
+                setSelectedImage({ url: sortedImages[nextIndex].url, index: nextIndex });
+              }}
+              className="absolute right-6 p-3 rounded-full transition-colors hover:bg-white/10"
+              style={{ color: "white" }}
+              aria-label="Next image">
+              <ChevronRight className="h-8 w-8" />
+            </button>
+          )}
+
+          <div
+            className="relative flex items-center justify-center"
+            style={{
+              maxWidth: "90vw",
+              maxHeight: "90vh",
+            }}>
+            <img
+              src={selectedImage.url}
+              alt={`${app.name} preview ${selectedImage.index + 1}`}
+              style={{
+                maxWidth: "90vw",
+                maxHeight: "90vh",
+                width: "auto",
+                height: "auto",
+              }}
+              className="object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AppDetailsDesktop;

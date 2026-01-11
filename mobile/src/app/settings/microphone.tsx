@@ -1,10 +1,10 @@
-import {ScrollView} from "react-native"
+import {ScrollView, View} from "react-native"
 
 import {MicrophoneSelector} from "@/components/glasses/settings/MicrophoneSelector"
 import {Header, Screen} from "@/components/ignite"
 import {Spacer} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function MicrophoneScreen() {
   const {theme} = useAppTheme()
@@ -13,9 +13,10 @@ export default function MicrophoneScreen() {
   return (
     <Screen preset="fixed">
       <Header titleTx="microphoneSettings:title" leftIcon="chevron-left" onLeftPress={goBack} />
-      <Spacer height={theme.spacing.s6} />
       <ScrollView>
-        <MicrophoneSelector />
+        <View className="gap-6 pt-6">
+          <MicrophoneSelector />
+        </View>
       </ScrollView>
     </Screen>
   )

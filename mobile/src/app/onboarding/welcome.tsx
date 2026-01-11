@@ -1,9 +1,6 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-// eslint-disable-next-line import/no-unresolved
 import DontHaveGlassesSvg from "@assets/glasses/dont-have.svg"
-// eslint-disable-next-line import/no-unresolved
 import HaveGlassesSvg from "@assets/glasses/have.svg"
-// eslint-disable-next-line import/no-unresolved
 import LogoSvg from "@assets/logo/logo.svg"
 import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 import {SvgProps} from "react-native-svg"
@@ -11,10 +8,10 @@ import {SvgProps} from "react-native-svg"
 import {Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 // Import SVG components
 

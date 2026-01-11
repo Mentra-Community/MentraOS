@@ -1,13 +1,18 @@
 package com.mentra.asg_client.service.core.handlers;
 
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 
-import android.content.Context;
-
+import com.mentra.asg_client.audio.AudioAssets;
+import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.managers.K900HardwareManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -15,6 +20,7 @@ import com.mentra.asg_client.service.communication.interfaces.ICommunicationMana
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.utils.SysProp;
+import com.mentra.asg_client.SysControl;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -30,6 +36,7 @@ public class K900CommandHandler {
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
     private final ICommunicationManager communicationManager;
+    private final IHardwareManager hardwareManager;
     private final Handler mainHandler;
 
     public K900CommandHandler(AsgClientServiceManager serviceManager,
@@ -39,6 +46,7 @@ public class K900CommandHandler {
         this.serviceManager = serviceManager;
         this.stateManager = stateManager;
         this.communicationManager = communicationManager;
+        this.hardwareManager = HardwareManagerFactory.getInstance(serviceManager.getContext());
     }
 
     /**
@@ -117,6 +125,16 @@ public class K900CommandHandler {
                 case "sr_btaddr":
                     // BT MAC address response from BES chip
                     handleBtAddrResponse(bData);
+                    break;
+
+                case "sr_keyevt":
+                    // Power button short press - announce battery level
+                    handleKeyEventReport(bData);
+                    break;
+
+                case "cs_shut":
+                    // BES requesting graceful shutdown - send acknowledgment and shutdown MTK
+                    handleShutdownCommand();
                     break;
 
                 default:
@@ -255,6 +273,114 @@ public class K900CommandHandler {
     }
 
     /**
+     * Handle key event report (sr_keyevt) - power button short press
+     * Announces current battery level via audio
+     */
+    private void handleKeyEventReport(JSONObject bData) {
+        int button = bData != null ? bData.optInt("button", -1) : -1;
+        int type = bData != null ? bData.optInt("type", -1) : -1;
+
+        Log.d(TAG, "🔘 Key event - button: " + button + ", type: " + type);
+
+        // button=0, type=0 = power button short press
+        if (button == 0 && type == 0) {
+            if (!hardwareManager.supportsAudioPlayback()) {
+                Log.w(TAG, "⚠️ Hardware does not support audio playback");
+                return;
+            }
+
+            // Check if device is awake, wake it if not (without interfering with existing wake locks)
+            Context context = serviceManager != null ? serviceManager.getContext() : null;
+            if (context != null) {
+                PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                if (powerManager != null && !powerManager.isInteractive()) {
+                    // Device is asleep - acquire a short wake lock for battery query + audio playback
+                    Log.d(TAG, "🔋 Device is asleep, acquiring short wake lock for battery announcement");
+                    WakeLockManager.acquireScreenWakeLock(context, 5000); // 5 seconds for query + audio
+                }
+            }
+
+            // Use hardwareManager to get battery level - this will query BES if cache is stale
+            int batteryLevel = hardwareManager.getBatteryLevel();
+            if (batteryLevel >= 0) {
+                String asset = AudioAssets.getBatteryLevelAsset(batteryLevel);
+                Log.i(TAG, "🔋 Announcing battery level: " + batteryLevel + "% -> " + asset);
+                
+                // TODO: implement this at a later time
+                //hardwareManager.playAudioAsset(asset);
+            } else {
+                Log.w(TAG, "🔋 Battery level unknown, cannot announce");
+            }
+        }
+    }
+
+    /**
+     * Handle shutdown command from BES (cs_shut).
+     * BES sends this when power button is held - we need to:
+     * 1. Send sr_shut acknowledgment back to BES
+     * 2. Perform graceful MTK shutdown
+     *
+     * This prevents sudden power cuts that could corrupt MTK firmware.
+     * BES will wait up to 2 seconds for sr_shut before force-cutting power.
+     */
+    private void handleShutdownCommand() {
+        Log.i(TAG, "🔌 Received shutdown command (cs_shut) from BES");
+
+        // Step 1: Send acknowledgment back to BES
+        sendShutdownAcknowledgment();
+
+        // Step 2: Perform graceful shutdown after a small delay to ensure ACK is sent
+        mainHandler.postDelayed(() -> {
+            Log.i(TAG, "🔌 Initiating MTK shutdown...");
+            Context context = serviceManager != null ? serviceManager.getContext() : null;
+            if (context != null) {
+                SysControl.shut(context);
+            } else {
+                Log.e(TAG, "🔌 Cannot shutdown - context not available");
+            }
+        }, 100); // 100ms delay to ensure sr_shut is sent first
+    }
+
+    /**
+     * Send shutdown acknowledgment (sr_shut) back to BES.
+     * This tells BES that MTK received the shutdown command and is shutting down.
+     */
+    private void sendShutdownAcknowledgment() {
+        Log.i(TAG, "🔌 Sending shutdown acknowledgment (sr_shut) to BES");
+
+        try {
+            JSONObject k900Command = new JSONObject();
+            k900Command.put("C", "sr_shut");
+            k900Command.put("V", 1);
+            k900Command.put("B", "");
+
+            String commandStr = k900Command.toString();
+            Log.d(TAG, "📤 Sending sr_shut: " + commandStr);
+
+            if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
+                Log.w(TAG, "⚠️ ServiceManager or Bluetooth manager unavailable");
+                return;
+            }
+
+            if (!serviceManager.getBluetoothManager().isConnected()) {
+                Log.w(TAG, "⚠️ Bluetooth not connected; cannot send shutdown acknowledgment");
+                return;
+            }
+
+            boolean sent = serviceManager.getBluetoothManager().sendData(
+                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            if (sent) {
+                Log.i(TAG, "✅ Shutdown acknowledgment (sr_shut) sent to BES");
+            } else {
+                Log.e(TAG, "❌ Failed to send shutdown acknowledgment");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error creating shutdown acknowledgment", e);
+        }
+    }
+
+    /**
      * Send request to BES chip to get BT MAC address (cs_btaddr)
      * Call this on startup/UART connection to retrieve the unique device identifier
      */
@@ -317,6 +443,11 @@ public class K900CommandHandler {
             }
             if (newBatteryVoltage != -1) {
                 Log.d(TAG, "🔋 Battery voltage: " + newBatteryVoltage + "mV");
+            }
+
+            // Notify K900HardwareManager of battery response (for cache update)
+            if (hardwareManager instanceof K900HardwareManager) {
+                ((K900HardwareManager) hardwareManager).onBatteryResponse(newBatteryPercentage, newBatteryVoltage);
             }
 
             // Send battery status over BLE if we have valid data
@@ -579,12 +710,18 @@ public class K900CommandHandler {
      * Send battery status over BLE
      */
     private void sendBatteryStatusOverBle(int batteryPercentage, int batteryVoltage) {
+        // Calculate charging status based on voltage
+        boolean isCharging = batteryVoltage > 3900;
+
+        // Always update local state, regardless of BLE connection
+        if (stateManager != null) {
+            stateManager.updateBatteryStatus(batteryPercentage, isCharging, System.currentTimeMillis());
+        }
+
+        // Send to phone only if BLE is connected
         if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
                 serviceManager.getBluetoothManager().isConnected()) {
             try {
-                // Calculate charging status based on voltage
-                boolean isCharging = batteryVoltage > 3900;
-
                 JSONObject obj = new JSONObject();
                 obj.put("type", "battery_status");
                 obj.put("charging", isCharging);
@@ -593,11 +730,6 @@ public class K900CommandHandler {
                 Log.d(TAG, "Formatted battery status message: " + jsonString);
                 serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
                 Log.d(TAG, "Sent battery status via BLE");
-
-                // Update the main service with battery status
-                if (stateManager != null) {
-                    stateManager.updateBatteryStatus(batteryPercentage, isCharging, System.currentTimeMillis());
-                }
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating battery status JSON", e);
             }

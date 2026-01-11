@@ -22,3 +22,7 @@ services:
       SERVICE_NAME: "cloud"
       # Better Stack logging for Go bridge (when enabled)
       BETTERSTACK_INGESTING_HOST: "s1311181.eu-nbg-2.betterstackdata.com"
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio

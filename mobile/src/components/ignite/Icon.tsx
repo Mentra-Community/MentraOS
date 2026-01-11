@@ -5,6 +5,7 @@ import {
   FileType2,
   Fullscreen,
   Glasses,
+  Info,
   LayoutDashboard,
   Locate,
   Unlink,
@@ -26,7 +27,7 @@ import {
 } from "react-native"
 
 import {ShoppingBagIcon, HomeIcon} from "@/components/icons"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export type IconTypes = keyof typeof iconRegistry
 
@@ -109,12 +110,48 @@ const lucideIcons = {
   "locate": Locate,
   "layout-dashboard": LayoutDashboard,
   "wifi-off": WifiOff,
+  "info": Info,
   // "house": House,
   // custom icons:
   "shopping-bag": ShoppingBagIcon,
   "shopping-bag-filled": ShoppingBagIcon,
   "house": HomeIcon,
   "house-filled": HomeIcon,
+}
+
+const tablerIcons = {
+  "settings": 1,
+  "bluetooth-connected": 1,
+  "bluetooth-off": 1,
+  "battery-3": 1,
+  "battery-2": 1,
+  "battery-1": 1,
+  "battery-0": 1,
+  "arrow-left": 1,
+  "arrow-right": 1,
+  "x": 1,
+  "message-2-star": 1,
+  "shield-lock": 1,
+  "user-code": 1,
+  "user": 1,
+  "user-filled": 1,
+  "sun": 1,
+  "microphone": 1,
+  "device-ipad": 1,
+  "device-airpods-case": 1,
+  "brightness-half": 1,
+  "battery-charging": 1,
+  "alert": 1,
+  "chevron-left": 1,
+  "chevron-right": 1,
+  "trash": 1,
+  "trash-x": 1,
+  "check": 1,
+  "world-download": 1,
+  "repeat": 1,
+  "mail": 1,
+  "chevron-down": 1,
+  "chevron-up": 1,
 }
 
 /**
@@ -179,33 +216,7 @@ export const iconRegistry = {
   // included in other font sets (imported automatically):
   // included here mostly for ide/type hinting purposes:
   // tabler icons:
-  "settings": 1,
-  "bluetooth-connected": 1,
-  "bluetooth-off": 1,
-  "battery-3": 1,
-  "battery-2": 1,
-  "battery-1": 1,
-  "battery-0": 1,
-  "arrow-left": 1,
-  "arrow-right": 1,
-  "x": 1,
-  "message-2-star": 1,
-  "shield-lock": 1,
-  "user-code": 1,
-  "user": 1,
-  "user-filled": 1,
-  "sun": 1,
-  "microphone": 1,
-  "device-ipad": 1,
-  "device-airpods-case": 1,
-  "brightness-half": 1,
-  "battery-charging": 1,
-  "alert": 1,
-  "chevron-left": 1,
-  "chevron-right": 1,
-  "trash": 1,
-  "trash-x": 1,
-  "check": 1,
+  ...tablerIcons,
   // lucide-react-native icons:
   ...lucideIcons,
 }

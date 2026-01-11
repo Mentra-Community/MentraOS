@@ -15,9 +15,9 @@ class AudioSessionMonitor {
     private static var instance: AudioSessionMonitor?
 
     // Current monitoring state
-    private var isMonitoring = false
-    private var devicePattern: String?
-    private var callback: ((Bool, String?) -> Void)?
+    static var isMonitoring = false
+    static var devicePattern: String?
+    static var callback: ((Bool, String?) -> Void)?
 
     private init() {
         Bridge.log("AudioMonitor: Initialized")
@@ -33,7 +33,7 @@ class AudioSessionMonitor {
     /// Check if AVAudioSession is configured for Bluetooth
     /// Returns true if session allows Bluetooth audio
     /// NOTE: We don't configure the session - PhoneMic.swift handles that when recording
-    func isAudioSessionConfigured() -> Bool {
+    static func isAudioSessionConfigured() -> Bool {
         let session = AVAudioSession.sharedInstance()
 
         // Check if category supports Bluetooth
@@ -46,7 +46,7 @@ class AudioSessionMonitor {
 
     /// Check if a Bluetooth audio device matching the pattern is currently the active audio route
     /// Returns true if device is actively routing audio
-    func isAudioDeviceConnected(devicePattern: String) -> Bool {
+    static func isAudioDeviceConnected(devicePattern: String) -> Bool {
         let session = AVAudioSession.sharedInstance()
         let outputs = session.currentRoute.outputs
 
@@ -68,7 +68,7 @@ class AudioSessionMonitor {
     /// Check if a Bluetooth device matching the pattern is paired (appears in availableInputs)
     /// Returns true if device is found (paired), WITHOUT activating it
     /// This avoids switching A2DP music playback to HFP microphone mode
-    func isDevicePaired(devicePattern: String) -> Bool {
+    static func isDevicePaired(devicePattern: String) -> Bool {
         let session = AVAudioSession.sharedInstance()
 
         // Check if already active (using A2DP for music or HFP for calls)
@@ -104,7 +104,7 @@ class AudioSessionMonitor {
 
     /// Start monitoring for audio route changes
     /// Callback will be called when device matching pattern connects/disconnects
-    func startMonitoring(devicePattern: String, callback: @escaping (Bool, String?) -> Void) {
+    static func startMonitoring(devicePattern: String, callback: @escaping (Bool, String?) -> Void) {
         guard !isMonitoring else {
             Bridge.log("AudioMonitor: Already monitoring")
             return
@@ -135,7 +135,7 @@ class AudioSessionMonitor {
     }
 
     /// Stop monitoring for audio route changes
-    func stopMonitoring() {
+    static func stopMonitoring() {
         guard isMonitoring else {
             Bridge.log("AudioMonitor: Not currently monitoring")
             return
@@ -153,9 +153,9 @@ class AudioSessionMonitor {
             object: nil
         )
 
-        isMonitoring = false
-        devicePattern = nil
-        callback = nil
+        AudioSessionMonitor.isMonitoring = false
+        AudioSessionMonitor.devicePattern = nil
+        AudioSessionMonitor.callback = nil
 
         Bridge.log("AudioMonitor: Stopped monitoring")
     }
@@ -164,7 +164,7 @@ class AudioSessionMonitor {
         guard let userInfo = notification.userInfo,
               let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
-              let pattern = devicePattern
+              let pattern = AudioSessionMonitor.devicePattern
         else {
             return
         }
@@ -178,16 +178,14 @@ class AudioSessionMonitor {
             Bridge.log("AudioMonitor: New device available, attempting to activate '\(pattern)'")
 
             // Add small delay to let iOS populate availableInputs
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                guard let self = self else { return }
-
-                if self.isDevicePaired(devicePattern: pattern) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if AudioSessionMonitor.isDevicePaired(devicePattern: pattern) {
                     let session = AVAudioSession.sharedInstance()
                     let deviceName = session.availableInputs?.first(where: {
                         $0.portName.localizedCaseInsensitiveContains(pattern)
                     })?.portName
                     Bridge.log("AudioMonitor: ✅ Successfully detected newly paired device '\(pattern)'")
-                    self.callback?(true, deviceName)
+                    AudioSessionMonitor.callback?(true, deviceName)
                 } else {
                     Bridge.log("AudioMonitor: New device available but not matching '\(pattern)'")
                 }
@@ -195,9 +193,9 @@ class AudioSessionMonitor {
 
         case .oldDeviceUnavailable:
             // Check if our device disconnected
-            if !isAudioDeviceConnected(devicePattern: pattern) {
+            if !AudioSessionMonitor.isAudioDeviceConnected(devicePattern: pattern) {
                 Bridge.log("AudioMonitor: Device '\(pattern)' disconnected")
-                callback?(false, nil)
+                AudioSessionMonitor.callback?(false, nil)
             }
 
         default:
@@ -206,7 +204,7 @@ class AudioSessionMonitor {
     }
 
     @objc private func handleAppBecameActive() {
-        guard let pattern = devicePattern else { return }
+        guard let pattern = AudioSessionMonitor.devicePattern else { return }
 
         Bridge.log("AudioMonitor: App became active, checking for paired device '\(pattern)'")
 
@@ -214,12 +212,12 @@ class AudioSessionMonitor {
         // Just wait a bit for iOS to update availableInputs after returning from background
         // iOS needs time to populate availableInputs after app foreground
         // Use retry with progressive delays: 100ms, 400ms, 500ms = 1s total
-        attemptActivateDevice(pattern: pattern, attempt: 0, maxAttempts: 3)
+        AudioSessionMonitor.attemptActivateDevice(pattern: pattern, attempt: 0, maxAttempts: 3)
     }
 
     /// Try to detect if the audio device is paired with retry logic
     /// Delays: [100ms, 400ms, 500ms] = 1 second total
-    private func attemptActivateDevice(pattern: String, attempt: Int, maxAttempts: Int) {
+    static func attemptActivateDevice(pattern: String, attempt: Int, maxAttempts: Int) {
         // Progressive delays in seconds (total: 1 second)
         let delays: [TimeInterval] = [0.1, 0.4, 0.5]
 
@@ -230,22 +228,20 @@ class AudioSessionMonitor {
 
         let delay = attempt < delays.count ? delays[attempt] : 0.5
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self = self else { return }
-
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             Bridge.log("AudioMonitor: Attempt \(attempt + 1)/\(maxAttempts) to detect '\(pattern)'...")
 
-            if self.isDevicePaired(devicePattern: pattern) {
+            if AudioSessionMonitor.isDevicePaired(devicePattern: pattern) {
                 let session = AVAudioSession.sharedInstance()
                 // Try to get device name from availableInputs
                 let deviceName = session.availableInputs?.first(where: {
                     $0.portName.localizedCaseInsensitiveContains(pattern)
                 })?.portName
                 Bridge.log("AudioMonitor: ✅ Found paired device on attempt \(attempt + 1)")
-                self.callback?(true, deviceName)
+                AudioSessionMonitor.callback?(true, deviceName)
             } else {
                 Bridge.log("AudioMonitor: Attempt \(attempt + 1) failed, retrying in \(delays[min(attempt + 1, delays.count - 1)])s...")
-                self.attemptActivateDevice(pattern: pattern, attempt: attempt + 1, maxAttempts: maxAttempts)
+                AudioSessionMonitor.attemptActivateDevice(pattern: pattern, attempt: attempt + 1, maxAttempts: maxAttempts)
             }
         }
     }

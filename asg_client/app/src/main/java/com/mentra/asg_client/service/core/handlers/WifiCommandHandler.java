@@ -36,7 +36,7 @@ public class WifiCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("set_wifi_credentials", "request_wifi_status", "request_wifi_scan", "set_hotspot_state", "disconnect_wifi");
+        return Set.of("set_wifi_credentials", "request_wifi_status", "request_wifi_scan", "set_hotspot_state", "disconnect_wifi", "forget_wifi");
     }
 
     @Override
@@ -53,6 +53,8 @@ public class WifiCommandHandler implements ICommandHandler {
                     return handleSetHotspotState(data);
                 case "disconnect_wifi":
                     return handleDisconnectWifi();
+                case "forget_wifi":
+                    return handleForgetWifi(data);
                 default:
                     Log.e(TAG, "Unsupported WiFi command: " + commandType);
                     return false;
@@ -260,6 +262,34 @@ public class WifiCommandHandler implements ICommandHandler {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error handling WiFi disconnect command", e);
+            return false;
+        }
+    }
+
+    /**
+     * Handle forget WiFi command - removes a saved network from the device
+     */
+    private boolean handleForgetWifi(JSONObject data) {
+        try {
+            String ssid = data.optString("ssid", "");
+            if (ssid.isEmpty()) {
+                Log.e(TAG, "📶 Cannot forget WiFi - missing SSID");
+                return false;
+            }
+
+            Log.d(TAG, "📶 Forgetting WiFi network: " + ssid);
+
+            INetworkManager networkManager = serviceManager.getNetworkManager();
+            if (networkManager != null) {
+                networkManager.forgetWifiNetwork(ssid);
+                Log.d(TAG, "📶 ✅ WiFi forget command executed for: " + ssid);
+                return true;
+            } else {
+                Log.e(TAG, "📶 Network manager not available for WiFi forget");
+                return false;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "📶 Error handling WiFi forget command", e);
             return false;
         }
     }

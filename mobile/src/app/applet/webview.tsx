@@ -7,11 +7,10 @@ import {Header, Screen, Text} from "@/components/ignite"
 import InternetConnectionFallbackComponent from "@/components/misc/InternetConnectionFallbackComponent"
 import LoadingOverlay from "@/components/misc/LoadingOverlay"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import restComms from "@/services/RestComms"
 import {useSettingsStore} from "@/stores/settings"
-import {$styles} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function AppWebView() {
   const {theme, themed} = useAppTheme()
@@ -234,7 +233,7 @@ export default function AppWebView() {
 
   // Render WebView only when finalUrl is ready
   return (
-    <Screen preset="fixed" safeAreaEdges={[]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
       <Header
         title={appName}
         titleMode="center"
@@ -268,6 +267,9 @@ export default function AppWebView() {
               // Show loading overlay while WebView itself loads
               <LoadingOverlay message={`Loading ${appName}...`} />
             )}
+            // allow inline media playback:
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
             // Disable zooming and scaling
             scalesPageToFit={false}
             scrollEnabled={true}

@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/react-native"
+import CoreModule from "core"
 import {FC, createContext, useEffect, useState, useContext} from "react"
 
 import {LogoutUtils} from "@/utils/LogoutUtils"
@@ -56,6 +57,12 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
           id: session?.user?.id,
           email: session?.user?.email,
         })
+        // Send user email to glasses for crash reporting
+        if (session?.user?.email) {
+          CoreModule.setUserEmail(session.user.email).catch((e) => {
+            console.log("AuthContext: Failed to send user email to glasses:", e)
+          })
+        }
       })
       console.log("AuthContext: setupAuthListener()", res)
       if (res.is_ok()) {
@@ -68,17 +75,6 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     getInitialSession()
     setupAuthListener()
-
-    // // Run both initial checks
-    // getInitialSession().catch(error => {
-    //   console.error("AuthContext: Error getting initial session:", error)
-    //   setLoading(false)
-    // })
-
-    // setupAuthListener().catch(error => {
-    //   console.error("AuthContext: Error setting up auth listener:", error)
-    //   setLoading(false)
-    // })
 
     // Cleanup the listener
     return () => {

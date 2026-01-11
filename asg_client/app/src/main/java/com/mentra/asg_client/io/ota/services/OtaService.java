@@ -51,8 +51,8 @@ public class OtaService extends Service {
             Log.e(TAG, "Failed to stop external OTA updater", e);
         }
         
-        // Initialize OTA helper
-        otaHelper = new OtaHelper(this);
+        // Initialize OTA helper singleton
+        otaHelper = OtaHelper.initialize(this);
         
         // Register EventBus
         if (!EventBus.getDefault().isRegistered(this)) {

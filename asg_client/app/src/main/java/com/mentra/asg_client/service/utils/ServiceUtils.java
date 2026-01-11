@@ -374,6 +374,12 @@ public class ServiceUtils {
                         if (propLower.contains("k900")) {
                             return "K900";
                         }
+                        if (propLower.contains("mentra live")) {
+                            return "Mentra Live";
+                        }
+                        if (propLower.contains("mentralive")) {
+                            return "Mentra Live";
+                        }
                     }
                 }
                 return "K900 (variant unknown)";

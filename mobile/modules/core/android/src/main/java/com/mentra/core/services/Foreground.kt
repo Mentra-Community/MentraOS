@@ -61,7 +61,6 @@ class ForegroundService : Service() {
             return 0 // No service types before Android Q
         }
 
-        // Start with dataSync (always allowed)
         var serviceType = 0
 
         // Check Bluetooth permissions
@@ -81,11 +80,28 @@ class ForegroundService : Service() {
                     }
                 }
 
-        if (hasBluetoothPermission) {
+        // Check CHANGE_NETWORK_STATE permission - this is a "normal" permission that is
+        // auto-granted at install time, but we check it defensively in case this changes.
+        // This permission can satisfy the connectedDevice FGS requirement without needing
+        // BLUETOOTH_CONNECT, which is a "dangerous" permission that users can deny.
+        val hasNetworkStatePermission =
+                ContextCompat.checkSelfPermission(
+                        this,
+                        android.Manifest.permission.CHANGE_NETWORK_STATE
+                ) == PackageManager.PERMISSION_GRANTED
+
+        // Use connectedDevice if we have EITHER Bluetooth OR network state permission.
+        // This avoids falling back to dataSync (which has a 6-hour timeout on Android 14+)
+        // when users deny Bluetooth permissions.
+        if (hasBluetoothPermission || hasNetworkStatePermission) {
             serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            Bridge.log("ForegroundService: Added connectedDevice (has Bluetooth permission)")
+            if (hasBluetoothPermission) {
+                Bridge.log("ForegroundService: Added connectedDevice (has Bluetooth permission)")
+            } else {
+                Bridge.log("ForegroundService: Added connectedDevice (has CHANGE_NETWORK_STATE permission)")
+            }
         } else {
-            Bridge.log("ForegroundService: No Bluetooth permission")
+            Bridge.log("ForegroundService: No Bluetooth or network state permission for connectedDevice")
         }
 
         // Check microphone permission
@@ -100,10 +116,12 @@ class ForegroundService : Service() {
             Bridge.log("ForegroundService: No microphone permission")
         }
 
-        // Only use dataSync as fallback if no other types were added
+        // Only use dataSync as absolute last resort fallback if no other types were added.
+        // WARNING: dataSync has a 6-hour timeout on Android 14+ which will crash the app.
+        // This should rarely happen since CHANGE_NETWORK_STATE is a normal permission.
         if (serviceType == 0) {
             serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            Bridge.log("ForegroundService: Using dataSync as fallback (no other permissions)")
+            Bridge.log("ForegroundService: WARNING - Using dataSync as fallback (6-hour timeout on Android 14+)")
         }
 
         return serviceType

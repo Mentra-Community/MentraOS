@@ -13,12 +13,12 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useCoreStatus} from "@/contexts/CoreStatusProvider"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
 import {useApplets} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function DeviceSettings() {
   const {theme} = useAppTheme()
@@ -99,9 +99,9 @@ export default function DeviceSettings() {
         {defaultWearable && (features?.display?.count ?? 0 > 1) && (
           <RouteButton
             icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}
-            label={translate("settings:screenSettings")}
+            label={translate("settings:positionSettings")}
             // subtitle={translate("settings:screenDescription")}
-            onPress={() => push("/settings/screen")}
+            onPress={() => push("/settings/position")}
           />
         )}
         {/* Only show dashboard settings if glasses have display capability */}
@@ -160,7 +160,7 @@ export default function DeviceSettings() {
           icon={<Icon name="wifi" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("settings:glassesWifiSettings")}
           onPress={() => {
-            push("/pairing/glasseswifisetup", {deviceModel: defaultWearable || "Glasses"})
+            push("/wifi/scan")
           }}
         />
       )}

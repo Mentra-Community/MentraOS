@@ -292,11 +292,65 @@ public class SystemNetworkManager extends BaseNetworkManager {
         } catch (Exception e) {
             Log.e(TAG, "Error disconnecting from WiFi", e);
             notificationManager.showDebugNotification(
-                    "WiFi Error", 
+                    "WiFi Error",
                     "Error disconnecting from WiFi: " + e.getMessage());
         }
     }
-    
+
+    @Override
+    public void forgetWifiNetwork(String ssid) {
+        Log.d(TAG, "Forgetting WiFi network: " + ssid);
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Modern Android - limited forget options due to security restrictions
+                Log.w(TAG, "Android 10+ has limited WiFi forget capabilities");
+                notificationManager.showDebugNotification(
+                        "WiFi Forget",
+                        "Please forget '" + ssid + "' manually via system settings");
+            } else {
+                // Legacy Android - can remove network programmatically
+                forgetWifiLegacy(ssid);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error forgetting WiFi network", e);
+            notificationManager.showDebugNotification(
+                    "WiFi Error",
+                    "Error forgetting WiFi network: " + e.getMessage());
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void forgetWifiLegacy(String ssid) {
+        try {
+            if (wifiManager != null) {
+                List<WifiConfiguration> configs = wifiManager.getConfiguredNetworks();
+                if (configs != null) {
+                    for (WifiConfiguration config : configs) {
+                        if (config.SSID != null && config.SSID.equals("\"" + ssid + "\"")) {
+                            boolean removed = wifiManager.removeNetwork(config.networkId);
+                            if (removed) {
+                                wifiManager.saveConfiguration();
+                                notificationManager.showDebugNotification(
+                                        "WiFi Network Forgotten",
+                                        "Removed saved network: " + ssid);
+                                Log.d(TAG, "WiFi network forgotten: " + ssid);
+                            } else {
+                                notificationManager.showDebugNotification(
+                                        "WiFi Error",
+                                        "Failed to forget network: " + ssid);
+                            }
+                            return;
+                        }
+                    }
+                }
+                Log.w(TAG, "Network not found in saved networks: " + ssid);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error forgetting WiFi network (legacy)", e);
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private void connectWifiLegacy(String ssid, String password) {
         try {

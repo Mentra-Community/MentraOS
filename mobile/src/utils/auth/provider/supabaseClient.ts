@@ -237,6 +237,19 @@ export class SupabaseWrapperClient extends AuthClient {
     })
   }
 
+  public resendSignupEmail(email: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      const {error} = await this.supabase.auth.resend({
+        type: "signup",
+        email,
+      })
+      if (error) {
+        throw error
+      }
+      return undefined
+    })
+  }
+
   public updateUserPassword(password: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       const {error} = await this.supabase.auth.updateUser({

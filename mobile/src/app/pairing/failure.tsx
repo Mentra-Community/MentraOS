@@ -7,10 +7,10 @@ import Icon from "react-native-vector-icons/FontAwesome"
 
 import {Screen, Header, Text, Button} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function PairingFailureScreen() {
   const {themed, theme} = useAppTheme()
@@ -59,7 +59,7 @@ export default function PairingFailureScreen() {
         />
 
         <View style={themed($buttonContainer)}>
-          <Button tx="pairing:tryAgain" preset="primary" onPress={handleRetry} style={themed($button)} />
+          <Button tx="common:tryAgain" preset="primary" onPress={handleRetry} style={themed($button)} />
 
           <Button tx="pairing:goHome" preset="alternate" onPress={handleGoHome} style={themed($button)} />
         </View>

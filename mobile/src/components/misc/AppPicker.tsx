@@ -5,10 +5,10 @@ import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityI
 import {Text} from "@/components/ignite"
 import AppIcon from "@/components/misc/AppIcon"
 import {Group} from "@/components/ui/Group"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ClientAppletInterface} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface AppPickerProps {
   visible: boolean

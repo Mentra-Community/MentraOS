@@ -4,6 +4,7 @@
  * Mounted at: /api/client/*
  */
 
+export { default as audioConfigApi } from "./audio-config.api";
 export { default as calendarApi } from "./calendar.api";
 export { default as clientAppsApi } from "./client.apps.api";
 export { default as deviceStateApi } from "./device-state.api";

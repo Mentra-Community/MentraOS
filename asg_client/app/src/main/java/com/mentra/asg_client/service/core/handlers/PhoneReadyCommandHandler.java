@@ -10,6 +10,7 @@ import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.utils.smartglasses.K900ProtocolUtils;
 
 import org.json.JSONObject;
 
@@ -66,8 +67,12 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
         Log.d(TAG, "📱 HANDLE PHONE READY COMMAND");
         Log.d(TAG, "📱 =========================================");
         Log.d(TAG, "📱 Received phone_ready data: " + (data != null ? data.toString() : "null"));
-        
+
         try {
+            // Reset file pack size to default on new connection.
+            // Phone will send set_ble_mtu command after glasses_ready to set the correct size.
+            K900ProtocolUtils.resetFilePackSize();
+
             Log.d(TAG, "📱 📱 Received phone_ready message - sending glasses_ready response");
             
             Log.d(TAG, "📱 🔨 Building glasses_ready response...");

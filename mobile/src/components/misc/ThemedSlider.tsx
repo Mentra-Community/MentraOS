@@ -2,8 +2,8 @@ import {useEffect, useRef, useState, cloneElement, isValidElement} from "react"
 import {View, ViewStyle, PanResponder, LayoutChangeEvent, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 type ThemedSliderProps = {
   value: number

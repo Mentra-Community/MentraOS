@@ -9,7 +9,6 @@
 import axios, { AxiosError } from "axios";
 import { Logger } from "pino";
 
-
 import {
   CloudToAppMessageType,
   CloudToGlassesMessageType,
@@ -131,6 +130,25 @@ export class AppManager {
     }
 
     let session = this.apps.get(packageName);
+
+    // Check if existing session is disposed (e.g., after ownership release cleanup)
+    // If so, we need to create a fresh AppSession to avoid "Cannot track resources on a disposed ResourceTracker" error
+    // This can happen when:
+    // 1. SDK sends OWNERSHIP_RELEASE (e.g., clean_shutdown)
+    // 2. handleDisconnect() calls cleanup() which disposes the ResourceTracker
+    // 3. App is marked DORMANT but stays in the apps map
+    // 4. Later, resurrection tries to reuse this disposed session
+    // See: cloud/issues/019-sdk-photo-request-architecture (related death spiral investigation)
+    if (session?.isDisposed) {
+      this.logger.info(
+        { packageName },
+        `[AppManager] Existing AppSession for ${packageName} is disposed, creating fresh session`,
+      );
+      // Remove the disposed session
+      this.apps.delete(packageName);
+      session = undefined;
+    }
+
     if (!session) {
       session = new AppSession({
         packageName,
@@ -262,16 +280,196 @@ export class AppManager {
    */
   private async handleAppSessionGracePeriodExpired(appSession: AppSession): Promise<void> {
     const packageName = appSession.packageName;
-    this.logger.info({ packageName }, `[AppManager] AppSession grace period expired, attempting resurrection`);
+
+    // Check if user is still connected to THIS cloud
+    const userConnected =
+      this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN;
+
+    if (!userConnected) {
+      // User not connected - can't resurrect, go to DORMANT
+      // App will be resurrected when user reconnects (see resurrectDormantApps)
+      this.logger.info({ packageName }, `[AppManager] Grace period expired but user not connected - marking DORMANT`);
+      appSession.markDormant();
+      return;
+    }
+
+    // User is connected - attempt resurrection
+    this.logger.info({ packageName }, `[AppManager] Grace period expired, attempting resurrection`);
 
     try {
       // Stop and restart the app (resurrection)
       await this.stopApp(packageName, true);
-      await this.startApp(packageName);
+      const result = await this.startApp(packageName);
+
+      // Check if resurrection succeeded - startApp returns { success: false } on failure, doesn't throw
+      if (!result.success) {
+        this.logger.error(
+          { packageName, error: result.error },
+          `[AppManager] Resurrection failed for ${packageName}: ${result.error?.message}`,
+        );
+        appSession.markStopped();
+        // Notify mobile that app stopped
+        if (this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN) {
+          const appStoppedMessage = {
+            type: "app_stopped",
+            packageName: packageName,
+            timestamp: new Date(),
+          };
+          this.userSession.websocket.send(JSON.stringify(appStoppedMessage));
+          this.logger.info({ packageName }, `[AppManager] Sent app_stopped to mobile after resurrection failure`);
+        }
+      }
     } catch (error) {
       const logger = this.logger.child({ packageName });
       logger.error(error, `[AppManager] Error during AppSession resurrection`);
+      appSession.markStopped();
+      // Notify mobile that app stopped
+      if (this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN) {
+        const appStoppedMessage = {
+          type: "app_stopped",
+          packageName: packageName,
+          timestamp: new Date(),
+        };
+        this.userSession.websocket.send(JSON.stringify(appStoppedMessage));
+        this.logger.info({ packageName }, `[AppManager] Sent app_stopped to mobile after resurrection error`);
+      }
     }
+  }
+
+  /**
+   * Resurrect apps that became dormant while the user was disconnected from this cloud.
+   *
+   * ## Why This Method Exists
+   *
+   * When a mini app's WebSocket to the cloud breaks (e.g., mini app server crashes),
+   * we enter a grace period to allow the SDK to reconnect. If the grace period expires
+   * and the user isn't connected, we mark the app as DORMANT instead of resurrecting.
+   *
+   * When the user reconnects, we call this method to resurrect any DORMANT apps that
+   * the SDK didn't manage to reconnect on its own.
+   *
+   * ## The Multi-Cloud Problem
+   *
+   * Users can be connected to multiple clouds (e.g., switching regions, failover).
+   * If we resurrected apps immediately when grace period expires, we could "steal" an
+   * app that the user intentionally moved to another cloud:
+   *
+   * 1. User connected to Cloud A, running AppX
+   * 2. User switches to Cloud B, starts AppX there
+   * 3. AppX on Cloud A loses its WS connection (mini app now talking to Cloud B)
+   * 4. Cloud A's grace period expires
+   * 5. BAD: Cloud A resurrects AppX, stealing it back from Cloud B
+   *
+   * ## The Solution
+   *
+   * - Grace period: Always wait 5s for SDK reconnect (works regardless of user connection)
+   * - If SDK reconnects: Great, back to RUNNING
+   * - If grace expires + user connected: Resurrect immediately
+   * - If grace expires + user NOT connected: Mark DORMANT, wait for user
+   * - When user reconnects: Call resurrectDormantApps() to revive any DORMANT apps
+   *
+   * This ensures we only trigger webhooks for users actively using THIS cloud.
+   * If the user switched clouds, they'll never reconnect here, and the DORMANT apps
+   * get cleaned up when the UserSession disposes.
+   *
+   * ## Note on SDK Late Reconnection
+   *
+   * The SDK has 3 reconnect attempts with exponential backoff (1s, 2s, 4s = ~7s total).
+   * Our grace period is 5s. So the SDK's last attempt might arrive while we're DORMANT.
+   * We accept these late reconnections! If the SDK is still trying, the mini app server
+   * is still alive and knows about this session - let it reconnect.
+   *
+   * @returns Array of package names that were attempted to resurrect
+   */
+  async resurrectDormantApps(): Promise<string[]> {
+    const resurrected: string[] = [];
+    const dormantApps = this.getDormantApps();
+
+    if (dormantApps.length === 0) {
+      return resurrected;
+    }
+
+    this.logger.info(
+      { dormantApps, count: dormantApps.length },
+      "[AppManager] Resurrecting dormant apps after user reconnect",
+    );
+
+    // Sequential resurrection to avoid webhook spam
+    for (const packageName of dormantApps) {
+      const appSession = this.apps.get(packageName);
+
+      // Double-check still dormant (SDK might have reconnected in the meantime)
+      if (!appSession?.isDormant) {
+        this.logger.debug({ packageName }, "[AppManager] App no longer dormant, skipping resurrection");
+        continue;
+      }
+
+      try {
+        this.logger.info({ packageName }, "[AppManager] Resurrecting dormant app");
+        await this.stopApp(packageName, true); // restart=true marks as RESURRECTING
+        const result = await this.startApp(packageName);
+
+        // Check if resurrection succeeded - startApp returns { success: false } on failure, doesn't throw
+        if (result.success) {
+          resurrected.push(packageName);
+        } else {
+          this.logger.error(
+            { packageName, error: result.error },
+            `[AppManager] Failed to resurrect dormant app ${packageName}: ${result.error?.message}`,
+          );
+          appSession.markStopped();
+          // Notify mobile that app stopped
+          if (this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN) {
+            const appStoppedMessage = {
+              type: "app_stopped",
+              packageName: packageName,
+              timestamp: new Date(),
+            };
+            this.userSession.websocket.send(JSON.stringify(appStoppedMessage));
+            this.logger.info(
+              { packageName },
+              "[AppManager] Sent app_stopped to mobile after dormant resurrection failure",
+            );
+          }
+        }
+      } catch (error) {
+        this.logger.error(error, `[AppManager] Failed to resurrect dormant app ${packageName}`);
+        appSession.markStopped();
+        // Notify mobile that app stopped
+        if (this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN) {
+          const appStoppedMessage = {
+            type: "app_stopped",
+            packageName: packageName,
+            timestamp: new Date(),
+          };
+          this.userSession.websocket.send(JSON.stringify(appStoppedMessage));
+          this.logger.info({ packageName }, "[AppManager] Sent app_stopped to mobile after dormant resurrection error");
+        }
+      }
+    }
+
+    // Broadcast updated app state to mobile
+    if (resurrected.length > 0) {
+      await this.broadcastAppState();
+    }
+
+    return resurrected;
+  }
+
+  /**
+   * Get list of apps in DORMANT state.
+   * These are apps whose mini app WS died, grace period expired, and user wasn't connected.
+   */
+  private getDormantApps(): string[] {
+    const dormant: string[] = [];
+
+    for (const [packageName, session] of this.apps) {
+      if (session.isDormant) {
+        dormant.push(packageName);
+      }
+    }
+
+    return dormant;
   }
 
   /**
@@ -940,13 +1138,16 @@ export class AppManager {
         return;
       }
 
-      // Check if app is in loading, running, or grace period state via AppSession
+      // Check if app is in loading, running, grace period, or dormant state via AppSession
       // Grace period allows SDK reconnection after temporary disconnection (e.g., network hiccup)
+      // Dormant allows late SDK reconnection after grace period expired while user was disconnected
       const appSession = this.apps.get(packageName);
       const isConnecting = appSession?.isConnecting ?? false;
       const isRunning = appSession?.isRunning ?? false;
       const isInGracePeriod = appSession?.isInGracePeriod ?? false;
-      if (!isConnecting && !isRunning && !isInGracePeriod) {
+      const isDormant = appSession?.isDormant ?? false;
+
+      if (!isConnecting && !isRunning && !isInGracePeriod && !isDormant) {
         this.logger.error(
           {
             userId: this.userSession.userId,
@@ -954,7 +1155,7 @@ export class AppManager {
             service: "AppManager",
             appState: appSession?.state ?? "no_session",
           },
-          `App ${packageName} not in loading, active, or grace period state for session ${this.userSession.userId}`,
+          `App ${packageName} not in loading, active, grace period, or dormant state for session ${this.userSession.userId}`,
         );
 
         // Resolve pending connection with connection error
@@ -974,6 +1175,15 @@ export class AppManager {
         }
         ws.close(1008, "App not started for this session");
         return;
+      }
+
+      // If DORMANT, the SDK is reconnecting after we gave up waiting during grace period
+      // This is great - accept the reconnection! The mini app server is still alive.
+      if (isDormant) {
+        this.logger.info(
+          { packageName, userId: this.userSession.userId },
+          "[AppManager] SDK reconnected while DORMANT - accepting late reconnection",
+        );
       }
 
       // Get or create AppSession and handle the connection
@@ -1027,6 +1237,9 @@ export class AppManager {
       };
 
       ws.send(JSON.stringify(ackMessage));
+
+      // Send full device state snapshot immediately after CONNECTION_ACK
+      this.userSession.deviceManager.sendFullStateSnapshot(ws);
 
       // update user.runningApps in database.
       try {
@@ -1314,15 +1527,19 @@ export class AppManager {
         }
 
         // Check if ownership was released (SDK sent OWNERSHIP_RELEASE before disconnect)
-        // This indicates a clean handoff - no resurrection needed
+        // This indicates a clean handoff to another cloud.
+        // AppSession.handleDisconnect will mark as DORMANT (not STOPPED) so the app
+        // will be resurrected if the user returns to this cloud.
+        // NOTE: We do NOT modify user.runningApps in the database here because
+        // all clouds share the same DB - the new cloud needs to see the app in runningApps.
         if (appSession.ownershipReleased) {
           const releaseInfo = appSession.ownershipReleaseInfo;
           logger.info(
             { packageName, code, reason, releaseReason: releaseInfo?.reason },
-            `[AppManager] App ${packageName} closed after ownership release (${releaseInfo?.reason}) - no resurrection`,
+            `[AppManager] App ${packageName} closed after ownership release (${releaseInfo?.reason}) - marking DORMANT for potential resurrection`,
           );
 
-          // Let AppSession handle cleanup (state transitions internally)
+          // Let AppSession handle cleanup (state transitions to DORMANT)
           appSession.handleDisconnect(code, reason);
 
           // Clean up subscriptions

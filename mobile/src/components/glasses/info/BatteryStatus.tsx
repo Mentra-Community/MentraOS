@@ -3,10 +3,10 @@ import {View, TextStyle, ViewStyle} from "react-native"
 import {Text, Icon} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {StatusCard} from "@/components/ui/RouteButton"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 interface BatteryStatusProps {
   compact?: boolean

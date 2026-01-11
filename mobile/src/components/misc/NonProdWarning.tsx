@@ -4,11 +4,11 @@ import {useEffect, useState} from "react"
 import {TouchableOpacity, ViewStyle, Platform, Linking} from "react-native"
 
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function NonProdWarning() {
   const {theme, themed} = useAppTheme()

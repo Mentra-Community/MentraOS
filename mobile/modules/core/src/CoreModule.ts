@@ -22,7 +22,11 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // WiFi Commands
   requestWifiScan(): Promise<void>
   sendWifiCredentials(ssid: string, password: string): Promise<void>
+  forgetWifiNetwork(ssid: string): Promise<void>
   setHotspotState(enabled: boolean): Promise<void>
+
+  // User Context Commands
+  setUserEmail(email: string): Promise<void>
 
   // Gallery Commands
   queryGalleryStatus(): Promise<void>
@@ -33,13 +37,17 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
     webhookUrl: string | null,
     authToken: string | null,
     compress: string,
+    silent: boolean,
   ): Promise<void>
+
+  // OTA Commands
+  sendOtaStart(): Promise<void>
 
   // Video Recording Commands
   startBufferRecording(): Promise<void>
   stopBufferRecording(): Promise<void>
   saveBufferVideo(requestId: string, durationSeconds: number): Promise<void>
-  startVideoRecording(requestId: string, save: boolean): Promise<void>
+  startVideoRecording(requestId: string, save: boolean, silent: boolean): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
   // RTMP Stream Commands
@@ -50,6 +58,9 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Microphone Commands
   setMicState(sendPcmData: boolean, sendTranscript: boolean, bypassVad: boolean): Promise<void>
   restartTranscriber(): Promise<void>
+
+  // Audio Encoding Commands
+  setLC3FrameSize(frameSize: number): Promise<void>
 
   // RGB LED Control
   rgbLedControl(

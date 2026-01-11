@@ -3,15 +3,16 @@ import {TextInput, View, ViewStyle, TextStyle} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
+import mantle from "@/services/MantleManager"
 
 export default function BackendUrl() {
   const {theme, themed} = useAppTheme()
-  const {replace} = useNavigationHistory()
+  const {replaceAll} = useNavigationHistory()
   const [customUrlInput, setCustomUrlInput] = useState("")
   const [isSavingUrl, setIsSavingUrl] = useState(false)
   const [backendUrl, setBackendUrl] = useSetting(SETTINGS.backend_url.key)
@@ -65,8 +66,9 @@ export default function BackendUrl() {
             [
               {
                 text: translate("common:ok"),
-                onPress: () => {
-                  replace("/")
+                onPress: async () => {
+                  await mantle.cleanup()
+                  replaceAll("/")
                 },
               },
             ],
@@ -107,7 +109,7 @@ export default function BackendUrl() {
       {
         text: "OK",
         onPress: () => {
-          replace("/")
+          replaceAll("/")
         },
       },
     ])

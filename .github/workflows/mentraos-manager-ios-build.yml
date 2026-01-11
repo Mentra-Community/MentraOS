@@ -16,6 +16,15 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
 
     steps:
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          # Clean iOS build outputs from previous runs
+          rm -rf mobile/ios/build mobile/ios/build-device
+          # Clean node_modules to ensure fresh install
+          rm -rf mobile/node_modules
+          # Clean Pods to avoid stale dependencies
+          rm -rf mobile/ios/Pods
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -24,10 +33,13 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Clean pnpm setup directory
+        run: rm -rf /Users/fosse/setup-pnpm || true
+
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

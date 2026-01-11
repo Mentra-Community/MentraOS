@@ -633,6 +633,8 @@ async function uploadImage(c: AppContext) {
     const body = await c.req.parseBody();
     const file = body["file"] as File | undefined;
     const metadataRaw = body["metadata"] as string | undefined;
+    // Console client sends replaceImageId as a separate multipart field
+    const replaceImageIdField = body["replaceImageId"] as string | undefined;
 
     if (!file) {
       return c.json({ error: "No file provided" }, 400);
@@ -641,7 +643,24 @@ async function uploadImage(c: AppContext) {
     // Validate file type
     const allowedMimeTypes = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"];
     if (!allowedMimeTypes.includes(file.type)) {
-      return c.json({ error: "Invalid file type. Only PNG, JPEG, GIF, and WebP images are allowed." }, 400);
+      return c.json(
+        {
+          error:
+            "Invalid file type. Only PNG, JPEG, GIF, and WebP images are allowed. Please convert your image and try again.",
+        },
+        400,
+      );
+    }
+
+    // Validate file size
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB backend limit
+    if (file.size > MAX_SIZE) {
+      return c.json(
+        {
+          error: `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB. Please compress your image or use a smaller file.`,
+        },
+        400,
+      );
     }
 
     // Parse metadata
@@ -670,13 +689,16 @@ async function uploadImage(c: AppContext) {
     const buffer = Buffer.from(arrayBuffer);
 
     // Upload the image using uploadImageAndReplace
+    // Priority: replaceImageId from multipart field > replaceImageId from metadata > empty string
+    const replaceImageId = replaceImageIdField || metadata?.replaceImageId || "";
+
     const result = await storageService.uploadImageAndReplace({
       image: buffer,
       filename: file.name,
       mimetype: file.type,
       email: email || "",
       orgId: orgId,
-      replaceImageId: metadata?.replaceImageId || "",
+      replaceImageId,
       appPackageName: metadata?.appPackageName,
     });
 
@@ -698,11 +720,16 @@ async function deleteImage(c: AppContext) {
   try {
     const email = c.get("email");
     const orgId = (c as any).currentOrgId;
-    const imageId = c.req.param("imageId");
+    const encodedImageId = c.req.param("imageId");
 
-    if (!imageId) {
+    if (!encodedImageId) {
       return c.json({ error: "Image ID is required" }, 400);
     }
+
+    // Decode the imageId since it may contain slashes (e.g., R2 object keys like "mini_app_assets/orgs/.../file.png")
+    const imageId = decodeURIComponent(encodedImageId);
+
+    logger.info({ imageId, encodedImageId }, "Deleting image");
 
     // Get storage service dynamically
     let StorageServiceClass;
