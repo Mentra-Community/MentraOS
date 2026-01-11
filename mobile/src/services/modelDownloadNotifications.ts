@@ -36,6 +36,9 @@ class ModelDownloadNotifications {
   private notificationActive = false
   private lastUpdateTime = 0 // For iOS throttling
 
+  // Disable notifications for now - can be re-enabled later
+  private notificationsEnabled = false
+
   private constructor() {}
 
   static getInstance(): ModelDownloadNotifications {
@@ -87,6 +90,10 @@ class ModelDownloadNotifications {
    * Show initial download notification
    */
   async showDownloadStarted(modelName: string): Promise<void> {
+    if (!this.notificationsEnabled) {
+      console.log(`[ModelDownloadNotifications] Notifications disabled, skipping start notification for ${modelName}`)
+      return
+    }
     await this.ensureChannel()
 
     const hasPermission = await this.requestPermissions()
@@ -127,6 +134,7 @@ class ModelDownloadNotifications {
    * On iOS, updates are throttled to avoid spamming the user with banner notifications
    */
   async updateDownloadProgress(modelName: string, progress: number): Promise<void> {
+    if (!this.notificationsEnabled) return
     if (!this.notificationActive) return
 
     // On iOS, throttle updates to avoid banner spam
@@ -170,6 +178,7 @@ class ModelDownloadNotifications {
    * Update extraction progress notification
    */
   async updateExtractionProgress(modelName: string, progress: number): Promise<void> {
+    if (!this.notificationsEnabled) return
     if (!this.notificationActive) return
 
     // On iOS, throttle updates
@@ -209,6 +218,7 @@ class ModelDownloadNotifications {
    * Show activating model notification
    */
   async showActivating(modelName: string): Promise<void> {
+    if (!this.notificationsEnabled) return
     if (!this.notificationActive) return
 
     await this.ensureChannel()
@@ -229,6 +239,10 @@ class ModelDownloadNotifications {
    * Show download complete notification
    */
   async showComplete(modelName: string): Promise<void> {
+    if (!this.notificationsEnabled) {
+      console.log(`[ModelDownloadNotifications] Notifications disabled, skipping complete notification for ${modelName}`)
+      return
+    }
     await this.ensureChannel()
 
     await Notifications.scheduleNotificationAsync({
@@ -254,6 +268,10 @@ class ModelDownloadNotifications {
    * Show download error notification
    */
   async showError(errorMessage: string): Promise<void> {
+    if (!this.notificationsEnabled) {
+      console.log(`[ModelDownloadNotifications] Notifications disabled, skipping error notification: ${errorMessage}`)
+      return
+    }
     await this.ensureChannel()
 
     await Notifications.scheduleNotificationAsync({
@@ -279,6 +297,10 @@ class ModelDownloadNotifications {
    * Show download cancelled notification (just dismisses)
    */
   async showCancelled(): Promise<void> {
+    if (!this.notificationsEnabled) {
+      console.log("[ModelDownloadNotifications] Notifications disabled, skipping cancelled notification")
+      return
+    }
     await this.dismiss()
     this.notificationActive = false
     console.log("[ModelDownloadNotifications] Download cancelled, notification dismissed")

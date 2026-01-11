@@ -5,7 +5,7 @@
 
 import CoreModule from "core"
 import {Platform} from "react-native"
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {useModelDownloadStore, selectCanStartDownload} from "@/stores/modelDownload"
 
