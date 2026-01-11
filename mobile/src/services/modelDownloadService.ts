@@ -78,7 +78,7 @@ class ModelDownloadService {
 
     // Get model info
     const models = STTModelManager.getAvailableModels()
-    const model = models.find(m => m.id === modelId)
+    const model = models.find((m) => m.id === modelId)
     if (!model) {
       store.setError(`Model ${modelId} not found`)
       return
@@ -89,8 +89,7 @@ class ModelDownloadService {
     // Update store
     store.setDownloading(modelId, model.displayName)
 
-    // Request notification permission and show started notification
-    await modelDownloadNotifications.requestPermissions()
+    // Show started notification (permissions requested internally if notifications enabled)
     await modelDownloadNotifications.showDownloadStarted(model.displayName)
 
     try {
@@ -237,6 +236,9 @@ class ModelDownloadService {
     // Set as current model
     STTModelManager.setCurrentModelId(model.id)
     CoreModule.setSttModelDetails(modelPath, model.languageCode)
+
+    // Restart transcriber to initialize with the new model
+    await CoreModule.restartTranscriber()
 
     console.log("[ModelDownloadService] Model activated")
   }
