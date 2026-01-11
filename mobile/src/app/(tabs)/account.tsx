@@ -13,7 +13,6 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export default function AccountPage() {
   const {theme, themed} = useAppTheme()
