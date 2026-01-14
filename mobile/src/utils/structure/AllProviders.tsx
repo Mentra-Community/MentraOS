@@ -12,7 +12,7 @@ import Toast from "react-native-toast-message"
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
 import {JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
-import {SnapshotTransitionProvider, useSnapshotTransition} from "@/components/navigation/SnapshotTransitionOverlay"
+// import {SnapshotTransitionProvider, useSnapshotTransition} from "@/components/navigation/SnapshotTransitionOverlay"
 import {AppStoreProvider} from "@/contexts/AppStoreContext"
 import {AuthProvider} from "@/contexts/AuthContext"
 import {CoreStatusProvider} from "@/contexts/CoreStatusProvider"
@@ -116,7 +116,7 @@ export const AllProviders = withWrappers(
     )
   },
   KonamiCodeProvider,
-  SnapshotTransitionProvider,
+  // SnapshotTransitionProvider,
   (props) => {
     const {preventBack, getHistory} = useNavigationHistory()
     const [debugNavigationHistory] = useSetting(SETTINGS.debug_navigation_history.key)
