@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",
+    "@dr.pogodin/react-native-fs": "^2.36.2",
     "@expo-google-fonts/red-hat-display": "^0.4.1",
     "@expo-google-fonts/space-grotesk": "^0.4.1",
     "@expo/metro-runtime": "~6.1.2",
@@ -39,6 +40,7 @@
     "@livekit/react-native-webrtc": "^137.0.2",
     "@react-native-community/netinfo": "^11.4.1",
     "@react-native-community/slider": "5.0.1",
+    "@react-navigation/stack": "^7.6.14",
     "@sentry/react-native": "~7.2.0",
     "@shopify/flash-list": "2.0.2",
     "@supabase/supabase-js": "^2.81.1",
@@ -88,7 +90,6 @@
     "react-native-canvas": "^0.1.40",
     "react-native-drawer-layout": "^4.2.0",
     "react-native-error-boundary": "^3.1.0",
-    "@dr.pogodin/react-native-fs": "^2.36.2",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-image-viewing": "^0.2.2",
     "react-native-inappbrowser-reborn": "^3.7.0",

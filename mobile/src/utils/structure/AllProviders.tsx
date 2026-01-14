@@ -1,8 +1,7 @@
 import {BottomSheetModalProvider} from "@gorhom/bottom-sheet"
 import * as Sentry from "@sentry/react-native"
-import {Stack} from "expo-router"
 import {PostHogProvider} from "posthog-react-native"
-import {Suspense} from "react"
+import {Suspense, useEffect, useRef} from "react"
 import {View} from "react-native"
 import ErrorBoundary from "react-native-error-boundary"
 import {GestureHandlerRootView} from "react-native-gesture-handler"
@@ -12,6 +11,8 @@ import Toast from "react-native-toast-message"
 
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
+import {JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
+import {SnapshotTransitionProvider, useSnapshotTransition} from "@/components/navigation/SnapshotTransitionOverlay"
 import {AppStoreProvider} from "@/contexts/AppStoreContext"
 import {AuthProvider} from "@/contexts/AuthContext"
 import {CoreStatusProvider} from "@/contexts/CoreStatusProvider"
@@ -115,6 +116,7 @@ export const AllProviders = withWrappers(
     )
   },
   KonamiCodeProvider,
+  SnapshotTransitionProvider,
   (props) => {
     const {preventBack, getHistory} = useNavigationHistory()
     const [debugNavigationHistory] = useSetting(SETTINGS.debug_navigation_history.key)
@@ -141,15 +143,24 @@ export const AllProviders = withWrappers(
   },
   (props) => {
     const {preventBack} = useNavigationHistory()
+    const transition = useSnapshotTransition()
+    const navigatorRef = useRef<View>(null)
+
+    useEffect(() => {
+      if (transition && navigatorRef.current) {
+        transition.setNavigatorRef(navigatorRef.current)
+      }
+    }, [transition])
+
     return (
       <>
-        {props.children}
-        <Stack
+        <View ref={navigatorRef} style={{flex: 1}} collapsable={false}>
+          {props.children}
+        </View>
+        <JsStack
           screenOptions={{
-            headerShown: false,
+            ...woltScreenOptions,
             gestureEnabled: !preventBack,
-            gestureDirection: "horizontal",
-            animation: "simple_push",
           }}
         />
       </>
