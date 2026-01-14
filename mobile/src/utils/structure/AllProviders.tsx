@@ -143,20 +143,18 @@ export const AllProviders = withWrappers(
   },
   (props) => {
     const {preventBack} = useNavigationHistory()
-    const transition = useSnapshotTransition()
-    const navigatorRef = useRef<View>(null)
+    // const transition = useSnapshotTransition()
+    // const navigatorRef = useRef<View>(null)
 
-    useEffect(() => {
-      if (transition && navigatorRef.current) {
-        transition.setNavigatorRef(navigatorRef.current)
-      }
-    }, [transition])
+    // useEffect(() => {
+    //   if (transition && navigatorRef.current) {
+    //     transition.setNavigatorRef(navigatorRef.current)
+    //   }
+    // }, [transition])
 
     return (
       <>
-        <View ref={navigatorRef} style={{flex: 1}} collapsable={false}>
-          {props.children}
-        </View>
+        {props.children}
         <JsStack
           screenOptions={{
             ...woltScreenOptions,
