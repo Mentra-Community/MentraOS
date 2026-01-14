@@ -11,9 +11,9 @@
         vad_init_logic-gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;  /* P0.27 Logic IO: HIGH during VAD initialization */
         i2s_active_logic-gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;  /* P0.26 Logic IO: HIGH during I2S active */
         vad_voice_detect-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;  /* P0.25 Voice detection: LOW=voice present, HIGH=no voice */
-        stp513n_reset-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;  /* P0.02 STP513N reset pin (GPIO01, falling edge active: 下降沿有效, shared with I2C SDA) */
-        stp513n_sda-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;  /* P0.02 STP513N I2C SDA (software I2C) */
-        stp513n_scl-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;  /* P0.03 STP513N I2C SCL (software I2C) */
+        spt513n_reset-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;  /* P0.02 SPT513N reset pin (GPIO01, falling edge active: 下降沿有效, shared with I2C SDA) */
+        spt513n_sda-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;  /* P0.02 SPT513N I2C SDA (software I2C) */
+        spt513n_scl-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;  /* P0.03 SPT513N I2C SCL (software I2C) */
 
         cvt213x_int-gpios = <&gpio0 29 GPIO_ACTIVE_HIGH>;
     };
@@ -250,3 +250,6 @@ zephyr_udc0: &usbd {
 &led3 {
     status = "disabled";
 };
+// &uicr {
+//     nfct-pins-as-gpios;
+// };

@@ -4,6 +4,29 @@ All notable changes to the nRF5340 DK BLE Glasses Protobuf Simulator will be doc
 
 ## Unreleased
 
+### 🔤 SPT513N Naming Consistency Update - 2026-01-14
+
+#### Summary
+
+- Standardize touch controller name from "STP513N" to "SPT513N".
+- Update all code references: driver/header, shell commands, device tree properties, and CMake sources.
+- No functional changes; shell command names updated accordingly.
+
+#### Modified Files
+
+- `CMakeLists.txt`: replace `shell_stp513n_control.c` → `shell_spt513n_control.c`.
+- `src/mos_driver/CMakeLists.txt`: replace `stp513n.c` → `spt513n.c`.
+- `boards/nrf5340dk_nrf5340_cpuapp_ns.overlay`: rename `zephyr,user` properties `stp513n_reset/sda/scl-gpios` → `spt513n_*`.
+- `src/main.c`: include `spt513n.h` and update log/help texts.
+- `src/mos_driver/include/spt513n.h`: header renamed; macros and API prefixes `STP513N_*`/`stp513n_*` → `SPT513N_*`/`spt513n_*`.
+- `src/mos_driver/src/spt513n.c`: source renamed; internal symbols and DT property names updated to `spt513n_*`.
+- `src/shell_spt513n_control.c`: module name, command registration, and help texts updated to `spt513n`.
+
+#### Impact
+
+- Shell commands are now invoked with `spt513n ...` (previous `stp513n ...` commands are deprecated).
+- Device tree `zephyr,user` property names changed to `spt513n_*`; driver code already aligned.
+
 ### 🚀 CVT213X Debounce Timer & IED Detection Integration - 2026-01-07
 
 #### Key Features

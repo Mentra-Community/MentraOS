@@ -44,7 +44,7 @@
 
 #include "bsp_gx8002.h"
 #include "interrupt_handler.h"
-#include "stp513n.h"
+#include "spt513n.h"
 #include "app_cvt213x_porting.h"
 #include "app_cvt213x_main.h"  // For app_cvt213x_sys_init()
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
@@ -928,16 +928,16 @@ int main(void)
 
 	// Initialize SPT513N touch panel driver (default enabled)
 	LOG_INF("📱 Initializing SPT513N touch panel driver...");
-	err = stp513n_init();
+	err = spt513n_init();
 	if (err)
 	{
 		LOG_WRN("Failed to initialize SPT513N touch panel (err: %d)", err);
-		LOG_WRN("💡 You can try to initialize it later via shell: stp513n init");
+		LOG_WRN("💡 You can try to initialize it later via shell: spt513n init");
 	}
 	else
 	{
 		LOG_INF("✅ SPT513N touch panel driver initialized");
-		LOG_INF("💡 Use 'stp513n help' for available commands");
+		LOG_INF("💡 Use 'spt513n help' for available commands");
 	}
 
 	// Initialize ping/pong connectivity monitoring system

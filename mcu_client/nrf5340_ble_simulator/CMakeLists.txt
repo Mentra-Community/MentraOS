@@ -33,7 +33,7 @@ target_sources(app PRIVATE
     src/shell_log_control.c
     src/shell_display_control.c
     src/shell_gx8002_control.c
-    src/shell_stp513n_control.c
+    src/shell_spt513n_control.c
     src/shell_cvt213x_control.c
     src/mos_components/mos_sysport/src/bal_os.c
     src/mos_components/mos_lvgl_display/src/mos_lvgl_display.c
