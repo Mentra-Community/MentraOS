@@ -229,7 +229,7 @@ class RestComms {
 
     const config: RequestConfig = {
       method: "POST",
-      endpoint: "/auth/exchange-token",
+      endpoint: "/api/client/auth/exchange-token",
       data: {
         supabaseToken: !isChina ? token : undefined,
         authingToken: isChina ? token : undefined,
