@@ -1,0 +1,451 @@
+name: Codex PR Review
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [opened, ready_for_review]
+
+jobs:
+  codex-review:
+    # Skip for Dependabot PRs since they don't have access to OPENAI_API_KEY secret
+    if: |
+      github.actor != 'dependabot[bot]' &&
+      (
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/review')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '/review')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '/review')) ||
+        (github.event_name == 'pull_request' && github.event.action == 'ready_for_review') ||
+        (github.event_name == 'pull_request' && github.event.action == 'opened' && github.event.pull_request.draft == false)
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Determine PR number and trigger text
+        id: pr
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          if [ -n "$ISSUE_NUMBER" ]; then
+            echo "number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+            TRIGGER="$COMMENT_BODY"
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            if [ "$EVENT_ACTION" = "opened" ]; then
+              TRIGGER="Automatic review triggered on PR creation"
+            elif [ "$EVENT_ACTION" = "ready_for_review" ]; then
+              TRIGGER="Automatic review triggered when PR marked ready for review"
+            else
+              TRIGGER="Automatic review triggered"
+            fi
+          else
+            echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            TRIGGER="${COMMENT_BODY}${REVIEW_BODY}"
+          fi
+
+          {
+            echo "trigger_body<<EOF"
+            echo "${TRIGGER}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Add initial reaction
+        id: initial_reaction
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pr_number = Number(process.env.PR_NUMBER);
+
+            try {
+              // Always react on the PR issue, regardless of trigger type
+              const reaction = await github.rest.reactions.createForIssue({
+                owner,
+                repo,
+                issue_number: pr_number,
+                content: 'eyes'
+              });
+
+              core.setOutput('reaction_id', reaction.data.id);
+              core.info(`Created eyes reaction ${reaction.data.id} on PR #${pr_number}`);
+            } catch (err) {
+              core.warning(`Failed to create initial reaction: ${err.message}`);
+            }
+
+      - name: Fetch PR metadata
+        id: meta
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_JSON=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+          echo "base_ref=$(echo "$PR_JSON" | jq -r '.base.ref')" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$(echo "$PR_JSON" | jq -r '.head.ref')" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$(echo "$PR_JSON" | jq -r '.base.sha')" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(echo "$PR_JSON" | jq -r '.head.sha')" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR merge ref
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ steps.pr.outputs.number }}/merge
+          fetch-depth: 0
+
+      - name: Pre-fetch base and head refs
+        run: |
+          git fetch --no-tags origin \
+            "${{ steps.meta.outputs.base_ref }}" \
+            "+refs/pull/${{ steps.pr.outputs.number }}/head:${{ steps.meta.outputs.head_ref }}"
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          allow-bots: true
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          # Pinned to 0.80.0 due to Landlock sandbox regression in 0.81.0+
+          codex-version: 0.80.0
+          codex-args: --full-auto
+          output-file: codex-output.json
+          output-schema: |
+            {
+              "type": "object",
+              "required": ["summary", "findings"],
+              "additionalProperties": false,
+              "properties": {
+                "summary": { "type": "string" },
+                "findings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["path", "start_line", "line", "body"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "path": { "type": "string" },
+                      "start_line": { "type": "integer" },
+                      "line": { "type": "integer" },
+                      "body": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          prompt: |
+            You are Codex reviewing PR #${{ steps.pr.outputs.number }} in ${{ github.repository }}.
+
+            Trigger text from the user:
+            ----
+            ${{ steps.pr.outputs.trigger_body }}
+            ----
+
+            Context:
+            - Base ref: ${{ steps.meta.outputs.base_ref }} (${{ steps.meta.outputs.base_sha }})
+            - Head ref: ${{ steps.meta.outputs.head_ref }} (${{ steps.meta.outputs.head_sha }})
+            - Review only the diff between base and head. Do not propose sweeping refactors unrelated to the diff.
+
+            **CRITICAL: Comment Placement Constraint**
+            The `line` field in your findings MUST ALWAYS reference a line that appears in the PR diff hunks. GitHub's review API cannot post comments on lines outside the diff.
+
+            Rules:
+            1. ONLY place comments on lines that are in the PR diff (added lines or context lines around changes)
+            2. NEVER set `line` to a line number outside the visible diff hunks - those comments will be silently dropped
+            3. If you identify an issue related to code outside the diff, place your comment on the most relevant line that IS in the diff:
+               - Prefer lines in the same function or method where the issue is relevant
+               - Choose lines that are semantically related to the issue you're raising
+               - Place the comment where it provides the most value to the reviewer
+            4. Write your comment body naturally - explain the issue clearly and why it matters
+            5. Do not explicitly mention that the issue is on a different line - just provide helpful, actionable feedback
+
+            Output JSON matching the schema:
+            - summary: one to three sentences summarizing the review.
+            - findings: zero or more objects with:
+              - path: repo-relative path (e.g., src/file.ts)
+              - start_line: first line number of the range (for single-line, set equal to line)
+              - line: last line number of the range on the HEAD version
+              - body: the complete comment body, ready to post to GitHub (formatted in markdown)
+
+            Comment body format:
+            - Start with a severity indicator with emoji:
+              - ℹ️ **INFO** - for observations, style suggestions, or minor improvements
+              - ⚠️ **WARNING** - for potential issues that should be addressed
+              - ❌ **ERROR** - for bugs, security issues, or critical problems
+            - The body is markdown formatted - use markdown elements appropriately:
+              - **bold** for emphasis
+              - `inline code` for variable names, function names, etc.
+              - Code blocks for multi-line code examples
+              - Bullet lists for multiple points
+            - For simple fixes (≤5 lines of code), include a suggestion block that GitHub can apply directly.
+              **CRITICAL**: The suggested code MUST be:
+              - 100% correct as an exact substitute for the lines from start_line to line (inclusive)
+              - Correctly indented to match the file's indentation (spaces/tabs)
+              - Ready to paste directly without any further edits
+              - Precisely matching the intended change (not partial or approximate)
+
+              **MULTI-LINE SUGGESTIONS**: When your suggestion replaces multiple lines:
+              - Set `start_line` to the first line being replaced
+              - Set `line` to the last line being replaced
+              - The suggestion content replaces ALL lines from start_line to line inclusive
+              - Do NOT include surrounding context lines in the suggestion - only the replacement code
+
+              Example (single-line, start_line=42, line=42):
+
+              ⚠️ **WARNING** Use `const` instead of `let` for immutable variable
+
+              ```suggestion
+              const result = calculateTotal();
+              ```
+
+              Example (multi-line, start_line=10, line=12 replaces 3 lines):
+
+              ⚠️ **WARNING** Simplify conditional logic
+
+              ```suggestion
+              if (isValid) {
+                  return processData(input);
+              }
+              ```
+
+            - For complex changes (>5 lines), provide descriptive guidance without a suggestion block:
+
+              ❌ **ERROR** This function has multiple issues that need refactoring
+
+              Consider:
+              - Extract the validation logic into a separate function
+              - Add error handling for edge cases
+              - Use early returns to reduce nesting
+
+            Guidance:
+            - **Indentation and exactness**: All code suggestions must preserve correct indentation and be exact replacements. Never provide partial or approximate suggestions.
+            - Prioritize correctness, regressions, security/privacy, data handling, performance, and missing tests.
+            - Keep messages terse and actionable; include expected vs actual when relevant.
+            - If no issues, return an empty findings array and a neutral summary.
+            - Do not attempt to commit or open PRs.
+
+      - name: Post Codex feedback
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.meta.outputs.head_sha }}
+          CODEX_FINAL_MESSAGE: ${{ steps.run_codex.outputs.final-message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = Number(process.env.PR_NUMBER);
+            let parsed;
+
+            // Load structured output from Codex
+            try {
+              const raw = fs.readFileSync(path.join(process.cwd(), 'codex-output.json'), 'utf8');
+              parsed = JSON.parse(raw);
+            } catch (err) {
+              core.warning(`Failed to parse codex-output.json: ${err.message}`);
+            }
+
+            if (!parsed || !parsed.summary) {
+              core.info('Falling back to top-level comment with raw output.');
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pull_number,
+                body: process.env.CODEX_FINAL_MESSAGE || 'Codex review completed (no structured output).'
+              });
+
+              // Update reaction to success
+              await updateReactionToSuccess(github, owner, repo, pull_number);
+              return;
+            }
+
+            // Helper function to update reaction
+            async function updateReactionToSuccess(github, owner, repo, pull_number) {
+              const reaction_id = '${{ steps.initial_reaction.outputs.reaction_id }}';
+
+              if (!reaction_id) {
+                core.info('No initial reaction to update');
+                return;
+              }
+
+              try {
+                // Delete the eyes reaction
+                await github.rest.reactions.deleteForIssue({
+                  owner,
+                  repo,
+                  issue_number: pull_number,
+                  reaction_id: Number(reaction_id)
+                });
+
+                // Add thumbs up reaction on the PR
+                await github.rest.reactions.createForIssue({
+                  owner,
+                  repo,
+                  issue_number: pull_number,
+                  content: '+1'
+                });
+
+                core.info('Successfully updated reaction to thumbs up');
+              } catch (err) {
+                core.warning(`Failed to update reaction: ${err.message}`);
+              }
+            }
+
+            // Build set of valid diff lines per file from diff patches
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            const validDiffLines = new Map(); // path -> Set<line>
+
+            const buildValidLinesSet = (patch) => {
+              const validLines = new Set();
+              if (!patch) return validLines;
+              const lines = patch.split('\n');
+              let newLine = 0;
+
+              for (const line of lines) {
+                if (line.startsWith('@@')) {
+                  const match = /\+([0-9]+)(?:,([0-9]+))?/.exec(line);
+                  if (match) {
+                    newLine = parseInt(match[1], 10);
+                  }
+                  continue;
+                }
+
+                if (line.startsWith('+') && !line.startsWith('+++')) {
+                  validLines.add(newLine); // added line in new file
+                  newLine += 1;
+                } else if (line.startsWith('-') && !line.startsWith('---')) {
+                  // deletion: only affects old file line numbers
+                } else {
+                  // context line in new file
+                  validLines.add(newLine);
+                  newLine += 1;
+                }
+              }
+              return validLines;
+            };
+
+            for (const file of files) {
+              if (file.patch) {
+                validDiffLines.set(file.filename, buildValidLinesSet(file.patch));
+              }
+            }
+
+            const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
+            const comments = [];
+
+            for (const f of findings) {
+              if (!(f.path && f.line && f.body)) continue;
+              const validLines = validDiffLines.get(f.path);
+              if (!validLines) continue;
+
+              const line = Number(f.line);
+              const startLine = f.start_line ? Number(f.start_line) : line;
+
+              // Validate that both start_line and line are in the diff
+              if (!validLines.has(line)) continue;
+              if (!validLines.has(startLine)) continue;
+
+              const comment = {
+                path: f.path,
+                line,
+                side: 'RIGHT',
+                body: f.body
+              };
+
+              // Add multi-line fields if start_line differs from line
+              if (startLine !== line) {
+                comment.start_line = startLine;
+                comment.start_side = 'RIGHT';
+              }
+
+              comments.push(comment);
+            }
+
+            if (comments.length === 0) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pull_number,
+                body: parsed.summary || 'Codex review completed.'
+              });
+
+              // Update reaction to success
+              await updateReactionToSuccess(github, owner, repo, pull_number);
+              return;
+            }
+
+            await github.rest.pulls.createReview({
+              owner,
+              repo,
+              pull_number,
+              event: 'COMMENT',
+              body: parsed.summary || 'Codex review findings:',
+              comments
+            });
+
+            // Update reaction to success
+            await updateReactionToSuccess(github, owner, repo, pull_number);
+
+      - name: Handle failure
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REACTION_ID: ${{ steps.initial_reaction.outputs.reaction_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pr_number = Number(process.env.PR_NUMBER);
+            const reaction_id = process.env.REACTION_ID;
+
+            // Delete the eyes reaction if it exists
+            if (reaction_id) {
+              try {
+                await github.rest.reactions.deleteForIssue({
+                  owner,
+                  repo,
+                  issue_number: pr_number,
+                  reaction_id: Number(reaction_id)
+                });
+                core.info('Deleted initial reaction');
+              } catch (err) {
+                core.warning(`Failed to delete reaction: ${err.message}`);
+              }
+            }
+
+            // Post failure comment
+            try {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr_number,
+                body: '⚠️ Codex review failed. Please check the [workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
+              });
+              core.info('Posted failure comment');
+            } catch (err) {
+              core.error(`Failed to post failure comment: ${err.message}`);
+            }
+        

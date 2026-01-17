@@ -88,7 +88,12 @@ export const ForegroundAppsGrid: React.FC = () => {
       }
 
       return (
-        <TouchableOpacity style={themed($gridItem)} onPress={() => handlePress(item)} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={themed($gridItem)}
+          onPress={() => handlePress(item)}
+          activeOpacity={0.7}
+          testID={`inactive-app-${item.packageName}`}
+          accessibilityLabel={item.name}>
           <AppIcon app={item} style={themed($appIcon)} />
           <Text
             text={item.name}

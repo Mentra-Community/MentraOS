@@ -1,0 +1,49 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Helper: Login and Complete Onboarding
+# Called when app shows welcome screen and needs full login + onboarding flow
+#
+# Required environment variables (inherited from parent flow):
+#   E2E_TEST_EMAIL - Test account email
+#   E2E_TEST_PASSWORD - Test account password
+
+# Tap on Log In button
+- tapOn: "Log In"
+
+# Wait for login form
+- assertVisible: "Log in to MentraOS"
+
+# Enter email
+- tapOn:
+    text: "Email"
+- inputText: ${E2E_TEST_EMAIL}
+
+# Hide keyboard and tap password field
+- hideKeyboard
+- tapOn:
+    text: "Password"
+    index: 1
+- inputText: ${E2E_TEST_PASSWORD}
+
+# Hide keyboard and tap Log In button
+- hideKeyboard
+- tapOn: "Log In"
+
+# Dismiss Google password manager prompt if it appears
+- pressKey: back
+
+# Wait for onboarding screen
+- extendedWaitUntil:
+    visible: "Do you have smart glasses?"
+    timeout: 15000
+- takeScreenshot: "login-onboarding-glasses-question"
+
+# Select "I don't have glasses yet" for simulated glasses testing
+- tapOn: "I don't have glasses yet"
+
+# Handle simulated glasses info screen
+- extendedWaitUntil:
+    visible: "Simulated Glasses"
+    timeout: 5000
+- takeScreenshot: "login-simulated-glasses-info"
+- tapOn: "Continue"

@@ -6,17 +6,35 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      flow_filter:
+        description: 'Filter flows by name (e.g., "auth", "captions"). Leave empty to run all.'
+        required: false
+        default: ''
+
+env:
+  E2E_TEST_EMAIL: ${{ secrets.E2E_TEST_EMAIL }}
+  E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
 
 jobs:
   maestro-test:
     runs-on: self-hosted
-    # Temporarily disabled - Maestro tests are flaky on self-hosted runners
-    if: false
-    # Original condition: if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -40,21 +58,30 @@ jobs:
           curl -Ls "https://get.maestro.mobile.dev" | bash
           echo "$HOME/.maestro/bin" >> $GITHUB_PATH
 
+      - name: Determine emulator architecture
+        id: emu-arch
+        run: |
+          if [ "${{ runner.arch }}" = "ARM64" ]; then
+            echo "arch=arm64-v8a" >> $GITHUB_OUTPUT
+          else
+            echo "arch=x86_64" >> $GITHUB_OUTPUT
+          fi
+
       - name: AVD cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: avd-cache
         with:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-34
+          key: avd-34-${{ steps.emu-arch.outputs.arch }}
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
-          arch: x86_64
+          arch: ${{ steps.emu-arch.outputs.arch }}
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: false
@@ -64,7 +91,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
-          arch: x86_64
+          arch: ${{ steps.emu-arch.outputs.arch }}
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
@@ -76,12 +103,34 @@ jobs:
             # Install the APK
             adb install app-debug.apk
 
-            # Run Maestro tests
+            # Install dependencies
             cd mobile
-            maestro test .maestro/flows \
-              --env MAESTRO_APP_ID=com.mentra.mentra \
-              --format junit \
-              --output maestro-results.xml
+            bun install
+
+            # Prep device (push test audio files, etc.)
+            ./scripts/prep-test-device.sh
+
+            # Determine which flows to run
+            FLOW_FILTER="${{ github.event.inputs.flow_filter }}"
+
+            if [ -n "$FLOW_FILTER" ]; then
+              echo "Running flows matching: $FLOW_FILTER"
+              maestro test .maestro/flows \
+                --include-tags "$FLOW_FILTER" \
+                --env MAESTRO_APP_ID=com.mentra.mentra \
+                --env E2E_TEST_EMAIL="${E2E_TEST_EMAIL}" \
+                --env E2E_TEST_PASSWORD="${E2E_TEST_PASSWORD}" \
+                --format junit \
+                --output maestro-results.xml || true
+            else
+              echo "Running all Maestro flows"
+              maestro test .maestro/flows \
+                --env MAESTRO_APP_ID=com.mentra.mentra \
+                --env E2E_TEST_EMAIL="${E2E_TEST_EMAIL}" \
+                --env E2E_TEST_PASSWORD="${E2E_TEST_PASSWORD}" \
+                --format junit \
+                --output maestro-results.xml || true
+            fi
 
       - name: Upload test results
         if: always()
@@ -89,6 +138,14 @@ jobs:
         with:
           name: maestro-test-results
           path: mobile/maestro-results.xml
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-screenshots
+          path: ~/.maestro/tests/
+          if-no-files-found: ignore
 
       - name: Publish test results
         if: always()

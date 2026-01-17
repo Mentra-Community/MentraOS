@@ -99,7 +99,12 @@ export const ActiveForegroundApp: React.FC = () => {
           </View>
         </View>
         {!applet.loading && (
-          <TouchableOpacity onPress={handleStopApp} style={themed($closeButton)} activeOpacity={0.7}>
+          <TouchableOpacity
+            onPress={handleStopApp}
+            style={themed($closeButton)}
+            activeOpacity={0.7}
+            testID="stop-foreground-app"
+            accessibilityLabel="Stop app">
             <Icon name="x" size={24} color={theme.colors.textDim} />
           </TouchableOpacity>
         )}

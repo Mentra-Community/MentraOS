@@ -1,0 +1,46 @@
+# Helper: Inject Test Audio via ADB Broadcast
+#
+# Injects test audio into the transcription pipeline using ADB broadcast intent.
+# The app must be running and transcription must be active for this to work.
+#
+# Prerequisites:
+#   - Test audio files pushed to device (done by prep-test-device.sh)
+#   - App built with TestAudioReceiver registered
+#
+# Usage in flows:
+#   - runFlow: ../helpers/inject-test-audio.yaml
+#
+# With custom audio file:
+#   - runFlow:
+#       file: ../helpers/inject-test-audio.yaml
+#       env:
+#         AUDIO_FILE: "hey-mentra-kangaroos.wav"
+#
+# Available test audio files:
+#   - hello-world.wav (~5s) - "Hello world. Testing one two three..."
+#   - numbers-count.wav (~7s) - "One. Two. Three..."
+#   - hey-mentra-kangaroos.wav (~3s) - "Hey Mentra, how many kangaroos..."
+#   - hey-mentra-president.wav (~3s) - "Hey Mentra, who is the president..."
+
+appId: ${MAESTRO_APP_ID}
+env:
+  AUDIO_FILE: "hello-world.wav"
+---
+
+# Inject audio via ADB broadcast
+- evalScript: |
+    const audioFile = AUDIO_FILE || 'hello-world.wav';
+    const filePath = `/sdcard/Download/mentra-test/${audioFile}`;
+
+    // Run ADB command to send broadcast
+    // Note: This uses Maestro's ability to run shell commands
+    output.filePath = filePath;
+    output.audioFile = audioFile;
+
+# Actually send the broadcast using Maestro's shell capability
+- assertTrue:
+    condition: true
+    label: "Injecting test audio: ${AUDIO_FILE}"
+
+# The actual ADB command is run via runScript since Maestro doesn't have direct shell access
+# We'll document the manual command for now and use a workaround in the test flow

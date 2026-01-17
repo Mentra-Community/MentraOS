@@ -1,0 +1,86 @@
+appId: ${MAESTRO_APP_ID}
+env:
+  # Expected words from hello-world.wav: "Hello world testing one two three"
+  EXPECTED_TRANSCRIPT: "hello"
+---
+# Test: Live Captions with Injected Audio (Full E2E)
+# Description: Complete E2E test that injects audio and verifies transcription
+#
+# IMPORTANT: This test requires a two-part execution:
+#   Part 1: Maestro starts the app and Live Captions
+#   Part 2: External script injects audio (run concurrently or with timing)
+#   Part 3: Maestro verifies transcript appears
+#
+# Run with test harness:
+#   bun test:maestro:captions
+#
+# Or manually:
+#   Terminal 1: maestro test .maestro/flows/08-live-captions-with-audio.yaml
+#   Terminal 2: sleep 10 && ./scripts/inject-test-audio.sh hello
+
+# ============================================
+# PART 1: Setup and Start Live Captions
+# ============================================
+
+# NOTE: This test assumes user is already logged in and glasses are connected.
+# Run 01-auth-flow.yaml first if starting from fresh state, or ensure
+# the app is in a logged-in state before running this test.
+
+- launchApp
+
+# Wait for either Home tab or login screen
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 10000
+
+- tapOn: "Home"
+
+# Start Live Captions
+- assertVisible: "Live Captions"
+- tapOn: "Live Captions"
+- takeScreenshot: "01-starting-live-captions"
+
+# Wait for Live Captions to be running
+- extendedWaitUntil:
+    visible:
+      textContains: "running"
+    timeout: 20000
+- takeScreenshot: "02-live-captions-running"
+
+# ============================================
+# PART 2: Audio Injection Window
+# ============================================
+
+# Wait for audio injection to happen externally
+# The test harness will inject audio during this window
+# hello-world.wav is ~5 seconds, we wait 20 seconds total for injection + processing
+
+# Navigate to Glasses view to see transcript (this also gives time for injection)
+- tapOn: "Glasses"
+- takeScreenshot: "03-glasses-view"
+
+# Check for Glasses Mirror which shows transcripts
+- extendedWaitUntil:
+    visible: "Glasses Mirror"
+    timeout: 10000
+- takeScreenshot: "04-glasses-mirror"
+
+# ============================================
+# PART 3: Verify Transcription
+# ============================================
+
+# Look for transcribed text
+# Note: The exact text depends on STT accuracy, so we check for partial match
+# If no transcript appears (e.g., audio wasn't injected), this will timeout but not fail
+- extendedWaitUntil:
+    visible:
+      textContains: "${EXPECTED_TRANSCRIPT}"
+    timeout: 30000
+- takeScreenshot: "05-transcript-result"
+
+# ============================================
+# Cleanup
+# ============================================
+
+- tapOn: "Home"
+- takeScreenshot: "06-test-complete"

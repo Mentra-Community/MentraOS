@@ -1,0 +1,86 @@
+appId: ${MAESTRO_APP_ID}
+env:
+  E2E_TEST_EMAIL: ${E2E_TEST_EMAIL}
+  E2E_TEST_PASSWORD: ${E2E_TEST_PASSWORD}
+  EXPECTED_TRANSCRIPT: "hello"
+---
+# Test: Live Captions Full E2E (Login + Start Captions + Audio + Verify)
+#
+# Run with test harness:
+#   bun test:maestro:captions
+#
+# Required environment variables:
+#   E2E_TEST_EMAIL - Test account email
+#   E2E_TEST_PASSWORD - Test account password
+
+# ============================================
+# PART 1: Launch and Handle Login if Needed
+# ============================================
+
+- launchApp:
+    clearState: true
+
+# Check if we see welcome screen (needs login) or home screen (already logged in)
+# Need longer timeout because clearState can make app slow to start
+- extendedWaitUntil:
+    visible: "(The future of smart glasses starts here|Home)"
+    timeout: 20000
+
+# Conditional: If we see welcome screen, perform login
+- runFlow:
+    when:
+      visible: "The future of smart glasses starts here"
+    file: ../helpers/login-and-onboard.yaml
+
+# Should now be on home screen
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 15000
+- takeScreenshot: "01-home-screen"
+
+# ============================================
+# PART 2: Close Any Foreground App First
+# ============================================
+
+# If any app is in foreground (showing stop button), close it first
+- runFlow:
+    when:
+      visible:
+        id: "stop-foreground-app"
+    commands:
+      - tapOn:
+          id: "stop-foreground-app"
+      - extendedWaitUntil:
+          notVisible:
+            id: "stop-foreground-app"
+          timeout: 5000
+
+- takeScreenshot: "02-home-apps-closed"
+
+# ============================================
+# PART 3: Activate Captions (Don't Open View)
+# ============================================
+
+# Tap Captions in the inactive apps grid to activate it
+- tapOn:
+    id: "inactive-app-com.mentra.captions"
+
+# Wait for Captions to show "Active" status (with X button appearing)
+- extendedWaitUntil:
+    visible: "Active"
+    timeout: 20000
+- takeScreenshot: "03-captions-active"
+
+# ============================================
+# PART 4: Wait for Audio Injection & Transcript
+# ============================================
+
+# Audio injection happens externally during this wait
+# The transcript should appear in the "Simulated glasses" preview area
+# hello-world.wav says "Hello world. Testing one two three..."
+- extendedWaitUntil:
+    visible: ".*${EXPECTED_TRANSCRIPT}.*"
+    timeout: 45000
+- takeScreenshot: "04-transcript-verified"
+
+- takeScreenshot: "05-test-complete"

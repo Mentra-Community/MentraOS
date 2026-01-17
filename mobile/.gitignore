@@ -98,3 +98,6 @@ expo-env.d.ts
 pnpm-lock.yaml
 
 .env.local
+
+# Maestro E2E test output
+.maestro/output/

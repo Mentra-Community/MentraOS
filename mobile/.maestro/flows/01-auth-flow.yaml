@@ -1,32 +1,29 @@
 appId: ${MAESTRO_APP_ID}
+env:
+  E2E_TEST_EMAIL: ${E2E_TEST_EMAIL}
+  E2E_TEST_PASSWORD: ${E2E_TEST_PASSWORD}
 ---
 # Test: Authentication Flow
 # Description: Tests login flow for existing users
+#
+# Required environment variables (set on CI runner or locally):
+#   E2E_TEST_EMAIL - Test account email
+#   E2E_TEST_PASSWORD - Test account password
 
 - launchApp:
     clearState: true
 
 # Should see welcome screen after clearState
-- assertVisible: "Welcome to MentraOS"
+- assertVisible: "The future of smart glasses starts here"
+- takeScreenshot: "welcome-screen"
 
-# Tap on Sign In button
-- tapOn: "Sign In"
+# Run the login and onboarding helper
+- runFlow:
+    file: ../helpers/login-and-onboard.yaml
 
-# Enter email
-- assertVisible: "Email"
-- inputText: "test@example.com"
-
-# Continue to password
-- tapOn: "Continue"
-
-# Enter password
-- assertVisible: "Password"
-- inputText: "TestPassword123!"
-
-# Sign in
-- tapOn: "Sign In"
-
-# Verify successful login - wait up to 10 seconds
-- assertVisible: "Home"
+# Verify we reach home screen
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 10000
 
 - takeScreenshot: "logged-in-home"

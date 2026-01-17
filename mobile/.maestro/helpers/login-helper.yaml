@@ -1,33 +1,40 @@
+appId: ${MAESTRO_APP_ID}
+---
 # Helper flow for logging in
 # This is a reusable flow that can be called from other tests
----
-- assertVisible: "Welcome to MentraOS"
+#
+# Required environment variables (set on CI runner or locally):
+#   E2E_TEST_EMAIL - Test account email
+#   E2E_TEST_PASSWORD - Test account password
 
-# Tap on Sign In or Get Started button
+- assertVisible: "The future of smart glasses starts here"
+
+# Tap on Log In button
+- tapOn: "Log In"
+
+# Wait for login form
+- assertVisible: "Log in to MentraOS"
+
+# Enter email - tap the email field and type
 - tapOn:
-    text: "(Sign In|Get Started)"
+    text: "Email"
+- inputText: ${E2E_TEST_EMAIL}
 
-# Enter email
-- assertVisible: "Email"
+# Hide keyboard and tap password field
+- hideKeyboard
 - tapOn:
-    id: "email-input"
-- inputText: "test@example.com"
+    text: "Password"
+    index: 1
+- inputText: ${E2E_TEST_PASSWORD}
 
-# Continue to password
-- tapOn: "Continue"
-- waitForAnimationToEnd
+# Hide keyboard and tap Log In button
+- hideKeyboard
+- tapOn: "Log In"
 
-# Enter password
-- assertVisible: "Password"
-- tapOn:
-    id: "password-input"
-- inputText: "TestPassword123!"
+# Dismiss Google password manager prompt if it appears
+- pressKey: back
 
-# Sign in
-- tapOn: "Sign In"
-- waitForAnimationToEnd
-
-# Wait for home screen
-- assertVisible:
-    text: "Home"
-    timeout: 10000
+# Wait for onboarding or home screen
+- extendedWaitUntil:
+    visible: "(Do you have smart glasses?|Home)"
+    timeout: 15000

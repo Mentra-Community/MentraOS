@@ -332,6 +332,125 @@ class CoreModule : Module() {
             true
         }
 
+        // MARK: - Test/Debug Commands (E2E Testing)
+
+        /**
+         * Injects test audio from a WAV file into the audio pipeline.
+         * Used for E2E testing of transcription without requiring actual mic input.
+         *
+         * @param filePath Path to WAV file on device (e.g., /sdcard/Download/mentra-test/test.wav)
+         * @return Map with success status and any error message
+         */
+        AsyncFunction("injectTestAudioFromFile") { filePath: String ->
+            try {
+                val file = java.io.File(filePath)
+                if (!file.exists()) {
+                    return@AsyncFunction mapOf("success" to false, "error" to "File not found: $filePath")
+                }
+
+                // Read WAV file
+                val inputStream = java.io.FileInputStream(file)
+                val wavData = inputStream.readBytes()
+                inputStream.close()
+
+                // Parse WAV header (44 bytes for standard WAV)
+                if (wavData.size < 44) {
+                    return@AsyncFunction mapOf("success" to false, "error" to "Invalid WAV file: too small")
+                }
+
+                // Verify WAV header
+                val riff = String(wavData.sliceArray(0..3))
+                val wave = String(wavData.sliceArray(8..11))
+                if (riff != "RIFF" || wave != "WAVE") {
+                    return@AsyncFunction mapOf("success" to false, "error" to "Invalid WAV file: not a valid WAV format")
+                }
+
+                // Extract format info from WAV header
+                val byteBuffer = java.nio.ByteBuffer.wrap(wavData).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                val numChannels = byteBuffer.getShort(22).toInt()
+                val sampleRate = byteBuffer.getInt(24)
+                val bitsPerSample = byteBuffer.getShort(34).toInt()
+
+                android.util.Log.d("CoreModule", "WAV: channels=$numChannels, sampleRate=$sampleRate, bits=$bitsPerSample")
+
+                // Validate format (we expect 16kHz mono 16-bit)
+                if (sampleRate != 16000) {
+                    android.util.Log.w("CoreModule", "WAV sample rate is $sampleRate, expected 16000. Audio will be injected as-is.")
+                }
+                if (numChannels != 1) {
+                    android.util.Log.w("CoreModule", "WAV has $numChannels channels, expected 1 (mono). Using first channel only.")
+                }
+                if (bitsPerSample != 16) {
+                    return@AsyncFunction mapOf("success" to false, "error" to "Unsupported bits per sample: $bitsPerSample (need 16)")
+                }
+
+                // Find data chunk
+                var dataOffset = 12
+                while (dataOffset < wavData.size - 8) {
+                    val chunkId = String(wavData.sliceArray(dataOffset until dataOffset + 4))
+                    val chunkSize = byteBuffer.getInt(dataOffset + 4)
+                    if (chunkId == "data") {
+                        dataOffset += 8
+                        break
+                    }
+                    dataOffset += 8 + chunkSize
+                }
+
+                val pcmData = wavData.sliceArray(dataOffset until wavData.size)
+                android.util.Log.d("CoreModule", "PCM data size: ${pcmData.size} bytes")
+
+                // Calculate chunk size for ~20ms of audio at 16kHz mono 16-bit
+                // 16000 samples/sec * 0.020 sec * 2 bytes/sample = 640 bytes
+                // For stereo, we need to read 2x as many bytes to get 20ms of audio
+                val monoChunkSize = 640
+                val rawChunkSize = monoChunkSize * numChannels
+                val chunkDelayMs = 20L
+
+                // Inject PCM data in chunks to simulate real-time mic input
+                Thread {
+                    var offset = 0
+                    var chunkCount = 0
+                    while (offset < pcmData.size) {
+                        val end = minOf(offset + rawChunkSize, pcmData.size)
+                        val chunk = pcmData.sliceArray(offset until end)
+
+                        // If stereo, extract left channel only (samples are interleaved: L R L R ...)
+                        val monoChunk = if (numChannels == 2) {
+                            // Each sample is 2 bytes (16-bit), stereo has L/R pairs = 4 bytes per sample pair
+                            val mono = ByteArray(chunk.size / 2)
+                            var monoIdx = 0
+                            var stereoIdx = 0
+                            while (stereoIdx < chunk.size - 3 && monoIdx < mono.size - 1) {
+                                // Copy left channel sample (2 bytes)
+                                mono[monoIdx] = chunk[stereoIdx]
+                                mono[monoIdx + 1] = chunk[stereoIdx + 1]
+                                monoIdx += 2
+                                stereoIdx += 4  // Skip right channel
+                            }
+                            mono.sliceArray(0 until monoIdx)
+                        } else {
+                            chunk
+                        }
+
+                        if (monoChunk.isNotEmpty()) {
+                            coreManager?.handlePcm(monoChunk)
+                            chunkCount++
+                        }
+                        offset = end
+
+                        // Sleep to simulate real-time audio
+                        Thread.sleep(chunkDelayMs)
+                    }
+                    android.util.Log.d("CoreModule", "Test audio injection complete: $chunkCount chunks sent")
+                }.start()
+
+                mapOf("success" to true, "pcmBytes" to pcmData.size, "durationMs" to (pcmData.size / 32)) // 32 bytes per ms at 16kHz 16-bit mono
+            } catch (e: Exception) {
+                android.util.Log.e("CoreModule", "Error injecting test audio: ${e.message}", e)
+                mapOf("success" to false, "error" to e.message)
+            }
+        }
+
         // MARK: - Media Library Commands
 
         AsyncFunction("saveToGalleryWithDate") { filePath: String, captureTimeMillis: Long? ->

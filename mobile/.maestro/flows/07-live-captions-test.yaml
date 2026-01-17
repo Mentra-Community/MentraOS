@@ -1,0 +1,64 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Test: Live Captions with Audio Injection
+# Description: Tests the full Live Captions flow with injected test audio
+#
+# Prerequisites:
+#   - User must be logged in (run 01-auth-flow.yaml first or use logged-in state)
+#   - Simulated glasses connected
+#   - Test audio files pushed to device (done by prep-test-device.sh)
+#   - App must be rebuilt with TestAudioReceiver
+#
+# This test:
+#   1. Navigates to Home
+#   2. Starts Live Captions app
+#   3. Waits for transcription to be active
+#   4. Injects test audio via ADB (run separately or use test harness)
+#   5. Verifies transcription appears in UI
+
+# Ensure we're on the Home screen
+- launchApp
+- tapOn: "Home"
+
+# Find and tap Live Captions app
+- assertVisible: "Live Captions"
+- takeScreenshot: "home-with-live-captions"
+- tapOn: "Live Captions"
+
+# Wait for app to start
+- extendedWaitUntil:
+    visible:
+      textContains: "Caption"
+    timeout: 10000
+- takeScreenshot: "live-captions-starting"
+
+# Wait for Live Captions to be active
+# The UI should show some indication that transcription is running
+- extendedWaitUntil:
+    visible:
+      textContains: "running"
+    timeout: 15000
+- takeScreenshot: "live-captions-active"
+
+# At this point, the test harness should inject audio via:
+#   ./scripts/inject-test-audio.sh hello
+#
+# For now, we'll wait and check if any transcript appears
+# (This assumes the mic might pick up ambient audio, or audio was injected externally)
+
+# Check the Glasses Mirror / display area for transcribed text
+- tapOn: "Glasses"
+- takeScreenshot: "glasses-mirror-view"
+
+# Wait to see if any text appears (from ambient audio or injected test audio)
+# This is a basic check - the full test requires audio injection
+- extendedWaitUntil:
+    visible:
+      textContains: "Glasses Mirror"
+    timeout: 5000
+
+- takeScreenshot: "live-captions-final"
+
+# Cleanup - stop the app
+- tapOn: "Home"
+- assertVisible: "Live Captions"
