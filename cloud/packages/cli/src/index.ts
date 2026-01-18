@@ -10,6 +10,7 @@ import {authCommand} from "./commands/auth"
 import {cloudCommand} from "./commands/cloud"
 import {appCommand} from "./commands/app"
 import {orgCommand} from "./commands/org"
+import {tunnelCommand} from "./commands/tunnel"
 
 const program = new Command()
 
@@ -20,6 +21,7 @@ program.addCommand(authCommand)
 program.addCommand(cloudCommand)
 program.addCommand(appCommand)
 program.addCommand(orgCommand)
+program.addCommand(tunnelCommand)
 
 // Global options
 program.option("--json", "Output JSON")

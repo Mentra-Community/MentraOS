@@ -106,6 +106,17 @@ mentra cloud add my-cloud --name "My Cloud" --url https://my-cloud.mentra.glass
 mentra cloud use my-cloud
 ```
 
+### Local Tunneling
+
+```bash
+mentra tunnel                    # Start tunnel to localhost:3000
+mentra tunnel --port 8080        # Forward to different port
+mentra tunnel --subdomain myapp  # Request specific subdomain
+mentra tunnel --host <url>       # Use custom tunnel server
+```
+
+Start a reverse tunnel for local TPA development. Routes webhooks from Mentra Cloud to your localhost.
+
 ### Global Options
 
 ```bash
