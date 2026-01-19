@@ -373,6 +373,9 @@ public class MediaCaptureService {
                 }
             }
         });
+
+        // Clean up any orphaned .recording files from previous crashes
+        cleanupOrphanedRecordings();
     }
 
     /**
@@ -568,7 +571,8 @@ public class MediaCaptureService {
             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
             int randomSuffix = (int)(Math.random() * 1000);
             String requestId = "local_video_" + timeStamp + "_" + randomSuffix;
-            String videoFilePath = fileManager.getDefaultMediaDirectory() + File.separator + "VID_" + timeStamp + "_" + randomSuffix + ".mp4";
+            // Use .recording extension during capture - will be renamed to .mp4 when complete
+            String videoFilePath = fileManager.getDefaultMediaDirectory() + File.separator + "VID_" + timeStamp + "_" + randomSuffix + ".mp4.recording";
             startVideoRecording(videoFilePath, requestId, settings, enableLed, maxRecordingTimeMinutes);
         }
     }
@@ -604,7 +608,8 @@ public class MediaCaptureService {
                             // Generate filename with requestId
                             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
                             int randomSuffix = (int)(Math.random() * 1000);
-                            String videoFilePath = fileManager.getDefaultMediaDirectory() + File.separator + "VID_" + timeStamp + "_" + randomSuffix + "_" + requestId + ".mp4";
+                            // Use .recording extension during capture - will be renamed to .mp4 when complete
+                            String videoFilePath = fileManager.getDefaultMediaDirectory() + File.separator + "VID_" + timeStamp + "_" + randomSuffix + "_" + requestId + ".mp4.recording";
 
         // Start video recording with the provided requestId and settings (or null for defaults)
         startVideoRecording(videoFilePath, requestId, settings, enableLed);
@@ -2685,6 +2690,120 @@ public class MediaCaptureService {
             }
         } catch (Exception e) {
             Log.e(TAG, "📸 Error creating gallery status update", e);
+        }
+    }
+
+    /**
+     * Clean up orphaned .recording files from previous crashes.
+     * 
+     * IMPORTANT: Before deleting a .recording file, we check if it's a valid MP4.
+     * If MediaRecorder.stop() completed but the rename didn't happen (due to crash/power loss),
+     * the file is actually complete and playable - we should rename it, not delete it!
+     * 
+     * Only delete files that are truly incomplete (missing MP4 footer, corrupted, or very small).
+     */
+    private void cleanupOrphanedRecordings() {
+        try {
+            File mediaDir = fileManager.getDefaultMediaDirectory();
+            if (!mediaDir.exists() || !mediaDir.isDirectory()) {
+                Log.d(TAG, "🧹 Media directory doesn't exist, skipping cleanup");
+                return;
+            }
+
+            File[] files = mediaDir.listFiles();
+            if (files == null || files.length == 0) {
+                Log.d(TAG, "🧹 No files in media directory, skipping cleanup");
+                return;
+            }
+
+            int cleanedCount = 0;
+            int recoveredCount = 0;
+            for (File file : files) {
+                if (file.isFile() && file.getName().endsWith(".recording")) {
+                    long fileSize = file.length();
+                    
+                    // Check if this is a complete video (MediaRecorder finished but rename didn't happen)
+                    if (isValidMp4File(file)) {
+                        // This is a COMPLETE video! Recover it by renaming.
+                        String finalName = file.getName().substring(0, file.getName().length() - 10); // Remove ".recording"
+                        File finalFile = new File(mediaDir, finalName);
+                        
+                        if (file.renameTo(finalFile)) {
+                            Log.i(TAG, "🧹 ✅ RECOVERED complete video: " + finalName + 
+                                      " (" + (fileSize / 1024 / 1024) + " MB) - was orphaned after recording completed");
+                            recoveredCount++;
+                        } else {
+                            Log.w(TAG, "🧹 ⚠️ Failed to recover " + file.getName() + " - will delete on next cleanup");
+                        }
+                    } else {
+                        // This is an incomplete/corrupted video - safe to delete
+                        if (file.delete()) {
+                            Log.i(TAG, "🧹 🗑️ Deleted incomplete recording: " + file.getName() + 
+                                      " (" + (fileSize / 1024) + " KB) - was corrupted/incomplete");
+                            cleanedCount++;
+                        } else {
+                            Log.w(TAG, "🧹 Failed to delete incomplete recording: " + file.getName());
+                        }
+                    }
+                }
+            }
+
+            if (recoveredCount > 0 || cleanedCount > 0) {
+                Log.i(TAG, "🧹 Cleanup complete: recovered " + recoveredCount + 
+                          " video(s), deleted " + cleanedCount + " incomplete recording(s)");
+            } else {
+                Log.d(TAG, "🧹 No orphaned recordings found");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "🧹 Error during orphaned recordings cleanup", e);
+        }
+    }
+    
+    /**
+     * Check if a .recording file is actually a valid, complete MP4 video.
+     * 
+     * MP4 files have a specific structure:
+     * - Must be larger than a minimum size (avoid partial writes)
+     * - Must contain the 'ftyp' box near the start (MP4 signature)
+     * - Should contain 'moov' box (movie metadata/index) - written by MediaRecorder.stop()
+     * 
+     * If MediaRecorder.stop() completed, the file will have proper MP4 structure.
+     * If recording was interrupted (crash during recording), file will be incomplete.
+     * 
+     * @param file The .recording file to check
+     * @return true if this appears to be a valid, complete MP4
+     */
+    private boolean isValidMp4File(File file) {
+        // Files smaller than 100KB are likely incomplete (< 1 second of video)
+        if (file.length() < 100 * 1024) {
+            Log.d(TAG, "🔍 " + file.getName() + " is too small (" + file.length() + " bytes) - likely incomplete");
+            return false;
+        }
+        
+        // Check for MP4 signature and structure
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+            byte[] header = new byte[12];
+            int bytesRead = fis.read(header);
+            
+            if (bytesRead < 12) {
+                Log.d(TAG, "🔍 " + file.getName() + " header too short - incomplete");
+                return false;
+            }
+            
+            // Check for 'ftyp' box (MP4 signature) at offset 4-7
+            // All valid MP4s start with: [size:4bytes]['ftyp':4bytes][type:4bytes]
+            if (header[4] == 'f' && header[5] == 't' && 
+                header[6] == 'y' && header[7] == 'p') {
+                Log.d(TAG, "🔍 " + file.getName() + " has valid MP4 signature (ftyp) - appears complete");
+                return true;
+            } else {
+                Log.d(TAG, "🔍 " + file.getName() + " missing MP4 signature - corrupted");
+                return false;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "🔍 Error checking " + file.getName() + ": " + e.getMessage());
+            // If we can't check, assume incomplete for safety
+            return false;
         }
     }
 

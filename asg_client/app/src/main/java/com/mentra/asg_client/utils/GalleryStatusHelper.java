@@ -32,13 +32,43 @@ public class GalleryStatusHelper {
         int photoCount = 0;
         int videoCount = 0;
         long totalSize = 0;
+        int ghostFilesDetected = 0;
+        int ghostFilesDeleted = 0;
 
-        // Count photos and videos
+        // Count photos and videos, detect and remove ghost files (0-byte corrupted files)
         for (FileManager.FileMetadata metadata : allFiles) {
-            String fileName = metadata.getFileName().toLowerCase();
-            totalSize += metadata.getFileSize();
+            String fileName = metadata.getFileName();
+            long fileSize = metadata.getFileSize();
+            
+            // 👻 GHOST PHOTO DETECTION: Files with 0 bytes are corrupted/incomplete
+            // These cause sync issues and should be cleaned up immediately
+            if (fileSize == 0) {
+                ghostFilesDetected++;
+                Log.w(TAG, "👻 GHOST FILE DETECTED: " + fileName + " (0 bytes) - Deleting...");
+                
+                try {
+                    // Delete the ghost file from file system
+                    var deleteResult = fileManager.deleteFile(fileManager.getDefaultPackageName(), fileName);
+                    
+                    if (deleteResult.isSuccess()) {
+                        ghostFilesDeleted++;
+                        Log.i(TAG, "✅ Ghost file deleted successfully: " + fileName);
+                    } else {
+                        Log.e(TAG, "❌ Failed to delete ghost file: " + fileName + " - " + deleteResult.getMessage());
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "💥 Error deleting ghost file: " + fileName, e);
+                }
+                
+                // Skip counting this file - it's corrupted
+                continue;
+            }
+            
+            // Count valid files only
+            String fileNameLower = fileName.toLowerCase();
+            totalSize += fileSize;
 
-            if (isVideoFile(fileName)) {
+            if (isVideoFile(fileNameLower)) {
                 videoCount++;
             } else {
                 photoCount++;  // Assume non-video files are photos
@@ -54,6 +84,10 @@ public class GalleryStatusHelper {
         response.put("total_size", totalSize);
         response.put("has_content", (photoCount + videoCount) > 0);
 
+        // Log summary
+        if (ghostFilesDetected > 0) {
+            Log.w(TAG, "👻 Ghost file cleanup summary: " + ghostFilesDeleted + "/" + ghostFilesDetected + " deleted");
+        }
         Log.d(TAG, "Gallery status: " + photoCount + " photos, " + videoCount + " videos, " +
                    formatBytes(totalSize) + " total size");
 

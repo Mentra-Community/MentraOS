@@ -948,8 +948,35 @@ public class CameraNeo extends LifecycleService {
                 mediaRecorder.reset();
             }
             Log.d(TAG, "Video recording stopped for: " + currentVideoId);
+            
+            // Finalize the video file: rename from .recording to .mp4
+            String finalPath = currentVideoPath;
+            if (currentVideoPath != null && currentVideoPath.endsWith(".recording")) {
+                try {
+                    File recordingFile = new File(currentVideoPath);
+                    finalPath = currentVideoPath.substring(0, currentVideoPath.length() - 10); // Remove ".recording"
+                    File finalFile = new File(finalPath);
+                    
+                    if (recordingFile.exists()) {
+                        if (recordingFile.renameTo(finalFile)) {
+                            Log.i(TAG, "✅ Video finalized: " + finalFile.getName());
+                        } else {
+                            Log.e(TAG, "❌ Failed to rename video file from .recording to final name");
+                            // Keep original path if rename fails
+                            finalPath = currentVideoPath;
+                        }
+                    } else {
+                        Log.w(TAG, "⚠️ Recording file not found at expected path: " + currentVideoPath);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error finalizing video file", e);
+                    // Keep original path if rename fails
+                    finalPath = currentVideoPath;
+                }
+            }
+            
             if (sVideoCallback != null) {
-                sVideoCallback.onRecordingStopped(currentVideoId, currentVideoPath);
+                sVideoCallback.onRecordingStopped(currentVideoId, finalPath);
             }
         } catch (RuntimeException stopErr) {
             Log.e(TAG, "MediaRecorder.stop() failed", stopErr);

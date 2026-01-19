@@ -290,6 +290,44 @@ public class AsgCameraServer extends AsgServer {
             long fetchTime = System.currentTimeMillis() - startTime;
             logger.debug(TAG, "📚 Found " + photoMetadataList.size() + " total photos in " + fetchTime + "ms");
 
+            // 👻 GHOST PHOTO CLEANUP: Detect and remove 0-byte corrupted files
+            // These files cause sync issues and should be cleaned up before processing
+            int ghostFilesDetected = 0;
+            int ghostFilesDeleted = 0;
+            List<FileMetadata> validFiles = new ArrayList<>();
+            
+            for (FileMetadata metadata : photoMetadataList) {
+                if (metadata.getFileSize() == 0) {
+                    ghostFilesDetected++;
+                    logger.warn(TAG, "👻 GHOST FILE DETECTED: " + metadata.getFileName() + " (0 bytes) - Deleting...");
+                    
+                    try {
+                        var deleteResult = fileManager.deleteFile(fileManager.getDefaultPackageName(), metadata.getFileName());
+                        
+                        if (deleteResult.isSuccess()) {
+                            ghostFilesDeleted++;
+                            logger.info(TAG, "✅ Ghost file deleted successfully: " + metadata.getFileName());
+                        } else {
+                            logger.error(TAG, "❌ Failed to delete ghost file: " + metadata.getFileName() + " - " + deleteResult.getMessage());
+                        }
+                    } catch (Exception e) {
+                        logger.error(TAG, "💥 Error deleting ghost file: " + metadata.getFileName(), e);
+                    }
+                } else {
+                    // Only keep valid files (non-zero size)
+                    validFiles.add(metadata);
+                }
+            }
+            
+            // Log ghost cleanup summary
+            if (ghostFilesDetected > 0) {
+                logger.warn(TAG, "👻 Ghost file cleanup: " + ghostFilesDeleted + "/" + ghostFilesDetected + " deleted");
+            }
+            
+            // Replace list with filtered valid files only
+            photoMetadataList = validFiles;
+            logger.debug(TAG, "📚 Valid photos after ghost cleanup: " + photoMetadataList.size());
+
             if (photoMetadataList.isEmpty()) {
                 logger.debug(TAG, "📚 No photos found, returning empty gallery");
                 Map<String, Object> data = new HashMap<>();
@@ -1051,6 +1089,40 @@ public class AsgCameraServer extends AsgServer {
             // Get all files
             List<FileMetadata> allFiles = fileManager.listFiles(fileManager.getDefaultPackageName());
 
+            // 👻 GHOST PHOTO CLEANUP: Detect and remove 0-byte corrupted files
+            int ghostFilesDetected = 0;
+            int ghostFilesDeleted = 0;
+            List<FileMetadata> validFiles = new ArrayList<>();
+            
+            for (FileMetadata metadata : allFiles) {
+                if (metadata.getFileSize() == 0) {
+                    ghostFilesDetected++;
+                    logger.warn(TAG, "🔄 👻 GHOST FILE DETECTED: " + metadata.getFileName() + " (0 bytes) - Deleting...");
+                    
+                    try {
+                        var deleteResult = fileManager.deleteFile(fileManager.getDefaultPackageName(), metadata.getFileName());
+                        
+                        if (deleteResult.isSuccess()) {
+                            ghostFilesDeleted++;
+                            logger.info(TAG, "🔄 ✅ Ghost file deleted successfully: " + metadata.getFileName());
+                        } else {
+                            logger.error(TAG, "🔄 ❌ Failed to delete ghost file: " + metadata.getFileName() + " - " + deleteResult.getMessage());
+                        }
+                    } catch (Exception e) {
+                        logger.error(TAG, "🔄 💥 Error deleting ghost file: " + metadata.getFileName(), e);
+                    }
+                } else {
+                    validFiles.add(metadata);
+                }
+            }
+            
+            if (ghostFilesDetected > 0) {
+                logger.warn(TAG, "🔄 👻 Ghost file cleanup: " + ghostFilesDeleted + "/" + ghostFilesDetected + " deleted");
+            }
+            
+            // Use only valid files for sync
+            allFiles = validFiles;
+
             // Filter files that have changed since last sync
             List<Map<String, Object>> changedFiles = new ArrayList<>();
             List<Map<String, Object>> deletedFiles = new ArrayList<>();
@@ -1059,8 +1131,17 @@ public class AsgCameraServer extends AsgServer {
             // In a more sophisticated implementation, you'd track deletions separately
             for (FileMetadata fileMetadata : allFiles) {
                 if (fileMetadata.getLastModified() > lastSyncTime) {
+                    String fileName = fileMetadata.getFileName();
+                    
+                    // 🎥 Skip in-progress video recordings (have .recording extension)
+                    // These files are not complete and would be corrupted if synced
+                    if (fileName.endsWith(".recording")) {
+                        logger.debug(TAG, "🔄 ⏭️ Skipping in-progress recording: " + fileName);
+                        continue;
+                    }
+                    
                     // Skip and delete AVIF transfer artifacts - these should not be synced to mobile
-                    if (isAvifTransferArtifact(fileMetadata.getFileName())) {
+                    if (isAvifTransferArtifact(fileName)) {
                         logger.debug(TAG, "🔄 Found AVIF transfer artifact, deleting: " + fileMetadata.getFileName());
 
                         // Delete the AVIF file to clean up storage
@@ -1078,7 +1159,7 @@ public class AsgCameraServer extends AsgServer {
                     }
 
                     Map<String, Object> fileInfo = new HashMap<>();
-                    fileInfo.put("name", fileMetadata.getFileName());
+                    fileInfo.put("name", fileName);
                     fileInfo.put("size", fileMetadata.getFileSize());
                     fileInfo.put("modified", fileMetadata.getLastModified());
                     fileInfo.put("mime_type", fileMetadata.getMimeType());
