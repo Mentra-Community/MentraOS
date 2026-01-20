@@ -47,4 +47,18 @@ void battery_monitor(void);
  */
 int battery_get_charge_status(int32_t *chg_status);
 
+/**
+ * @brief Get current battery state of charge percentage
+ * 获取当前电池电量百分比
+ * @return Battery SoC as integer percentage (0-100), or negative error code on failure
+ */
+int battery_get_soc_percentage(void);
+
+/**
+ * @brief Check if battery is currently charging
+ * 检查电池是否正在充电
+ * @return true if charging, false if not charging or error
+ */
+bool battery_is_charging(void);
+
 #endif /* _MOS_FUEL_GAUGE_H_ */

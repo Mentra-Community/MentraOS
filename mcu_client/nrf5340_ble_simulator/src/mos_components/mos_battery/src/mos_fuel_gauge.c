@@ -29,6 +29,10 @@ static const struct device *charger = DEVICE_DT_GET(DT_NODELABEL(npm1300_ek_char
 static volatile bool vbus_connected;  /* VBUS connection status / VBUS连接状态 */
 static int64_t ref_time;              /* Reference time for delta calculation / 用于计算时间差的参考时间 */
 
+/* Current battery data / 当前电池数据 */
+static float current_soc = 0.0f;      /* Current state of charge percentage / 当前电量百分比 */
+static int32_t current_charge_status = 0; /* Current charge status bitmask / 当前充电状态位掩码 */
+
 /* Battery model parameters / 电池模型参数 */
 static const struct battery_model battery_model = {
 #include "battery_model.inc"
@@ -244,7 +248,9 @@ int fuel_gauge_update(const struct device *charger, bool vbus_connected)
 	/* Get estimated times from fuel gauge / 从电量计获取估算时间 */
 	tte = nrf_fuel_gauge_tte_get();  /* Time to empty in seconds / 耗尽时间（秒） */
 	ttf = nrf_fuel_gauge_ttf_get();  /* Time to full in seconds / 充满时间（秒） */
-
+	/* Store current battery data globally / 全局存储当前电池数据 */
+	current_soc = soc;
+	current_charge_status = chg_status;
 	LOG_INF("V: %.3f, I: %.3f, T: %.2f, ", (double)voltage, (double)current, (double)temp);
 	LOG_INF("SoC: %.2f%%, TTE(s): %.0f, TTF(s): %.0f,", (double)soc, (double)tte, (double)ttf);
 
@@ -367,4 +373,26 @@ int battery_get_charge_status(int32_t *chg_status)
 	*chg_status = value.val1;
 
 	return 0;
+}
+
+int battery_get_soc_percentage(void)
+{
+	/* SoC is already in percentage (94.71), just convert to integer / SoC已经是百分比(94.71)，只需转换为整数 */
+	int soc_int = (int)(current_soc);
+	
+	/* Clamp to valid range / 限制在有效范围内 */
+	if (soc_int < 0) soc_int = 0;
+	if (soc_int > 100) soc_int = 100;
+	
+	return soc_int;
+}
+
+bool battery_is_charging(void)
+{
+	/* Check if any charging state is active / 检查是否有任何充电状态激活 */
+	bool charging = (current_charge_status & NPM1300_CHG_STATUS_TRICKLE_MASK) ||
+	                (current_charge_status & NPM1300_CHG_STATUS_CC_MASK) ||
+	                (current_charge_status & NPM1300_CHG_STATUS_CV_MASK);
+	
+	return charging;
 }

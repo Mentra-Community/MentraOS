@@ -48,6 +48,12 @@ config USER_STEREO_1RX_L_1RX_R
 	
 config USER_STEREO_2RX_L
 	bool "encode fifo enable"
+
+config MENTRAOS_VERSION_STRING
+	string "MentraOS Version String"
+	default "V1.2.3"
+	help
+	  Complete version string for MentraOS build display
 	default n
 	
 config USER_STEREO_2RX_LR

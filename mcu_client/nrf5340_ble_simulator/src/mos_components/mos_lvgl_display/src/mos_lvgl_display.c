@@ -632,17 +632,17 @@ static void create_scrolling_text_container(lv_obj_t *screen)
         // Large display - simple welcome message with device info
         snprintf(large_display_text, sizeof(large_display_text),
                  "Welcome to MentraOS\n"
-                 "Build V1.2.3 %s %s\n"
+                 "Build %s %s %s\n"
                  "Waiting for connection\n"
-                 "Device Name: %s", __DATE__, __TIME__, device_name);
+                 "Device Name: %s", CONFIG_MENTRAOS_VERSION_STRING, __DATE__, __TIME__, device_name);
         initial_text = large_display_text;
     } else {
         // Small display - compact welcome message
         snprintf(small_display_text, sizeof(small_display_text),
                  "Welcome to MentraOS\n"
-                 "Build V1.2.3 %s %s\n"
+                 "Build %s %s %s\n"
                  "Waiting for connection\n" 
-                 "Device: %s", __DATE__, __TIME__, device_name);
+                 "Device: %s", CONFIG_MENTRAOS_VERSION_STRING, __DATE__, __TIME__, device_name);
         initial_text = small_display_text;
     }
 

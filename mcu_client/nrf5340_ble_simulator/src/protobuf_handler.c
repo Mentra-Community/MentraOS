@@ -53,6 +53,7 @@
 #include "lvgl_interface.h"
 #include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
 #include "pdm_audio_stream.h"  // **NEW: For microphone audio streaming**
+#include "mos_components/mos_battery/include/mos_fuel_gauge.h"  // **NEW: For battery fuel gauge data**
 #include <pb_decode.h>
 #include <pb_encode.h>
 
@@ -583,9 +584,16 @@ void protobuf_send_battery_notification(void)
 	// Set which_payload to battery_status (tag 10)
 	notification.which_payload = 10;
 	
-	// Fill battery status with current level
-	notification.payload.battery_status.level = current_battery_level;
-	notification.payload.battery_status.charging = current_charging_state;
+	// Get actual battery data from fuel gauge
+	int soc_percentage = battery_get_soc_percentage();
+	bool charging = battery_is_charging();
+	
+	LOG_INF("🔋 Fuel Gauge Notification: SoC=%d%%, Charging=%s", 
+	        soc_percentage, charging ? "true" : "false");
+	
+	// Fill battery status with fuel gauge data
+	notification.payload.battery_status.level = (uint32_t)soc_percentage;
+	notification.payload.battery_status.charging = charging;
 	
 	LOG_INF("Pre-Encoding Message Analysis:");
 	LOG_INF("  - Message Type: GlassesToPhone::BatteryStatus");
@@ -674,9 +682,16 @@ int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_le
 	// Set which_payload to battery_status (tag 10) - simpler than device_info
 	response.which_payload = 10;
 	
-	// Create a battery status response using current battery level
-	response.payload.battery_status.level = current_battery_level;
-	response.payload.battery_status.charging = current_charging_state;
+	// Get actual battery data from fuel gauge
+	int soc_percentage = battery_get_soc_percentage();
+	bool charging = battery_is_charging();
+	
+	LOG_INF("🔋 Fuel Gauge Data: SoC=%d%%, Charging=%s", 
+	        soc_percentage, charging ? "true" : "false");
+	
+	// Create a battery status response using fuel gauge data
+	response.payload.battery_status.level = (uint32_t)soc_percentage;
+	response.payload.battery_status.charging = charging;
 	
 	LOG_INF("� Pre-Encoding Message Analysis:");
 	LOG_INF("  - Message Type: GlassesToPhone::BatteryStatus");
