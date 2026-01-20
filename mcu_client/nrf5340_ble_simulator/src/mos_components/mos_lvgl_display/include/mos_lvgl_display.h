@@ -36,6 +36,7 @@ typedef enum
     LCD_CMD_GRAYSCALE_VERTICAL,    // **NEW: Direct A6N vertical grayscale**
     LCD_CMD_CHESS_PATTERN,         // **NEW: Direct A6N chess pattern**
     LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
+    LCD_CMD_CLEAR_ALL,             // **NEW: Clear all display content**
 } display_cmd_type_t;
 #define MAX_TEXT_LEN 128
 typedef struct
@@ -118,6 +119,9 @@ void display_cycle_pattern(void);
 
 // **NEW: Thread-safe protobuf text update function**
 void display_update_protobuf_text(const char *text_content);
+
+// **NEW: Clear display function**
+void display_clear_all(void);
 
 // **NEW: Direct A6N pattern functions**
 void display_draw_horizontal_grayscale(void);

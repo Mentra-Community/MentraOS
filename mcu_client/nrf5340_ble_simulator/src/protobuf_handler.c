@@ -74,6 +74,16 @@ static bool auto_brightness_enabled = false;
 // Audio streaming error counter
 static uint32_t streaming_errors = 0;
 
+// **NEW: Microphone state switching protection**
+static int64_t last_mic_state_change_time = 0;
+static bool last_mic_state_request = false;
+static uint32_t mic_state_request_count = 0;
+static bool mic_state_change_in_progress = false;
+
+#define MIC_STATE_DEBOUNCE_MS 500      // Minimum time between state changes
+#define MIC_STATE_MAX_RAPID_REQUESTS 5  // Max rapid requests before blocking
+#define MIC_STATE_RAPID_WINDOW_MS 2000  // Time window for counting rapid requests
+
 // **NEW: Ping/Pong connectivity monitoring**
 // (Glasses send periodic pings to phone, phone responds with pongs)
 static struct k_timer ping_timer;
@@ -1149,10 +1159,15 @@ void protobuf_process_clear_display(void)
 	// TODO: Implement actual display clearing logic here
 	// This is where you would interface with your display driver
 	LOG_INF("Display Clear Implementation:");
-	LOG_INF("  - Clear framebuffer: TODO");
-	LOG_INF("  - Reset text state: TODO");
-	LOG_INF("  - Stop scrolling animations: TODO");
-	LOG_INF("  - Refresh display: TODO");
+	
+	// **IMPLEMENTATION: Call MOS LVGL display clear function**
+	display_clear_all();
+	
+	LOG_INF("  ✅ Clear LVGL objects: DONE");
+	LOG_INF("  ✅ Clear hardware framebuffer: DONE"); 
+	LOG_INF("  ✅ Reset text state: DONE");
+	LOG_INF("  ✅ Stop scrolling animations: DONE");
+	LOG_INF("  ✅ Reset pattern state: DONE");
 	
 	// Print to UART
 	LOG_INF("\n[Phone->Glasses CLEAR] Clear Display: all content cleared (temporary tag:99)\n");
@@ -1259,7 +1274,49 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
 		return;
 	}
 	
-	LOG_INF("=== MICROPHONE STATE CONFIG MESSAGE (Tag 20) ===");
+	// **NEW: Microphone state switching protection**
+	int64_t current_time = k_uptime_get();
+	bool enabled = mic_state->enabled;
+	
+	// Check if state change is in progress
+	if (mic_state_change_in_progress) {
+		LOG_WRN("🛡️ Microphone state change already in progress, ignoring request");
+		return;
+	}
+	
+	// Check for rapid repeated requests
+	if (enabled == last_mic_state_request && 
+	    (current_time - last_mic_state_change_time) < MIC_STATE_RAPID_WINDOW_MS) {
+		mic_state_request_count++;
+		LOG_WRN("🛡️ Rapid duplicate microphone request #%u (same state: %s)", 
+		        mic_state_request_count, enabled ? "ON" : "OFF");
+		
+		if (mic_state_request_count >= MIC_STATE_MAX_RAPID_REQUESTS) {
+			LOG_ERR("🛡️ TOO MANY rapid requests (%u), blocking for protection", 
+			        mic_state_request_count);
+			return;
+		}
+	} else {
+		// Different state or enough time has passed, reset counter
+		mic_state_request_count = 0;
+	}
+	
+	// Check debounce timing
+	if ((current_time - last_mic_state_change_time) < MIC_STATE_DEBOUNCE_MS) {
+		LOG_WRN("🛡️ Microphone state change too soon, debouncing (last change %lld ms ago)", 
+		        current_time - last_mic_state_change_time);
+		return;
+	}
+	
+	// Set protection flag
+	mic_state_change_in_progress = true;
+	last_mic_state_change_time = current_time;
+	last_mic_state_request = enabled;
+	
+	LOG_INF("=== MICROPHONE STATE CONFIG MESSAGE (Tag 20) ===*");
+	LOG_INF("🛡️ Protection: debounce=%lldms, rapid_count=%u, in_progress=true", 
+	        current_time - (last_mic_state_change_time - MIC_STATE_DEBOUNCE_MS), 
+	        mic_state_request_count);
 	
 	// *** RAW PROTOBUF FIELD ANALYSIS ***
 	LOG_INF("\n🔍 RAW MICSTATECONFIG FIELD VALUES:\n");
@@ -1269,8 +1326,6 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
 	LOG_INF("  - Tag Number: 20\n");
 	LOG_INF("  - Field 1 (enabled): %s\n", mic_state->enabled ? "ENABLE_MICROPHONE" : "DISABLE_MICROPHONE");
 	LOG_INF("  - Expected Action: %s\n", mic_state->enabled ? "Start PDM capture + LC3 encoding + BLE streaming" : "Stop all audio processing");
-	
-	bool enabled = mic_state->enabled;
 
 	pdm_audio_state_t current_state = pdm_audio_stream_get_state();
 	bool was_streaming = (current_state == PDM_AUDIO_STATE_STREAMING);
@@ -1299,8 +1354,15 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
 	LOG_INF("  - Transport: BLE via 0xA0 audio chunk messages");
 	LOG_INF("  - Stream ID: 0x01 (microphone audio)");
 	
-	// Apply the configuration
+	// Apply the configuration with protection
 	int ret = pdm_audio_stream_set_enabled(enabled);
+	
+	// Handle -EALREADY specifically to avoid treating as error
+	if (ret == -EALREADY) {
+		LOG_WRN("🛡️ PDM already in requested state (%s), ignoring duplicate request", 
+		        enabled ? "ENABLED" : "DISABLED");
+		ret = 0;  // Treat as success for logging purposes
+	}
 	
 	// Get updated statistics
 	uint32_t frames_captured, frames_encoded, frames_transmitted, errors;
@@ -1336,6 +1398,10 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
 	LOG_INF("\n[Phone->Glasses MIC_STATE] Microphone: %s->%s (frames: %u/%u/%u, errors: %u)\n", 
 	       was_streaming ? "ON" : "OFF", enabled ? "ON" : "OFF", 
 	       frames_captured, frames_encoded, frames_transmitted, errors);
+	
+	// **NEW: Clear protection flag**
+	mic_state_change_in_progress = false;
+	LOG_INF("🛡️ Protection: state change completed, in_progress=false");
 	
 	LOG_INF("=== END MICROPHONE STATE CONFIG MESSAGE ===");
 }

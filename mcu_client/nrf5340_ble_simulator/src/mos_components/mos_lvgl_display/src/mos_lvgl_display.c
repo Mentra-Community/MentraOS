@@ -1071,6 +1071,17 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     current_pattern = cmd.p.pattern.pattern_id;  // Update current pattern
                     show_test_pattern(cmd.p.pattern.pattern_id);
                     break;
+                case LCD_CMD_CLEAR_ALL:
+                    /* **NEW: Handle clear display command** */
+                    LOG_INF("LCD_CMD_CLEAR_ALL - Clearing all display content");
+                    // Clear LVGL objects
+                    lv_obj_clean(lv_screen_active());
+                    // Clear hardware display
+                    a6n_clear_screen(false);
+                    // Reset pattern state
+                    current_pattern = 0;
+                    LOG_INF("Display cleared successfully");
+                    break;
                 default:
                     break;
             }
@@ -1100,4 +1111,19 @@ void lvgl_display_thread(void)
                                          0,
                                          K_NO_WAIT);
     k_thread_name_set(lvgl_thread_handle, TASK_LVGL_NAME);
+}
+
+void display_clear_all(void)
+{
+    /* Send clear command to LVGL thread via message queue */
+    display_cmd_t cmd = {.type = LCD_CMD_CLEAR_ALL};
+    
+    LOG_INF("🧹 Sending clear display command to LVGL thread");
+    
+    int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+    if (ret != 0) {
+        LOG_ERR("Failed to send clear display command: %d", ret);
+    } else {
+        LOG_INF("Clear display command queued successfully");
+    }
 }
