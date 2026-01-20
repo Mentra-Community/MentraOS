@@ -18,6 +18,7 @@ export interface DownloadedFile {
   thumbnailPath?: string // Path to thumbnail file
   downloaded_at: number
   glassesModel?: string // Model of glasses that captured this media
+  fileHash?: string // SHA256 hash for deduplication (cloud + WiFi Direct sync)
 }
 
 interface SyncState {

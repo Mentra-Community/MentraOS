@@ -12,14 +12,22 @@ import {ThemedStyle} from "@/theme"
 const MIN_Y = 60
 const MIN_X = 0
 
+interface LogEntry {
+  type: string
+  message: string
+  timestamp: string
+}
+
 export const ConsoleLogger = () => {
   const {themed} = useAppTheme()
-  const [logs, setLogs] = useState([])
+  const [logs, setLogs] = useState<LogEntry[]>([])
   const [isVisible, setIsVisible] = useState(false)
-  const scrollViewRef = useRef(null)
+  const [isFrozen, setIsFrozen] = useState(false)
+  const scrollViewRef = useRef<ScrollView>(null)
   const [debugConsole] = useSetting(SETTINGS.debug_console.key)
   const consoleOverrideSetup = useRef(false)
   const isAtBottom = useRef(true)
+  const isFrozenRef = useRef(isFrozen)
 
   // Console window position
   const panX = useSharedValue(MIN_X)
@@ -75,6 +83,11 @@ export const ConsoleLogger = () => {
     isAtBottom.current = isBottom
   }
 
+  // Keep frozen ref in sync with state
+  useEffect(() => {
+    isFrozenRef.current = isFrozen
+  }, [isFrozen])
+
   useEffect(() => {
     if (!debugConsole || consoleOverrideSetup.current) {
       return
@@ -92,6 +105,10 @@ export const ConsoleLogger = () => {
 
         setTimeout(() => {
           setLogs(prev => {
+            // Don't add logs if frozen
+            if (isFrozenRef.current) {
+              return prev
+            }
             const newLogs = [
               ...prev,
               {
@@ -154,9 +171,15 @@ export const ConsoleLogger = () => {
     <Animated.View style={[themed($container), panAnimatedStyle]}>
       <GestureDetector gesture={panGesture}>
         <View style={themed($header)}>
-          <Text text={`Console (${logs.length}/500)`} className="text-xs font-bold" />
+          <Text text={`Console (${logs.length}/500)${isFrozen ? " [FROZEN]" : ""}`} className="text-xs font-bold" />
           <View className="flex-row gap-2">
             <Button text="Hide" preset="primary" compact onPress={handleHide} />
+            <Button
+              text={isFrozen ? "Unfreeze" : "Freeze"}
+              preset={isFrozen ? "primary" : "default"}
+              compact
+              onPress={() => setIsFrozen(!isFrozen)}
+            />
             <Button text="Clear" preset="secondary" compact onPress={() => setLogs([])} />
           </View>
         </View>
@@ -190,7 +213,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   position: "absolute",
   left: 0,
   right: 0,
-  height: 300,
+  height: 600,
   width: "90%",
   backgroundColor: colors.primary_foreground,
   borderWidth: 1,

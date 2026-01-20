@@ -22,6 +22,9 @@ import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
 import com.mentra.asg_client.service.system.managers.ConfigurationManager;
 import com.mentra.asg_client.service.system.managers.ServiceLifecycleManager;
 import com.mentra.asg_client.service.system.managers.StateManager;
+import com.mentra.asg_client.service.gallery.BackgroundGallerySyncManager;
+import com.mentra.asg_client.service.gallery.CloudGalleryUploader;
+import com.mentra.asg_client.service.gallery.GalleryUploadQueue;
 
 
 /**
@@ -44,6 +47,11 @@ public class ServiceContainer {
     private final IMediaManager streamingManager;
 
     private final FileManager fileManager;
+    
+    // Gallery cloud sync components
+    private BackgroundGallerySyncManager backgroundSyncManager;
+    private CloudGalleryUploader cloudGalleryUploader;
+    private GalleryUploadQueue galleryUploadQueue;
 
     public ServiceContainer(Context context, AsgClientService service) {
         this.context = context;
@@ -88,6 +96,13 @@ public class ServiceContainer {
 
         // Initialize lifecycle manager with all components
         this.lifecycleManager = new ServiceLifecycleManager(context, serviceManager, commandProcessor, notificationManager);
+        
+        // Initialize gallery cloud sync components
+        Log.i("ServiceContainer", "☁️ Initializing gallery cloud sync components");
+        this.galleryUploadQueue = new GalleryUploadQueue(context, fileManager);
+        this.cloudGalleryUploader = new CloudGalleryUploader(context, fileManager, galleryUploadQueue);
+        this.backgroundSyncManager = new BackgroundGallerySyncManager(context, stateManager, cloudGalleryUploader);
+        Log.i("ServiceContainer", "✅ Gallery cloud sync components initialized");
     }
 
     /**
@@ -151,6 +166,27 @@ public class ServiceContainer {
     }
 
     /**
+     * Get background sync manager
+     */
+    public BackgroundGallerySyncManager getBackgroundSyncManager() {
+        return backgroundSyncManager;
+    }
+    
+    /**
+     * Get cloud gallery uploader
+     */
+    public CloudGalleryUploader getCloudGalleryUploader() {
+        return cloudGalleryUploader;
+    }
+    
+    /**
+     * Get gallery upload queue
+     */
+    public GalleryUploadQueue getGalleryUploadQueue() {
+        return galleryUploadQueue;
+    }
+    
+    /**
      * Initialize all components
      */
     public void initialize() {
@@ -167,6 +203,11 @@ public class ServiceContainer {
      */
     public void cleanup() {
         Log.d("ServiceContainer", "Cleaning up service container");
+        
+        // Clean up gallery sync manager
+        if (backgroundSyncManager != null) {
+            backgroundSyncManager.stopMonitoring();
+        }
 
         // Clean up streaming manager first (unregisters callbacks)
         streamingManager.cleanup();

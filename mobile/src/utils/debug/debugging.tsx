@@ -1,12 +1,13 @@
 // @ts-nocheck
 
-import {Text} from "@/components/ignite/Text"
-import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEffect, useRef, useState} from "react"
 import {ScrollView, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
-export const DebugHitSlop = ({children, hitSlop, style, ...props}) => {
+import {Text} from "@/components/ignite/Text"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
+
+export const DebugHitSlop = ({children, hitSlop, style, ..._props}) => {
   if (!__DEV__ || !hitSlop) return children
 
   const hitSlopStyle = {
@@ -379,7 +380,7 @@ export const ConsoleLogger = () => {
   if (!isVisible) {
     return (
       <TouchableOpacity style={themed($toggleButton)} onPress={() => setIsVisible(true)}>
-        <Text style={themed($toggleButtonText)}>Show Console</Text>
+        <Text style={themed($toggleButtonText)}>Sow Console</Text>
       </TouchableOpacity>
     )
   }
@@ -424,7 +425,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors}) => ({
   top: 50,
   left: 0,
   right: 0,
-  height: 250,
+  height: 600,
   backgroundColor: colors.background,
   borderTopWidth: 2,
   borderTopColor: colors.border,

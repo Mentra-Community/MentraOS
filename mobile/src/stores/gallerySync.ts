@@ -56,6 +56,13 @@ export interface GallerySyncInfo {
   glassesTotalCount: number
   glassesHasContent: boolean
 
+  // Cloud sync state
+  cloudPendingCount: number
+  cloudPendingBytes: number
+  cloudSyncActive: boolean
+  cloudSyncError: string | null
+  lastCloudPollTime: number | null
+
   // Error tracking
   lastError: string | null
 }
@@ -85,6 +92,12 @@ interface GallerySyncState extends GallerySyncInfo {
   setGlassesGalleryStatus: (photos: number, videos: number, total: number, hasContent: boolean) => void
   clearGlassesGalleryStatus: () => void
 
+  // Cloud sync management
+  setCloudPending: (count: number, bytes: number) => void
+  setCloudSyncActive: (active: boolean) => void
+  setCloudSyncError: (error: string | null) => void
+  setLastCloudPollTime: (time: number) => void
+
   // Queue management (for resume)
   setQueue: (files: PhotoInfo[], startIndex?: number) => void
   advanceQueue: () => void
@@ -109,6 +122,11 @@ const initialState: GallerySyncInfo = {
   glassesVideoCount: 0,
   glassesTotalCount: 0,
   glassesHasContent: false,
+  cloudPendingCount: 0,
+  cloudPendingBytes: 0,
+  cloudSyncActive: false,
+  cloudSyncError: null,
+  lastCloudPollTime: null,
   lastError: null,
 }
 
@@ -244,6 +262,28 @@ export const useGallerySyncStore = create<GallerySyncState>()(
         glassesVideoCount: 0,
         glassesTotalCount: 0,
         glassesHasContent: false,
+      }),
+
+    // Cloud sync management
+    setCloudPending: (count: number, bytes: number) =>
+      set({
+        cloudPendingCount: count,
+        cloudPendingBytes: bytes,
+      }),
+
+    setCloudSyncActive: (active: boolean) =>
+      set({
+        cloudSyncActive: active,
+      }),
+
+    setCloudSyncError: (error: string | null) =>
+      set({
+        cloudSyncError: error,
+      }),
+
+    setLastCloudPollTime: (time: number) =>
+      set({
+        lastCloudPollTime: time,
       }),
 
     // Queue management

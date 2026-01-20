@@ -785,8 +785,19 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             
             Log.d(TAG, "🎯 Enabling swipe volume control on Bluetooth connection");
             handleSwipeVolumeControl(false);
+            
+            // Start background gallery sync monitoring
+            Log.d(TAG, "☁️ Starting background gallery sync monitoring");
+            if (serviceContainer != null && serviceContainer.getBackgroundSyncManager() != null) {
+                serviceContainer.getBackgroundSyncManager().startMonitoring();
+            }
         } else {
-            Log.d(TAG, "📶 Bluetooth disconnected - no additional actions needed");
+            Log.d(TAG, "📶 Bluetooth disconnected - stopping background sync");
+            
+            // Stop background gallery sync monitoring
+            if (serviceContainer != null && serviceContainer.getBackgroundSyncManager() != null) {
+                serviceContainer.getBackgroundSyncManager().stopMonitoring();
+            }
         }
     }
 

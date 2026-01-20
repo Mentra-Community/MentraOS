@@ -31,6 +31,7 @@ import {Header, Icon, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import {cloudGallerySyncService} from "@/services/asg/cloudGallerySyncService"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {localStorageService} from "@/services/asg/localStorageService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
@@ -90,6 +91,12 @@ export function GalleryScreen() {
       hasContent: state.glassesHasContent,
     })),
   )
+
+  // Cloud sync state
+  const cloudPendingCount = useGallerySyncStore(state => state.cloudPendingCount)
+  const cloudPendingBytes = useGallerySyncStore(state => state.cloudPendingBytes)
+  const cloudSyncActive = useGallerySyncStore(state => state.cloudSyncActive)
+  const cloudSyncError = useGallerySyncStore(state => state.cloudSyncError)
 
   // Permission state - no longer blocking, permission is requested lazily when saving
   const [_hasMediaLibraryPermission, setHasMediaLibraryPermission] = useState(false)
@@ -851,6 +858,54 @@ export function GalleryScreen() {
     ],
   )
 
+  // Helper function to format bytes
+  const formatBytes = (bytes: number): string => {
+    if (bytes < 1024) return bytes + " B"
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB"
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB"
+  }
+
+  // Render cloud sync banner
+  const renderCloudSyncBanner = () => {
+    if (cloudPendingCount === 0 && !cloudSyncActive) return null
+
+    return (
+      <View style={themed($cloudSyncBanner)}>
+        <View style={themed($cloudSyncContent)}>
+          <Icon name="cloud" size={20} color={theme.colors.palette.primary300} style={{marginRight: spacing.s2}} />
+          {cloudSyncActive ? (
+            <>
+              <ActivityIndicator
+                size="small"
+                color={theme.colors.palette.primary300}
+                style={{marginRight: spacing.s2}}
+              />
+              <Text style={themed($cloudSyncText)}>Downloading from cloud...</Text>
+            </>
+          ) : (
+            <>
+              <Text style={themed($cloudSyncText)}>
+                {cloudPendingCount} {cloudPendingCount === 1 ? "photo" : "photos"} in cloud (
+                {formatBytes(cloudPendingBytes)})
+              </Text>
+              <TouchableOpacity
+                onPress={() => cloudGallerySyncService.downloadPending()}
+                style={themed($downloadNowButton)}>
+                <Text style={themed($downloadNowText)}>Download Now</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+        {cloudSyncError && (
+          <Text style={themed($cloudSyncError)} numberOfLines={1}>
+            {cloudSyncError}
+          </Text>
+        )}
+      </View>
+    )
+  }
+
   return (
     <>
       <Header
@@ -888,6 +943,7 @@ export function GalleryScreen() {
           )
         }
       />
+      {renderCloudSyncBanner()}
       <View style={themed($screenContainer)}>
         <View style={themed($galleryContainer)}>
           {(() => {
@@ -1201,4 +1257,45 @@ const $selectionCountText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 16,
   lineHeight: 24,
   fontWeight: "600",
+})
+
+// Cloud sync banner styles
+const $cloudSyncBanner: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.palette.primary100,
+  borderBottomWidth: 1,
+  borderBottomColor: colors.border,
+  paddingHorizontal: spacing.s4,
+  paddingVertical: spacing.s3,
+})
+
+const $cloudSyncContent: ThemedStyle<ViewStyle> = () => ({
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+})
+
+const $cloudSyncText: ThemedStyle<TextStyle> = ({colors}) => ({
+  flex: 1,
+  fontSize: 14,
+  color: colors.text,
+})
+
+const $downloadNowButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.palette.primary300,
+  paddingHorizontal: spacing.s3,
+  paddingVertical: spacing.s2,
+  borderRadius: 6,
+  marginLeft: spacing.s2,
+})
+
+const $downloadNowText: ThemedStyle<TextStyle> = () => ({
+  fontSize: 13,
+  fontWeight: "600",
+  color: "#FFFFFF",
+})
+
+const $cloudSyncError: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 12,
+  color: colors.palette.angry500,
+  marginTop: spacing.s1,
 })

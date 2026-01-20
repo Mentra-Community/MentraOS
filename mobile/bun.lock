@@ -21,6 +21,7 @@
         "axios": "^1.13.2",
         "babel-plugin-module-resolver": "5.0.0",
         "core": "file:./modules/core",
+        "crypto-js": "^4.2.0",
         "date-fns": "^4.1.0",
         "dotenv": "^17.2.3",
         "expo": "~54.0.28",
