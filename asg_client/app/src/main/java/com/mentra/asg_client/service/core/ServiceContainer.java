@@ -185,7 +185,7 @@ public class ServiceContainer {
     public GalleryUploadQueue getGalleryUploadQueue() {
         return galleryUploadQueue;
     }
-    
+
     /**
      * Initialize all components
      */

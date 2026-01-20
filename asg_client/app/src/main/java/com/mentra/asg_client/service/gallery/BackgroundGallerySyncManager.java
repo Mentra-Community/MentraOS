@@ -68,8 +68,9 @@ public class BackgroundGallerySyncManager {
      * Start monitoring charging and WiFi state
      */
     public void startMonitoring() {
+        Log.i(TAG, "🔄 startMonitoring() called. Current monitoring state: " + mIsMonitoring);
         if (mIsMonitoring) {
-            Log.d(TAG, "Already monitoring");
+            Log.w(TAG, "⚠️ Already monitoring - skipping start");
             return;
         }
         
@@ -102,6 +103,16 @@ public class BackgroundGallerySyncManager {
         mContext.registerReceiver(mWifiReceiver, wifiFilter);
         
         mIsMonitoring = true;
+        
+        // Initialize current charging state from Android system
+        IntentFilter tempFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        Intent batteryStatus = mContext.registerReceiver(null, tempFilter);
+        if (batteryStatus != null) {
+            int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            mLastChargingState = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                status == BatteryManager.BATTERY_STATUS_FULL;
+            Log.d(TAG, "🔋 Initial charging state: " + (mLastChargingState ? "CHARGING" : "NOT CHARGING"));
+        }
         
         // Check conditions immediately
         checkConditionsAndScheduleSync();
@@ -212,22 +223,25 @@ public class BackgroundGallerySyncManager {
      * Check if all conditions are met for sync and schedule if ready
      */
     private void checkConditionsAndScheduleSync() {
-        boolean isCharging = mStateManager.isCharging();
+        // Use phone's charging status (from BroadcastReceiver), not glasses charging status
+        boolean isCharging = mLastChargingState;
         boolean isWifiConnected = mStateManager.isConnectedToWifi();
         boolean syncEnabled = mPrefs.getBoolean(PREF_ENABLE_BACKGROUND_SYNC, true);
         boolean wifiOnly = mPrefs.getBoolean(PREF_CLOUD_SYNC_WIFI_ONLY, true);
         int minBattery = mPrefs.getInt(PREF_CLOUD_SYNC_MIN_BATTERY, 20);
+        // Use glasses battery level if available, otherwise allow sync (battery check is for glasses, not phone)
         int currentBattery = mStateManager.getBatteryLevel();
         
         Log.d(TAG, "📊 Condition check: charging=" + isCharging + 
-                  ", wifi=" + isWifiConnected + 
+                  " (phone), wifi=" + isWifiConnected + 
                   ", enabled=" + syncEnabled + 
-                  ", battery=" + currentBattery + "% (min: " + minBattery + "%)");
+                  ", glasses_battery=" + currentBattery + "% (min: " + minBattery + "%)");
         
         // Check all conditions
+        // Note: We check phone charging status, but glasses battery level (if available)
         boolean conditionsMet = syncEnabled &&
-                              isCharging &&
-                              (currentBattery >= minBattery || currentBattery == -1) && // -1 means unknown
+                              isCharging &&  // Phone must be charging
+                              (currentBattery >= minBattery || currentBattery == -1) && // Glasses battery check (-1 means unknown, allow sync)
                               (!wifiOnly || isWifiConnected);
         
         if (conditionsMet) {
