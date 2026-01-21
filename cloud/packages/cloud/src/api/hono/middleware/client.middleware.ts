@@ -58,8 +58,8 @@ export const clientAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
 
     const email = decoded.email.toLowerCase();
     c.set("email", email);
-    c.set("logger", logger.child({ userId: email }));
-    logger.info(`Auth Middleware: User ${email} authenticated.`);
+    // Include reqId for request correlation across all logs
+    c.set("logger", logger.child({ userId: email, reqId: c.get("reqId") }));
     await next();
   } catch (error) {
     const jwtError = error as Error;
@@ -97,7 +97,7 @@ export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     }
 
     c.set("user", user);
-    reqLogger.info(`requireUser: User object populated for ${email}`);
+    reqLogger.debug("User object populated");
     await next();
   } catch (error) {
     reqLogger.error(error, `requireUser: Failed to findOrCreateUser for email: ${email}`);
@@ -128,7 +128,7 @@ export const requireUserSession: MiddlewareHandler<AppEnv> = async (c, next) => 
     }
 
     c.set("userSession", userSession);
-    reqLogger.info(`requireUserSession: User session populated for ${email}`);
+    reqLogger.debug("User session populated");
     await next();
   } catch (error) {
     reqLogger.error(error, `requireUserSession: Failed to fetch session for user: ${email}`);

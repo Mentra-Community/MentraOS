@@ -1,9 +1,9 @@
 import {forwardRef, ReactElement, ComponentType} from "react"
 import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewStyle} from "react-native"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {$styles} from "@/theme"
 import type {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {Icon, IconTypes} from "./Icon"
 import {Text, TextProps} from "./Text"

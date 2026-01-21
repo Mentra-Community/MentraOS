@@ -2,8 +2,9 @@ import {useCallback, useMemo} from "react"
 import {FlatList, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
-import AppIcon from "@/components/misc/AppIcon"
+import AppIcon from "@/components/home/AppIcon"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {
   ClientAppletInterface,
   DUMMY_APPLET,
@@ -13,7 +14,6 @@ import {
 } from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 const GRID_COLUMNS = 4
 

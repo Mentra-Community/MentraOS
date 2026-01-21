@@ -185,7 +185,7 @@ export const markPermissionNotRequested = async (featureKey: string): Promise<vo
 export const hasPermissionBeenRequested = async (featureKey: string): Promise<boolean> => {
   const res = storage.load<boolean>(`PERMISSION_REQUESTED_${featureKey}`)
   if (res.is_error()) {
-    console.error("Failed to get permission requested status", res.error)
+    console.log("Failed to get permission requested status, assuming it has not been requested", res.error)
     return false
   }
   return true
@@ -353,6 +353,9 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
           }
           await markPermissionRequested(permission)
           // ignore the fact that this reports as blocked, since that's just how the flow for this permission works
+          // TODO: there is an edge case here where we can't tell if the user has actually been shown the dialog for the ALWAYS permission since it reports as blocked
+          // in either case
+          // so we have to either be ok with the edge case or NEVER show the dialog :/
           continue
         }
 
@@ -684,10 +687,10 @@ export const askPermissionsUI = async (app: AppletInterface, theme: Theme): Prom
           },
         },
       ],
-      {
-        iconName: "information-outline",
-        iconColor: theme.colors.textDim,
-      },
+      // {
+      //   iconName: "info",
+      //   iconColor: theme.colors.textDim,
+      // },
     )
   })
 }
@@ -821,11 +824,10 @@ async function isLocationPermissionGranted(): Promise<boolean> {
 async function isLocationServicesEnabled(): Promise<boolean> {
   try {
     if (Platform.OS === "android") {
-      // // Use our native module to check if location services are enabled
-      // const locationServicesEnabled = await checkLocationServices()
-      // console.log("Location services enabled (native check):", locationServicesEnabled)
-      // return locationServicesEnabled
-      return true // TODO: fix this!
+      // Use our native module to check if location services are enabled
+      const locationServicesEnabled = await CoreModule.isLocationServicesEnabled()
+      console.log("Location services enabled (native check):", locationServicesEnabled)
+      return locationServicesEnabled
     } else if (Platform.OS === "ios") {
       // iOS doesn't require location for BLE scanning since iOS 13
       return true
@@ -836,6 +838,9 @@ async function isLocationServicesEnabled(): Promise<boolean> {
     return false
   }
 }
+
+// Export for use in other services (e.g., GallerySyncService)
+export {isLocationServicesEnabled}
 
 async function checkConnectivityRequirements(): Promise<{
   isReady: boolean
@@ -865,8 +870,7 @@ async function checkConnectivityRequirements(): Promise<{
       console.log("Location permission missing, showing error")
       return {
         isReady: false,
-        message:
-          "Location permission is required to scan for glasses on Android. Please grant location permission and try again.",
+        message: translate("connectivity:locationPermissionRequiredMessage"),
         requirement: "location",
       }
     }

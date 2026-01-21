@@ -116,7 +116,7 @@ class RestComms {
       endpoint: "/api/client/min-version",
     }
     const res = this.unauthenticatedRequest<Response>(config)
-    return res.map(response => response.data)
+    return res.map((response) => response.data)
   }
 
   public checkAppHealthStatus(packageName: string): AsyncResult<boolean, Error> {
@@ -131,7 +131,25 @@ class RestComms {
     }
 
     const res = this.authenticatedRequest<Response>(config)
-    return res.map(response => response.success)
+    return res.map((response) => response.success)
+  }
+
+  public retry<T>(fn: () => AsyncResult<T, Error>, attempts: number, delayMs: number = 0): AsyncResult<T, Error> {
+    return Res.try_async(async () => {
+      let lastError: Error | null = null
+
+      for (let i = 0; i < attempts; i++) {
+        const result: Result<T, Error> = await fn()
+        if (result.is_ok()) {
+          return result.value
+        }
+        lastError = result.error
+        if (i < attempts - 1 && delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs))
+        }
+      }
+      throw lastError
+    })
   }
 
   public getApplets(): AsyncResult<AppletInterface[], Error> {
@@ -144,7 +162,7 @@ class RestComms {
       endpoint: "/api/client/apps",
     }
     let res = this.authenticatedRequest<Response>(config)
-    let data = res.map(response => response.data)
+    let data = res.map((response) => response.data)
     return data
   }
 
@@ -208,7 +226,7 @@ class RestComms {
       data: any
     }
     const res = this.authenticatedRequest<Response>(config)
-    return res.map(response => response.data)
+    return res.map((response) => response.data)
   }
 
   public updateGlassesState(state: Partial<GlassesInfo>): AsyncResult<void, Error> {
@@ -239,7 +257,7 @@ class RestComms {
       coreToken: string
     }
     let res = this.makeRequest<Response>(config)
-    const coreTokenResult: AsyncResult<string, Error> = res.map(response => response.coreToken)
+    const coreTokenResult: AsyncResult<string, Error> = res.map((response) => response.coreToken)
 
     // set the core token in the store:
     return coreTokenResult.and_then((coreToken: string) => {
@@ -261,7 +279,7 @@ class RestComms {
       token: string
     }
     const res = this.authenticatedRequest<Response>(config)
-    return res.map(response => response.token)
+    return res.map((response) => response.token)
   }
 
   public hashWithApiKey(stringToHash: string, packageName: string): AsyncResult<string, Error> {
@@ -274,7 +292,7 @@ class RestComms {
       hash: string
     }
     const res = this.authenticatedRequest<Response>(config)
-    return res.map(response => response.hash)
+    return res.map((response) => response.hash)
   }
 
   // Account Management
@@ -322,11 +340,11 @@ class RestComms {
     //   // return {url: response.url, token: response.token}
     // })()
 
-    return res.map(response => response.data)
+    return res.map((response) => response.data)
   }
 
   // User Feedback & Settings
-  public sendFeedback(feedbackBody: string): AsyncResult<void, Error> {
+  public sendFeedback(feedbackBody: string | object): AsyncResult<void, Error> {
     const config: RequestConfig = {
       method: "POST",
       endpoint: "/api/client/feedback",
@@ -362,7 +380,7 @@ class RestComms {
       data: {settings: Record<string, any>}
     }
     const res = this.authenticatedRequest<Response>(config)
-    return res.map(response => response.data.settings)
+    return res.map((response) => response.data.settings)
   }
 
   // Error Reporting
@@ -442,6 +460,19 @@ class RestComms {
       method: "POST",
       endpoint: "/api/client/notifications/dismissed",
       data: data,
+    }
+    interface Response {
+      success: boolean
+      data: any
+    }
+    const res = this.authenticatedRequest<Response>(config)
+    return res.map(() => undefined)
+  }
+
+  public goodbye(): AsyncResult<void, Error> {
+    const config: RequestConfig = {
+      method: "POST",
+      endpoint: "/api/client/goodbye",
     }
     interface Response {
       success: boolean

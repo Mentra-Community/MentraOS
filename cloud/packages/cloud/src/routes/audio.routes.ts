@@ -7,14 +7,42 @@ const logger = rootLogger.child({ service: "audio.routes" });
 
 const router = express.Router();
 
+// ============================================================================
+// ElevenLabs Default Voice Settings
+// ============================================================================
+// These are the hardcoded fallback defaults if environment variables aren't set
+const ELEVENLABS_DEFAULTS = {
+  VOICE_ID: "8IRrZoKuYTPnpLc6lM6a",
+  SPEED: 1.13,
+  STABILITY: 0.68,
+  SIMILARITY_BOOST: 0.75,
+  STYLE: 0.0,
+};
+
+/**
+ * Get default voice settings from environment variables with hardcoded fallbacks
+ */
+function getDefaultVoiceSettings() {
+  return {
+    speed: parseFloat(process.env.ELEVENLABS_DEFAULT_SPEED || "") || ELEVENLABS_DEFAULTS.SPEED,
+    stability: parseFloat(process.env.ELEVENLABS_DEFAULT_STABILITY || "") || ELEVENLABS_DEFAULTS.STABILITY,
+    similarity_boost:
+      parseFloat(process.env.ELEVENLABS_DEFAULT_SIMILARITY || "") || ELEVENLABS_DEFAULTS.SIMILARITY_BOOST,
+    style: parseFloat(process.env.ELEVENLABS_DEFAULT_STYLE || "") ?? ELEVENLABS_DEFAULTS.STYLE,
+  };
+}
+
+/**
+ * Get default voice ID from environment variable with hardcoded fallback
+ */
+function getDefaultVoiceId() {
+  return process.env.ELEVENLABS_DEFAULT_VOICE_ID || ELEVENLABS_DEFAULTS.VOICE_ID;
+}
+
 // Only allow com.augmentos.shazam
 const ALLOWED_PACKAGE = "com.augmentos.shazam";
 
-async function shazamAuthMiddleware(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) {
+async function shazamAuthMiddleware(req: Request, res: Response, next: NextFunction) {
   const apiKey = req.query.apiKey as string;
   const packageName = req.query.packageName as string;
   const userId = req.query.userId as string;
@@ -40,8 +68,7 @@ async function shazamAuthMiddleware(
 
   return res.status(401).json({
     success: false,
-    message:
-      "Authentication required. Provide apiKey, packageName, and userId.",
+    message: "Authentication required. Provide apiKey, packageName, and userId.",
   });
 }
 
@@ -56,10 +83,7 @@ router.get("/api/audio/:userId", shazamAuthMiddleware, async (req, res) => {
     if (!userSession) {
       return res.status(404).json({ error: "Session not found" });
     }
-    if (
-      !userSession.recentAudioBuffer ||
-      userSession.recentAudioBuffer.length === 0
-    ) {
+    if (!userSession.recentAudioBuffer || userSession.recentAudioBuffer.length === 0) {
       return res.status(404).json({ error: "No audio available" });
     }
 
@@ -83,9 +107,7 @@ router.get("/api/audio/:userId", shazamAuthMiddleware, async (req, res) => {
     //   buffers = userSession.recentAudioBuffer.map(chunk => Buffer.from(chunk.data));
     // }
 
-    buffers = userSession.audioManager
-      .getRecentAudioBuffer()
-      .map((chunk) => Buffer.from(chunk.data));
+    buffers = userSession.audioManager.getRecentAudioBuffer().map((chunk) => Buffer.from(chunk.data));
 
     if (buffers.length === 0) {
       return res.status(404).json({ error: "No decodable audio available" });
@@ -112,9 +134,8 @@ router.get("/api/tts", async (req, res) => {
       });
     }
 
-    // Get API key and default voice ID from environment
+    // Get API key from environment
     const apiKey = process.env.ELEVENLABS_API_KEY;
-    const defaultVoiceId = process.env.ELEVENLABS_DEFAULT_VOICE_ID;
 
     if (!apiKey) {
       logger.error("ELEVENLABS_API_KEY environment variable not set");
@@ -124,15 +145,8 @@ router.get("/api/tts", async (req, res) => {
       });
     }
 
-    // Use provided voice_id or default from environment
-    const voiceId = (voice_id as string) || defaultVoiceId;
-    if (!voiceId) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Voice ID is required (either as parameter or ELEVENLABS_DEFAULT_VOICE_ID env var)",
-      });
-    }
+    // Use provided voice_id or default (env var with hardcoded fallback)
+    const voiceId = (voice_id as string) || getDefaultVoiceId();
 
     // Parse voice_settings if provided
     let parsedVoiceSettings = null;
@@ -159,8 +173,13 @@ router.get("/api/tts", async (req, res) => {
       requestBody.model_id = "eleven_flash_v2_5";
     }
 
+    // Use provided voice_settings or apply defaults (env vars with hardcoded fallbacks)
     if (parsedVoiceSettings) {
       requestBody.voice_settings = parsedVoiceSettings;
+    } else {
+      // Apply default voice settings when none provided
+      requestBody.voice_settings = getDefaultVoiceSettings();
+      logger.info({ voiceSettings: requestBody.voice_settings }, "Using default voice settings");
     }
 
     // Call ElevenLabs API
@@ -191,7 +210,7 @@ router.get("/api/tts", async (req, res) => {
     res.set({
       "Content-Type": "audio/mpeg",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+      "Connection": "keep-alive",
     });
 
     // Stream the response back to the client

@@ -4,13 +4,13 @@ import {View, BackHandler} from "react-native"
 import {WebView} from "react-native-webview"
 
 import {Header, Screen, Text} from "@/components/ignite"
-import InternetConnectionFallbackComponent from "@/components/misc/InternetConnectionFallbackComponent"
-import LoadingOverlay from "@/components/misc/LoadingOverlay"
+import InternetConnectionFallbackComponent from "@/components/ui/InternetConnectionFallbackComponent"
+import LoadingOverlay from "@/components/ui/LoadingOverlay"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import restComms from "@/services/RestComms"
 import {useSettingsStore} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function AppWebView() {
   const {theme, themed} = useAppTheme()
@@ -267,6 +267,9 @@ export default function AppWebView() {
               // Show loading overlay while WebView itself loads
               <LoadingOverlay message={`Loading ${appName}...`} />
             )}
+            // allow inline media playback:
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
             // Disable zooming and scaling
             scalesPageToFit={false}
             scrollEnabled={true}

@@ -339,3 +339,48 @@ jobs:
             } catch (error) {
               console.log('Cleanup skipped:', error.message);
             }
+
+      - name: Notify Slack of successful build
+        if: success()
+        run: |
+          curl -X POST "${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "text": "Nightly build success: ${{ steps.build-info.outputs.date }} (${{ steps.build-info.outputs.sha }})",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "Nightly Build Success",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {"type": "mrkdwn", "text": "*Date:*\n${{ steps.build-info.outputs.date }}"},
+                    {"type": "mrkdwn", "text": "*Commit:*\n`${{ steps.build-info.outputs.sha }}`"},
+                    {"type": "mrkdwn", "text": "*Status:*\n:white_check_mark: Success"},
+                    {"type": "mrkdwn", "text": "*Build Type:*\nnightly"}
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Downloads:*\n• <https://github.com/${{ github.repository }}/releases/download/nightly-builds/mobile-latest.apk|Mobile App (mobile-latest.apk)>\n• <https://github.com/${{ github.repository }}/releases/download/nightly-builds/asg-latest.apk|ASG Client (asg-latest.apk)>"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {"type": "plain_text", "text": "View Release", "emoji": true},
+                      "url": "https://github.com/${{ github.repository }}/releases/tag/nightly-builds"
+                    }
+                  ]
+                }
+              ]
+            }' || echo "Slack notification failed (non-critical)"

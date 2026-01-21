@@ -18,6 +18,19 @@ import { ConnectionValidator } from "../validators/ConnectionValidator";
 // Timeout handling is managed by CameraModule in the SDK
 
 /**
+ * Packages that should have silent photo mode (no LED flash, no shutter sound).
+ * These are AI apps that take photos continuously for context awareness.
+ */
+const SILENT_PHOTO_PACKAGES_HARDCODED = ["com.mentra.mira", "com.mentra.mentraai", "com.mentra.mentraai.beta"];
+
+// Build the allowlist: hardcoded + env var
+const envPackages =
+  process.env.SILENT_PHOTO_PACKAGES?.split(",")
+    .map((p) => p.trim())
+    .filter(Boolean) || [];
+const SILENT_PHOTO_PACKAGES = new Set([...SILENT_PHOTO_PACKAGES_HARDCODED, ...envPackages]);
+
+/**
  * Internal representation of a pending photo request,
  * adapted from PendingPhotoRequest in photo-request.service.ts.
  */
@@ -92,26 +105,18 @@ export class PhotoManager {
     } else {
       const app = this.userSession.installedApps.get(packageName);
       webhookUrl = app?.publicUrl ? `${app.publicUrl}/photo-upload` : undefined;
-      this.logger.info(
-        { requestId, defaultWebhookUrl: webhookUrl },
-        "Using default webhook URL for photo request.",
-      );
+      this.logger.info({ requestId, defaultWebhookUrl: webhookUrl }, "Using default webhook URL for photo request.");
     }
 
     // Validate connections before processing photo request
-    const validation = ConnectionValidator.validateForHardwareRequest(
-      this.userSession,
-      "photo",
-    );
+    const validation = ConnectionValidator.validateForHardwareRequest(this.userSession, "photo");
 
     if (!validation.valid) {
       this.logger.error(
         {
           error: validation.error,
           errorCode: validation.errorCode,
-          connectionStatus: ConnectionValidator.getConnectionStatus(
-            this.userSession,
-          ),
+          connectionStatus: ConnectionValidator.getConnectionStatus(this.userSession),
         },
         "Photo request validation failed",
       );
@@ -128,6 +133,9 @@ export class PhotoManager {
     };
     this.pendingPhotoRequests.set(requestId, requestInfo);
 
+    // Determine if this app should use silent mode (no LED flash, no shutter sound)
+    const silent = SILENT_PHOTO_PACKAGES.has(packageName);
+
     // Message to glasses based on CloudToGlassesMessageType.PHOTO_REQUEST
     // Include webhook URL so ASG can upload directly to the app
     const messageToGlasses = {
@@ -139,6 +147,7 @@ export class PhotoManager {
       authToken, // Include authToken for webhook authentication
       size, // Propagate desired size
       compress, // Propagate compression setting
+      silent, // Silent mode: disables LED flash and shutter sound for AI apps
       timestamp: new Date(),
     };
 
@@ -151,8 +160,9 @@ export class PhotoManager {
           webhookUrl,
           isCustom: !!customWebhookUrl,
           hasAuthToken: !!authToken,
+          silent,
         },
-        "PHOTO_REQUEST command sent to glasses with webhook URL.",
+        `PHOTO_REQUEST command sent to glasses${silent ? " (silent mode)" : ""}.`,
       );
 
       // If using custom webhook URL, resolve immediately since glasses won't send response back to cloud
@@ -174,10 +184,7 @@ export class PhotoManager {
         });
       }
     } catch (error) {
-      this.logger.error(
-        { error, requestId },
-        "Failed to send PHOTO_REQUEST to glasses.",
-      );
+      this.logger.error({ error, requestId }, "Failed to send PHOTO_REQUEST to glasses.");
       this.pendingPhotoRequests.delete(requestId);
       throw error;
     }
@@ -188,9 +195,7 @@ export class PhotoManager {
    * Handles a photo response from glasses.
    * Adapts logic from photoRequestService.processPhotoResponse.
    */
-  async handlePhotoResponse(
-    glassesResponse: PhotoResponse | any,
-  ): Promise<void> {
+  async handlePhotoResponse(glassesResponse: PhotoResponse | any): Promise<void> {
     // Handle simplified error format from glasses/phone
     let normalizedResponse: PhotoResponse;
 
@@ -262,10 +267,7 @@ export class PhotoManager {
 
     try {
       // Use centralized messaging with automatic resurrection
-      const result = await this.userSession.appManager.sendMessageToApp(
-        packageName,
-        errorResponse,
-      );
+      const result = await this.userSession.appManager.sendMessageToApp(packageName, errorResponse);
 
       if (result.sent) {
         this.logger.info(
@@ -310,10 +312,7 @@ export class PhotoManager {
 
     try {
       // Use centralized messaging with automatic resurrection
-      const result = await this.userSession.appManager.sendMessageToApp(
-        packageName,
-        photoResponse,
-      );
+      const result = await this.userSession.appManager.sendMessageToApp(packageName, photoResponse);
 
       if (result.sent) {
         this.logger.info(
@@ -351,9 +350,7 @@ export class PhotoManager {
    * Called when the UserSession is ending.
    */
   dispose(): void {
-    this.logger.info(
-      "Disposing PhotoManager, cancelling pending photo requests for this session.",
-    );
+    this.logger.info("Disposing PhotoManager, cancelling pending photo requests for this session.");
     // Timeout handling removed - CameraModule manages timeouts
     this.pendingPhotoRequests.clear();
   }

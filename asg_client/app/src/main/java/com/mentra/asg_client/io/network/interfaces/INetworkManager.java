@@ -58,6 +58,12 @@ public interface INetworkManager {
      * Disconnect from the currently connected WiFi network
      */
     void disconnectFromWifi();
+
+    /**
+     * Forget a saved WiFi network (removes it from saved networks)
+     * @param ssid The SSID of the network to forget
+     */
+    void forgetWifiNetwork(String ssid);
     
     /**
      * Add a listener for WiFi state changes

@@ -1,49 +1,53 @@
-name: OTA Updater Build
-
-on:
-  pull_request:
-    paths:
-      - "asg_client/ota_updater/**"
-      - ".github/workflows/ota-updater-build.yml"
-  push:
-    branches:
-      - main
-      - dev
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: self-hosted
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v3
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v2
-
-      - name: Cache Gradle dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Clean and Build Debug APK
-        working-directory: ./asg_client/ota_updater
-        run: ./gradlew clean assembleDebug
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ota-updater-debug
-          path: asg_client/ota_updater/app/build/outputs/apk/debug/app-debug.apk
+# DEPRECATED: OTA updater functionality is now built into asg_client app.
+# This dedicated ota_updater app is no longer used.
+# Keeping this file commented out for reference.
+#
+# name: OTA Updater Build
+#
+# on:
+#   pull_request:
+#     paths:
+#       - "asg_client/ota_updater/**"
+#       - ".github/workflows/ota-updater-build.yml"
+#   push:
+#     branches:
+#       - main
+#       - dev
+#   workflow_dispatch:
+#
+# jobs:
+#   build:
+#     runs-on: self-hosted
+#
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#
+#       - name: Setup Java
+#         uses: actions/setup-java@v3
+#         with:
+#           java-version: "17"
+#           distribution: "temurin"
+#
+#       - name: Setup Android SDK
+#         uses: android-actions/setup-android@v2
+#
+#       - name: Cache Gradle dependencies
+#         uses: actions/cache@v3
+#         with:
+#           path: |
+#             ~/.gradle/caches
+#             ~/.gradle/wrapper
+#           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+#           restore-keys: |
+#             ${{ runner.os }}-gradle-
+#
+#       - name: Clean and Build Debug APK
+#         working-directory: ./asg_client/ota_updater
+#         run: ./gradlew clean assembleDebug
+#
+#       - name: Upload Debug APK
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: ota-updater-debug
+#           path: asg_client/ota_updater/app/build/outputs/apk/debug/app-debug.apk

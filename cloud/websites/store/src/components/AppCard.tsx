@@ -1,6 +1,6 @@
-import {memo, useState} from "react"
-import {Button} from "./ui/button"
-import {AppI} from "../types"
+import { memo, useState } from "react";
+import { Button } from "./ui/button";
+import { AppI } from "../types";
 
 // Tag mapping for apps
 const APP_TAGS: Record<string, string[]> = {
@@ -15,23 +15,23 @@ const APP_TAGS: Record<string, string[]> = {
   "Calendar": ["Time", "Schedule"],
   "Teleprompter": ["Media", "Tools"],
   "MemCards": ["Learning", "Memory"],
-}
+};
 
 // Fallback tags for apps without specific tags
-const FALLBACK_TAGS = ["App", "Utility"]
+const FALLBACK_TAGS = ["App", "Utility"];
 
 interface AppCardProps {
-  app: AppI
-  theme: string
-  isAuthenticated: boolean
+  app: AppI;
+  theme: string;
+  isAuthenticated: boolean;
   // isWebView: boolean; // Deprecated: No longer used after removing Open button
-  installingApp: string | null
-  onInstall: (packageName: string) => void
-  onUninstall: (packageName: string) => void
+  installingApp: string | null;
+  onInstall: (packageName: string) => void;
+  onUninstall: (packageName: string) => void;
   // onOpen: (packageName: string) => void; // Deprecated: No longer used after removing Open button
-  onCardClick: (packageName: string) => void
-  onLogin: () => void
-  isLastRow?: boolean
+  onCardClick: (packageName: string) => void;
+  onLogin: () => void;
+  isLastRow?: boolean;
 }
 
 const AppCard: React.FC<AppCardProps> = memo(
@@ -47,17 +47,17 @@ const AppCard: React.FC<AppCardProps> = memo(
     onLogin,
     isLastRow = false,
   }) => {
-    const [imageLoaded, setImageLoaded] = useState(false)
-    const [imageError, setImageError] = useState(false)
+    const [imageLoaded, setImageLoaded] = useState(false);
+    const [imageError, setImageError] = useState(false);
 
     const handleCardClick = () => {
-      onCardClick(app.packageName)
-    }
+      onCardClick(app.packageName);
+    };
 
     const handleInstallClick = (e: React.MouseEvent) => {
-      e.stopPropagation()
-      onInstall(app.packageName)
-    }
+      e.stopPropagation();
+      onInstall(app.packageName);
+    };
 
     // Deprecated: No longer used after removing Open button
     // const handleOpenClick = (e: React.MouseEvent) => {
@@ -66,22 +66,23 @@ const AppCard: React.FC<AppCardProps> = memo(
     // };
 
     const handleLoginClick = (e: React.MouseEvent) => {
-      e.stopPropagation()
-      onLogin()
-    }
+      e.stopPropagation();
+      onLogin();
+    };
 
     const handleImageLoad = () => {
-      setImageLoaded(true)
-    }
+      setImageLoaded(true);
+    };
 
     const handleImageError = () => {
-      setImageError(true)
-      setImageLoaded(true)
-    }
+      setImageError(true);
+      setImageLoaded(true);
+    };
 
     return (
       <div
-        className="  flex gap-2 sm:gap-3 rounded-sm relative cursor-pointer "
+        className="flex gap-2 sm:gap-3 relative cursor-pointer -mx-2 sm:-mx-3 px-2 sm:px-3 py-2 sm:py-3"
+        style={{ borderRadius: "24px" }}
         data-app-card
         onClick={handleCardClick}
         onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--bg-secondary)")}
@@ -249,10 +250,10 @@ const AppCard: React.FC<AppCardProps> = memo(
           )}
         </div>
       </div>
-    )
+    );
   },
-)
+);
 
-AppCard.displayName = "AppCard"
+AppCard.displayName = "AppCard";
 
-export default AppCard
+export default AppCard;

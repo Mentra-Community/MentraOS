@@ -20,7 +20,7 @@ import { memoryTelemetryService } from "./services/debug/MemoryTelemetryService"
 import { logger as rootLogger } from "./services/logging/pino-logger";
 import { udpAudioServer } from "./services/udp/UdpAudioServer";
 import { handleUpgrade, websocketHandlers } from "./services/websocket/bun-websocket";
-import generateCoreToken from "./utils/generateCoreToken";
+// import generateCoreToken from "./utils/generateCoreToken";
 
 // Hono app with all routes
 
@@ -100,12 +100,12 @@ const LEGACY_EXPRESS_PATHS = [
 /**
  * Check if a path should fall back to Express
  */
-function shouldUseLegacyExpress(pathname: string): boolean {
+function _shouldUseLegacyExpress(pathname: string): boolean {
   return LEGACY_EXPRESS_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
 }
 
 // Start Bun.serve() with native WebSocket support
-const server = Bun.serve({
+const _server = Bun.serve({
   port: PORT,
 
   // Native Bun WebSocket handlers

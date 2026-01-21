@@ -12,22 +12,14 @@ import {ThemedStyle} from "@/theme"
 const MIN_Y = 60
 const MIN_X = 0
 
-interface LogEntry {
-  type: string
-  message: string
-  timestamp: string
-}
-
 export const ConsoleLogger = () => {
   const {themed} = useAppTheme()
-  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [logs, setLogs] = useState([])
   const [isVisible, setIsVisible] = useState(false)
-  const [isFrozen, setIsFrozen] = useState(false)
-  const scrollViewRef = useRef<ScrollView>(null)
+  const scrollViewRef = useRef(null)
   const [debugConsole] = useSetting(SETTINGS.debug_console.key)
   const consoleOverrideSetup = useRef(false)
   const isAtBottom = useRef(true)
-  const isFrozenRef = useRef(isFrozen)
 
   // Console window position
   const panX = useSharedValue(MIN_X)
@@ -46,7 +38,7 @@ export const ConsoleLogger = () => {
       panStartX.value = panX.value
       panStartY.value = panY.value
     })
-    .onUpdate(event => {
+    .onUpdate((event) => {
       panX.value = panStartX.value + event.translationX
       panY.value = panStartY.value + event.translationY
     })
@@ -64,7 +56,7 @@ export const ConsoleLogger = () => {
       toggleStartX.value = toggleX.value
       toggleStartY.value = toggleY.value
     })
-    .onUpdate(event => {
+    .onUpdate((event) => {
       toggleX.value = toggleStartX.value + event.translationX
       toggleY.value = toggleStartY.value + event.translationY
     })
@@ -83,11 +75,6 @@ export const ConsoleLogger = () => {
     isAtBottom.current = isBottom
   }
 
-  // Keep frozen ref in sync with state
-  useEffect(() => {
-    isFrozenRef.current = isFrozen
-  }, [isFrozen])
-
   useEffect(() => {
     if (!debugConsole || consoleOverrideSetup.current) {
       return
@@ -100,15 +87,11 @@ export const ConsoleLogger = () => {
 
       const addLog = (type: any, args: any[]) => {
         const message = args
-          .map(arg => (typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)))
+          .map((arg) => (typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)))
           .join(" ")
 
         setTimeout(() => {
-          setLogs(prev => {
-            // Don't add logs if frozen
-            if (isFrozenRef.current) {
-              return prev
-            }
+          setLogs((prev) => {
             const newLogs = [
               ...prev,
               {
@@ -160,7 +143,7 @@ export const ConsoleLogger = () => {
   if (!isVisible) {
     return (
       <GestureDetector gesture={toggleGesture}>
-        <Animated.View className="absolute bottom-28 right-2" style={toggleAnimatedStyle}>
+        <Animated.View className="absolute bottom-28 right-2 z-1" style={toggleAnimatedStyle}>
           <Button text="Show Console" preset="primary" compact onPress={() => setIsVisible(true)} />
         </Animated.View>
       </GestureDetector>
@@ -171,15 +154,9 @@ export const ConsoleLogger = () => {
     <Animated.View style={[themed($container), panAnimatedStyle]}>
       <GestureDetector gesture={panGesture}>
         <View style={themed($header)}>
-          <Text text={`Console (${logs.length}/500)${isFrozen ? " [FROZEN]" : ""}`} className="text-xs font-bold" />
+          <Text text={`Console (${logs.length}/500)`} className="text-xs font-bold" />
           <View className="flex-row gap-2">
             <Button text="Hide" preset="primary" compact onPress={handleHide} />
-            <Button
-              text={isFrozen ? "Unfreeze" : "Freeze"}
-              preset={isFrozen ? "primary" : "default"}
-              compact
-              onPress={() => setIsFrozen(!isFrozen)}
-            />
             <Button text="Clear" preset="secondary" compact onPress={() => setLogs([])} />
           </View>
         </View>
@@ -211,9 +188,10 @@ export const ConsoleLogger = () => {
 
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   position: "absolute",
+  zIndex: 1,
   left: 0,
   right: 0,
-  height: 600,
+  height: 300,
   width: "90%",
   backgroundColor: colors.primary_foreground,
   borderWidth: 1,

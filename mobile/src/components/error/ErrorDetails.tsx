@@ -2,8 +2,8 @@ import {ErrorInfo} from "react"
 import {ScrollView, TextStyle, View, ViewStyle} from "react-native"
 
 import {Button, Icon, Screen, Text} from "@/components/ignite"
-import type {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import type {ThemedStyle} from "@/theme"
 
 export interface ErrorDetailsProps {
   error: Error

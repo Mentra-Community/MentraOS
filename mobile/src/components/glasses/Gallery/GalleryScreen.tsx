@@ -6,9 +6,10 @@
 import {getModelCapabilities} from "@/../../cloud/packages/types/src"
 import LinearGradient from "expo-linear-gradient"
 import {useFocusEffect} from "expo-router"
-import {useCallback, useEffect, useMemo, useState} from "react"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
   Dimensions,
   FlatList,
@@ -19,7 +20,7 @@ import {
   View,
   ViewStyle,
 } from "react-native"
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 import {useShallow} from "zustand/react/shallow"
@@ -42,7 +43,7 @@ import {PhotoInfo} from "@/types/asg"
 import showAlert from "@/utils/AlertUtils"
 // import {shareFile} from "@/utils/FileUtils"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
-import {TEST_GALLERY_ITEMS, ENABLE_TEST_GALLERY_DATA} from "@/utils/testGalleryData"
+import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
 
 // @ts-ignore
 const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)
@@ -69,22 +70,23 @@ export function GalleryScreen() {
   // Column calculation - 3 per row like Google Photos / Apple Photos
   const screenWidth = Dimensions.get("window").width
   const ITEM_SPACING = 2 // Minimal spacing between items (1-2px hairline)
+  const HORIZONTAL_PADDING = spacing.s3 * 2 // Padding on left and right edges (12px * 2 = 24px)
   const numColumns = screenWidth < 320 ? 2 : 3 // 2 columns for very small screens, otherwise 3
-  const itemWidth = (screenWidth - ITEM_SPACING * (numColumns - 1)) / numColumns
+  const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore(state => state.connected)
+  const glassesConnected = useGlassesStore((state) => state.connected)
 
   // Subscribe to sync store
-  const syncState = useGallerySyncStore(state => state.syncState)
-  const currentFile = useGallerySyncStore(state => state.currentFile)
-  const currentFileProgress = useGallerySyncStore(state => state.currentFileProgress)
-  const completedFiles = useGallerySyncStore(state => state.completedFiles)
-  const totalFiles = useGallerySyncStore(state => state.totalFiles)
-  const failedFiles = useGallerySyncStore(state => state.failedFiles)
-  const syncQueue = useGallerySyncStore(state => state.queue)
+  const syncState = useGallerySyncStore((state) => state.syncState)
+  const currentFile = useGallerySyncStore((state) => state.currentFile)
+  const currentFileProgress = useGallerySyncStore((state) => state.currentFileProgress)
+  const completedFiles = useGallerySyncStore((state) => state.completedFiles)
+  const totalFiles = useGallerySyncStore((state) => state.totalFiles)
+  const failedFiles = useGallerySyncStore((state) => state.failedFiles)
+  const syncQueue = useGallerySyncStore((state) => state.queue)
   const glassesGalleryStatus = useGallerySyncStore(
-    useShallow(state => ({
+    useShallow((state) => ({
       photos: state.glassesPhotoCount,
       videos: state.glassesVideoCount,
       total: state.glassesTotalCount,
@@ -120,26 +122,92 @@ export function GalleryScreen() {
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set())
 
+  // Initial loading state for first gallery load
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
+  const [loadingPhotoCount, setLoadingPhotoCount] = useState(0)
+  const [showLoadingPlaceholders, setShowLoadingPlaceholders] = useState(false)
+
+  // Post-sync validation state
+  const [isValidating, setIsValidating] = useState(false)
+  const [validatingCount, setValidatingCount] = useState(0)
+
+  // Animation for smooth transition from placeholders to photos
+  const fadeAnim = useRef(new Animated.Value(1)).current
+
+  // DEBUG: Log state changes
+  useEffect(() => {
+    console.log("[GalleryScreen] 🔍 STATE CHANGE - isInitialLoading:", isInitialLoading)
+  }, [isInitialLoading])
+
+  useEffect(() => {
+    console.log("[GalleryScreen] 🔍 STATE CHANGE - showLoadingPlaceholders:", showLoadingPlaceholders)
+  }, [showLoadingPlaceholders])
+
+  useEffect(() => {
+    console.log("[GalleryScreen] 🔍 STATE CHANGE - loadingPhotoCount:", loadingPhotoCount)
+  }, [loadingPhotoCount])
+
+  useEffect(() => {
+    console.log("[GalleryScreen] 🔍 STATE CHANGE - downloadedPhotos.length:", downloadedPhotos.length)
+  }, [downloadedPhotos.length])
+
   // Load downloaded photos (validates files exist and cleans up stale entries)
   const loadDownloadedPhotos = useCallback(async () => {
+    const loadStartTime = Date.now()
+    console.log("[GalleryScreen] ⏱️ LOAD START at", loadStartTime)
     try {
       // console.log("[GalleryScreen] 🔍 Loading downloaded photos from storage...")
       const downloadedFiles = await localStorageService.getDownloadedFiles()
-      // console.log(`[GalleryScreen] 📦 Found ${Object.keys(downloadedFiles).length} files in storage metadata`)
+      const metadataLoadTime = Date.now()
+      console.log(
+        "[GalleryScreen] ⏱️ METADATA LOADED at",
+        metadataLoadTime,
+        "- took",
+        metadataLoadTime - loadStartTime,
+        "ms",
+      )
+
+      const totalFromStorage = Object.keys(downloadedFiles).length
+      console.log(`[GalleryScreen] 📦 Found ${totalFromStorage} files in storage metadata`)
+
+      // Set count immediately for placeholder display (FAST - no file validation yet)
+      setLoadingPhotoCount(totalFromStorage)
+      console.log("[GalleryScreen] ⏱️ SET loadingPhotoCount to", totalFromStorage)
+
+      // Show validating status only for newly downloaded photos from this sync session
+      // Use completedFiles from sync store (photos downloaded this session) instead of total gallery count
+      if (completedFiles > 0) {
+        setIsValidating(true)
+        setValidatingCount(completedFiles)
+        console.log(`[GalleryScreen] 🔄 Validating ${completedFiles} newly downloaded pictures`)
+      }
+
       const validPhotoInfos: PhotoInfo[] = []
       const staleFileNames: string[] = []
 
-      // Check each file exists on disk
-      for (const [name, file] of Object.entries(downloadedFiles)) {
+      // Check all files exist on disk in parallel (50-100x faster than sequential)
+      const validationPromises = Object.entries(downloadedFiles).map(async ([name, file]) => {
         // console.log(`[GalleryScreen]   Checking file: ${name} at ${file.filePath}`)
         const fileExists = await RNFS.exists(file.filePath)
-        if (fileExists) {
+        return {
+          name,
+          file,
+          exists: fileExists,
+        }
+      })
+
+      // Wait for all validations to complete (happens in parallel)
+      const validationResults = await Promise.all(validationPromises)
+
+      // Process results
+      for (const result of validationResults) {
+        if (result.exists) {
           // console.log(`[GalleryScreen]     ✅ File exists on disk`)
-          validPhotoInfos.push(localStorageService.convertToPhotoInfo(file))
+          validPhotoInfos.push(localStorageService.convertToPhotoInfo(result.file))
         } else {
           // console.log(`[GalleryScreen]     ❌ File missing on disk - marking as stale`)
-          console.log(`[GalleryScreen] Cleaning up stale entry for missing file: ${name}`)
-          staleFileNames.push(name)
+          console.log(`[GalleryScreen] Cleaning up stale entry for missing file: ${result.name}`)
+          staleFileNames.push(result.name)
         }
       }
 
@@ -152,6 +220,14 @@ export function GalleryScreen() {
         console.log(`[GalleryScreen] Cleaned up ${staleFileNames.length} stale photo entries`)
       }
 
+      const validationCompleteTime = Date.now()
+      console.log(
+        "[GalleryScreen] ⏱️ VALIDATION COMPLETE at",
+        validationCompleteTime,
+        "- took",
+        validationCompleteTime - loadStartTime,
+        "ms",
+      )
       console.log(`[GalleryScreen] ✅ Loaded ${validPhotoInfos.length} valid photos`)
       validPhotoInfos.forEach((photo, idx) => {
         console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name}`)
@@ -165,20 +241,30 @@ export function GalleryScreen() {
       } else {
         setDownloadedPhotos(validPhotoInfos)
       }
+
+      const finalTime = Date.now()
+      console.log("[GalleryScreen] ⏱️ LOAD COMPLETE at", finalTime, "- TOTAL TIME:", finalTime - loadStartTime, "ms")
+
+      // Clear validation state
+      setIsValidating(false)
+      setValidatingCount(0)
     } catch (err) {
       console.error("Error loading downloaded photos:", err)
+      // Clear validation state on error too
+      setIsValidating(false)
+      setValidatingCount(0)
     }
-  }, [])
+  }, [completedFiles])
 
   // Initialize pending status for all files when sync starts
   useEffect(() => {
     if (syncState === "syncing" && syncQueue.length > 0) {
       // On first render of syncing state, initialize all files as pending
-      setPhotoSyncStates(prev => {
+      setPhotoSyncStates((prev) => {
         // Only initialize if we don't have states yet (avoid overwriting progress)
         if (prev.size === 0) {
           const initialStates = new Map()
-          syncQueue.forEach(file => {
+          syncQueue.forEach((file) => {
             initialStates.set(file.name, {
               status: "pending" as const,
               progress: 0,
@@ -206,7 +292,7 @@ export function GalleryScreen() {
 
     // Update the current file's progress
     if (currentFile) {
-      setPhotoSyncStates(prev => {
+      setPhotoSyncStates((prev) => {
         const newStates = new Map(prev)
 
         // If current file is at 100%, remove it immediately (no green ring)
@@ -261,7 +347,7 @@ export function GalleryScreen() {
   // Memoized for stable reference in handlePhotoPress
   const togglePhotoSelection = useCallback(
     (photoName: string) => {
-      setSelectedPhotos(prev => {
+      setSelectedPhotos((prev) => {
         const newSet = new Set(prev)
         if (newSet.has(photoName)) {
           newSet.delete(photoName)
@@ -449,16 +535,44 @@ export function GalleryScreen() {
 
   // Initial mount - load gallery data
   useEffect(() => {
+    const mountTime = Date.now()
+    console.log("[GalleryScreen] ⏱️ COMPONENT MOUNTED at", mountTime)
     console.log("[GalleryScreen] Component mounted - initializing gallery")
 
     // Check permission status in background (for state tracking, not blocking)
-    MediaLibraryPermissions.checkPermission().then(hasPermission => {
+    MediaLibraryPermissions.checkPermission().then((hasPermission) => {
       setHasMediaLibraryPermission(hasPermission)
       console.log("[GalleryScreen] Media library permission status:", hasPermission)
     })
 
     // Initialize gallery immediately - no permission blocking
-    loadDownloadedPhotos()
+    // Only show placeholders if loading takes > 150ms (avoid flicker for cached photos)
+    console.log("[GalleryScreen] ⏱️ SET isInitialLoading = true")
+    setIsInitialLoading(true)
+
+    console.log("[GalleryScreen] ⏱️ SET TIMEOUT for placeholders (150ms)")
+    const placeholderTimeout = setTimeout(() => {
+      console.log("[GalleryScreen] ⏱️ TIMEOUT FIRED - SET showLoadingPlaceholders = true")
+      setShowLoadingPlaceholders(true)
+    }, 150) // Delay showing placeholders by 150ms
+
+    loadDownloadedPhotos().finally(() => {
+      const completeTime = Date.now()
+      console.log(
+        "[GalleryScreen] ⏱️ FINALLY BLOCK at",
+        completeTime,
+        "- elapsed since mount:",
+        completeTime - mountTime,
+        "ms",
+      )
+      console.log("[GalleryScreen] ⏱️ CLEARING timeout")
+      clearTimeout(placeholderTimeout)
+      console.log("[GalleryScreen] ⏱️ SET showLoadingPlaceholders = false")
+      setShowLoadingPlaceholders(false)
+      console.log("[GalleryScreen] ⏱️ SET isInitialLoading = false")
+      setIsInitialLoading(false)
+      console.log("[GalleryScreen] Initial gallery load complete")
+    })
 
     // Only query glasses if we have glasses info (meaning glasses are connected) AND glasses have gallery capability
     if (glassesConnected && features?.hasCamera) {
@@ -516,8 +630,8 @@ export function GalleryScreen() {
 
     const items: GalleryItem[] = []
 
-    // Show photos from the sync queue in chronological order
-    // Files download in size order (performance), but display chronologically (UX)
+    // Show photos from the sync queue in chronological order (newest first for UX)
+    // Files download in chronological order (oldest first), but we re-sort for display
     // Keep showing queue even when state transitions to idle after sync
     if (syncQueue.length > 0) {
       console.log(`[GalleryScreen] 📋 syncQueue contains:`)
@@ -545,7 +659,7 @@ export function GalleryScreen() {
     }
 
     // Downloaded photos (exclude any that are in the sync queue or are AVIF artifacts)
-    const syncQueueNames = new Set(syncQueue.map(p => p.name))
+    const syncQueueNames = new Set(syncQueue.map((p) => p.name))
     // console.log(
     //   `[GalleryScreen] 🚫 Will exclude these names from downloadedPhotos: ${Array.from(syncQueueNames).join(", ")}`,
     // )
@@ -570,7 +684,7 @@ export function GalleryScreen() {
     // })
 
     const downloadedOnly = downloadedPhotos
-      .filter(p => !syncQueueNames.has(p.name) && !isAvifArtifact(p.name))
+      .filter((p) => !syncQueueNames.has(p.name) && !isAvifArtifact(p.name))
       .sort((a, b) => {
         const aTime = typeof a.modified === "string" ? new Date(a.modified).getTime() : a.modified
         const bTime = typeof b.modified === "string" ? new Date(b.modified).getTime() : b.modified
@@ -597,6 +711,58 @@ export function GalleryScreen() {
 
     return items
   }, [syncState, syncQueue, downloadedPhotos])
+
+  // Create placeholder items during initial load (only if loading is taking a while)
+  const placeholderItems = useMemo(() => {
+    // Don't show placeholders if we already have photos from syncQueue
+    if (!showLoadingPlaceholders || loadingPhotoCount === 0 || allPhotos.length > 0) return []
+
+    // Create placeholder items matching expected photo count
+    return Array.from({length: loadingPhotoCount}, (_, i) => ({
+      id: `placeholder-${i}`,
+      type: "placeholder" as const,
+      index: i,
+      photo: undefined,
+      isOnServer: false,
+    }))
+  }, [showLoadingPlaceholders, loadingPhotoCount, allPhotos.length])
+
+  // Use placeholders during initial load, otherwise use real photos
+  // Only show placeholders if allPhotos is truly empty (no syncQueue photos)
+  const displayItems =
+    showLoadingPlaceholders && placeholderItems.length > 0 && allPhotos.length === 0 ? placeholderItems : allPhotos
+
+  // DEBUG: Log what we're displaying
+  useEffect(() => {
+    console.log("[GalleryScreen] 🎨 RENDER displayItems:", {
+      showLoadingPlaceholders,
+      placeholderItemsCount: placeholderItems.length,
+      allPhotosCount: allPhotos.length,
+      displayItemsCount: displayItems.length,
+      usingPlaceholders: showLoadingPlaceholders && placeholderItems.length > 0,
+    })
+  }, [displayItems.length, showLoadingPlaceholders, placeholderItems.length, allPhotos.length])
+
+  // Animate transition from placeholders to photos
+  const wasShowingPlaceholders = useRef(false)
+  useEffect(() => {
+    const isShowingPlaceholders = showLoadingPlaceholders && placeholderItems.length > 0
+
+    // Detect transition from placeholders to real photos
+    if (wasShowingPlaceholders.current && !isShowingPlaceholders && allPhotos.length > 0) {
+      console.log("[GalleryScreen] 🎬 Animating fade-in from placeholders to photos")
+      // Start from 0 opacity
+      fadeAnim.setValue(0)
+      // Fade in over 300ms
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start()
+    }
+
+    wasShowingPlaceholders.current = isShowingPlaceholders
+  }, [showLoadingPlaceholders, placeholderItems.length, allPhotos.length, fadeAnim])
 
   // Viewability tracking - DISABLED for performance
   // onViewableItemsChanged callbacks block touch input when scroll stops (~0.5s delay)
@@ -627,7 +793,7 @@ export function GalleryScreen() {
   // The performance trade-off is acceptable for correct scrolling behavior.
 
   // UI state
-  const isLoading = syncState === "connecting_wifi" || syncState === "requesting_hotspot"
+  const isLoading = syncState === "connecting_wifi" || syncState === "requesting_hotspot" || isInitialLoading
   const isSyncing = syncState === "syncing"
 
   const shouldShowSyncButton =
@@ -715,6 +881,17 @@ export function GalleryScreen() {
           )
 
         case "complete":
+          // Show validating status for newly downloaded photos
+          if (isValidating && validatingCount > 0) {
+            return (
+              <View style={themed($syncButtonRow)}>
+                <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
+                <Text style={themed($syncButtonText)}>
+                  Validating {validatingCount} {validatingCount === 1 ? "picture" : "pictures"}...
+                </Text>
+              </View>
+            )
+          }
           return (
             <View style={themed($syncButtonRow)}>
               <Text style={themed($syncButtonText)}>Sync complete!</Text>
@@ -823,7 +1000,6 @@ export function GalleryScreen() {
                     progress={Math.max(0, Math.min(100, syncStateForItem.progress || 0))}
                     size={50}
                     strokeWidth={4}
-                    showPercentage={!isFailed}
                     progressColor={isFailed ? theme.colors.error : theme.colors.primary}
                   />
                   {isFailed && (
@@ -948,6 +1124,17 @@ export function GalleryScreen() {
         <View style={themed($galleryContainer)}>
           {(() => {
             const showEmpty = allPhotos.length === 0 && !isLoading && !isSyncing
+            const showSpinner = isInitialLoading && !showLoadingPlaceholders && displayItems.length === 0
+
+            // Show spinner during initial load before placeholders appear
+            if (showSpinner) {
+              return (
+                <View style={themed($loadingSpinnerContainer)}>
+                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                  <Text style={themed($loadingSpinnerText)}>Loading gallery...</Text>
+                </View>
+              )
+            }
 
             if (showEmpty) {
               return (
@@ -964,31 +1151,34 @@ export function GalleryScreen() {
               )
             } else {
               return (
-                <FlatList
-                  data={allPhotos}
-                  numColumns={numColumns}
-                  key={numColumns}
-                  renderItem={renderPhotoItem}
-                  keyExtractor={item => item.id}
-                  contentContainerStyle={[
-                    themed($photoGridContent),
-                    {
-                      paddingBottom: shouldShowSyncButton
-                        ? 100 + insets.bottom + spacing.s12
-                        : spacing.s6 + insets.bottom,
-                    },
-                  ]}
-                  columnWrapperStyle={numColumns > 1 ? themed($columnWrapper) : undefined}
-                  initialNumToRender={21}
-                  maxToRenderPerBatch={7}
-                  windowSize={7}
-                  removeClippedSubviews={false}
-                  updateCellsBatchingPeriod={50}
-                  scrollEventThrottle={16}
-                  bounces={false}
-                  overScrollMode="never"
-                  decelerationRate="fast"
-                />
+                <Animated.View style={{flex: 1, opacity: fadeAnim}}>
+                  <FlatList
+                    data={displayItems}
+                    numColumns={numColumns}
+                    key={numColumns}
+                    renderItem={renderPhotoItem}
+                    keyExtractor={(item) => item.id}
+                    contentContainerStyle={[
+                      themed($photoGridContent),
+                      {
+                        paddingBottom: shouldShowSyncButton
+                          ? 100 + insets.bottom + spacing.s6
+                          : spacing.s6 + insets.bottom,
+                      },
+                    ]}
+                    columnWrapperStyle={numColumns > 1 ? themed($columnWrapper) : undefined}
+                    ItemSeparatorComponent={() => <View style={{height: ITEM_SPACING}} />}
+                    initialNumToRender={21}
+                    maxToRenderPerBatch={21}
+                    windowSize={7}
+                    removeClippedSubviews={false}
+                    updateCellsBatchingPeriod={50}
+                    scrollEventThrottle={16}
+                    bounces={false}
+                    overScrollMode="never"
+                    decelerationRate="fast"
+                  />
+                </Animated.View>
               )
             }
           })()}
@@ -1001,8 +1191,8 @@ export function GalleryScreen() {
           (() => {
             // Calculate the actual index in the flattened photos array
             // GalleryItem.index includes sync queue offsets, so we need to find the real position
-            const flatPhotos = allPhotos.map(item => item.photo).filter((p): p is PhotoInfo => p !== undefined)
-            const actualIndex = flatPhotos.findIndex(p => p?.name === selectedPhoto.name)
+            const flatPhotos = allPhotos.map((item) => item.photo).filter((p): p is PhotoInfo => p !== undefined)
+            const actualIndex = flatPhotos.findIndex((p) => p?.name === selectedPhoto.name)
 
             if (actualIndex === -1) {
               console.error("[GalleryScreen] ❌ Selected photo not found in photos array:", selectedPhoto.name)
@@ -1037,14 +1227,26 @@ const $screenContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   marginHorizontal: -spacing.s6,
 })
 
-const $photoGridContent: ThemedStyle<ViewStyle> = () => ({
-  paddingHorizontal: 0,
+const $photoGridContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  paddingHorizontal: spacing.s3, // Add padding on left and right edges
   paddingTop: 0,
 })
 
 const $columnWrapper: ThemedStyle<ViewStyle> = () => ({
   justifyContent: "flex-start",
   gap: 2,
+})
+
+const $loadingSpinnerContainer: ThemedStyle<ViewStyle> = () => ({
+  flex: 1,
+  justifyContent: "center",
+  alignItems: "center",
+})
+
+const $loadingSpinnerText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 16,
+  color: colors.textDim,
+  marginTop: spacing.s4,
 })
 
 const $emptyContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
@@ -1074,7 +1276,7 @@ const $photoItem: ThemedStyle<ViewStyle> = () => ({
   borderRadius: 0,
   overflow: "hidden",
   backgroundColor: "rgba(0,0,0,0.05)",
-  marginBottom: 2, // Vertical spacing between rows (matches ITEM_SPACING)
+  // No marginBottom needed - ItemSeparatorComponent handles vertical spacing to match horizontal gap
 })
 
 const $photoImage: ThemedStyle<ImageStyle> = () => ({
@@ -1180,7 +1382,7 @@ const $syncButtonProgressBar: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 
 const $syncButtonProgressFill: ThemedStyle<ViewStyle> = ({colors}) => ({
   height: "100%",
-  backgroundColor: colors.palette.primary500,
+  backgroundColor: colors.primary,
   borderRadius: 2,
 })
 

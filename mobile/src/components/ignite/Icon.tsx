@@ -119,6 +119,41 @@ const lucideIcons = {
   "house-filled": HomeIcon,
 }
 
+const tablerIcons = {
+  "settings": 1,
+  "bluetooth-connected": 1,
+  "bluetooth-off": 1,
+  "battery-3": 1,
+  "battery-2": 1,
+  "battery-1": 1,
+  "battery-0": 1,
+  "arrow-left": 1,
+  "arrow-right": 1,
+  "x": 1,
+  "message-2-star": 1,
+  "shield-lock": 1,
+  "user-code": 1,
+  "user": 1,
+  "user-filled": 1,
+  "sun": 1,
+  "microphone": 1,
+  "device-ipad": 1,
+  "device-airpods-case": 1,
+  "brightness-half": 1,
+  "battery-charging": 1,
+  "alert": 1,
+  "chevron-left": 1,
+  "chevron-right": 1,
+  "trash": 1,
+  "trash-x": 1,
+  "check": 1,
+  "world-download": 1,
+  "repeat": 1,
+  "mail": 1,
+  "chevron-down": 1,
+  "chevron-up": 1,
+}
+
 /**
  * A component to render a registered icon.
  * It is wrapped in a <View />, use `PressableIcon` if you want to react to input
@@ -181,33 +216,7 @@ export const iconRegistry = {
   // included in other font sets (imported automatically):
   // included here mostly for ide/type hinting purposes:
   // tabler icons:
-  "settings": 1,
-  "bluetooth-connected": 1,
-  "bluetooth-off": 1,
-  "battery-3": 1,
-  "battery-2": 1,
-  "battery-1": 1,
-  "battery-0": 1,
-  "arrow-left": 1,
-  "arrow-right": 1,
-  "x": 1,
-  "message-2-star": 1,
-  "shield-lock": 1,
-  "user-code": 1,
-  "user": 1,
-  "user-filled": 1,
-  "sun": 1,
-  "microphone": 1,
-  "device-ipad": 1,
-  "device-airpods-case": 1,
-  "brightness-half": 1,
-  "battery-charging": 1,
-  "alert": 1,
-  "chevron-left": 1,
-  "chevron-right": 1,
-  "trash": 1,
-  "trash-x": 1,
-  "check": 1,
+  ...tablerIcons,
   // lucide-react-native icons:
   ...lucideIcons,
 }

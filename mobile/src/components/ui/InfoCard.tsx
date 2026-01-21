@@ -1,8 +1,8 @@
 import {View, ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
-import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 
 // Single card item
 interface InfoCardProps {
@@ -31,7 +31,9 @@ const InfoCard: React.FC<InfoCardProps> = ({label, value, isFirst, isLast}) => {
           marginBottom: isLast ? 0 : theme.spacing.s2,
         },
       ]}>
-      <Text style={themed($infoCardTitle)} weight="semibold">{label}</Text>
+      <Text style={themed($infoCardTitle)} weight="semibold">
+        {label}
+      </Text>
       <Text style={themed($infoCardValue)}>{String(value)}</Text>
     </View>
   )

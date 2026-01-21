@@ -1,15 +1,15 @@
-import {BottomSheetBackdrop, BottomSheetModal, BottomSheetView} from "@gorhom/bottom-sheet"
+import {BottomSheetBackdrop, BottomSheetFlatList, BottomSheetModal, BottomSheetView} from "@gorhom/bottom-sheet"
 import {useCallback, useMemo, useRef} from "react"
 import {FlatList, TouchableOpacity, View} from "react-native"
+import {useSafeAreaInsets} from "react-native-safe-area-context"
 
 import {Text} from "@/components/ignite"
-import AppIcon from "@/components/misc/AppIcon"
+import AppIcon from "@/components/home/AppIcon"
 import {Badge} from "@/components/ui"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ClientAppletInterface, DUMMY_APPLET, useIncompatibleApps} from "@/stores/applets"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
 
 const GRID_COLUMNS = 4
 
@@ -46,7 +46,7 @@ export const IncompatibleApps: React.FC = () => {
   const handleAppPress = useCallback(
     (app: ClientAppletInterface) => {
       const missingHardware =
-        app.compatibility?.missingRequired?.map(req => req.type.toLowerCase()).join(", ") || "required features"
+        app.compatibility?.missingRequired?.map((req) => req.type.toLowerCase()).join(", ") || "required features"
 
       showAlert(
         translate("home:hardwareIncompatible"),
@@ -56,10 +56,6 @@ export const IncompatibleApps: React.FC = () => {
             missing: missingHardware,
           }),
         [{text: translate("common:ok")}],
-        {
-          iconName: "alert-circle-outline",
-          iconColor: theme.colors.error,
-        },
       )
     },
     [theme],
@@ -134,22 +130,23 @@ export const IncompatibleApps: React.FC = () => {
         snapPoints={snapPoints}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
+        enableDynamicSizing={false}
         backgroundStyle={{backgroundColor: theme.colors.primary_foreground}}
         handleIndicatorStyle={{backgroundColor: theme.colors.muted_foreground}}>
-        <BottomSheetView className="px-6">
-          <View className="gap-4 px-4 my-6">
+        <View className="px-4">
+          <View className="gap-4 px-4 my-6 h-21">
             <Text className="text-lg font-bold text-foreground text-center" tx="home:incompatibleApps" />
             <Text className="text-sm text-muted-foreground font-medium" tx="home:incompatibleAppsDescription" />
           </View>
-          <FlatList
+          <BottomSheetFlatList
             data={gridData}
             renderItem={renderItem}
-            keyExtractor={item => item.packageName}
+            keyExtractor={(item: ClientAppletInterface) => item.packageName}
             numColumns={GRID_COLUMNS}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{paddingBottom: bottom}}
+            contentContainerStyle={{paddingBottom: 21 * 4 + 6 * 4 * 2}}
           />
-        </BottomSheetView>
+        </View>
       </BottomSheetModal>
     </>
   )

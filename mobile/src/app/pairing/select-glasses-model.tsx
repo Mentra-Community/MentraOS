@@ -12,9 +12,9 @@ import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {$styles, ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 // import {useLocalSearchParams} from "expo-router"
 
@@ -68,10 +68,8 @@ export default function SelectGlassesModelScreen() {
           // {modelName: "Brilliant Labs Frame", key: "frame"},
         ]
 
-  const triggerGlassesPairingGuide = async (glassesModelName: string) => {
-    // No need for Bluetooth permissions anymore as we're using direct communication
-    console.log("TRIGGERING SEARCH SCREEN FOR: " + glassesModelName)
-    push("/pairing/prep", {glassesModelName: glassesModelName})
+  const triggerGlassesPairingGuide = async (modelName: string) => {
+    push("/pairing/prep", {modelName: modelName})
   }
 
   return (

@@ -27,6 +27,8 @@ import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
+import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
+import com.mentra.asg_client.reporting.core.ReportManager;
 
 import org.json.JSONObject;
 
@@ -294,6 +296,9 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new AuthTokenCommandHandler(communicationManager, configurationManager));
             Log.d(TAG, "✅ Registered AuthTokenCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new UserEmailCommandHandler(configurationManager, ReportManager.getInstance(context)));
+            Log.d(TAG, "✅ Registered UserEmailCommandHandler");
 
             commandHandlerRegistry.registerHandler(new PhotoCommandHandler(context, serviceManager, fileManager, stateManager));
             Log.d(TAG, "✅ Registered PhotoCommandHandler");

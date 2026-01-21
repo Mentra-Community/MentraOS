@@ -80,7 +80,8 @@ export const authenticateConsole: MiddlewareHandler<AppEnv> = async (c, next) =>
 
     // Attach auth context for console routes
     c.set("console", { email });
-    c.set("logger", logger.child({ userId: email, context: "console" }));
+    // Include reqId for request correlation across all logs
+    c.set("logger", logger.child({ userId: email, context: "console", reqId: c.get("reqId") }));
 
     logger.debug(`Console auth: User ${email} authenticated`);
     await next();

@@ -7,16 +7,16 @@ import Icon from "react-native-vector-icons/FontAwesome"
 
 import {Screen, Header, Text, Button} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function PairingFailureScreen() {
   const {themed, theme} = useAppTheme()
   const {clearHistory, replace, clearHistoryAndGoHome} = useNavigationHistory()
 
-  const {error, glassesModelName}: {error: string; glassesModelName?: string} = useLocalSearchParams()
+  const {error, modelName}: {error: string; modelName?: string} = useLocalSearchParams()
 
   const fadeInOpacity = useSharedValue(0)
   const slideUpTranslate = useSharedValue(50)
@@ -53,13 +53,13 @@ export default function PairingFailureScreen() {
         <Text tx="pairing:pairingFailed" preset="heading" style={themed($title)} />
 
         <Text
-          text={translate(error as TxKeyPath, {glassesModel: glassesModelName || "glasses"})}
+          text={translate(error as TxKeyPath, {glassesModel: modelName || "glasses"})}
           preset="default"
           style={themed($description)}
         />
 
         <View style={themed($buttonContainer)}>
-          <Button tx="pairing:tryAgain" preset="primary" onPress={handleRetry} style={themed($button)} />
+          <Button tx="common:tryAgain" preset="primary" onPress={handleRetry} style={themed($button)} />
 
           <Button tx="pairing:goHome" preset="alternate" onPress={handleGoHome} style={themed($button)} />
         </View>

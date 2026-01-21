@@ -5,9 +5,9 @@ import Toast from "react-native-toast-message"
 
 import {Screen, Text, Header, Switch} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface InstalledApp {
   packageName: string

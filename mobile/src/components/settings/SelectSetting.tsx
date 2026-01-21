@@ -15,9 +15,9 @@ import {
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 
 import {Icon, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 type Option = {
   label: string

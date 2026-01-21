@@ -2,7 +2,8 @@ package com.mentra.asg_client.audio;
 
 /**
  * Constants for audio asset file names in the application's assets directory.
- * All audio files are in WAV format for optimal compatibility with I2S audio routing.
+ * Most audio files are in WAV format for optimal compatibility with I2S audio routing.
+ * Some files (like battery announcements and storage alerts) use MP3 format.
  *
  * Usage:
  * <pre>
@@ -22,6 +23,11 @@ public final class AudioAssets {
      * Low battery notification sound
      */
     public static final String BATTERY_LOW = "battery_low.wav";
+
+    /**
+     * Storage full notification sound
+     */
+    public static final String STORAGE_FULL = "storage_full.mp3";
 
     /**
      * Camera shutter sound for photo capture
@@ -79,4 +85,21 @@ public final class AudioAssets {
      * Same as audio recording stop for consistency
      */
     public static final String VIDEO_RECORDING_STOP = RECORDING_STOP;
+
+    /**
+     * Battery level announcement audio folder prefix
+     */
+    public static final String BATTERY_LEVEL_PREFIX = "battery/";
+
+    /**
+     * Get battery level announcement audio file path.
+     * Rounds to nearest 10% (10, 20, 30... 100).
+     *
+     * @param percent Battery level 0-100
+     * @return Asset path like "battery/50.mp3"
+     */
+    public static String getBatteryLevelAsset(int percent) {
+        int rounded = Math.max(10, Math.min(100, ((percent + 5) / 10) * 10));
+        return BATTERY_LEVEL_PREFIX + rounded + ".mp3";
+    }
 }

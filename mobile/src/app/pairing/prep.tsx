@@ -1,27 +1,29 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
 import CoreModule from "core"
-import {Linking, PermissionsAndroid, Platform, ScrollView} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-import {Header} from "@/components/ignite"
-import {Screen} from "@/components/ignite/Screen"
-import {PairingGuide, PairingOptions} from "@/components/pairing/GlassesPairingGuides"
+import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {$styles} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
+import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
+import {useState} from "react"
+import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
+import {Spacer} from "@/components/ui/Spacer"
+import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
-  const {themed, theme} = useAppTheme()
-  const {glassesModelName} = route.params as {glassesModelName: string}
-  const {goBack, replace, clearHistoryAndGoHome} = useNavigationHistory()
+  const {theme} = useAppTheme()
+  const {modelName} = route.params as {modelName: string}
+  const {goBack, push, clearHistoryAndGoHome} = useNavigationHistory()
 
   const advanceToPairing = async () => {
-    if (glassesModelName == null || glassesModelName == "") {
+    if (modelName == null || modelName == "") {
       console.log("SOME WEIRD ERROR HERE")
       return
     }
@@ -29,7 +31,7 @@ export default function PairingPrepScreen() {
     // Always request Bluetooth permissions - required for Android 14+ foreground service
     let needsBluetoothPermissions = true
     // we don't need bluetooth permissions for simulated glasses
-    if (glassesModelName.startsWith(DeviceTypes.SIMULATED) && Platform.OS === "ios") {
+    if (modelName.startsWith(DeviceTypes.SIMULATED) && Platform.OS === "ios") {
       needsBluetoothPermissions = false
     }
 
@@ -77,11 +79,11 @@ export default function PairingPrepScreen() {
             console.log("Bluetooth permissions array:", bluetoothPermissions)
             console.log(
               "Bluetooth permission values:",
-              bluetoothPermissions.map(p => `${p} (${typeof p})`),
+              bluetoothPermissions.map((p) => `${p} (${typeof p})`),
             )
 
             // Filter out any null/undefined permissions
-            const validBluetoothPermissions = bluetoothPermissions.filter(permission => permission != null)
+            const validBluetoothPermissions = bluetoothPermissions.filter((permission) => permission != null)
             console.log("Valid Bluetooth permissions after filtering:", validBluetoothPermissions)
 
             if (validBluetoothPermissions.length === 0) {
@@ -90,14 +92,14 @@ export default function PairingPrepScreen() {
             }
 
             const results = await PermissionsAndroid.requestMultiple(validBluetoothPermissions)
-            const allGranted = Object.values(results).every(value => value === PermissionsAndroid.RESULTS.GRANTED)
+            const allGranted = Object.values(results).every((value) => value === PermissionsAndroid.RESULTS.GRANTED)
 
             // Since we now handle NEVER_ASK_AGAIN in requestFeaturePermissions,
             // we just need to check if all are granted
             if (!allGranted) {
               // Check if any are NEVER_ASK_AGAIN to show proper dialog
               const anyNeverAskAgain = Object.values(results).some(
-                value => value === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN,
+                (value) => value === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN,
               )
 
               if (anyNeverAskAgain) {
@@ -205,27 +207,202 @@ export default function PairingPrepScreen() {
     console.log("needsBluetoothPermissions", needsBluetoothPermissions)
 
     // skip pairing for simulated glasses:
-    if (glassesModelName.startsWith(DeviceTypes.SIMULATED)) {
+    if (modelName.startsWith(DeviceTypes.SIMULATED)) {
       await CoreModule.connectSimulated()
       clearHistoryAndGoHome()
       return
     }
 
-    replace("/pairing/scan", {glassesModelName})
+    push("/pairing/scan", {modelName})
+  }
+
+  const SimulatedPairingGuide = () => {
+    return (
+      <View className="flex-1 flex-col justify-start">
+        <Text text="Preview MentraOS" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+        <GlassesDisplayMirror demoText="Simulated glasses display" />
+        <Text
+          text="Experience the full power of MentraOS without physical glasses. Simulated Glasses provides a virtual display that mirrors exactly what you would see on real smart glasses."
+          className="text-sm text-secondary-foreground mt-6"
+        />
+      </View>
+    )
+  }
+
+  const MentraLivePairingGuide = () => {
+    let steps: OnboardingStep[] = [
+      {
+        name: "power_on_tutorial",
+        type: "image",
+        source: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
+        transition: false,
+        title: translate("pairing:powerOn"), // for spacing so it's consistent with the other steps
+        subtitle: translate("onboarding:livePowerOnTutorial"),
+        info: translate("onboarding:livePowerOnInfo"),
+      },
+    ]
+
+    return (
+      <OnboardingGuide
+        steps={steps}
+        autoStart={true}
+        showCloseButton={false}
+        showSkipButton={false}
+        showHeader={false}
+        exitFn={() => {
+          advanceToPairing()
+        }}
+        endButtonText={translate("pairing:poweredOn")}
+        endButtonFn={() => {
+          advanceToPairing()
+        }}
+      />
+    )
+  }
+
+  const MentraMach1PairingGuide = () => {
+    return (
+      <View className="flex-1 flex-col justify-start mt-6">
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="1. Make sure your Mach1 is fully charged and turned on."
+        />
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="2. Make sure your device is running the latest firmware by using the Vuzix Connect app."
+        />
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="3. Put your Mentra Mach1 in pairing mode: hold the power button until you see the Bluetooth icon, then release."
+        />
+      </View>
+    )
+  }
+
+  const VuzixZ100PairingGuide = () => {
+    return (
+      <View className="flex-1 flex-col justify-start mt-6">
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="1. Make sure your Mach1 is fully charged and turned on."
+        />
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="2. Make sure your device is running the latest firmware by using the Vuzix Connect app."
+        />
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="3. Put your Mentra Mach1 in pairing mode: hold the power button until you see the Bluetooth icon, then release."
+        />
+      </View>
+    )
+  }
+
+  const MentraNexGlassesPairingGuide = () => {
+    return (
+      <View className="flex-1 flex-col justify-start mt-6">
+        <Text text="Mentra Nex" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+        <Text
+          text="1. Make sure your Mentra Nex is fully charged and turned on."
+          className="text-lg text-secondary-foreground"
+        />
+      </View>
+    )
+  }
+
+  const G1PairingGuide = () => {
+    const {theme} = useAppTheme()
+
+    return (
+      <View className="flex-1 flex-col justify-start mt-6">
+        <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
+          <Image source={require("../../../assets/glasses/g1.png")} resizeMode="contain" className="w-50 h-25" />
+          <Icon name="chevron-down" size={36} color={theme.colors.text} />
+          <Image
+            source={require("../../../assets/guide/image_g1_pair.png")}
+            resizeMode="contain"
+            className="w-62 h-38"
+          />
+        </View>
+
+        <View style={{justifyContent: "flex-start", flexDirection: "column"}}>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text
+            className="text-lg text-secondary-foreground"
+            text="1. Disconnect your G1 from within the Even Realities app, or uninstall the Even Realities app"
+          />
+          <Text
+            className="text-lg text-secondary-foreground"
+            text="2. Place your G1 in the charging case with the lid open."
+          />
+        </View>
+      </View>
+    )
+  }
+
+  const G1Buttons = () => {
+    const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
+    return (
+      <>
+        <View className="gap-4">
+          <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
+          <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
+        </View>
+        <GlassesTroubleshootingModal
+          isVisible={showTroubleshootingModal}
+          onClose={() => setShowTroubleshootingModal(false)}
+          modelName={modelName}
+        />
+      </>
+    )
+  }
+
+  const renderGuide = () => {
+    switch (modelName) {
+      case DeviceTypes.SIMULATED:
+        return <SimulatedPairingGuide />
+      case DeviceTypes.G1:
+        return <G1PairingGuide />
+      case DeviceTypes.LIVE:
+        return <MentraLivePairingGuide />
+      case DeviceTypes.MACH1:
+        return <MentraMach1PairingGuide />
+      case DeviceTypes.Z100:
+        return <VuzixZ100PairingGuide />
+      case DeviceTypes.NEX:
+        return <MentraNexGlassesPairingGuide />
+    }
+
+    throw new Error(`Unknown model name: ${modelName}`)
+  }
+
+  const renderButtons = () => {
+    switch (modelName) {
+      case DeviceTypes.G1:
+        return <G1Buttons />
+      case DeviceTypes.LIVE:
+        return null
+      default:
+        return <Button tx="common:continue" onPress={advanceToPairing} />
+    }
   }
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]}>
       <Header
-        title={glassesModelName}
+        title={modelName}
         leftIcon="chevron-left"
         onLeftPress={goBack}
         RightActionComponent={<MentraLogoStandalone />}
       />
-      <ScrollView style={{marginRight: -theme.spacing.s6, paddingRight: theme.spacing.s6}}>
-        <PairingGuide model={glassesModelName} />
-      </ScrollView>
-      <PairingOptions model={glassesModelName} continueFn={advanceToPairing} />
+      <Spacer height={theme.spacing.s6} />
+      {/* <ScrollView style={{marginRight: -theme.spacing.s6, paddingRight: theme.spacing.s6}}> */}
+      {/* </ScrollView> */}
+
+      {/* <PairingGuide model={modelName} /> */}
+      {/* <PairingOptions model={modelName} continueFn={advanceToPairing} /> */}
+      {renderGuide()}
+      {renderButtons()}
     </Screen>
   )
 }

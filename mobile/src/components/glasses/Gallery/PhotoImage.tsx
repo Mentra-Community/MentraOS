@@ -9,9 +9,9 @@ import {View, Image, ViewStyle, ImageStyle, TextStyle} from "react-native"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 // @ts-ignore
 const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)
@@ -232,7 +232,7 @@ const $avifBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   position: "absolute",
   top: spacing.s2,
   right: spacing.s2,
-  backgroundColor: colors.palette.primary500,
+  backgroundColor: colors.primary,
   paddingHorizontal: spacing.s2,
   paddingVertical: 2,
   borderRadius: 4,
@@ -278,6 +278,6 @@ const $loadingOverlay: ThemedStyle<ViewStyle> = ({colors}) => ({
   left: 0,
   right: 0,
   bottom: 0,
-  backgroundColor: colors.palette.neutral300, // Darker, less jarring than neutral100
+  backgroundColor: colors.border, // Match shimmer placeholder grey
   zIndex: 1,
 })

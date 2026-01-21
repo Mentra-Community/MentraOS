@@ -88,6 +88,39 @@ gradle.taskGraph.whenReady { taskGraph ->
 
         println "╚════════════════════════════════════════════════════════════════╝"
         println ""
+
+        // Check Sentry configuration status (from .env file)
+        def sentryDsn = envProperties['SENTRY_DSN'] ?: ""
+        def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
+                             (project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null)
+
+        def isSentryConfigured = sentryDsn && !sentryDsn.isEmpty() && sentryDsn.contains("sentry.io")
+
+        println "╔════════════════════════════════════════════════════════════════╗"
+        println "║                    SENTRY ERROR REPORTING                      ║"
+        println "╠════════════════════════════════════════════════════════════════╣"
+
+        if (isSentryConfigured) {
+            println "║  ✅ SENTRY: ENABLED - Crashes will be reported                 ║"
+            println "║     Config: .env file                                         ║"
+            if (sentryAuthToken) {
+                println "║     Source Maps: ✅ Will be uploaded                          ║"
+            } else {
+                println "║     Source Maps: ❌ SENTRY_AUTH_TOKEN not set                 ║"
+            }
+        } else {
+            println "║  ⚠️  SENTRY: DISABLED - Crashes will NOT be reported to cloud  ║"
+            println "║                                                               ║"
+            println "║  Local file logging is still enabled at:                      ║"
+            println "║     /sdcard/mentra_crash_logs/                                ║"
+            println "║                                                               ║"
+            println "║  To enable Sentry:                                            ║"
+            println "║  1. Copy .env.example to .env                                 ║"
+            println "║  2. Set SENTRY_DSN=https://xxx@sentry.io/xxx                  ║"
+        }
+
+        println "╚════════════════════════════════════════════════════════════════╝"
+        println ""
     }
 }
 
@@ -153,8 +186,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 21
-        versionName "21.0"
+        versionCode 29
+        versionName "29.0"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"
@@ -170,6 +203,9 @@ android {
         buildConfigField "String", "MENTRAOS_HOST", "\"${envProperties['MENTRAOS_HOST'] ?: ""}\""
         buildConfigField "String", "MENTRAOS_PORT", "\"${envProperties['MENTRAOS_PORT'] ?: ""}\""
         buildConfigField "String", "MENTRAOS_SECURE", "\"${envProperties['MENTRAOS_SECURE'] ?: ""}\""
+
+        // Sentry configuration
+        buildConfigField "String", "SENTRY_DSN", "\"${envProperties['SENTRY_DSN'] ?: ""}\""
     }
 
     packagingOptions {
@@ -294,8 +330,8 @@ def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
                      project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null
 
 sentry {
-    org = "ahmad-wv"
-    projectName = "asg"
+    org = "mentra-labs"
+    projectName = "mentra-asg-client"
 
     // Only enable Sentry features if auth token is present
     if (sentryAuthToken) {

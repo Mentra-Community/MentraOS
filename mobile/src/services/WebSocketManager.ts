@@ -5,8 +5,6 @@ import {useConnectionStore} from "@/stores/connection"
 import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
 import {BackgroundTimer} from "@/utils/timers"
 
-// import mantle from "@/services/MantleManager"
-
 export enum WebSocketStatus {
   DISCONNECTED = "disconnected",
   CONNECTING = "connecting",
@@ -91,21 +89,21 @@ class WebSocketManager extends EventEmitter {
       this.updateStatus(WebSocketStatus.CONNECTED)
     }
 
-    this.webSocket.onmessage = event => {
+    this.webSocket.onmessage = (event) => {
       this.handleIncomingMessage(event.data)
     }
 
-    this.webSocket.onerror = error => {
-      console.log("WSM: WebSocket error:", error)
-      // mantle.displayTextMain(`WSM: WebSocket error: ${error?.toString() || "WebSocket error"}`)
+    this.webSocket.onerror = (_error) => {
+      console.log("WSM: WebSocket error:", _error) // Commented out - unrelated to gallery sync
+      // mantle.displayTextMain(`WSM: WebSocket error: ${_error?.toString() || "WebSocket error"}`)
       this.updateStatus(WebSocketStatus.ERROR)
-      store.setError(error?.toString() || "WebSocket error")
+      store.setError(_error?.toString() || "WebSocket error")
       this.startReconnectInterval()
     }
 
-    this.webSocket.onclose = event => {
-      console.log("WSM: Connection closed with code:", event.code)
-      // mantle.displayTextMain(`WSM: Connection closed with code: ${event.code}`)
+    this.webSocket.onclose = (_event) => {
+      console.log("WSM: Connection closed with code:", _event.code) // Commented out - unrelated to gallery sync
+      // mantle.displayTextMain(`WSM: Connection closed with code: ${_event.code}`)
       this.updateStatus(WebSocketStatus.DISCONNECTED)
       this.startReconnectInterval()
     }
@@ -126,7 +124,7 @@ class WebSocketManager extends EventEmitter {
   }
 
   private startReconnectInterval() {
-    console.log("WSM: Starting reconnect interval, manuallyDisconnected: ", this.manuallyDisconnected)
+    console.log("WSM: Starting reconnect interval, manuallyDisconnected: ", this.manuallyDisconnected) // Commented out - unrelated to gallery sync
     // mantle.displayTextMain(`WSM: Starting reconnect interval, manuallyDisconnected: ${this.manuallyDisconnected}`)
     if (this.reconnectInterval) {
       BackgroundTimer.clearInterval(this.reconnectInterval)
@@ -212,9 +210,10 @@ class WebSocketManager extends EventEmitter {
   }
 
   public cleanup() {
+    console.log("WSM: cleanup()")
     this.disconnect()
     this.removeAllListeners()
-    WebSocketManager.instance = null
+    this.webSocket = null
     const store = useConnectionStore.getState()
     store.reset()
   }

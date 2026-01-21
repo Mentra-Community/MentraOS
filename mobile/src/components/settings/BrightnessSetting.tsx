@@ -1,9 +1,9 @@
 import {View, ViewStyle, TextStyle} from "react-native"
 
 import {Switch, Text} from "@/components/ignite"
-import {ThemedSlider} from "@/components/misc/ThemedSlider"
-import {ThemedStyle} from "@/theme"
+import {ThemedSlider} from "@/components/settings/ThemedSlider"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 
 type BrightnessSettingProps = {
   label: string

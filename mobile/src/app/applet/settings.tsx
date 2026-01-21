@@ -4,9 +4,9 @@ import {Animated, BackHandler, TextStyle, View, ViewStyle} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 
 import {Header, Icon, PillButton, Screen, Text} from "@/components/ignite"
-import AppIcon from "@/components/misc/AppIcon"
-import LoadingOverlay from "@/components/misc/LoadingOverlay"
-import SettingsSkeleton from "@/components/misc/SettingsSkeleton"
+import AppIcon from "@/components/home/AppIcon"
+import LoadingOverlay from "@/components/ui/LoadingOverlay"
+import SettingsSkeleton from "@/components/settings/SettingsSkeleton"
 import GroupTitle from "@/components/settings/GroupTitle"
 import MultiSelectSetting from "@/components/settings/MultiSelectSetting"
 import NumberSetting from "@/components/settings/NumberSetting"
@@ -21,6 +21,7 @@ import Divider from "@/components/ui/Divider"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
 import {useApplets, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
@@ -28,13 +29,12 @@ import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function AppSettings() {
   const {packageName, appName: appNameParam} = useLocalSearchParams()
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
-  const {goBack, replace} = useNavigationHistory()
+  const {goBack, replaceAll} = useNavigationHistory()
   const insets = useSafeAreaInsets()
   const hasLoadedData = useRef(false)
 
@@ -159,7 +159,7 @@ export default function AppSettings() {
               showAlert(
                 translate("common:success"),
                 translate("appSettings:uninstalledSuccess", {appName: appInfo?.name || appName}),
-                [{text: translate("common:ok"), onPress: () => replace("/(tabs)/home")}],
+                [{text: translate("common:ok"), onPress: () => replaceAll("/home")}],
               )
             } catch (error: any) {
               console.error("Error uninstalling app:", error)

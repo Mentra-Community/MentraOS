@@ -155,7 +155,7 @@ class WifiCredentialsService {
   private static loadCredentialsData(): WifiCredentialsData {
     const res = storage.load<WifiCredentialsData>(this.STORAGE_KEY)
     if (res.is_error()) {
-      console.error("Error loading WiFi credentials:", res.error)
+      // console.log("WIFI_CREDENTIALS: No saved WiFi credentials found, using defaults")
       return this.getDefaultData()
     }
     const data = res.value

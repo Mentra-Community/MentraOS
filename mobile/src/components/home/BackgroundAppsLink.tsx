@@ -1,11 +1,12 @@
 import {TouchableOpacity, View, ViewStyle} from "react-native"
+
 import {Icon, Text} from "@/components/ignite"
-import AppIcon from "@/components/misc/AppIcon"
+import AppIcon from "@/components/home/AppIcon"
 import {Badge} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useBackgroundApps} from "@/stores/applets"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export const BackgroundAppsLink = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()

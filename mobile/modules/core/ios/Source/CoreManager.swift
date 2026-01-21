@@ -36,12 +36,78 @@ struct ViewState {
     var sendStateWorkItem: DispatchWorkItem?
     let sendStateQueue = DispatchQueue(label: "sendStateQueue", qos: .userInitiated)
 
+    /**
+     * Setup Bluetooth audio pairing after BLE connection is established
+     * Attempts to automatically activate Mentra Live as the system audio device
+     * If not paired yet, prompts user to pair in Settings
+     */
+    private func setupAudioPairing(deviceName: String) {
+        // Don't configure audio session - PhoneMic.swift handles that
+        // Just check if audio session supports Bluetooth (informational only)
+        if !AudioSessionMonitor.isAudioSessionConfigured() {
+            Bridge.log(
+                "Audio: Audio session not configured for Bluetooth yet - mic system will configure it when recording"
+            )
+        }
+
+        // Extract device ID pattern to match the specific device
+        // BLE name: "MENTRA_LIVE_BLE_ABC123"
+        // BT Classic could be: "MENTRA_LIVE_BLE_ABC123" or "MENTRA_LIVE_BT_ABC123"
+        // We need to match on the unique device ID part (e.g., "ABC123")
+        let audioDevicePattern: String
+        if let idRange = deviceName.range(of: "_BLE_", options: .caseInsensitive) {
+            // Extract the ID after "_BLE_" (e.g., "ABC123")
+            audioDevicePattern = String(deviceName[idRange.upperBound...])
+            Bridge.log("Audio: Extracted device ID: \(audioDevicePattern) from \(deviceName)")
+        } else if let idRange = deviceName.range(of: "_BT_", options: .caseInsensitive) {
+            // Extract the ID after "_BT_"
+            audioDevicePattern = String(deviceName[idRange.upperBound...])
+            Bridge.log("Audio: Extracted device ID: \(audioDevicePattern) from \(deviceName)")
+        } else {
+            // Fallback: use the full device name
+            audioDevicePattern = deviceName
+            Bridge.log("Audio: Using full device name as pattern: \(audioDevicePattern)")
+        }
+
+        // Check if device is paired (don't activate to preserve A2DP music playback)
+        let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
+
+        if isPaired {
+            // Device is paired! Don't activate it - let PhoneMic.swift activate when recording starts
+            Bridge.log("Audio: ✅ Mentra Live is paired (preserving A2DP for music)")
+            btcConnected = true
+            getStatus()
+        } else {
+            btcConnected = false
+            getStatus()
+            // Not found in availableInputs - not paired yet
+
+            // Start monitoring for when user pairs manually
+            AudioSessionMonitor.startMonitoring(devicePattern: audioDevicePattern) {
+                [weak self] (connected: Bool, _: String?) in
+                guard let self = self else { return }
+
+                if connected {
+                    Bridge.log("Audio: ✅ Device paired and connected")
+                    // Don't activate - let PhoneMic.swift handle that when recording starts
+                    self.btcConnected = true
+                    CoreManager.shared.getStatus()
+                } else {
+                    Bridge.log("Audio: Device disconnected")
+                    self.btcConnected = false
+                    CoreManager.shared.getStatus()
+                }
+            }
+        }
+    }
+
     // MARK: - End Unique
 
     // MARK: - Properties
 
     var coreToken: String = ""
     var coreTokenOwner: String = ""
+    var userEmail: String = ""
     var sgc: SGCManager?
 
     // state
@@ -49,10 +115,11 @@ struct ViewState {
     private var lastStatusObj: [String: Any] = [:]
     private var defaultWearable: String = ""
     private var pendingWearable: String = ""
-    private var deviceName: String = ""
+    var deviceName: String = ""
     var deviceAddress: String = ""
     private var screenDisabled: Bool = false
     private var isSearching: Bool = false
+    private var btcConnected: Bool = false
     private var systemMicUnavailable: Bool = false
     var micRanking: [String] = MicMap.map["auto"]!
 
@@ -74,9 +141,19 @@ struct ViewState {
     private var alwaysOnStatusBar: Bool = false
     private var bypassVad: Bool = true
     private var enforceLocalTranscription: Bool = false
-    private var bypassAudioEncoding: Bool = false
     private var offlineMode: Bool = false
     private var metricSystem: Bool = false
+
+    // LC3 Audio Encoding
+    // Audio output format enum
+    enum AudioOutputFormat { case lc3, pcm }
+    // Canonical LC3 config: 16kHz sample rate, 10ms frame duration
+    // Frame size is configurable: 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps)
+    // Persistent LC3 converter for encoding/decoding
+    private var lc3Converter: PcmConverter?
+    private var lc3FrameSize = 20 // bytes per LC3 frame (default: 20 = 16kbps)
+    // Audio output format - defaults to LC3 for bandwidth savings
+    private var audioOutputFormat: AudioOutputFormat = .lc3
 
     // mic:
     private var useOnboardMic = false
@@ -126,6 +203,9 @@ struct ViewState {
         vad = SileroVADStrategy()
         super.init()
 
+        // Start memory monitoring (logs every 30s to help detect leaks)
+        // MemoryMonitor.start()
+
         // Initialize SherpaOnnx Transcriber
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first,
@@ -151,6 +231,10 @@ struct ViewState {
                 speechTriggerDurationMs: 50
             )
         }
+
+        // Initialize persistent LC3 converter for unified audio encoding
+        lc3Converter = PcmConverter()
+        Bridge.log("LC3 converter initialized for unified audio encoding")
     }
 
     // MARK: - AUX Voice Data Handling
@@ -162,11 +246,34 @@ struct ViewState {
         }
     }
 
+    /**
+     * Send audio data to cloud via Bridge.
+     * Encodes to LC3 if audioOutputFormat is .lc3, otherwise sends raw PCM.
+     * All audio destined for cloud should go through this function.
+     */
+    private func sendMicData(_ pcmData: Data) {
+        switch audioOutputFormat {
+        case .lc3:
+            guard let lc3Converter = lc3Converter else {
+                Bridge.log("MAN: ERROR - LC3 converter not initialized but format is LC3")
+                return
+            }
+            let lc3Data = lc3Converter.encode(pcmData) as Data
+            guard lc3Data.count > 0 else {
+                Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
+                return
+            }
+            Bridge.sendMicData(lc3Data)
+        case .pcm:
+            Bridge.sendMicData(pcmData)
+        }
+    }
+
     private func emptyVadBuffer() {
         // go through the buffer, popping from the first element in the array (FIFO):
         while !vadBuffer.isEmpty {
             let chunk = vadBuffer.removeFirst()
-            Bridge.sendMicData(chunk)
+            sendMicData(chunk) // Uses our encoder, not Bridge directly
         }
     }
 
@@ -179,74 +286,30 @@ struct ViewState {
         }
     }
 
+    /**
+     * Handle raw LC3 audio data from glasses.
+     * Decodes the glasses LC3 to PCM, then forwards to handlePcm for processing.
+     * This matches Android behavior - glasses forward raw LC3, CoreManager handles encoding.
+     */
     func handleGlassesMicData(_ lc3Data: Data, _ frameSize: Int = 20) {
-        // decode the g1 audio data to PCM and feed to the VAD:
+        guard let lc3Converter = lc3Converter else {
+            Bridge.log("MAN: LC3 converter not initialized")
+            return
+        }
 
-        // Ensure we have enough data to process
         guard lc3Data.count > 2 else {
-            Bridge.log("Received invalid PCM data size: \(lc3Data.count)")
+            Bridge.log("MAN: Received invalid LC3 data size: \(lc3Data.count)")
             return
         }
 
-        // Ensure we have valid PCM data
-        guard lc3Data.count > 0 else {
-            Bridge.log("No LC3 data after removing command bytes")
-            return
-        }
-
-        if bypassVad {
-            // Bridge.log("MAN: Glasses mic VAD bypassed - bypassVad=\(bypassVad)")
-            checkSetVadStatus(speaking: true)
-            // first send out whatever's in the vadBuffer (if there is anything):
-            emptyVadBuffer()
-            let pcmConverter = PcmConverter()
-            let pcmData = pcmConverter.decode(lc3Data, frameSize: frameSize) as Data
-            //        self.serverComms.sendAudioChunk(lc3Data)
-            Bridge.sendMicData(pcmData)
-            return
-        }
-
-        let pcmConverter = PcmConverter()
-        let pcmData = pcmConverter.decode(lc3Data, frameSize: frameSize) as Data
-
+        let pcmData = lc3Converter.decode(lc3Data, frameSize: frameSize) as Data
         guard pcmData.count > 0 else {
-            Bridge.log("PCM conversion resulted in empty data")
+            Bridge.log("MAN: Failed to decode glasses LC3 audio")
             return
         }
 
-        // feed PCM to the VAD:
-        guard let vad = vad else {
-            Bridge.log("VAD not initialized")
-            return
-        }
-
-        // convert audioData to Int16 array:
-        let pcmDataArray = pcmData.withUnsafeBytes { pointer -> [Int16] in
-            Array(
-                UnsafeBufferPointer(
-                    start: pointer.bindMemory(to: Int16.self).baseAddress,
-                    count: pointer.count / MemoryLayout<Int16>.stride
-                ))
-        }
-
-        vad.checkVAD(pcm: pcmDataArray) { [weak self] state in
-            guard let self = self else { return }
-            Bridge.log("VAD State: \(state)")
-        }
-
-        let vadState = vad.currentState()
-        if vadState == .speeching {
-            checkSetVadStatus(speaking: true)
-            // first send out whatever's in the vadBuffer (if there is anything):
-            emptyVadBuffer()
-            //        self.serverComms.sendAudioChunk(lc3Data)
-            Bridge.sendMicData(pcmData)
-        } else {
-            checkSetVadStatus(speaking: false)
-            // add to the vadBuffer:
-            //        addToVadBuffer(lc3Data)
-            addToVadBuffer(pcmData)
-        }
+        // Forward to handlePcm which handles VAD and encoding
+        handlePcm(pcmData)
     }
 
     func handlePcm(_ pcmData: Data) {
@@ -259,25 +322,19 @@ struct ViewState {
         }
 
         if bypassVad {
-            //          let pcmConverter = PcmConverter()
-            //          let lc3Data = pcmConverter.encode(pcmData) as Data
-            //          checkSetVadStatus(speaking: true)
-            //          // first send out whatever's in the vadBuffer (if there is anything):
-            //          emptyVadBuffer()
-            //          self.serverComms.sendAudioChunk(lc3Data)
+            // Send audio to cloud (encoding handled by sendMicData)
             if shouldSendPcmData {
-                // Bridge.log("MAN: Sending PCM data to server")
-                Bridge.sendMicData(pcmData)
+                sendMicData(pcmData)
             }
 
-            // Also send to local transcriber when bypassing VAD
+            // Send PCM to local transcriber (always needs raw PCM)
             if shouldSendTranscript {
                 transcriber?.acceptAudio(pcm16le: pcmData)
             }
             return
         }
 
-        // convert audioData to Int16 array:
+        // convert audioData to Int16 array for VAD:
         let pcmDataArray = pcmData.withUnsafeBytes { pointer -> [Int16] in
             Array(
                 UnsafeBufferPointer(
@@ -288,32 +345,27 @@ struct ViewState {
 
         vad.checkVAD(pcm: pcmDataArray) { [weak self] state in
             guard let self = self else { return }
-            //            self.handler?(state)
             Bridge.log("VAD State: \(state)")
         }
-
-        // encode the pcmData as LC3:
-        //        let pcmConverter = PcmConverter()
-        //        let lc3Data = pcmConverter.encode(pcmData) as Data
 
         let vadState = vad.currentState()
         if vadState == .speeching {
             checkSetVadStatus(speaking: true)
             // first send out whatever's in the vadBuffer (if there is anything):
             emptyVadBuffer()
-            //          self.serverComms.sendAudioChunk(lc3Data)
+
+            // Send audio to cloud (encoding handled by sendMicData)
             if shouldSendPcmData {
-                Bridge.sendMicData(pcmData)
+                sendMicData(pcmData)
             }
 
-            // Send to local transcriber when speech is detected
+            // Send PCM to local transcriber (always needs raw PCM)
             if shouldSendTranscript {
                 transcriber?.acceptAudio(pcm16le: pcmData)
             }
         } else {
             checkSetVadStatus(speaking: false)
-            // add to the vadBuffer:
-            //          addToVadBuffer(lc3Data)
+            // add to the vadBuffer (stores PCM for potential later sending):
             addToVadBuffer(pcmData)
         }
     }
@@ -563,8 +615,23 @@ struct ViewState {
         setMicState(shouldSendPcmData, shouldSendTranscript, bypassVad)
     }
 
-    func updateBypassAudioEncoding(_ enabled: Bool) {
-        bypassAudioEncoding = enabled
+    func updateAudioOutputFormat(_ format: AudioOutputFormat) {
+        audioOutputFormat = format
+        Bridge.log("Audio output format set to: \(format)")
+    }
+
+    /// Set the LC3 frame size for phone→cloud encoding.
+    /// Valid values: 20 (16kbps), 40 (32kbps), 60 (48kbps).
+    func setLC3FrameSize(_ frameSize: Int) {
+        if frameSize != 20 && frameSize != 40 && frameSize != 60 {
+            Bridge.log("MAN: Invalid LC3 frame size \(frameSize), must be 20, 40, or 60. Using default 20.")
+            lc3FrameSize = 20
+            lc3Converter?.setOutputFrameSize(20)
+            return
+        }
+        lc3FrameSize = frameSize
+        lc3Converter?.setOutputFrameSize(frameSize)
+        Bridge.log("MAN: LC3 frame size set to \(frameSize) bytes (\(frameSize * 800 / 1000)kbps)")
     }
 
     func updateMetricSystem(_ enabled: Bool) {
@@ -680,7 +747,7 @@ struct ViewState {
                 currentViewState = self.viewStates[0]
             }
             if isHeadUp && !self.contextualDashboard {
-                return
+                currentViewState = self.viewStates[0]
             }
 
             if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true {
@@ -768,11 +835,71 @@ struct ViewState {
         return result
     }
 
+    func getAudioDevicePattern() -> String {
+        let audioDevicePattern: String
+        if let idRange = deviceName.range(of: "_BLE_", options: .caseInsensitive) {
+            // Extract the ID after "_BLE_" (e.g., "ABC123")
+            audioDevicePattern = String(deviceName[idRange.upperBound...])
+            Bridge.log("Audio: Extracted device ID: \(audioDevicePattern) from \(deviceName)")
+        } else if let idRange = deviceName.range(of: "_BT_", options: .caseInsensitive) {
+            // Extract the ID after "_BT_"
+            audioDevicePattern = String(deviceName[idRange.upperBound...])
+            Bridge.log("Audio: Extracted device ID: \(audioDevicePattern) from \(deviceName)")
+        } else {
+            // Fallback: use the full device name
+            audioDevicePattern = deviceName
+            Bridge.log("Audio: Using full device name as pattern: \(audioDevicePattern)")
+        }
+        return audioDevicePattern
+    }
+
+    func checkCurrentAudioDevice() {
+        let audioDevicePattern = getAudioDevicePattern()
+
+        // check if the device disconnected:
+        let isConnected = AudioSessionMonitor.isAudioDeviceConnected(
+            devicePattern: audioDevicePattern)
+        if !isConnected {
+            Bridge.log("MAN: Device '\(deviceName)' disconnected")
+            btcConnected = false
+            getStatus()
+            return
+        }
+
+        let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
+        if isPaired {
+            let session = AVAudioSession.sharedInstance()
+            let deviceName = session.availableInputs?.first(where: {
+                $0.portName.localizedCaseInsensitiveContains(audioDevicePattern)
+            })?.portName
+            Bridge.log("MAN: ✅ Successfully detected newly paired device '\(deviceName)'")
+            btcConnected = true
+            getStatus()
+        } else {
+            btcConnected = false
+            getStatus()
+        }
+    }
+
     func onRouteChange(
         reason: AVAudioSession.RouteChangeReason, availableInputs: [AVAudioSessionPortDescription]
     ) {
         Bridge.log("MAN: onRouteChange: reason: \(reason)")
         Bridge.log("MAN: onRouteChange: inputs: \(availableInputs)")
+
+        // check if our deviceName is connected:
+        // (return if deviceName is empty):
+        if deviceName.isEmpty {
+            Bridge.log("MAN: Device name is empty, returning")
+            return
+        }
+
+        // Add small delay to let iOS populate availableInputs
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self = self else { return }
+            checkCurrentAudioDevice()
+        }
+
         updateMicState()
     }
 
@@ -950,8 +1077,7 @@ struct ViewState {
             return
         }
 
-        Bridge.log(
-            "Updating view state \(stateIndex) with \(layoutType) \(text) \(topText) \(bottomText)")
+        // Bridge.log("MAN: Updating view state \(stateIndex) with \(layoutType) \(text) \(topText) \(bottomText)")
 
         viewStates[stateIndex] = newViewState
 
@@ -993,14 +1119,33 @@ struct ViewState {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
+    func forgetWifiNetwork(_ ssid: String) {
+        Bridge.log("MAN: Forgetting wifi network: \(ssid)")
+        sgc?.forgetWifiNetwork(ssid)
+    }
+
     func setHotspotState(_ enabled: Bool) {
         Bridge.log("MAN: 🔥 Setting glasses hotspot state: \(enabled)")
         sgc?.sendHotspotState(enabled)
     }
 
+    func setUserEmail(_ email: String) {
+        Bridge.log("MAN: Setting user email for crash reporting")
+        userEmail = email
+        sgc?.sendUserEmailToGlasses(email)
+    }
+
     func queryGalleryStatus() {
         Bridge.log("MAN: 📸 Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
+    }
+
+    /// Send OTA start command to glasses.
+    /// Called when user approves an update (onboarding or background mode).
+    /// Triggers glasses to begin download and installation.
+    func sendOtaStart() {
+        Bridge.log("MAN: 📱 Sending OTA start command to glasses")
+        (sgc as? MentraLive)?.sendOtaStart()
     }
 
     func startBufferRecording() {
@@ -1020,7 +1165,8 @@ struct ViewState {
     }
 
     func startVideoRecording(_ requestId: String, _ save: Bool, _ silent: Bool) {
-        Bridge.log("MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), silent=\(silent)")
+        Bridge.log(
+            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), silent=\(silent)")
         sgc?.startVideoRecording(requestId: requestId, save: save, silent: silent)
     }
 
@@ -1099,6 +1245,12 @@ struct ViewState {
 
     func connectByName(_ dName: String) {
         Bridge.log("MAN: Connecting to wearable: \(dName)")
+        var name = dName
+
+        // use stored device name if available:
+        if dName.isEmpty && !deviceName.isEmpty {
+            name = deviceName
+        }
 
         if pendingWearable.isEmpty, defaultWearable.isEmpty {
             Bridge.log("MAN: No pending or default wearable, returning")
@@ -1114,7 +1266,7 @@ struct ViewState {
             disconnect()
             try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
             self.isSearching = true
-            self.deviceName = dName
+            self.deviceName = name
 
             initSGC(self.pendingWearable)
             sgc?.connectById(self.deviceName)
@@ -1198,6 +1350,7 @@ struct ViewState {
                 "connected": glassesConnected,
                 "micEnabled": sgc?.micEnabled ?? false,
                 "connectionState": sgc?.connectionState ?? "disconnected",
+                "btcConnected": btcConnected,
             ]
 
             if sgc is G1 {
@@ -1250,8 +1403,6 @@ struct ViewState {
             let coreInfo: [String: Any] = [
                 // "is_searching": self.isSearching && !self.defaultWearable.isEmpty,
                 "is_searching": isSearching,
-                // only on if recording from glasses:
-                "core_token": coreToken,
             ]
 
             // hardcoded list of apps:
@@ -1275,6 +1426,14 @@ struct ViewState {
             Bridge.sendStatus(statusObj)
         }
     }
+
+    // func getGlassesSettings() -> [String: Any] {
+    //     // TODO:
+    // }
+
+    // func getGlassesInfo() -> [String: Any] {
+    //     // TODO:
+    // }
 
     func updateSettings(_ settings: [String: Any]) {
         Bridge.log("MAN: Received update settings: \(settings)")
@@ -1443,6 +1602,7 @@ struct ViewState {
            newDeviceName != deviceName
         {
             deviceName = newDeviceName
+            checkCurrentAudioDevice() // check if we are paired to the btclassic device
         }
 
         if let newDeviceAddress = settings["device_address"] as? String,
@@ -1458,6 +1618,9 @@ struct ViewState {
         // Clean up transcriber resources
         transcriber?.shutdown()
         transcriber = nil
+
+        // Clean up LC3 converter
+        lc3Converter = nil
 
         cancellables.removeAll()
     }

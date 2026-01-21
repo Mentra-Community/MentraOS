@@ -3,12 +3,12 @@ import {useState} from "react"
 import {TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
-import {AppPicker} from "@/components/misc/AppPicker"
+import {AppPicker} from "@/components/settings/AppPicker"
 import ToggleSetting from "@/components/settings/ToggleSetting"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ClientAppletInterface} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 interface ButtonSettingsProps {
   enabled: boolean
   selectedApp: string

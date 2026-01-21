@@ -18,10 +18,7 @@ const SkeletonAppDetails = () => {
                 width={80}
                 height={80}
                 sx={{
-                  bgcolor:
-                    theme === "light"
-                      ? "rgba(0, 0, 0, 0.11)"
-                      : "rgba(255, 255, 255, 0.11)",
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                   borderRadius: "20px",
                 }}
               />
@@ -34,10 +31,7 @@ const SkeletonAppDetails = () => {
                   width="80%"
                   height={32}
                   sx={{
-                    bgcolor:
-                      theme === "light"
-                        ? "rgba(0, 0, 0, 0.11)"
-                        : "rgba(255, 255, 255, 0.11)",
+                    bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                     mb: 1,
                   }}
                 />
@@ -48,10 +42,7 @@ const SkeletonAppDetails = () => {
                   width="50%"
                   height={20}
                   sx={{
-                    bgcolor:
-                      theme === "light"
-                        ? "rgba(0, 0, 0, 0.11)"
-                        : "rgba(255, 255, 255, 0.11)",
+                    bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                     mb: 1,
                   }}
                 />
@@ -62,10 +53,7 @@ const SkeletonAppDetails = () => {
                   width="60%"
                   height={16}
                   sx={{
-                    bgcolor:
-                      theme === "light"
-                        ? "rgba(0, 0, 0, 0.11)"
-                        : "rgba(255, 255, 255, 0.11)",
+                    bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                   }}
                 />
               </div>
@@ -81,10 +69,7 @@ const SkeletonAppDetails = () => {
                 width="60%"
                 height={36}
                 sx={{
-                  bgcolor:
-                    theme === "light"
-                      ? "rgba(0, 0, 0, 0.11)"
-                      : "rgba(255, 255, 255, 0.11)",
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                   mb: 2,
                 }}
               />
@@ -95,10 +80,7 @@ const SkeletonAppDetails = () => {
                 width="40%"
                 height={20}
                 sx={{
-                  bgcolor:
-                    theme === "light"
-                      ? "rgba(0, 0, 0, 0.11)"
-                      : "rgba(255, 255, 255, 0.11)",
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                   mb: 2,
                 }}
               />
@@ -110,10 +92,7 @@ const SkeletonAppDetails = () => {
                   width={80}
                   height={28}
                   sx={{
-                    bgcolor:
-                      theme === "light"
-                        ? "rgba(0, 0, 0, 0.11)"
-                        : "rgba(255, 255, 255, 0.11)",
+                    bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                     borderRadius: "14px",
                   }}
                 />
@@ -122,10 +101,7 @@ const SkeletonAppDetails = () => {
                   width={70}
                   height={28}
                   sx={{
-                    bgcolor:
-                      theme === "light"
-                        ? "rgba(0, 0, 0, 0.11)"
-                        : "rgba(255, 255, 255, 0.11)",
+                    bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                     borderRadius: "14px",
                   }}
                 />
@@ -138,10 +114,7 @@ const SkeletonAppDetails = () => {
                   width={200}
                   height={36}
                   sx={{
-                    bgcolor:
-                      theme === "light"
-                        ? "rgba(0, 0, 0, 0.11)"
-                        : "rgba(255, 255, 255, 0.11)",
+                    bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                     borderRadius: "8px",
                   }}
                 />
@@ -150,10 +123,7 @@ const SkeletonAppDetails = () => {
                   width={100}
                   height={36}
                   sx={{
-                    bgcolor:
-                      theme === "light"
-                        ? "rgba(0, 0, 0, 0.11)"
-                        : "rgba(255, 255, 255, 0.11)",
+                    bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                     borderRadius: "8px",
                   }}
                 />
@@ -166,10 +136,7 @@ const SkeletonAppDetails = () => {
               width={140}
               height={140}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                 borderRadius: "28px",
               }}
             />
@@ -182,13 +149,61 @@ const SkeletonAppDetails = () => {
               width="100%"
               height={48}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                 borderRadius: "8px",
               }}
             />
+          </div>
+
+          {/* About this app Section Title - Mobile */}
+          <div className="sm:hidden mb-4">
+            <Skeleton
+              variant="text"
+              width="40%"
+              height={24}
+              sx={{
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+              }}
+            />
+          </div>
+
+          {/* Preview Images Carousel - Mobile */}
+          <div className="sm:hidden mb-6">
+            <div className="flex gap-3 overflow-x-hidden pb-3">
+              {/* Landscape Preview */}
+              <Skeleton
+                variant="rounded"
+                width={498}
+                height={280}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                  borderRadius: "12px",
+                  flexShrink: 0,
+                }}
+              />
+              {/* Portrait Preview */}
+              <Skeleton
+                variant="rounded"
+                width={130}
+                height={280}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                  borderRadius: "12px",
+                  flexShrink: 0,
+                }}
+              />
+              {/* Another Landscape */}
+              <Skeleton
+                variant="rounded"
+                width={498}
+                height={280}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                  borderRadius: "12px",
+                  flexShrink: 0,
+                }}
+              />
+            </div>
           </div>
 
           {/* Description - Mobile */}
@@ -198,10 +213,7 @@ const SkeletonAppDetails = () => {
               width="100%"
               height={20}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                 mb: 1,
               }}
             />
@@ -210,10 +222,7 @@ const SkeletonAppDetails = () => {
               width="90%"
               height={20}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                 mb: 1,
               }}
             />
@@ -222,10 +231,7 @@ const SkeletonAppDetails = () => {
               width="80%"
               height={20}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
               }}
             />
           </div>
@@ -240,10 +246,7 @@ const SkeletonAppDetails = () => {
               width="100%"
               height={60}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                 borderRadius: "12px",
               }}
             />
@@ -252,41 +255,65 @@ const SkeletonAppDetails = () => {
 
         {/* Tab Content - Desktop */}
         <div className="hidden sm:block">
-          {/* Tabs */}
-          <div
-            className="flex gap-8 mb-6 border-b pb-4"
-            style={{
-              borderColor:
-                theme === "light" ? "#E5E7EB" : "rgba(255, 255, 255, 0.1)",
-            }}
-          >
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton
-                key={i}
-                variant="text"
-                width={80}
-                height={24}
-                sx={{
-                  bgcolor:
-                    theme === "light"
-                      ? "rgba(0, 0, 0, 0.11)"
-                      : "rgba(255, 255, 255, 0.11)",
-                }}
-              />
-            ))}
+          {/* About this app Section Title - Desktop */}
+          <div className="mb-6">
+            <Skeleton
+              variant="text"
+              width="25%"
+              height={32}
+              sx={{
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+              }}
+            />
           </div>
 
-          {/* Content */}
-          <div>
+          {/* Preview Images Carousel - Desktop */}
+          <div className="mb-8">
+            <div className="flex gap-4 overflow-x-hidden pb-4">
+              {/* Landscape Preview */}
+              <Skeleton
+                variant="rounded"
+                width={750}
+                height={422}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                  borderRadius: "12px",
+                  flexShrink: 0,
+                }}
+              />
+              {/* Portrait Preview */}
+              <Skeleton
+                variant="rounded"
+                width={195}
+                height={422}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                  borderRadius: "12px",
+                  flexShrink: 0,
+                }}
+              />
+              {/* Another Landscape */}
+              <Skeleton
+                variant="rounded"
+                width={750}
+                height={422}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                  borderRadius: "12px",
+                  flexShrink: 0,
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Description Content - Desktop */}
+          <div className="mb-8">
             <Skeleton
               variant="text"
               width="100%"
               height={20}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                 mb: 1,
               }}
             />
@@ -295,10 +322,7 @@ const SkeletonAppDetails = () => {
               width="95%"
               height={20}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
                 mb: 1,
               }}
             />
@@ -307,12 +331,40 @@ const SkeletonAppDetails = () => {
               width="90%"
               height={20}
               sx={{
-                bgcolor:
-                  theme === "light"
-                    ? "rgba(0, 0, 0, 0.11)"
-                    : "rgba(255, 255, 255, 0.11)",
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
               }}
             />
+          </div>
+
+          {/* Additional Sections */}
+          <div className="space-y-6">
+            <Skeleton
+              variant="text"
+              width="30%"
+              height={28}
+              sx={{
+                bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+              }}
+            />
+            <div>
+              <Skeleton
+                variant="text"
+                width="100%"
+                height={20}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                  mb: 1,
+                }}
+              />
+              <Skeleton
+                variant="text"
+                width="85%"
+                height={20}
+                sx={{
+                  bgcolor: theme === "light" ? "rgba(0, 0, 0, 0.11)" : "rgba(255, 255, 255, 0.11)",
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>

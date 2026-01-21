@@ -5,10 +5,10 @@ import {useSafeAreaInsets} from "react-native-safe-area-context"
 import Icon from "react-native-vector-icons/MaterialIcons"
 
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import socketComms from "@/services/SocketComms"
 import {useDisplayStore} from "@/stores/display"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface SimulatedGlassesControlsProps {}
 

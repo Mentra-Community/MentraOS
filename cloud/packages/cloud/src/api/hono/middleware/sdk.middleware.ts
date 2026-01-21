@@ -94,7 +94,8 @@ export const authenticateSDK: MiddlewareHandler<AppEnv> = async (c, next) => {
       packageName,
       apiKey,
     });
-    c.set("logger", logger.child({ packageName, context: "sdk" }));
+    // Include reqId for request correlation across all logs
+    c.set("logger", logger.child({ packageName, context: "sdk", reqId: c.get("reqId") }));
 
     logger.debug(`SDK auth: Package ${packageName} authenticated`);
     await next();

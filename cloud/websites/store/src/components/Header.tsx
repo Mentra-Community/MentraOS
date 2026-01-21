@@ -1,39 +1,39 @@
-import React from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '@mentra/shared';
-import { usePlatform } from '../hooks/usePlatform';
-import { useTheme } from '../hooks/useTheme';
-import { useIsDesktop, useIsMobile } from '../hooks/useMediaQuery';
-import { useSearch } from '../contexts/SearchContext';
-import { Button } from './ui/button';
-import GetMentraOSButton from './GetMentraOSButton';
-import SearchBar from './SearchBar';
+import React from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { useAuth } from "@mentra/shared";
+import { usePlatform } from "../hooks/usePlatform";
+import { useTheme } from "../hooks/useTheme";
+import { useIsDesktop, useIsMobile } from "../hooks/useMediaQuery";
+import { useSearch } from "../contexts/SearchContext";
+import { Button } from "./ui/button";
+import GetMentraOSButton from "./GetMentraOSButton";
+import SearchBar from "./SearchBar";
 
 interface HeaderProps {
-  onSearch?: (e: React.FormEvent) => void
-  onSearchClear?: () => void
+  onSearch?: (e: React.FormEvent) => void;
+  onSearchClear?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear}) => {
-  const {isAuthenticated, signOut} = useAuth()
-  const {isWebView} = usePlatform()
-  const {theme} = useTheme()
-  const {searchQuery, setSearchQuery} = useSearch()
-  const navigate = useNavigate()
-  const location = useLocation()
-  const isDesktop = useIsDesktop()
-  const isMobile = useIsMobile()
-  const isStorePage = location.pathname === "/"
+const Header: React.FC<HeaderProps> = ({ onSearch, onSearchClear }) => {
+  const { isAuthenticated, signOut } = useAuth();
+  const { isWebView } = usePlatform();
+  const { theme } = useTheme();
+  const { searchQuery, setSearchQuery } = useSearch();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isDesktop = useIsDesktop();
+  const isMobile = useIsMobile();
+  const isStorePage = location.pathname === "/";
 
   // Handle sign out
   const handleSignOut = async () => {
-    await signOut()
-    navigate("/")
-  }
+    await signOut();
+    navigate("/");
+  };
 
   // Don't show header in webview
   if (isWebView) {
-    return null
+    return null;
   }
 
   return (
@@ -56,22 +56,22 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear}) => {
                 className="h-8 w-8"
               />
               <span
-                className="text-[26px] font-light"
+                className="text-[26px] font-semibold"
                 style={{
                   fontFamily: '"Red Hat Display", sans-serif',
                   letterSpacing: "0.06em",
                   color: "var(--text-primary)",
                 }}>
-                Mentra Store
+                Mentra MiniApp Store
               </span>
             </Link>
 
             {/* Buttons container - only visible on mobile/tablet in top row */}
             <div className="flex items-center gap-3 lg:hidden">
               {/* Get MentraOS Button - Only visible on small screens and up */}
-              <div className="hidden sm:block">
+              {/* <div className="hidden sm:block">
                 <GetMentraOSButton size="small" />
-              </div>
+              </div> */}
 
               {/* Authentication */}
               {isAuthenticated ? (
@@ -154,7 +154,7 @@ const Header: React.FC<HeaderProps> = ({onSearch, onSearchClear}) => {
         </div>
       </div>
     </header>
-  )
-}
+  );
+};
 
-export default Header
+export default Header;

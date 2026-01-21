@@ -17,7 +17,7 @@ export function ProgressRing({
   progress,
   size = 40,
   strokeWidth = 3,
-  showPercentage = true,
+  showPercentage = false,
   progressColor,
   style,
 }: ProgressRingProps) {
@@ -62,7 +62,9 @@ export function ProgressRing({
 
       {showPercentage && (
         <View style={$percentageContainer}>
-          <Text style={[$percentageText, {color: theme.colors.text}]}>{Math.round(clampedProgress)}%</Text>
+          <Text style={[$percentageText, {color: progressColor || theme.colors.tint}]}>
+            {Math.round(clampedProgress)}%
+          </Text>
         </View>
       )}
     </View>
@@ -81,6 +83,6 @@ const $percentageContainer: ViewStyle = {
 
 const $percentageText: TextStyle = {
   fontSize: 10,
-  fontWeight: "600",
+  fontWeight: "bold",
   textAlign: "center",
 }

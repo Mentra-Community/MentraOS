@@ -6,9 +6,23 @@
 
 import { Hono } from "hono";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
+
 import appService from "../../../services/core/app.service";
 import UserSession from "../../../services/session/UserSession";
 import type { AppEnv, AppContext } from "../../../types/hono";
+
+// ============================================================================
+// ElevenLabs Default Voice Settings
+// Environment variables take priority, with hardcoded fallbacks
+// ============================================================================
+
+const ELEVENLABS_DEFAULTS = {
+  voiceId: process.env.ELEVENLABS_DEFAULT_VOICE_ID || "8IRrZoKuYTPnpLc6lM6a",
+  speed: parseFloat(process.env.ELEVENLABS_DEFAULT_SPEED || "1.13"),
+  stability: parseFloat(process.env.ELEVENLABS_DEFAULT_STABILITY || "0.68"),
+  similarityBoost: parseFloat(process.env.ELEVENLABS_DEFAULT_SIMILARITY || "0.75"),
+  style: parseFloat(process.env.ELEVENLABS_DEFAULT_STYLE || "0.0"),
+};
 
 const logger = rootLogger.child({ service: "audio.routes" });
 
@@ -140,9 +154,8 @@ async function textToSpeech(c: AppContext) {
       );
     }
 
-    // Get API key and default voice ID from environment
+    // Get API key from environment
     const apiKey = process.env.ELEVENLABS_API_KEY;
-    const defaultVoiceId = process.env.ELEVENLABS_DEFAULT_VOICE_ID;
 
     if (!apiKey) {
       logger.error("ELEVENLABS_API_KEY environment variable not set");
@@ -155,18 +168,8 @@ async function textToSpeech(c: AppContext) {
       );
     }
 
-    // Use provided voice_id or default from environment
-    const voiceId = voiceIdParam || defaultVoiceId;
-
-    if (!voiceId) {
-      return c.json(
-        {
-          success: false,
-          message: "Voice ID is required (either as parameter or ELEVENLABS_DEFAULT_VOICE_ID env var)",
-        },
-        400,
-      );
-    }
+    // Use provided voice_id or default (env var with hardcoded fallback)
+    const voiceId = voiceIdParam || ELEVENLABS_DEFAULTS.voiceId;
 
     // Parse voice_settings if provided
     let parsedVoiceSettings = null;
@@ -185,15 +188,20 @@ async function textToSpeech(c: AppContext) {
       }
     }
 
+    // Build voice settings: use provided settings, or apply defaults
+    const voiceSettings = parsedVoiceSettings || {
+      speed: ELEVENLABS_DEFAULTS.speed,
+      stability: ELEVENLABS_DEFAULTS.stability,
+      similarity_boost: ELEVENLABS_DEFAULTS.similarityBoost,
+      style: ELEVENLABS_DEFAULTS.style,
+    };
+
     // Build request body for ElevenLabs API
     const requestBody: any = {
       text: text,
       model_id: modelId || "eleven_flash_v2_5",
+      voice_settings: voiceSettings,
     };
-
-    if (parsedVoiceSettings) {
-      requestBody.voice_settings = parsedVoiceSettings;
-    }
 
     // Call ElevenLabs API
     const elevenLabsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
@@ -228,7 +236,7 @@ async function textToSpeech(c: AppContext) {
         headers: {
           "Content-Type": "audio/mpeg",
           "Cache-Control": "no-cache",
-          Connection: "keep-alive",
+          "Connection": "keep-alive",
         },
       });
     } else {

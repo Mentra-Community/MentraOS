@@ -3,6 +3,7 @@ import {AppState} from "react-native"
 
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
+import CoreModule from "core"
 
 export function Reconnect() {
   // Add a listener for app state changes to detect when the app comes back from background
@@ -18,7 +19,11 @@ export function Reconnect() {
           return
         }
         // check if we have bluetooth perms in case they got removed:
-        await checkConnectivityRequirementsUI()
+        const requirementsCheck = await checkConnectivityRequirementsUI()
+        if (!requirementsCheck) {
+          return
+        }
+        await CoreModule.connectDefault()
       }
     }
 

@@ -1,6 +1,6 @@
 import CoreModule from "core"
 import {Platform} from "react-native"
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 
 export interface ModelInfo {
   name: string
@@ -166,7 +166,7 @@ class STTModelManager {
           const files = await RNFS.readDir(modelPath)
           console.log(
             `Files in directory:`,
-            files.map(f => f.name),
+            files.map((f) => f.name),
           )
         }
       }

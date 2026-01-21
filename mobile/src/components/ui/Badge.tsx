@@ -1,8 +1,8 @@
 import {View, ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
-import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 
 interface BadgeProps {
   text: string

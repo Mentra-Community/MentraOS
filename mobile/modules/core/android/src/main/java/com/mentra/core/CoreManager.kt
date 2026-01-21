@@ -21,6 +21,7 @@ import com.mentra.core.utils.DeviceTypes
 import com.mentra.core.utils.MicMap
 import com.mentra.core.utils.MicTypes
 import com.mentra.mentra.stt.SherpaOnnxTranscriber
+import com.mentra.lc3Lib.Lc3Cpp
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -61,6 +62,7 @@ class CoreManager {
     // MARK: - Properties
     var coreToken = ""
     var coreTokenOwner = ""
+    var storedUserEmail = ""
     var sgc: SGCManager? = null
 
     // state
@@ -92,9 +94,19 @@ class CoreManager {
     private var alwaysOnStatusBar = false
     private var bypassVad = true
     private var enforceLocalTranscription = false
-    private var bypassAudioEncoding = false
     private var offlineMode = false
     private var metricSystem = false
+
+    // LC3 Audio Encoding
+    // Audio output format enum
+    enum class AudioOutputFormat { LC3, PCM }
+    // Canonical LC3 config: 16kHz sample rate, 10ms frame duration
+    // Frame size is configurable: 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps)
+    private var lc3EncoderPtr: Long = 0
+    private var lc3DecoderPtr: Long = 0
+    private var lc3FrameSize = 20 // bytes per LC3 frame (default: 20 = 16kbps)
+    // Audio output format - defaults to LC3 for bandwidth savings
+    private var audioOutputFormat: AudioOutputFormat = AudioOutputFormat.LC3
 
     // mic
     public var useOnboardMic = false
@@ -152,6 +164,18 @@ class CoreManager {
         } catch (e: Exception) {
             Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
             transcriber = null
+        }
+
+        // Initialize LC3 encoder/decoder for unified audio encoding
+        try {
+            Lc3Cpp.init()
+            lc3EncoderPtr = Lc3Cpp.initEncoder()
+            lc3DecoderPtr = Lc3Cpp.initDecoder()
+            Bridge.log("LC3 encoder/decoder initialized successfully")
+        } catch (e: Exception) {
+            Bridge.log("Failed to initialize LC3 encoder/decoder: ${e.message}")
+            lc3EncoderPtr = 0
+            lc3DecoderPtr = 0
         }
     }
 
@@ -367,10 +391,35 @@ class CoreManager {
         }
     }
 
+    /**
+     * Send audio data to cloud via Bridge.
+     * Encodes to LC3 if audioOutputFormat is LC3, otherwise sends raw PCM.
+     * All audio destined for cloud should go through this function.
+     */
+    private fun sendMicData(pcmData: ByteArray) {
+        when (audioOutputFormat) {
+            AudioOutputFormat.LC3 -> {
+                if (lc3EncoderPtr == 0L) {
+                    Bridge.log("MAN: ERROR - LC3 encoder not initialized but format is LC3")
+                    return
+                }
+                val lc3Data = Lc3Cpp.encodeLC3(lc3EncoderPtr, pcmData, lc3FrameSize)
+                if (lc3Data == null || lc3Data.isEmpty()) {
+                    Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
+                    return
+                }
+                Bridge.sendMicData(lc3Data)
+            }
+            AudioOutputFormat.PCM -> {
+                Bridge.sendMicData(pcmData)
+            }
+        }
+    }
+
     private fun emptyVadBuffer() {
         while (vadBuffer.isNotEmpty()) {
             val chunk = vadBuffer.removeAt(0)
-            Bridge.sendMicData(chunk)
+            sendMicData(chunk) // Uses our encoder, not Bridge directly
         }
     }
 
@@ -382,24 +431,39 @@ class CoreManager {
         }
     }
 
-    fun handleGlassesMicData(rawLC3Data: ByteArray) {
-        // decode the lc3 data to pcm and pass to the bridge to be sent to the server:
-        // TODO: config
+    /**
+     * Handle raw LC3 audio data from glasses.
+     * Decodes the glasses LC3, then passes to handlePcm for canonical LC3 encoding.
+     * Note: frameSize here is for glasses→phone decoding, NOT for phone→cloud encoding.
+     */
+    fun handleGlassesMicData(rawLC3Data: ByteArray, frameSize: Int = 40) {
+        if (lc3DecoderPtr == 0L) {
+            Bridge.log("MAN: LC3 decoder not initialized, cannot process glasses audio")
+            return
+        }
 
+        try {
+            // Decode glasses LC3 to PCM (glasses may use different LC3 configs)
+            val pcmData = Lc3Cpp.decodeLC3(lc3DecoderPtr, rawLC3Data, frameSize)
+            if (pcmData != null && pcmData.isNotEmpty()) {
+                // Re-encode to canonical LC3 via handlePcm
+                handlePcm(pcmData)
+            } else {
+                Bridge.log("MAN: LC3 decode returned empty data")
+            }
+        } catch (e: Exception) {
+            Bridge.log("MAN: Failed to decode glasses LC3: ${e.message}")
+        }
     }
 
     fun handlePcm(pcmData: ByteArray) {
-        // Bridge.log("MAN: handlePcm()")
-
-        // Send PCM to cloud if needed
+        // Send audio to cloud if needed (encoding handled by sendMicData)
         if (shouldSendPcmData) {
-            // Bridge.log("MAN: handlePcm() - sending PCM to cloud")
-            Bridge.sendMicData(pcmData)
+            sendMicData(pcmData)
         }
 
-        // Send PCM to local transcriber if needed
+        // Send PCM to local transcriber (always needs raw PCM)
         if (shouldSendTranscript) {
-            Bridge.log("MAN: handlePcm() - sending PCM to local transcriber")
             transcriber?.acceptAudio(pcmData)
         }
     }
@@ -427,6 +491,7 @@ class CoreManager {
                     }
 
                     if (systemMicUnavailable) {
+                        Bridge.log("MAN: systemMicUnavailable, continuing to next mic")
                         continue
                     }
 
@@ -501,21 +566,21 @@ class CoreManager {
     }
 
     private fun sendCurrentState() {
-        Bridge.log("MAN: sendCurrentState(): $isHeadUp")
+        // Bridge.log("MAN: sendCurrentState(): $isHeadUp")
         if (screenDisabled) {
             return
         }
 
         // executor.execute {
-        val currentViewState =
-                if (isHeadUp) {
-                    viewStates[1]
-                } else {
-                    viewStates[0]
-                }
+        var currentViewState: ViewState
+        if (isHeadUp) {
+            currentViewState = viewStates[1]
+        } else {
+            currentViewState = viewStates[0]
+        }
 
         if (isHeadUp && !contextualDashboard) {
-            return
+            currentViewState = viewStates[0]
         }
 
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) {
@@ -532,7 +597,7 @@ class CoreManager {
         // Cancel any pending clear display work item
         // sendStateWorkItem?.let { mainHandler.removeCallbacks(it) }
 
-        Bridge.log("MAN: parsing layoutType: ${currentViewState.layoutType}")
+        // Bridge.log("MAN: parsing layoutType: ${currentViewState.layoutType}")
 
         when (currentViewState.layoutType) {
             "text_wall" -> sgc?.sendTextWall(currentViewState.text)
@@ -796,8 +861,23 @@ class CoreManager {
         setMicState(shouldSendPcmData, shouldSendTranscript, bypassVad)
     }
 
-    fun updateBypassAudioEncoding(enabled: Boolean) {
-        bypassAudioEncoding = enabled
+    fun updateAudioOutputFormat(format: AudioOutputFormat) {
+        audioOutputFormat = format
+        Bridge.log("Audio output format set to: $format")
+    }
+
+    /**
+     * Set the LC3 frame size for phone→cloud encoding.
+     * Valid values: 20 (16kbps), 40 (32kbps), 60 (48kbps).
+     */
+    fun setLC3FrameSize(frameSize: Int) {
+        if (frameSize != 20 && frameSize != 40 && frameSize != 60) {
+            Bridge.log("MAN: Invalid LC3 frame size $frameSize, must be 20, 40, or 60. Using default 20.")
+            lc3FrameSize = 20
+            return
+        }
+        lc3FrameSize = frameSize
+        Bridge.log("MAN: LC3 frame size set to $frameSize bytes (${frameSize * 800 / 1000}kbps)")
     }
 
     fun updateMetricSystem(enabled: Boolean) {
@@ -963,7 +1043,7 @@ class CoreManager {
         val currentState = viewStates[stateIndex]
 
         if (!statesEqual(currentState, newViewState)) {
-            Bridge.log("MAN: Updating view state $stateIndex with $layoutType")
+            // Bridge.log("MAN: Updating view state $stateIndex with $layoutType")
             viewStates[stateIndex] = newViewState
             if (stateIndex == 0 && !isHeadUp) {
                 sendCurrentState()
@@ -1002,6 +1082,17 @@ class CoreManager {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
+    fun setUserEmail(email: String) {
+        Bridge.log("MAN: Setting user email for crash reporting")
+        storedUserEmail = email
+        sgc?.sendUserEmailToGlasses(email)
+    }
+
+    fun forgetWifiNetwork(ssid: String) {
+        Bridge.log("MAN: Forgetting wifi network: $ssid")
+        sgc?.forgetWifiNetwork(ssid)
+    }
+
     fun setHotspotState(enabled: Boolean) {
         Bridge.log("MAN: Setting glasses hotspot state: $enabled")
         sgc?.sendHotspotState(enabled)
@@ -1010,6 +1101,16 @@ class CoreManager {
     fun queryGalleryStatus() {
         Bridge.log("MAN: Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
+    }
+
+    /**
+     * Send OTA start command to glasses.
+     * Called when user approves an update (onboarding or background mode).
+     * Triggers glasses to begin download and installation.
+     */
+    fun sendOtaStart() {
+        Bridge.log("MAN: 📱 Sending OTA start command to glasses")
+        (sgc as? MentraLive)?.sendOtaStart()
     }
 
     fun startBufferRecording() {
@@ -1098,6 +1199,13 @@ class CoreManager {
     fun connectByName(dName: String) {
         Bridge.log("MAN: Connecting to wearable: $dName")
 
+        var name = dName
+        
+        // use stored device name if available:
+        if (dName.isEmpty() && !deviceName.isEmpty()) {
+            name = deviceName
+        }
+
         if (pendingWearable.isEmpty() && defaultWearable.isEmpty()) {
             Bridge.log("MAN: No pending or default wearable, returning")
             return
@@ -1111,7 +1219,7 @@ class CoreManager {
         disconnect()
         Thread.sleep(100)
         isSearching = true
-        deviceName = dName
+        deviceName = name
 
         initSGC(pendingWearable)
         sgc?.connectById(deviceName)
@@ -1194,6 +1302,7 @@ class CoreManager {
             glassesInfo["connected"] = glassesConnected
             glassesInfo["connectionState"] = sgc.connectionState
             glassesInfo["micEnabled"] = sgc.micEnabled
+            glassesInfo["btcConnected"] = true
         }
 
         if (sgc is G1) {
@@ -1242,10 +1351,7 @@ class CoreManager {
 
         val coreInfo =
                 mapOf(
-                        "default_wearable" to defaultWearable,
-                        "preferred_mic" to preferredMic,
                         "is_searching" to isSearching,
-                        "core_token" to coreToken,
                 )
 
         val apps = emptyList<Any>()
@@ -1455,5 +1561,15 @@ class CoreManager {
         // Clean up transcriber resources
         transcriber?.shutdown()
         transcriber = null
+
+        // Clean up LC3 encoder/decoder
+        if (lc3EncoderPtr != 0L) {
+            Lc3Cpp.freeEncoder(lc3EncoderPtr)
+            lc3EncoderPtr = 0
+        }
+        if (lc3DecoderPtr != 0L) {
+            Lc3Cpp.freeDecoder(lc3DecoderPtr)
+            lc3DecoderPtr = 0
+        }
     }
 }

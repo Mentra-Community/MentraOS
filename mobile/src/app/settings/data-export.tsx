@@ -18,13 +18,12 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAuth} from "@/contexts/AuthContext"
 import {useCoreStatus} from "@/contexts/CoreStatusProvider"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useApplets} from "@/stores/applets"
+import {useSettingsStore} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
-
-import {useSettingsStore} from "@/stores/settings"
 
 export interface UserDataExport {
   metadata: {
@@ -192,7 +191,6 @@ class DataExportService {
     return `mentraos-data-export-${date}.json`
   }
 }
-
 
 export default function DataExportPage() {
   const [exportData, setExportData] = useState<UserDataExport | null>(null)

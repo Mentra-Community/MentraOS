@@ -12,17 +12,9 @@ export const $styles = {
   //   paddingTop: spacing.lg + spacing.xl,
   //   paddingHorizontal: spacing.lg,
   // } as ViewStyle,
-
-  toggleInner: {
-    width: "100%",
-    height: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  } as ViewStyle,
-  screen: {
-    paddingHorizontal: spacing.s6,
-  },
+  // screen: {
+  //   paddingHorizontal: spacing.s6,
+  // },
   scrollView: {
     marginRight: -spacing.s6,
     paddingRight: spacing.s6,

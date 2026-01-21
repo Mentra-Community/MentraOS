@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
+import android.bluetooth.BluetoothA2dp;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
@@ -196,6 +197,10 @@ public class MentraLive extends SGCManager {
     private boolean isBondingReceiverRegistered = false;
     private boolean isBtClassicConnected = false;
     private BroadcastReceiver bondingReceiver;
+
+    // A2DP profile connection for already-bonded devices
+    private BluetoothA2dp a2dpProfile = null;
+    private boolean isA2dpProxyRegistered = false;
 
     private ConcurrentLinkedQueue<byte[]> sendQueue = new ConcurrentLinkedQueue<>();
     private Runnable connectionTimeoutRunnable;
@@ -925,10 +930,11 @@ public class MentraLive extends SGCManager {
 
                     // Check if device is already bonded before attempting to create bond
                     if (connectedDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
-                        Bridge.log("LIVE: CTKD: Device is already bonded - marking audio as connected immediately");
-                        isBtClassicConnected = true;
-                        audioConnected = true;
-                        // Note: We'll mark as CONNECTED after glasses_ready is received
+                        Bridge.log("LIVE: CTKD: Device is already bonded - connecting A2DP audio profile");
+                        // Device is bonded but we need to explicitly connect the A2DP audio profile
+                        // Just being bonded doesn't mean the audio profile is connected
+                        connectA2dpProfile(connectedDevice);
+                        // Note: audioConnected will be set to true once A2DP profile connects
                     } else {
                         createBond(connectedDevice);
                     }
@@ -2021,7 +2027,7 @@ public class MentraLive extends SGCManager {
 
             case "pong":
                 // Process heartbeat pong response
-                Bridge.log("LIVE: 💓 Received pong response - connection healthy");
+                Bridge.log("LIVE: Received pong response - connection healthy");
                 break;
 
             case "imu_response":
@@ -2134,6 +2140,52 @@ public class MentraLive extends SGCManager {
                 Bridge.log("LIVE: Received token status from ASG client: " + (success ? "SUCCESS" : "FAILED"));
                 break;
 
+            case "ota_update_available":
+                // Process OTA update available notification from glasses (background mode)
+                Bridge.log("LIVE: 📱 Received ota_update_available from glasses");
+                try {
+                    long otaVersionCode = json.optLong("version_code", 0);
+                    String otaVersionName = json.optString("version_name", "");
+                    long otaTotalSize = json.optLong("total_size", 0);
+
+                    // Parse updates array
+                    List<String> updates = new ArrayList<>();
+                    if (json.has("updates")) {
+                        JSONArray updatesArray = json.getJSONArray("updates");
+                        for (int i = 0; i < updatesArray.length(); i++) {
+                            updates.add(updatesArray.getString(i));
+                        }
+                    }
+
+                    Bridge.log("LIVE: 📱 OTA available - version: " + otaVersionName +
+                          " (" + otaVersionCode + "), updates: " + updates +
+                          ", size: " + otaTotalSize + " bytes");
+
+                    // Send to React Native
+                    Bridge.sendOtaUpdateAvailable(otaVersionCode, otaVersionName, updates, otaTotalSize);
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error parsing ota_update_available", e);
+                }
+                break;
+
+            case "ota_progress":
+                // Process OTA progress update from glasses
+                String otaStage = json.optString("stage", "download");
+                String otaStatus = json.optString("status", "PROGRESS");
+                int otaProgress = json.optInt("progress", 0);
+                long otaBytesDownloaded = json.optLong("bytes_downloaded", 0);
+                long otaTotalBytes = json.optLong("total_bytes", 0);
+                String otaCurrentUpdate = json.optString("current_update", "apk");
+                String otaErrorMessage = json.optString("error_message", null);
+
+                Bridge.log("LIVE: 📱 OTA progress - " + otaStage + " " + otaStatus +
+                      " " + otaProgress + "% (" + otaCurrentUpdate + ")");
+
+                // Send to React Native
+                Bridge.sendOtaProgress(otaStage, otaStatus, otaProgress,
+                    otaBytesDownloaded, otaTotalBytes, otaCurrentUpdate, otaErrorMessage);
+                break;
+
             case "button_press":
                 // Process button press event
                 String buttonId = json.optString("buttonId", "unknown");
@@ -2238,6 +2290,9 @@ public class MentraLive extends SGCManager {
                 Bridge.log("LIVE: 🔄 Sending coreToken to ASG client");
                 sendCoreTokenToAsgClient();
 
+                // Send stored user email for crash reporting
+                sendStoredUserEmailToAsgClient();
+
                 //startDebugVideoCommandLoop();
 
                 // Start the heartbeat mechanism now that glasses are ready
@@ -2250,7 +2305,8 @@ public class MentraLive extends SGCManager {
                 sendUserSettings();
 
                 // Claim RGB LED control authority
-                sendRgbLedControlAuthority(true);
+                // DISABLED: MentraLive is not supposed to send this command
+                // sendRgbLedControlAuthority(true);
 
                 // Initialize LC3 audio logging now that glasses are ready
                 initializeLc3Logging();
@@ -2729,15 +2785,14 @@ public class MentraLive extends SGCManager {
 
             case "sr_shut":
                 Bridge.log("LIVE: K900 shutdown command received - glasses shutting down");
-                // Mark as killed to prevent reconnection attempts
-                isKilled = true;
-                // Clean disconnect without reconnection
-                if (bluetoothGatt != null) {
-                    Bridge.log("LIVE: Disconnecting from glasses due to shutdown");
-                    bluetoothGatt.disconnect();
-                }
+                // // Mark as killed to prevent reconnection attempts
+                // isKilled = true;
+                // // Clean disconnect without reconnection
+                // if (bluetoothGatt != null) {
+                //     Bridge.log("LIVE: Disconnecting from glasses due to shutdown");
+                //     bluetoothGatt.disconnect();
+                // }
                 // Notify the system that glasses are intentionally disconnected
-                // connectionEvent(SmartGlassesConnectionState.DISCONNECTED);
                 updateConnectionState(ConnTypes.DISCONNECTED);
                 break;
 
@@ -2803,6 +2858,21 @@ public class MentraLive extends SGCManager {
         } catch (JSONException e) {
             Log.e(TAG, "Error creating coreToken JSON message", e);
         }
+    }
+
+    /**
+     * Send stored user email to the ASG client for Sentry crash reporting
+     */
+    private void sendStoredUserEmailToAsgClient() {
+        String storedEmail = CoreManager.Companion.getInstance().getStoredUserEmail();
+
+        if (storedEmail == null || storedEmail.isEmpty()) {
+            Bridge.log("LIVE: No stored user email to send to ASG client");
+            return;
+        }
+
+        Bridge.log("LIVE: Sending stored user email to ASG client");
+        sendUserEmailToGlasses(storedEmail);
     }
 
     /**
@@ -2952,6 +3022,23 @@ public class MentraLive extends SGCManager {
             Bridge.log("LIVE: 📸 Sending gallery status query to glasses");
         } catch (JSONException e) {
             Log.e(TAG, "📸 Error creating gallery status query", e);
+        }
+    }
+
+    /**
+     * Send OTA start command to glasses.
+     * Called when user approves an update (onboarding or background mode).
+     * Triggers glasses to begin download and installation.
+     */
+    public void sendOtaStart() {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "ota_start");
+            json.put("timestamp", System.currentTimeMillis());
+            sendJson(json, true);
+            Bridge.log("LIVE: 📱 Sending ota_start command to glasses");
+        } catch (JSONException e) {
+            Log.e(TAG, "📱 Error creating ota_start command", e);
         }
     }
 
@@ -3661,6 +3748,144 @@ public class MentraLive extends SGCManager {
         return isBtClassicConnected;
     }
 
+    /**
+     * A2DP profile service listener for connecting to already-bonded devices
+     */
+    private final BluetoothProfile.ServiceListener a2dpServiceListener = new BluetoothProfile.ServiceListener() {
+        @Override
+        public void onServiceConnected(int profile, BluetoothProfile proxy) {
+            if (profile == BluetoothProfile.A2DP) {
+                a2dpProfile = (BluetoothA2dp) proxy;
+                Bridge.log("LIVE: A2DP: Profile proxy obtained");
+
+                // Now connect to the device if we have one pending
+                if (connectedDevice != null && connectedDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
+                    connectA2dpWithProxy(connectedDevice);
+                }
+            }
+        }
+
+        @Override
+        public void onServiceDisconnected(int profile) {
+            if (profile == BluetoothProfile.A2DP) {
+                Bridge.log("LIVE: A2DP: Profile proxy disconnected");
+                a2dpProfile = null;
+                isA2dpProxyRegistered = false;  // Reset so we can request a new proxy
+            }
+        }
+    };
+
+    /**
+     * Helper to connect A2DP using the proxy - called from service listener or directly
+     */
+    private void connectA2dpWithProxy(BluetoothDevice device) {
+        if (a2dpProfile == null || device == null) {
+            Bridge.log("LIVE: A2DP: Cannot connect - proxy or device is null");
+            return;
+        }
+
+        try {
+            int state = a2dpProfile.getConnectionState(device);
+            Bridge.log("LIVE: A2DP: Current connection state: " + state);
+
+            if (state == BluetoothProfile.STATE_CONNECTED) {
+                Bridge.log("LIVE: A2DP: Already connected to " + device.getName());
+                markAudioConnected(device.getName());
+            } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
+                Bridge.log("LIVE: A2DP: Connecting to " + device.getName());
+                // Use reflection to call connect() as it's a hidden API
+                Method connectMethod = BluetoothA2dp.class.getMethod("connect", BluetoothDevice.class);
+                boolean result = (Boolean) connectMethod.invoke(a2dpProfile, device);
+                Bridge.log("LIVE: A2DP: Connect initiated, result: " + result);
+
+                // Note: connect() is async. We mark as connected optimistically because:
+                // 1. The device is already bonded, so connection should succeed
+                // 2. Android will handle the actual A2DP connection in the background
+                // 3. If it fails, the user can still use BLE audio (LC3)
+                markAudioConnected(device.getName());
+            } else if (state == BluetoothProfile.STATE_CONNECTING) {
+                Bridge.log("LIVE: A2DP: Already connecting, marking audio as connected");
+                markAudioConnected(device.getName());
+            } else {
+                // STATE_DISCONNECTING - wait and retry
+                Bridge.log("LIVE: A2DP: Device disconnecting, will retry in 500ms");
+                handler.postDelayed(() -> {
+                    if (connectedDevice != null && a2dpProfile != null) {
+                        connectA2dpWithProxy(connectedDevice);
+                    }
+                }, 500);
+            }
+        } catch (Exception e) {
+            Bridge.log("LIVE: A2DP: Error connecting: " + e.getMessage());
+            // Still mark as connected - device is bonded and BLE audio (LC3) will work
+            markAudioConnected(device.getName());
+        }
+    }
+
+    /**
+     * Helper to mark audio as connected and notify
+     */
+    private void markAudioConnected(String deviceName) {
+        isBtClassicConnected = true;
+        audioConnected = true;
+        Bridge.sendAudioConnected(deviceName);
+        if (glassesReadyReceived) {
+            Bridge.log("LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected");
+            updateConnectionState(ConnTypes.CONNECTED);
+        }
+    }
+
+    /**
+     * Connect to A2DP audio profile for an already-bonded device
+     * This is needed because being bonded doesn't automatically connect the audio profile
+     */
+    private void connectA2dpProfile(BluetoothDevice device) {
+        if (device == null) {
+            Bridge.log("LIVE: A2DP: Cannot connect - device is null");
+            return;
+        }
+
+        if (bluetoothAdapter == null) {
+            Bridge.log("LIVE: A2DP: Cannot connect - BluetoothAdapter is null");
+            return;
+        }
+
+        Bridge.log("LIVE: A2DP: Requesting A2DP profile proxy for " + device.getName());
+
+        // If we already have the proxy, try to connect directly
+        if (a2dpProfile != null) {
+            connectA2dpWithProxy(device);
+            return;
+        }
+
+        // Get the A2DP profile proxy
+        if (!isA2dpProxyRegistered) {
+            boolean result = bluetoothAdapter.getProfileProxy(context, a2dpServiceListener, BluetoothProfile.A2DP);
+            if (result) {
+                isA2dpProxyRegistered = true;
+                Bridge.log("LIVE: A2DP: Profile proxy request successful, waiting for callback");
+            } else {
+                Bridge.log("LIVE: A2DP: Failed to get profile proxy, marking audio connected anyway");
+                // Still mark as connected - device is bonded and BLE audio (LC3) will work
+                markAudioConnected(device.getName());
+            }
+        } else {
+            Bridge.log("LIVE: A2DP: Proxy already registered, waiting for callback");
+        }
+    }
+
+    /**
+     * Close the A2DP profile proxy
+     */
+    private void closeA2dpProxy() {
+        if (a2dpProfile != null && bluetoothAdapter != null) {
+            Bridge.log("LIVE: A2DP: Closing profile proxy");
+            bluetoothAdapter.closeProfileProxy(BluetoothProfile.A2DP, a2dpProfile);
+            a2dpProfile = null;
+        }
+        isA2dpProxyRegistered = false;
+    }
+
     public void destroy() {
         Bridge.log("LIVE: Destroying MentraLiveSGC");
 
@@ -3675,6 +3900,9 @@ public class MentraLive extends SGCManager {
 
         // CTKD Implementation: Unregister bonding receiver
         unregisterBondingReceiver();
+
+        // Close A2DP profile proxy
+        closeA2dpProxy();
 
         // CTKD Implementation: Disconnect BT per documentation
         if (connectedDevice != null) {
@@ -3708,9 +3936,10 @@ public class MentraLive extends SGCManager {
         Bridge.log("LIVE: Cleared pending message tracking");
 
         // Release RGB LED control authority before disconnecting
-        if (rgbLedAuthorityClaimed) {
-            sendRgbLedControlAuthority(false);
-        }
+        // DISABLED: MentraLive is not supposed to send this command
+        // if (rgbLedAuthorityClaimed) {
+        //     sendRgbLedControlAuthority(false);
+        // }
 
         // Disconnect from GATT if connected
         if (bluetoothGatt != null) {
@@ -3910,6 +4139,11 @@ public class MentraLive extends SGCManager {
             String jsonStr = cmd.toString();
             Bridge.log("LIVE: Sending hrt command: " + jsonStr);
             byte[] packedData = K900ProtocolUtils.packDataToK900(jsonStr.getBytes(StandardCharsets.UTF_8), K900ProtocolUtils.CMD_TYPE_STRING);
+            
+            // Send this 3 times to ensure this gets through, since we don't get ACK from BES.
+            // Kind of hacky but works for now.
+            queueData(packedData);
+            queueData(packedData);
             queueData(packedData);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating enable_custom_audio_tx command", e);
@@ -4436,6 +4670,24 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    /**
+     * Forget a WiFi network on the glasses - removes cached credentials
+     * This sends the SSID so the K900 SystemUI can properly clear the cached credentials
+     */
+    @Override
+    public void forgetWifiNetwork(String ssid) {
+        Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: " + ssid);
+
+        try {
+            JSONObject wifiCommand = new JSONObject();
+            wifiCommand.put("type", "forget_wifi");
+            wifiCommand.put("ssid", ssid);
+            sendJson(wifiCommand, true);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating WiFi forget JSON", e);
+        }
+    }
+
     public void sendHotspotState(boolean enabled) {
         Bridge.log("LIVE: 🔥 Sending hotspot state to glasses - enabled: " + enabled);
         try {
@@ -4447,6 +4699,31 @@ public class MentraLive extends SGCManager {
             Bridge.log("LIVE: 🔥 ✅ Hotspot state command sent successfully");
         } catch (JSONException e) {
             Log.e(TAG, "🔥 💥 Error creating hotspot state JSON", e);
+        }
+    }
+
+    /**
+     * Sends user email to glasses for crash reporting identification
+     *
+     * @param email The user's email address
+     */
+    @Override
+    public void sendUserEmailToGlasses(String email) {
+        Bridge.log("LIVE: Sending user email to glasses for crash reporting");
+
+        if (email == null || email.isEmpty()) {
+            Log.w(TAG, "Cannot send user email - email is empty");
+            return;
+        }
+
+        try {
+            JSONObject emailCommand = new JSONObject();
+            emailCommand.put("type", "user_email");
+            emailCommand.put("email", email);
+            sendJson(emailCommand, true);
+            Log.d(TAG, "User email sent to glasses successfully");
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating user email JSON", e);
         }
     }
 
@@ -5348,27 +5625,9 @@ public class MentraLive extends SGCManager {
 
             // Bridge.log("LIVE: Received LC3 audio packet seq=" + sequenceNumber + ", size=" + lc3Data.length);
 
-            // Decode LC3 to PCM and forward to audio processing system
-            // if (audioProcessingCallback != null) {
-            if (lc3DecoderPtr != 0) {
-                // Decode LC3 to PCM using the native decoder with Mentra Live frame size
-                byte[] pcmData = Lc3Cpp.decodeLC3(lc3DecoderPtr, lc3Data, LC3_FRAME_SIZE);
-
-                if (pcmData != null && pcmData.length > 0) {
-                    // Forward PCM data to CoreManager which handles:
-                    // 1. Sending to server (if shouldSendPcmData = true)
-                    // 2. Local transcription (if shouldSendTranscript = true)
-                    // See CoreManager.handlePcm() for routing logic
-                    var m = CoreManager.getInstance();
-                    m.handlePcm(pcmData);
-                    // Bridge.log("LIVE: 🎤 Decoded LC3→PCM: " + lc3Data.length + "→" + pcmData.length + " bytes, forwarded to CoreManager");
-                } else {
-                    // Log.e(TAG, "❌ Failed to decode LC3 data to PCM - got null or empty result");
-                }
-            } else {
-                Log.e(TAG, "❌ LC3 decoder not initialized - cannot decode to PCM");
-
-            }
+            // Forward raw LC3 to CoreManager (matches iOS behavior)
+            // MentraLive uses 40-byte LC3 frames
+            CoreManager.getInstance().handleGlassesMicData(lc3Data, LC3_FRAME_SIZE);
 
             // Bridge.log("LIVE: 🔊 Audio playback enabled: " + audioPlaybackEnabled);
         // } else {

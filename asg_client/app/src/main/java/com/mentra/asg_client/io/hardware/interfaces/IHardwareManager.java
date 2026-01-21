@@ -108,6 +108,26 @@ public interface IHardwareManager {
     void shutdown();
 
     // ============================================
+    // Battery Status
+    // ============================================
+
+    /**
+     * Get the current battery level.
+     * On K900 devices, this may query BES if cache is stale (>2 min), with 50ms timeout.
+     * On standard Android devices, uses BatteryManager API directly.
+     * @return Battery level percentage (0-100), or -1 if unknown
+     */
+    int getBatteryLevel();
+
+    /**
+     * Get the current charging status.
+     * On K900 devices, this may query BES if cache is stale (>2 min), with 50ms timeout.
+     * On standard Android devices, uses BatteryManager API directly.
+     * @return true if charging, false if not charging or unknown
+     */
+    boolean getChargingStatus();
+
+    // ============================================
     // MTK LED Brightness Control
     // ============================================
 

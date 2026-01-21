@@ -1,29 +1,29 @@
 import CoreModule from "core"
-import {router} from "expo-router"
 
 import {push} from "@/contexts/NavigationRef"
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import livekit from "@/services/Livekit"
 import mantle from "@/services/MantleManager"
-import udpAudioService, {fnv1aHash} from "@/services/UdpAudioService"
-import wsManager from "@/services/WebSocketManager"
+import udp from "@/services/UdpManager"
+import ws from "@/services/WebSocketManager"
 import {useAppletStatusStore} from "@/stores/applets"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import restComms from "@/services/RestComms"
 
 class SocketComms {
   private static instance: SocketComms | null = null
-  private ws = wsManager
   private coreToken: string = ""
   public userid: string = ""
-  private udpAudioEnabled = false
-
+  
   private constructor() {
-    // Subscribe to WebSocket messages
-    this.ws.on("message", message => {
+  }
+
+  private setupListeners() {
+    ws.removeAllListeners("message")
+    ws.on("message", message => {
       this.handle_message(message)
     })
   }
@@ -37,33 +37,34 @@ class SocketComms {
   }
 
   public cleanup() {
-    // Cleanup WebSocket
-    this.ws.cleanup()
-
-    // Reset instance
-    SocketComms.instance = null
+    console.log("SOCKET: cleanup()")
+    udp.cleanup()
+    ws.cleanup()
   }
 
   // Connection Management
 
-  private async connectWebsocket() {
+  public async connectWebsocket() {
     console.log("SOCKET: connectWebsocket()")
+    this.setupListeners()
     const url = useSettingsStore.getState().getWsUrl()
     if (!url) {
       console.error(`SOCKET: Invalid server URL`)
       return
     }
-    this.ws.connect(url, this.coreToken)
+    ws.connect(url, this.coreToken)
   }
 
   public isWebSocketConnected(): boolean {
-    return this.ws.isConnected()
+    return ws.isConnected()
   }
 
-  public prestartConnection() {
-    console.log(`SOCKET: restartConnection`)
-    if (this.ws.isConnected()) {
-      this.ws.disconnect()
+  public restartConnection() {
+    console.log(`SOCKET: restartConnection()`)
+    if (ws.isConnected()) {
+      ws.disconnect()
+      this.connectWebsocket()
+    } else {
       this.connectWebsocket()
     }
   }
@@ -73,7 +74,7 @@ class SocketComms {
     this.coreToken = coreToken
     this.userid = userid
     useSettingsStore.getState().setSetting(SETTINGS.core_token.key, coreToken)
-    this.connectWebsocket()
+    // this.connectWebsocket()
   }
 
   public sendAudioPlayResponse(requestId: string, success: boolean, error: string | null, duration: number | null) {
@@ -84,13 +85,13 @@ class SocketComms {
       error: error,
       duration: duration,
     }
-    this.ws.sendText(JSON.stringify(msg))
+    ws.sendText(JSON.stringify(msg))
   }
 
   public sendRtmpStreamStatus(statusMessage: any) {
     try {
       // Forward the status message directly since it's already in the correct format
-      this.ws.sendText(JSON.stringify(statusMessage))
+      ws.sendText(JSON.stringify(statusMessage))
       console.log("SOCKET: Sent RTMP stream status:", statusMessage)
     } catch (error) {
       console.log(`SOCKET: Failed to send RTMP stream status: ${error}`)
@@ -100,7 +101,7 @@ class SocketComms {
   public sendKeepAliveAck(ackMessage: any) {
     try {
       // Forward the ACK message directly since it's already in the correct format
-      this.ws.sendText(JSON.stringify(ackMessage))
+      ws.sendText(JSON.stringify(ackMessage))
       console.log("SOCKET: Sent keep-alive ACK:", ackMessage)
     } catch (error) {
       console.log(`SOCKET: Failed to send keep-alive ACK: ${error}`)
@@ -119,7 +120,7 @@ class SocketComms {
 
     const connected = glassesInfo.connected
 
-    this.ws.sendText(
+    ws.sendText(
       JSON.stringify({
         type: "glasses_connection_state",
         modelName: modelName,
@@ -139,12 +140,12 @@ class SocketComms {
       charging: charging,
       timestamp: Date.now(),
     }
-    this.ws.sendText(JSON.stringify(msg))
+    ws.sendText(JSON.stringify(msg))
   }
 
   public sendText(text: string) {
     try {
-      this.ws.sendText(text)
+      ws.sendText(text)
     } catch (error) {
       console.log(`SOCKET: Failed to send text: ${error}`)
     }
@@ -152,7 +153,7 @@ class SocketComms {
 
   public sendBinary(data: ArrayBuffer | Uint8Array) {
     try {
-      this.ws.sendBinary(data)
+      ws.sendBinary(data)
     } catch (error) {
       console.log(`SOCKET: Failed to send binary: ${error}`)
     }
@@ -169,7 +170,7 @@ class SocketComms {
     }
 
     const jsonString = JSON.stringify(vadMsg)
-    this.ws.sendText(jsonString)
+    ws.sendText(jsonString)
   }
 
   public sendLocationUpdate(lat: number, lng: number, accuracy?: number, correlationId?: string) {
@@ -190,7 +191,7 @@ class SocketComms {
       }
 
       const jsonString = JSON.stringify(event)
-      this.ws.sendText(jsonString)
+      ws.sendText(jsonString)
     } catch (error) {
       console.log(`SOCKET: Error building location_update JSON: ${error}`)
     }
@@ -207,7 +208,7 @@ class SocketComms {
       }
 
       const jsonString = JSON.stringify(event)
-      this.ws.sendText(jsonString)
+      ws.sendText(jsonString)
     } catch (error) {
       console.log(`SOCKET: Error building button_press JSON: ${error}`)
     }
@@ -223,7 +224,7 @@ class SocketComms {
       }
 
       const jsonString = JSON.stringify(event)
-      this.ws.sendText(jsonString)
+      ws.sendText(jsonString)
     } catch (error) {
       console.log(`SOCKET: Error building photo_response JSON: ${error}`)
     }
@@ -239,7 +240,7 @@ class SocketComms {
       }
 
       const jsonString = JSON.stringify(event)
-      this.ws.sendText(jsonString)
+      ws.sendText(jsonString)
     } catch (error) {
       console.log(`SOCKET: Error building video_stream_response JSON: ${error}`)
     }
@@ -253,7 +254,7 @@ class SocketComms {
         gesture_name: event.gesture_name,
         timestamp: event.timestamp,
       }
-      this.ws.sendText(JSON.stringify(payload))
+      ws.sendText(JSON.stringify(payload))
     } catch (error) {
       console.log(`SOCKET: Error sending touch_event: ${error}`)
     }
@@ -266,7 +267,7 @@ class SocketComms {
         enabled,
         timestamp,
       }
-      this.ws.sendText(JSON.stringify(payload))
+      ws.sendText(JSON.stringify(payload))
     } catch (error) {
       console.log(`SOCKET: Error sending swipe_volume_status: ${error}`)
     }
@@ -280,7 +281,7 @@ class SocketComms {
         switch_value: switchValue,
         timestamp,
       }
-      this.ws.sendText(JSON.stringify(payload))
+      ws.sendText(JSON.stringify(payload))
     } catch (error) {
       console.log(`SOCKET: Error sending switch_status: ${error}`)
     }
@@ -300,7 +301,7 @@ class SocketComms {
       if (errorMessage) {
         payload.error = errorMessage
       }
-      this.ws.sendText(JSON.stringify(payload))
+      ws.sendText(JSON.stringify(payload))
     } catch (error) {
       console.log(`SOCKET: Error sending rgb_led_control_response: ${error}`)
     }
@@ -315,14 +316,14 @@ class SocketComms {
       }
 
       const jsonString = JSON.stringify(event)
-      this.ws.sendText(jsonString)
+      ws.sendText(jsonString)
     } catch (error) {
       console.log(`SOCKET: Error sending head position: ${error}`)
     }
   }
 
   public sendLocalTranscription(transcription: any) {
-    if (!this.ws.isConnected()) {
+    if (!ws.isConnected()) {
       console.log("Cannot send local transcription: WebSocket not connected")
       return
     }
@@ -335,7 +336,7 @@ class SocketComms {
 
     try {
       const jsonString = JSON.stringify(transcription)
-      this.ws.sendText(jsonString)
+      ws.sendText(jsonString)
 
       const isFinal = transcription.isFinal || false
       console.log(`SOCKET: Sent ${isFinal ? "final" : "partial"} transcription: '${text}'`)
@@ -346,131 +347,123 @@ class SocketComms {
 
   // MARK: - UDP Audio Methods
 
-  /**
-   * Register this user for UDP audio with the server and probe availability.
-   * Uses the React Native UDP service (react-native-udp) instead of native modules.
-   * UDP endpoint is provided by server in the connection_ack message.
-   *
-   * Flow:
-   * 1. Configure UDP service with host, port, userId (from connection_ack)
-   * 2. Send registration to server via WebSocket (so server knows our hash for routing)
-   * 3. Probe UDP with multiple pings (UDP is lossy, single ping unreliable)
-   * 4. Wait for WebSocket ack from server
-   * 5. If ack received, enable UDP audio; otherwise fallback to WebSocket/LiveKit
-   *
-   * @param udpHost UDP server host (provided by server in connection_ack)
-   * @param udpPort UDP server port (default 8000)
-   */
-  public async registerUdpAudio(udpHost: string, udpPort: number = 8000): Promise<boolean> {
-    try {
-      console.log(`UDP: Using server-provided endpoint ${udpHost}:${udpPort}`)
-
-      // Configure the React Native UDP service
-      udpAudioService.configure(udpHost, udpPort, this.userid)
-
-      // Get the hash from the service (uses UTF-8 encoding, matches Go/server)
-      const userIdHash = udpAudioService.getUserIdHash()
-
-      // Send registration to server via WebSocket (so server knows our hash for routing)
-      const msg = {
-        type: "udp_register",
-        userIdHash: userIdHash,
-      }
-      this.ws.sendText(JSON.stringify(msg))
-      console.log(`UDP: Sent registration with hash ${userIdHash}`)
-
-      // Probe UDP with multiple retries (UDP is lossy, single ping unreliable)
-      // probeWithRetries sends 3 pings at 200ms intervals, times out at 2000ms
-      const udpAvailable = await udpAudioService.probeWithRetries(2000)
-
-      if (udpAvailable) {
-        console.log("UDP: Probe successful - UDP audio enabled")
-        this.udpAudioEnabled = true
-        return true
-      } else {
-        console.log("UDP: Probe failed - stopping UDP service, using WebSocket fallback")
-        // CRITICAL: Stop the UDP service when probe fails to prevent audio loss
-        // This fixes issue #1: native sender not stopped on probe failure
-        udpAudioService.stop()
-        this.udpAudioEnabled = false
-        return false
-      }
-    } catch (error) {
-      console.log(`UDP: Registration error: ${error}`)
-      // Ensure UDP is stopped on any error
-      udpAudioService.stop()
-      this.udpAudioEnabled = false
-      return false
-    }
-  }
-
-  /**
-   * Unregister UDP audio and fall back to WebSocket/LiveKit.
-   */
-  public async unregisterUdpAudio(): Promise<void> {
-    try {
-      if (this.udpAudioEnabled) {
-        // Send unregister message
-        const userIdHash = fnv1aHash(this.userid)
-        const msg = {
-          type: "udp_unregister",
-          userIdHash: userIdHash,
-        }
-        this.ws.sendText(JSON.stringify(msg))
-
-        // Stop UDP service
-        udpAudioService.stop()
-        this.udpAudioEnabled = false
-        console.log("UDP: Audio disabled")
-      }
-    } catch (error) {
-      console.log(`UDP: Unregister error: ${error}`)
-    }
-  }
 
   /**
    * Check if UDP audio is currently enabled.
    */
-  public isUdpAudioEnabled(): boolean {
-    return this.udpAudioEnabled
-  }
-
-  /**
-   * Get the UDP audio service instance for sending audio data.
-   * Returns the service if UDP is enabled, null otherwise.
-   */
-  public getUdpAudioService(): typeof udpAudioService | null {
-    return this.udpAudioEnabled ? udpAudioService : null
+  public udpEnabledAndReady(): boolean {
+    return udp.enabledAndReady()
   }
 
   // message handlers, these should only ever be called from handle_message / the server:
   private async handle_connection_ack(msg: any) {
-    console.log("SOCKET: connection ack, connecting to livekit")
-    const isChina = await useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
-    if (!isChina) {
-      await livekit.connect()
-    }
+    // LiveKit connection disabled - using WebSocket/UDP audio instead
+    // const isChina = await useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+    // if (!isChina) {
+    //   await livekit.connect()
+    // }
+
+    // refresh the mini app list:
+    restComms.getApplets()
+
+    // Configure audio format (LC3) for bandwidth savings
+    // This tells the cloud that we're sending LC3-encoded audio
+    this.configureAudioFormat().catch(err => {
+      console.log("SOCKET: Audio format configuration failed (cloud will expect PCM):", err)
+    })
 
     // Try to register for UDP audio (non-blocking)
     // UDP endpoint is provided by server in connection_ack message
     const udpHost = msg.udpHost || msg.udp_host
     const udpPort = msg.udpPort || msg.udp_port || 8000
 
+    console.log("SOCKET: connection_ack UDP fields:", {
+      udpHost: msg.udpHost,
+      udp_host: msg.udp_host,
+      udpPort: msg.udpPort,
+      udp_port: msg.udp_port,
+      resolvedHost: udpHost,
+      resolvedPort: udpPort,
+      allKeys: Object.keys(msg),
+    })
+
     if (udpHost) {
-      this.registerUdpAudio(udpHost, udpPort).catch(err => {
-        console.log("SOCKET: UDP registration failed (will use WebSocket fallback):", err)
-      })
+      console.log(`SOCKET: UDP endpoint found, configuring with ${udpHost}:${udpPort}`)
+      udp.configure(udpHost, udpPort, this.userid)
+      udp.handleAck()
     } else {
-      console.log("SOCKET: No UDP endpoint in connection_ack, skipping UDP audio")
+      console.log("SOCKET: No UDP endpoint in connection_ack, skipping UDP audio. Full message:", JSON.stringify(msg, null, 2))
     }
 
-    GlobalEventEmitter.emit("APP_STATE_CHANGE", msg)
+  }
+
+  /**
+   * Public method to reconfigure audio format.
+   * Called when user changes LC3 bitrate setting to apply immediately.
+   */
+  async reconfigureAudioFormat(): Promise<void> {
+    return this.configureAudioFormat()
+  }
+
+  /**
+   * Configure audio format with the cloud server.
+   * Tells the server we're sending LC3-encoded audio.
+   * Uses canonical LC3 config: 16kHz, 10ms frame duration.
+   * Frame size is configurable: 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps).
+   */
+  private async configureAudioFormat(): Promise<void> {
+    const backendUrl = useSettingsStore.getState().getSetting(SETTINGS.backend_url.key)
+    const coreToken = useSettingsStore.getState().getSetting(SETTINGS.core_token.key)
+    const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key) || 20
+
+    if (!backendUrl || !coreToken) {
+      console.log("SOCKET: Cannot configure audio format - missing backend URL or token")
+      return
+    }
+
+    // Configure the native encoder frame size first
+    try {
+      await CoreModule.setLC3FrameSize(frameSizeBytes)
+      console.log(`SOCKET: Native LC3 encoder configured to ${frameSizeBytes} bytes/frame`)
+    } catch (err) {
+      console.error("SOCKET: Failed to configure native LC3 encoder:", err)
+      // Continue anyway - cloud config is more important
+    }
+
+    try {
+      const response = await fetch(`${backendUrl}/api/client/audio/configure`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${coreToken}`,
+        },
+        body: JSON.stringify({
+          format: "lc3",
+          lc3Config: {
+            sampleRate: 16000,
+            frameDurationMs: 10,
+            frameSizeBytes: frameSizeBytes,
+          },
+        }),
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        console.error("SOCKET: Failed to configure audio format:", response.status, text)
+        return
+      }
+
+      const result = await response.json()
+      console.log(`SOCKET: Audio format configured successfully: ${result.format}, ${frameSizeBytes} bytes/frame`)
+    } catch (error) {
+      console.error("SOCKET: Error configuring audio format:", error)
+      throw error
+    }
   }
 
   private handle_app_state_change(msg: any) {
-    // console.log("SOCKET: app state change", msg)
-    // this.parse_app_list(msg)
-    GlobalEventEmitter.emit("APP_STATE_CHANGE", msg)
+    console.log("SOCKET: app_state_change", msg)
+    useAppletStatusStore.getState().refreshApplets()
   }
 
   private handle_connection_error(msg: any) {
@@ -482,9 +475,10 @@ class SocketComms {
   }
 
   private handle_microphone_state_change(msg: any) {
-    const bypassVad = msg.bypassVad ?? true
+    // const bypassVad = msg.bypassVad ?? true
+    const bypassVad = true
     const requiredDataStrings = msg.requiredData || []
-    // console.log(`SOCKET: requiredData = ${requiredDataStrings}, bypassVad = ${bypassVad}`)
+    console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}], bypassVad = ${bypassVad}`)
     let shouldSendPcmData = false
     let shouldSendTranscript = false
     if (requiredDataStrings.includes("pcm")) {
@@ -554,7 +548,7 @@ class SocketComms {
     const size = msg.size ?? "medium"
     const authToken = msg.authToken ?? ""
     const compress = msg.compress ?? "none"
-    const silent = msg.silent ?? false
+    const silent = msg.silent ?? true
     console.log(
       `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} silent: ${silent}`,
     )
@@ -639,7 +633,6 @@ class SocketComms {
 
   private handle_show_wifi_setup(msg: any) {
     const reason = msg.reason || "This operation requires your glasses to be connected to WiFi."
-    const currentRoute = router.pathname || "/"
 
     showAlert(
       "WiFi Setup Required",
@@ -649,8 +642,7 @@ class SocketComms {
         {
           text: "Setup WiFi",
           onPress: () => {
-            const returnTo = encodeURIComponent(currentRoute)
-            push(`/pairing/glasseswifisetup?returnTo=${returnTo}`)
+            push("/wifi/scan")
           },
         },
       ],
@@ -666,10 +658,10 @@ class SocketComms {
    * This is sent via WebSocket when the Go bridge receives our UDP ping.
    */
   private handle_udp_ping_ack(_msg: any) {
-    console.log("UDP: Received ping ack from server")
+    // console.log("UDP: Received ping ack from server")
 
     // Notify the React Native UDP service that ping was acknowledged
-    udpAudioService.onPingAckReceived()
+    udp.onPingAckReceived()
   }
 
   /**
@@ -716,7 +708,7 @@ class SocketComms {
   private handle_message(msg: any) {
     const type = msg.type
 
-    console.log(`SOCKET: msg: ${type}`)
+    // console.log(`SOCKET: msg: ${type}`)
 
     switch (type) {
       case "connection_ack":

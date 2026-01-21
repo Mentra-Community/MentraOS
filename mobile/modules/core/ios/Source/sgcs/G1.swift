@@ -352,7 +352,11 @@ class G1: NSObject, SGCManager {
 
     func sendWifiCredentials(_: String, _: String) {}
 
+    func forgetWifiNetwork(_: String) {}
+
     func sendHotspotState(_: Bool) {}
+
+    func sendUserEmailToGlasses(_: String) {}
 
     func queryGalleryStatus() {}
 

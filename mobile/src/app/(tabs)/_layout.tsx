@@ -3,9 +3,9 @@ import {Pressable, TextStyle, View, ViewStyle} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 
 import {Icon, IconTypes, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 type TabButtonProps = TabTriggerSlotProps & {
   iconName: IconTypes
@@ -31,7 +31,8 @@ export default function Layout() {
       }
     }
     const textColor = isFocused ? theme.colors.secondary_foreground : theme.colors.muted_foreground
-    const backgroundColor = isFocused ? theme.colors.primary : "transparent"
+    const bottomBarColor = theme.colors.primary_foreground + "01"
+    const backgroundColor = isFocused ? theme.colors.primary : bottomBarColor
     const displayIcon = isFocused ? iconNameFilled : iconName
     return (
       <Pressable {...props} style={[themed($tabButton), {marginBottom: bottom}]}>

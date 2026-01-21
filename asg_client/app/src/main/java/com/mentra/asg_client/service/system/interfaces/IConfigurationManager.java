@@ -30,7 +30,32 @@ public interface IConfigurationManager {
      * @return true if core token exists, false otherwise
      */
     boolean hasCoreToken();
-    
+
+    /**
+     * Save user email to persistent storage
+     * @param email The user email to save
+     * @return true if saved successfully, false otherwise
+     */
+    boolean saveUserEmail(String email);
+
+    /**
+     * Retrieve user email from persistent storage
+     * @return The saved user email, or null if not found
+     */
+    String getUserEmail();
+
+    /**
+     * Clear user email from persistent storage
+     * @return true if cleared successfully, false otherwise
+     */
+    boolean clearUserEmail();
+
+    /**
+     * Check if user email exists
+     * @return true if user email exists, false otherwise
+     */
+    boolean hasUserEmail();
+
     /**
      * Save any configuration value
      * @param key Configuration key

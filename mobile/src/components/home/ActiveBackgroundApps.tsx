@@ -1,15 +1,14 @@
 import {ImageStyle, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
-import AppIcon from "@/components/misc/AppIcon"
+import AppIcon from "@/components/home/AppIcon"
 import {Badge} from "@/components/ui"
 import {Group} from "@/components/ui/Group"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ClientAppletInterface, useBackgroundApps, useStopApplet} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
-
 
 export const ActiveBackgroundApps: React.FC = () => {
   const {themed, theme} = useAppTheme()

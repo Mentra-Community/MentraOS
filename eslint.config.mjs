@@ -119,24 +119,8 @@ export default defineConfig([
           ],
         },
       ],
-      "import/order": [
-        "error",
-        {
-          "groups": ["builtin", "external", "internal", "parent", "sibling", "index"],
-          "pathGroups": [
-            {
-              pattern: "@/**",
-              group: "internal",
-              position: "before",
-            },
-          ],
-          "pathGroupsExcludedImportTypes": ["builtin"],
-          "newlines-between": "always",
-          "alphabetize": {
-            order: "asc",
-          },
-        },
-      ],
+      // Disabled: import/order causes mass file changes across PRs
+      // "import/order": "off",
     },
   },
 

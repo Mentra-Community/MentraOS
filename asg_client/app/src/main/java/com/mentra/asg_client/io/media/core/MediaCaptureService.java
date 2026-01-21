@@ -19,6 +19,7 @@ import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
+import com.mentra.asg_client.io.storage.StorageManager;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -426,6 +427,18 @@ public class MediaCaptureService {
     }
 
     /**
+     * Play storage full sound to alert user.
+     */
+    public void playStorageFullSound() {
+        if (hardwareManager != null && hardwareManager.supportsAudioPlayback()) {
+            hardwareManager.playAudioAsset(AudioAssets.STORAGE_FULL);
+            Log.d(TAG, "💾 Playing storage full sound");
+        } else {
+            Log.w(TAG, "⚠️ Cannot play storage full sound - hardware manager not available");
+        }
+    }
+
+    /**
      * Set or update the StateManager reference.
      * Used when StateManager is initialized after MediaCaptureService creation.
      */
@@ -462,8 +475,10 @@ public class MediaCaptureService {
             return;
         }
 
-        Log.d(TAG, "📸 Flashing privacy LED synchronized with shutter sound");
-        hardwareManager.flashRecordingLed(1000); // 1000ms flash duration
+        Log.d(TAG, "📸 Flashing privacy LED synchronized with shutter sound at 50% brightness");
+        // TODO: RESTORE LOWER LED BRIGHTNESS LATER
+        // hardwareManager.setRecordingLedBrightness(50, 1000); // 50% brightness, 1000ms flash duration
+        hardwareManager.flashRecordingLed(1000);
     }
     
     /**
@@ -473,7 +488,7 @@ public class MediaCaptureService {
         Log.i(TAG, "📸 triggerPhotoFlashLed() called");
 
         if (hardwareManager != null && hardwareManager.supportsRgbLed()) {
-            hardwareManager.flashRgbLedWhite(2200); // 5 second flash
+            hardwareManager.flashRgbLedWhite(1000); // 5 second flash
             Log.i(TAG, "📸 Photo flash LED (white) triggered via hardware manager");
         } else {
             Log.w(TAG, "⚠️ RGB LED not supported on this device");
@@ -705,10 +720,15 @@ public class MediaCaptureService {
                     // Start battery monitoring on main thread (callback runs on background thread)
                     new Handler(Looper.getMainLooper()).post(() -> startBatteryMonitoring());
 
-                    // Turn on recording LED if enabled
-                    if (enableLed && hardwareManager.supportsRecordingLed()) {
+                    // Turn on recording flash LED if enabled with controlled brightness
+                    if (enableLed && hardwareManager.supportsLedBrightness()) {
+                        // TODO: RESTORE LOWER LED BRIGHTNESS LATER
+                        //hardwareManager.setRecordingLedBrightness(50); // 50% brightness for video
                         hardwareManager.setRecordingLedOn();
-                        Log.d(TAG, "Recording LED turned ON");
+                        Log.d(TAG, "Recording flash LED turned ON at 50% brightness");
+                    } else if (enableLed && hardwareManager.supportsRecordingLed()) {
+                        hardwareManager.setRecordingLedOn();
+                        Log.d(TAG, "Recording flash LED turned ON (full brightness)");
                     }
 
                     // Notify listener
@@ -1105,14 +1125,21 @@ public class MediaCaptureService {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for local photo");
         }
 
-        // Note: No need to check CameraNeo.isCameraInUse() for photos
-        // The camera's keep-alive system handles rapid photo taking gracefully
-
-        // Check storage availability before taking photo
-        if (!isExternalStorageAvailable()) {
-            Log.e(TAG, "External storage is not available for photo capture");
+        // STORAGE CHECK: Reject if insufficient storage
+        StorageManager storageManager = StorageManager.getInstance(mContext);
+        if (!storageManager.canTakePhoto()) {
+            Log.w(TAG, "🚫 Photo rejected - insufficient storage");
+            playStorageFullSound();
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError("local",
+                    "Insufficient storage space for photo capture",
+                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+            }
             return;
         }
+
+        // Note: No need to check CameraNeo.isCameraInUse() for photos
+        // The camera's keep-alive system handles rapid photo taking gracefully
 
         // Add milliseconds and a random component to ensure uniqueness even in rapid capture
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
@@ -1242,6 +1269,15 @@ public class MediaCaptureService {
             }
         } else {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for photo upload");
+        }
+
+        // STORAGE CHECK: Reject if insufficient storage
+        StorageManager storageManager = StorageManager.getInstance(mContext);
+        if (!storageManager.canTakePhoto()) {
+            Log.w(TAG, "🚫 Photo rejected - insufficient storage");
+            playStorageFullSound();
+            sendPhotoErrorResponse(requestId, "INSUFFICIENT_STORAGE", "Insufficient storage space for photo capture");
+            return;
         }
 
         // Check if already uploading - skip request if busy
@@ -2093,6 +2129,15 @@ public class MediaCaptureService {
             }
         } else {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for BLE transfer");
+        }
+
+        // STORAGE CHECK: Reject if insufficient storage
+        StorageManager storageManager = StorageManager.getInstance(mContext);
+        if (!storageManager.canTakePhoto()) {
+            Log.w(TAG, "🚫 Photo rejected - insufficient storage");
+            playStorageFullSound();
+            sendPhotoErrorResponse(requestId, "INSUFFICIENT_STORAGE", "Insufficient storage space for photo capture");
+            return;
         }
 
         // Store the save flag for this request

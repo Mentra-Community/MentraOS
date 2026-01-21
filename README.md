@@ -84,7 +84,7 @@ The Mentra Store already has a ton of useful apps that real users are running ev
     <tr style="border: 0 !important; background: transparent;">
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.mentra.calendarreminder" style="text-decoration: none; color: inherit;">
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/dd3e7ad0-89c3-4820-89d0-f6d68ec99b00/square" alt="Calendar Reminder" width="80" style="border-radius: 18px;" />
+          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/32095bee-2bbd-4564-4777-4f99fcf73700/square" alt="Calendar Reminder" width="80" style="border-radius: 18px;" />
           <br /><b>Calendar</b>
         </a>
       </td>
@@ -96,7 +96,7 @@ The Mentra Store already has a ton of useful apps that real users are running ev
       </td>
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.mentra.translation" style="text-decoration: none; color: inherit;">
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/5b164770-ec85-47ad-3825-7ff2520c5600/square" alt="Live Translation" width="80" style="border-radius: 18px;" />
+          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/b5891997-3e90-4bdc-398a-834e3318b900/square" alt="Live Translation" width="80" style="border-radius: 18px;" />
           <br /><b>Translation</b>
         </a>
       </td>
@@ -175,7 +175,7 @@ Have questions or ideas? We'd love to hear from you!
 
 ## Contributing
 
-MentraOS is made by a community and we welcome PRs. Here's the Contributors Guide: [docs.mentra.glass/contributing](https://docs.mentra.glass/contributing)
+MentraOS is made by a community and we welcome PRs. Here's the Contributors Guide: [docs.mentra.glass/os-devs/contributing](https://docs.mentraglass.com/os-devs/contributing/overview)
 
 Looking for ways to contribute? We mark issues we'd love the community to help with using the **"Help Wanted"** tag. Check them out here: [Help Wanted Issues](https://github.com/Mentra-Community/MentraOS/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22)
 

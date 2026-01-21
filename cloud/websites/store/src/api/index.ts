@@ -49,9 +49,7 @@ const appService = {
    */
   getPublicApps: async (): Promise<AppI[]> => {
     try {
-      const response = await axios.get<ApiResponse<AppI[]>>(
-        `/api/apps/public`
-      );
+      const response = await axios.get<ApiResponse<AppI[]>>(`/api/store/published-apps`);
       return response.data.data || [];
     } catch (error) {
       console.error("Error fetching public apps:", error);
@@ -66,7 +64,7 @@ const appService = {
    */
   getAvailableApps: async (options?: AppFilterOptions): Promise<AppI[]> => {
     try {
-      let url = `/api/apps/available`;
+      let url = `/api/store/published-apps-loggedin`;
 
       // Add organization filter if provided
       if (options?.organizationId) {
@@ -87,9 +85,7 @@ const appService = {
    */
   getInstalledApps: async (): Promise<AppI[]> => {
     try {
-      const response = await axios.get<ApiResponse<AppI[]>>(
-        `/api/apps/installed`
-      );
+      const response = await axios.get<ApiResponse<AppI[]>>(`/api/store/installed`);
       return response.data.data;
     } catch (error) {
       console.error("Error fetching installed apps:", error);
@@ -103,9 +99,7 @@ const appService = {
    */
   getAppByPackageName: async (packageName: string): Promise<AppI | null> => {
     try {
-      const response = await axios.get<ApiResponse<AppI>>(
-        `/api/apps/${packageName}`
-      );
+      const response = await axios.get<ApiResponse<AppI>>(`/api/store/${packageName}`);
       return response.data.data;
     } catch (error) {
       console.error(`Error fetching app ${packageName}:`, error);
@@ -115,13 +109,11 @@ const appService = {
 
   /**
    * Install an app (auth required)
-   * Uses cloud backend
+   * Uses store backend
    */
   installApp: async (packageName: string): Promise<boolean> => {
     try {
-      const response = await axios.post<ApiResponse<null>>(
-        `/api/apps/install/${packageName}`
-      );
+      const response = await axios.post<ApiResponse<null>>(`/api/store/install/${packageName}`);
       return response.data.success;
     } catch (error) {
       console.error(`Error installing app ${packageName}:`, error);
@@ -131,7 +123,7 @@ const appService = {
 
   /**
    * Uninstall an app (auth required)
-   * Uses cloud backend
+   * Uses store backend
    */
   uninstallApp: async (packageName: string): Promise<boolean> => {
     try {
@@ -143,9 +135,7 @@ const appService = {
       // backend will stop the app automatically if it is running.
 
       // Then uninstall it
-      const response = await axios.post<ApiResponse<null>>(
-        `/api/apps/uninstall/${packageName}`
-      );
+      const response = await axios.post<ApiResponse<null>>(`/api/store/uninstall/${packageName}`);
       return response.data.success;
     } catch (error) {
       console.error(`Error uninstalling app ${packageName}:`, error);
@@ -155,13 +145,11 @@ const appService = {
 
   /**
    * Start an app (auth required)
-   * Uses cloud backend
+   * Uses store backend
    */
   startApp: async (packageName: string): Promise<boolean> => {
     try {
-      const response = await axios.post<ApiResponse<null>>(
-        `/api/apps/${packageName}/start`,
-      );
+      const response = await axios.post<ApiResponse<null>>(`/api/store/${packageName}/start`);
       return response.data.success;
     } catch (error) {
       console.error(`Error starting app ${packageName}:`, error);
@@ -171,13 +159,11 @@ const appService = {
 
   /**
    * Stop an app (auth required)
-   * Uses cloud backend
+   * Uses store backend
    */
   stopApp: async (packageName: string): Promise<boolean> => {
     try {
-      const response = await axios.post<ApiResponse<null>>(
-        `/api/apps/${packageName}/stop`,
-      );
+      const response = await axios.post<ApiResponse<null>>(`/api/store/${packageName}/stop`);
       return response.data.success;
     } catch (error) {
       console.error(`Error stopping app ${packageName}:`, error);
@@ -193,7 +179,7 @@ const appService = {
    */
   searchApps: async (query: string, options?: AppFilterOptions): Promise<AppI[]> => {
     try {
-      let url = `/api/apps/search?q=${encodeURIComponent(query)}`;
+      let url = `/api/store/search?q=${encodeURIComponent(query)}`;
 
       // Add organization filter if provided
       if (options?.organizationId) {
@@ -206,7 +192,7 @@ const appService = {
       console.error(`Error searching apps with query "${query}":`, error);
       return []; // Return empty array on error
     }
-  }
+  },
 };
 
 // User service functions
@@ -217,15 +203,13 @@ const userService = {
    */
   getCurrentUser: async (): Promise<User | null> => {
     try {
-      const response = await axios.get<ApiResponse<User>>(
-        `/api/user/me`
-      );
+      const response = await axios.get<ApiResponse<User>>(`/api/store/user/me`);
       return response.data.data;
     } catch (error) {
       console.error("Error fetching current user:", error);
       return null;
     }
-  }
+  },
 };
 
 // Auth service functions
@@ -238,11 +222,11 @@ const authService = {
   exchangeToken: async (supabaseToken: string): Promise<string> => {
     try {
       const response = await axios.post<TokenExchangeResponse>(
-        `/api/auth/exchange-token`,
+        `/api/store/auth/exchange-token`,
         { supabaseToken },
         {
-          headers: { 'Content-Type': 'application/json' }
-        }
+          headers: { "Content-Type": "application/json" },
+        },
       );
 
       if (response.status === 200 && response.data.coreToken) {
@@ -265,11 +249,11 @@ const authService = {
   exchangeTemporaryToken: async (tempToken: string, packageName: string): Promise<TempTokenExchangeResponse> => {
     try {
       const response = await axios.post<TempTokenExchangeResponse>(
-        `/api/auth/exchange-store-token`,
+        `/api/store/auth/exchange-store-token`,
         { aos_temp_token: tempToken, packageName },
         {
-          headers: { 'Content-Type': 'application/json' }
-        }
+          headers: { "Content-Type": "application/json" },
+        },
       );
 
       if (response.status === 200 && response.data.success) {
@@ -277,7 +261,7 @@ const authService = {
       } else {
         return {
           success: false,
-          error: response.data.error || `Failed with status ${response.status}`
+          error: response.data.error || `Failed with status ${response.status}`,
         };
       }
     } catch (error) {
@@ -285,15 +269,15 @@ const authService = {
       if (axios.isAxiosError(error) && error.response) {
         return {
           success: false,
-          error: error.response.data?.error || error.message
+          error: error.response.data?.error || error.message,
         };
       }
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error"
+        error: error instanceof Error ? error.message : "Unknown error",
       };
     }
-  }
+  },
 };
 
 // Set up auth token interceptor
@@ -310,5 +294,5 @@ export default {
   app: appService,
   user: userService,
   auth: authService,
-  setAuthToken
+  setAuthToken,
 };

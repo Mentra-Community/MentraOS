@@ -7,7 +7,7 @@ import {Text} from "@/components/ignite/Text"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 
-export const DebugHitSlop = ({children, hitSlop, style, ..._props}) => {
+export const DebugHitSlop = ({children, hitSlop, style, ...props}) => {
   if (!__DEV__ || !hitSlop) return children
 
   const hitSlopStyle = {
@@ -380,7 +380,7 @@ export const ConsoleLogger = () => {
   if (!isVisible) {
     return (
       <TouchableOpacity style={themed($toggleButton)} onPress={() => setIsVisible(true)}>
-        <Text style={themed($toggleButtonText)}>Sow Console</Text>
+        <Text style={themed($toggleButtonText)}>Show Console</Text>
       </TouchableOpacity>
     )
   }
@@ -425,7 +425,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors}) => ({
   top: 50,
   left: 0,
   right: 0,
-  height: 600,
+  height: 250,
   backgroundColor: colors.background,
   borderTopWidth: 2,
   borderTopColor: colors.border,

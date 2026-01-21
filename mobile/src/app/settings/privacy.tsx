@@ -7,11 +7,11 @@ import PermissionButton from "@/components/settings/PermButton"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function PrivacySettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)

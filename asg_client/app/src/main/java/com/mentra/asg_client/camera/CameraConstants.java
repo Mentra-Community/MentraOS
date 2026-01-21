@@ -52,15 +52,15 @@ public final class CameraConstants {
     /** SDK photo small resolution height */
     public static final int SDK_HEIGHT_SMALL = 480;
 
-    /** SDK photo medium resolution width (16:9 aspect ratio) - 720p */
+    /** SDK photo medium resolution width (4:3 aspect ratio) - matches native sensor */
     public static final int SDK_WIDTH_MEDIUM = 1280;
     /** SDK photo medium resolution height */
-    public static final int SDK_HEIGHT_MEDIUM = 720;
+    public static final int SDK_HEIGHT_MEDIUM = 960;
 
-    /** SDK photo large resolution width (16:9 aspect ratio) - 1080p */
+    /** SDK photo large resolution width (4:3 aspect ratio) - matches native sensor */
     public static final int SDK_WIDTH_LARGE = 1920;
     /** SDK photo large resolution height */
-    public static final int SDK_HEIGHT_LARGE = 1080;
+    public static final int SDK_HEIGHT_LARGE = 1440;
 
     /** SDK photo full resolution width - native sensor (4:3 aspect ratio) */
     public static final int SDK_WIDTH_FULL = 3264;

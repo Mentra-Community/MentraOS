@@ -1,6 +1,7 @@
 import {EventEmitter} from "events"
 
 import mantle from "./MantleManager"
+import CoreModule from "modules/core/src/CoreModule"
 
 export interface SuperWebViewMessage {
   type: string
@@ -72,19 +73,18 @@ class MiniComms {
     mantle.displayTextMain(`count: ${message.payload.count}`)
   }
 
-  // Subscribe to messages from WebView
-  public on(event: string, listener: (message: SuperWebViewMessage) => void) {
-    this.eventEmitter.on(event, listener)
-  }
-
-  // Unsubscribe from messages
-  public off(event: string, listener: (message: SuperWebViewMessage) => void) {
-    this.eventEmitter.off(event, listener)
+  private handleCoreFn(message: SuperWebViewMessage) {
+    const {fn, args} = message.payload
+    console.log(`SUPERCOMMS: Core function:`, fn, args)
+    CoreModule[fn](...args)
   }
 
   // Message handlers - these handle specific message types from WebView
   private handleMessage(message: SuperWebViewMessage) {
     switch (message.type) {
+      case "core_fn":
+        this.handleCoreFn(message)
+        break
       case "button_click":
         this.handleButtonClick(message)
         break

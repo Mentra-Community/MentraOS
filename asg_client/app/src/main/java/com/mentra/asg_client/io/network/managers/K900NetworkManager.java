@@ -52,10 +52,10 @@ public class K900NetworkManager extends BaseNetworkManager {
         this.notificationManager = new DebugNotificationManager(context);
         
         notificationManager.showDebugNotification(
-                "K900 Network Manager", 
+                "K900 Network Manager",
                 "Using K900-specific network APIs");
 
-        enableScan5GWifi(context, false);
+        enableScan5GWifi(context, true);
     }
     
     @Override
@@ -425,22 +425,24 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "📶 =========================================");
         Log.d(TAG, "📶 SSID: " + ssid);
         Log.d(TAG, "📶 Password: " + (password != null ? "***" : "null"));
-        
+
         try {
-            // Use SysControl for K900 WiFi connection
-            Log.d(TAG, "📶 📡 Connecting to WiFi via SysControl...");
-            SysControl.connectToWifi(context, ssid, password);
-            
+            // Use SysControl with credential refresh to fix K900 password caching bug.
+            // The K900 SystemUI caches WiFi credentials and won't update them on reconnect.
+            // connectToWifiWithRefresh works around this by: connect -> disconnect -> reconnect
+            Log.d(TAG, "📶 📡 Connecting to WiFi via SysControl (with credential refresh)...");
+            SysControl.connectToWifiWithRefresh(context, ssid, password);
+
             Log.d(TAG, "📶 ✅ WiFi connect command sent successfully");
             notificationManager.showDebugNotification(
-                    "WiFi Connection", 
+                    "WiFi Connection",
                     "Attempting to connect to: " + ssid);
-            
+
             Log.i(TAG, "📶 ✅ WiFi connect command sent for SSID: " + ssid);
         } catch (Exception e) {
             Log.e(TAG, "📶 💥 Error connecting to WiFi", e);
             notificationManager.showDebugNotification(
-                    "WiFi Error", 
+                    "WiFi Error",
                     "Failed to connect to WiFi: " + e.getMessage());
         }
     }
@@ -465,8 +467,33 @@ public class K900NetworkManager extends BaseNetworkManager {
         } catch (Exception e) {
             Log.e(TAG, "📶 💥 Error disconnecting from WiFi", e);
             notificationManager.showDebugNotification(
-                    "WiFi Error", 
+                    "WiFi Error",
                     "Failed to disconnect from WiFi: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void forgetWifiNetwork(String ssid) {
+        Log.d(TAG, "📶 =========================================");
+        Log.d(TAG, "📶 FORGET WIFI NETWORK: " + ssid);
+        Log.d(TAG, "📶 =========================================");
+
+        try {
+            // Use SysControl to forget the network (disconnectFromWifi with SSID removes it)
+            Log.d(TAG, "📶 📡 Forgetting WiFi network via SysControl...");
+            SysControl.disconnectFromWifi(context, ssid);
+
+            Log.d(TAG, "📶 ✅ WiFi forget command sent successfully");
+            notificationManager.showDebugNotification(
+                    "WiFi Network Forgotten",
+                    "Removed saved network: " + ssid);
+
+            Log.i(TAG, "📶 ✅ WiFi forget command sent for: " + ssid);
+        } catch (Exception e) {
+            Log.e(TAG, "📶 💥 Error forgetting WiFi network", e);
+            notificationManager.showDebugNotification(
+                    "WiFi Error",
+                    "Failed to forget WiFi network: " + e.getMessage());
         }
     }
 

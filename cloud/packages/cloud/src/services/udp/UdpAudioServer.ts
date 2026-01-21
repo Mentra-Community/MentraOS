@@ -2,12 +2,15 @@
  * @fileoverview UDP Audio Server for receiving audio packets directly from mobile clients.
  *
  * This replaces the Go bridge UDP listener with a Bun-native implementation.
- * Mobile clients send raw PCM audio over UDP for lowest latency.
+ * Mobile clients send audio over UDP for lowest latency.
  *
  * Packet format:
  * - Bytes 0-3: userIdHash (FNV-1a 32-bit, big-endian)
  * - Bytes 4-5: sequence number (big-endian)
- * - Bytes 6+: PCM audio data (or "PING" for ping packets)
+ * - Bytes 6+: audio data (PCM or LC3 depending on client config, or "PING" for ping packets)
+ *
+ * Audio format is determined by the client's audio configuration sent via REST endpoint.
+ * AudioManager handles decoding LC3 to PCM if needed.
  */
 
 import { logger as rootLogger } from "../logging/pino-logger";
@@ -121,11 +124,12 @@ export class UdpAudioServer {
       return;
     }
 
-    // Extract PCM data (after 6-byte header)
-    const pcmData = buf.slice(6);
+    // Extract audio data (after 6-byte header)
+    // Format is PCM or LC3 depending on client config - AudioManager handles decoding
+    const audioData = buf.slice(6);
 
-    // Validate PCM data
-    if (pcmData.length === 0) {
+    // Validate audio data exists
+    if (audioData.length === 0) {
       this.packetsDropped++;
       this.logger.warn(
         {
@@ -134,25 +138,7 @@ export class UdpAudioServer {
           bufferLength: buf.length,
           feature: "udp-audio",
         },
-        "UDP packet has no PCM data after header",
-      );
-      return;
-    }
-
-    // PCM16 must be even length (2 bytes per sample)
-    // If odd, trim the last byte
-    const validPcmData = pcmData.length % 2 === 0 ? pcmData : pcmData.slice(0, pcmData.length - 1);
-
-    if (validPcmData.length === 0) {
-      this.packetsDropped++;
-      this.logger.warn(
-        {
-          userIdHash,
-          sequence,
-          pcmDataLength: pcmData.length,
-          feature: "udp-audio",
-        },
-        "UDP packet PCM data too small after alignment",
+        "UDP packet has no audio data after header",
       );
       return;
     }
@@ -166,7 +152,7 @@ export class UdpAudioServer {
           userId: session.userId,
           userIdHash,
           sequence,
-          pcmBytes: validPcmData.length,
+          audioBytes: audioData.length,
           addr,
           port,
           feature: "udp-audio",
@@ -181,7 +167,7 @@ export class UdpAudioServer {
           pingsReceived: this.pingsReceived,
           activeSessions: this.sessionMap.size,
           lastSequence: sequence,
-          lastPcmBytes: validPcmData.length,
+          lastAudioBytes: audioData.length,
           feature: "udp-audio",
         },
         "UDP audio stats",
@@ -196,12 +182,13 @@ export class UdpAudioServer {
     }
 
     // Add packet to reorder buffer and process any ready packets
-    const packetsToProcess = reorderBuffer.addPacket(sequence, validPcmData);
+    const packetsToProcess = reorderBuffer.addPacket(sequence, audioData);
 
     // Forward reordered packets to AudioManager
+    // AudioManager handles LC3→PCM decoding if needed based on client's audio config
     try {
-      for (const pcmData of packetsToProcess) {
-        session.audioManager.processAudioData(pcmData, "udp");
+      for (const audioChunk of packetsToProcess) {
+        session.audioManager.processAudioData(audioChunk, "udp");
       }
     } catch (error) {
       this.logger.error(
@@ -210,7 +197,7 @@ export class UdpAudioServer {
           userId: session.userId,
           userIdHash,
           sequence,
-          pcmBytes: validPcmData.length,
+          audioBytes: audioData.length,
           feature: "udp-audio",
         },
         "Error processing UDP audio in AudioManager",
@@ -337,9 +324,9 @@ export class UdpAudioServer {
             { userIdHash, flushedPackets: remaining.length, feature: "udp-audio" },
             "Flushed remaining packets on unregister",
           );
-          for (const pcmData of remaining) {
+          for (const audioChunk of remaining) {
             try {
-              session.audioManager.processAudioData(pcmData, "udp");
+              session.audioManager.processAudioData(audioChunk, "udp");
             } catch {
               // Ignore errors during cleanup
             }
@@ -375,9 +362,9 @@ export class UdpAudioServer {
         if (reorderBuffer) {
           const remaining = reorderBuffer.flush();
           if (remaining.length > 0) {
-            for (const pcmData of remaining) {
+            for (const audioChunk of remaining) {
               try {
-                session.audioManager.processAudioData(pcmData, "udp");
+                session.audioManager.processAudioData(audioChunk, "udp");
               } catch {
                 // Ignore errors during cleanup
               }

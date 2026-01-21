@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["CrustModule"]
+  },
+  "android": {
+    "modules": ["com.mentra.crust.CrustModule"]
+  }
+}

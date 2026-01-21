@@ -4,6 +4,7 @@ import android.app.Application;
 import android.util.Log;
 
 import com.mentra.asg_client.di.AppModule;
+import com.mentra.asg_client.reporting.CrashHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
 import com.mentra.asg_client.di.ReportingModule;
 
@@ -21,6 +22,9 @@ public class AsgClientApplication extends Application {
         super.onCreate();
         instance = this;
 
+        // Install crash handler FIRST to catch any crashes during initialization
+        CrashHandler.install();
+
         AppModule.initialize(this);
         ReportingModule.initialize(this);
 
@@ -28,7 +32,7 @@ public class AsgClientApplication extends Application {
 
         // Get and log system OTA version (MTK firmware version)
         String systemOtaVersion = SysControl.getSystemCurrentVersion(this);
-        Log.i(TAG, "📱 System OTA Version (MTK): " + systemOtaVersion);
+        Log.i(TAG, "System OTA Version (MTK): " + systemOtaVersion);
 
         Log.i(TAG, "ASG Client Application initialized");
     }

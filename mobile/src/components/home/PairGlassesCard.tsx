@@ -1,18 +1,20 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import {TextStyle, View, ViewStyle} from "react-native"
+import {View, ViewStyle} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/contexts/ThemeContext"
 
 export const PairGlassesCard = ({style}: {style?: ViewStyle}) => {
-  const {themed, theme} = useAppTheme()
+  const {theme} = useAppTheme()
   const {push} = useNavigationHistory()
   return (
-    <View style={[themed($container), style]}>
-      <Text tx="onboarding:doYouHaveGlasses" style={themed($title)} />
-      <View style={themed($buttonContainer)}>
+    <View className="py-5 px-6 bg-primary-foreground" style={style}>
+      <Text
+        tx="onboarding:doYouHaveGlasses"
+        className="text-lg text-center font-semibold text-secondary-foreground mb-6"
+      />
+      <View className="flex-col gap-4 w-full">
         <Button
           flex={false}
           tx="home:pairGlasses"
@@ -24,31 +26,9 @@ export const PairGlassesCard = ({style}: {style?: ViewStyle}) => {
           tx="home:setupWithoutGlasses"
           preset="secondary"
           style={{backgroundColor: theme.colors.background}}
-          onPress={() => push("/pairing/prep", {glassesModelName: DeviceTypes.SIMULATED})}
+          onPress={() => push("/pairing/prep", {modelName: DeviceTypes.SIMULATED})}
         />
       </View>
     </View>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary_foreground,
-  paddingHorizontal: spacing.s6,
-  paddingVertical: spacing.s4,
-  borderRadius: spacing.s4,
-  height: 180,
-  alignItems: "center",
-  justifyContent: "space-between",
-})
-
-const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "column",
-  gap: spacing.s4,
-  width: "100%",
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: spacing.s4,
-  fontWeight: "bold",
-  color: colors.secondary_foreground,
-})

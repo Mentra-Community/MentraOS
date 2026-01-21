@@ -4,12 +4,12 @@ import {View, TextInput, ActivityIndicator, ScrollView, ViewStyle, TextStyle} fr
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function ChangeEmailScreen() {
   const [newEmail, setNewEmail] = useState("")

@@ -1,3 +1,4 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {CameraType, CameraView, useCameraPermissions} from "expo-camera"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useRef, useState} from "react"
@@ -11,7 +12,7 @@ import {
   View,
   ViewStyle,
 } from "react-native"
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import Icon from "react-native-vector-icons/MaterialIcons"
 
@@ -19,13 +20,11 @@ import {Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {SimulatedGlassesControls} from "@/components/mirror/SimulatedGlassesControls"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
-
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 // Request microphone permission for recording
 const requestMicrophonePermission = async () => {
@@ -104,7 +103,7 @@ export default function GlassesMirrorFullscreen() {
 
       // Read directory contents and count videos
       const files = await RNFS.readDir(videoDir)
-      const videoFiles = files.filter(file => file.name.endsWith(".mp4"))
+      const videoFiles = files.filter((file) => file.name.endsWith(".mp4"))
       setRecordingCount(videoFiles.length)
     } catch (error) {
       console.error("Error checking recordings:", error)
@@ -117,7 +116,7 @@ export default function GlassesMirrorFullscreen() {
     if (isRecording) {
       // Start a timer that updates every second
       recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1)
+        setRecordingTime((prev) => prev + 1)
       }, 1000)
     } else {
       // Clear the timer when recording stops

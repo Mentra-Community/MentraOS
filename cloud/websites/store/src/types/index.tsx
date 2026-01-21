@@ -43,6 +43,14 @@ export interface AppI {
   // Hardware requirements
   hardwareRequirements?: HardwareRequirement[];
 
+  // Preview images for app store
+  previewImages?: {
+    url: string;
+    imageId: string;
+    orientation: "landscape" | "portrait";
+    order: number;
+  }[];
+
   // Frontend-specific properties
   developerId?: string; // Developer's email address
   isInstalled?: boolean;

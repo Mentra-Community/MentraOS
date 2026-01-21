@@ -27,7 +27,7 @@ export class LC3Service {
   // LC3 parameters
   private readonly frameDurationUs = 10000; // 10ms per frame
   private readonly sampleRateHz = 16000; // 16kHz
-  private readonly frameBytes = 20; // Default, can be overridden
+  private frameBytes: number; // Frame size in bytes (20=16kbps, 40=32kbps, 60=48kbps)
 
   // Memory management
   private frameSamples = 0;
@@ -47,17 +47,24 @@ export class LC3Service {
   /**
    * Create a new LC3Service instance
    * @param sessionId Optional session ID for the user
-   * @param frameBytes Optional frame size in bytes (determines bitrate)
+   * @param frameBytes Optional frame size in bytes (determines bitrate: 20=16kbps, 40=32kbps, 60=48kbps)
    */
   constructor(
     sessionId: string = `session_${Date.now()}_${LC3Service.instanceCounter++}`,
+    frameBytes: number = 20,
   ) {
     this.sessionId = sessionId;
-    // if (frameBytes) {
-    //   this.frameBytes = frameBytes;
-    // }
+    // Validate frame size
+    if (frameBytes !== 20 && frameBytes !== 40 && frameBytes !== 60) {
+      logger.warn(
+        `Invalid frameBytes ${frameBytes}, must be 20, 40, or 60. Using default 20.`,
+      );
+      this.frameBytes = 20;
+    } else {
+      this.frameBytes = frameBytes;
+    }
     logger.info(
-      `Creating new LC3Service instance for session: ${this.sessionId}`,
+      `Creating new LC3Service instance for session: ${this.sessionId}, frameBytes: ${this.frameBytes}`,
     );
   }
 
@@ -561,12 +568,14 @@ class LC3Module {
 
 /**
  * Factory function to create a new LC3Service instance
+ * @param sessionId Optional session ID for the user
+ * @param frameBytes Optional frame size in bytes (20=16kbps, 40=32kbps, 60=48kbps)
  */
 export function createLC3Service(
   sessionId?: string,
-  // frameBytes?: number,
+  frameBytes?: number,
 ): LC3Service {
-  return new LC3Service(sessionId);
+  return new LC3Service(sessionId, frameBytes);
 }
 
 export default LC3Service;

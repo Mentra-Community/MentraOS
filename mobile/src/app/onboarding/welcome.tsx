@@ -1,3 +1,4 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import DontHaveGlassesSvg from "@assets/glasses/dont-have.svg"
 import HaveGlassesSvg from "@assets/glasses/have.svg"
 import LogoSvg from "@assets/logo/logo.svg"
@@ -7,12 +8,10 @@ import {SvgProps} from "react-native-svg"
 import {Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
-
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 // Import SVG components
 
@@ -85,7 +84,7 @@ export default function OnboardingWelcome() {
     // analytics.track('onboarding_no_glasses_selected')
     setOnboardingCompleted(true)
     // Go directly to simulated glasses pairing screen
-    push("/pairing/prep", {glassesModelName: DeviceTypes.SIMULATED})
+    push("/pairing/prep", {modelName: DeviceTypes.SIMULATED})
   }
 
   return (

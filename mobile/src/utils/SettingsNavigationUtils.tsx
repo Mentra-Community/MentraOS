@@ -79,6 +79,28 @@ export class SettingsNavigationUtils {
   }
 
   /**
+   * Opens WiFi settings page
+   * On Android: Opens WiFi settings directly using Linking.sendIntent
+   * On iOS: Opens general settings (iOS manages WiFi via Control Center)
+   */
+  static async openWifiSettings(): Promise<boolean> {
+    try {
+      if (Platform.OS === "android") {
+        // Use Linking.sendIntent to open WiFi settings (no native code needed)
+        await Linking.sendIntent("android.settings.WIFI_SETTINGS")
+      } else if (Platform.OS === "ios") {
+        // iOS doesn't have direct WiFi settings deep link
+        // Users can enable WiFi from Control Center
+        await this.openIosSettings()
+      }
+      return true
+    } catch (error) {
+      console.error("Error opening WiFi settings:", error)
+      return false
+    }
+  }
+
+  /**
    * Opens app settings page
    * On Android: Opens app-specific settings
    * On iOS: Opens app settings

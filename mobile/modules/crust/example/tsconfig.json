@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "crust": ["../src/index"],
+      "crust/*": ["../src/*"]
+    }
+  }
+}

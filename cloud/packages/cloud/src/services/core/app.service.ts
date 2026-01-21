@@ -27,8 +27,7 @@ import { Types } from "mongoose";
 const logger = rootLogger.child({ service: "app.service" });
 
 const APPSTORE_ENABLED = true;
-export const SYSTEM_DASHBOARD_PACKAGE_NAME =
-  process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "dev.augmentos.dashboard";
+export const SYSTEM_DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "dev.augmentos.dashboard";
 export const PRE_INSTALLED = [
   "com.augmentos.livecaptions",
   "cloud.augmentos.notify",
@@ -52,15 +51,9 @@ export const PRE_INSTALLED_DEBUG = [
 // export const PRE_INSTALLED = ["cloud.augmentos.live-captions-global", "cloud.augmentos.notify", "cloud.augmentos.mira"];
 
 // Add debug apps in non-production environments
-if (
-  process.env.NODE_ENV !== "production" ||
-  process.env.DEBUG_APPS === "true"
-) {
+if (process.env.NODE_ENV !== "production" || process.env.DEBUG_APPS === "true") {
   PRE_INSTALLED.push(...PRE_INSTALLED_DEBUG);
-  logger.info(
-    { PRE_INSTALLED_DEBUG },
-    "Debug mode enabled - adding debug apps to preinstalled list:",
-  );
+  logger.info({ PRE_INSTALLED_DEBUG }, "Debug mode enabled - adding debug apps to preinstalled list:");
 }
 
 // Add additional pre-installed apps from environment variable
@@ -70,10 +63,7 @@ if (process.env.ADDITIONAL_PRE_INSTALLED_APPS) {
     .filter((app) => app.length > 0);
 
   PRE_INSTALLED.push(...additionalApps);
-  logger.info(
-    { additionalApps },
-    "Adding additional pre-installed apps from ADDITIONAL_PRE_INSTALLED_APPS:",
-  );
+  logger.info({ additionalApps }, "Adding additional pre-installed apps from ADDITIONAL_PRE_INSTALLED_APPS:");
 }
 
 // If we're in test mode, we don't want to pre-install any apps. (used with the headless client for testing)
@@ -144,11 +134,9 @@ export class AppService {
       // Find apps the user installed.
       const user = await User.findOne({ email: userId });
       const _installedApps =
-        user?.installedApps?.map(
-          (installedApp: { packageName: string; installedDate: Date }) => {
-            return installedApp.packageName;
-          },
-        ) || [];
+        user?.installedApps?.map((installedApp: { packageName: string; installedDate: Date }) => {
+          return installedApp.packageName;
+        }) || [];
 
       // Fetch the apps from the appstore.
       const _appstoreApps = (await App.find({
@@ -164,12 +152,7 @@ export class AppService {
 
       usersApps.push(..._appMap.values());
       // Filter out any that are already in the LOCAL_APPS map since those would have already been fetched.
-      usersApps = usersApps.filter(
-        (app) =>
-          !LOCAL_APPS.some(
-            (localApp) => localApp.packageName === app.packageName,
-          ),
-      );
+      usersApps = usersApps.filter((app) => !LOCAL_APPS.some((localApp) => localApp.packageName === app.packageName));
     }
     const allApps = [...LOCAL_APPS, ...usersApps];
     return allApps;
@@ -211,10 +194,7 @@ export class AppService {
   }
 
   // TODO(isaiah): Move this to the new AppManager within new UserSession class.
-  async triggerStopByPackageName(
-    packageName: string,
-    userId: string,
-  ): Promise<void> {
+  async triggerStopByPackageName(packageName: string, userId: string): Promise<void> {
     // Look up the App by packageName
     const app = await this.getApp(packageName);
     const appSessionId = `${userId}-${packageName}`;
@@ -272,9 +252,7 @@ export class AppService {
     // Hash the provided API key and compare with stored hash
     const hashedKey = this.hashApiKey(apiKey);
 
-    logger.debug(
-      `Validating API key for ${packageName}: ${hashedKey} === ${appDoc.hashedApiKey}`,
-    );
+    logger.debug(`Validating API key for ${packageName}: ${hashedKey} === ${appDoc.hashedApiKey}`);
     // Compare the hashed API key with the stored hashed API key
 
     return hashedKey === appDoc.hashedApiKey;
@@ -311,43 +289,33 @@ export class AppService {
       const validatedParameters: Record<string, ToolParameterSchema> = {};
 
       if (tool.parameters) {
-        Object.entries(tool.parameters).forEach(
-          ([key, param]: [string, any]) => {
-            if (
-              !param.type ||
-              !["string", "number", "boolean"].includes(param.type)
-            ) {
-              throw new Error(
-                `Parameter ${key} has invalid type. Must be string, number, or boolean`,
-              );
-            }
+        Object.entries(tool.parameters).forEach(([key, param]: [string, any]) => {
+          if (!param.type || !["string", "number", "boolean"].includes(param.type)) {
+            throw new Error(`Parameter ${key} has invalid type. Must be string, number, or boolean`);
+          }
 
-            if (!param.description || typeof param.description !== "string") {
-              throw new Error(`Parameter ${key} requires a description`);
-            }
+          if (!param.description || typeof param.description !== "string") {
+            throw new Error(`Parameter ${key} requires a description`);
+          }
 
-            validatedParameters[key] = {
-              type: param.type as "string" | "number" | "boolean",
-              description: param.description,
-              required: !!param.required,
-            };
+          validatedParameters[key] = {
+            type: param.type as "string" | "number" | "boolean",
+            description: param.description,
+            required: !!param.required,
+          };
 
-            // Add enum values if present
-            if (param.enum && Array.isArray(param.enum)) {
-              validatedParameters[key].enum = param.enum;
-            }
-          },
-        );
+          // Add enum values if present
+          if (param.enum && Array.isArray(param.enum)) {
+            validatedParameters[key].enum = param.enum;
+          }
+        });
       }
 
       return {
         id: tool.id,
         description: tool.description,
         activationPhrases: tool.activationPhrases.map((p: string) => p.trim()),
-        parameters:
-          Object.keys(validatedParameters).length > 0
-            ? validatedParameters
-            : undefined,
+        parameters: Object.keys(validatedParameters).length > 0 ? validatedParameters : undefined,
       };
     });
   }
@@ -406,18 +374,14 @@ export class AppService {
       // Type-specific validation
       switch (setting.type) {
         case "toggle":
-          if (
-            setting.defaultValue !== undefined &&
-            typeof setting.defaultValue !== "boolean"
-          ) {
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "boolean") {
             throw new Error("Toggle setting requires a boolean defaultValue");
           }
           return {
             type: AppSettingType.TOGGLE,
             key: setting.key,
             label: setting.label,
-            defaultValue:
-              setting.defaultValue !== undefined ? setting.defaultValue : false,
+            defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : false,
             value: setting.value,
           } as AppSetting;
 
@@ -444,14 +408,8 @@ export class AppService {
           if (!Array.isArray(setting.options)) {
             throw new Error("Select setting requires an options array");
           }
-          if (
-            !setting.options.every(
-              (opt: any) => typeof opt.label === "string" && "value" in opt,
-            )
-          ) {
-            throw new Error(
-              "Select options must have label and value properties",
-            );
+          if (!setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt)) {
+            throw new Error("Select options must have label and value properties");
           }
           return {
             type: AppSettingType.SELECT,
@@ -464,18 +422,10 @@ export class AppService {
 
         case "select_with_search":
           if (!Array.isArray(setting.options)) {
-            throw new Error(
-              "Select with search setting requires an options array",
-            );
+            throw new Error("Select with search setting requires an options array");
           }
-          if (
-            !setting.options.every(
-              (opt: any) => typeof opt.label === "string" && "value" in opt,
-            )
-          ) {
-            throw new Error(
-              "Select with search options must have label and value properties",
-            );
+          if (!setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt)) {
+            throw new Error("Select with search options must have label and value properties");
           }
           return {
             type: "select_with_search" as any,
@@ -490,22 +440,12 @@ export class AppService {
           if (!Array.isArray(setting.options)) {
             throw new Error("Multiselect setting requires an options array");
           }
-          if (
-            !setting.options.every(
-              (opt: any) => typeof opt.label === "string" && "value" in opt,
-            )
-          ) {
-            throw new Error(
-              "Multiselect options must have label and value properties",
-            );
+          if (!setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt)) {
+            throw new Error("Multiselect options must have label and value properties");
           }
           // Ensure defaultValue is an array for multiselect
-          const defaultValue = Array.isArray(setting.defaultValue)
-            ? setting.defaultValue
-            : [];
-          const value = Array.isArray(setting.value)
-            ? setting.value
-            : undefined;
+          const defaultValue = Array.isArray(setting.defaultValue) ? setting.defaultValue : [];
+          const value = Array.isArray(setting.value) ? setting.value : undefined;
           return {
             type: "multiselect" as any,
             key: setting.key,
@@ -516,24 +456,14 @@ export class AppService {
           } as AppSetting;
 
         case "slider":
-          if (
-            typeof setting.min !== "number" ||
-            typeof setting.max !== "number"
-          ) {
-            throw new Error(
-              "Slider setting requires numeric min and max values",
-            );
+          if (typeof setting.min !== "number" || typeof setting.max !== "number") {
+            throw new Error("Slider setting requires numeric min and max values");
           }
-          if (
-            setting.defaultValue !== undefined &&
-            typeof setting.defaultValue !== "number"
-          ) {
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "number") {
             throw new Error("Slider setting requires a numeric defaultValue");
           }
           if (setting.min > setting.max) {
-            throw new Error(
-              "Slider min value cannot be greater than max value",
-            );
+            throw new Error("Slider min value cannot be greater than max value");
           }
           return {
             type: AppSettingType.SLIDER,
@@ -541,10 +471,7 @@ export class AppService {
             label: setting.label,
             min: setting.min,
             max: setting.max,
-            defaultValue:
-              setting.defaultValue !== undefined
-                ? setting.defaultValue
-                : setting.min,
+            defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : setting.min,
             value: setting.value,
           } as AppSetting;
 
@@ -559,16 +486,10 @@ export class AppService {
           if (setting.step !== undefined && typeof setting.step !== "number") {
             throw new Error("Numeric input step value must be a number");
           }
-          if (
-            setting.placeholder !== undefined &&
-            typeof setting.placeholder !== "string"
-          ) {
+          if (setting.placeholder !== undefined && typeof setting.placeholder !== "string") {
             throw new Error("Numeric input placeholder must be a string");
           }
-          if (
-            setting.defaultValue !== undefined &&
-            typeof setting.defaultValue !== "number"
-          ) {
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "number") {
             throw new Error("Numeric input defaultValue must be a number");
           }
           return {
@@ -579,34 +500,23 @@ export class AppService {
             max: setting.max,
             step: setting.step,
             placeholder: setting.placeholder,
-            defaultValue:
-              setting.defaultValue !== undefined ? setting.defaultValue : 0,
+            defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : 0,
             value: setting.value,
           } as AppSetting;
 
         case "time_picker":
-          if (
-            setting.showSeconds !== undefined &&
-            typeof setting.showSeconds !== "boolean"
-          ) {
+          if (setting.showSeconds !== undefined && typeof setting.showSeconds !== "boolean") {
             throw new Error("Time picker showSeconds must be a boolean");
           }
-          if (
-            setting.defaultValue !== undefined &&
-            typeof setting.defaultValue !== "number"
-          ) {
-            throw new Error(
-              "Time picker defaultValue must be a number (total seconds)",
-            );
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "number") {
+            throw new Error("Time picker defaultValue must be a number (total seconds)");
           }
           return {
             type: "time_picker" as any,
             key: setting.key,
             label: setting.label,
-            showSeconds:
-              setting.showSeconds !== undefined ? setting.showSeconds : true,
-            defaultValue:
-              setting.defaultValue !== undefined ? setting.defaultValue : 0,
+            showSeconds: setting.showSeconds !== undefined ? setting.showSeconds : true,
+            defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : 0,
             value: setting.value,
           } as AppSetting;
 
@@ -619,10 +529,7 @@ export class AppService {
   /**
    * Create a new app
    */
-  async createApp(
-    appData: any,
-    developerId: string,
-  ): Promise<{ app: AppI; apiKey: string }> {
+  async createApp(appData: any, developerId: string): Promise<{ app: AppI; apiKey: string }> {
     // Generate API key
     const apiKey = crypto.randomBytes(32).toString("hex");
     const hashedApiKey = this.hashApiKey(apiKey);
@@ -679,8 +586,7 @@ export class AppService {
 
     // If organization ID is provided, check ownership
     if (organizationId && app.organizationId) {
-      hasPermission =
-        app.organizationId.toString() === organizationId.toString();
+      hasPermission = app.organizationId.toString() === organizationId.toString();
     }
     // For backward compatibility, check developer ID
     else if (app.developerId) {
@@ -709,6 +615,31 @@ export class AppService {
       }
     }
 
+    // Validate preview images if present
+    if (appData.previewImages) {
+      if (!Array.isArray(appData.previewImages)) {
+        throw new Error("previewImages must be an array");
+      }
+      if (appData.previewImages.length > 8) {
+        throw new Error("Maximum 8 preview images allowed");
+      }
+      // Validate each preview image
+      appData.previewImages.forEach((img: any, index: number) => {
+        if (!img.url || typeof img.url !== "string") {
+          throw new Error(`Preview image ${index}: url is required and must be a string`);
+        }
+        if (!img.imageId || typeof img.imageId !== "string") {
+          throw new Error(`Preview image ${index}: imageId is required and must be a string`);
+        }
+        if (!img.orientation || !["landscape", "portrait"].includes(img.orientation)) {
+          throw new Error(`Preview image ${index}: orientation must be 'landscape' or 'portrait'`);
+        }
+        if (typeof img.order !== "number" || img.order < 0 || img.order > 7) {
+          throw new Error(`Preview image ${index}: order must be a number between 0 and 7`);
+        }
+      });
+    }
+
     // If developerInfo is provided, ensure it's properly structured
     if (appData.developerInfo) {
       // Make sure only valid fields are included
@@ -726,11 +657,7 @@ export class AppService {
     }
 
     // Update app
-    const updatedApp = await App.findOneAndUpdate(
-      { packageName },
-      { $set: appData },
-      { new: true },
-    );
+    const updatedApp = await App.findOneAndUpdate({ packageName }, { $set: appData }, { new: true });
 
     return updatedApp!;
   }
@@ -739,11 +666,7 @@ export class AppService {
   /**
    * Publish an app to the app store
    */
-  async publishApp(
-    packageName: string,
-    developerId: string,
-    organizationId?: Types.ObjectId,
-  ): Promise<AppI> {
+  async publishApp(packageName: string, developerId: string, organizationId?: Types.ObjectId): Promise<AppI> {
     // Ensure organization owns the app
     const app = await App.findOne({ packageName });
     if (!app) {
@@ -758,8 +681,7 @@ export class AppService {
 
     // If organization ID is provided, check ownership
     if (organizationId && app.organizationId) {
-      hasPermission =
-        app.organizationId.toString() === organizationId.toString();
+      hasPermission = app.organizationId.toString() === organizationId.toString();
     }
     // For backward compatibility, check developer ID
     else if (app.developerId) {
@@ -772,8 +694,7 @@ export class AppService {
 
     // If the app belongs to an organization, verify organization profile completeness
     if (organizationId) {
-      const Organization =
-        require("../../models/organization.model").Organization;
+      const Organization = require("../../models/organization.model").Organization;
       const org = await Organization.findById(organizationId);
 
       if (!org) {
@@ -817,11 +738,7 @@ export class AppService {
   /**
    * Delete an app
    */
-  async deleteApp(
-    packageName: string,
-    developerId: string,
-    organizationId?: Types.ObjectId,
-  ): Promise<void> {
+  async deleteApp(packageName: string, developerId: string, organizationId?: Types.ObjectId): Promise<void> {
     // Ensure organization owns the app
     const app = await App.findOne({ packageName });
     if (!app) {
@@ -836,8 +753,7 @@ export class AppService {
 
     // If organization ID is provided, check ownership
     if (organizationId && app.organizationId) {
-      hasPermission =
-        app.organizationId.toString() === organizationId.toString();
+      hasPermission = app.organizationId.toString() === organizationId.toString();
     }
     // For backward compatibility, check developer ID
     else if (app.developerId) {
@@ -854,11 +770,7 @@ export class AppService {
   /**
    * Regenerate API key for an app
    */
-  async regenerateApiKey(
-    packageName: string,
-    developerId: string,
-    organizationId?: Types.ObjectId,
-  ): Promise<string> {
+  async regenerateApiKey(packageName: string, developerId: string, organizationId?: Types.ObjectId): Promise<string> {
     // Ensure organization owns the app
     const app = await App.findOne({ packageName });
     if (!app) {
@@ -873,8 +785,7 @@ export class AppService {
 
     // If organization ID is provided, check ownership
     if (organizationId && app.organizationId) {
-      hasPermission =
-        app.organizationId.toString() === organizationId.toString();
+      hasPermission = app.organizationId.toString() === organizationId.toString();
     }
     // For backward compatibility, check developer ID
     else if (app.developerId) {
@@ -909,10 +820,7 @@ export class AppService {
    * @param packageName - Package name of the app to use its hashed API key
    * @returns Promise resolving to the resulting hash string
    */
-  async hashWithApiKey(
-    stringToHash: string,
-    packageName: string,
-  ): Promise<string> {
+  async hashWithApiKey(stringToHash: string, packageName: string): Promise<string> {
     const app = await App.findOne({ packageName });
 
     if (!app || !app.hashedApiKey) {
@@ -920,11 +828,7 @@ export class AppService {
     }
 
     // Create a hash using the provided string and the app's hashed API key
-    return crypto
-      .createHash("sha256")
-      .update(stringToHash)
-      .update(app.hashedApiKey)
-      .digest("hex");
+    return crypto.createHash("sha256").update(stringToHash).update(app.hashedApiKey).digest("hex");
   }
 
   /**
@@ -1025,10 +929,7 @@ export class AppService {
         if (attempt === maxRetries - 1) {
           if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError;
-            logger.error(
-              axiosError as Error,
-              `Tool webhook failed for ${packageName}: ${axiosError.message}`,
-            );
+            logger.error(axiosError as Error, `Tool webhook failed for ${packageName}: ${axiosError.message}`);
 
             // Return a standardized error response
             return {
@@ -1046,18 +947,14 @@ export class AppService {
               status: 500,
               data: {
                 error: true,
-                message: `Webhook failed: ${
-                  genericError.message || "Unknown error"
-                }`,
+                message: `Webhook failed: ${genericError.message || "Unknown error"}`,
               },
             };
           }
         }
 
         // Exponential backoff before retry
-        await new Promise((resolve) =>
-          setTimeout(resolve, baseDelay * Math.pow(2, attempt)),
-        );
+        await new Promise((resolve) => setTimeout(resolve, baseDelay * Math.pow(2, attempt)));
       }
     }
 
@@ -1090,9 +987,7 @@ export class AppService {
 
     // Get tools from the database instead of fetching app_config.json
     if (app.tools && Array.isArray(app.tools)) {
-      logger.debug(
-        `Found ${app.tools.length} tools in ${packageName} database`,
-      );
+      logger.debug(`Found ${app.tools.length} tools in ${packageName} database`);
       return app.tools;
     }
 
@@ -1102,21 +997,13 @@ export class AppService {
   }
 
   // Add a method to update app visibility
-  async updateAppVisibility(
-    packageName: string,
-    developerId: string,
-    sharedWithOrganization: boolean,
-  ): Promise<AppI> {
+  async updateAppVisibility(packageName: string, developerId: string, sharedWithOrganization: boolean): Promise<AppI> {
     // Ensure developer owns the app
     const app = await App.findOne({ packageName });
     if (!app) {
       throw new Error(`App with package name ${packageName} not found`);
     }
-    if (
-      !developerId ||
-      !app.developerId ||
-      app.developerId.toString() !== developerId
-    ) {
+    if (!developerId || !app.developerId || app.developerId.toString() !== developerId) {
       throw new Error("You do not have permission to update this app");
     }
     let organizationDomain = null;
@@ -1136,11 +1023,7 @@ export class AppService {
   }
 
   // TODO(isaiah): Move this logic to a new developer service to declutter the app service.
-  async updateSharedWithEmails(
-    packageName: string,
-    emails: string[],
-    developerId: string,
-  ): Promise<AppI> {
+  async updateSharedWithEmails(packageName: string, emails: string[], developerId: string): Promise<AppI> {
     // Ensure developer owns the app or is in the org if shared
     const app = await App.findOne({ packageName });
     if (!app) {
@@ -1149,8 +1032,7 @@ export class AppService {
     if (!developerId) {
       throw new Error("Developer ID is required");
     }
-    const isOwner =
-      app.developerId && app.developerId.toString() === developerId;
+    const isOwner = app.developerId && app.developerId.toString() === developerId;
     let isOrgMember = false;
     if (app.sharedWithOrganization && app.organizationDomain) {
       const emailDomain = developerId.split("@")[1]?.toLowerCase();
@@ -1160,9 +1042,7 @@ export class AppService {
       throw new Error("Not authorized to update sharing list");
     }
     // Validate emails (basic)
-    const validEmails = emails.filter((email) =>
-      /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email),
-    );
+    const validEmails = emails.filter((email) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email));
     app.sharedWithEmails = validEmails;
     await app.save();
     return app.toObject();
@@ -1214,9 +1094,7 @@ export class AppService {
     });
 
     if (!app) {
-      throw new Error(
-        `App with package name ${packageName} not found in source organization`,
-      );
+      throw new Error(`App with package name ${packageName} not found in source organization`);
     }
 
     // Update organization ID

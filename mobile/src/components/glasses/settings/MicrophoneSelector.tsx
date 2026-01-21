@@ -3,12 +3,12 @@ import {View, TouchableOpacity, TextStyle, ViewStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
 import {Badge} from "@/components/ui"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 const MIC_OPTIONS = [
   // auto is rendered by itself since it has the recommended label
@@ -65,7 +65,7 @@ export function MicrophoneSelector() {
         {preferredMic === "auto" ? (
           <Icon name="check" size={24} color={theme.colors.primary} />
         ) : (
-          <Icon name="check" size={24} color={"transparent"} />
+          <Icon name="check" size={24} color={theme.colors.primary_foreground} />
         )}
       </TouchableOpacity>
 
@@ -77,7 +77,7 @@ export function MicrophoneSelector() {
             {preferredMic === option.value ? (
               <Icon name="check" size={24} color={theme.colors.primary} />
             ) : (
-              <Icon name="check" size={24} color={"transparent"} />
+              <Icon name="check" size={24} color={theme.colors.primary_foreground} />
             )}
           </TouchableOpacity>
         </Fragment>

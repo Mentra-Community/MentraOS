@@ -2,8 +2,8 @@ import {TextStyle, View, ViewStyle} from "react-native"
 
 import {Button} from "@/components/ignite"
 import {Text} from "@/components/ignite/Text"
-import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 
 interface BasicDialogProps {
   title: string
@@ -29,7 +29,7 @@ const BasicDialog = ({
     <View style={themed($container)}>
       <View style={themed($titleDescription)}>
         {icon}
-        {title && <Text text={title} style={themed($headline)} weight="semibold"/>}
+        {title && <Text text={title} style={themed($headline)} weight="semibold" />}
         {description && (
           <Text text={typeof description === "string" ? description : undefined} style={themed($description)}>
             {typeof description !== "string" ? description : undefined}
@@ -68,8 +68,6 @@ const BasicDialog = ({
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s4,
-  borderWidth: 1,
-  borderColor: colors.border,
   overflow: "hidden",
   elevation: 4,
   justifyContent: "center",

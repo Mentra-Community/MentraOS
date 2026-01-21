@@ -5,8 +5,8 @@ import {BackgroundAppsGrid} from "@/components/home/BackgroundAppsGrid"
 import {Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {ThemedStyle} from "@/theme"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 
 export default function BackgroundAppsScreen() {
   const {themed, theme} = useAppTheme()

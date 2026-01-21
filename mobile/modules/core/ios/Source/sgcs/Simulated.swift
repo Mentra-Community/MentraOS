@@ -213,8 +213,16 @@ class Simulated: SGCManager {
         Bridge.log("sendWifiCredentials")
     }
 
+    func forgetWifiNetwork(_ ssid: String) {
+        Bridge.log("forgetWifiNetwork: \(ssid)")
+    }
+
     func sendHotspotState(_: Bool) {
         Bridge.log("sendHotspotState")
+    }
+
+    func sendUserEmailToGlasses(_ email: String) {
+        Bridge.log("sendUserEmailToGlasses: \(email)")
     }
 
     // MARK: - Gallery

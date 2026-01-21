@@ -115,7 +115,8 @@ export const authenticateCLI: MiddlewareHandler<AppEnv> = async (c, next) => {
       email,
       orgId: "", // CLITokenPayload doesn't have orgId - will be resolved from user if needed
     });
-    c.set("logger", logger.child({ userId: email, keyId: payload.keyId, context: "cli" }));
+    // Include reqId for request correlation across all logs
+    c.set("logger", logger.child({ userId: email, keyId: payload.keyId, context: "cli", reqId: c.get("reqId") }));
 
     logger.debug(`CLI auth: User ${email} authenticated with key ${payload.keyId}`);
     await next();

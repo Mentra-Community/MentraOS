@@ -504,6 +504,8 @@ class SonioxTranscriptionStream implements StreamInstance {
       enable_speaker_diarization: true,
       language_hints: languageHints.length > 0 ? languageHints : undefined,
       // context: "Mentra, MentraOS, Mira, Hey Mira",
+      context: "Mentra MentraOS, Hey Mentra (an ai assistant)",
+      // context: "Mentra, MentraOS, Mira, Hey Mira",
     };
 
     // Configure translation if target language is specified

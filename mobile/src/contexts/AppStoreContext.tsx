@@ -2,10 +2,10 @@ import {createContext, useContext, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 import {WebView} from "react-native-webview"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import restComms from "@/services/RestComms"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 const STORE_PACKAGE_NAME = "org.augmentos.store"
 
@@ -72,10 +72,7 @@ export const AppStoreProvider: React.FC<{children: React.ReactNode}> = ({childre
         "generate-webview-signed-user-token",
       )
       if (signedUserTokenResult.is_error()) {
-        console.warn(
-          "AppStoreProvider: Failed to generate signed user token:",
-          signedUserTokenResult.error,
-        )
+        console.warn("AppStoreProvider: Failed to generate signed user token:", signedUserTokenResult.error)
         signedUserToken = undefined
       } else {
         signedUserToken = signedUserTokenResult.value
@@ -92,9 +89,7 @@ export const AppStoreProvider: React.FC<{children: React.ReactNode}> = ({childre
       console.error("AppStoreProvider: Error during prefetch:", error)
       // Retry on unexpected errors
       if (retryCount < MAX_RETRIES) {
-        console.log(
-          `AppStoreProvider: Retrying after error (attempt ${retryCount + 2}/${MAX_RETRIES + 1})...`,
-        )
+        console.log(`AppStoreProvider: Retrying after error (attempt ${retryCount + 2}/${MAX_RETRIES + 1})...`)
         setTimeout(
           () => {
             prefetchWebview(retryCount + 1).catch(console.error)

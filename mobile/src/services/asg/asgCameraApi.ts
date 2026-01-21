@@ -3,7 +3,7 @@
  * Provides methods to interact with the AsgCameraServer Java APIs
  */
 
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
 
@@ -68,7 +68,7 @@ export class AsgCameraApiClient {
     if (timeSinceLastRequest < minDelay) {
       const delay = minDelay - timeSinceLastRequest
       console.log(`[ASG Camera API] Rate limiting: waiting ${delay}ms`)
-      await new Promise(resolve => setTimeout(resolve, delay))
+      await new Promise((resolve) => setTimeout(resolve, delay))
     }
 
     this.lastRequestTime = Date.now()
@@ -77,7 +77,7 @@ export class AsgCameraApiClient {
   /**
    * Make a request to the ASG Camera Server with rate limiting and retry logic
    */
-  private async makeRequest<T>(endpoint: string, options?: RequestInit, retries: number = 2): Promise<T> {
+  private async makeRequest<T>(endpoint: string, options?: RequestInit, retries: number = 5): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`
     const method = options?.method || "GET"
 
@@ -134,9 +134,9 @@ export class AsgCameraApiClient {
 
         // Handle rate limiting with retry
         if (response.status === 429 && retries > 0) {
-          const retryDelay = Math.pow(2, 3 - retries) * 1000 // Exponential backoff: 1s, 2s
+          const retryDelay = Math.pow(2, 6 - retries) * 1000 // Exponential backoff: 2s, 4s, 8s, 16s, 32s
           console.log(`[ASG Camera API] Rate limited, retrying in ${retryDelay}ms (${retries} retries left)`)
-          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          await new Promise((resolve) => setTimeout(resolve, retryDelay))
           return this.makeRequest<T>(endpoint, options, retries - 1)
         }
 
@@ -338,7 +338,7 @@ export class AsgCameraApiClient {
       console.log(`[ASG Camera API] Found ${photos.length} photos (total: ${(response.data as any).total_count})`)
 
       // Ensure each photo has proper URLs and detect AVIF files
-      const processedPhotos = photos.map(photo => {
+      const processedPhotos = photos.map((photo) => {
         // Check if filename suggests AVIF (no extension or .avif)
         const mightBeAvif = !photo.name.includes(".") || photo.name.match(/\.(avif|avifs)$/i)
 
@@ -644,7 +644,7 @@ export class AsgCameraApiClient {
           console.log(`[ASG Camera API] Downloading file ${globalIndex + 1}/${files.length}: ${file.name}`)
 
           // Download file with progress tracking
-          const fileData = await this.downloadFile(file.name, includeThumbnails, fileProgress => {
+          const fileData = await this.downloadFile(file.name, includeThumbnails, (fileProgress) => {
             if (onProgress) {
               onProgress(globalIndex + 1, files.length, file.name, fileProgress)
             }
@@ -667,14 +667,14 @@ export class AsgCameraApiClient {
 
           // Schedule delete operation (non-blocking)
           const deletePromise = this.deleteFilesFromServer([file.name])
-            .then(deleteResult => {
+            .then((deleteResult) => {
               if (deleteResult.deleted.length > 0) {
                 console.log(`[ASG Camera API] Successfully deleted ${file.name} from glasses`)
               } else if (deleteResult.failed.length > 0) {
                 console.warn(`[ASG Camera API] Failed to delete ${file.name} from glasses, but keeping downloaded file`)
               }
             })
-            .catch(deleteError => {
+            .catch((deleteError) => {
               // Log the error but don't fail the sync - the file was downloaded successfully
               console.warn(`[ASG Camera API] Error deleting ${file.name} from glasses (non-fatal):`, deleteError)
             })
@@ -704,12 +704,12 @@ export class AsgCameraApiClient {
       // Small delay between batches to prevent overwhelming the server
       if (i + CONCURRENCY_LIMIT < files.length) {
         console.log(`[ASG Camera API] Waiting 300ms between batches`)
-        await new Promise(resolve => setTimeout(resolve, 300))
+        await new Promise((resolve) => setTimeout(resolve, 300))
       }
     }
 
     // Wait for all delete operations to complete (non-blocking for sync completion)
-    Promise.all(deletePromises).catch(error => {
+    Promise.all(deletePromises).catch((error) => {
       console.warn(`[ASG Camera API] Some delete operations failed:`, error)
     })
 
@@ -825,10 +825,10 @@ export class AsgCameraApiClient {
         backgroundTimeout: 600000, // 10 minutes for background downloads (iOS)
         progressDivider: 1, // Get progress updates every 1% instead of 10%
         progressInterval: 250, // Update progress every 250ms max
-        begin: res => {
+        begin: (res) => {
           console.log(`[ASG Camera API] Download started for ${filename}, size: ${res.contentLength}`)
         },
-        progress: res => {
+        progress: (res) => {
           // Validate progress data to prevent negative percentages
           const contentLength = res.contentLength || 0
           const bytesWritten = res.bytesWritten || 0
@@ -915,10 +915,10 @@ export class AsgCameraApiClient {
             connectionTimeout: 60000, // 1 minute for thumbnails (smaller files)
             readTimeout: 60000, // 1 minute for thumbnails
             progressDivider: 1, // Get all progress updates for thumbnails too
-            begin: res => {
+            begin: (res) => {
               console.log(`[ASG Camera API] Thumbnail download started for ${filename}, size: ${res.contentLength}`)
             },
-            progress: res => {
+            progress: (res) => {
               const percentage = Math.round((res.bytesWritten / res.contentLength) * 100)
               if (percentage % 25 === 0) {
                 console.log(`[ASG Camera API] Thumbnail download progress ${filename}: ${percentage}%`)

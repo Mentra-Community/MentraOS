@@ -1,4 +1,3 @@
-
 export type CoreMessageEventPayload = {
   message: string
 }

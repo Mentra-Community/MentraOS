@@ -40,7 +40,35 @@ import java.util.stream.Collectors;
 
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 
+import org.json.JSONArray;
+
 public class OtaHelper {
+
+    // ========== Phone Connection Provider Interface ==========
+
+    /**
+     * Interface for providing phone connection status and sending OTA messages to phone.
+     * Implemented by CommunicationManager to enable phone-controlled OTA updates.
+     */
+    public interface PhoneConnectionProvider {
+        /**
+         * Check if phone is currently connected via BLE
+         * @return true if phone is connected
+         */
+        boolean isPhoneConnected();
+
+        /**
+         * Send OTA update available notification to phone (background mode)
+         * @param updateInfo JSON with version_code, version_name, updates[], total_size
+         */
+        void sendOtaUpdateAvailable(JSONObject updateInfo);
+
+        /**
+         * Send OTA progress update to phone
+         * @param progress JSON with stage, status, progress, bytes_downloaded, total_bytes, etc.
+         */
+        void sendOtaProgress(JSONObject progress);
+    }
     private static final String TAG = OtaConstants.TAG;
     private static ConnectivityManager.NetworkCallback networkCallback;
     private static ConnectivityManager connectivityManager;
@@ -72,24 +100,87 @@ public class OtaHelper {
     // This will bypass version checking, downloading, and directly install /storage/emulated/0/asg/bes_firmware.bin
     private static final boolean DEBUG_FORCE_BES_INSTALL = false;
 
+    // ========== Autonomous OTA Mode ==========
+    // When false, OTA updates only happen when initiated by the phone app.
+    // When true, glasses will also check for updates autonomously (initial check, periodic checks, WiFi callback).
+    // Disabled by default since phone-initiated OTA is the preferred flow.
+    private static final boolean AUTONOMOUS_OTA_ENABLED = false;
+
+    // ========== Phone-Controlled OTA State ==========
+
+    // Provider for phone connection status and messaging
+    private PhoneConnectionProvider phoneConnectionProvider;
+
+    // Track phone-initiated vs glasses-initiated OTA
+    private static volatile boolean isPhoneInitiatedOta = false;
+
+    // Track if we've notified phone about available update (to avoid spam)
+    private static volatile boolean hasNotifiedPhoneOfUpdate = false;
+
+    // Progress throttling - send every 2s OR every 5% change
+    private long lastProgressSentTime = 0;
+    private int lastProgressSentPercent = 0;
+    private static final long PROGRESS_MIN_INTERVAL_MS = 2000; // 2 seconds
+    private static final int PROGRESS_MIN_CHANGE_PERCENT = 5;   // 5%
+
+    // Current update stage for progress reporting
+    private String currentUpdateStage = "download"; // "download" or "install"
+    private String currentUpdateType = "apk"; // "apk", "mtk", or "bes"
+
+    // ========== Singleton Pattern ==========
+
+    private static volatile OtaHelper instance;
+
+    /**
+     * Get the singleton instance of OtaHelper.
+     * Must call initialize(Context) first.
+     * @return The OtaHelper instance, or null if not initialized
+     */
+    public static OtaHelper getInstance() {
+        return instance;
+    }
+
+    /**
+     * Initialize the singleton instance.
+     * Should be called once during app startup (e.g., from OtaService).
+     * @param context Application context
+     * @return The OtaHelper instance
+     */
+    public static synchronized OtaHelper initialize(Context context) {
+        if (instance == null) {
+            instance = new OtaHelper(context);
+            Log.i(TAG, "OtaHelper singleton initialized");
+        }
+        return instance;
+    }
+
     public OtaHelper(Context context) {
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
-        
+
         // Register for EventBus to receive battery status updates
         EventBus.getDefault().register(this);
-        
-        // Schedule initial check after 15 seconds
-        handler.postDelayed(() -> {
-            Log.d(TAG, "Performing initial OTA check after 15 seconds");
-            startVersionCheck(this.context);
-        }, 15000);
-        
-        // Start periodic checks
-        startPeriodicChecks();
 
-        // Register network callback to check for updates when WiFi becomes available
-        registerNetworkCallback(this.context);
+        if (AUTONOMOUS_OTA_ENABLED) {
+            // Delay all autonomous checks by 30 seconds to ensure PhoneConnectionProvider
+            // is set up (happens at ~6s) so isPhoneConnected() works correctly
+            handler.postDelayed(() -> {
+                Log.d(TAG, "Starting autonomous OTA checks after 30 second delay");
+
+                // Perform initial check
+                startVersionCheck(this.context);
+
+                // Start periodic checks
+                startPeriodicChecks();
+
+                // Register network callback to check for updates when WiFi becomes available
+                registerNetworkCallback(this.context);
+            }, 30000);
+
+            Log.i(TAG, "Autonomous OTA mode ENABLED - checks will start in 30 seconds");
+        } else {
+            Log.i(TAG, "Autonomous OTA mode DISABLED - updates only via phone app");
+        }
     }
 
     public void cleanup() {
@@ -98,13 +189,61 @@ public class OtaHelper {
         }
         stopPeriodicChecks();
         unregisterNetworkCallback();
-        
+
         // Unregister from EventBus
         if (EventBus.getDefault().isRegistered(this)) {
             EventBus.getDefault().unregister(this);
         }
-        
+
+        phoneConnectionProvider = null;
         context = null;
+    }
+
+    // ========== Phone Connection Provider Methods ==========
+
+    /**
+     * Set the phone connection provider for phone-controlled OTA updates.
+     * Should be called by CommunicationManager during service initialization.
+     * @param provider The PhoneConnectionProvider implementation
+     */
+    public void setPhoneConnectionProvider(PhoneConnectionProvider provider) {
+        this.phoneConnectionProvider = provider;
+        Log.i(TAG, "PhoneConnectionProvider set: " + (provider != null ? "enabled" : "disabled"));
+    }
+
+    /**
+     * Check if phone is currently connected via BLE
+     * @return true if phone is connected
+     */
+    private boolean isPhoneConnected() {
+        return phoneConnectionProvider != null && phoneConnectionProvider.isPhoneConnected();
+    }
+
+    /**
+     * Called when phone disconnects - reset notification flag so we can re-notify on reconnect
+     */
+    public void onPhoneDisconnected() {
+        hasNotifiedPhoneOfUpdate = false;
+        Log.d(TAG, "Phone disconnected - reset OTA notification flag");
+    }
+
+    /**
+     * Start OTA update from phone command (onboarding or background approval).
+     * Called by OtaCommandHandler when phone sends ota_start command.
+     */
+    public void startOtaFromPhone() {
+        Log.i(TAG, "📱 Starting OTA from phone request");
+        isPhoneInitiatedOta = true;
+        hasNotifiedPhoneOfUpdate = false; // Reset for next check cycle
+
+        // Reset progress tracking
+        lastProgressSentTime = 0;
+        lastProgressSentPercent = 0;
+
+        // Send initial progress
+        sendProgressToPhone("download", 0, 0, 0, "STARTED", null);
+
+        startVersionCheck(context);
     }
 
     private void startPeriodicChecks() {
@@ -277,7 +416,35 @@ public class OtaHelper {
                     versionInfo = fetchVersionInfo(OtaConstants.VERSION_JSON_URL);
                 }
                 JSONObject json = new JSONObject(versionInfo);
-                
+
+                // ========== Phone-Controlled OTA Logic ==========
+                // If phone is connected AND this is NOT phone-initiated AND we haven't notified yet:
+                // - Check for available updates
+                // - Notify phone (background mode)
+                // - Wait for phone to send ota_start before proceeding
+                boolean phoneConnected = isPhoneConnected();
+
+                if (phoneConnected && !isPhoneInitiatedOta && !hasNotifiedPhoneOfUpdate) {
+                    Log.i(TAG, "📱 Phone connected, checking for available updates (background mode)");
+                    JSONObject updateInfo = checkForAvailableUpdates(json);
+
+                    if (updateInfo != null && updateInfo.optBoolean("available", false)) {
+                        // Notify phone and wait for approval
+                        notifyPhoneUpdateAvailable(updateInfo);
+                        hasNotifiedPhoneOfUpdate = true;
+                        Log.i(TAG, "📱 Notified phone of update - waiting for ota_start command");
+                        return; // Don't proceed with download - wait for phone approval
+                    } else {
+                        Log.d(TAG, "📱 No updates available for phone notification");
+                    }
+                }
+
+                // ========== Proceed with OTA (Autonomous or Phone-Initiated) ==========
+                // Either:
+                // 1. Phone not connected (autonomous mode)
+                // 2. Phone initiated OTA (isPhoneInitiatedOta = true)
+                // 3. Already notified phone and no updates available
+
                 // Check if new format (multiple apps) or legacy format
                 if (json.has("apps")) {
                     // New format - process sequentially (pass root JSON for firmware access)
@@ -289,9 +456,14 @@ public class OtaHelper {
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Exception during OTA check", e);
+                // Send failure to phone if this was phone-initiated
+                if (isPhoneInitiatedOta) {
+                    sendProgressToPhone(currentUpdateStage, 0, 0, 0, "FAILED", e.getMessage());
+                }
             } finally {
-                // Always reset the flag when done
+                // Always reset the flags when done
                 isCheckingVersion = false;
+                isPhoneInitiatedOta = false;
                 Log.d(TAG, "Version check completed, ready for next check");
             }
         }).start();
@@ -456,6 +628,10 @@ public class OtaHelper {
                 // Download new version
                 boolean downloadOk = downloadApk(apkUrl, appInfo, context, filename);
                 if (downloadOk) {
+                    // Notify phone that install is starting
+                    currentUpdateStage = "install";
+                    sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
+
                     // Install
                     installApk(context, apkFile.getAbsolutePath());
                     
@@ -591,7 +767,11 @@ public class OtaHelper {
         int lastProgress = 0;
 
         Log.d(TAG, "Download started, file size: " + fileSize + " bytes");
-        
+
+        // Set current update stage for phone progress
+        currentUpdateStage = "download";
+        currentUpdateType = "apk";
+
         // Emit download started event
         EventBus.getDefault().post(DownloadProgressEvent.createStarted(fileSize));
 
@@ -609,15 +789,19 @@ public class OtaHelper {
                 EventBus.getDefault().post(new DownloadProgressEvent(DownloadProgressEvent.DownloadStatus.PROGRESS, progress, total, fileSize));
                 lastProgress = progress;
             }
+
+            // Send progress to phone (throttled internally)
+            sendProgressToPhone("download", progress, total, fileSize, "PROGRESS", null);
         }
 
         out.close();
         in.close();
 
         Log.d(TAG, "APK downloaded to: " + apkFile.getAbsolutePath());
-        
+
         // Emit download finished event
         EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
+        sendProgressToPhone("download", 100, fileSize, fileSize, "FINISHED", null);
         
         // Immediately check hash after download
         boolean hashOk = verifyApkFile(apkFile.getAbsolutePath(), json);
@@ -1442,8 +1626,177 @@ public class OtaHelper {
         return isMtkOtaInProgress;
     }
     
+    // ========== Phone-Controlled OTA Methods ==========
+
+    /**
+     * Check for available updates and return info without downloading.
+     * Used by background mode to notify phone of available updates.
+     * @param rootJson The root version.json object
+     * @return JSONObject with update info, or null if no updates available
+     */
+    private JSONObject checkForAvailableUpdates(JSONObject rootJson) {
+        try {
+            JSONObject result = new JSONObject();
+            JSONArray updatesArray = new JSONArray();
+            long totalSize = 0;
+            long latestVersionCode = 0;
+            String latestVersionName = "";
+
+            // Check APK updates
+            if (rootJson.has("apps")) {
+                JSONObject apps = rootJson.getJSONObject("apps");
+
+                // Check asg_client
+                JSONObject asgClient = apps.optJSONObject("com.mentra.asg_client");
+                if (asgClient != null) {
+                    long currentVersion = getInstalledVersion("com.mentra.asg_client", context);
+                    long serverVersion = asgClient.getLong("versionCode");
+                    if (serverVersion > currentVersion) {
+                        updatesArray.put("apk");
+                        totalSize += asgClient.optLong("apkSize", 0);
+                        latestVersionCode = serverVersion;
+                        latestVersionName = asgClient.optString("versionName", "");
+                    }
+                }
+
+                // Check ota_updater
+                JSONObject otaUpdater = apps.optJSONObject("com.augmentos.otaupdater");
+                if (otaUpdater != null) {
+                    long currentVersion = getInstalledVersion("com.augmentos.otaupdater", context);
+                    long serverVersion = otaUpdater.getLong("versionCode");
+                    if (serverVersion > currentVersion) {
+                        // Include in APK updates (don't add separate entry, just size)
+                        totalSize += otaUpdater.optLong("apkSize", 0);
+                    }
+                }
+            }
+
+            // Check MTK firmware
+            if (rootJson.has("mtk_firmware")) {
+                JSONObject mtkFirmware = rootJson.getJSONObject("mtk_firmware");
+                String currentVersionStr = com.mentra.asg_client.SysControl.getSystemCurrentVersion(context);
+                long currentVersion = 0;
+                try {
+                    currentVersion = Long.parseLong(currentVersionStr);
+                } catch (NumberFormatException e) {
+                    // Ignore parse errors
+                }
+
+                long serverVersion = mtkFirmware.optLong("versionCode", 0);
+                if (serverVersion > currentVersion) {
+                    updatesArray.put("mtk");
+                    totalSize += mtkFirmware.optLong("fileSize", 0);
+                }
+            }
+
+            // Check BES firmware
+            if (rootJson.has("bes_firmware")) {
+                JSONObject besFirmware = rootJson.getJSONObject("bes_firmware");
+                byte[] currentVersion = BesOtaManager.getCurrentFirmwareVersion();
+                long serverVersion = besFirmware.optLong("versionCode", 0);
+                byte[] serverVersionBytes = BesOtaManager.parseServerVersionCode(serverVersion);
+
+                if (currentVersion != null && serverVersionBytes != null) {
+                    if (BesOtaManager.isNewerVersion(serverVersionBytes, currentVersion)) {
+                        updatesArray.put("bes");
+                        totalSize += besFirmware.optLong("fileSize", 0);
+                    }
+                }
+            }
+
+            if (updatesArray.length() > 0) {
+                result.put("available", true);
+                result.put("version_code", latestVersionCode);
+                result.put("version_name", latestVersionName);
+                result.put("updates", updatesArray);
+                result.put("total_size", totalSize);
+                Log.i(TAG, "📱 Updates available: " + updatesArray.toString());
+                return result;
+            }
+
+            result.put("available", false);
+            return result;
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking for available updates", e);
+            return null;
+        }
+    }
+
+    /**
+     * Notify phone that an update is available (background mode).
+     * @param updateInfo JSON with update details
+     */
+    private void notifyPhoneUpdateAvailable(JSONObject updateInfo) {
+        if (phoneConnectionProvider == null) return;
+
+        try {
+            updateInfo.put("type", "ota_update_available");
+
+            phoneConnectionProvider.sendOtaUpdateAvailable(updateInfo);
+            Log.i(TAG, "📱 Notified phone of available update: " + updateInfo.toString());
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to notify phone of update", e);
+        }
+    }
+
+    /**
+     * Send OTA progress update to phone with throttling.
+     * Sends every 2 seconds OR every 5% change, whichever comes first.
+     * Always sends STARTED, FINISHED, FAILED status immediately.
+     *
+     * @param stage Current stage: "download" or "install"
+     * @param progress Progress percentage (0-100)
+     * @param bytesDownloaded Bytes downloaded so far
+     * @param totalBytes Total bytes to download
+     * @param status Status: "STARTED", "PROGRESS", "FINISHED", "FAILED"
+     * @param errorMessage Error message if status is FAILED
+     */
+    private void sendProgressToPhone(String stage, int progress, long bytesDownloaded,
+                                     long totalBytes, String status, String errorMessage) {
+        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+
+        long now = System.currentTimeMillis();
+        boolean shouldSend = false;
+
+        // Always send STARTED, FINISHED, FAILED immediately
+        if ("STARTED".equals(status) || "FINISHED".equals(status) || "FAILED".equals(status)) {
+            shouldSend = true;
+        }
+        // For PROGRESS, throttle: every 2s OR every 5%
+        else if ("PROGRESS".equals(status)) {
+            boolean timeElapsed = (now - lastProgressSentTime) >= PROGRESS_MIN_INTERVAL_MS;
+            boolean percentChanged = Math.abs(progress - lastProgressSentPercent) >= PROGRESS_MIN_CHANGE_PERCENT;
+            shouldSend = timeElapsed || percentChanged || progress == 100;
+        }
+
+        if (!shouldSend) return;
+
+        try {
+            JSONObject progressInfo = new JSONObject();
+            progressInfo.put("type", "ota_progress");
+            progressInfo.put("stage", stage);
+            progressInfo.put("status", status);
+            progressInfo.put("progress", progress);
+            progressInfo.put("bytes_downloaded", bytesDownloaded);
+            progressInfo.put("total_bytes", totalBytes);
+            progressInfo.put("current_update", currentUpdateType);
+            if (errorMessage != null) {
+                progressInfo.put("error_message", errorMessage);
+            }
+
+            phoneConnectionProvider.sendOtaProgress(progressInfo);
+
+            lastProgressSentTime = now;
+            lastProgressSentPercent = progress;
+
+            Log.d(TAG, "📱 Sent OTA progress: " + stage + " " + status + " " + progress + "%");
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to send OTA progress", e);
+        }
+    }
+
     // ========== DEBUG METHODS ==========
-    
+
     /**
      * DEBUG: Force install MTK firmware from local zip file without any checks
      * Skips version checking, downloading, and mutual exclusion

@@ -10,27 +10,52 @@ import java.io.File;
 /**
  * Manages storage space for media capture operations.
  * Ensures sufficient space is available and reserves space for OTA updates.
+ *
+ * Uses singleton pattern to avoid repeated object creation during rapid photo capture.
  */
 public class StorageManager {
     private static final String TAG = "StorageManager";
-    
-    // Reserve 3GB for OTA updates
-    private static final long OTA_RESERVED_SPACE = 3L * 1024 * 1024 * 1024; // 3GB
-    
+
+    // Singleton instance
+    private static volatile StorageManager sInstance;
+
+    // Reserve 4GB for OTA updates
+    private static final long OTA_RESERVED_SPACE = 4L * 1024 * 1024 * 1024; // 4GB
+
     // Minimum space required for video recording
     private static final long MIN_VIDEO_SPACE = 500L * 1024 * 1024; // 500MB
-    
+
     // Estimated size for a photo
     private static final long ESTIMATED_PHOTO_SIZE = 5L * 1024 * 1024; // 5MB
-    
+
     // Maximum file size (4GB - 1 byte for FAT32 compatibility)
     private static final long MAX_FILE_SIZE = (4L * 1024 * 1024 * 1024) - 1;
-    
+
     // Maximum video duration (30 minutes)
     private static final long MAX_VIDEO_DURATION_MS = 30 * 60 * 1000;
-    
+
     private final Context context;
-    
+
+    /**
+     * Get singleton instance of StorageManager.
+     * @param context Application context
+     * @return StorageManager instance
+     */
+    public static StorageManager getInstance(Context context) {
+        if (sInstance == null) {
+            synchronized (StorageManager.class) {
+                if (sInstance == null) {
+                    sInstance = new StorageManager(context);
+                }
+            }
+        }
+        return sInstance;
+    }
+
+    /**
+     * @deprecated Use {@link #getInstance(Context)} instead to avoid repeated object creation.
+     */
+    @Deprecated
     public StorageManager(Context context) {
         this.context = context.getApplicationContext();
     }

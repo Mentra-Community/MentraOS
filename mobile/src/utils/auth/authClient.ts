@@ -19,6 +19,10 @@ export abstract class AuthClient {
     return Res.error_async(new Error("Method not implemented"))
   }
 
+  public resendSignupEmail(_email: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
   public signInWithPassword(_params: {email: string; password: string}): AsyncResult<MentraSigninResponse, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }

@@ -1,0 +1,71 @@
+name: Self-Hosted Runner Cleanup
+
+on:
+  schedule:
+    # Run every Sunday at 3 AM UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: [self-hosted, macOS, ARM64]
+
+    steps:
+      - name: Clean Homebrew cache
+        run: |
+          echo "Cleaning Homebrew cache..."
+          rm -rf ~/Library/Caches/Homebrew/* || true
+          brew cleanup --prune=7 || true
+
+      - name: Clean CocoaPods cache
+        run: |
+          echo "Cleaning CocoaPods cache..."
+          rm -rf ~/Library/Caches/CocoaPods/* || true
+
+      - name: Clean old Gradle caches
+        run: |
+          echo "Cleaning old Gradle caches..."
+          # Remove daemon logs and old caches (keep wrapper)
+          rm -rf ~/.gradle/daemon || true
+          rm -rf ~/.gradle/caches/build-cache-* || true
+          rm -rf ~/.gradle/caches/transforms-* || true
+          rm -rf ~/.gradle/caches/journal-* || true
+          # Clean caches older than 30 days
+          find ~/.gradle/caches -type f -atime +30 -delete 2>/dev/null || true
+
+      - name: Clean old runner artifacts
+        run: |
+          echo "Cleaning old runner externals and bins..."
+          # Remove old runner version artifacts (keeps current symlinked versions)
+          rm -rf ~/mentra/actions-runner-*/externals.2.3[0-2]* || true
+          rm -rf ~/mentra/actions-runner-*/bin.2.3[0-2]* || true
+          rm -f ~/mentra/actions-runner-*/*.tar.gz || true
+
+      - name: Clean pnpm cache
+        run: |
+          echo "Cleaning pnpm cache..."
+          rm -rf ~/Library/Caches/pnpm/* || true
+          pnpm store prune 2>/dev/null || true
+
+      - name: Clean npm cache
+        run: |
+          echo "Cleaning npm cache..."
+          npm cache clean --force 2>/dev/null || true
+
+      - name: Empty trash
+        run: |
+          echo "Emptying trash..."
+          rm -rf ~/.Trash/* || true
+
+      - name: Clean Xcode derived data (if older than 7 days)
+        run: |
+          echo "Cleaning old Xcode derived data..."
+          find ~/Library/Developer/Xcode/DerivedData -type d -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
+
+      - name: Report disk usage
+        run: |
+          echo "=== Disk Usage After Cleanup ==="
+          df -h /
+          echo ""
+          echo "=== Largest directories in home ==="
+          du -sh ~/* 2>/dev/null | sort -h | tail -10

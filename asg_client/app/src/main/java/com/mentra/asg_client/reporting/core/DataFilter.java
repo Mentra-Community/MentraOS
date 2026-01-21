@@ -18,7 +18,8 @@ public class DataFilter {
     private static final String[] SENSITIVE_KEYS = {
             "password", "token", "api_key", "dsn", "auth_token", "secret",
             "private_key", "access_token", "refresh_token", "client_secret",
-            "api_secret", "encryption_key", "signing_key", "master_key"
+            "api_secret", "encryption_key", "signing_key", "master_key",
+            "coreToken", "core_token"
     };
 
     // Sensitive patterns that should be filtered
@@ -95,15 +96,11 @@ public class DataFilter {
      *
      * @param userId   User ID (can be kept)
      * @param username Username (can be kept)
-     * @param email    Email (should be filtered)
+     * @param email    Email (kept for crash identification)
      * @return Filtered user information
      */
     public static UserInfo filterUserInfo(String userId, String username, String email) {
-        return new UserInfo(
-                userId,
-                username,
-                email != null ? "[FILTERED]" : null
-        );
+        return new UserInfo(userId, username, email);
     }
 
     /**

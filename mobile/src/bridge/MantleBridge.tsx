@@ -7,7 +7,7 @@ import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import udpAudioService from "@/services/UdpAudioService"
+import udp from "@/services/UdpManager"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore} from "@/stores/settings"
 import {INTENSE_LOGGING} from "@/utils/Constants"
@@ -283,9 +283,9 @@ export class MantleBridge {
           break
         case "mic_data":
           // Route audio to: UDP (if enabled) -> WebSocket (fallback)
-          if (socketComms.isUdpAudioEnabled() && udpAudioService.isConfiguredAndReady()) {
+          if (socketComms.udpEnabledAndReady()) {
             // UDP audio is enabled and ready - send directly via UDP
-            udpAudioService.sendAudio(data.base64)
+            udp.sendAudio(data.base64)
           } else {
             // Fallback to WebSocket
             binaryString = atob(data.base64)
@@ -320,6 +320,47 @@ export class MantleBridge {
             message: data.message,
             timestamp: data.timestamp,
           })
+          break
+        case "ota_update_available":
+          console.log("📱 MantleBridge: OTA update available from glasses:", data)
+          useGlassesStore.getState().setOtaUpdateAvailable({
+            available: true,
+            versionCode: data.version_code ?? 0,
+            versionName: data.version_name ?? "",
+            updates: data.updates ?? [],
+            totalSize: data.total_size ?? 0,
+          })
+          GlobalEventEmitter.emit("ota_update_available", {
+            versionCode: data.version_code,
+            versionName: data.version_name,
+            updates: data.updates,
+            totalSize: data.total_size,
+          })
+          break
+        case "ota_progress":
+          console.log("📱 MantleBridge: OTA progress:", data.stage, data.status, data.progress + "%")
+          useGlassesStore.getState().setOtaProgress({
+            stage: data.stage ?? "download",
+            status: data.status ?? "PROGRESS",
+            progress: data.progress ?? 0,
+            bytesDownloaded: data.bytes_downloaded ?? 0,
+            totalBytes: data.total_bytes ?? 0,
+            currentUpdate: data.current_update ?? "apk",
+            errorMessage: data.error_message,
+          })
+          GlobalEventEmitter.emit("ota_progress", {
+            stage: data.stage,
+            status: data.status,
+            progress: data.progress,
+            bytesDownloaded: data.bytes_downloaded,
+            totalBytes: data.total_bytes,
+            currentUpdate: data.current_update,
+            errorMessage: data.error_message,
+          })
+          // Clear OTA update available when finished or failed
+          if (data.status === "FINISHED" || data.status === "FAILED") {
+            useGlassesStore.getState().setOtaUpdateAvailable(null)
+          }
           break
         case "version_info":
           console.log("MantleBridge: Received version_info:", data)

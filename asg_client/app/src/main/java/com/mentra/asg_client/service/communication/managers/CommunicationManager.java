@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.communication.managers;
 import android.util.Log;
 
 
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -17,8 +18,10 @@ import java.util.List;
 /**
  * Manages all communication operations (Bluetooth, WiFi status, etc.).
  * Follows Single Responsibility Principle by handling only communication concerns.
+ *
+ * Also implements OtaHelper.PhoneConnectionProvider for phone-controlled OTA updates.
  */
-public class CommunicationManager implements ICommunicationManager {
+public class CommunicationManager implements ICommunicationManager, OtaHelper.PhoneConnectionProvider {
     
     private static final String TAG = "CommunicationManager";
 
@@ -510,5 +513,66 @@ public class CommunicationManager implements ICommunicationManager {
             }
             return false;
         }
+    }
+
+    // ========== PhoneConnectionProvider Implementation ==========
+
+    /**
+     * Check if phone is currently connected via BLE.
+     * Part of OtaHelper.PhoneConnectionProvider interface.
+     */
+    @Override
+    public boolean isPhoneConnected() {
+        return serviceManager != null &&
+               serviceManager.getBluetoothManager() != null &&
+               serviceManager.getBluetoothManager().isConnected();
+    }
+
+    /**
+     * Send OTA update available notification to phone (background mode).
+     * Part of OtaHelper.PhoneConnectionProvider interface.
+     * @param updateInfo JSON with version_code, version_name, updates[], total_size
+     */
+    @Override
+    public void sendOtaUpdateAvailable(JSONObject updateInfo) {
+        Log.d(TAG, "📱 =========================================");
+        Log.d(TAG, "📱 SEND OTA UPDATE AVAILABLE");
+        Log.d(TAG, "📱 =========================================");
+
+        if (isPhoneConnected()) {
+            try {
+                // Use reliable sending for important update notification
+                boolean sent = reliableManager.sendMessage(updateInfo);
+                Log.d(TAG, "📱 " + (sent ? "✅ OTA update available sent successfully" : "❌ Failed to send OTA update available"));
+            } catch (Exception e) {
+                Log.e(TAG, "📱 💥 Error sending OTA update available", e);
+            }
+        } else {
+            Log.w(TAG, "📱 ❌ Cannot send OTA update available - phone not connected");
+        }
+    }
+
+    /**
+     * Send OTA progress update to phone.
+     * Part of OtaHelper.PhoneConnectionProvider interface.
+     * @param progress JSON with stage, status, progress, bytes_downloaded, total_bytes, etc.
+     */
+    @Override
+    public void sendOtaProgress(JSONObject progress) {
+        // Less verbose logging for frequent progress updates
+        Log.d(TAG, "📱 OTA Progress: " + progress.optString("stage", "?") +
+              " " + progress.optString("status", "?") +
+              " " + progress.optInt("progress", 0) + "%");
+
+        if (isPhoneConnected()) {
+            try {
+                // Progress updates don't need reliability (frequent updates, not critical)
+                String jsonString = progress.toString();
+                serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                Log.e(TAG, "📱 💥 Error sending OTA progress", e);
+            }
+        }
+        // Don't log warning for disconnected - progress may continue even if phone disconnects
     }
 } 

@@ -3,7 +3,7 @@
  * Manages downloaded files and sync state
  */
 
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo} from "@/types/asg"
 import {storage} from "@/utils/storage"

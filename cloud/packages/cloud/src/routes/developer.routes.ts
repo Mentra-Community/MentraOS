@@ -18,21 +18,11 @@ const upload = multer({
   },
   fileFilter: (req, file, cb) => {
     // Accept only image files
-    const allowedMimeTypes = [
-      "image/png",
-      "image/jpeg",
-      "image/jpg",
-      "image/gif",
-      "image/webp",
-    ];
+    const allowedMimeTypes = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"];
     if (allowedMimeTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(
-        new Error(
-          "Invalid file type. Only PNG, JPEG, GIF, and WebP images are allowed.",
-        ),
-      );
+      cb(new Error("Invalid file type. Only PNG, JPEG, GIF, and WebP images are allowed."));
     }
   },
 });
@@ -58,11 +48,7 @@ const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
 // TODO(isaiah): This is called validateSupabaseToken, but i'm pretty sure this is using an AugmentOS JWT(coreToken), not a Supabase token.
 // TODO(isaiah): Investigate how currentOrgId is used, the DevPortalRequest claims it's optional yet this middleware fails if it's not provided.
 // Also the middleware doesn't validate the currentOrgId, only injects it into the request object, maybe it should just be a query param instead of a header?
-const validateSupabaseToken = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> => {
+const validateSupabaseToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const authHeader = req.headers.authorization;
   const baseLogger = logger.child({
     service: "developer.routes",
@@ -96,23 +82,15 @@ const validateSupabaseToken = async (
     const userData = jwt.verify(token, AUGMENTOS_AUTH_JWT_SECRET);
 
     if (!userData || !(userData as jwt.JwtPayload).email) {
-      baseLogger.error(
-        { hasUserData: !!userData, tokenPayload: userData },
-        "No user or email in token payload",
-      );
+      baseLogger.error({ hasUserData: !!userData, tokenPayload: userData }, "No user or email in token payload");
       res.status(401).json({ error: "Invalid token data" });
       return;
     }
 
-    const userEmail = (
-      (userData as jwt.JwtPayload).email as string
-    ).toLowerCase();
+    const userEmail = ((userData as jwt.JwtPayload).email as string).toLowerCase();
     const userLogger = baseLogger.child({ userId: userEmail });
 
-    userLogger.info(
-      { tokenIssued: (userData as jwt.JwtPayload).iat },
-      "User authenticated successfully",
-    );
+    userLogger.info({ tokenIssued: (userData as jwt.JwtPayload).iat }, "User authenticated successfully");
 
     // Add developer email to request object
     (req as DevPortalRequest).developerEmail = userEmail;
@@ -149,18 +127,13 @@ const validateSupabaseToken = async (
         userLogger.error(
           {
             orgIdHeader,
-            parseError:
-              parseError instanceof Error
-                ? parseError.message
-                : String(parseError),
+            parseError: parseError instanceof Error ? parseError.message : String(parseError),
           },
           "Failed to parse organization ID from header",
         );
       }
     } else {
-      userLogger.debug(
-        "No valid x-org-id header, checking user defaultOrg from database",
-      );
+      userLogger.debug("No valid x-org-id header, checking user defaultOrg from database");
 
       const user = await User.findOne({ email: userEmail });
       userLogger.debug(
@@ -189,8 +162,7 @@ const validateSupabaseToken = async (
             hasUser: !!user,
             hasDefaultOrg: !!user?.defaultOrg,
             availableOrgs: user?.organizations?.length || 0,
-            userOrganizations:
-              user?.organizations?.map((org) => org.toString()) || [],
+            userOrganizations: user?.organizations?.map((org) => org.toString()) || [],
           },
           "No default organization found for user",
         );
@@ -211,14 +183,9 @@ const validateSupabaseToken = async (
             },
             "Set first available organization as default and using it",
           );
-        } else if (
-          user &&
-          (!user.organizations || user.organizations.length === 0)
-        ) {
+        } else if (user && (!user.organizations || user.organizations.length === 0)) {
           // Check if there are any orgs that have this user as an admin member
-          userLogger.info(
-            "User has no organizations in their array - checking for orphaned memberships",
-          );
+          userLogger.info("User has no organizations in their array - checking for orphaned memberships");
 
           try {
             const { Organization } = require("../models/organization.model");
@@ -230,24 +197,19 @@ const validateSupabaseToken = async (
               userLogger.info(
                 {
                   foundOrganizations: orgsWithUserAsMember.length,
-                  orgIds: orgsWithUserAsMember.map((org: any) =>
-                    org._id.toString(),
-                  ),
+                  orgIds: orgsWithUserAsMember.map((org: any) => org._id.toString()),
                 },
                 "Found organizations where user is a member - syncing user data",
               );
 
               // Update user's organizations array with found organizations
-              user.organizations = orgsWithUserAsMember.map(
-                (org: any) => org._id,
-              );
+              user.organizations = orgsWithUserAsMember.map((org: any) => org._id);
 
               // Set the first organization as default
               user.defaultOrg = orgsWithUserAsMember[0]._id;
 
               await user.save();
-              (req as DevPortalRequest).currentOrgId =
-                orgsWithUserAsMember[0]._id;
+              (req as DevPortalRequest).currentOrgId = orgsWithUserAsMember[0]._id;
 
               userLogger.info(
                 {
@@ -258,18 +220,13 @@ const validateSupabaseToken = async (
                 "Successfully synced user organizations from existing memberships",
               );
             } else {
-              userLogger.info(
-                "No existing organization memberships found - will create new personal org",
-              );
+              userLogger.info("No existing organization memberships found - will create new personal org");
               // Fall through to create personal org
             }
           } catch (syncError) {
             userLogger.error(
               {
-                error:
-                  syncError instanceof Error
-                    ? syncError.message
-                    : String(syncError),
+                error: syncError instanceof Error ? syncError.message : String(syncError),
                 userEmail: user.email,
               },
               "Error checking for existing organization memberships",
@@ -280,14 +237,11 @@ const validateSupabaseToken = async (
 
         // Only create new org if user still has no organizations after sync attempt
         if (user && (!user.organizations || user.organizations.length === 0)) {
-          userLogger.warn(
-            "No organizations found for user - creating personal organization",
-          );
+          userLogger.warn("No organizations found for user - creating personal organization");
 
           // Create a personal organization for the user
           try {
-            const personalOrgId =
-              await OrganizationService.createPersonalOrg(user);
+            const personalOrgId = await OrganizationService.createPersonalOrg(user);
 
             // Add to user's organizations array
             if (!user.organizations) {
@@ -302,9 +256,7 @@ const validateSupabaseToken = async (
             userLogger.info(
               {
                 newOrgId: personalOrgId.toString(),
-                orgName: `${
-                  user.profile?.company || user.email.split("@")[0]
-                }'s Org`,
+                orgName: `${user.profile?.company || user.email.split("@")[0]}'s Org`,
                 source: "auto-created-personal-org",
               },
               "Created new personal organization for user and set as default",
@@ -312,10 +264,7 @@ const validateSupabaseToken = async (
           } catch (orgCreationError) {
             userLogger.error(
               {
-                error:
-                  orgCreationError instanceof Error
-                    ? orgCreationError.message
-                    : String(orgCreationError),
+                error: orgCreationError instanceof Error ? orgCreationError.message : String(orgCreationError),
                 userEmail: user.email,
               },
               "Failed to create personal organization for user",
@@ -339,11 +288,9 @@ const validateSupabaseToken = async (
           orgIdHeader,
           orgIdHeaderType: typeof orgIdHeader,
           userHasDefaultOrg: !!user?.defaultOrg,
-          userOrganizations:
-            user?.organizations?.map((org) => org.toString()) || [],
+          userOrganizations: user?.organizations?.map((org) => org.toString()) || [],
           userDefaultOrgValue: user?.defaultOrg?.toString(),
-          reason:
-            "No organization context available from header or user default",
+          reason: "No organization context available from header or user default",
           endpoint: req.originalUrl,
           method: req.method,
         },
@@ -369,8 +316,7 @@ const validateSupabaseToken = async (
       {
         error: error instanceof Error ? error.message : String(error),
         tokenLength: token?.length,
-        errorType:
-          error instanceof Error ? error.constructor.name : typeof error,
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
       },
       "Token verification error",
     );
@@ -386,14 +332,9 @@ const validateSupabaseToken = async (
  * @param packageName - The package name of the app to install
  * @param developerEmail - The email of the developer who created the app
  */
-const autoInstallAppForDeveloper = async (
-  packageName: string,
-  developerEmail: string,
-): Promise<void> => {
+const autoInstallAppForDeveloper = async (packageName: string, developerEmail: string): Promise<void> => {
   try {
-    logger.info(
-      `Auto-installing app ${packageName} for developer ${developerEmail}`,
-    );
+    logger.info(`Auto-installing app ${packageName} for developer ${developerEmail}`);
 
     // Find the user (do not create if not found)
     const user = await User.findOne({ email: developerEmail.toLowerCase() });
@@ -404,18 +345,14 @@ const autoInstallAppForDeveloper = async (
 
     // Check if app is already installed (safety check)
     if (user.isAppInstalled(packageName)) {
-      logger.info(
-        `App ${packageName} is already installed for developer ${developerEmail}`,
-      );
+      logger.info(`App ${packageName} is already installed for developer ${developerEmail}`);
       return;
     }
 
     // Install the app using the user model method
     await user.installApp(packageName);
 
-    logger.info(
-      `Successfully auto-installed app ${packageName} for developer ${developerEmail}`,
-    );
+    logger.info(`Successfully auto-installed app ${packageName} for developer ${developerEmail}`);
 
     // Trigger app state change notification for any active sessions
     try {
@@ -424,9 +361,7 @@ const autoInstallAppForDeveloper = async (
       if (userSession) {
         userSession.appManager.broadcastAppState();
       } else {
-        logger.warn(
-          `No active session found for developer ${developerEmail} to trigger app state change`,
-        );
+        logger.warn(`No active session found for developer ${developerEmail} to trigger app state change`);
       }
     } catch (error) {
       logger.warn(
@@ -436,10 +371,7 @@ const autoInstallAppForDeveloper = async (
       // Non-critical error, installation succeeded
     }
   } catch (error) {
-    logger.error(
-      { error, packageName, developerEmail },
-      "Error auto-installing app for developer",
-    );
+    logger.error({ error, packageName, developerEmail }, "Error auto-installing app for developer");
     // Don't throw the error - we don't want app creation to fail if auto-install fails
   }
 };
@@ -447,10 +379,7 @@ const autoInstallAppForDeveloper = async (
 /**
  * Get authenticated developer user
  */
-const getAuthenticatedUser = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const getAuthenticatedUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const email = (req as DevPortalRequest).developerEmail;
     const user = await User.findOrCreateUser(email);
@@ -566,9 +495,7 @@ const createApp = async (req: Request, res: Response) => {
     const appData = req.body;
 
     // Check if App with this package name already exists
-    const existingApp = await appService.getAppByPackageName(
-      appData.packageName,
-    );
+    const existingApp = await appService.getAppByPackageName(appData.packageName);
     if (existingApp) {
       return res.status(409).json({
         error: `App with package name '${appData.packageName}' already exists`,
@@ -617,9 +544,7 @@ const createApp = async (req: Request, res: Response) => {
       });
     }
 
-    return res
-      .status(500)
-      .json({ error: error.message || "Failed to create app" });
+    return res.status(500).json({ error: error.message || "Failed to create app" });
   }
 };
 
@@ -633,12 +558,7 @@ const updateApp = async (req: Request, res: Response) => {
     const { packageName } = req.params;
     const appData = req.body;
 
-    const updatedApp = await appService.updateApp(
-      packageName,
-      appData,
-      email,
-      orgId,
-    );
+    const updatedApp = await appService.updateApp(packageName, appData, email, orgId);
 
     res.json(updatedApp);
   } catch (error: any) {
@@ -654,10 +574,7 @@ const updateApp = async (req: Request, res: Response) => {
     }
 
     // For validation errors (like tool/setting validation), return the specific error message
-    if (
-      error.message.includes("Invalid tool definitions") ||
-      error.message.includes("Invalid setting definitions")
-    ) {
+    if (error.message.includes("Invalid tool definitions") || error.message.includes("Invalid setting definitions")) {
       return res.status(400).json({ error: error.message });
     }
 
@@ -677,9 +594,7 @@ const deleteApp = async (req: Request, res: Response) => {
 
     await appService.deleteApp(packageName, email, orgId);
 
-    return res
-      .status(200)
-      .json({ message: `App ${packageName} deleted successfully` });
+    return res.status(200).json({ message: `App ${packageName} deleted successfully` });
   } catch (error: any) {
     console.error("Error deleting App:", error);
 
@@ -743,9 +658,7 @@ const getShareableLink = async (req: Request, res: Response) => {
     }
 
     // Generate a shareable URL directly to the app's page on the app store
-    const installUrl = `${
-      process.env.APP_STORE_URL || "https://apps.mentra.glass"
-    }/package/${packageName}`;
+    const installUrl = `${process.env.APP_STORE_URL || "https://apps.mentra.glass"}/package/${packageName}`;
 
     res.json({ installUrl });
   } catch (error) {
@@ -824,8 +737,7 @@ const updateDeveloperProfile = async (req: Request, res: Response) => {
   try {
     return res.status(410).json({
       error: "This endpoint is deprecated",
-      message:
-        "Please use the organization profile update endpoint: PUT /api/orgs/:orgId",
+      message: "Please use the organization profile update endpoint: PUT /api/orgs/:orgId",
     });
   } catch (error) {
     console.error("Error updating developer profile:", error);
@@ -881,9 +793,7 @@ const moveToOrg = async (req: Request, res: Response) => {
 
   try {
     if (!sourceOrgId || !targetOrgId) {
-      return res
-        .status(400)
-        .json({ error: "Source and target organization IDs are required" });
+      return res.status(400).json({ error: "Source and target organization IDs are required" });
     }
 
     // Get the user document
@@ -893,25 +803,15 @@ const moveToOrg = async (req: Request, res: Response) => {
     }
 
     // Check if source org exists and user has admin access
-    const hasSourceAdminAccess = await OrganizationService.isOrgAdmin(
-      user,
-      sourceOrgId,
-    );
+    const hasSourceAdminAccess = await OrganizationService.isOrgAdmin(user, sourceOrgId);
     if (!hasSourceAdminAccess) {
-      return res
-        .status(403)
-        .json({ error: "Insufficient permissions in source organization" });
+      return res.status(403).json({ error: "Insufficient permissions in source organization" });
     }
 
     // Check if target org exists and user has admin access
-    const hasTargetAdminAccess = await OrganizationService.isOrgAdmin(
-      user,
-      targetOrgId,
-    );
+    const hasTargetAdminAccess = await OrganizationService.isOrgAdmin(user, targetOrgId);
     if (!hasTargetAdminAccess) {
-      return res
-        .status(403)
-        .json({ error: "Insufficient permissions in target organization" });
+      return res.status(403).json({ error: "Insufficient permissions in target organization" });
     }
 
     // Use app service to move the app
@@ -944,9 +844,7 @@ const moveToOrg = async (req: Request, res: Response) => {
       return res.status(403).json({ error: error.message });
     }
 
-    return res
-      .status(500)
-      .json({ error: "Failed to move App to new organization" });
+    return res.status(500).json({ error: "Failed to move App to new organization" });
   }
 };
 
@@ -997,9 +895,7 @@ const uploadImage = async (req: Request, res: Response) => {
         },
         "Failed to initialize storage service",
       );
-      return res
-        .status(500)
-        .json({ error: "Failed to initialize storage service" });
+      return res.status(500).json({ error: "Failed to initialize storage service" });
     }
 
     // Parse metadata if provided
@@ -1022,10 +918,7 @@ const uploadImage = async (req: Request, res: Response) => {
     // Check if we're replacing an existing image
     const replaceImageId = req.body.replaceImageId;
     if (replaceImageId) {
-      userLogger.info(
-        { replaceImageId },
-        "Will replace existing image after successful upload",
-      );
+      userLogger.info({ replaceImageId }, "Will replace existing image after successful upload");
     }
 
     const response = await storageService.uploadImageAndReplace({
@@ -1040,9 +933,7 @@ const uploadImage = async (req: Request, res: Response) => {
 
     if (!response.url) {
       userLogger.error("No delivery URL found");
-      return res
-        .status(500)
-        .json({ error: "Failed to upload image to Cloudflare" });
+      return res.status(500).json({ error: "Failed to upload image to Cloudflare" });
     }
 
     // Return the image URL and ID
@@ -1058,14 +949,11 @@ const uploadImage = async (req: Request, res: Response) => {
       {
         error: error instanceof Error ? error.message : String(error),
         errorStack: error instanceof Error ? error.stack : undefined,
-        errorType:
-          error instanceof Error ? error.constructor.name : typeof error,
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
       },
       "Error in image upload handler",
     );
-    return res
-      .status(500)
-      .json({ error: "Internal server error during image upload" });
+    return res.status(500).json({ error: "Internal server error during image upload" });
   }
 };
 
@@ -1089,19 +977,31 @@ const deleteImage = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Image ID is required" });
     }
 
+    userLogger.info(`Attempting to delete image ${imageId}`);
+
     const storageService = new StorageService(userLogger);
     await storageService.deleteImage(imageId);
 
     userLogger.info(`Image ${imageId} deleted by ${email}`);
     res.json({ success: true, message: "Image deleted successfully" });
   } catch (error) {
-    userLogger.error(error as Error, "Error in image delete handler:");
+    userLogger.error(
+      {
+        error: error instanceof Error ? error.message : String(error),
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorMessage: error instanceof Error ? error.message : undefined,
+      },
+      "Error in image delete handler",
+    );
+
     if (error instanceof Error && error.message.includes("Image not found")) {
+      userLogger.info("Returning 404 - image not found");
       return res.status(404).json({ error: "Image not found" });
     }
-    return res
-      .status(500)
-      .json({ error: "Internal server error during image deletion" });
+
+    userLogger.error("Returning 500 - unexpected error");
+    return res.status(500).json({ error: "Internal server error during image deletion" });
   }
 };
 
@@ -1137,33 +1037,16 @@ router.post("/apps/register", validateSupabaseToken, createApp);
 router.get("/apps/:packageName", validateSupabaseToken, getAppByPackageName);
 router.put("/apps/:packageName", validateSupabaseToken, updateApp);
 router.delete("/apps/:packageName", validateSupabaseToken, deleteApp);
-router.post(
-  "/apps/:packageName/api-key",
-  validateSupabaseToken,
-  regenerateApiKey,
-);
+router.post("/apps/:packageName/api-key", validateSupabaseToken, regenerateApiKey);
 router.get("/apps/:packageName/share", validateSupabaseToken, getShareableLink);
 router.post("/apps/:packageName/share", validateSupabaseToken, trackSharing);
 router.post("/apps/:packageName/publish", validateSupabaseToken, publishApp);
-router.patch(
-  "/apps/:packageName/visibility",
-  validateSupabaseToken,
-  updateAppVisibility,
-);
-router.patch(
-  "/apps/:packageName/share-emails",
-  validateSupabaseToken,
-  updateSharedEmails,
-);
+router.patch("/apps/:packageName/visibility", validateSupabaseToken, updateAppVisibility);
+router.patch("/apps/:packageName/share-emails", validateSupabaseToken, updateSharedEmails);
 router.post("/apps/:packageName/move-org", validateSupabaseToken, moveToOrg);
 
 // Image upload routes
-router.post(
-  "/images/upload",
-  validateSupabaseToken,
-  upload.single("file"),
-  uploadImage,
-);
+router.post("/images/upload", validateSupabaseToken, upload.single("file"), uploadImage);
 router.delete("/images/:imageId", validateSupabaseToken, deleteImage);
 
 export default router;

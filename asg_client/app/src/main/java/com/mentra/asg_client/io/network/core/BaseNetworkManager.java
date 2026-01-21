@@ -56,7 +56,7 @@ public abstract class BaseNetworkManager implements INetworkManager {
     
     // HTTP activity tracking for auto-disconnect
     private long lastHttpActivityTime = 0;
-    private static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 40000; // 40 seconds
+    private static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120000; // 120 seconds - increased from 40s to allow time for iOS WiFi connection
     private Handler inactivityCheckHandler;
     private Runnable inactivityCheckRunnable;
 

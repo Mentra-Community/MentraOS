@@ -1,12 +1,7 @@
 // @mentra/sdk
 // packages/sdk/types/src/models.ts - Core models
 
-import {
-  AppSettingType,
-  AppType,
-  HardwareType,
-  HardwareRequirementLevel,
-} from "./enums";
+import { AppSettingType, AppType, HardwareType, HardwareRequirementLevel } from "./enums";
 
 // Tool parameter type definition
 export interface ToolParameterSchema {
@@ -74,6 +69,21 @@ export interface HardwareRequirement {
 }
 
 /**
+ * Preview image orientation
+ */
+export type PhotoOrientation = "landscape" | "portrait";
+
+/**
+ * Preview image for an app in the app store
+ */
+export interface PreviewImage {
+  url: string;
+  imageId: string;
+  orientation: PhotoOrientation;
+  order: number;
+}
+
+/**
  * Base interface for applications
  */
 export interface AppI {
@@ -110,6 +120,11 @@ export interface AppI {
    * If not specified, app is assumed to work with any hardware
    */
   hardwareRequirements?: HardwareRequirement[];
+
+  /**
+   * Preview images for the app store
+   */
+  previewImages?: PreviewImage[];
 
   isPublic?: boolean;
   appStoreStatus?: "DEVELOPMENT" | "SUBMITTED" | "REJECTED" | "PUBLISHED";
@@ -219,11 +234,7 @@ export function validateAppConfig(config: any): config is AppConfig {
   if (!config || typeof config !== "object") return false;
 
   // Check required string properties
-  if (
-    typeof config.name !== "string" ||
-    typeof config.description !== "string" ||
-    typeof config.version !== "string"
-  ) {
+  if (typeof config.name !== "string" || typeof config.description !== "string" || typeof config.version !== "string") {
     return false;
   }
 
@@ -254,28 +265,20 @@ export function validateAppConfig(config: any): config is AppConfig {
 
       case AppSettingType.TEXT:
       case AppSettingType.TEXT_NO_SAVE_BUTTON:
-        return (
-          setting.defaultValue === undefined ||
-          typeof setting.defaultValue === "string"
-        );
+        return setting.defaultValue === undefined || typeof setting.defaultValue === "string";
 
       case AppSettingType.SELECT:
       case AppSettingType.SELECT_WITH_SEARCH:
         return (
           Array.isArray(setting.options) &&
-          setting.options.every(
-            (opt: any) => typeof opt.label === "string" && "value" in opt,
-          )
+          setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt)
         );
 
       case AppSettingType.MULTISELECT:
         return (
           Array.isArray(setting.options) &&
-          setting.options.every(
-            (opt: any) => typeof opt.label === "string" && "value" in opt,
-          ) &&
-          (setting.defaultValue === undefined ||
-            Array.isArray(setting.defaultValue))
+          setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt) &&
+          (setting.defaultValue === undefined || Array.isArray(setting.defaultValue))
         );
 
       case AppSettingType.SLIDER:
@@ -288,21 +291,17 @@ export function validateAppConfig(config: any): config is AppConfig {
 
       case AppSettingType.NUMERIC_INPUT:
         return (
-          (setting.defaultValue === undefined ||
-            typeof setting.defaultValue === "number") &&
+          (setting.defaultValue === undefined || typeof setting.defaultValue === "number") &&
           (setting.min === undefined || typeof setting.min === "number") &&
           (setting.max === undefined || typeof setting.max === "number") &&
           (setting.step === undefined || typeof setting.step === "number") &&
-          (setting.placeholder === undefined ||
-            typeof setting.placeholder === "string")
+          (setting.placeholder === undefined || typeof setting.placeholder === "string")
         );
 
       case AppSettingType.TIME_PICKER:
         return (
-          (setting.defaultValue === undefined ||
-            typeof setting.defaultValue === "number") &&
-          (setting.showSeconds === undefined ||
-            typeof setting.showSeconds === "boolean")
+          (setting.defaultValue === undefined || typeof setting.defaultValue === "number") &&
+          (setting.showSeconds === undefined || typeof setting.showSeconds === "boolean")
         );
 
       case AppSettingType.GROUP:

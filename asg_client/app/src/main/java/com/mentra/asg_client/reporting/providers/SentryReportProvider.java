@@ -71,14 +71,10 @@ public class SentryReportProvider implements IReportProvider {
                 options.setTracesSampleRate(sampleRate);
                 options.setProfilesSampleRate(sampleRate);
                 
-                // Enable debug mode only in development
-                if ("development".equals(environment) || "staging".equals(environment)) {
-                    options.setDebug(true);
-                    options.setDiagnosticLevel(io.sentry.SentryLevel.DEBUG);
-                } else {
-                    options.setDebug(false);
-                    options.setDiagnosticLevel(io.sentry.SentryLevel.ERROR);
-                }
+                // Disable debug mode to avoid verbose logging
+                // Set to true only when actively debugging Sentry itself
+                options.setDebug(false);
+                options.setDiagnosticLevel(io.sentry.SentryLevel.ERROR);
                 
                 // Configure data collection based on environment
                 if ("production".equals(environment)) {

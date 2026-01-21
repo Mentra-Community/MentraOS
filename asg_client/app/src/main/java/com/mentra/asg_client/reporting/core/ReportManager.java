@@ -160,6 +160,57 @@ public class ReportManager {
     public void report(ReportData.Builder builder) {
         report(builder.build());
     }
+
+    /**
+     * Report data synchronously to all enabled providers.
+     * Use this for critical reports (like crashes) that must complete before the app dies.
+     * This blocks the calling thread until all providers have processed the report.
+     */
+    public void reportSync(ReportData reportData) {
+        if (reportData == null) {
+            Log.w(TAG, "Cannot report null data");
+            return;
+        }
+
+        // Add current user and session info if not already set
+        ReportData.Builder builder = new ReportData.Builder()
+            .message(reportData.getMessage())
+            .level(reportData.getLevel())
+            .category(reportData.getCategory())
+            .operation(reportData.getOperation())
+            .tags(reportData.getTags())
+            .context(reportData.getContext())
+            .exception(reportData.getException())
+            .timestamp(reportData.getTimestamp());
+
+        if (reportData.getUserId() == null && currentUserId != null) {
+            builder.userId(currentUserId);
+        } else {
+            builder.userId(reportData.getUserId());
+        }
+
+        if (reportData.getSessionId() == null && currentSessionId != null) {
+            builder.sessionId(currentSessionId);
+        } else {
+            builder.sessionId(reportData.getSessionId());
+        }
+
+        ReportData enhancedData = builder.build();
+
+        // Apply central data filtering to all reports
+        ReportData filteredData = DataFilter.filterReportData(enhancedData);
+
+        // Report to all enabled providers SYNCHRONOUSLY
+        for (IReportProvider provider : providers) {
+            if (provider.isEnabled()) {
+                try {
+                    provider.report(filteredData);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error reporting to " + provider.getProviderName(), e);
+                }
+            }
+        }
+    }
     
     /**
      * Set user context for all providers

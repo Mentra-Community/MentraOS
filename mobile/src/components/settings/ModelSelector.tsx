@@ -15,9 +15,9 @@ import {
 
 import {Icon, Text, Button} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ModelInfo, STTModelManager} from "@/services/STTModelManager"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 type ModelSelectorProps = {
   selectedModelId: string

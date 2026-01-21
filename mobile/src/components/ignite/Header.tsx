@@ -1,9 +1,9 @@
 import {ReactElement} from "react"
 import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewStyle} from "react-native"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {isRTL, translate} from "@/i18n"
 import type {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 import {ExtendedEdge, useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
 
 import {IconTypes, PressableIcon} from "./Icon"

@@ -93,9 +93,23 @@ public class CoreModule: Module {
             }
         }
 
+        AsyncFunction("forgetWifiNetwork") { (ssid: String) in
+            await MainActor.run {
+                CoreManager.shared.forgetWifiNetwork(ssid)
+            }
+        }
+
         AsyncFunction("setHotspotState") { (enabled: Bool) in
             await MainActor.run {
                 CoreManager.shared.setHotspotState(enabled)
+            }
+        }
+
+        // MARK: - User Context Commands
+
+        AsyncFunction("setUserEmail") { (email: String) in
+            await MainActor.run {
+                CoreManager.shared.setUserEmail(email)
             }
         }
 
@@ -116,6 +130,14 @@ public class CoreModule: Module {
                 CoreManager.shared.photoRequest(
                     requestId, appId, size, webhookUrl, authToken, compress, silent
                 )
+            }
+        }
+
+        // MARK: - OTA Commands
+
+        AsyncFunction("sendOtaStart") {
+            await MainActor.run {
+                CoreManager.shared.sendOtaStart()
             }
         }
 
@@ -182,6 +204,14 @@ public class CoreModule: Module {
         AsyncFunction("restartTranscriber") {
             await MainActor.run {
                 CoreManager.shared.restartTranscriber()
+            }
+        }
+
+        // MARK: - Audio Encoding Commands
+
+        AsyncFunction("setLC3FrameSize") { (frameSize: Int) in
+            await MainActor.run {
+                CoreManager.shared.setLC3FrameSize(frameSize)
             }
         }
 

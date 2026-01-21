@@ -1,8 +1,8 @@
 import {View, ViewProps} from "react-native"
 import Svg, {Path} from "react-native-svg"
 
-import {Theme} from "@/theme"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {Theme} from "@/theme"
 
 interface HomeIconProps extends Omit<ViewProps, "style"> {
   size?: number

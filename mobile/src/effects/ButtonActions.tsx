@@ -1,10 +1,10 @@
 import {useEffect} from "react"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {useApplets, useStartApplet} from "@/stores/applets"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export function ButtonActions() {
   const applets = useApplets()

@@ -5,9 +5,9 @@ import {SafeAreaView} from "react-native-safe-area-context"
 
 import {Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {textEditorStore} from "@/utils/TextEditorStore"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function TextEditorScreen() {
   const {label, value, settingKey} = useLocalSearchParams()

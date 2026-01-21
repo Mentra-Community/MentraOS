@@ -19,6 +19,11 @@ echo ""
 echo "📦 Step 1: Cleaning build artifacts, caches, and lock files..."
 rm -rf android/build android/.gradle node_modules .expo .bundle android/app/build android/app/src/main/assets
 
+# Clean Metro bundler cache (critical for env variable changes)
+echo "🗑️  Clearing Metro bundler cache..."
+rm -rf $TMPDIR/metro-* $TMPDIR/haste-map-* 2>/dev/null || true
+pkill -f metro 2>/dev/null || true
+
 # Clean lock files (critical for fixing dependency conflicts)
 echo "🗑️  Removing lock files..."
 rm -f bun.lock pnpm-lock.yaml package-lock.json yarn.lock

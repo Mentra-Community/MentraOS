@@ -1,10 +1,13 @@
 package com.mentra.asg_client.io.hardware.managers;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.MediaPlayer;
+import android.os.BatteryManager;
 import android.util.Log;
 
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
@@ -182,6 +185,37 @@ public class StandardHardwareManager extends BaseHardwareManager {
     @Override
     public void setRgbLedSolidWhite(int durationMs) {
         Log.w(TAG, "RGB LED not supported on this device");
+    }
+
+    // ============================================
+    // Battery Status (Android BatteryManager)
+    // ============================================
+
+    @Override
+    public int getBatteryLevel() {
+        BatteryManager batteryManager = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+        if (batteryManager != null) {
+            int level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+            Log.d(TAG, "🔋 Battery level: " + level + "%");
+            return level;
+        }
+        Log.w(TAG, "🔋 BatteryManager not available");
+        return -1;
+    }
+
+    @Override
+    public boolean getChargingStatus() {
+        IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        Intent batteryStatus = context.registerReceiver(null, filter);
+        if (batteryStatus != null) {
+            int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            boolean isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                 status == BatteryManager.BATTERY_STATUS_FULL;
+            Log.d(TAG, "🔋 Charging status: " + isCharging);
+            return isCharging;
+        }
+        Log.w(TAG, "🔋 Battery status not available");
+        return false;
     }
 
     @Override

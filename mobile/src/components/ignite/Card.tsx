@@ -1,9 +1,9 @@
 import {ComponentType, Fragment, ReactElement} from "react"
 import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewProps, ViewStyle} from "react-native"
 
+import {useAppTheme} from "@/contexts/ThemeContext"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {$styles} from "@/theme"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 import {Text, TextProps} from "./Text"
 

@@ -13,6 +13,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)setupStaticEncoderAndDecoder;
 -(NSMutableData *)decode: (NSData *)lc3data frameSize:(NSInteger)frameSize;
 -(NSMutableData *)encode: (NSData *)pcmdata;
+-(void)setOutputFrameSize:(NSInteger)frameSize;
+-(NSInteger)getOutputFrameSize;
+-(void)resetEncoder;
+-(void)resetDecoder;
 @end
 
 NS_ASSUME_NONNULL_END

@@ -3,11 +3,11 @@ import {TextInput, View, ViewStyle, TextStyle} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function StoreUrl() {
   const {theme, themed} = useAppTheme()
@@ -101,8 +101,15 @@ export default function StoreUrl() {
             flexContainer={false}
           />
           <Button
-            tx="developer:dev"
+            tx="developer:beta"
             onPress={() => setCustomUrlInput("https://appsbeta.mentraglass.com")}
+            compact
+            flexContainer={false}
+            flex
+          />
+          <Button
+            tx="developer:dev"
+            onPress={() => setCustomUrlInput("https://appsdev.mentraglass.com")}
             compact
             flexContainer={false}
             flex

@@ -25,32 +25,48 @@ public class SileroVAD: NSObject {
 
     private class InternalBuffer {
         private let size: Int
-        private var buffer: [Bool] = []
+        // Use ContiguousArray for better memory layout and to avoid copy-on-write issues
+        // when the array buffer is accessed from multiple threads
+        private var buffer: ContiguousArray<Bool>
         private let lock = NSLock()
 
         init(size: Int) {
             self.size = size
+            // Pre-allocate capacity to minimize reallocations
+            self.buffer = ContiguousArray<Bool>()
+            self.buffer.reserveCapacity(size + 1)
         }
 
         func append(_ isSpeech: Bool) {
             lock.lock()
-            defer { lock.unlock() }
-            buffer.append(isSpeech)
-            if buffer.count > size {
-                buffer.removeFirst(buffer.count - size)
+            // Perform all mutations while holding the lock
+            if buffer.count >= size {
+                // Remove oldest elements to make room
+                let removeCount = buffer.count - size + 1
+                buffer.removeFirst(removeCount)
             }
+            buffer.append(isSpeech)
+            lock.unlock()
         }
 
         func isAllSpeech() -> Bool {
             lock.lock()
-            defer { lock.unlock() }
-            return buffer.count == size && buffer.allSatisfy { $0 }
+            // Copy the values we need while holding the lock
+            let count = buffer.count
+            let targetSize = size
+            let allTrue = count == targetSize && !buffer.contains(false)
+            lock.unlock()
+            return allTrue
         }
 
         func isAllNotSpeech() -> Bool {
             lock.lock()
-            defer { lock.unlock() }
-            return buffer.count == size && buffer.allSatisfy { !$0 }
+            // Copy the values we need while holding the lock
+            let count = buffer.count
+            let targetSize = size
+            let allFalse = count == targetSize && !buffer.contains(true)
+            lock.unlock()
+            return allFalse
         }
     }
 
@@ -85,6 +101,12 @@ public class SileroVAD: NSObject {
 
     private var env: ORTEnv?
     private var session: ORTSession
+
+    // Pre-allocated buffers to avoid creating new objects every frame (memory leak fix)
+    private var inputData: NSMutableData!
+    private var srData: NSMutableData!
+    private var hData: NSMutableData!
+    private var cData: NSMutableData!
 
     /**
      * sampleRate: 16000, 8000
@@ -122,6 +144,13 @@ public class SileroVAD: NSObject {
         } catch {
             fatalError()
         }
+
+        // Pre-allocate reusable buffers for ONNX inference (prevents memory leak)
+        inputData = NSMutableData(length: Int(sliceSize) * MemoryLayout<Float>.size)!
+        srData = NSMutableData(bytes: [sampleRate], length: MemoryLayout<Int64>.size)
+        hData = NSMutableData(length: hcSize * MemoryLayout<Float>.size)!
+        cData = NSMutableData(length: hcSize * MemoryLayout<Float>.size)!
+
         super.init()
         debugLog("SampleRate = \(sampleRate); sliceSize = \(sliceSize); threshold = \(threshold); silenceTriggerDurationMs = \(silenceTriggerDurationMs); speechTriggerDurationMs = \(speechTriggerDurationMs)")
     }
@@ -133,11 +162,29 @@ public class SileroVAD: NSObject {
 
     public func predict(data: [Float]) throws {
         let inputShape: [NSNumber] = [1, NSNumber(value: sliceSizeSamples)]
-        // 输入长度 sliceSize * 2 bytes
-        let inputTensor = try ORTValue(tensorData: NSMutableData(bytes: data, length: Int(sliceSizeSamples) * MemoryLayout<Float>.size), elementType: .float, shape: inputShape)
-        let srTensor = try ORTValue(tensorData: NSMutableData(bytes: [sampleRate], length: MemoryLayout<Int64>.size), elementType: .int64, shape: [1])
-        let hTensor = try ORTValue(tensorData: NSMutableData(bytes: hidden.flatMap { $0.flatMap { $0 } }, length: hcSize * MemoryLayout<Float>.size), elementType: .float, shape: [2, 1, 64])
-        let cTensor = try ORTValue(tensorData: NSMutableData(bytes: cell.flatMap { $0.flatMap { $0 } }, length: hcSize * MemoryLayout<Float>.size), elementType: .float, shape: [2, 1, 64])
+
+        // Copy input data into pre-allocated buffer (reuse buffer to avoid memory leak)
+        data.withUnsafeBytes { ptr in
+            inputData.replaceBytes(in: NSRange(location: 0, length: inputData.length), withBytes: ptr.baseAddress!)
+        }
+
+        // Copy hidden state into pre-allocated buffer
+        let flatHidden = hidden.flatMap { $0.flatMap { $0 } }
+        flatHidden.withUnsafeBytes { ptr in
+            hData.replaceBytes(in: NSRange(location: 0, length: hData.length), withBytes: ptr.baseAddress!)
+        }
+
+        // Copy cell state into pre-allocated buffer
+        let flatCell = cell.flatMap { $0.flatMap { $0 } }
+        flatCell.withUnsafeBytes { ptr in
+            cData.replaceBytes(in: NSRange(location: 0, length: cData.length), withBytes: ptr.baseAddress!)
+        }
+
+        // Create tensors from pre-allocated buffers (ORTValue creation is unavoidable but buffers are reused)
+        let inputTensor = try ORTValue(tensorData: inputData, elementType: .float, shape: inputShape)
+        let srTensor = try ORTValue(tensorData: srData, elementType: .int64, shape: [1])
+        let hTensor = try ORTValue(tensorData: hData, elementType: .float, shape: [2, 1, 64])
+        let cTensor = try ORTValue(tensorData: cData, elementType: .float, shape: [2, 1, 64])
 
         let outputTensor = try session.run(
             withInputs: ["input": inputTensor, "sr": srTensor, "h": hTensor, "c": cTensor],

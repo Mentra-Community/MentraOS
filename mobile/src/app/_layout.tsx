@@ -1,8 +1,8 @@
 import "@/utils/polyfills/event" // Must be before any livekit imports
-import {useFonts} from "expo-font"
 import {registerGlobals} from "@livekit/react-native-webrtc"
 import * as Sentry from "@sentry/react-native"
-import {Stack, SplashScreen, useNavigationContainerRef} from "expo-router"
+import {useFonts} from "expo-font"
+import {SplashScreen, useNavigationContainerRef} from "expo-router"
 import {useEffect, useState} from "react"
 import {LogBox} from "react-native"
 
@@ -10,10 +10,9 @@ import {SentryNavigationIntegration, SentrySetup} from "@/effects/SentrySetup"
 import {initI18n} from "@/i18n"
 import {useSettingsStore} from "@/stores/settings"
 import {customFontsToLoad} from "@/theme"
-import {ConsoleLogger} from "@/utils/debug/console"
 import {loadDateFnsLocale} from "@/utils/formatDate"
-import {AllEffects} from "@/utils/structure/AllEffects"
-import {AllProviders} from "@/utils/structure/AllProviders"
+import {AllEffects} from "@/effects/AllEffects"
+import {AllProviders} from "@/contexts/AllProviders"
 import "@/global.css"
 
 // prevent the annoying warning box at the bottom of the screen from getting in the way:
@@ -22,6 +21,8 @@ LogBox.ignoreLogs([
   "Require cycle:",
   "is missing the required default export.",
   "Attempted to import the module",
+  "The action 'RESET' with payload",
+  "The action 'POP_TO_TOP' was not handled",
 ])
 
 SentrySetup()
@@ -77,15 +78,6 @@ function Root() {
   return (
     <AllProviders>
       <AllEffects />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          gestureEnabled: true,
-          gestureDirection: "horizontal",
-          animation: "simple_push",
-        }}
-      />
-      <ConsoleLogger />
     </AllProviders>
   )
 }

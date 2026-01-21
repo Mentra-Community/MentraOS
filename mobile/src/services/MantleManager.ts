@@ -5,6 +5,7 @@ import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import bridge from "@/bridge/MantleBridge"
+import livekit from "@/services/Livekit"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
@@ -26,7 +27,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
   }
   const locs = locations as Location.LocationObject[]
   if (locs.length === 0) {
-    console.log("Mantle: LOCATION: No locations received")
+    console.log("MANTLE: LOCATION: No locations received")
     return
   }
 
@@ -81,15 +82,10 @@ class MantleManager {
       const loadedSettings = res.value
       await useSettingsStore.getState().setManyLocally(loadedSettings) // write settings to local storage
     } else {
-      console.error("Mantle: No settings received from server")
+      console.error("MANTLE: No settings received from server")
     }
 
     await CoreModule.updateSettings(useSettingsStore.getState().getCoreSettings()) // send settings to core
-
-    setTimeout(async () => {
-      await CoreModule.connectDefault()
-    }, 3000)
-
     // send initial status request:
     await CoreModule.getStatus()
 
@@ -98,7 +94,7 @@ class MantleManager {
     this.setupSubscriptions()
   }
 
-  public cleanup() {
+  public async cleanup() {
     // Stop timers
     if (this.calendarSyncTimer) {
       clearInterval(this.calendarSyncTimer)
@@ -106,9 +102,14 @@ class MantleManager {
     }
     Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
     this.transcriptProcessor.clear()
+
+    livekit.disconnect()
+    socketComms.cleanup()
+    restComms.goodbye()
   }
 
   private initServices() {
+    socketComms.connectWebsocket()
     gallerySyncService.initialize()
   }
 
@@ -128,8 +129,26 @@ class MantleManager {
         accuracy: properAccuracy,
       })
     } catch (error) {
-      console.error("Mantle: Error starting location updates", error)
+      console.error("MANTLE: Error starting location updates", error)
     }
+
+    // check for requirements immediately, but only if we've passed through onboarding:
+    // const onboardingCompleted = await useSettingsStore.getState().getSetting(SETTINGS.onboarding_completed.key)
+    // if (onboardingCompleted) {
+    //   try {
+    //     const requirementsCheck = await checkConnectivityRequirementsUI()
+    //     if (!requirementsCheck) {
+    //       return
+    //     }
+    //     // give some time for the glasses to be fully ready:
+    //     BackgroundTimer.setTimeout(async () => {
+    //       await CoreModule.connectDefault()
+    //     }, 3000)
+    //   } catch (error) {
+    //     console.error("connect to glasses error:", error)
+    //     showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
+    //   }
+    // }
   }
 
   private setupSubscriptions() {
@@ -151,7 +170,7 @@ class MantleManager {
 
     // subscribe to core settings changes and update the core:
     useSettingsStore.subscribe(
-      state => state.getCoreSettings(),
+      (state) => state.getCoreSettings(),
       (state: Record<string, any>, previousState: Record<string, any>) => {
         const coreSettingsObj: Record<string, any> = {}
 
@@ -161,7 +180,7 @@ class MantleManager {
             coreSettingsObj[k] = state[k] as any
           }
         }
-        console.log("Mantle: core settings changed", coreSettingsObj)
+        console.log("MANTLE: core settings changed", coreSettingsObj)
         CoreModule.updateSettings(coreSettingsObj)
       },
       {equalityFn: shallow},
@@ -170,7 +189,7 @@ class MantleManager {
 
   private async sendCalendarEvents() {
     try {
-      console.log("Mantle: sendCalendarEvents()")
+      console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const calendarIds = calendars.map((calendar: Calendar.Calendar) => calendar.id)
       // from 2 hours ago to 1 week from now:
@@ -180,12 +199,12 @@ class MantleManager {
       restComms.sendCalendarData({events, calendars})
     } catch (error) {
       // it's fine if this fails
-      console.log("Mantle: Error sending calendar events", error)
+      console.log("MANTLE: Error sending calendar events", error)
     }
   }
 
   private async sendLocationUpdates() {
-    console.log("Mantle: sendLocationUpdates()")
+    console.log("MANTLE: sendLocationUpdates()")
     // const location = await Location.getCurrentPositionAsync()
     // socketComms.sendLocationUpdate(location)
   }
@@ -205,13 +224,13 @@ class MantleManager {
       case "reduced":
         return Location.LocationAccuracy.Lowest
       default:
-        // console.error("Mantle: unknown accuracy: " + accuracy)
+        // console.error("MANTLE: unknown accuracy: " + accuracy)
         return Location.LocationAccuracy.Lowest
     }
   }
 
   public async setLocationTier(tier: string) {
-    console.log("Mantle: setLocationTier()", tier)
+    console.log("MANTLE: setLocationTier()", tier)
     // restComms.sendLocationData({tier})
     try {
       const accuracy = this.getLocationAccuracy(tier)
@@ -221,12 +240,12 @@ class MantleManager {
         pausesUpdatesAutomatically: false,
       })
     } catch (error) {
-      console.log("Mantle: Error setting location tier", error)
+      console.log("MANTLE: Error setting location tier", error)
     }
   }
 
   public async requestSingleLocation(accuracy: string, correlationId: string) {
-    console.log("Mantle: requestSingleLocation()")
+    console.log("MANTLE: requestSingleLocation()")
     // restComms.sendLocationData({tier})
     try {
       const location = await Location.getCurrentPositionAsync({accuracy: this.getLocationAccuracy(accuracy)})
@@ -237,7 +256,7 @@ class MantleManager {
         correlationId,
       )
     } catch (error) {
-      console.log("Mantle: Error requesting single location", error)
+      console.log("MANTLE: Error requesting single location", error)
     }
   }
 
@@ -261,11 +280,11 @@ class MantleManager {
 
   public async resetDisplayTimeout() {
     if (this.clearTextTimeout) {
-      console.log("Mantle: canceling pending timeout")
+      // console.log("MANTLE: canceling pending timeout")
       clearTimeout(this.clearTextTimeout)
     }
     this.clearTextTimeout = setTimeout(() => {
-      console.log("Mantle: clearing text from wall")
+      console.log("MANTLE: clearing text from wall")
     }, 10000) // 10 seconds
   }
 
@@ -288,10 +307,7 @@ class MantleManager {
       return
     }
 
-    if (socketComms.isWebSocketConnected()) {
-      socketComms.sendLocalTranscription(data)
-      return
-    }
+    socketComms.sendLocalTranscription(data)
   }
 
   public async handle_button_press(id: string, type: string, timestamp: string) {

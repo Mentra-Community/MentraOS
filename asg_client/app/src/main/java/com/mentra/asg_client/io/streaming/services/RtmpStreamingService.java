@@ -604,7 +604,7 @@ public class RtmpStreamingService extends Service {
                     MediaFormat.MIMETYPE_VIDEO_AVC,
                     START_BITRATE,
                     new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
-                    15, // Increase to 15 FPS minimum
+                    30, // Increase to 15 FPS minimum
                     profile,
                     level,
                     2.0f // Force keyframe every 2 seconds

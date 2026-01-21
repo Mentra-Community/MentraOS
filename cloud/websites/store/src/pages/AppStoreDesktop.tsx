@@ -1,291 +1,257 @@
-import React, {useState, useEffect, useCallback, useMemo, useRef} from "react"
-import {useNavigate, useSearchParams} from "react-router-dom"
-import {X, Building, ChevronLeft, ChevronRight} from "lucide-react"
-import {motion} from "framer-motion"
-import {useAuth} from "@mentra/shared"
-import {useTheme} from "../hooks/useTheme"
-import {useSearch} from "../contexts/SearchContext"
-import api, {AppFilterOptions} from "../api"
-import {AppI} from "../types"
-import Header from "../components/Header_v2"
-import AppCard from "../components/AppCard"
-import SkeletonAppCard from "../components/SkeletonAppCard"
-import SkeletonSlider from "../components/SkeletonSlider"
-import {toast} from "sonner"
-import {formatCompatibilityError} from "../utils/errorHandling"
-import {CaptionsSlide, MergeSlide, StreamSlide, XSlide} from "../components/ui/slides"
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { X, Building, ChevronLeft, ChevronRight } from "lucide-react";
+import { motion } from "framer-motion";
+import { useAuth } from "@mentra/shared";
+import { useTheme } from "../hooks/useTheme";
+import { useSearch } from "../contexts/SearchContext";
+import api, { AppFilterOptions } from "../api";
+import { AppI } from "../types";
+import Header from "../components/Header_v2";
+import AppCard from "../components/AppCard";
+import SkeletonAppCard from "../components/SkeletonAppCard";
+import SkeletonSlider from "../components/SkeletonSlider";
+import { useToast } from "../components/ui/MuiToast";
+import { formatCompatibilityError } from "../utils/errorHandling";
+import { CaptionsSlide, MergeSlide, StreamSlide, XSlide } from "../components/ui/slides";
+import AppStorePromotionBanner from "@/ui/AppStorePromotionBanner";
 
 /**
  * Desktop-optimized AppStore component
  */
 const AppStoreDesktop: React.FC = () => {
-  const navigate = useNavigate()
-  const {isAuthenticated, supabaseToken, coreToken, isLoading: authLoading} = useAuth()
-  const {theme} = useTheme()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate();
+  const { isAuthenticated, supabaseToken, coreToken, isLoading: authLoading } = useAuth();
+  const { theme } = useTheme();
+  const { showToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Get organization ID from URL query parameter
-  const orgId = searchParams.get("orgId")
+  const orgId = searchParams.get("orgId");
 
-  const {searchQuery, setSearchQuery} = useSearch()
-  const [isLoading, setIsLoading] = useState(true)
-  const [slidesLoaded, setSlidesLoaded] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [apps, setApps] = useState<AppI[]>([])
-  const [originalApps, setOriginalApps] = useState<AppI[]>([])
-  const [installingApp, setInstallingApp] = useState<string | null>(null)
-  const [activeOrgFilter, setActiveOrgFilter] = useState<string | null>(orgId)
-  const [orgName, setOrgName] = useState<string>("")
+  const { searchQuery, setSearchQuery, focusSearchInput } = useSearch();
+  const [isLoading, setIsLoading] = useState(true);
+  const [slidesLoaded, setSlidesLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [apps, setApps] = useState<AppI[]>([]);
+  const [originalApps, setOriginalApps] = useState<AppI[]>([]);
+  const [installingApp, setInstallingApp] = useState<string | null>(null);
+  const [activeOrgFilter, setActiveOrgFilter] = useState<string | null>(orgId);
+  const [orgName, setOrgName] = useState<string>("");
 
   // Slideshow state - desktop slides only
-  const slideComponents = [CaptionsSlide, MergeSlide, StreamSlide, XSlide]
-  const [currentSlide, setCurrentSlide] = useState(1) // Start at 1 to account for cloned slide
-  const [isTransitioning, setIsTransitioning] = useState(true)
-  const slideIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const slideComponents = [CaptionsSlide, MergeSlide, StreamSlide, XSlide];
+  const [currentSlide, setCurrentSlide] = useState(1); // Start at 1 to account for cloned slide
+  const [isTransitioning, setIsTransitioning] = useState(true);
+  const slideIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Helper function to check if authentication tokens are ready
   const isAuthTokenReady = () => {
-    if (!isAuthenticated) return true
-    return !authLoading && (supabaseToken || coreToken)
-  }
+    if (!isAuthenticated) return true;
+    return !authLoading && (supabaseToken || coreToken);
+  };
 
   // Reset the auto-play timer
   const resetAutoPlayTimer = useCallback(() => {
     if (slideIntervalRef.current) {
-      clearInterval(slideIntervalRef.current)
+      clearInterval(slideIntervalRef.current);
     }
     slideIntervalRef.current = setInterval(() => {
-      setCurrentSlide((prev) => prev + 1)
-    }, 8000)
-  }, [])
+      setCurrentSlide((prev) => prev + 1);
+    }, 8000);
+  }, []);
 
   // Slideshow navigation functions with infinite scroll
   const goToNextSlide = useCallback(() => {
-    setCurrentSlide((prev) => prev + 1)
-    resetAutoPlayTimer()
-  }, [resetAutoPlayTimer])
+    setCurrentSlide((prev) => prev + 1);
+    resetAutoPlayTimer();
+  }, [resetAutoPlayTimer]);
 
   const goToPrevSlide = useCallback(() => {
-    setCurrentSlide((prev) => prev - 1)
-    resetAutoPlayTimer()
-  }, [resetAutoPlayTimer])
+    setCurrentSlide((prev) => prev - 1);
+    resetAutoPlayTimer();
+  }, [resetAutoPlayTimer]);
 
   const goToSlide = useCallback(
     (index: number) => {
-      setCurrentSlide(index)
-      resetAutoPlayTimer()
+      setCurrentSlide(index);
+      resetAutoPlayTimer();
     },
     [resetAutoPlayTimer],
-  )
+  );
 
   // Handle looping back to the real slides after transition completes
   useEffect(() => {
     if (currentSlide === slideComponents.length + 1) {
       // We've reached the clone at the end, jump back to start (index 1) without animation
       setTimeout(() => {
-        setIsTransitioning(false)
-        setCurrentSlide(1)
-        setTimeout(() => setIsTransitioning(true), 50)
-      }, 400) // Match transition duration
+        setIsTransitioning(false);
+        setCurrentSlide(1);
+        setTimeout(() => setIsTransitioning(true), 50);
+      }, 400); // Match transition duration
     } else if (currentSlide === 0) {
       // We've reached the clone at the start, jump to end (last real slide) without animation
       setTimeout(() => {
-        setIsTransitioning(false)
-        setCurrentSlide(slideComponents.length)
-        setTimeout(() => setIsTransitioning(true), 50)
-      }, 400) // Match transition duration
+        setIsTransitioning(false);
+        setCurrentSlide(slideComponents.length);
+        setTimeout(() => setIsTransitioning(true), 50);
+      }, 400); // Match transition duration
     }
-  }, [currentSlide, slideComponents.length])
+  }, [currentSlide, slideComponents.length]);
 
   // Set slides as loaded after a short delay
   useEffect(() => {
     const timer = setTimeout(() => {
-      setSlidesLoaded(true)
-    }, 500)
+      setSlidesLoaded(true);
+    }, 500);
 
-    return () => clearTimeout(timer)
-  }, [])
+    return () => clearTimeout(timer);
+  }, []);
 
   // Auto-play slideshow - advance every 8 seconds
   useEffect(() => {
     slideIntervalRef.current = setInterval(() => {
-      goToNextSlide()
-    }, 8000)
+      goToNextSlide();
+    }, 8000);
 
     return () => {
       if (slideIntervalRef.current) {
-        clearInterval(slideIntervalRef.current)
+        clearInterval(slideIntervalRef.current);
       }
-    }
-  }, [goToNextSlide])
+    };
+  }, [goToNextSlide]);
 
   // Fetch apps on component mount or when org filter changes
   useEffect(() => {
-    setActiveOrgFilter(orgId)
+    setActiveOrgFilter(orgId);
 
     if (isAuthTokenReady()) {
-      fetchApps()
+      fetchApps();
     }
-  }, [isAuthenticated, supabaseToken, coreToken, authLoading, orgId])
+  }, [isAuthenticated, supabaseToken, coreToken, authLoading, orgId]);
 
   /**
    * Fetches available apps and installed status
    */
   const fetchApps = async () => {
     try {
-      setIsLoading(true)
-      setError(null)
+      setIsLoading(true);
+      setError(null);
 
-      let appList: AppI[] = []
-      let installedApps: AppI[] = []
+      let appList: AppI[] = [];
+      let installedApps: AppI[] = [];
 
       try {
-        const filterOptions: AppFilterOptions = {}
+        const filterOptions: AppFilterOptions = {};
         if (orgId) {
-          filterOptions.organizationId = orgId
+          filterOptions.organizationId = orgId;
         }
 
-        appList = await api.app.getAvailableApps(orgId ? filterOptions : undefined)
+        // Use public endpoint if not authenticated, available endpoint if authenticated
+        if (isAuthenticated) {
+          appList = await api.app.getAvailableApps(orgId ? filterOptions : undefined);
+        } else {
+          appList = await api.app.getPublicApps();
+        }
 
         if (orgId && appList.length > 0) {
-          const firstApp = appList[0]
+          const firstApp = appList[0];
           if (firstApp.orgName) {
-            setOrgName(firstApp.orgName)
+            setOrgName(firstApp.orgName);
           } else {
-            setOrgName("Selected Organization")
+            setOrgName("Selected Organization");
           }
         }
       } catch {
-        setError("Failed to load apps. Please try again.")
-        return
+        setError("Failed to load apps. Please try again.");
+        return;
       }
 
       if (isAuthenticated) {
         try {
-          installedApps = await api.app.getInstalledApps()
+          installedApps = await api.app.getInstalledApps();
 
-          const installedMap = new Map<string, boolean>()
+          const installedMap = new Map<string, boolean>();
           installedApps.forEach((app) => {
-            installedMap.set(app.packageName, true)
-          })
+            installedMap.set(app.packageName, true);
+          });
 
           appList = appList.map((app) => ({
             ...app,
             isInstalled: installedMap.has(app.packageName),
-          }))
+          }));
 
-          console.log("Merged apps with install status:", appList)
+          console.log("Merged apps with install status:", appList);
         } catch (err) {
-          console.error("Error fetching installed apps:", err)
+          console.error("Error fetching installed apps:", err);
         }
       }
 
-      setApps(appList)
-      setOriginalApps(appList)
+      setApps(appList);
+      setOriginalApps(appList);
     } catch (err) {
-      console.error("Error fetching apps:", err)
-      setError("Failed to load apps. Please try again.")
+      console.error("Error fetching apps:", err);
+      setError("Failed to load apps. Please try again.");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   // Filter apps based on search query
   const filteredApps = useMemo(() => {
-    if (searchQuery.trim() === "") return apps
+    if (searchQuery.trim() === "") return apps;
 
-    const query = searchQuery.toLowerCase()
+    const query = searchQuery.toLowerCase();
     const filtered = apps.filter(
       (app) =>
         app.name.toLowerCase().includes(query) ||
         (app.description && app.description.toLowerCase().includes(query)) ||
         app.packageName.toLowerCase().includes(query),
-    )
+    );
 
     if (apps.length === 1 && apps !== originalApps) {
-      return apps
+      return apps;
     }
 
-    return filtered
-  }, [apps, originalApps, searchQuery])
+    return filtered;
+  }, [apps, originalApps, searchQuery]);
 
   /**
    * Handles search form submission
    */
   const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    if (!searchQuery.trim()) {
-      fetchApps()
-      return
-    }
-
-    try {
-      setIsLoading(true)
-      setError(null)
-
-      const filterOptions: AppFilterOptions = {}
-      if (orgId) {
-        filterOptions.organizationId = orgId
-      }
-
-      const results = await api.app.searchApps(searchQuery, orgId ? filterOptions : undefined)
-
-      if (isAuthenticated && isAuthTokenReady()) {
-        try {
-          const installedApps = await api.app.getInstalledApps()
-
-          const installedMap = new Map<string, boolean>()
-          installedApps.forEach((app) => {
-            installedMap.set(app.packageName, true)
-          })
-
-          results.forEach((app) => {
-            app.isInstalled = installedMap.has(app.packageName)
-          })
-        } catch (err) {
-          console.error("Error updating search results with install status:", err)
-        }
-      }
-
-      setApps(results)
-    } catch (err) {
-      console.error("Error searching apps:", err)
-      toast.error("Failed to search apps")
-      setError("Failed to search apps. Please try again.")
-    } finally {
-      setIsLoading(false)
-    }
-  }
+    e.preventDefault();
+    // Do nothing on Enter - search is handled by handleSearchChange as you type
+  };
 
   /**
    * Clears the organization filter
    */
   const clearOrgFilter = () => {
     setSearchParams((prev) => {
-      const newParams = new URLSearchParams(prev)
-      newParams.delete("orgId")
-      return newParams
-    })
-    setActiveOrgFilter(null)
-    setOrgName("")
-  }
+      const newParams = new URLSearchParams(prev);
+      newParams.delete("orgId");
+      return newParams;
+    });
+    setActiveOrgFilter(null);
+    setOrgName("");
+  };
 
   // Handle app installation
   const handleInstall = useCallback(
     async (packageName: string) => {
       if (!isAuthenticated) {
-        navigate("/login")
-        return
+        navigate("/login");
+        return;
       }
 
       try {
-        setInstallingApp(packageName)
+        setInstallingApp(packageName);
 
-        const success = await api.app.installApp(packageName)
+        const success = await api.app.installApp(packageName);
 
         if (success) {
-          toast.success("App installed successfully")
+          showToast("App installed successfully", "success");
 
           setApps((prevApps) =>
             prevApps.map((app) =>
@@ -297,124 +263,122 @@ const AppStoreDesktop: React.FC = () => {
                   }
                 : app,
             ),
-          )
+          );
         } else {
-          toast.error("Failed to install app")
+          showToast("Failed to install app", "error");
         }
       } catch (err) {
-        console.error("Error installing app:", err)
+        console.error("Error installing app:", err);
 
-        const compatibilityError = formatCompatibilityError(err)
+        const compatibilityError = formatCompatibilityError(err);
         if (compatibilityError) {
-          toast.error(compatibilityError, {
-            duration: 6000,
-          })
+          showToast(compatibilityError, "error");
         } else {
           const errorMessage =
-            (err as {response?: {data?: {message?: string}}})?.response?.data?.message || "Failed to install app"
-          toast.error(errorMessage)
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message || "Failed to install app";
+          showToast(errorMessage, "error");
         }
       } finally {
-        setInstallingApp(null)
+        setInstallingApp(null);
       }
     },
-    [isAuthenticated, navigate],
-  )
+    [isAuthenticated, navigate, showToast],
+  );
 
   // Handle app uninstallation
   const handleUninstall = useCallback(
     async (packageName: string) => {
       if (!isAuthenticated) {
-        navigate("/login")
-        return
+        navigate("/login");
+        return;
       }
 
       try {
-        console.log("Uninstalling app:", packageName)
-        setInstallingApp(packageName)
+        console.log("Uninstalling app:", packageName);
+        setInstallingApp(packageName);
 
-        const success = await api.app.uninstallApp(packageName)
+        const success = await api.app.uninstallApp(packageName);
 
         if (success) {
-          toast.success("App uninstalled successfully")
+          showToast("App uninstalled successfully", "success");
 
           setApps((prevApps) =>
             prevApps.map((app) =>
-              app.packageName === packageName ? {...app, isInstalled: false, installedDate: undefined} : app,
+              app.packageName === packageName ? { ...app, isInstalled: false, installedDate: undefined } : app,
             ),
-          )
+          );
         } else {
-          toast.error("Failed to uninstall app")
+          showToast("Failed to uninstall app", "error");
         }
       } catch (err) {
-        console.error("Error uninstalling app:", err)
-        toast.error("Failed to uninstall app")
+        console.error("Error uninstalling app:", err);
+        showToast("Failed to uninstall app", "error");
       } finally {
-        setInstallingApp(null)
+        setInstallingApp(null);
       }
     },
-    [isAuthenticated, navigate],
-  )
+    [isAuthenticated, navigate, showToast],
+  );
 
   const handleCardClick = useCallback(
     (packageName: string) => {
-      navigate(`/package/${packageName}`)
+      navigate(`/package/${packageName}`);
     },
     [navigate],
-  )
+  );
 
   const handleLogin = useCallback(() => {
-    navigate("/login")
-  }, [navigate])
+    navigate("/login");
+  }, [navigate]);
 
   const handleSearchChange = useCallback(
     async (value: string) => {
-      setSearchQuery(value)
+      setSearchQuery(value);
 
       if (apps !== originalApps) {
-        setApps(originalApps)
+        setApps(originalApps);
       }
 
       if (value.trim() === "") {
-        return
+        return;
       }
 
-      const query = value.toLowerCase()
+      const query = value.toLowerCase();
       const filtered = originalApps.filter(
         (app) =>
           app.name.toLowerCase().includes(query) || (app.description && app.description.toLowerCase().includes(query)),
-      )
+      );
 
       if (filtered.length === 0) {
-        setIsLoading(true)
+        setIsLoading(true);
         try {
-          const pkgApp = await api.app.getAppByPackageName(value)
+          const pkgApp = await api.app.getAppByPackageName(value);
 
           if (pkgApp) {
             if (isAuthenticated && isAuthTokenReady()) {
               try {
-                const installedApps = await api.app.getInstalledApps()
-                pkgApp.isInstalled = installedApps.some((app) => app.packageName === pkgApp.packageName)
-                console.log(`App install status: ${pkgApp.isInstalled ? "INSTALLED" : "NOT INSTALLED"}`)
+                const installedApps = await api.app.getInstalledApps();
+                pkgApp.isInstalled = installedApps.some((app) => app.packageName === pkgApp.packageName);
+                console.log(`App install status: ${pkgApp.isInstalled ? "INSTALLED" : "NOT INSTALLED"}`);
               } catch (error) {
-                console.error("Error checking install status:", error)
-                pkgApp.isInstalled = false
+                console.error("Error checking install status:", error);
+                pkgApp.isInstalled = false;
               }
             } else {
-              pkgApp.isInstalled = false
+              pkgApp.isInstalled = false;
             }
 
-            setApps([pkgApp])
+            setApps([pkgApp]);
           }
         } catch {
           // Silent fail
         } finally {
-          setIsLoading(false)
+          setIsLoading(false);
         }
       }
     },
     [apps, originalApps, isAuthenticated, isAuthTokenReady],
-  )
+  );
 
   return (
     <div
@@ -428,8 +392,8 @@ const AppStoreDesktop: React.FC = () => {
         onSearch={handleSearch}
         onSearchChange={handleSearchChange}
         onSearchClear={() => {
-          setSearchQuery("")
-          fetchApps()
+          setSearchQuery("");
+          fetchApps();
         }}
       />
 
@@ -481,7 +445,7 @@ const AppStoreDesktop: React.FC = () => {
                 {/* Slides Container */}
                 <motion.div
                   className="flex"
-                  animate={{x: `-${currentSlide * 100}%`}}
+                  animate={{ x: `-${currentSlide * 100}%` }}
                   transition={
                     isTransitioning
                       ? {
@@ -489,7 +453,7 @@ const AppStoreDesktop: React.FC = () => {
                           duration: 0.4,
                           ease: [0.25, 0.1, 0.25, 1],
                         }
-                      : {duration: 0}
+                      : { duration: 0 }
                   }>
                   {/* Clone of last slide for seamless loop */}
                   {slideComponents[slideComponents.length - 1] &&
@@ -501,7 +465,7 @@ const AppStoreDesktop: React.FC = () => {
                     <SlideComponent key={index} />
                   ))}
                   {/* Clone of first slide for seamless loop */}
-                  {slideComponents[0] && React.createElement(slideComponents[0], {key: "clone-first"})}
+                  {slideComponents[0] && React.createElement(slideComponents[0], { key: "clone-first" })}
                 </motion.div>
 
                 {/* Previous Button - Left Side */}
@@ -517,8 +481,8 @@ const AppStoreDesktop: React.FC = () => {
                   }
                   onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#ffffff1a")}
                   aria-label="Previous slide"
-                  whileHover={{scale: 1.1}}
-                  whileTap={{scale: 0.9}}>
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}>
                   <ChevronLeft className="w-6 h-6" strokeWidth={2} />
                 </motion.button>
 
@@ -535,8 +499,8 @@ const AppStoreDesktop: React.FC = () => {
                   }
                   onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#ffffff1a")}
                   aria-label="Next slide"
-                  whileHover={{scale: 1.1}}
-                  whileTap={{scale: 0.9}}>
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}>
                   <ChevronRight className="w-6 h-6" strokeWidth={2} />
                 </motion.button>
 
@@ -549,7 +513,7 @@ const AppStoreDesktop: React.FC = () => {
                         ? slideComponents.length - 1
                         : currentSlide === slideComponents.length + 1
                           ? 0
-                          : currentSlide - 1
+                          : currentSlide - 1;
                     return (
                       <motion.button
                         key={index}
@@ -561,10 +525,10 @@ const AppStoreDesktop: React.FC = () => {
                         animate={{
                           width: index === actualIndex ? 32 : 8,
                         }}
-                        transition={{duration: 0.3}}
-                        whileHover={{scale: 1.2}}
+                        transition={{ duration: 0.3 }}
+                        whileHover={{ scale: 1.2 }}
                       />
-                    )
+                    );
                   })}
                 </div>
               </div>
@@ -577,7 +541,7 @@ const AppStoreDesktop: React.FC = () => {
             Top Apps
           </div>
         )}
-
+        {/* <AppStorePromotionBanner /> */}
         {/* App grid with loading skeletons */}
         <div className="">
           {isLoading ? (
@@ -590,16 +554,16 @@ const AppStoreDesktop: React.FC = () => {
             <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[48px] gap-y-[24px]">
               {filteredApps.map((app, index) => {
                 // Calculate if this card is in the last row
-                const totalApps = filteredApps.length
-                const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280
-                const isXlBreakpoint = window.innerWidth >= 1280
+                const totalApps = filteredApps.length;
+                const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280;
+                const isXlBreakpoint = window.innerWidth >= 1280;
 
-                let columns = 1
-                if (isXlBreakpoint) columns = 3
-                else if (isMdBreakpoint) columns = 2
+                let columns = 1;
+                if (isXlBreakpoint) columns = 3;
+                else if (isMdBreakpoint) columns = 2;
 
-                const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns
-                const isLastRow = index >= lastRowStartIndex
+                const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns;
+                const isLastRow = index >= lastRowStartIndex;
 
                 return (
                   <AppCard
@@ -614,57 +578,56 @@ const AppStoreDesktop: React.FC = () => {
                     onLogin={handleLogin}
                     isLastRow={isLastRow}
                   />
-                )
+                );
               })}
             </div>
           ) : null}
         </div>
 
+        {!searchQuery && (
+          <div className="hidden lg:block">
+            <AppStorePromotionBanner />
+          </div>
+        )}
+
         {/* Empty state */}
         {!isLoading && !error && filteredApps.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 px-4">
+          <div className="flex flex-col min-h-[calc(100vh-200px)] items-center justify-center py-16 px-4">
             {searchQuery ? (
               <>
-                <div
-                  className="mb-6 w-20 h-20 rounded-full flex items-center justify-center"
-                  style={{backgroundColor: "var(--bg-secondary)"}}>
-                  <svg
-                    className="w-10 h-10"
-                    style={{color: "var(--text-muted)"}}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
+                <div className="mb-9 flex items-center justify-center">
+                  <img src="/app-icons/figma_icons/not_found.svg" alt="No apps found" className="w-62 h-auto" />
                 </div>
 
-                <h3 className="text-2xl font-semibold mb-2 text-center" style={{color: "var(--text-primary)"}}>
+                <h3 className="text-2xl font-semibold mb-2 text-center" style={{ color: "var(--text-primary)" }}>
                   No apps found
                 </h3>
-                <p className="text-base mb-6 max-w-md text-center" style={{color: "var(--text-secondary)"}}>
+                <p className="text-base mb-6 max-w-md text-center" style={{ color: "var(--text-secondary)" }}>
                   We couldn&apos;t find any apps matching &quot;{searchQuery}&quot;
                   {activeOrgFilter && ` in ${orgName}`}
                 </p>
 
                 <motion.button
-                  className="px-6 py-3 font-medium rounded-xl shadow-md transition-colors"
+                  className="px-6 py-2.5 font-medium rounded-full transition-all"
                   style={{
-                    backgroundColor: "var(--accent-primary)",
-                    color: "#ffffff",
+                    backgroundColor: "var(--button-bg)",
+                    color: "var(--button-text)",
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--accent-hover)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--accent-primary)")}
+                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--button-hover)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--button-bg)")}
                   onClick={() => {
-                    setSearchQuery("")
-                    fetchApps()
+                    setSearchQuery("");
+                    fetchApps();
+                    // Scroll to top and focus the search input
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                    // Navigate to trigger search mode and focus input
+                    navigate("/?search=true");
+                    setTimeout(() => {
+                      focusSearchInput();
+                    }, 400);
                   }}
-                  whileHover={{scale: 1.05}}
-                  whileTap={{scale: 0.95}}>
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}>
                   Clear Search
                 </motion.button>
               </>
@@ -672,10 +635,10 @@ const AppStoreDesktop: React.FC = () => {
               <>
                 <div
                   className="mb-6 w-20 h-20 rounded-full flex items-center justify-center"
-                  style={{backgroundColor: "var(--bg-secondary)"}}>
+                  style={{ backgroundColor: "var(--bg-secondary)" }}>
                   <svg
                     className="w-10 h-10"
-                    style={{color: "var(--text-muted)"}}
+                    style={{ color: "var(--text-muted)" }}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24">
@@ -687,7 +650,7 @@ const AppStoreDesktop: React.FC = () => {
                     />
                   </svg>
                 </div>
-                <p className="text-lg" style={{color: "var(--text-secondary)"}}>
+                <p className="text-lg" style={{ color: "var(--text-secondary)" }}>
                   {activeOrgFilter ? `No apps available for ${orgName}.` : "No apps available at this time."}
                 </p>
               </>
@@ -696,7 +659,7 @@ const AppStoreDesktop: React.FC = () => {
         )}
       </main>
     </div>
-  )
-}
+  );
+};
 
-export default AppStoreDesktop
+export default AppStoreDesktop;
