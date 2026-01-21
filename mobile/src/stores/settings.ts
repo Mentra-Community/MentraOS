@@ -76,7 +76,7 @@ export const SETTINGS: Record<string, Setting> = {
         return process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE
       }
       if (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china") {
-        return "https://store.mentraglass.cn"
+        return "https://dev-store.mentraglass.cn"
       }
       return "https://apps.mentra.glass"
     },

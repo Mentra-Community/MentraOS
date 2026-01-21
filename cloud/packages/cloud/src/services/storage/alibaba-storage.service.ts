@@ -1,6 +1,6 @@
 import OSS from "ali-oss";
-import { Logger } from "pino";
 import { Types } from "mongoose";
+import { Logger } from "pino";
 
 export class AlibabaStorageService {
   private ossClient: OSS;
@@ -12,7 +12,7 @@ export class AlibabaStorageService {
     const region = "oss-cn-shenzhen";
     const accessKeyId = process.env.ALIBABA_ACCESS_KEY_ID;
     const accessKeySecret = process.env.ALIBABA_ACCESS_KEY_SECRET;
-    this.bucketName = "mentra-dev-oss-backend-cnsz";
+    this.bucketName = "mentraos-dev-api-oss-public";
 
     if (!region || !accessKeyId || !accessKeySecret || !this.bucketName) {
       throw new Error("Alibaba OSS credentials or configuration missing");
@@ -21,7 +21,7 @@ export class AlibabaStorageService {
     this.ossClient = new OSS({
       accessKeyId,
       accessKeySecret,
-      endpoint: "assets.mentraglass.cn",
+      endpoint: "dev-assets.mentraglass.cn",
       cname: true,
       bucket: this.bucketName,
     });
