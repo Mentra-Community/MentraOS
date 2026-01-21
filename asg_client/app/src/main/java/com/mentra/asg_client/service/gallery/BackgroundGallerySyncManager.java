@@ -6,13 +6,17 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
-import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import androidx.preference.PreferenceManager;
 
+import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 
 /**
  * Background Gallery Sync Manager
@@ -37,29 +41,73 @@ public class BackgroundGallerySyncManager {
     private static final long SYNC_DEBOUNCE_MS = 5000; // Wait 5s after conditions met before starting
     private static final long CONDITION_CHECK_INTERVAL_MS = 60000; // Check conditions every 60s
     
+    // Feature flags - set to false to disable battery/charging checks
+    private static final boolean REQUIRE_CHARGING = false; // Set to true to require charging
+    private static final boolean REQUIRE_MIN_BATTERY = false; // Set to true to require minimum battery level
+    
     private final Context mContext;
     private final IStateManager mStateManager;
     private final CloudGalleryUploader mCloudUploader;
+    private final GalleryUploadQueue mUploadQueue;
     private final SharedPreferences mPrefs;
     private final Handler mHandler;
     
-    private BroadcastReceiver mBatteryReceiver;
     private BroadcastReceiver mWifiReceiver;
     private boolean mIsMonitoring = false;
     private Runnable mSyncDebounceRunnable;
     private Runnable mPeriodicCheckRunnable;
     
     // State tracking
-    private boolean mLastChargingState = false;
     private boolean mLastWifiState = false;
+    private boolean mSyncInProgress = false; // Track if sync is currently running
     
     public BackgroundGallerySyncManager(Context context, IStateManager stateManager, 
-                                       CloudGalleryUploader cloudUploader) {
+                                       CloudGalleryUploader cloudUploader, GalleryUploadQueue uploadQueue) {
         this.mContext = context;
         this.mStateManager = stateManager;
         this.mCloudUploader = cloudUploader;
+        this.mUploadQueue = uploadQueue;
         this.mPrefs = PreferenceManager.getDefaultSharedPreferences(context);
         this.mHandler = new Handler(Looper.getMainLooper());
+        
+        // Register for EventBus immediately so we don't miss battery events
+        if (!EventBus.getDefault().isRegistered(this)) {
+            EventBus.getDefault().register(this);
+            Log.d(TAG, "📡 Registered for EventBus battery status updates (in constructor)");
+        }
+        
+        // Set up upload progress callback
+        cloudUploader.setCallback(new CloudGalleryUploader.UploadCallback() {
+            @Override
+            public void onProgress(String filename, int filesUploaded, int totalFiles) {
+                int percent = totalFiles > 0 ? (filesUploaded * 100 / totalFiles) : 0;
+                Log.i(TAG, "📤 Upload progress: [" + filesUploaded + "/" + totalFiles + "] " + percent + "% - Uploading: " + filename);
+            }
+            
+            @Override
+            public void onComplete(int filesUploaded, int filesFailed) {
+                mSyncInProgress = false;
+                Log.i(TAG, "");
+                Log.i(TAG, "═══════════════════════════════════════════════════════════");
+                Log.i(TAG, "✅✅✅ CLOUD GALLERY UPLOAD COMPLETE ✅✅✅");
+                Log.i(TAG, "═══════════════════════════════════════════════════════════");
+                Log.i(TAG, "📊 Upload Summary:");
+                Log.i(TAG, "   ✅ Successfully uploaded: " + filesUploaded + " files");
+                Log.i(TAG, "   ❌ Failed: " + filesFailed + " files");
+                Log.i(TAG, "   📦 Total processed: " + (filesUploaded + filesFailed) + " files");
+                if (filesUploaded > 0) {
+                    Log.i(TAG, "   🎉 Success rate: " + (filesUploaded * 100 / (filesUploaded + filesFailed)) + "%");
+                }
+                Log.i(TAG, "═══════════════════════════════════════════════════════════");
+                Log.i(TAG, "✅✅✅ UPLOAD FINISHED ✅✅✅");
+                Log.i(TAG, "");
+            }
+            
+            @Override
+            public void onError(String filename, String error) {
+                Log.e(TAG, "❌ Upload error for " + filename + ": " + error);
+            }
+        });
         
         Log.i(TAG, "🔄 BackgroundGallerySyncManager initialized");
     }
@@ -76,19 +124,7 @@ public class BackgroundGallerySyncManager {
         
         Log.i(TAG, "🔄 Starting background sync monitoring");
         
-        // Register battery receiver
-        mBatteryReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                handleBatteryStateChange(intent);
-            }
-        };
-        
-        IntentFilter batteryFilter = new IntentFilter();
-        batteryFilter.addAction(Intent.ACTION_BATTERY_CHANGED);
-        batteryFilter.addAction(Intent.ACTION_POWER_CONNECTED);
-        batteryFilter.addAction(Intent.ACTION_POWER_DISCONNECTED);
-        mContext.registerReceiver(mBatteryReceiver, batteryFilter);
+        // EventBus already registered in constructor - no need to register again
         
         // Register WiFi receiver
         mWifiReceiver = new BroadcastReceiver() {
@@ -103,16 +139,6 @@ public class BackgroundGallerySyncManager {
         mContext.registerReceiver(mWifiReceiver, wifiFilter);
         
         mIsMonitoring = true;
-        
-        // Initialize current charging state from Android system
-        IntentFilter tempFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
-        Intent batteryStatus = mContext.registerReceiver(null, tempFilter);
-        if (batteryStatus != null) {
-            int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
-            mLastChargingState = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                                status == BatteryManager.BATTERY_STATUS_FULL;
-            Log.d(TAG, "🔋 Initial charging state: " + (mLastChargingState ? "CHARGING" : "NOT CHARGING"));
-        }
         
         // Check conditions immediately
         checkConditionsAndScheduleSync();
@@ -133,13 +159,10 @@ public class BackgroundGallerySyncManager {
         
         Log.i(TAG, "🛑 Stopping background sync monitoring");
         
-        try {
-            if (mBatteryReceiver != null) {
-                mContext.unregisterReceiver(mBatteryReceiver);
-                mBatteryReceiver = null;
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Error unregistering battery receiver", e);
+        // Unregister from EventBus
+        if (EventBus.getDefault().isRegistered(this)) {
+            EventBus.getDefault().unregister(this);
+            Log.d(TAG, "📡 Unregistered from EventBus battery status updates");
         }
         
         try {
@@ -168,22 +191,6 @@ public class BackgroundGallerySyncManager {
     }
     
     /**
-     * Handle battery state change
-     */
-    private void handleBatteryStateChange(Intent intent) {
-        int status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
-        boolean isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                           status == BatteryManager.BATTERY_STATUS_FULL;
-        
-        // Only log if state changed
-        if (isCharging != mLastChargingState) {
-            Log.d(TAG, "🔋 Charging state changed: " + (isCharging ? "CHARGING" : "NOT CHARGING"));
-            mLastChargingState = isCharging;
-            checkConditionsAndScheduleSync();
-        }
-    }
-    
-    /**
      * Handle WiFi state change
      */
     private void handleWifiStateChange() {
@@ -195,6 +202,18 @@ public class BackgroundGallerySyncManager {
             mLastWifiState = isWifiConnected;
             checkConditionsAndScheduleSync();
         }
+    }
+    
+    /**
+     * EventBus subscriber for battery status updates from StateManager
+     * Called when glasses hardware battery status is received via Bluetooth from MCU
+     */
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onBatteryStatusEvent(BatteryStatusEvent event) {
+        Log.d(TAG, "🔋 Battery status updated: " + event.getBatteryLevel() + "% " + 
+                  (event.isCharging() ? "(charging)" : "(not charging)"));
+        // Trigger condition check when battery status changes
+        checkConditionsAndScheduleSync();
     }
     
     /**
@@ -223,29 +242,44 @@ public class BackgroundGallerySyncManager {
      * Check if all conditions are met for sync and schedule if ready
      */
     private void checkConditionsAndScheduleSync() {
-        // Use phone's charging status (from BroadcastReceiver), not glasses charging status
-        boolean isCharging = mLastChargingState;
+        // Use GLASSES hardware battery status from StateManager (reported via Bluetooth from MCU)
+        // boolean isCharging = mStateManager.isCharging(); // COMMENTED OUT - controlled by REQUIRE_CHARGING constant
         boolean isWifiConnected = mStateManager.isConnectedToWifi();
         boolean syncEnabled = mPrefs.getBoolean(PREF_ENABLE_BACKGROUND_SYNC, true);
         boolean wifiOnly = mPrefs.getBoolean(PREF_CLOUD_SYNC_WIFI_ONLY, true);
-        int minBattery = mPrefs.getInt(PREF_CLOUD_SYNC_MIN_BATTERY, 20);
-        // Use glasses battery level if available, otherwise allow sync (battery check is for glasses, not phone)
-        int currentBattery = mStateManager.getBatteryLevel();
+        // int minBattery = mPrefs.getInt(PREF_CLOUD_SYNC_MIN_BATTERY, 20); // COMMENTED OUT - controlled by REQUIRE_MIN_BATTERY constant
+        // int currentBattery = mStateManager.getBatteryLevel(); // COMMENTED OUT - controlled by REQUIRE_MIN_BATTERY constant
         
-        Log.d(TAG, "📊 Condition check: charging=" + isCharging + 
-                  " (phone), wifi=" + isWifiConnected + 
+        // Get battery status only if checks are enabled (for logging)
+        boolean isCharging = REQUIRE_CHARGING ? mStateManager.isCharging() : false;
+        int currentBattery = REQUIRE_MIN_BATTERY ? mStateManager.getBatteryLevel() : -1;
+        int minBattery = REQUIRE_MIN_BATTERY ? mPrefs.getInt(PREF_CLOUD_SYNC_MIN_BATTERY, 20) : 0;
+        
+        Log.d(TAG, "📊 Condition check: charging=" + (REQUIRE_CHARGING ? isCharging : "DISABLED") + 
+                  " (glasses), wifi=" + isWifiConnected + 
                   ", enabled=" + syncEnabled + 
-                  ", glasses_battery=" + currentBattery + "% (min: " + minBattery + "%)");
+                  ", glasses_battery=" + (REQUIRE_MIN_BATTERY ? (currentBattery + "% (min: " + minBattery + "%)") : "DISABLED"));
         
         // Check all conditions
-        // Note: We check phone charging status, but glasses battery level (if available)
+        // All checks use glasses hardware status (reported via Bluetooth from MCU)
         boolean conditionsMet = syncEnabled &&
-                              isCharging &&  // Phone must be charging
-                              (currentBattery >= minBattery || currentBattery == -1) && // Glasses battery check (-1 means unknown, allow sync)
+                              (!REQUIRE_CHARGING || isCharging) &&  // Glasses hardware must be charging (if enabled)
+                              (!REQUIRE_MIN_BATTERY || (currentBattery >= minBattery || currentBattery == -1)) && // Glasses battery check (if enabled, -1 means unknown, allow sync)
                               (!wifiOnly || isWifiConnected);
         
-        if (conditionsMet) {
-            scheduleSync();
+        // Don't schedule if already uploading or sync in progress
+        if (conditionsMet && !mSyncInProgress && !mCloudUploader.isUploading()) {
+            // Check if there are files to upload before scheduling
+            mUploadQueue.buildQueue();
+            int pendingCount = mUploadQueue.getTotalFiles();
+            if (pendingCount > 0) {
+                Log.d(TAG, "📋 Found " + pendingCount + " files to upload - scheduling sync");
+                scheduleSync();
+            } else {
+                Log.d(TAG, "📋 No files to upload - skipping sync");
+            }
+        } else if (mSyncInProgress || mCloudUploader.isUploading()) {
+            Log.d(TAG, "⏸️ Sync already in progress - skipping schedule");
         } else {
             // Conditions not met - cancel any pending sync
             if (mSyncDebounceRunnable != null) {
@@ -289,14 +323,26 @@ public class BackgroundGallerySyncManager {
     private void onConditionsMetForSync() {
         Log.i(TAG, "✅ All conditions met for background sync");
         
-        // Check if already uploading
-        if (mCloudUploader.isUploading()) {
-            Log.d(TAG, "Already uploading - continuing existing sync");
+        // Double-check if already uploading (race condition protection)
+        if (mSyncInProgress || mCloudUploader.isUploading()) {
+            Log.d(TAG, "⏸️ Already uploading - skipping duplicate start");
             return;
         }
         
+        // Check if there are files to upload
+        mUploadQueue.buildQueue();
+        int pendingCount = mUploadQueue.getTotalFiles();
+        if (pendingCount == 0) {
+            Log.i(TAG, "📋 No files to upload - sync complete");
+            mSyncInProgress = false;
+            return;
+        }
+        
+        // Mark sync as in progress
+        mSyncInProgress = true;
+        
         // Start the upload
-        Log.i(TAG, "🚀 Starting cloud gallery upload");
+        Log.i(TAG, "🚀 Starting cloud gallery upload - " + pendingCount + " files queued");
         mCloudUploader.startUpload();
         
         // Update last sync time

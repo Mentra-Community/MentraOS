@@ -103,7 +103,7 @@ public class ServiceContainer {
         Log.i("ServiceContainer", "☁️ Initializing gallery cloud sync components");
         this.galleryUploadQueue = new GalleryUploadQueue(context, fileManager);
         this.cloudGalleryUploader = new CloudGalleryUploader(context, fileManager, galleryUploadQueue);
-        this.backgroundSyncManager = new BackgroundGallerySyncManager(context, stateManager, cloudGalleryUploader);
+        this.backgroundSyncManager = new BackgroundGallerySyncManager(context, stateManager, cloudGalleryUploader, galleryUploadQueue);
         Log.i("ServiceContainer", "✅ Gallery cloud sync components initialized");
     }
 

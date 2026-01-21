@@ -61,6 +61,7 @@ public class CloudGalleryUploader {
     private final AtomicBoolean mIsPaused = new AtomicBoolean(false);
     private Call mCurrentCall;
     private String mCurrentFileName;
+    private int mInitialTotalFiles = 0; // Track initial queue size for progress
     
     // Callbacks
     public interface UploadCallback {
@@ -104,10 +105,23 @@ public class CloudGalleryUploader {
             return;
         }
         
+        // Build queue first
+        mUploadQueue.buildQueue();
+        mInitialTotalFiles = mUploadQueue.getTotalFiles();
+        
+        if (mInitialTotalFiles == 0) {
+            Log.i(TAG, "📋 No files to upload - queue is empty");
+            mIsUploading.set(false);
+            if (mCallback != null) {
+                mCallback.onComplete(0, 0);
+            }
+            return;
+        }
+        
         mIsPaused.set(false);
         mIsUploading.set(true);
         
-        Log.i(TAG, "🚀 Starting cloud upload");
+        Log.i(TAG, "🚀 Starting cloud upload - " + mInitialTotalFiles + " files in queue");
         processNextFile();
     }
     
@@ -191,14 +205,18 @@ public class CloudGalleryUploader {
         
         if (fileMetadata == null) {
             // Queue complete
-            Log.i(TAG, "✅ All files uploaded");
             mIsUploading.set(false);
+            int uploaded = mUploadQueue.getUploadedCount();
+            int failed = mUploadQueue.getFailedCount();
+            
+            Log.i(TAG, "✅ All files processed - Uploaded: " + uploaded + ", Failed: " + failed);
             
             if (mCallback != null) {
-                int uploaded = mUploadQueue.getUploadedCount();
-                int failed = mUploadQueue.getFailedCount();
                 mCallback.onComplete(uploaded, failed);
             }
+            
+            // Reset for next sync
+            mInitialTotalFiles = 0;
             return;
         }
         
@@ -293,10 +311,11 @@ public class CloudGalleryUploader {
                         mUploadQueue.markAsUploaded(metadata.getFileName());
                         
                         if (mCallback != null) {
+                            int uploaded = mUploadQueue.getUploadedCount();
                             mHandler.post(() -> mCallback.onProgress(
                                 metadata.getFileName(),
-                                mUploadQueue.getUploadedCount(),
-                                mUploadQueue.getTotalFiles()
+                                uploaded,
+                                mInitialTotalFiles
                             ));
                         }
                         
