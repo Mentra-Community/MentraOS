@@ -36,7 +36,7 @@ public class CloudGalleryUploader {
     private static final String TAG = "CloudGalleryUploader";
     
     // SharedPreferences keys
-    private static final String PREF_AUTH_TOKEN = "auth_token";
+    private static final String PREF_AUTH_TOKEN = "core_token"; // Use same key as ConfigurationManager
     private static final String PREF_UPLOAD_STATE = "cloud_upload_state";
     
     // Upload limits
@@ -100,14 +100,20 @@ public class CloudGalleryUploader {
      * Start uploading files from queue
      */
     public void startUpload() {
-        if (mIsUploading.get()) {
-            Log.d(TAG, "Already uploading");
-            return;
-        }
-        
-        // Build queue first
-        mUploadQueue.buildQueue();
-        mInitialTotalFiles = mUploadQueue.getTotalFiles();
+        Log.e(TAG, "🔴🔴🔴 START UPLOAD ENTRY POINT 🔴🔴🔴");
+        try {
+            Log.i(TAG, "🔵 startUpload() called - isUploading=" + mIsUploading.get() + ", isPaused=" + mIsPaused.get());
+            
+            if (mIsUploading.get()) {
+                Log.w(TAG, "⚠️ Already uploading - returning early");
+                return;
+            }
+            
+            Log.i(TAG, "📋 Building upload queue...");
+            // Build queue first
+            mUploadQueue.buildQueue();
+            mInitialTotalFiles = mUploadQueue.getTotalFiles();
+            Log.i(TAG, "📋 Queue built - total files: " + mInitialTotalFiles);
         
         if (mInitialTotalFiles == 0) {
             Log.i(TAG, "📋 No files to upload - queue is empty");
@@ -118,11 +124,28 @@ public class CloudGalleryUploader {
             return;
         }
         
+        // Count photos vs videos for logging
+        int photoCount = 0;
+        int videoCount = 0;
+        long totalSize = 0;
+        // Note: We can't easily count here without accessing the queue internals
+        // But we'll log it as we process each file
+        
         mIsPaused.set(false);
         mIsUploading.set(true);
         
-        Log.i(TAG, "🚀 Starting cloud upload - " + mInitialTotalFiles + " files in queue");
-        processNextFile();
+            Log.i(TAG, "═══════════════════════════════════════════════════════════");
+            Log.i(TAG, "🚀 STARTING CLOUD GALLERY UPLOAD");
+            Log.i(TAG, "═══════════════════════════════════════════════════════════");
+            Log.i(TAG, "📊 Total files to upload: " + mInitialTotalFiles);
+            Log.i(TAG, "═══════════════════════════════════════════════════════════");
+            Log.i(TAG, "▶️ Calling processNextFile() to start processing...");
+            processNextFile();
+            Log.i(TAG, "▶️ processNextFile() returned");
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Exception in startUpload()", e);
+            mIsUploading.set(false);
+        }
     }
     
     /**
@@ -194,14 +217,19 @@ public class CloudGalleryUploader {
      * Process next file in queue
      */
     private void processNextFile() {
-        // Check if paused
-        if (mIsPaused.get()) {
-            Log.d(TAG, "Upload paused - waiting for resume");
-            return;
-        }
-        
-        // Get next file from queue
-        FileManager.FileMetadata fileMetadata = mUploadQueue.getNextFile();
+        try {
+            Log.i(TAG, "🔄 processNextFile() called - isPaused=" + mIsPaused.get() + ", isUploading=" + mIsUploading.get());
+            
+            // Check if paused
+            if (mIsPaused.get()) {
+                Log.i(TAG, "⏸️ Upload paused - waiting for resume");
+                return;
+            }
+            
+            // Get next file from queue
+            Log.i(TAG, "📋 Getting next file from queue...");
+            FileManager.FileMetadata fileMetadata = mUploadQueue.getNextFile();
+            Log.i(TAG, "📋 Got file from queue: " + (fileMetadata != null ? fileMetadata.getFileName() : "null"));
         
         if (fileMetadata == null) {
             // Queue complete
@@ -209,7 +237,19 @@ public class CloudGalleryUploader {
             int uploaded = mUploadQueue.getUploadedCount();
             int failed = mUploadQueue.getFailedCount();
             
-            Log.i(TAG, "✅ All files processed - Uploaded: " + uploaded + ", Failed: " + failed);
+            Log.i(TAG, "");
+            Log.i(TAG, "═══════════════════════════════════════════════════════════");
+            Log.i(TAG, "✅ UPLOAD QUEUE COMPLETE");
+            Log.i(TAG, "═══════════════════════════════════════════════════════════");
+            Log.i(TAG, "📊 Upload Summary:");
+            Log.i(TAG, "   ✅ Successfully uploaded: " + uploaded + " files");
+            Log.i(TAG, "   ❌ Failed: " + failed + " files");
+            Log.i(TAG, "   📦 Total processed: " + (uploaded + failed) + " files");
+            if (uploaded + failed > 0) {
+                Log.i(TAG, "   🎉 Success rate: " + (uploaded * 100 / (uploaded + failed)) + "%");
+            }
+            Log.i(TAG, "═══════════════════════════════════════════════════════════");
+            Log.i(TAG, "");
             
             if (mCallback != null) {
                 mCallback.onComplete(uploaded, failed);
@@ -220,24 +260,48 @@ public class CloudGalleryUploader {
             return;
         }
         
+        // Calculate current file number (position in queue, not including previous failures)
+        // We use the queue index + 1, not uploaded + failed count
+        int uploaded = mUploadQueue.getUploadedCount();
+        int failed = mUploadQueue.getFailedCount();
+        // Current file number is based on queue position, not total processed
+        // Get the index from the queue if possible, otherwise estimate
+        int currentFileNumber = uploaded + failed + 1;
+        
         // Get the actual file
+        Log.d(TAG, "📁 Looking for file: " + fileMetadata.getFileName());
         File file = mFileManager.getFile(mFileManager.getDefaultPackageName(), fileMetadata.getFileName());
         if (file == null || !file.exists()) {
-            Log.e(TAG, "File not found: " + fileMetadata.getFileName());
+            Log.e(TAG, "❌ [" + currentFileNumber + "/" + mInitialTotalFiles + "] File not found: " + fileMetadata.getFileName());
+            Log.e(TAG, "   File path: " + (file != null ? file.getAbsolutePath() : "null"));
             mUploadQueue.markAsFailed(fileMetadata.getFileName(), "File not found");
             processNextFile(); // Skip to next
             return;
         }
+        Log.i(TAG, "✅ File found: " + file.getAbsolutePath() + " (" + formatBytes(file.length()) + ")");
         
         mCurrentFileName = fileMetadata.getFileName();
         
         // Determine if video or image
         boolean isVideo = isVideoFile(fileMetadata.getFileName());
         
-        if (isVideo) {
-            uploadVideo(file, fileMetadata);
-        } else {
-            uploadImage(file, fileMetadata);
+        Log.i(TAG, "───────────────────────────────────────────────────────────────");
+        Log.i(TAG, "📤 [" + currentFileNumber + "/" + mInitialTotalFiles + "] Processing: " + fileMetadata.getFileName());
+        Log.i(TAG, "   Type: " + (isVideo ? "VIDEO" : "PHOTO"));
+        Log.i(TAG, "   Size: " + formatBytes(fileMetadata.getFileSize()));
+        Log.i(TAG, "   Progress: " + uploaded + " uploaded, " + failed + " failed");
+        Log.i(TAG, "───────────────────────────────────────────────────────────────");
+        
+            if (isVideo) {
+                Log.i(TAG, "▶️ Calling uploadVideo()...");
+                uploadVideo(file, fileMetadata);
+            } else {
+                Log.i(TAG, "▶️ Calling uploadImage()...");
+                uploadImage(file, fileMetadata);
+            }
+            Log.i(TAG, "▶️ uploadImage/uploadVideo() returned");
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Exception in processNextFile()", e);
         }
     }
     
@@ -245,11 +309,16 @@ public class CloudGalleryUploader {
      * Upload image directly via multipart form data
      */
     private void uploadImage(File imageFile, FileManager.FileMetadata metadata) {
-        Log.i(TAG, "📤 Uploading image: " + metadata.getFileName() + " (" + formatBytes(metadata.getFileSize()) + ")");
+        int uploaded = mUploadQueue.getUploadedCount();
+        int currentFileNumber = uploaded + 1;
+        
+        Log.i(TAG, "📸 [" + currentFileNumber + "/" + mInitialTotalFiles + "] Starting image upload: " + metadata.getFileName());
+        Log.d(TAG, "   📏 File size: " + formatBytes(metadata.getFileSize()));
+        Log.d(TAG, "   📍 Upload URL: " + ServerConfigUtil.getServerBaseUrl(mContext) + "/api/client/asg/gallery/upload");
         
         // Check size limit
         if (metadata.getFileSize() > MAX_IMAGE_SIZE) {
-            Log.e(TAG, "Image too large: " + metadata.getFileSize() + " bytes (max: " + MAX_IMAGE_SIZE + ")");
+            Log.e(TAG, "❌ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Image too large: " + formatBytes(metadata.getFileSize()) + " (max: " + formatBytes(MAX_IMAGE_SIZE) + ")");
             mUploadQueue.markAsFailed(metadata.getFileName(), "File too large");
             processNextFile();
             return;
@@ -259,11 +328,16 @@ public class CloudGalleryUploader {
             // Get JWT token
             String token = mPrefs.getString(PREF_AUTH_TOKEN, null);
             if (token == null || token.isEmpty()) {
-                Log.e(TAG, "No auth token available");
+                Log.e(TAG, "❌ [" + currentFileNumber + "/" + mInitialTotalFiles + "] No auth token available");
+                Log.e(TAG, "   🔴 Upload cannot proceed without JWT token from mobile app");
+                Log.e(TAG, "   💡 Token should be sent via BLE command 'auth_token' from mobile app");
+                Log.e(TAG, "   ⏸️ Pausing upload - will retry when token is available");
                 mUploadQueue.markAsFailed(metadata.getFileName(), "No auth token");
                 pauseUpload(); // Pause entire upload until token available
                 return;
             }
+            
+            Log.d(TAG, "   🔐 Auth token found (length: " + token.length() + " chars)");
             
             // Build URL
             String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
@@ -289,29 +363,47 @@ public class CloudGalleryUploader {
                 .build();
             
             // Execute async
+            long uploadStartTime = System.currentTimeMillis();
+            Log.d(TAG, "   ⏳ Sending HTTP request...");
+            
             mCurrentCall = mHttpClient.newCall(request);
             mCurrentCall.enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
                     if (call.isCanceled()) {
-                        Log.d(TAG, "Upload cancelled: " + metadata.getFileName());
+                        int uploaded = mUploadQueue.getUploadedCount();
+                        int currentFileNumber = uploaded + 1;
+                        Log.d(TAG, "⏸️ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload cancelled: " + metadata.getFileName());
                         return;
                     }
                     
-                    Log.e(TAG, "Upload failed: " + metadata.getFileName(), e);
+                    int uploaded = mUploadQueue.getUploadedCount();
+                    int currentFileNumber = uploaded + 1;
+                    long uploadDuration = System.currentTimeMillis() - uploadStartTime;
+                    Log.e(TAG, "❌ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload failed: " + metadata.getFileName());
+                    Log.e(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
+                    Log.e(TAG, "   🔴 Error: " + e.getMessage());
                     handleUploadFailure(metadata.getFileName(), e.getMessage());
                 }
                 
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     mCurrentCall = null;
+                    long uploadDuration = System.currentTimeMillis() - uploadStartTime;
+                    int uploadedBefore = mUploadQueue.getUploadedCount();
                     
                     if (response.isSuccessful()) {
-                        Log.i(TAG, "✅ Upload successful: " + metadata.getFileName());
                         mUploadQueue.markAsUploaded(metadata.getFileName());
+                        int uploaded = mUploadQueue.getUploadedCount();
+                        int currentFileNumber = uploaded;
+                        int percent = mInitialTotalFiles > 0 ? (uploaded * 100 / mInitialTotalFiles) : 0;
+                        
+                        Log.i(TAG, "✅ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload successful: " + metadata.getFileName());
+                        Log.i(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
+                        Log.i(TAG, "   📊 Progress: " + uploaded + "/" + mInitialTotalFiles + " (" + percent + "%)");
+                        Log.i(TAG, "   📈 Speed: " + formatBytes(metadata.getFileSize() * 1000 / (uploadDuration > 0 ? uploadDuration : 1)) + "/s");
                         
                         if (mCallback != null) {
-                            int uploaded = mUploadQueue.getUploadedCount();
                             mHandler.post(() -> mCallback.onProgress(
                                 metadata.getFileName(),
                                 uploaded,
@@ -323,11 +415,18 @@ public class CloudGalleryUploader {
                         mHandler.post(() -> processNextFile());
                     } else if (response.code() == 401) {
                         // Auth error - need new token
-                        Log.e(TAG, "Authentication error - token may be expired");
+                        int uploaded = mUploadQueue.getUploadedCount();
+                        int currentFileNumber = uploaded + 1;
+                        Log.e(TAG, "🔐 [" + currentFileNumber + "/" + mInitialTotalFiles + "] Authentication error - token may be expired");
+                        Log.e(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
                         handleAuthError(metadata.getFileName());
                     } else {
+                        int uploaded = mUploadQueue.getUploadedCount();
+                        int currentFileNumber = uploaded + 1;
                         String errorBody = response.body() != null ? response.body().string() : "Unknown error";
-                        Log.e(TAG, "Upload failed with code " + response.code() + ": " + errorBody);
+                        Log.e(TAG, "❌ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload failed with HTTP " + response.code());
+                        Log.e(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
+                        Log.e(TAG, "   🔴 Error: " + errorBody);
                         handleUploadFailure(metadata.getFileName(), "HTTP " + response.code());
                     }
                     

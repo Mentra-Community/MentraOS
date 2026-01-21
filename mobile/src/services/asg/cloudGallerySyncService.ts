@@ -10,7 +10,6 @@ import RNFS from "react-native-fs"
 
 import restComms from "@/services/RestComms"
 import {useGallerySyncStore} from "@/stores/gallerySync"
-import {useSettingsStore} from "@/stores/settings"
 import {calculateFileHash, isDuplicateFile} from "@/utils/FileHashUtil"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
@@ -109,7 +108,11 @@ class CloudGallerySyncService {
     }
 
     try {
-      const baseUrl = useSettingsStore.getState().getRestUrl()
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      console.warn("[CloudGallerySync] ⚠️ TEMPORARY OVERRIDE ACTIVE:", baseUrl, "- DO NOT COMMIT THIS!")
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
       const token = restComms.getCoreToken()
 
       if (!token) {
@@ -188,7 +191,10 @@ class CloudGallerySyncService {
     try {
       // Get items if not provided
       if (!items) {
-        const baseUrl = useSettingsStore.getState().getRestUrl()
+        // TEMPORARY OVERRIDE - DO NOT COMMIT
+        const baseUrl = "https://clouddev.ngrok.app"
+        console.warn("[CloudGallerySync] ⚠️ TEMPORARY OVERRIDE ACTIVE:", baseUrl, "- DO NOT COMMIT THIS!")
+        // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
         const token = restComms.getCoreToken()
 
         if (!token) {
@@ -349,7 +355,11 @@ class CloudGallerySyncService {
    */
   async markSynced(ids: string[]): Promise<void> {
     try {
-      const baseUrl = useSettingsStore.getState().getRestUrl()
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      console.warn("[CloudGallerySync] ⚠️ TEMPORARY OVERRIDE ACTIVE:", baseUrl, "- DO NOT COMMIT THIS!")
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
       const token = restComms.getCoreToken()
 
       if (!token) {
@@ -382,7 +392,11 @@ class CloudGallerySyncService {
    */
   async deleteItem(itemId: string): Promise<void> {
     try {
-      const baseUrl = useSettingsStore.getState().getRestUrl()
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      console.warn("[CloudGallerySync] ⚠️ TEMPORARY OVERRIDE ACTIVE:", baseUrl, "- DO NOT COMMIT THIS!")
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
       const token = restComms.getCoreToken()
 
       if (!token) {

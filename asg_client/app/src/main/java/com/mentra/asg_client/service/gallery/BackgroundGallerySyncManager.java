@@ -242,6 +242,12 @@ public class BackgroundGallerySyncManager {
      * Check if all conditions are met for sync and schedule if ready
      */
     private void checkConditionsAndScheduleSync() {
+        // Skip condition check if already uploading or sync in progress
+        if (mSyncInProgress || mCloudUploader.isUploading()) {
+            Log.d(TAG, "⏸️ Sync already in progress - skipping condition check");
+            return;
+        }
+        
         // Use GLASSES hardware battery status from StateManager (reported via Bluetooth from MCU)
         // boolean isCharging = mStateManager.isCharging(); // COMMENTED OUT - controlled by REQUIRE_CHARGING constant
         boolean isWifiConnected = mStateManager.isConnectedToWifi();
@@ -267,9 +273,8 @@ public class BackgroundGallerySyncManager {
                               (!REQUIRE_MIN_BATTERY || (currentBattery >= minBattery || currentBattery == -1)) && // Glasses battery check (if enabled, -1 means unknown, allow sync)
                               (!wifiOnly || isWifiConnected);
         
-        // Don't schedule if already uploading or sync in progress
-        if (conditionsMet && !mSyncInProgress && !mCloudUploader.isUploading()) {
-            // Check if there are files to upload before scheduling
+        // Check if there are files to upload before scheduling
+        if (conditionsMet) {
             mUploadQueue.buildQueue();
             int pendingCount = mUploadQueue.getTotalFiles();
             if (pendingCount > 0) {
@@ -278,8 +283,6 @@ public class BackgroundGallerySyncManager {
             } else {
                 Log.d(TAG, "📋 No files to upload - skipping sync");
             }
-        } else if (mSyncInProgress || mCloudUploader.isUploading()) {
-            Log.d(TAG, "⏸️ Sync already in progress - skipping schedule");
         } else {
             // Conditions not met - cancel any pending sync
             if (mSyncDebounceRunnable != null) {
@@ -343,7 +346,11 @@ public class BackgroundGallerySyncManager {
         
         // Start the upload
         Log.i(TAG, "🚀 Starting cloud gallery upload - " + pendingCount + " files queued");
+        Log.i(TAG, "▶️ Calling mCloudUploader.startUpload()...");
+        Log.i(TAG, "   mCloudUploader instance: " + mCloudUploader.getClass().getName());
+        Log.i(TAG, "   mCloudUploader.isUploading(): " + mCloudUploader.isUploading());
         mCloudUploader.startUpload();
+        Log.i(TAG, "▶️ mCloudUploader.startUpload() returned");
         
         // Update last sync time
         mPrefs.edit()

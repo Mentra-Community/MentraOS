@@ -54,17 +54,22 @@ public class AuthTokenCommandHandler implements ICommandHandler {
         try {
             String coreToken = data.optString("coreToken", "");
             if (!coreToken.isEmpty()) {
-                Log.d(TAG, "Received coreToken from AugmentOS Core");
+                Log.i(TAG, "🔐 Received coreToken from mobile app (length: " + coreToken.length() + " chars)");
                 boolean success = configurationManager.saveCoreToken(coreToken);
+                if (success) {
+                    Log.i(TAG, "✅ Core token saved successfully - gallery uploads can now proceed");
+                } else {
+                    Log.e(TAG, "❌ Failed to save core token");
+                }
                 communicationManager.sendTokenStatusResponse(success);
                 return success;
             } else {
-                Log.e(TAG, "Received empty coreToken");
+                Log.e(TAG, "❌ Received empty coreToken from mobile app");
                 communicationManager.sendTokenStatusResponse(false);
                 return false;
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error handling auth token command", e);
+            Log.e(TAG, "💥 Error handling auth token command", e);
             communicationManager.sendTokenStatusResponse(false);
             return false;
         }

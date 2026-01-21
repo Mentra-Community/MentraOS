@@ -40,9 +40,9 @@ public class ConfigurationManager implements IConfigurationManager {
             boolean success = editor.commit();
             
             if (success) {
-                Log.d(TAG, "Core token saved successfully");
+                Log.i(TAG, "✅ Core token saved successfully to SharedPreferences (key: " + CORE_TOKEN_KEY + ")");
             } else {
-                Log.e(TAG, "Failed to save core token");
+                Log.e(TAG, "❌ Failed to save core token to SharedPreferences");
             }
             
             return success;
