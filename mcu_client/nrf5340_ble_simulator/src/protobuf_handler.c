@@ -16,7 +16,7 @@
  * Tag 35: DisplayScrollingText     - Display animated scrolling text (No response)
  * Tag 37: BrightnessConfig         - Set display brightness level (LED3 + Projector, No response)
  * Tag 38: AutoBrightnessConfig     - Configure automatic brightness adjustment (No response)
- * Tag 99: ClearDisplay             - Clear display content (TEMPORARY TAG - update when protobuf definition ready)
+ * Tag 46: ClearDisplay             - Clear display content
  * 
  * === GlassesToPhone (Outgoing) Messages ===
  * Tag 10: BatteryStatus            - Battery level notification (85% default, 0-100% range)
@@ -66,7 +66,7 @@ static uint32_t current_battery_level = 85;
 static bool current_charging_state = false;
 
 // Global brightness level state (0-100%)
-static uint32_t current_brightness_level = 50;
+static uint32_t current_brightness_level = 30;
 
 // Global auto brightness state
 static bool auto_brightness_enabled = false;
@@ -334,10 +334,11 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
 			}
 			break;
 			
-		case 99: // clear_display_tag (temporary - TODO: update when protobuf definition is updated)
+		case 46: // clear_display_tag
 			LOG_INF("Processing Clear Display Command...");
-			LOG_WRN("Using temporary tag 99 for ClearDisplay - update when protobuf definition is ready");
-			protobuf_process_clear_display();
+			if (phone_msg.which_payload == mentraos_ble_PhoneToGlasses_clear_display_tag) {
+				protobuf_process_clear_display();
+			}
 			break;
 			
 		default:
@@ -351,7 +352,7 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
 			LOG_WRN("  - 35: DisplayScrollingText");
 			LOG_WRN("  - 37: BrightnessConfig");
 			LOG_WRN("  - 38: AutoBrightnessConfig");
-			LOG_WRN("  - 99: ClearDisplay (temporary tag)");
+			LOG_WRN("  - 46: ClearDisplay");
 			break;
 		}
 		
@@ -1132,14 +1133,12 @@ void protobuf_parse_text_brightness(const char *text)
 
 void protobuf_process_clear_display(void)
 {
-	LOG_INF("=== CLEAR DISPLAY MESSAGE (Tag 99 - TEMPORARY) ===");
-	LOG_WRN("TEMPORARY IMPLEMENTATION: Using tag 99 for ClearDisplay");
-	LOG_WRN("TODO: Update to official tag when protobuf definition is updated");
+	LOG_INF("=== CLEAR DISPLAY MESSAGE (Tag 46) ===");
 	
 	LOG_INF("Clear Display Command:");
 	LOG_INF("  - Message Type: PhoneToGlasses::ClearDisplay");
-	LOG_INF("  - Protocol: MentraOS BLE Protobuf v3 (EXTENDED)");
-	LOG_INF("  - Payload Tag: 99 (clear_display - TEMPORARY)");
+	LOG_INF("  - Protocol: MentraOS BLE Protobuf v3");
+	LOG_INF("  - Payload Tag: 46 (clear_display)");
 	LOG_INF("  - Direction: Phone → Glasses");
 	LOG_INF("  - Action: Clear all display content");
 	
@@ -1149,11 +1148,10 @@ void protobuf_process_clear_display(void)
 	LOG_INF("  - Reset display state: YES");
 	LOG_INF("  - Preserve brightness: YES");
 	
-	// Protocol compliance (temporary)
-	LOG_INF("Protocol Compliance (TEMPORARY):");
+	// Protocol compliance
+	LOG_INF("Protocol Compliance:");
 	LOG_INF("  - Message Type: PhoneToGlasses::ClearDisplay");
-	LOG_INF("  - Official definition: PENDING");
-	LOG_INF("  - Temporary tag: 99");
+	LOG_INF("  - Protobuf Tag: 46");
 	LOG_INF("  - Implementation: Display hardware clear");
 	
 	// TODO: Implement actual display clearing logic here

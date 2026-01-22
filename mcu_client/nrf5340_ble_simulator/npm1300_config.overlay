@@ -73,18 +73,18 @@
 
         npm1300_ek_charger: charger {
             compatible = "nordic,npm1300-charger";
-            term-microvolt = <4250000>;// 充电终止电压; Charging termination voltage
+            term-microvolt = <4400000>;// 充电终止电压; Charging termination voltage
             term-warm-microvolt = <3600000>;
             // term-current-percent = <10>;
             
             // current-microamp = <800000>;// 限制充电电流(uA); Limit charging current (uA)
-            current-microamp = <300000>;// 限制充电电流(uA); Limit charging current (uA)
+            current-microamp = <170000>;// 限制充电电流(uA); Limit charging current (uA)
 
             // trickle-microvolt = <2900000>;
             // dischg-limit-microamp = <200000>; // 限制放电电流(uA); Limit discharge current (uA)
             dischg-limit-microamp = <1000000>; // 限制放电电流(uA); Limit discharge current (uA)
             vbus-limit-microamp = <500000>;
-            thermistor-ohms = <10000>;
+            thermistor-ohms = <100000>;
             thermistor-beta = <3380>;
 
             charging-enable;
@@ -102,7 +102,3 @@
     };
 };
 
-/* Disable UART0 to avoid conflict with EVT1 PDM pins (P0.20/P0.21) */
-&uart0 {
-    status = "disabled";
-};

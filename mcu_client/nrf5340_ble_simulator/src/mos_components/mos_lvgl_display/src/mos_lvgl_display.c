@@ -116,7 +116,8 @@ int lvgl_display_sem_take(int64_t time)
 void display_open(void)
 {
     // display_cmd_t cmd = {.type = LCD_CMD_OPEN, .param = NULL};
-    display_cmd_t cmd = {.type = LCD_CMD_OPEN, .p.open = {.brightness = 9, .mirror = 0x08}};
+    // Set initial open brightness to ~30% (legacy 0-9 scale -> ~3)
+    display_cmd_t cmd = {.type = LCD_CMD_OPEN, .p.open = {.brightness = 3, .mirror = 0x08}};
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
@@ -963,7 +964,9 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     mos_delay_us(6);
                     
                     // 配置 Bank0 寄存器 | Configure Bank0 registers
-                    a6n_set_brightness(0xff);
+                    // Default projector brightness to 30% (0-100% -> 0x00-0xFF)
+                    uint8_t default_brightness = (30 * 255) / 100; // 0x4D
+                    a6n_set_brightness(default_brightness);
                     mos_delay_us(6);
                     
                     // 设置显示格式为 GRAY16 (4-bit) | Set display format to GRAY16 (4-bit)
