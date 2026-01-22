@@ -142,6 +142,30 @@ async function uploadImage(c: AppContext) {
       }
     }
 
+    // Parse capturedAt timestamp
+    // Glasses send it as milliseconds since epoch (string or number)
+    let parsedCapturedAt: Date;
+    try {
+      // Try parsing as number (milliseconds since epoch)
+      const timestamp = typeof capturedAt === "string" ? parseInt(capturedAt, 10) : capturedAt;
+      if (isNaN(timestamp)) {
+        // If not a number, try parsing as ISO date string
+        parsedCapturedAt = new Date(capturedAt);
+      } else {
+        // Valid timestamp - create date from milliseconds
+        parsedCapturedAt = new Date(timestamp);
+      }
+
+      // Validate the date is valid
+      if (isNaN(parsedCapturedAt.getTime())) {
+        reqLogger.warn({ capturedAt, timestamp }, "Invalid capturedAt timestamp, using current time as fallback");
+        parsedCapturedAt = new Date();
+      }
+    } catch (error) {
+      reqLogger.warn({ capturedAt, error }, "Error parsing capturedAt, using current time as fallback");
+      parsedCapturedAt = new Date();
+    }
+
     // Convert File to Buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -151,7 +175,7 @@ async function uploadImage(c: AppContext) {
       file: buffer,
       filename,
       mimeType: file.type,
-      capturedAt: new Date(capturedAt),
+      capturedAt: parsedCapturedAt,
       deviceId: deviceId || undefined,
       metadata: parsedMetadata,
     });

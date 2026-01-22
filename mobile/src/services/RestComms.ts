@@ -45,6 +45,7 @@ class RestComms {
     )
 
     if (token) {
+      console.log(`${this.TAG}: 🔐 FULL CORE TOKEN (PRINTED ONCE):`, token)
       console.log(`${this.TAG}: Core token set, emitting CORE_TOKEN_SET event`)
       GlobalEventEmitter.emit("CORE_TOKEN_SET")
     }

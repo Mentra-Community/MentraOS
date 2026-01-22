@@ -124,25 +124,49 @@ public class GalleryUploadQueue {
         
         // Filter files
         mPendingFiles = new ArrayList<>();
+        int skippedUploaded = 0;
+        int skippedFailed = 0;
+        int skippedOld = 0;
+        
+        Log.d(TAG, "📋 Filtering " + allFiles.size() + " files (lastSyncTime: " + lastSyncTime + 
+                  ", uploaded: " + mUploadedFiles.size() + ", failed: " + mFailedUploads.size() + ")");
+        
         for (FileMetadata file : allFiles) {
             // Skip if already uploaded
             if (mUploadedFiles.contains(file.getFileName())) {
+                skippedUploaded++;
+                Log.d(TAG, "   ⏭️ Skipping (already uploaded): " + file.getFileName());
                 continue;
             }
             
-            // Skip if failed too many times (will be in failed uploads map)
+            // Check if file previously failed - always allow retry on new sync cycle
             if (mFailedUploads.containsKey(file.getFileName())) {
-                continue;
+                String error = mFailedUploads.get(file.getFileName());
+                Log.i(TAG, "   🔄 Retrying previously failed file: " + file.getFileName() + " - " + error);
+                // Remove from failed list to allow retry
+                mFailedUploads.remove(file.getFileName());
+                saveFailedUploads();
+                // Continue to add to queue for retry
             }
             
             // Skip if modified before last sync (should have been synced already)
             // Allow 10 second buffer for clock skew
             if (file.getLastModified() < lastSyncTime - 10000) {
+                skippedOld++;
+                Log.d(TAG, "   ⏭️ Skipping (too old): " + file.getFileName() + 
+                          " (modified: " + file.getLastModified() + 
+                          ", lastSync: " + lastSyncTime + ")");
                 continue;
             }
             
             mPendingFiles.add(file);
+            Log.d(TAG, "   ✅ Adding to queue: " + file.getFileName());
         }
+        
+        Log.i(TAG, "📋 Filter results: " + mPendingFiles.size() + " pending, " + 
+                  skippedUploaded + " already uploaded, " + 
+                  skippedFailed + " failed, " + 
+                  skippedOld + " too old");
         
         // Sort by capture time (oldest first)
         Collections.sort(mPendingFiles, new Comparator<FileMetadata>() {
@@ -254,6 +278,13 @@ public class GalleryUploadQueue {
      */
     public int getTotalFiles() {
         return mPendingFiles != null ? mPendingFiles.size() : 0;
+    }
+    
+    /**
+     * Get current index in queue (0-based)
+     */
+    public int getCurrentIndex() {
+        return mCurrentIndex;
     }
     
     /**

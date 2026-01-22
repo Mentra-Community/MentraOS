@@ -2904,12 +2904,10 @@ public class MentraLive extends SGCManager {
         Bridge.log("LIVE: 🔐 ========== sendCoreTokenToAsgClient() START ==========");
         Bridge.log("LIVE: 🔐 Step 1: Preparing to send coreToken to ASG client");
 
-        // Get the coreToken from SharedPreferences
-        Bridge.log("LIVE: 🔐 Step 2: Opening SharedPreferences (name: " + AUTH_PREFS_NAME + ")");
-        SharedPreferences prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE);
-        Bridge.log("LIVE: 🔐 Step 3: Reading coreToken from SharedPreferences (key: " + KEY_CORE_TOKEN + ")");
-        String coreToken = prefs.getString(KEY_CORE_TOKEN, null);
-        Bridge.log("LIVE: 🔐 Step 4: Token retrieved - " + (coreToken != null ? "exists (length: " + coreToken.length() + ")" : "NULL"));
+        // Get the coreToken using getCoreToken() function
+        Bridge.log("LIVE: 🔐 Step 2: Calling getCoreToken() to retrieve token");
+        String coreToken = getCoreToken();
+        Bridge.log("LIVE: 🔐 Step 3: Token retrieved - " + (coreToken != null && !coreToken.isEmpty() ? "exists (length: " + coreToken.length() + ")" : "NULL/EMPTY"));
 
         if (coreToken == null || coreToken.isEmpty()) {
             Log.e(TAG, "LIVE: ❌ No coreToken available to send to ASG client");
@@ -5383,8 +5381,18 @@ public class MentraLive extends SGCManager {
      * Get the core authentication token
      */
     private String getCoreToken() {
+        // TEMPORARY HARDCODED TOKEN - DO NOT COMMIT
+        final String HARDCODED_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwODMwMGE0OS00MDg0LTRjYzYtOWFmOC1jZmE5N2FkNWQ4ODMiLCJlbWFpbCI6InRhaW50ZXJtaWNoZWxlQGdtYWlsLmNvbSIsIm9yZ2FuaXphdGlvbnMiOltdLCJkZWZhdWx0T3JnIjpudWxsLCJpYXQiOjE3NjkxMTE5MDd9.IgEjbaNIG_oon7HaL2e0Hlur46h0WZ4cyN8BecH87VU";
+        Bridge.log("LIVE: 🔐 ⚠️ TEMPORARY HARDCODED TOKEN ACTIVE - DO NOT COMMIT THIS!");
+        Bridge.log("LIVE: 🔐 Using hardcoded token (length: " + HARDCODED_TOKEN.length() + " chars)");
+        return HARDCODED_TOKEN;
+        // END TEMPORARY HARDCODED TOKEN
+        
+        // Original code (commented out for temporary override):
+        /*
         SharedPreferences prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE);
         return prefs.getString(KEY_CORE_TOKEN, "");
+        */
     }
 
     /**

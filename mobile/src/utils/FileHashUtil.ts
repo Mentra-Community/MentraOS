@@ -5,7 +5,7 @@
  */
 
 import CryptoJS from "crypto-js"
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {DownloadedFile} from "@/services/asg/localStorageService"
 

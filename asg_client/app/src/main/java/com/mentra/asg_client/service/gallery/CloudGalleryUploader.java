@@ -8,6 +8,7 @@ import android.util.Log;
 import androidx.preference.PreferenceManager;
 
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.utils.ServerConfigUtil;
 
 import org.json.JSONException;
@@ -52,6 +53,7 @@ public class CloudGalleryUploader {
     private final Context mContext;
     private final FileManager mFileManager;
     private final GalleryUploadQueue mUploadQueue;
+    private final ICommunicationManager mCommunicationManager;
     private final SharedPreferences mPrefs;
     private final Handler mHandler;
     private final OkHttpClient mHttpClient;
@@ -72,10 +74,11 @@ public class CloudGalleryUploader {
     
     private UploadCallback mCallback;
     
-    public CloudGalleryUploader(Context context, FileManager fileManager, GalleryUploadQueue uploadQueue) {
+    public CloudGalleryUploader(Context context, FileManager fileManager, GalleryUploadQueue uploadQueue, ICommunicationManager communicationManager) {
         this.mContext = context;
         this.mFileManager = fileManager;
         this.mUploadQueue = uploadQueue;
+        this.mCommunicationManager = communicationManager;
         this.mPrefs = PreferenceManager.getDefaultSharedPreferences(context);
         this.mHandler = new Handler(Looper.getMainLooper());
         
@@ -260,13 +263,20 @@ public class CloudGalleryUploader {
             return;
         }
         
-        // Calculate current file number (position in queue, not including previous failures)
-        // We use the queue index + 1, not uploaded + failed count
+        // Calculate current file number based on queue position
+        // After getNextFile() is called, mCurrentIndex has been incremented, so it's 1-based
+        int queueIndex = mUploadQueue.getCurrentIndex();
+        int currentFileNumber = queueIndex; // Already 1-based after getNextFile() increments
+        
+        // Update total files in case queue changed (e.g., retried files added)
+        int actualTotalFiles = mUploadQueue.getTotalFiles();
+        if (actualTotalFiles != mInitialTotalFiles) {
+            Log.d(TAG, "📊 Queue size changed: " + mInitialTotalFiles + " -> " + actualTotalFiles);
+            mInitialTotalFiles = actualTotalFiles;
+        }
+        
         int uploaded = mUploadQueue.getUploadedCount();
         int failed = mUploadQueue.getFailedCount();
-        // Current file number is based on queue position, not total processed
-        // Get the index from the queue if possible, otherwise estimate
-        int currentFileNumber = uploaded + failed + 1;
         
         // Get the actual file
         Log.d(TAG, "📁 Looking for file: " + fileMetadata.getFileName());
@@ -309,8 +319,9 @@ public class CloudGalleryUploader {
      * Upload image directly via multipart form data
      */
     private void uploadImage(File imageFile, FileManager.FileMetadata metadata) {
+        // Use queue index for accurate file number (already 1-based after getNextFile())
+        int currentFileNumber = mUploadQueue.getCurrentIndex();
         int uploaded = mUploadQueue.getUploadedCount();
-        int currentFileNumber = uploaded + 1;
         
         Log.i(TAG, "📸 [" + currentFileNumber + "/" + mInitialTotalFiles + "] Starting image upload: " + metadata.getFileName());
         Log.d(TAG, "   📏 File size: " + formatBytes(metadata.getFileSize()));
@@ -370,15 +381,13 @@ public class CloudGalleryUploader {
             mCurrentCall.enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
+                    int currentFileNumber = mUploadQueue.getCurrentIndex();
                     if (call.isCanceled()) {
-                        int uploaded = mUploadQueue.getUploadedCount();
-                        int currentFileNumber = uploaded + 1;
                         Log.d(TAG, "⏸️ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload cancelled: " + metadata.getFileName());
                         return;
                     }
                     
                     int uploaded = mUploadQueue.getUploadedCount();
-                    int currentFileNumber = uploaded + 1;
                     long uploadDuration = System.currentTimeMillis() - uploadStartTime;
                     Log.e(TAG, "❌ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload failed: " + metadata.getFileName());
                     Log.e(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
@@ -395,13 +404,27 @@ public class CloudGalleryUploader {
                     if (response.isSuccessful()) {
                         mUploadQueue.markAsUploaded(metadata.getFileName());
                         int uploaded = mUploadQueue.getUploadedCount();
-                        int currentFileNumber = uploaded;
+                        int currentFileNumber = mUploadQueue.getCurrentIndex();
                         int percent = mInitialTotalFiles > 0 ? (uploaded * 100 / mInitialTotalFiles) : 0;
                         
                         Log.i(TAG, "✅ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload successful: " + metadata.getFileName());
                         Log.i(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
                         Log.i(TAG, "   📊 Progress: " + uploaded + "/" + mInitialTotalFiles + " (" + percent + "%)");
                         Log.i(TAG, "   📈 Speed: " + formatBytes(metadata.getFileSize() * 1000 / (uploadDuration > 0 ? uploadDuration : 1)) + "/s");
+                        
+                        // Delete file from glasses after successful upload
+                        String packageName = mFileManager.getDefaultPackageName();
+                        FileManager.FileOperationResult deleteResult = 
+                            mFileManager.deleteFile(packageName, metadata.getFileName());
+                        
+                        if (deleteResult.isSuccess()) {
+                            Log.i(TAG, "   🗑️ Deleted from glasses: " + metadata.getFileName());
+                        } else {
+                            Log.w(TAG, "   ⚠️ Failed to delete from glasses: " + metadata.getFileName() + " - " + deleteResult.getMessage());
+                        }
+                        
+                        // Notify mobile app that a picture was uploaded to cloud
+                        sendCloudUploadNotification(metadata.getFileName());
                         
                         if (mCallback != null) {
                             mHandler.post(() -> mCallback.onProgress(
@@ -415,14 +438,14 @@ public class CloudGalleryUploader {
                         mHandler.post(() -> processNextFile());
                     } else if (response.code() == 401) {
                         // Auth error - need new token
+                        int currentFileNumber = mUploadQueue.getCurrentIndex();
                         int uploaded = mUploadQueue.getUploadedCount();
-                        int currentFileNumber = uploaded + 1;
                         Log.e(TAG, "🔐 [" + currentFileNumber + "/" + mInitialTotalFiles + "] Authentication error - token may be expired");
                         Log.e(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
                         handleAuthError(metadata.getFileName());
                     } else {
+                        int currentFileNumber = mUploadQueue.getCurrentIndex();
                         int uploaded = mUploadQueue.getUploadedCount();
-                        int currentFileNumber = uploaded + 1;
                         String errorBody = response.body() != null ? response.body().string() : "Unknown error";
                         Log.e(TAG, "❌ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload failed with HTTP " + response.code());
                         Log.e(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
@@ -577,5 +600,31 @@ public class CloudGalleryUploader {
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
         return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+    
+    /**
+     * Send notification to mobile app that a picture was uploaded to cloud
+     */
+    private void sendCloudUploadNotification(String filename) {
+        if (mCommunicationManager == null) {
+            Log.w(TAG, "⚠️ Cannot send cloud upload notification - CommunicationManager not available");
+            return;
+        }
+        
+        try {
+            JSONObject notification = new JSONObject();
+            notification.put("type", "cloud_upload_complete");
+            notification.put("filename", filename);
+            notification.put("timestamp", System.currentTimeMillis());
+            
+            boolean sent = mCommunicationManager.sendBluetoothResponse(notification);
+            if (sent) {
+                Log.d(TAG, "📱 Notified mobile app of cloud upload: " + filename);
+            } else {
+                Log.w(TAG, "⚠️ Failed to notify mobile app of cloud upload: " + filename);
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error creating cloud upload notification", e);
+        }
     }
 }

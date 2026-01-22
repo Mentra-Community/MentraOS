@@ -62,6 +62,11 @@ export interface GallerySyncInfo {
   cloudSyncActive: boolean
   cloudSyncError: string | null
   lastCloudPollTime: number | null
+  cloudCurrentFile: number
+  cloudTotalFiles: number
+  cloudCurrentFileName: string | null
+  cloudFileProgress: Map<string, number> // Track progress per file (filename -> progress 0-100)
+  cloudDownloadingItems: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}> // Items currently being downloaded (for preview)
 
   // Error tracking
   lastError: string | null
@@ -97,6 +102,12 @@ interface GallerySyncState extends GallerySyncInfo {
   setCloudSyncActive: (active: boolean) => void
   setCloudSyncError: (error: string | null) => void
   setLastCloudPollTime: (time: number) => void
+  setCloudProgress: (current: number, total: number, fileName?: string | null) => void
+  setCloudFileProgress: (fileName: string, progress: number) => void
+  clearCloudFileProgress: () => void
+  setCloudDownloadingItems: (
+    items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}>,
+  ) => void
 
   // Queue management (for resume)
   setQueue: (files: PhotoInfo[], startIndex?: number) => void
@@ -127,6 +138,11 @@ const initialState: GallerySyncInfo = {
   cloudSyncActive: false,
   cloudSyncError: null,
   lastCloudPollTime: null,
+  cloudCurrentFile: 0,
+  cloudTotalFiles: 0,
+  cloudCurrentFileName: null,
+  cloudFileProgress: new Map<string, number>(),
+  cloudDownloadingItems: [],
   lastError: null,
 }
 
@@ -230,7 +246,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
 
     updateFileInQueue: (fileName: string, updatedFile: PhotoInfo) => {
       const state = get()
-      const updatedQueue = state.queue.map(file => (file.name === fileName ? updatedFile : file))
+      const updatedQueue = state.queue.map((file) => (file.name === fileName ? updatedFile : file))
       set({queue: updatedQueue})
     },
 
@@ -274,6 +290,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
     setCloudSyncActive: (active: boolean) =>
       set({
         cloudSyncActive: active,
+        ...(active === false ? {cloudCurrentFile: 0, cloudTotalFiles: 0, cloudCurrentFileName: null} : {}), // Reset progress when stopping
       }),
 
     setCloudSyncError: (error: string | null) =>
@@ -285,6 +302,31 @@ export const useGallerySyncStore = create<GallerySyncState>()(
       set({
         lastCloudPollTime: time,
       }),
+
+    setCloudProgress: (current: number, total: number, fileName?: string | null) =>
+      set({
+        cloudCurrentFile: current,
+        cloudTotalFiles: total,
+        cloudCurrentFileName: fileName ?? null,
+      }),
+
+    setCloudFileProgress: (fileName: string, progress: number) =>
+      set((state) => {
+        const newProgress = new Map(state.cloudFileProgress)
+        if (progress >= 100) {
+          // Remove when complete
+          newProgress.delete(fileName)
+        } else {
+          newProgress.set(fileName, progress)
+        }
+        return {cloudFileProgress: newProgress}
+      }),
+
+    clearCloudFileProgress: () => set({cloudFileProgress: new Map<string, number>()}),
+
+    setCloudDownloadingItems: (
+      items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}>,
+    ) => set({cloudDownloadingItems: items}),
 
     // Queue management
     setQueue: (files: PhotoInfo[], startIndex: number = 0) =>

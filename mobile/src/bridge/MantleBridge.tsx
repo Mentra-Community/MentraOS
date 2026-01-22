@@ -138,6 +138,12 @@ export class MantleBridge {
             camera_busy: data.camera_busy, // Add camera busy state
           })
           break
+        case "cloud_upload_complete":
+          GlobalEventEmitter.emit("cloud_upload_complete", {
+            filename: data.filename,
+            timestamp: data.timestamp,
+          })
+          break
         case "compatible_glasses_search_result":
           console.log("Received compatible_glasses_search_result event from Core", data)
           GlobalEventEmitter.emit("compatible_glasses_search_result", {

@@ -6,7 +6,7 @@
 
 import NetInfo from "@react-native-community/netinfo"
 import axios from "axios"
-import RNFS from "react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import restComms from "@/services/RestComms"
 import {useGallerySyncStore} from "@/stores/gallerySync"
@@ -237,7 +237,6 @@ class CloudGallerySyncService {
         }
       }
 
-      const downloadedIds: string[] = []
       const skippedDuplicates: string[] = []
       const failedDownloads: string[] = []
 
@@ -248,12 +247,34 @@ class CloudGallerySyncService {
         return timeA - timeB
       })
 
-      for (const item of sortedItems) {
+      // Set initial progress
+      store.setCloudProgress(0, sortedItems.length, null)
+
+      // Add all items to downloading list for gallery preview
+      store.setCloudDownloadingItems(
+        sortedItems.map((item) => ({
+          filename: item.filename,
+          capturedAt: new Date(item.capturedAt).getTime(),
+          mimeType: item.mimeType,
+          is_video: item.type === "video",
+        })),
+      )
+
+      for (let i = 0; i < sortedItems.length; i++) {
+        const item = sortedItems[i]
+        store.setCloudProgress(i + 1, sortedItems.length, item.filename)
+
+        // Initialize photo sync state for this file
+        store.setCloudFileProgress(item.filename, 0)
+
         try {
           console.log(`[CloudGallerySync] Downloading: ${item.filename} (${this.formatBytes(item.sizeBytes)})`)
 
-          // Download to temp location first
-          const tempPath = await this.downloadFile(item.downloadUrl, `temp_${item.filename}`)
+          // Download to temp location first with progress tracking
+          const tempPath = await this.downloadFile(item.downloadUrl, `temp_${item.filename}`, (progress) => {
+            // Update progress in store for gallery screen to display
+            store.setCloudFileProgress(item.filename, progress)
+          })
 
           // Check for duplicates by hash
           const isDuplicate = await isDuplicateFile(tempPath, existingFilesArray)
@@ -262,7 +283,8 @@ class CloudGallerySyncService {
             console.log(`[CloudGallerySync] Skipping duplicate: ${item.filename}`)
             await RNFS.unlink(tempPath)
             skippedDuplicates.push(item.filename)
-            downloadedIds.push(item.id) // Still mark as synced in cloud
+            // Delete from cloud immediately (duplicate, no need to keep)
+            await this.markSynced([item.id])
             continue
           }
 
@@ -287,6 +309,9 @@ class CloudGallerySyncService {
 
           await localStorageService.saveDownloadedFile(downloadedFile)
 
+          // Mark file as complete (100% progress)
+          store.setCloudFileProgress(item.filename, 100)
+
           // Save to camera roll if enabled
           if (shouldAutoSave) {
             const captureTime = new Date(item.capturedAt).getTime()
@@ -298,21 +323,20 @@ class CloudGallerySyncService {
             }
           }
 
-          downloadedIds.push(item.id)
-          console.log(`[CloudGallerySync] ✅ Downloaded: ${item.filename}`)
+          // Delete from cloud immediately after successful download
+          await this.markSynced([item.id])
+          console.log(`[CloudGallerySync] ✅ Downloaded and deleted from cloud: ${item.filename}`)
         } catch (error: any) {
           console.error(`[CloudGallerySync] Failed to download ${item.filename}:`, error?.message || error)
           failedDownloads.push(item.filename)
+          // Mark as failed in progress tracking
+          store.setCloudFileProgress(item.filename, -1) // Use -1 to indicate failed
         }
       }
 
-      // Mark all downloaded items as synced (triggers cloud deletion)
-      if (downloadedIds.length > 0) {
-        await this.markSynced(downloadedIds)
-      }
-
+      const successfulDownloads = sortedItems.length - skippedDuplicates.length - failedDownloads.length
       console.log(
-        `[CloudGallerySync] Download complete: ${downloadedIds.length - skippedDuplicates.length} new, ${skippedDuplicates.length} duplicates, ${failedDownloads.length} failed`,
+        `[CloudGallerySync] Download complete: ${successfulDownloads} new, ${skippedDuplicates.length} duplicates, ${failedDownloads.length} failed`,
       )
 
       // Clear error state on success
@@ -325,13 +349,18 @@ class CloudGallerySyncService {
     } finally {
       this.isDownloading = false
       store.setCloudSyncActive(false)
+      // Clear cloud file progress and downloading items after a delay to allow UI to show completion
+      setTimeout(() => {
+        store.clearCloudFileProgress()
+        store.setCloudDownloadingItems([])
+      }, 3000)
     }
   }
 
   /**
-   * Download a single file from presigned URL
+   * Download a single file from presigned URL with progress tracking
    */
-  private async downloadFile(url: string, filename: string): Promise<string> {
+  private async downloadFile(url: string, filename: string, onProgress?: (progress: number) => void): Promise<string> {
     const tempPath = `${RNFS.TemporaryDirectoryPath}/${filename}`
 
     console.log(`[CloudGallerySync] Downloading to temp: ${tempPath}`)
@@ -341,6 +370,20 @@ class CloudGallerySyncService {
       toFile: tempPath,
       connectionTimeout: TIMING.REQUEST_TIMEOUT_MS,
       readTimeout: TIMING.DOWNLOAD_TIMEOUT_MS,
+      progressDivider: 1, // Get progress updates every 1%
+      progressInterval: 250, // Update progress every 250ms max
+      progress: (res) => {
+        const contentLength = res.contentLength || 0
+        const bytesWritten = res.bytesWritten || 0
+        let percentage = 0
+        if (contentLength > 0 && bytesWritten >= 0) {
+          percentage = Math.round((bytesWritten / contentLength) * 100)
+          percentage = Math.max(0, Math.min(100, percentage))
+        }
+        if (onProgress) {
+          onProgress(percentage)
+        }
+      },
     }).promise
 
     if (result.statusCode !== 200) {
