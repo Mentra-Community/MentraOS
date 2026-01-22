@@ -101,3 +101,8 @@
 
     };
 };
+
+/* Disable UART0 to avoid conflict with EVT1 PDM pins (P0.20/P0.21) */
+&uart0 {
+    status = "disabled";
+};

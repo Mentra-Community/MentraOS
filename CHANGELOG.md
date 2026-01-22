@@ -20,6 +20,7 @@
 - Battery percentage calculation corrected: SoC from fuel gauge is already in percentage format, removed incorrect multiplication by 100.
 - Microphone error handling improved: -EALREADY errors now treated as warnings instead of failures to prevent unnecessary error states.
  - EVT1 PDM pin mapping updated: `PDM_CLK` → P0.20, `PDM_DIN` → P0.21. Board overlay updated at [mcu_client/nrf5340_ble_simulator/boards/nrf5340dk_nrf5340_cpuapp_ns.overlay](mcu_client/nrf5340_ble_simulator/boards/nrf5340dk_nrf5340_cpuapp_ns.overlay) to reflect EVT1 hardware.
+ - Disabled `uart0` in [mcu_client/nrf5340_ble_simulator/npm1300_config.overlay](mcu_client/nrf5340_ble_simulator/npm1300_config.overlay) to free P0.20/P0.21 for the EVT1 PDM microphone pins.
 
 ### Fixed
 - Battery status synchronization: Mobile app now shows correct battery percentage matching the Zephyr shell `battery status` command.
