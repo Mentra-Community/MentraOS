@@ -1,0 +1,10 @@
+default: nrf5340_ble_simulator
+build_dir: /Users/loayyari/Documents/Github/MentraOS/build
+domains:
+  - name: nrf5340_ble_simulator
+    build_dir: /Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator
+  - name: ipc_radio
+    build_dir: /Users/loayyari/Documents/Github/MentraOS/build/ipc_radio
+flash_order:
+  - ipc_radio
+  - nrf5340_ble_simulator

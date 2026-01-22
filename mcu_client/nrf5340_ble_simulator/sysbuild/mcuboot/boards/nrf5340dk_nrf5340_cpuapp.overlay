@@ -1,0 +1,6 @@
+/ {
+        chosen {
+                zephyr,code-partition = &boot_partition;
+                nordic,pm-ext-flash = &mx25r64;
+        };
+};

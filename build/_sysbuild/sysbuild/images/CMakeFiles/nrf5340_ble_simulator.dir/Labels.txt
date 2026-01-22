@@ -1,0 +1,13 @@
+# Target labels
+ nrf5340_ble_simulator
+# Source files and their labels
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/CMakeFiles/nrf5340_ble_simulator
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/CMakeFiles/nrf5340_ble_simulator.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/CMakeFiles/nrf5340_ble_simulator-complete.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/nrf5340_ble_simulator-prefix/src/nrf5340_ble_simulator-stamp/nrf5340_ble_simulator-build.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/nrf5340_ble_simulator-prefix/src/nrf5340_ble_simulator-stamp/nrf5340_ble_simulator-configure.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/nrf5340_ble_simulator-prefix/src/nrf5340_ble_simulator-stamp/nrf5340_ble_simulator-download.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/nrf5340_ble_simulator-prefix/src/nrf5340_ble_simulator-stamp/nrf5340_ble_simulator-install.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/nrf5340_ble_simulator-prefix/src/nrf5340_ble_simulator-stamp/nrf5340_ble_simulator-mkdir.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/nrf5340_ble_simulator-prefix/src/nrf5340_ble_simulator-stamp/nrf5340_ble_simulator-patch.rule
+/Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/sysbuild/images/nrf5340_ble_simulator-prefix/src/nrf5340_ble_simulator-stamp/nrf5340_ble_simulator-update.rule

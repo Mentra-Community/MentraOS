@@ -40,6 +40,7 @@ target_sources(app PRIVATE
     src/mos_components/mos_sysport/src/bal_os.c
     src/mos_components/mos_lvgl_display/src/mos_lvgl_display.c
     src/mos_components/mos_lvgl_display/src/display_config.c
+    src/external_fonts/font_puhui_24_1.c
 )
 
 # Add protobuf sources when available
@@ -55,6 +56,7 @@ target_include_directories(app PRIVATE
     src/BspLog
     src/mos_components/mos_sysport/include
     src/mos_components/mos_lvgl_display/include
+    src/external_fonts
     custom_driver_module/drivers
 )
 

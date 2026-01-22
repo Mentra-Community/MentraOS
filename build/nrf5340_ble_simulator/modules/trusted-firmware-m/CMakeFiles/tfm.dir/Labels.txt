@@ -1,0 +1,13 @@
+# Target labels
+ tfm
+# Source files and their labels
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/CMakeFiles/tfm
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/CMakeFiles/tfm.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/CMakeFiles/tfm-complete.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/tfm-prefix/src/tfm-stamp/tfm-build.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/tfm-prefix/src/tfm-stamp/tfm-configure.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/tfm-prefix/src/tfm-stamp/tfm-download.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/tfm-prefix/src/tfm-stamp/tfm-install.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/tfm-prefix/src/tfm-stamp/tfm-mkdir.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/tfm-prefix/src/tfm-stamp/tfm-patch.rule
+/Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/modules/trusted-firmware-m/tfm-prefix/src/tfm-stamp/tfm-update.rule

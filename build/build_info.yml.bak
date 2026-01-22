@@ -1,0 +1,24 @@
+cmake:
+  board:
+    name: nrf5340dk
+    path:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk
+    qualifiers: nrf5340/cpuapp/ns
+    revision: 
+  images:
+   - name: nrf5340_ble_simulator
+     source-dir: /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator
+     type: MAIN
+   - name: ipc_radio
+     source-dir: 
+  kconfig:
+    files:
+     - /Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/empty.conf
+     - /Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/empty.conf
+    user-files:
+     - /Users/loayyari/Documents/Github/MentraOS/build/_sysbuild/empty.conf
+version: 0.1.0
+west:
+  command: /opt/nordic/ncs/toolchains/ef4fc6722e/bin/west build -p -b nrf5340dk/nrf5340/cpuapp/ns --sysbuild mcu_client/nrf5340_ble_simulator
+  topdir: /opt/nordic/ncs/v3.0.0
+  version: 1.2.0

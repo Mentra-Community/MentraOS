@@ -1,0 +1,60 @@
+cmake:
+  application:
+    configuration-dir: /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator
+    source-dir: /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator
+  board:
+    name: nrf5340dk
+    path:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk
+    qualifiers: nrf5340/cpuapp/ns
+    revision: 
+  devicetree:
+    bindings-dirs:
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/bindings
+     - /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator/custom_driver_module/dts/bindings
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/bindings
+    files:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_nrf5340_cpuapp_ns.dts
+     - /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator/boards/nrf5340dk_nrf5340_cpuapp_ns.overlay
+    include-dirs:
+     - /opt/nordic/ncs/v3.0.0/nrf/include
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/common
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/riscv
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/arm
+     - /opt/nordic/ncs/v3.0.0/nrf/dts
+     - /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator/custom_driver_module/dts
+     - /opt/nordic/ncs/v3.0.0/zephyr/include
+     - /opt/nordic/ncs/v3.0.0/zephyr/include/zephyr
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/common
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/x86
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/xtensa
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/sparc
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/riscv
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/posix
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/nios2
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/arm64
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/arm
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/arc
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts
+    user-files:
+     - /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator/boards/nrf5340dk_nrf5340_cpuapp_ns.overlay
+  images:
+   - name: tfm
+     source-dir: /opt/nordic/ncs/v3.0.0/modules/tee/tf-m/trusted-firmware-m
+  kconfig:
+    files:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_nrf5340_cpuapp_ns_defconfig
+     - /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator/prj.conf
+     - /Users/loayyari/Documents/Github/MentraOS/build/nrf5340_ble_simulator/zephyr/.config.sysbuild
+    user-files:
+     - /Users/loayyari/Documents/Github/MentraOS/mcu_client/nrf5340_ble_simulator/prj.conf
+  toolchain:
+    name: zephyr
+    path: /Users/loayyari/zephyr-sdk-0.17.4
+  vendor-specific:
+    nordic:
+      svdfile: /opt/nordic/ncs/v3.0.0/modules/hal/nordic/nrfx/mdk/nrf5340_application.svd
+  zephyr:
+    version: 4.0.99
+    zephyr-base: /opt/nordic/ncs/v3.0.0/zephyr
+version: 0.1.0
