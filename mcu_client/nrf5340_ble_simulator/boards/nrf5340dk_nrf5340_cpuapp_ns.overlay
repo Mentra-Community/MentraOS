@@ -1,7 +1,8 @@
 / {
     chosen {
         zephyr,display = &a6n;  // Switch to A6N projector for testing
-        nordic-nus-uart = &uart0;
+        /* Use USB CDC ACM for NUS UART bridge to avoid UART0 pin conflicts */
+        nordic,nus-uart = &cdc_acm_uart0;
         // /* USB CDC ACM for console/shell */
         zephyr,console = &cdc_acm_uart0;
         zephyr,shell-uart = &cdc_acm_uart0;
@@ -279,4 +280,8 @@ zephyr_udc0: &usbd {
 		t-enter-dpd = <10000>;
 		t-exit-dpd = <35000>;
 	};
+};
+/* Disable UART0 to avoid conflict with EVT1 PDM pins (P0.20/P0.21) */
+&uart0 {
+    status = "disabled";
 };

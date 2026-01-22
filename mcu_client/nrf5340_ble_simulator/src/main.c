@@ -403,10 +403,14 @@ static void uart_work_handler(struct k_work *item)
 
 static bool uart_test_async_api(const struct device *dev)
 {
+#ifdef CONFIG_UART_ASYNC_API
 	const struct uart_driver_api *api =
 			(const struct uart_driver_api *)dev->api;
-
 	return (api->callback_set != NULL);
+#else
+	ARG_UNUSED(dev);
+	return false;
+#endif
 }
 
 static int uart_init(void)
