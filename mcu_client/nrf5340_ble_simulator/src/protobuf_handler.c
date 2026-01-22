@@ -253,9 +253,9 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
 			message_name = "AutoBrightnessConfig";
 			message_description = "Configure automatic brightness adjustment";
 			break;
-		case 99: // TODO: Replace with actual tag when protobuf definition is updated
+		case 46: // TODO: Replace with actual tag when protobuf definition is updated
 			message_name = "ClearDisplay";
-			message_description = "Clear display content (temporary tag)";
+			message_description = "Clear display content";
 			break;
 		default:
 			message_name = "Unknown";
@@ -336,9 +336,7 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
 			
 		case 46: // clear_display_tag
 			LOG_INF("Processing Clear Display Command...");
-			if (phone_msg.which_payload == mentraos_ble_PhoneToGlasses_clear_display_tag) {
-				protobuf_process_clear_display();
-			}
+			protobuf_process_clear_display();
 			break;
 			
 		default:

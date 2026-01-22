@@ -781,8 +781,17 @@ static void update_protobuf_text_content(const char *text_content)
     // Verify we have valid global references
     if (!protobuf_container || !protobuf_label)
     {
-        LOG_ERR("Protobuf container not initialized");
-        return;
+        LOG_INF("Protobuf container not initialized - recreating after clear");
+        // Recreate the scrolling text container 
+        lv_obj_t *screen = lv_screen_active();
+        create_scrolling_text_container(screen);
+        
+        // Verify containers were created successfully
+        if (!protobuf_container || !protobuf_label)
+        {
+            LOG_ERR("Failed to recreate protobuf containers");
+            return;
+        }
     }
 
     // **CLEAR AND UPDATE: Replace existing text with new protobuf content**
@@ -824,8 +833,21 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
     }
     else
     {
-        LOG_ERR("No valid text container available - must be in Pattern 4 or Pattern 5");
-        return;
+        LOG_INF("No text containers available - recreating after clear");
+        // Recreate the scrolling text container as fallback
+        lv_obj_t *screen = lv_screen_active();
+        create_scrolling_text_container(screen);
+        
+        if (protobuf_container)
+        {
+            target_container = protobuf_container;
+            LOG_DBG("Using recreated Pattern 4 scrolling text container");
+        }
+        else
+        {
+            LOG_ERR("Failed to recreate text containers");
+            return;
+        }
     }
 
     // **CLEAR ALL PREVIOUS TEXT CONTENT** before adding new text
@@ -1077,12 +1099,27 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                 case LCD_CMD_CLEAR_ALL:
                     /* **NEW: Handle clear display command** */
                     LOG_INF("LCD_CMD_CLEAR_ALL - Clearing all display content");
-                    // Clear LVGL objects
+                    
+                    // Safely invalidate static object pointers before clearing
+                    protobuf_container = NULL;
+                    protobuf_label = NULL;
+                    xy_text_container = NULL;
+                    current_xy_text_label = NULL;
+                    scrolling_welcome_label = NULL;
+                    counter_label = NULL;
+                    acc_label = NULL;
+                    gyr_label = NULL;
+                    cont = NULL;
+                    
+                    // Clear LVGL objects (this will destroy all child objects)
                     lv_obj_clean(lv_screen_active());
+                    
                     // Clear hardware display
                     a6n_clear_screen(false);
+                    
                     // Reset pattern state
                     current_pattern = 0;
+                    
                     LOG_INF("Display cleared successfully");
                     break;
                 default:
