@@ -247,8 +247,10 @@ class CloudGallerySyncService {
         return timeA - timeB
       })
 
-      // Set initial progress
+      // Set initial progress and reset completed files counter
       store.setCloudProgress(0, sortedItems.length, null)
+      // Reset completed files count for new download batch
+      useGallerySyncStore.setState({cloudCompletedFiles: 0})
 
       // Add all items to downloading list for gallery preview
       store.setCloudDownloadingItems(
@@ -309,8 +311,20 @@ class CloudGallerySyncService {
 
           await localStorageService.saveDownloadedFile(downloadedFile)
 
-          // Mark file as complete (100% progress)
+          // Mark file as complete (100% progress) - this removes it from cloudFileProgress immediately
           store.setCloudFileProgress(item.filename, 100)
+
+          // Increment completed files count (like normal sync)
+          store.onCloudFileComplete(item.filename)
+
+          // Reload photos immediately so preview appears (like normal sync does)
+          // Use a small delay to ensure file is fully written
+          setTimeout(() => {
+            // Trigger photo reload by emitting an event or calling a callback
+            // For now, we'll rely on the effect in GalleryScreen that watches cloudFileProgress
+            // But we should also trigger a reload here
+            console.log(`[CloudGallerySync] ✅ File complete - should reload photos: ${item.filename}`)
+          }, 100)
 
           // Save to camera roll if enabled
           if (shouldAutoSave) {
@@ -343,17 +357,28 @@ class CloudGallerySyncService {
       if (failedDownloads.length === 0) {
         store.setCloudSyncError(null)
       }
-    } catch (error: any) {
-      console.error("[CloudGallerySync] Download error:", error?.message || error)
-      store.setCloudSyncError(error?.message || "Download failed")
-    } finally {
+
+      // Show "Sync complete" message briefly, then hide banner
       this.isDownloading = false
-      store.setCloudSyncActive(false)
-      // Clear cloud file progress and downloading items after a delay to allow UI to show completion
+      store.setCloudSyncComplete(true)
       setTimeout(() => {
+        store.setCloudSyncComplete(false)
+        store.setCloudSyncActive(false)
+        // Clear cloud file progress, downloading items, reset counters, and pending count
         store.clearCloudFileProgress()
         store.setCloudDownloadingItems([])
-      }, 3000)
+        store.setCloudPending(0, 0) // Reset pending count since we downloaded everything
+        useGallerySyncStore.setState({cloudCompletedFiles: 0, cloudTotalFiles: 0, cloudCurrentFile: 0})
+      }, 2000) // Show "Sync complete" for 2 seconds, then hide banner
+    } catch (error: any) {
+      console.error("[CloudGallerySync] Download error:", error?.message || error)
+      this.isDownloading = false
+      store.setCloudSyncActive(false)
+      store.setCloudSyncError(error?.message || "Download failed")
+      // Reset counters on error (but keep pending count so user can retry)
+      store.clearCloudFileProgress()
+      store.setCloudDownloadingItems([])
+      useGallerySyncStore.setState({cloudCompletedFiles: 0, cloudTotalFiles: 0, cloudCurrentFile: 0})
     }
   }
 

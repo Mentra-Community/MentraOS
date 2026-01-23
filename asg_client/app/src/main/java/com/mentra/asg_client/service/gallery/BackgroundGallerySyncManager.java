@@ -332,8 +332,8 @@ public class BackgroundGallerySyncManager {
             return;
         }
         
-        // Check if there are files to upload
-        mUploadQueue.buildQueue();
+        // Get pending count from already-built queue (built in checkConditionsAndScheduleSync)
+        // Note: startUpload() will rebuild the queue anyway for accuracy at upload time
         int pendingCount = mUploadQueue.getTotalFiles();
         if (pendingCount == 0) {
             Log.i(TAG, "📋 No files to upload - sync complete");

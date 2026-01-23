@@ -96,12 +96,12 @@ export function GalleryScreen() {
 
   // Cloud sync state
   const cloudPendingCount = useGallerySyncStore((state) => state.cloudPendingCount)
-  const cloudPendingBytes = useGallerySyncStore((state) => state.cloudPendingBytes)
   const cloudSyncActive = useGallerySyncStore((state) => state.cloudSyncActive)
+  const cloudSyncComplete = useGallerySyncStore((state) => state.cloudSyncComplete)
   const cloudSyncError = useGallerySyncStore((state) => state.cloudSyncError)
-  const cloudCurrentFile = useGallerySyncStore((state) => state.cloudCurrentFile)
   const cloudTotalFiles = useGallerySyncStore((state) => state.cloudTotalFiles)
   const cloudCurrentFileName = useGallerySyncStore((state) => state.cloudCurrentFileName)
+  const cloudCompletedFiles = useGallerySyncStore((state) => state.cloudCompletedFiles)
   const cloudFileProgress = useGallerySyncStore((state) => state.cloudFileProgress)
   const cloudDownloadingItems = useGallerySyncStore((state) => state.cloudDownloadingItems)
 
@@ -341,17 +341,24 @@ export function GalleryScreen() {
     }
   }, [syncState, loadDownloadedPhotos])
 
-  // Reload photos when cloud download completes
-  // This ensures cloud-downloaded photos appear in the gallery
+  // Reload photos when cloud download completes OR when a file finishes downloading
+  // This ensures cloud-downloaded photos appear in the gallery immediately after each download
   const prevCloudSyncActive = useRef(cloudSyncActive)
+  const prevCloudCompletedFiles = useRef(cloudCompletedFiles)
   useEffect(() => {
+    // Reload when sync finishes
     if (prevCloudSyncActive.current && !cloudSyncActive) {
-      // Cloud sync just finished - reload photos
       console.log("[GalleryScreen] 🔄 Cloud download complete - reloading all photos from storage")
       loadDownloadedPhotos()
     }
+    // Reload when a new file completes (for immediate preview)
+    if (cloudCompletedFiles > prevCloudCompletedFiles.current && cloudSyncActive) {
+      console.log(`[GalleryScreen] 🔄 Cloud file ${cloudCompletedFiles} complete - reloading photos for preview`)
+      loadDownloadedPhotos()
+    }
     prevCloudSyncActive.current = cloudSyncActive
-  }, [cloudSyncActive, loadDownloadedPhotos])
+    prevCloudCompletedFiles.current = cloudCompletedFiles
+  }, [cloudSyncActive, cloudCompletedFiles, loadDownloadedPhotos])
 
   // Exit selection mode
   // Memoized for stable reference in other callbacks
@@ -731,23 +738,26 @@ export function GalleryScreen() {
 
     // console.log(`[GalleryScreen]   - After AVIF filtering: ${downloadedOnly.length}`)
 
-    // Add cloud downloading photos (for preview with progress rings) BEFORE downloaded photos
-    cloudDownloadingPhotos.forEach((photo, i) => {
+    // Add downloaded photos FIRST (they appear at top of gallery, newest first)
+    downloadedOnly.forEach((photo, i) => {
       items.push({
-        id: `cloud-downloading-${photo.name}`,
+        id: `local-${photo.name}`,
         type: "local",
         index: (syncState === "syncing" ? syncQueue.length : 0) + i,
         photo,
         isOnServer: false,
       })
     })
-    // console.log(`[GalleryScreen] ➕ Added ${cloudDownloadingPhotos.length} items from cloudDownloadingItems`)
 
-    downloadedOnly.forEach((photo, i) => {
+    // Add cloud downloading photos AFTER downloaded photos (they appear at BOTTOM of gallery)
+    // Reverse order so current download (first in array) appears on the RIGHT side of the row
+    // This creates right-to-left, bottom-to-top fill pattern for downloading items
+    const reversedCloudPhotos = [...cloudDownloadingPhotos].reverse()
+    reversedCloudPhotos.forEach((photo, i) => {
       items.push({
-        id: `local-${photo.name}`,
+        id: `cloud-downloading-${photo.name}`,
         type: "local",
-        index: (syncState === "syncing" ? syncQueue.length : 0) + cloudDownloadingPhotos.length + i,
+        index: (syncState === "syncing" ? syncQueue.length : 0) + downloadedOnly.length + i,
         photo,
         isOnServer: false,
       })
@@ -998,6 +1008,11 @@ export function GalleryScreen() {
       // Check both WiFi Direct sync state and cloud download progress
       const cloudProgress = cloudFileProgress.get(item.photo.name)
       const isCloudDownloading = cloudProgress !== undefined && cloudProgress >= 0 && cloudProgress < 100
+      // Check if this is a cloud downloading item (has no filePath and is in cloudDownloadingItems)
+      const isCloudDownloadingItem =
+        !item.photo.filePath && cloudDownloadingItems.some((i) => i.filename === item.photo?.name)
+      // Check if this is the currently downloading item (shows spinner)
+      const isCurrentlyDownloading = cloudCurrentFileName === item.photo.name && isCloudDownloading
       const isDownloading =
         (itemSyncState && (itemSyncState.status === "downloading" || itemSyncState.status === "pending")) ||
         isCloudDownloading
@@ -1015,8 +1030,55 @@ export function GalleryScreen() {
           }}
           disabled={isDownloading}>
           <View style={{position: "relative"}}>
-            <PhotoImage photo={item.photo} style={{...themed($photoImage), width: itemWidth, height: itemWidth}} />
-            {isDownloading && <View style={themed($photoDimmingOverlay)} />}
+            {/* Show shimmer for cloud downloading items that haven't been downloaded yet */}
+            {isCloudDownloadingItem && !item.photo.filePath ? (
+              <View style={{width: itemWidth, height: itemWidth}}>
+                <ShimmerPlaceholder
+                  shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+                  shimmerStyle={{
+                    width: itemWidth,
+                    height: itemWidth,
+                    borderRadius: 0,
+                  }}
+                  duration={1500}
+                />
+                {/* Show progress ring for ALL cloud downloading items, not just current */}
+                {(() => {
+                  const itemProgress = cloudFileProgress.get(item.photo.name)
+                  const hasProgress = itemProgress !== undefined && itemProgress >= 0
+                  const isWaiting = !hasProgress // Hasn't started downloading yet
+
+                  if (isCurrentlyDownloading || hasProgress) {
+                    // Show progress ring with actual progress
+                    return (
+                      <View style={themed($progressRingOverlay)}>
+                        <ProgressRing
+                          progress={Math.max(0, Math.min(100, itemProgress || 0))}
+                          size={50}
+                          strokeWidth={4}
+                          progressColor={theme.colors.primary}
+                        />
+                      </View>
+                    )
+                  } else if (isWaiting) {
+                    // Show waiting indicator (queued but not started)
+                    return (
+                      <View style={themed($progressRingOverlay)}>
+                        <View style={themed($waitingIndicator)}>
+                          <Icon name="world-download" size={20} color="white" />
+                        </View>
+                      </View>
+                    )
+                  }
+                  return null
+                })()}
+              </View>
+            ) : (
+              <>
+                <PhotoImage photo={item.photo} style={{...themed($photoImage), width: itemWidth, height: itemWidth}} />
+                {isDownloading && <View style={themed($photoDimmingOverlay)} />}
+              </>
+            )}
           </View>
           {item.isOnServer && !isSelectionMode && (
             <View style={themed($serverBadge)}>
@@ -1097,67 +1159,54 @@ export function GalleryScreen() {
       handlePhotoPress,
       enterSelectionMode,
       cloudFileProgress,
+      cloudDownloadingItems,
+      cloudCurrentFileName,
     ],
   )
 
-  // Helper function to format bytes
-  const formatBytes = (bytes: number): string => {
-    if (bytes < 1024) return bytes + " B"
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB"
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB"
-  }
-
-  // Render cloud sync banner - matches sync button design
+  // Render cloud sync banner - matches sync button design, positioned at bottom
   const renderCloudSyncBanner = () => {
-    if (cloudPendingCount === 0 && !cloudSyncActive) return null
+    // Hide banner if no pending items, not active, and not showing completion message
+    if (cloudPendingCount === 0 && !cloudSyncActive && !cloudSyncComplete) return null
 
-    const progressPercent = cloudTotalFiles > 0 ? Math.round((cloudCurrentFile / cloudTotalFiles) * 100) : 0
+    // Don't show cloud banner if normal WiFi sync is active (to avoid overlap)
+    if (shouldShowSyncButton) return null
 
-    // Find the current downloading photo for preview
-    const currentPhoto = cloudCurrentFileName ? downloadedPhotos.find((p) => p.name === cloudCurrentFileName) : null
+    // Calculate progress like normal sync: (completedFiles + currentFileProgress / 100) / totalFiles
+    const currentFileProgress = cloudCurrentFileName ? cloudFileProgress.get(cloudCurrentFileName) || 0 : 0
+    const progressPercent =
+      cloudTotalFiles > 0 ? Math.round(((cloudCompletedFiles + currentFileProgress / 100) / cloudTotalFiles) * 100) : 0
 
     return (
-      <View style={themed($cloudSyncBanner)}>
-        <View style={themed($cloudSyncContent)}>
-          {cloudSyncActive ? (
+      <TouchableOpacity
+        style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s12}]}
+        onPress={!cloudSyncActive ? () => cloudGallerySyncService.downloadPending() : undefined}
+        activeOpacity={!cloudSyncActive ? 0.8 : 1}
+        disabled={cloudSyncActive}>
+        <View style={themed($syncButtonContent)}>
+          {cloudSyncComplete ? (
+            // Show "Sync complete" message
+            <View style={themed($syncButtonRow)}>
+              <Text style={themed($syncButtonText)}>Cloud sync complete!</Text>
+            </View>
+          ) : cloudSyncActive ? (
             <>
-              {/* Photo preview */}
-              <View style={themed($cloudSyncPreview)}>
-                {currentPhoto ? (
-                  <PhotoImage photo={currentPhoto} style={themed($cloudSyncPreviewImage)} />
-                ) : (
-                  <View style={themed($cloudSyncPreviewPlaceholder)}>
-                    <Icon name="world-download" size={24} color={theme.colors.textDim} />
-                  </View>
-                )}
-              </View>
-              <View style={themed($cloudSyncTextWrapper)}>
-                <Text style={themed($cloudSyncText)}>
-                  Downloading {cloudCurrentFile} of {cloudTotalFiles} items
-                </Text>
-                {cloudTotalFiles > 0 && (
-                  <View style={themed($cloudSyncProgressBar)}>
-                    <View style={[themed($cloudSyncProgressFill), {width: `${progressPercent}%`}]} />
-                  </View>
-                )}
-              </View>
+              <Text style={themed($syncButtonText)}>
+                Downloading {Math.min(cloudCompletedFiles + 1, cloudTotalFiles)} of {cloudTotalFiles} from cloud
+              </Text>
+              {cloudTotalFiles > 0 && (
+                <View style={themed($syncButtonProgressBar)}>
+                  <View style={[themed($syncButtonProgressFill), {width: `${progressPercent}%`}]} />
+                </View>
+              )}
             </>
           ) : (
-            <>
-              <View style={themed($cloudSyncTextWrapper)}>
-                <Text style={themed($cloudSyncText)}>
-                  {cloudPendingCount} {cloudPendingCount === 1 ? "photo" : "photos"} in cloud (
-                  {formatBytes(cloudPendingBytes)})
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => cloudGallerySyncService.downloadPending()}
-                style={themed($cloudSyncButton)}>
-                <Icon name="world-download" size={20} color={theme.colors.text} style={{marginRight: spacing.s2}} />
-                <Text style={themed($cloudSyncButtonText)}>Download</Text>
-              </TouchableOpacity>
-            </>
+            <View style={themed($syncButtonRow)}>
+              <Icon name="world-download" size={20} color={theme.colors.text} style={{marginRight: spacing.s2}} />
+              <Text style={themed($syncButtonText)}>
+                Download {cloudPendingCount} {cloudPendingCount === 1 ? "photo" : "photos"} from cloud
+              </Text>
+            </View>
           )}
         </View>
         {cloudSyncError && (
@@ -1165,7 +1214,7 @@ export function GalleryScreen() {
             {cloudSyncError}
           </Text>
         )}
-      </View>
+      </TouchableOpacity>
     )
   }
 
@@ -1206,7 +1255,6 @@ export function GalleryScreen() {
           )
         }
       />
-      {renderCloudSyncBanner()}
       <View style={themed($screenContainer)}>
         <View style={themed($galleryContainer)}>
           {(() => {
@@ -1272,6 +1320,7 @@ export function GalleryScreen() {
         </View>
 
         {renderStatusBar()}
+        {renderCloudSyncBanner()}
 
         {/* Gallery viewer - direct open (no floating transition) */}
         {selectedPhoto &&
@@ -1395,6 +1444,15 @@ const $progressRingOverlay: ThemedStyle<ViewStyle> = () => ({
   justifyContent: "center",
   alignItems: "center",
   borderRadius: 0,
+})
+
+const $waitingIndicator: ThemedStyle<ViewStyle> = () => ({
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: "rgba(0,0,0,0.4)",
+  justifyContent: "center",
+  alignItems: "center",
 })
 
 const $galleryContainer: ThemedStyle<ViewStyle> = () => ({
@@ -1548,88 +1606,7 @@ const $selectionCountText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontWeight: "600",
 })
 
-// Cloud sync banner styles - matches sync button design
-const $cloudSyncBanner: ThemedStyle<ViewStyle> = ({colors, spacing, isDark}) => ({
-  backgroundColor: colors.primary_foreground,
-  borderBottomWidth: 1,
-  borderBottomColor: colors.border,
-  paddingHorizontal: spacing.s4,
-  paddingVertical: spacing.s3,
-  ...(isDark
-    ? {}
-    : {
-        shadowColor: "#000",
-        shadowOffset: {width: 0, height: 1},
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 2,
-      }),
-})
-
-const $cloudSyncContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  gap: spacing.s3,
-})
-
-const $cloudSyncPreview: ThemedStyle<ViewStyle> = ({spacing: _spacing}) => ({
-  width: 48,
-  height: 48,
-  borderRadius: 4,
-  overflow: "hidden",
-  backgroundColor: "rgba(0,0,0,0.05)",
-})
-
-const $cloudSyncPreviewImage: ThemedStyle<ImageStyle> = () => ({
-  width: "100%",
-  height: "100%",
-})
-
-const $cloudSyncPreviewPlaceholder: ThemedStyle<ViewStyle> = () => ({
-  width: "100%",
-  height: "100%",
-  justifyContent: "center",
-  alignItems: "center",
-  backgroundColor: "rgba(0,0,0,0.05)",
-})
-
-const $cloudSyncTextWrapper: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-})
-
-const $cloudSyncText: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 16,
-  fontWeight: "600",
-  color: colors.text,
-})
-
-const $cloudSyncProgressBar: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  height: 6,
-  backgroundColor: colors.border,
-  borderRadius: 3,
-  overflow: "hidden",
-  marginTop: spacing.s2,
-  width: "100%",
-})
-
-const $cloudSyncProgressFill: ThemedStyle<ViewStyle> = ({colors}) => ({
-  height: "100%",
-  backgroundColor: colors.primary,
-  borderRadius: 2,
-})
-
-const $cloudSyncButton: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "center",
-})
-
-const $cloudSyncButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 16,
-  fontWeight: "600",
-  color: colors.text,
-})
-
+// Cloud sync error style (used in cloud sync banner)
 const $cloudSyncError: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 12,
   color: colors.error,

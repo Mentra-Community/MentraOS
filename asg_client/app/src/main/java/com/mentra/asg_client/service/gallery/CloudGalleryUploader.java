@@ -64,6 +64,7 @@ public class CloudGalleryUploader {
     private Call mCurrentCall;
     private String mCurrentFileName;
     private int mInitialTotalFiles = 0; // Track initial queue size for progress
+    private int mCurrentBatchUploaded = 0; // Track files uploaded in current batch (not cumulative)
     
     // Callbacks
     public interface UploadCallback {
@@ -113,8 +114,8 @@ public class CloudGalleryUploader {
             }
             
             Log.i(TAG, "📋 Building upload queue...");
-            // Build queue first
-            mUploadQueue.buildQueue();
+            // Build queue first (forced to ensure fresh state at upload time)
+            mUploadQueue.buildQueue(true);
             mInitialTotalFiles = mUploadQueue.getTotalFiles();
             Log.i(TAG, "📋 Queue built - total files: " + mInitialTotalFiles);
         
@@ -136,6 +137,7 @@ public class CloudGalleryUploader {
         
         mIsPaused.set(false);
         mIsUploading.set(true);
+        mCurrentBatchUploaded = 0; // Reset counter for new batch
         
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             Log.i(TAG, "🚀 STARTING CLOUD GALLERY UPLOAD");
@@ -237,7 +239,6 @@ public class CloudGalleryUploader {
         if (fileMetadata == null) {
             // Queue complete
             mIsUploading.set(false);
-            int uploaded = mUploadQueue.getUploadedCount();
             int failed = mUploadQueue.getFailedCount();
             
             Log.i(TAG, "");
@@ -245,21 +246,25 @@ public class CloudGalleryUploader {
             Log.i(TAG, "✅ UPLOAD QUEUE COMPLETE");
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             Log.i(TAG, "📊 Upload Summary:");
-            Log.i(TAG, "   ✅ Successfully uploaded: " + uploaded + " files");
+            Log.i(TAG, "   ✅ Successfully uploaded: " + mCurrentBatchUploaded + " files");
             Log.i(TAG, "   ❌ Failed: " + failed + " files");
-            Log.i(TAG, "   📦 Total processed: " + (uploaded + failed) + " files");
-            if (uploaded + failed > 0) {
-                Log.i(TAG, "   🎉 Success rate: " + (uploaded * 100 / (uploaded + failed)) + "%");
+            Log.i(TAG, "   📦 Total processed: " + (mCurrentBatchUploaded + failed) + " files");
+            if (mCurrentBatchUploaded + failed > 0) {
+                Log.i(TAG, "   🎉 Success rate: " + (mCurrentBatchUploaded * 100 / (mCurrentBatchUploaded + failed)) + "%");
             }
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             Log.i(TAG, "");
             
+            // Send gallery status update to phone after all uploads complete
+            sendGalleryStatusUpdate();
+            
             if (mCallback != null) {
-                mCallback.onComplete(uploaded, failed);
+                mCallback.onComplete(mCurrentBatchUploaded, failed);
             }
             
             // Reset for next sync
             mInitialTotalFiles = 0;
+            mCurrentBatchUploaded = 0;
             return;
         }
         
@@ -275,7 +280,6 @@ public class CloudGalleryUploader {
             mInitialTotalFiles = actualTotalFiles;
         }
         
-        int uploaded = mUploadQueue.getUploadedCount();
         int failed = mUploadQueue.getFailedCount();
         
         // Get the actual file
@@ -299,7 +303,7 @@ public class CloudGalleryUploader {
         Log.i(TAG, "📤 [" + currentFileNumber + "/" + mInitialTotalFiles + "] Processing: " + fileMetadata.getFileName());
         Log.i(TAG, "   Type: " + (isVideo ? "VIDEO" : "PHOTO"));
         Log.i(TAG, "   Size: " + formatBytes(fileMetadata.getFileSize()));
-        Log.i(TAG, "   Progress: " + uploaded + " uploaded, " + failed + " failed");
+        Log.i(TAG, "   Progress: " + mCurrentBatchUploaded + " uploaded, " + failed + " failed");
         Log.i(TAG, "───────────────────────────────────────────────────────────────");
         
             if (isVideo) {
@@ -403,13 +407,13 @@ public class CloudGalleryUploader {
                     
                     if (response.isSuccessful()) {
                         mUploadQueue.markAsUploaded(metadata.getFileName());
-                        int uploaded = mUploadQueue.getUploadedCount();
+                        mCurrentBatchUploaded++; // Increment current batch counter
                         int currentFileNumber = mUploadQueue.getCurrentIndex();
-                        int percent = mInitialTotalFiles > 0 ? (uploaded * 100 / mInitialTotalFiles) : 0;
+                        int percent = mInitialTotalFiles > 0 ? (mCurrentBatchUploaded * 100 / mInitialTotalFiles) : 0;
                         
                         Log.i(TAG, "✅ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload successful: " + metadata.getFileName());
                         Log.i(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
-                        Log.i(TAG, "   📊 Progress: " + uploaded + "/" + mInitialTotalFiles + " (" + percent + "%)");
+                        Log.i(TAG, "   📊 Progress: " + mCurrentBatchUploaded + "/" + mInitialTotalFiles + " (" + percent + "%)");
                         Log.i(TAG, "   📈 Speed: " + formatBytes(metadata.getFileSize() * 1000 / (uploadDuration > 0 ? uploadDuration : 1)) + "/s");
                         
                         // Delete file from glasses after successful upload
@@ -429,7 +433,7 @@ public class CloudGalleryUploader {
                         if (mCallback != null) {
                             mHandler.post(() -> mCallback.onProgress(
                                 metadata.getFileName(),
-                                uploaded,
+                                mCurrentBatchUploaded,
                                 mInitialTotalFiles
                             ));
                         }
@@ -625,6 +629,39 @@ public class CloudGalleryUploader {
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating cloud upload notification", e);
+        }
+    }
+    
+    /**
+     * Send full gallery status update to phone after cloud uploads complete.
+     * Uses GalleryStatusHelper to build consistent gallery status response.
+     */
+    private void sendGalleryStatusUpdate() {
+        if (mCommunicationManager == null) {
+            Log.w(TAG, "⚠️ Cannot send gallery status - CommunicationManager not available");
+            return;
+        }
+        
+        if (mFileManager == null) {
+            Log.w(TAG, "⚠️ Cannot send gallery status - FileManager not available");
+            return;
+        }
+        
+        try {
+            Log.i(TAG, "📊 Sending gallery status update to phone after cloud upload completion");
+            
+            // Build gallery status using shared utility
+            JSONObject galleryStatus = com.mentra.asg_client.utils.GalleryStatusHelper.buildGalleryStatus(mFileManager);
+            
+            boolean sent = mCommunicationManager.sendBluetoothResponse(galleryStatus);
+            if (sent) {
+                Log.i(TAG, "📱 Gallery status sent to phone: " + galleryStatus.optInt("photos") + " photos, " + 
+                          galleryStatus.optInt("videos") + " videos remaining");
+            } else {
+                Log.w(TAG, "⚠️ Failed to send gallery status to phone");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error sending gallery status update", e);
         }
     }
 }

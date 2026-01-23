@@ -20,6 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Gallery Upload Queue
@@ -35,6 +36,9 @@ public class GalleryUploadQueue {
     private static final String PREF_FAILED_UPLOADS = "cloud_failed_uploads";
     private static final String PREF_UPLOAD_ATTEMPTS = "cloud_upload_attempts";
     
+    // Queue build protection
+    private static final long MIN_BUILD_INTERVAL_MS = 1000; // Minimum 1 second between builds
+    
     private final Context mContext;
     private final FileManager mFileManager;
     private final SharedPreferences mPrefs;
@@ -45,6 +49,10 @@ public class GalleryUploadQueue {
     private Set<String> mUploadedFiles;
     private Map<String, String> mFailedUploads;
     private Map<String, Integer> mUploadAttempts;
+    
+    // Build protection state
+    private final AtomicBoolean mIsBuilding = new AtomicBoolean(false);
+    private volatile long mLastBuildTimestamp = 0;
     
     public GalleryUploadQueue(Context context, FileManager fileManager) {
         this.mContext = context;
@@ -112,12 +120,37 @@ public class GalleryUploadQueue {
     /**
      * Build the upload queue from FileManager
      * Filters out already-uploaded files and sorts by capture time
+     * Protected against concurrent builds and rapid rebuilds
      */
     public void buildQueue() {
-        Log.i(TAG, "🔨 Building upload queue");
+        buildQueue(false);
+    }
+    
+    /**
+     * Build the upload queue from FileManager
+     * @param force If true, bypasses the debounce protection (use sparingly)
+     */
+    public void buildQueue(boolean force) {
+        // Guard against concurrent builds
+        if (!mIsBuilding.compareAndSet(false, true)) {
+            Log.d(TAG, "⏸️ Queue build already in progress - skipping duplicate build");
+            return;
+        }
         
-        // Get all files from FileManager
-        List<FileMetadata> allFiles = mFileManager.listFiles(mFileManager.getDefaultPackageName());
+        try {
+            // Guard against rapid rebuilds (debounce)
+            long now = System.currentTimeMillis();
+            long timeSinceLastBuild = now - mLastBuildTimestamp;
+            if (!force && mLastBuildTimestamp > 0 && timeSinceLastBuild < MIN_BUILD_INTERVAL_MS) {
+                Log.d(TAG, "⏸️ Queue was built " + timeSinceLastBuild + "ms ago - skipping rebuild (min interval: " + MIN_BUILD_INTERVAL_MS + "ms)");
+                return;
+            }
+            
+            Log.i(TAG, "🔨 Building upload queue" + (force ? " (forced)" : ""));
+            mLastBuildTimestamp = now;
+            
+            // Get all files from FileManager
+            List<FileMetadata> allFiles = mFileManager.listFiles(mFileManager.getDefaultPackageName());
         
         // Get last sync timestamp
         long lastSyncTime = mPrefs.getLong(PREF_LAST_SYNC_TIMESTAMP, 0);
@@ -196,6 +229,24 @@ public class GalleryUploadQueue {
         
         Log.i(TAG, "📊 Queue summary: " + photoCount + " photos, " + videoCount + " videos, " + 
                   formatBytes(totalSize) + " total");
+        } finally {
+            // Always release the build lock
+            mIsBuilding.set(false);
+        }
+    }
+    
+    /**
+     * Check if queue is currently being built
+     */
+    public boolean isBuilding() {
+        return mIsBuilding.get();
+    }
+    
+    /**
+     * Get timestamp of last queue build
+     */
+    public long getLastBuildTimestamp() {
+        return mLastBuildTimestamp;
     }
     
     /**

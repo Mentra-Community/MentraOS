@@ -60,11 +60,13 @@ export interface GallerySyncInfo {
   cloudPendingCount: number
   cloudPendingBytes: number
   cloudSyncActive: boolean
+  cloudSyncComplete: boolean
   cloudSyncError: string | null
   lastCloudPollTime: number | null
   cloudCurrentFile: number
   cloudTotalFiles: number
   cloudCurrentFileName: string | null
+  cloudCompletedFiles: number
   cloudFileProgress: Map<string, number> // Track progress per file (filename -> progress 0-100)
   cloudDownloadingItems: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}> // Items currently being downloaded (for preview)
 
@@ -100,10 +102,12 @@ interface GallerySyncState extends GallerySyncInfo {
   // Cloud sync management
   setCloudPending: (count: number, bytes: number) => void
   setCloudSyncActive: (active: boolean) => void
+  setCloudSyncComplete: (complete: boolean) => void
   setCloudSyncError: (error: string | null) => void
   setLastCloudPollTime: (time: number) => void
   setCloudProgress: (current: number, total: number, fileName?: string | null) => void
   setCloudFileProgress: (fileName: string, progress: number) => void
+  onCloudFileComplete: (fileName: string) => void
   clearCloudFileProgress: () => void
   setCloudDownloadingItems: (
     items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}>,
@@ -136,11 +140,13 @@ const initialState: GallerySyncInfo = {
   cloudPendingCount: 0,
   cloudPendingBytes: 0,
   cloudSyncActive: false,
+  cloudSyncComplete: false,
   cloudSyncError: null,
   lastCloudPollTime: null,
   cloudCurrentFile: 0,
   cloudTotalFiles: 0,
   cloudCurrentFileName: null,
+  cloudCompletedFiles: 0,
   cloudFileProgress: new Map<string, number>(),
   cloudDownloadingItems: [],
   lastError: null,
@@ -290,7 +296,13 @@ export const useGallerySyncStore = create<GallerySyncState>()(
     setCloudSyncActive: (active: boolean) =>
       set({
         cloudSyncActive: active,
+        cloudSyncComplete: false, // Reset complete state when starting new download
         ...(active === false ? {cloudCurrentFile: 0, cloudTotalFiles: 0, cloudCurrentFileName: null} : {}), // Reset progress when stopping
+      }),
+
+    setCloudSyncComplete: (complete: boolean) =>
+      set({
+        cloudSyncComplete: complete,
       }),
 
     setCloudSyncError: (error: string | null) =>
@@ -314,13 +326,30 @@ export const useGallerySyncStore = create<GallerySyncState>()(
       set((state) => {
         const newProgress = new Map(state.cloudFileProgress)
         if (progress >= 100) {
-          // Remove when complete
+          // Remove when complete (like normal sync)
           newProgress.delete(fileName)
         } else {
           newProgress.set(fileName, progress)
         }
         return {cloudFileProgress: newProgress}
       }),
+
+    onCloudFileComplete: (fileName: string) => {
+      const state = get()
+      const nextCompletedFiles = state.cloudCompletedFiles + 1
+      // Find next file to download
+      const currentIndex = state.cloudDownloadingItems.findIndex((item) => item.filename === fileName)
+      const nextItem =
+        currentIndex >= 0 && currentIndex < state.cloudDownloadingItems.length - 1
+          ? state.cloudDownloadingItems[currentIndex + 1]
+          : null
+
+      set({
+        cloudCompletedFiles: nextCompletedFiles,
+        cloudCurrentFileName: nextItem?.filename ?? null,
+        cloudCurrentFile: nextCompletedFiles + 1, // For display: "Downloading X of Y"
+      })
+    },
 
     clearCloudFileProgress: () => set({cloudFileProgress: new Map<string, number>()}),
 
