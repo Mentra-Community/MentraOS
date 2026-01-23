@@ -1,5 +1,4 @@
-// TODO: this should be re-written in kotlin so that it can be maintained 1:1 with the swift code!
-
+// NOTE: Last stable code from nex-sgc branch for reference. DELETE LATER.
 
 // package com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunicators;
 
@@ -37,6 +36,8 @@
 // import mentraos.ble.MentraosBle.DisplayHeightConfig;
 // import mentraos.ble.MentraosBle.VersionRequest;
 // import mentraos.ble.MentraosBle.VersionResponse;
+// import mentraos.ble.MentraosBle.VadEnabledRequest;
+// import mentraos.ble.MentraosBle.VadConfigRequest;
 
 // import com.google.protobuf.InvalidProtocolBufferException;
 
@@ -137,7 +138,7 @@
 
 // /**
 //  * MentraNexSGC - Smart Glasses Communicator for Mentra Nex Glasses
-//  *
+//  * 
 //  * Heartbeat System: This implementation now follows the protobuf specification where:
 //  * - Glasses send PING messages to the phone
 //  * - Phone responds with PONG messages
@@ -153,10 +154,13 @@
 //     private boolean isDebugMode = true;
 //     private boolean isLc3AudioEnabled = true;
 
+//     private boolean isVadEnabled = true;
+//     private int vadSensitivity = 50;
+
 //     // Count of pings received from glasses (used for battery query timing)
 //     private int heartbeatCount = 0;
 //     private int micBeatCount = 0;
-
+    
 //     // Heartbeat timing tracking
 //     private long lastHeartbeatSentTime = 0;
 //     private long lastHeartbeatReceivedTime = 0;
@@ -346,7 +350,7 @@
 //     private final Gson gson = new Gson();
 
 //     private Lc3Player lc3AudioPlayer;
-
+    
 //     // Track if protobuf version has been posted to avoid duplicates
 //     private boolean protobufVersionPosted = false;
 
@@ -405,6 +409,12 @@
 //                         mainReconnectAttempts = 0;
 //                         Log.d(TAG, "Both glasses connected. Stopping BLE scan.");
 //                         stopScan();
+
+//                         if (!isWorkerRunning) {
+//                             Log.d(TAG, "Worker thread is not running. Starting it.");
+//                             startWorkerIfNeeded();
+//                         }
+
 //                         Log.d(TAG, "Discover services calling...");
 //                         gatt.discoverServices();
 //                         updateConnectionState();
@@ -420,14 +430,14 @@
 //                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
 //                         Log.d(TAG, " glass disconnected, stopping heartbeats");
 //                         Log.d(TAG, "Entering STATE_DISCONNECTED branch for side: ");
-
+                        
 //                         // Save current microphone state before disconnection
 //                         microphoneStateBeforeDisconnection = isMicrophoneEnabled;
 //                         Log.d(TAG, "Saved microphone state before disconnection: " + microphoneStateBeforeDisconnection);
-
+                        
 //                         // Reset protobuf version posted flag for next connection
 //                         protobufVersionPosted = false;
-
+                        
 //                         // Mark both sides as not ready (you could also clear both if one disconnects)
 //                         MAX_CHUNK_SIZE = MAX_CHUNK_SIZE_DEFAULT;
 //                         BMP_CHUNK_SIZE = MAX_CHUNK_SIZE_DEFAULT;
@@ -456,7 +466,7 @@
 //                     // Save current microphone state before connection failure
 //                     microphoneStateBeforeDisconnection = isMicrophoneEnabled;
 //                     Log.d(TAG, "Saved microphone state before connection failure: " + microphoneStateBeforeDisconnection);
-
+                    
 //                     currentMTU = 0;
 //                     MAX_CHUNK_SIZE = MAX_CHUNK_SIZE_DEFAULT;
 //                     BMP_CHUNK_SIZE = MAX_CHUNK_SIZE_DEFAULT;
@@ -558,31 +568,31 @@
 //             public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
 //                 final boolean statusBool = status == BluetoothGatt.GATT_SUCCESS;
 //                 Log.d(TAG, "🔄 MTU Negotiation Result: Success=" + statusBool + ", Device MTU=" + mtu + ", Status=" + status);
-
+                
 //                 if (statusBool) {
 //                     // Store device capability and calculate actual negotiated MTU
 //                     deviceMaxMTU = mtu; // Record what device actually supports
 //                     // The actual negotiated MTU is the minimum of our request and device capability
 //                     currentMTU = Math.min(MTU_517, mtu);
-
+                    
 //                     Log.d(TAG, "🎯 MTU Negotiation Complete:");
 //                     Log.d(TAG, "   📱 App Requested: " + MTU_517 + " bytes");
 //                     Log.d(TAG, "   📡 Device Supports: " + deviceMaxMTU + " bytes");
 //                     Log.d(TAG, "   🤝 Negotiated MTU: " + currentMTU + " bytes");
-
+                    
 //                     // Calculate optimal chunk sizes based on negotiated MTU
 //                     MAX_CHUNK_SIZE = currentMTU - 10;
 //                     BMP_CHUNK_SIZE = currentMTU - 20; // BMP has more config bytes
-
+                    
 //                     Log.d(TAG, "✅ MTU Configuration Complete:");
 //                     Log.d(TAG, "   📊 Final MTU: " + currentMTU + " bytes");
 //                     Log.d(TAG, "   📦 Data Chunk Size: " + MAX_CHUNK_SIZE + " bytes");
 //                     Log.d(TAG, "   🖼️ Image Chunk Size: " + BMP_CHUNK_SIZE + " bytes");
 //                     Log.d(TAG, "   🔧 Device Maximum: " + deviceMaxMTU + " bytes");
-
+                    
 //                 } else {
 //                     Log.w(TAG, "❌ MTU Request Failed - Status: " + status + ", Requested: " + mtu);
-
+                    
 //                     // Simple fallback strategy: 247 → 23
 //                     if (mtu == MTU_517) {
 //                         Log.d(TAG, "🔄 247 bytes failed, trying default: " + MTU_DEFAULT + " bytes...");
@@ -594,7 +604,7 @@
 //                         deviceMaxMTU = MTU_DEFAULT;
 //                         MAX_CHUNK_SIZE = MAX_CHUNK_SIZE_DEFAULT;
 //                         BMP_CHUNK_SIZE = MAX_CHUNK_SIZE_DEFAULT;
-
+                        
 //                         Log.d(TAG, "📋 Fallback Configuration:");
 //                         Log.d(TAG, "   📊 Default MTU: " + MTU_DEFAULT + " bytes");
 //                         Log.d(TAG, "   📦 Data Chunk Size: " + MAX_CHUNK_SIZE + " bytes");
@@ -659,7 +669,7 @@
 
 //                 // Restore previous microphone state or disable if this is the first connection
 //                 boolean shouldRestoreMic = microphoneStateBeforeDisconnection;
-//                 Log.d(TAG, "Restoring microphone state to: " + shouldRestoreMic +
+//                 Log.d(TAG, "Restoring microphone state to: " + shouldRestoreMic + 
 //                           " (previous state: " + microphoneStateBeforeDisconnection + ")");
 //                 if (shouldRestoreMic) {
 //                     startMicBeat((int) MICBEAT_INTERVAL_MS);
@@ -682,13 +692,13 @@
 //                 // start sending debug notifications
 //                 //just for test
 //                 //startPeriodicTextWall(302);
-
+                
 //                 // Post protobuf schema version information (only once)
 //                 if (!protobufVersionPosted) {
 //                     postProtobufSchemaVersionInfo();
 //                     protobufVersionPosted = true;
 //                 }
-
+                
 //                 // Query glasses protobuf version from firmware
 //                 queryGlassesProtobufVersionFromFirmware();
 //             }
@@ -1660,20 +1670,20 @@
 
 //         chunk.put(PACKET_TYPE_PROTOBUF);
 //         chunk.put(contentBytes);
-
+        
 //         // Enhanced logging for protobuf messages
 //         byte[] result = chunk.array();
 //         logProtobufMessage(phoneToGlasses, result);
-
+        
 //         return result;
 //     }
-
+    
 //     // Enhanced logging method for protobuf messages
 //     private void logProtobufMessage(PhoneToGlasses phoneToGlasses, byte[] fullMessage) {
 //         StringBuilder logMessage = new StringBuilder();
 //         logMessage.append("=== PROTOBUF MESSAGE TO GLASSES ===\n");
 //         logMessage.append("Message Type: ").append(phoneToGlasses.getPayloadCase()).append("\n");
-
+        
 //         // Extract and log text content if present
 //         if (phoneToGlasses.hasDisplayText()) {
 //             String text = phoneToGlasses.getDisplayText().getText();
@@ -1684,13 +1694,13 @@
 //             logMessage.append("Scrolling Text Content: \"").append(text).append("\"\n");
 //             logMessage.append("Text Length: ").append(text.length()).append(" characters\n");
 //         }
-
+        
 //         // Log message size information
 //         logMessage.append("Protobuf Payload Size: ").append(phoneToGlasses.toByteArray().length).append(" bytes\n");
 //         logMessage.append("Total Message Size: ").append(fullMessage.length).append(" bytes\n");
 //         logMessage.append("Packet Type: 0x").append(String.format("%02X", PACKET_TYPE_PROTOBUF)).append("\n");
 //         logMessage.append("=====================================");
-
+        
 //         Log.d(TAG, logMessage.toString());
 //     }
 
@@ -1698,7 +1708,7 @@
 //     // Note: Glasses send ping, phone responds with pong
 //     private byte[] constructPongResponse() {
 //         Log.d(TAG, "Constructing pong response to glasses ping");
-
+        
 //         // Create the PongResponse message
 //         PongResponse pongResponse = PongResponse.newBuilder().build();
 
@@ -1717,16 +1727,16 @@
 //         return generateProtobufCommandBytes(phoneToGlasses);
 
 //     }
-
+    
 //     /**
 //      * Queries the protobuf schema version from the glasses firmware
 //      */
 //     private void queryGlassesProtobufVersionFromFirmware() {
 //         Log.d(TAG, "=== SENDING GLASSES PROTOBUF VERSION REQUEST ===");
-
+        
 //         // Generate unique message ID for this request
 //         String msgId = "ver_req_" + System.currentTimeMillis();
-
+        
 //         VersionRequest versionRequest = VersionRequest.newBuilder()
 //                 .setMsgId(msgId)
 //                 .build();
@@ -1738,7 +1748,7 @@
 
 //         byte[] versionQueryPacket = generateProtobufCommandBytes(phoneToGlasses);
 //         sendDataSequentially(versionQueryPacket, 100);
-
+        
 //         Log.d(TAG, "Sent glasses protobuf version request with msg_id: " + msgId);
 //     }
 
@@ -1883,14 +1893,14 @@
 //         // Respond to ping from glasses with pong
 //         lastHeartbeatReceivedTime = System.currentTimeMillis();
 //         Log.d(TAG, "=== SENDING PONG RESPONSE TO GLASSES === (Time: " + lastHeartbeatReceivedTime + ")");
-
+        
 //         byte[] pongPacket = constructPongResponse();
 
 //         // Send the pong response
 //         if (pongPacket != null) {
 //             sendDataSequentially(pongPacket, 100);
 //             Log.d(TAG, "Pong response sent successfully");
-
+            
 //             // Notify mobile app about pong sent
 //             notifyHeartbeatSent(System.currentTimeMillis());
 //         } else {
@@ -1903,7 +1913,7 @@
 //         }
 
 //         heartbeatCount++;
-
+        
 //         // Notify mobile app about heartbeat received
 //         notifyHeartbeatReceived(lastHeartbeatReceivedTime);
 //     }
@@ -1945,7 +1955,7 @@
 //     public void sendAutoBrightnessCommand(boolean autoLight) {
 //         Log.d(TAG, "=== SENDING AUTO BRIGHTNESS COMMAND TO GLASSES ===");
 //         Log.d(TAG, "Auto Brightness Enabled: " + autoLight);
-
+        
 //         AutoBrightnessConfig autoBrightnessConfig = AutoBrightnessConfig.newBuilder().setEnabled(autoLight).build();
 //         PhoneToGlasses phoneToGlasses = PhoneToGlasses.newBuilder().setAutoBrightness(autoBrightnessConfig).build();
 
@@ -1965,10 +1975,10 @@
 //         } else if (headUpAngle > 60) {
 //             headUpAngle = 60;
 //         }
-
+        
 //         Log.d(TAG, "=== SENDING HEAD UP ANGLE COMMAND TO GLASSES ===");
 //         Log.d(TAG, "Head Up Angle: " + headUpAngle + " degrees (validated range: 0-60)");
-
+        
 //         HeadUpAngleConfig headUpAngleConfig = HeadUpAngleConfig.newBuilder().setAngle(headUpAngle).build();
 //         PhoneToGlasses phoneToGlasses = PhoneToGlasses.newBuilder().setHeadUpAngle(headUpAngleConfig).build();
 
@@ -2268,7 +2278,7 @@
 //         Log.d(TAG, "Text: \"" + text + "\"");
 //         Log.d(TAG, "Text Length: " + text.length() + " characters");
 //         Log.d(TAG, "DisplayText Builder: " + textNewBuilder.toString());
-
+        
 //         // Create the PhoneToGlasses using its builder and set the DisplayText
 //         PhoneToGlasses phoneToGlasses = PhoneToGlasses
 //                 .newBuilder()
@@ -2346,7 +2356,7 @@
 //         Log.d(TAG, "Image Position: X=" + 0 + ", Y=" + 0);
 //         Log.d(TAG, "Image Dimensions: " + width + "x" + height);
 //         Log.d(TAG, "Image Encoding: raw");
-
+        
 //         DisplayImage displayImage = DisplayImage.newBuilder()
 //                 .setStreamId(streamId)
 //                 .setTotalChunks(totalChunks)
@@ -2763,7 +2773,7 @@
 //             return;
 //         }
 //         Log.d(TAG, "=== SENDING CLEAR DISPLAY COMMAND TO GLASSES ===");
-
+        
 //         // Create the clear display protobuf message
 //         mentraos.ble.MentraosBle.ClearDisplay clearDisplay = mentraos.ble.MentraosBle.ClearDisplay.newBuilder()
 //                 .build();
@@ -2919,19 +2929,19 @@
 //     private List<byte[]> createBmpChunksForNexGlasses(String streamId, byte[] bmpData, int totalChunks) {
 //         List<byte[]> chunks = new ArrayList<>();
 //         Log.d(TAG, "Creating " + totalChunks + " chunks from " + bmpData.length + " bytes");
-
+        
 //         // Parse hex stream ID to bytes (e.g., "002A" -> 0x00, 0x2A)
 //         int streamIdInt = Integer.parseInt(streamId, 16);
-
+        
 //         for (int i = 0; i < totalChunks; i++) {
 //             int start = i * BMP_CHUNK_SIZE;
 //             int end = Math.min(start + BMP_CHUNK_SIZE, bmpData.length);
 //             byte[] chunk = Arrays.copyOfRange(bmpData, start, end);
-
+            
 //             byte[] header = new byte[4 + chunk.length];
 //             header[0] = PACKET_TYPE_IMAGE; // 0xB0
 //             header[1] = (byte) ((streamIdInt >> 8) & 0xFF); // Stream ID high byte
-//             header[2] = (byte) (streamIdInt & 0xFF); // Stream ID low byte
+//             header[2] = (byte) (streamIdInt & 0xFF); // Stream ID low byte  
 //             header[3] = (byte) (i & 0xFF); // Chunk index
 //             System.arraycopy(chunk, 0, header, 4, chunk.length);
 //             chunks.add(header);
@@ -3086,7 +3096,7 @@
 //                     if (data[0] == (byte) 0xA0) {
 //                         byte sequenceNumber = data[1];
 //                         long receiveTime = System.currentTimeMillis();
-
+                        
 //                         // Basic sequence validation
 //                         if (lastReceivedLc3Sequence != -1 && (byte)(lastReceivedLc3Sequence + 1) != sequenceNumber) {
 //                             Log.w(TAG, "LC3 packet sequence mismatch. Expected: " + (lastReceivedLc3Sequence + 1) + ", Got: " + sequenceNumber);
@@ -3094,7 +3104,7 @@
 //                         lastReceivedLc3Sequence = sequenceNumber;
 
 //                         final byte[] lc3Data = Arrays.copyOfRange(data, 2, dataLen);
-
+                        
 //                         Log.d(TAG, "Received LC3 audio packet seq=" + sequenceNumber + ", size=" + lc3Data.length);
 
 //                         // Play LC3 audio directly through LC3 player
@@ -3307,7 +3317,7 @@
 //                     if (!versionResponse.getBuildDate().isEmpty()) {
 //                         Log.d(TAG, "Build Date: " + versionResponse.getBuildDate());
 //                     }
-
+                    
 //                     // Post glasses protobuf version event to update UI
 //                     EventBus.getDefault().post(new ProtocolVersionResponseEvent(
 //                         versionResponse.getVersion(),
@@ -3379,7 +3389,7 @@
 //     public void setLc3AudioEnabled(boolean enabled) {
 //         Log.d(TAG, "setLc3AudioEnabled: " + enabled);
 //         this.isLc3AudioEnabled = enabled;
-
+        
 //         if (lc3AudioPlayer != null) {
 //             if (enabled) {
 //                 // Start LC3 audio player
@@ -3401,6 +3411,47 @@
 //                 }
 //             }
 //         }
+//     }
+
+//     public void setVadEnabled(boolean enabled) {
+//         Log.d(TAG, "setVadEnabled: " + enabled);
+//         this.isVadEnabled = enabled;
+
+//         VadEnabledRequest vadEnabledRequest = VadEnabledRequest.newBuilder().setEnabled(enabled).build();
+        
+//         PhoneToGlasses phoneToGlasses = PhoneToGlasses.newBuilder()
+//             .setSetVadEnabled(vadEnabledRequest)
+//             .build();
+
+//         byte[] versionQueryPacket = generateProtobufCommandBytes(phoneToGlasses);
+//         sendDataSequentially(versionQueryPacket, 100);
+//     }
+
+//     public void setVadSensitivity(int sensitivity) {
+//         Log.d(TAG, "setVadSensitivity: " + sensitivity);
+//         this.vadSensitivity = sensitivity;
+
+//         VadConfigRequest vadConfigRequest = VadConfigRequest.newBuilder().setSensitivity(sensitivity).build();
+        
+//         PhoneToGlasses phoneToGlasses = PhoneToGlasses.newBuilder()
+//             .setSetVadConfig(vadConfigRequest)
+//             .build();
+
+//         byte[] versionQueryPacket = generateProtobufCommandBytes(phoneToGlasses);
+//         sendDataSequentially(versionQueryPacket, 100);
+//     }
+
+//     public void requestVadConfig() {
+//         Log.d(TAG, "requestVadConfig");
+
+//         MentraosBle.VadStatusRequest request = MentraosBle.VadStatusRequest.newBuilder().build();
+
+//         PhoneToGlasses phoneToGlasses = PhoneToGlasses.newBuilder()
+//             .setRequestVadStatus(request)
+//             .build();
+
+//         byte[] versionQueryPacket = generateProtobufCommandBytes(phoneToGlasses);
+//         sendDataSequentially(versionQueryPacket, 100);
 //     }
 
 //     public boolean isLc3AudioEnabled() {
@@ -3495,7 +3546,7 @@
 //             String[] dimensions = imageSize.split("x");
 //             int width = Integer.parseInt(dimensions[0]);
 //             int height = Integer.parseInt(dimensions[1]);
-
+            
 //             // Generate the test image based on type and size
 //             byte[] bmpData = generateTestImage(imageType, width, height);
 //             if (bmpData != null) {
@@ -3517,16 +3568,16 @@
 //         try {
 //             // Create a 1-bit bitmap (black and white)
 //             Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-
+            
 //             // Fill with white background
 //             bitmap.eraseColor(Color.WHITE);
-
+            
 //             // Create canvas for drawing
 //             Canvas canvas = new Canvas(bitmap);
 //             Paint paint = new Paint();
 //             paint.setColor(Color.BLACK);
 //             paint.setStyle(Paint.Style.FILL);
-
+            
 //             switch (imageType) {
 //                 case "pattern":
 //                     // Create continuous horizontal lines pattern
@@ -3535,7 +3586,7 @@
 //                         canvas.drawLine(0, y + 1, width, y + 1, paint);
 //                     }
 //                     break;
-
+                    
 //                 case "gradient":
 //                     // Create a gradient from top to bottom
 //                     for (int y = 0; y < height; y++) {
@@ -3544,7 +3595,7 @@
 //                         canvas.drawLine(0, y, width, y, paint);
 //                     }
 //                     break;
-
+                    
 //                 case "checkerboard":
 //                     // Create a checkerboard pattern
 //                     int squareSize = Math.max(1, Math.min(width, height) / 8);
@@ -3556,12 +3607,12 @@
 //                         }
 //                     }
 //                     break;
-
+                    
 //                 case "solid":
 //                     // Create a solid black image
 //                     canvas.drawRect(0, 0, width, height, paint);
 //                     break;
-
+                    
 //                 default:
 //                     // Default to pattern
 //                     for (int i = 0; i < Math.max(width, height); i += 4) {
@@ -3569,16 +3620,16 @@
 //                     }
 //                     break;
 //             }
-
+            
 //             // Convert to 1-bit BMP format
 //             return BitmapJavaUtils.convertBitmapTo1BitBmpBytes(bitmap, false);
-
+            
 //         } catch (Exception e) {
 //             Log.e(TAG, "Error generating test image: " + e.getMessage());
 //             return null;
 //         }
 //     }
-
+    
 //     /**
 //      * Notify mobile app about heartbeat sent (now used when sending pong responses)
 //      */
@@ -3587,7 +3638,7 @@
 //         // Send heartbeat event to mobile app via EventBus
 //         EventBus.getDefault().post(new HeartbeatSentEvent(timestamp));
 //     }
-
+    
 //     /**
 //      * Notify mobile app about heartbeat received
 //      */
@@ -3595,52 +3646,52 @@
 //         // Send heartbeat event to mobile app via EventBus
 //         EventBus.getDefault().post(new HeartbeatReceivedEvent(timestamp));
 //     }
-
+    
 //     /**
 //      * Get last heartbeat sent timestamp (pong response time)
 //      */
 //     public long getLastHeartbeatSentTime() {
 //         return lastHeartbeatSentTime;
 //     }
-
+    
 //     /**
 //      * Get last heartbeat received timestamp
 //      */
 //     public long getLastHeartbeatReceivedTime() {
 //         return lastHeartbeatReceivedTime;
 //     }
-
+    
 //         /**
 //      * Gets the current protobuf schema version from the compiled protobuf descriptor
 //      */
 //     public int getProtobufSchemaVersion() {
 //         try {
 //             // Get the protobuf descriptor and extract the schema version
-//             com.google.protobuf.Descriptors.FileDescriptor fileDescriptor =
+//             com.google.protobuf.Descriptors.FileDescriptor fileDescriptor = 
 //                 mentraos.ble.MentraosBle.getDescriptor().getFile();
-
+            
 //             Log.d(TAG, "Proto file descriptor: " + fileDescriptor.getName());
-
+            
 //             // Method 1: Try to access the custom mentra_schema_version option
 //             try {
 //                 // Get the file options from the descriptor
 //                 com.google.protobuf.DescriptorProtos.FileOptions options = fileDescriptor.getOptions();
 //                 Log.d(TAG, "Got file options: " + options.toString());
-
+                
 //                 // Try to access the custom option using the extension registry
 //                 // First, check if the extension is available in the generated code
 //                 try {
 //                     // Look for the generated extension in the MentraosBle class
 //                     java.lang.reflect.Field[] fields = mentraos.ble.MentraosBle.class.getDeclaredFields();
 //                     for (java.lang.reflect.Field field : fields) {
-//                         if (field.getName().toLowerCase().contains("schema") ||
+//                         if (field.getName().toLowerCase().contains("schema") || 
 //                             field.getName().toLowerCase().contains("version")) {
 //                             Log.d(TAG, "Found potential version field: " + field.getName());
 //                             field.setAccessible(true);
 //                             try {
 //                                 Object value = field.get(null);
 //                                                         if (value instanceof com.google.protobuf.Extension) {
-//                                 com.google.protobuf.Extension<com.google.protobuf.DescriptorProtos.FileOptions, Integer> ext =
+//                                 com.google.protobuf.Extension<com.google.protobuf.DescriptorProtos.FileOptions, Integer> ext = 
 //                                     (com.google.protobuf.Extension<com.google.protobuf.DescriptorProtos.FileOptions, Integer>) value;
 //                                 if (options.hasExtension(ext)) {
 //                                     int version = options.getExtension(ext);
@@ -3656,11 +3707,11 @@
 //                 } catch (Exception extensionException) {
 //                     Log.d(TAG, "Extension search failed: " + extensionException.getMessage());
 //                 }
-
+                
 //             } catch (Exception optionsException) {
 //                 Log.d(TAG, "Options access failed: " + optionsException.getMessage());
 //             }
-
+            
 //             // Method 2: Try to read from the actual proto file content
 //             try {
 //                 String protoVersion = readProtoVersionFromProject();
@@ -3671,18 +3722,18 @@
 //             } catch (Exception projectException) {
 //                 Log.d(TAG, "Project file reading failed: " + projectException.getMessage());
 //             }
+            
 
-
-
+            
 //             Log.w(TAG, "Could not extract protobuf schema version dynamically, using fallback");
 //             return 1; // Fallback to version 1
-
+            
 //         } catch (Exception e) {
 //             Log.e(TAG, "Error getting protobuf schema version: " + e.getMessage(), e);
 //             return 1; // Fallback to version 1
 //         }
 //     }
-
+    
 //     /**
 //      * Gets detailed protobuf build information
 //      */
@@ -3690,19 +3741,19 @@
 //         try {
 //             int schemaVersion = getProtobufSchemaVersion();
 //             String fileDescriptorName = mentraos.ble.MentraosBle.getDescriptor().getFile().getName();
-
+            
 //             return String.format("Schema v%d | %s", schemaVersion, fileDescriptorName);
 //         } catch (Exception e) {
 //             Log.e(TAG, "Error getting protobuf build info: " + e.getMessage(), e);
 //             return "Schema v1 | Unknown";
 //         }
 //     }
-
+    
 //     @Override
 //     public String getProtobufSchemaVersionInfo() {
 //         return getProtobufBuildInfo();
 //     }
-
+    
 //     /**
 //      * Posts protobuf schema version information to EventBus for React Native consumption
 //      */
@@ -3710,24 +3761,24 @@
 //         try {
 //             // Call the version method only once
 //             int schemaVersion = getProtobufSchemaVersion();
-
+            
 //             // Build the info string directly instead of calling getProtobufBuildInfo()
 //             String fileDescriptorName = mentraos.ble.MentraosBle.getDescriptor().getFile().getName();
 //             String buildInfo = String.format("Schema v%d | %s", schemaVersion, fileDescriptorName);
-
+            
 //             ProtobufSchemaVersionEvent event = new ProtobufSchemaVersionEvent(
-//                 schemaVersion,
-//                 buildInfo,
+//                 schemaVersion, 
+//                 buildInfo, 
 //                 smartGlassesDevice != null ? smartGlassesDevice.deviceModelName : "Unknown"
 //             );
-
+            
 //             EventBus.getDefault().post(event);
 //             Log.d(TAG, "Posted protobuf schema version event: " + buildInfo);
 //         } catch (Exception e) {
 //             Log.e(TAG, "Error posting protobuf schema version event: " + e.getMessage(), e);
 //         }
 //     }
-
+    
 //     /**
 //      * Attempts to read the protobuf schema version from the proto file in the project
 //      */
@@ -3741,7 +3792,7 @@
 //         } catch (Exception assetsException) {
 //             Log.d(TAG, "Could not read from assets: " + assetsException.getMessage());
 //         }
-
+        
 //         try {
 //             // Try to read from resources
 //             try (InputStream is = context.getResources().openRawResource(
@@ -3752,21 +3803,21 @@
 //         } catch (Exception resourcesException) {
 //             Log.d(TAG, "Could not read from resources: " + resourcesException.getMessage());
 //         }
-
+        
 //         // Try to read from the project directory structure
 //         try {
 //             // Look for the proto file in common project locations relative to Android app
 //             String[] projectPaths = {
 //                 // Relative to Android project root
 //                 "../../mcu_client/mentraos_ble.proto",
-//                 "../../../mcu_client/mentraos_ble.proto",
+//                 "../../../mcu_client/mentraos_ble.proto", 
 //                 "../../../../mcu_client/mentraos_ble.proto",
 //                 // Absolute paths from common Android locations
 //                 "/data/data/" + context.getPackageName() + "/../../mcu_client/mentraos_ble.proto",
 //                 // Try external storage
 //                 android.os.Environment.getExternalStorageDirectory() + "/MentraOS/mcu_client/mentraos_ble.proto"
 //             };
-
+            
 //             for (String path : projectPaths) {
 //                 try {
 //                     java.io.File protoFile = new java.io.File(path);
@@ -3783,10 +3834,10 @@
 //         } catch (Exception projectException) {
 //             Log.d(TAG, "Project file reading failed: " + projectException.getMessage());
 //         }
-
+        
 //         return null;
 //     }
-
+    
 //     /**
 //      * Extracts version number from proto file content
 //      */
@@ -3796,13 +3847,13 @@
 //             java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
 //                 "option\\s*\\(\\s*mentra_schema_version\\s*\\)\\s*=\\s*(\\d+)\\s*;");
 //             java.util.regex.Matcher matcher = pattern.matcher(content);
-
+            
 //             if (matcher.find()) {
 //                 String version = matcher.group(1);
 //                 Log.d(TAG, "Extracted version from proto content: " + version);
 //                 return version;
 //             }
-
+            
 //             Log.d(TAG, "No mentra_schema_version found in proto content");
 //             return null;
 //         } catch (Exception e) {

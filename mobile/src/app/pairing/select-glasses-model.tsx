@@ -13,7 +13,7 @@ import {Screen} from "@/components/ignite/Screen"
 import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {$styles, ThemedStyle} from "@/theme"
+import {ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 
 // import {useLocalSearchParams} from "expo-router"
@@ -36,6 +36,7 @@ export default function SelectGlassesModelScreen() {
       case DeviceTypes.G1:
         return <EvenRealitiesLogo color={theme.colors.text} />
       case DeviceTypes.LIVE:
+      case DeviceTypes.NEX:
       case DeviceTypes.MACH1:
         return <MentraLogo color={theme.colors.text} />
       case DeviceTypes.Z100:
@@ -54,7 +55,7 @@ export default function SelectGlassesModelScreen() {
           {modelName: DeviceTypes.LIVE, key: "mentra_live"},
           {modelName: DeviceTypes.MACH1, key: "mentra_mach1"},
           {modelName: DeviceTypes.Z100, key: "vuzix-z100"},
-          // {modelName: DeviceTypes.NEX, key: "mentra_nex"},
+          {modelName: DeviceTypes.NEX, key: "mentra_nex"},
           //{modelName: "Brilliant Labs Frame", key: "frame"},
         ]
       : [
@@ -64,7 +65,7 @@ export default function SelectGlassesModelScreen() {
           {modelName: DeviceTypes.LIVE, key: "mentra_live"},
           {modelName: DeviceTypes.MACH1, key: "mentra_mach1"},
           {modelName: DeviceTypes.Z100, key: "vuzix-z100"},
-          // {modelName: "Mentra Nex", key: "mentra_nex"},
+          {modelName: DeviceTypes.NEX, key: "mentra_nex"},
           // {modelName: "Brilliant Labs Frame", key: "frame"},
         ]
 

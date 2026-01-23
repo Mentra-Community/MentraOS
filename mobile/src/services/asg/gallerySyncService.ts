@@ -21,7 +21,12 @@ import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
 import {localStorageService} from "./localStorageService"
-import {checkFeaturePermissions, requestFeaturePermissions, PermissionFeatures, isLocationServicesEnabled} from "@/utils/PermissionsUtils"
+import {
+  checkFeaturePermissions,
+  requestFeaturePermissions,
+  PermissionFeatures,
+  isLocationServicesEnabled,
+} from "@/utils/PermissionsUtils"
 
 // Timing constants
 const TIMING = {
@@ -412,16 +417,22 @@ class GallerySyncService {
 
     // Pre-flight WiFi check on Android BEFORE any connection attempts
     // This prevents sync failures even when we think we're already connected
-    // (cached connection state can be stale if WiFi was disabled)
+    // NOTE: We use WifiManager.isEnabled() instead of NetInfo.isWifiEnabled because
+    // NetInfo can return stale/cached data that reports WiFi as enabled when it's actually OFF
     console.log("[GallerySyncService] 📡 Step 2/6: WiFi pre-flight check...")
     if (Platform.OS === "android") {
       try {
+        // Use WifiManager.isEnabled() for accurate WiFi state (NetInfo can be stale)
+        const wifiEnabled = await WifiManager.isEnabled()
+        console.log("[GallerySyncService]   📡 WiFi enabled (WifiManager):", wifiEnabled)
+
+        // Also log NetInfo for debugging comparison
         const netState = await NetInfo.fetch()
-        console.log("[GallerySyncService]   📡 WiFi enabled:", netState.isWifiEnabled)
+        console.log("[GallerySyncService]   📡 WiFi enabled (NetInfo):", netState.isWifiEnabled)
         console.log("[GallerySyncService]   📡 Connected:", netState.isConnected)
         console.log("[GallerySyncService]   📡 Internet reachable:", netState.isInternetReachable)
 
-        if (netState.isWifiEnabled === false) {
+        if (!wifiEnabled) {
           console.error("[GallerySyncService]   ❌ WiFi is disabled - cannot sync")
 
           // Mark that we're waiting for WiFi so we can auto-retry when user returns

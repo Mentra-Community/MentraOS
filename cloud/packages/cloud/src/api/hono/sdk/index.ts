@@ -6,3 +6,4 @@
 
 export { default as sdkVersionApi } from "./sdk-version.api";
 export { default as simpleStorageApi } from "./simple-storage.api";
+export { systemAppApi } from "./system-app";

@@ -45,6 +45,8 @@ import {
   storeAppsApi,
   storeAuthApi,
   storeUserApi,
+  // System App APIs (app management with API key auth)
+  systemAppApi,
 } from "./api/hono";
 
 // Hono Legacy routes (migrated from Express)
@@ -281,6 +283,12 @@ app.route("/api/cli", cliRouter);
 app.route("/api/store", storeAppsApi);
 app.route("/api/store/auth", storeAuthApi);
 app.route("/api/store/user", storeUserApi);
+
+// ============================================================================
+// System App API Routes (app management with API key auth)
+// ============================================================================
+
+app.route("/api/sdk/system-app", systemAppApi);
 
 // ============================================================================
 // Legacy Routes (migrated from Express)

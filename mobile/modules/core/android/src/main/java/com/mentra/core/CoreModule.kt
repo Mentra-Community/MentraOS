@@ -36,6 +36,8 @@ class CoreModule : Module() {
             coreManager?.displayText(params)
         }
 
+        AsyncFunction("clearDisplay") { coreManager?.clearDisplay() }
+
         // MARK: - Connection Commands
 
         AsyncFunction("getStatus") { coreManager?.getStatus() }

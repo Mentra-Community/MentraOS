@@ -19,7 +19,7 @@ export {
 } from "./client";
 
 // SDK APIs (third-party apps)
-export { sdkVersionApi, simpleStorageApi } from "./sdk";
+export { sdkVersionApi, simpleStorageApi, systemAppApi } from "./sdk";
 
 // Public APIs (no auth required)
 export { publicPermissionsApi } from "./public";

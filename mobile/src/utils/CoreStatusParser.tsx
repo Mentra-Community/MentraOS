@@ -88,8 +88,8 @@ export interface CoreInfo {
   cloud_connection_status: string
   default_wearable: string | null
   is_searching: boolean
-  // protobuf_schema_version: string
-  // glasses_protobuf_version: string
+  protobuf_schema_version: string
+  glasses_protobuf_version: string
 }
 
 export interface CoreStatus {
@@ -105,6 +105,8 @@ export interface CoreStatus {
 export class CoreStatusParser {
   static defaultStatus: CoreStatus = {
     core_info: {
+      protobuf_schema_version: "",
+      glasses_protobuf_version: "",
       cloud_connection_status: "DISCONNECTED",
       core_token: null,
       default_wearable: null,
@@ -137,6 +139,8 @@ export class CoreStatusParser {
 
   static mockStatus: CoreStatus = {
     core_info: {
+      protobuf_schema_version: "",
+      glasses_protobuf_version: "",
       cloud_connection_status: "CONNECTED",
       core_token: "1234567890",
       default_wearable: "evenrealities_g1",
@@ -199,6 +203,8 @@ export class CoreStatusParser {
 
       return {
         core_info: {
+          protobuf_schema_version: coreInfo.protobuf_schema_version,
+          glasses_protobuf_version: coreInfo.glasses_protobuf_version,
           core_token: coreInfo.core_token ?? null,
           cloud_connection_status: coreInfo.cloud_connection_status ?? "DISCONNECTED",
           default_wearable:

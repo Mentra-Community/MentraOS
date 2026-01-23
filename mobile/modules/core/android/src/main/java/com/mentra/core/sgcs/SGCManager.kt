@@ -10,6 +10,9 @@ abstract class SGCManager {
     var connectionState: String =
             ConnTypes.DISCONNECTED // "disconnected" | "connected" | "connecting"
 
+    @JvmField var protobufSchemaVersion: String = ""
+    @JvmField var glassesProtobufVersion: String = ""
+
     @JvmField var glassesAppVersion: String = ""
     @JvmField var glassesBuildNumber: String = ""
     @JvmField var glassesDeviceModel: String = ""

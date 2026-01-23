@@ -659,7 +659,7 @@ public class Bridge private constructor() {
          * function above that calls this function
          */
         @JvmStatic
-        private fun sendTypedMessage(type: String, body: Map<String, Any>) {
+        fun sendTypedMessage(type: String, body: Map<String, Any>) {
             var mutableBody = body
             if (body !is HashMap) {
                 mutableBody = HashMap(body)

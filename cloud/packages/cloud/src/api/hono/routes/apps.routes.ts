@@ -31,6 +31,10 @@ const ALLOWED_API_KEY_PACKAGES = [
   "cloud.augmentos.mira",
   "com.augmentos.mira",
   "com.mentra.mentraai.beta",
+  "com.mentra.mentraai.dev",
+  "com.mentra.ai.noporter",
+  "com.mentra.ai.dev",
+  "com.mentra.ai",
 ];
 
 // ============================================================================

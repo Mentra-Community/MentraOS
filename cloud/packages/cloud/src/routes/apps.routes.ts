@@ -40,6 +40,9 @@ const ALLOWED_API_KEY_PACKAGES = [
   "com.mentra.mentraai.beta",
   // "com.mentra.mentraai.dev",  //later
   // "com.mentra.mentraai" //later
+  "com.mentra.mentraai.dev",
+  "com.mentra.ai.noporter",
+  "com.mentra.ai",
 ];
 
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";

@@ -8,6 +8,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Display Commands
   displayEvent(params: Record<string, any>): Promise<void>
   displayText(params: Record<string, any>): Promise<void>
+  clearDisplay(): Promise<void>
 
   // Connection Commands
   requestStatus(): Promise<void>

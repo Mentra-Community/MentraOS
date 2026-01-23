@@ -83,6 +83,9 @@ dependencies {
   // Vuzix Z100
   implementation 'com.vuzix:ultralite-sdk-android:1.8'
   implementation 'com.squareup.picasso:picasso:2.8'
+
+  implementation 'com.google.protobuf:protobuf-java:4.32.0'
+  implementation 'com.google.protobuf:protobuf-java-util:4.32.0'
 }
 
 // Force override onnxruntime version to 1.17.1

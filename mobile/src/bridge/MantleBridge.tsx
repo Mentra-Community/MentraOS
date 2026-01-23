@@ -158,15 +158,31 @@ export class MantleBridge {
           })
           break
         case "heartbeat_sent":
-          console.log("💓 Received heartbeat_sent event from Core", data.heartbeat_sent)
+          console.log("💓 Received heartbeat_sent event from Core", data)
           GlobalEventEmitter.emit("heartbeat_sent", {
-            timestamp: data.heartbeat_sent.timestamp,
+            timestamp: data.timestamp,
           })
           break
         case "heartbeat_received":
-          console.log("💓 Received heartbeat_received event from Core", data.heartbeat_received)
+          console.log("💓 Received heartbeat_received event from Core", data)
           GlobalEventEmitter.emit("heartbeat_received", {
-            timestamp: data.heartbeat_received.timestamp,
+            timestamp: data.timestamp,
+          })
+          break
+        case "send_command_to_ble":
+          console.log("📡 Received send_command_to_ble event from Core", data)
+          GlobalEventEmitter.emit("send_command_to_ble", {
+            command: data.command,
+            commandText: data.commandText,
+            timestamp: data.timestamp,
+          })
+          break
+        case "receive_command_from_ble":
+          console.log("📡 Received receive_command_from_ble event from Core", data)
+          GlobalEventEmitter.emit("receive_command_from_ble", {
+            command: data.command,
+            commandText: data.commandText,
+            timestamp: data.timestamp,
           })
           break
         case "notify_manager":
