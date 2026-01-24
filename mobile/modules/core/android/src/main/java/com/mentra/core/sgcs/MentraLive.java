@@ -2279,6 +2279,28 @@ public class MentraLive extends SGCManager {
                 Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent);
                 break;
 
+            case "cloud_upload_started":
+                // Glasses started uploading to cloud - phone should pause cloud downloads
+                int cloudUploadTotalFiles = json.optInt("total_files", 0);
+                long cloudUploadStartTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: 🚀 Glasses started cloud upload: " + cloudUploadTotalFiles + " files");
+
+                // Send to React Native to pause cloud downloads
+                Bridge.sendCloudUploadStarted(cloudUploadTotalFiles, cloudUploadStartTimestamp);
+                break;
+
+            case "cloud_upload_complete":
+                // A file was uploaded to cloud by glasses
+                String cloudUploadFilename = json.optString("filename", "");
+                long cloudUploadCompleteTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: ☁️ Glasses uploaded file to cloud: " + cloudUploadFilename);
+
+                // Send to React Native
+                Bridge.sendCloudUploadComplete(cloudUploadFilename, cloudUploadCompleteTimestamp);
+                break;
+
             case "touch_event":
                 // Process touch event from glasses (swipes, taps, long press)
                 String gestureName = json.optString("gesture_name", "unknown");

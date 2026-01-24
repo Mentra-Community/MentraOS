@@ -144,6 +144,10 @@ public class CloudGalleryUploader {
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             Log.i(TAG, "📊 Total files to upload: " + mInitialTotalFiles);
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
+            
+            // Notify phone that glasses are uploading - phone should pause cloud downloads
+            sendCloudUploadStartedNotification(mInitialTotalFiles);
+            
             Log.i(TAG, "▶️ Calling processNextFile() to start processing...");
             processNextFile();
             Log.i(TAG, "▶️ processNextFile() returned");
@@ -604,6 +608,33 @@ public class CloudGalleryUploader {
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
         return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+    
+    /**
+     * Send notification to mobile app that cloud upload is starting.
+     * Phone should pause downloading from cloud until upload completes.
+     */
+    private void sendCloudUploadStartedNotification(int totalFiles) {
+        if (mCommunicationManager == null) {
+            Log.w(TAG, "⚠️ Cannot send cloud upload started notification - CommunicationManager not available");
+            return;
+        }
+        
+        try {
+            JSONObject notification = new JSONObject();
+            notification.put("type", "cloud_upload_started");
+            notification.put("total_files", totalFiles);
+            notification.put("timestamp", System.currentTimeMillis());
+            
+            boolean sent = mCommunicationManager.sendBluetoothResponse(notification);
+            if (sent) {
+                Log.i(TAG, "📱 Notified mobile app that cloud upload started: " + totalFiles + " files");
+            } else {
+                Log.w(TAG, "⚠️ Failed to notify mobile app that cloud upload started");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error creating cloud upload started notification", e);
+        }
     }
     
     /**

@@ -138,6 +138,12 @@ export class MantleBridge {
             camera_busy: data.camera_busy, // Add camera busy state
           })
           break
+        case "cloud_upload_started":
+          GlobalEventEmitter.emit("cloud_upload_started", {
+            total_files: data.total_files,
+            timestamp: data.timestamp,
+          })
+          break
         case "cloud_upload_complete":
           GlobalEventEmitter.emit("cloud_upload_complete", {
             filename: data.filename,

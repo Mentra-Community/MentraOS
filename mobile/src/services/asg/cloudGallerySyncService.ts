@@ -55,8 +55,35 @@ class CloudGallerySyncService {
   private isDownloading = false
   private isPolling = false
   private consecutiveEmptyPolls = 0
+  private glassesUploadingToCloud = false // Pause downloads while glasses are uploading
 
   private constructor() {}
+
+  /**
+   * Called when glasses start uploading to cloud.
+   * Pauses cloud downloads to prevent race conditions.
+   */
+  setGlassesUploading(uploading: boolean): void {
+    const wasUploading = this.glassesUploadingToCloud
+    this.glassesUploadingToCloud = uploading
+
+    if (uploading) {
+      console.log("[CloudGallerySync] 🚫 Glasses uploading to cloud - pausing downloads")
+    } else if (wasUploading) {
+      console.log("[CloudGallerySync] ✅ Glasses finished uploading - resuming downloads")
+      // Immediately check for pending items after upload completes
+      if (this.isPolling && !this.isDownloading) {
+        setTimeout(() => this.checkPending(), 2000) // Brief delay to let cloud process
+      }
+    }
+  }
+
+  /**
+   * Check if glasses are currently uploading to cloud
+   */
+  isGlassesUploading(): boolean {
+    return this.glassesUploadingToCloud
+  }
 
   static getInstance(): CloudGallerySyncService {
     if (!CloudGallerySyncService.instance) {
@@ -105,6 +132,13 @@ class CloudGallerySyncService {
   async checkPending(): Promise<void> {
     if (this.isDownloading) {
       console.log("[CloudGallerySync] Already downloading, skipping poll")
+      return
+    }
+
+    // Don't check for pending items while glasses are uploading to cloud
+    // This prevents race conditions where phone downloads incomplete uploads
+    if (this.glassesUploadingToCloud) {
+      console.log("[CloudGallerySync] 🚫 Glasses uploading to cloud - skipping poll to avoid race condition")
       return
     }
 

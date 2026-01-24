@@ -1743,6 +1743,30 @@ class MentraLive: NSObject, SGCManager {
                 hasContent: hasContent
             )
 
+        case "cloud_upload_started":
+            // Glasses started uploading to cloud - phone should pause cloud downloads
+            let totalFiles = json["total_files"] as? Int ?? 0
+            let timestamp = json["timestamp"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+            Bridge.log("LIVE: 🚀 Glasses started cloud upload: \(totalFiles) files")
+
+            let eventBody: [String: Any] = [
+                "total_files": totalFiles,
+                "timestamp": timestamp,
+            ]
+            Bridge.sendTypedMessage("cloud_upload_started", body: eventBody)
+
+        case "cloud_upload_complete":
+            // A file was uploaded to cloud by glasses
+            let filename = json["filename"] as? String ?? ""
+            let timestamp = json["timestamp"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+            Bridge.log("LIVE: ☁️ Glasses uploaded file to cloud: \(filename)")
+
+            let eventBody: [String: Any] = [
+                "filename": filename,
+                "timestamp": timestamp,
+            ]
+            Bridge.sendTypedMessage("cloud_upload_complete", body: eventBody)
+
         case "button_press":
             handleButtonPress(json)
 

@@ -1,6 +1,7 @@
 /**
  * Cloud Gallery Sync Effect
  * Monitors WiFi state and manages cloud gallery polling
+ * Coordinates with glasses upload to prevent race conditions
  */
 
 import NetInfo from "@react-native-community/netinfo"
@@ -35,14 +36,34 @@ export const CloudGallerySync = () => {
       }
     })
 
-    // Listen for cloud upload notifications from glasses
-    const handleCloudUploadComplete = (data: {filename: string; timestamp: number}) => {
-      console.log(`[CloudGallerySync] 📱 Received cloud upload notification: ${data.filename}`)
-      // Refresh pending count immediately when glasses uploads a picture
-      cloudGallerySyncService.checkPending()
+    // Listen for glasses starting cloud upload - pause phone downloads
+    const handleCloudUploadStarted = (data: {total_files: number; timestamp: number}) => {
+      console.log(`[CloudGallerySync] 🚫 Glasses started cloud upload: ${data.total_files} files - pausing downloads`)
+      cloudGallerySyncService.setGlassesUploading(true)
     }
 
+    // Listen for cloud upload completion notifications from glasses (per-file)
+    const handleCloudUploadComplete = (data: {filename: string; timestamp: number}) => {
+      console.log(`[CloudGallerySync] 📱 Received cloud upload notification: ${data.filename}`)
+      // Don't trigger immediate download - wait for gallery_status with 0 items
+      // to confirm all uploads are done
+    }
+
+    // Listen for gallery status updates - resume downloads when glasses have no more photos
+    const handleGalleryStatus = (data: {photos: number; videos: number; total: number; has_content: boolean}) => {
+      console.log(`[CloudGallerySync] 📊 Received gallery status: ${data.photos} photos, ${data.videos} videos`)
+
+      // If glasses have no content left, they're done uploading
+      // Resume cloud downloads
+      if (data.total === 0 && cloudGallerySyncService.isGlassesUploading()) {
+        console.log("[CloudGallerySync] ✅ Glasses finished uploading (0 items remaining) - resuming downloads")
+        cloudGallerySyncService.setGlassesUploading(false)
+      }
+    }
+
+    GlobalEventEmitter.addListener("cloud_upload_started", handleCloudUploadStarted)
     GlobalEventEmitter.addListener("cloud_upload_complete", handleCloudUploadComplete)
+    GlobalEventEmitter.addListener("gallery_status", handleGalleryStatus)
 
     // Check initial state
     NetInfo.fetch().then((state) => {
@@ -56,7 +77,9 @@ export const CloudGallerySync = () => {
     return () => {
       console.log("[CloudGallerySync] Effect unmounting - cleaning up")
       unsubscribeNetInfo()
+      GlobalEventEmitter.removeListener("cloud_upload_started", handleCloudUploadStarted)
       GlobalEventEmitter.removeListener("cloud_upload_complete", handleCloudUploadComplete)
+      GlobalEventEmitter.removeListener("gallery_status", handleGalleryStatus)
       cloudGallerySyncService.stopPolling()
     }
   }, [])

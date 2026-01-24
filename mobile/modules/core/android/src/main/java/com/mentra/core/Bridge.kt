@@ -439,6 +439,26 @@ public class Bridge private constructor() {
             sendTypedMessage("gallery_status", galleryData as Map<String, Any>)
         }
 
+        /** Send cloud upload started - glasses started uploading to cloud, phone should pause downloads */
+        @JvmStatic
+        fun sendCloudUploadStarted(totalFiles: Int, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["total_files"] = totalFiles
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_started", eventBody as Map<String, Any>)
+        }
+
+        /** Send cloud upload complete - a file was uploaded to cloud by glasses */
+        @JvmStatic
+        fun sendCloudUploadComplete(filename: String, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["filename"] = filename
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_complete", eventBody as Map<String, Any>)
+        }
+
         /** Send hotspot status change - matches iOS MentraLive.swift emitHotspotStatusChange */
         @JvmStatic
         fun sendHotspotStatusChange(
