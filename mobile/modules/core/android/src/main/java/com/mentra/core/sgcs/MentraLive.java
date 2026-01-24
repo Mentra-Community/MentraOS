@@ -5382,7 +5382,7 @@ public class MentraLive extends SGCManager {
      */
     private String getCoreToken() {
         // TEMPORARY HARDCODED TOKEN - DO NOT COMMIT
-        final String HARDCODED_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwODMwMGE0OS00MDg0LTRjYzYtOWFmOC1jZmE5N2FkNWQ4ODMiLCJlbWFpbCI6InRhaW50ZXJtaWNoZWxlQGdtYWlsLmNvbSIsIm9yZ2FuaXphdGlvbnMiOltdLCJkZWZhdWx0T3JnIjpudWxsLCJpYXQiOjE3NjkxMTE5MDd9.IgEjbaNIG_oon7HaL2e0Hlur46h0WZ4cyN8BecH87VU";
+        final String HARDCODED_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiODJjZTlhYS1hZmY1LTRmNWYtYmNlYy00Zjk0YmZlMTY3ZjAiLCJlbWFpbCI6ImxvcmlhbWlzdGFkaTc1KzVAZ21haWwuY29tIiwib3JnYW5pemF0aW9ucyI6WyI2OTYxODIxZDYyY2ZlODhlYTQwZWE1MDciXSwiZGVmYXVsdE9yZyI6IjY5NjE4MjFkNjJjZmU4OGVhNDBlYTUwNyIsImlhdCI6MTc2OTIxNzQwMX0.EtMMeUhLgtnf2vwVvEwupELXlytf_IPa4Mb8jFoVkWY";
         Bridge.log("LIVE: 🔐 ⚠️ TEMPORARY HARDCODED TOKEN ACTIVE - DO NOT COMMIT THIS!");
         Bridge.log("LIVE: 🔐 Using hardcoded token (length: " + HARDCODED_TOKEN.length() + " chars)");
         return HARDCODED_TOKEN;

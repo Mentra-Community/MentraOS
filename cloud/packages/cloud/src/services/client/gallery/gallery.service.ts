@@ -1,11 +1,16 @@
 // services/client/gallery/gallery.service.ts
 // Gallery sync service - handles uploads from glasses and syncing to mobile
 
+import sharp from "sharp";
 import { GalleryProvider } from "./gallery.provider";
 import { CloudflareGalleryProvider } from "./cloudflare.gallery.provider";
 import { AlibabaGalleryProvider } from "./alibaba.gallery.provider";
 import { GalleryItem, GalleryItemI } from "../../../models/gallery-item.model";
 import { logger as rootLogger } from "../../logging";
+
+// Thumbnail settings
+const THUMBNAIL_WIDTH = 400;
+const THUMBNAIL_QUALITY = 70;
 
 const logger = rootLogger.child({ service: "gallery" });
 
@@ -70,6 +75,47 @@ export function isGalleryConfigured(): boolean {
 }
 
 // ============================================================================
+// Thumbnail Generation
+// ============================================================================
+
+/**
+ * Generate a thumbnail from an image buffer.
+ * Returns null if thumbnail generation fails (non-fatal).
+ */
+async function generateThumbnail(imageBuffer: Buffer): Promise<Buffer | null> {
+  try {
+    const thumbnail = await sharp(imageBuffer)
+      .resize(THUMBNAIL_WIDTH, null, {
+        withoutEnlargement: true,
+        fit: "inside",
+      })
+      .jpeg({ quality: THUMBNAIL_QUALITY })
+      .toBuffer();
+
+    logger.debug({ originalSize: imageBuffer.length, thumbnailSize: thumbnail.length }, "Thumbnail generated");
+    return thumbnail;
+  } catch (error) {
+    logger.warn({ error }, "Failed to generate thumbnail - continuing without");
+    return null;
+  }
+}
+
+/**
+ * Generate thumbnail storage key from original key.
+ */
+function getThumbnailKey(storageKey: string): string {
+  // Insert "thumbs/" prefix after user ID
+  // e.g., "gallery/user@email.com/IMG_123.jpg" -> "gallery/user@email.com/thumbs/IMG_123.jpg"
+  const parts = storageKey.split("/");
+  if (parts.length >= 3) {
+    parts.splice(2, 0, "thumbs");
+    return parts.join("/");
+  }
+  // Fallback: just add "_thumb" suffix
+  return storageKey.replace(/(\.[^.]+)$/, "_thumb$1");
+}
+
+// ============================================================================
 // Image Upload (Direct)
 // ============================================================================
 
@@ -90,6 +136,7 @@ export interface UploadImageParams {
 export async function uploadImage(params: UploadImageParams): Promise<GalleryItemI> {
   const provider = getProvider();
   const storageKey = provider.generateKey(params.userId, params.filename);
+  const thumbnailKey = getThumbnailKey(storageKey);
 
   // Create DB record first (status: uploading)
   const item = new GalleryItem({
@@ -100,6 +147,7 @@ export async function uploadImage(params: UploadImageParams): Promise<GalleryIte
     sizeBytes: params.file.length,
     storageProvider: provider.providerType,
     storageKey,
+    thumbnailKey, // Will be set even if thumbnail upload fails
     status: "uploading",
     capturedAt: params.capturedAt,
     deviceId: params.deviceId,
@@ -108,15 +156,34 @@ export async function uploadImage(params: UploadImageParams): Promise<GalleryIte
   await item.save();
 
   try {
-    // Upload to storage
+    // Upload original to storage
     await provider.uploadObject(storageKey, params.file, params.mimeType);
+
+    // Generate and upload thumbnail (non-blocking, non-fatal)
+    const thumbnail = await generateThumbnail(params.file);
+    if (thumbnail) {
+      try {
+        await provider.uploadObject(thumbnailKey, thumbnail, "image/jpeg");
+        logger.debug({ thumbnailKey }, "Thumbnail uploaded");
+      } catch (thumbError) {
+        // Thumbnail upload failed - clear the key but continue
+        logger.warn({ error: thumbError }, "Failed to upload thumbnail - continuing without");
+        item.thumbnailKey = undefined;
+      }
+    } else {
+      // No thumbnail generated - clear the key
+      item.thumbnailKey = undefined;
+    }
 
     // Update status to pending
     item.status = "pending";
     item.uploadedAt = new Date();
     await item.save();
 
-    logger.info({ itemId: item._id, userId: params.userId }, "Image uploaded successfully");
+    logger.info(
+      { itemId: item._id, userId: params.userId, hasThumbnail: !!item.thumbnailKey },
+      "Image uploaded successfully",
+    );
     return item;
   } catch (error) {
     // Rollback DB record on failure
@@ -227,6 +294,7 @@ export interface PendingItem {
   capturedAt: Date;
   uploadedAt: Date;
   downloadUrl: string;
+  thumbnailUrl?: string; // Presigned URL for thumbnail (images only)
   metadata?: {
     width?: number;
     height?: number;
@@ -276,25 +344,40 @@ export async function getPending(
     items.pop();
   }
 
-  // Generate download URLs for each item
+  // Generate download URLs for each item (including thumbnails if available)
   const pendingItems: PendingItem[] = await Promise.all(
-    items.map(async (item) => ({
-      id: item._id.toString(),
-      type: item.type,
-      filename: item.filename,
-      mimeType: item.mimeType,
-      sizeBytes: item.sizeBytes,
-      capturedAt: item.capturedAt,
-      uploadedAt: item.uploadedAt!,
-      downloadUrl: await provider.getPresignedDownloadUrl(item.storageKey),
-      metadata: item.metadata
-        ? {
-            width: item.metadata.width,
-            height: item.metadata.height,
-            duration: item.metadata.duration,
-          }
-        : undefined,
-    })),
+    items.map(async (item) => {
+      const downloadUrl = await provider.getPresignedDownloadUrl(item.storageKey);
+
+      // Get thumbnail URL if available (images only)
+      let thumbnailUrl: string | undefined;
+      if (item.thumbnailKey) {
+        try {
+          thumbnailUrl = await provider.getPresignedDownloadUrl(item.thumbnailKey);
+        } catch (error) {
+          logger.warn({ error, itemId: item._id }, "Failed to get thumbnail URL");
+        }
+      }
+
+      return {
+        id: item._id.toString(),
+        type: item.type,
+        filename: item.filename,
+        mimeType: item.mimeType,
+        sizeBytes: item.sizeBytes,
+        capturedAt: item.capturedAt,
+        uploadedAt: item.uploadedAt!,
+        downloadUrl,
+        thumbnailUrl,
+        metadata: item.metadata
+          ? {
+              width: item.metadata.width,
+              height: item.metadata.height,
+              duration: item.metadata.duration,
+            }
+          : undefined,
+      };
+    }),
   );
 
   return {

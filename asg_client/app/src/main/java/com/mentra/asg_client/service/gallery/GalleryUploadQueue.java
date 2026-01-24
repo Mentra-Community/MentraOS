@@ -229,6 +229,33 @@ public class GalleryUploadQueue {
         
         Log.i(TAG, "📊 Queue summary: " + photoCount + " photos, " + videoCount + " videos, " + 
                   formatBytes(totalSize) + " total");
+        
+        // Clean up stale failure records for files that no longer exist on glasses
+        // This prevents ghost entries from accumulating in statistics
+        if (!mFailedUploads.isEmpty()) {
+            Set<String> existingFileNames = new HashSet<>();
+            for (FileMetadata file : allFiles) {
+                existingFileNames.add(file.getFileName());
+            }
+            
+            // Find failure records for files that no longer exist
+            Set<String> staleFailures = new HashSet<>();
+            for (String failedFileName : mFailedUploads.keySet()) {
+                if (!existingFileNames.contains(failedFileName) && 
+                    !mUploadedFiles.contains(failedFileName)) {
+                    staleFailures.add(failedFileName);
+                }
+            }
+            
+            // Remove stale failure records
+            if (!staleFailures.isEmpty()) {
+                for (String stale : staleFailures) {
+                    mFailedUploads.remove(stale);
+                }
+                saveFailedUploads();
+                Log.i(TAG, "🧹 Cleaned up " + staleFailures.size() + " stale failure records (files no longer exist)");
+            }
+        }
         } finally {
             // Always release the build lock
             mIsBuilding.set(false);

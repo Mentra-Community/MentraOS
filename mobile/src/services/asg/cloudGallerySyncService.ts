@@ -25,6 +25,7 @@ interface PendingItem {
   capturedAt: string
   uploadedAt: string
   downloadUrl: string
+  thumbnailUrl?: string // Presigned URL for thumbnail preview
   metadata?: {
     width?: number
     height?: number
@@ -252,14 +253,19 @@ class CloudGallerySyncService {
       // Reset completed files count for new download batch
       useGallerySyncStore.setState({cloudCompletedFiles: 0})
 
-      // Add all items to downloading list for gallery preview
+      // Add all items to downloading list for gallery preview (thumbnails appear immediately)
+      console.log(`[CloudGallerySync] 🖼️ Setting ${sortedItems.length} preview items for gallery`)
       store.setCloudDownloadingItems(
         sortedItems.map((item) => ({
           filename: item.filename,
           capturedAt: new Date(item.capturedAt).getTime(),
           mimeType: item.mimeType,
           is_video: item.type === "video",
+          thumbnailUrl: item.thumbnailUrl, // Include thumbnail URL for preview
         })),
+      )
+      console.log(
+        `[CloudGallerySync] 🖼️ Preview items set - gallery should now show ${sortedItems.length} thumbnails at top`,
       )
 
       for (let i = 0; i < sortedItems.length; i++) {

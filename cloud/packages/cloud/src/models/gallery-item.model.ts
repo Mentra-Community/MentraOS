@@ -13,6 +13,7 @@ export interface GalleryItemI extends Document {
   sizeBytes: number;
   storageProvider: StorageProviderType;
   storageKey: string;
+  thumbnailKey?: string; // Storage key for thumbnail (images only)
   status: "uploading" | "pending" | "synced" | "deleted";
   capturedAt: Date;
   uploadedAt?: Date;
@@ -42,6 +43,7 @@ const GalleryItemSchema = new Schema<GalleryItemI>(
       required: true,
     },
     storageKey: { type: String, required: true, unique: true },
+    thumbnailKey: { type: String }, // Storage key for thumbnail (images only)
     status: {
       type: String,
       enum: ["uploading", "pending", "synced", "deleted"],

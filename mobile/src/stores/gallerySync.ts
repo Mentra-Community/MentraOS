@@ -68,7 +68,13 @@ export interface GallerySyncInfo {
   cloudCurrentFileName: string | null
   cloudCompletedFiles: number
   cloudFileProgress: Map<string, number> // Track progress per file (filename -> progress 0-100)
-  cloudDownloadingItems: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}> // Items currently being downloaded (for preview)
+  cloudDownloadingItems: Array<{
+    filename: string
+    capturedAt: number
+    mimeType: string
+    is_video: boolean
+    thumbnailUrl?: string
+  }> // Items currently being downloaded (for preview)
 
   // Error tracking
   lastError: string | null
@@ -110,7 +116,7 @@ interface GallerySyncState extends GallerySyncInfo {
   onCloudFileComplete: (fileName: string) => void
   clearCloudFileProgress: () => void
   setCloudDownloadingItems: (
-    items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}>,
+    items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean; thumbnailUrl?: string}>,
   ) => void
 
   // Queue management (for resume)
@@ -354,7 +360,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
     clearCloudFileProgress: () => set({cloudFileProgress: new Map<string, number>()}),
 
     setCloudDownloadingItems: (
-      items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean}>,
+      items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean; thumbnailUrl?: string}>,
     ) => set({cloudDownloadingItems: items}),
 
     // Queue management

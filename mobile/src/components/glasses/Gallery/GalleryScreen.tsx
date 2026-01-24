@@ -620,6 +620,12 @@ export function GalleryScreen() {
     useCallback(() => {
       console.log("[GalleryScreen] Screen focused - refreshing downloaded photos")
       loadDownloadedPhotos()
+
+      // Check for pending cloud items unless download is already in progress
+      if (!cloudGallerySyncService.isCurrentlyDownloading()) {
+        console.log("[GalleryScreen] Screen focused - checking cloud for pending items")
+        cloudGallerySyncService.checkPending()
+      }
     }, []),
   )
 
@@ -684,9 +690,6 @@ export function GalleryScreen() {
 
     // Downloaded photos (exclude any that are in the sync queue or are AVIF artifacts)
     const syncQueueNames = new Set(syncQueue.map((p) => p.name))
-    // console.log(
-    //   `[GalleryScreen] 🚫 Will exclude these names from downloadedPhotos: ${Array.from(syncQueueNames).join(", ")}`,
-    // )
 
     const isAvifArtifact = (name: string) => {
       // Filter out AVIF transfer artifacts by pattern
@@ -699,65 +702,95 @@ export function GalleryScreen() {
       )
     }
 
-    // Add cloud downloading items as PhotoInfo objects for preview
+    // Add cloud downloading items as PhotoInfo objects for preview (at TOP, like WiFi sync)
+    // Keep ALL items in this section during sync - don't filter out completed ones mid-sync
+    // This prevents visual "jumping" where completed items move from cloud section to downloaded section
+    if (cloudDownloadingItems.length > 0) {
+      console.log(`[GalleryScreen] 🖼️ cloudDownloadingItems has ${cloudDownloadingItems.length} items`)
+    }
+
+    // Create a set of cloud downloading filenames for filtering downloadedOnly
+    const cloudDownloadingNames = new Set(cloudDownloadingItems.map((item) => item.filename))
+
     const cloudDownloadingPhotos: PhotoInfo[] = cloudDownloadingItems
       .filter((item) => {
-        // Only show if not already in downloadedPhotos or syncQueue
-        const alreadyExists =
-          downloadedPhotos.some((p) => p.name === item.filename) || syncQueue.some((p) => p.name === item.filename)
-        return !alreadyExists
+        // Only filter out items that are in syncQueue (WiFi sync takes priority)
+        const inSyncQueue = syncQueue.some((p) => p.name === item.filename)
+        return !inSyncQueue
       })
-      .map((item) => ({
-        name: item.filename,
-        url: "", // No URL yet - downloading
-        download: "", // Required field - empty for downloading items
-        filePath: undefined, // Not downloaded yet
-        size: 0,
-        modified: item.capturedAt,
-        mime_type: item.mimeType,
-        is_video: item.is_video,
-        thumbnailPath: undefined,
-        glassesModel: undefined,
-      }))
+      .map((item) => {
+        // Check if this item has already been downloaded (exists in downloadedPhotos)
+        const downloadedVersion = downloadedPhotos.find((p) => p.name === item.filename)
 
-    // console.log(`[GalleryScreen] 📥 Processing downloadedPhotos:`)
-    // const filteredBeforeAvif = downloadedPhotos.filter(p => !syncQueueNames.has(p.name))
-    // console.log(`[GalleryScreen]   - After removing syncQueue duplicates: ${filteredBeforeAvif.length}`)
-    // filteredBeforeAvif.forEach((photo, idx) => {
-    //   const isAvif = isAvifArtifact(photo.name)
-    //   console.log(`[GalleryScreen]     ${idx + 1}. ${photo.name}${isAvif ? " (AVIF - will be filtered)" : ""}`)
-    // })
+        // Build URL: prefer local file if downloaded, otherwise thumbnail URL
+        let photoUrl = item.thumbnailUrl || ""
+        if (downloadedVersion?.filePath) {
+          photoUrl = downloadedVersion.filePath.startsWith("file://")
+            ? downloadedVersion.filePath
+            : `file://${downloadedVersion.filePath}`
+        }
+
+        return {
+          name: item.filename,
+          url: photoUrl,
+          download: "", // Required field - empty for downloading items
+          filePath: downloadedVersion?.filePath, // Set filePath if downloaded
+          size: 0,
+          modified: item.capturedAt,
+          mime_type: item.mimeType,
+          is_video: item.is_video,
+          thumbnailPath: undefined,
+          glassesModel: undefined,
+        }
+      })
+
+    // Add cloud downloading photos at TOP (after WiFi sync queue, before local photos)
+    // Sort newest first for display consistency, same as WiFi sync
+    if (cloudDownloadingPhotos.length > 0) {
+      console.log(
+        `[GalleryScreen] 🖼️ Adding ${cloudDownloadingPhotos.length} cloud download thumbnails to gallery (at TOP)`,
+      )
+      const sortedCloudPhotos = [...cloudDownloadingPhotos].sort((a, b) => {
+        const aTime = typeof a.modified === "string" ? new Date(a.modified).getTime() : a.modified || 0
+        const bTime = typeof b.modified === "string" ? new Date(b.modified).getTime() : b.modified || 0
+        return bTime - aTime // Newest first
+      })
+
+      sortedCloudPhotos.forEach((photo, i) => {
+        items.push({
+          id: `cloud-downloading-${photo.name}`,
+          type: "server", // Same type as WiFi sync items
+          index: (syncState === "syncing" ? syncQueue.length : 0) + i,
+          photo,
+          // Only show "on server" badge if not yet downloaded (still waiting/downloading)
+          isOnServer: !photo.filePath,
+        })
+      })
+    }
 
     const downloadedOnly = downloadedPhotos
-      .filter((p) => !syncQueueNames.has(p.name) && !isAvifArtifact(p.name))
+      .filter((p) => {
+        // Exclude items in WiFi sync queue
+        if (syncQueueNames.has(p.name)) return false
+        // Exclude AVIF artifacts
+        if (isAvifArtifact(p.name)) return false
+        // Exclude items that are in the cloud downloading batch (they're shown in cloud section)
+        if (cloudDownloadingNames.has(p.name)) return false
+        return true
+      })
       .sort((a, b) => {
         const aTime = typeof a.modified === "string" ? new Date(a.modified).getTime() : a.modified
         const bTime = typeof b.modified === "string" ? new Date(b.modified).getTime() : b.modified
         return bTime - aTime
       })
 
-    // console.log(`[GalleryScreen]   - After AVIF filtering: ${downloadedOnly.length}`)
-
-    // Add downloaded photos FIRST (they appear at top of gallery, newest first)
+    // Add downloaded photos AFTER cloud downloading items
+    const cloudOffset = cloudDownloadingPhotos.length
     downloadedOnly.forEach((photo, i) => {
       items.push({
         id: `local-${photo.name}`,
         type: "local",
-        index: (syncState === "syncing" ? syncQueue.length : 0) + i,
-        photo,
-        isOnServer: false,
-      })
-    })
-
-    // Add cloud downloading photos AFTER downloaded photos (they appear at BOTTOM of gallery)
-    // Reverse order so current download (first in array) appears on the RIGHT side of the row
-    // This creates right-to-left, bottom-to-top fill pattern for downloading items
-    const reversedCloudPhotos = [...cloudDownloadingPhotos].reverse()
-    reversedCloudPhotos.forEach((photo, i) => {
-      items.push({
-        id: `cloud-downloading-${photo.name}`,
-        type: "local",
-        index: (syncState === "syncing" ? syncQueue.length : 0) + downloadedOnly.length + i,
+        index: (syncState === "syncing" ? syncQueue.length : 0) + cloudOffset + i,
         photo,
         isOnServer: false,
       })
@@ -1011,8 +1044,6 @@ export function GalleryScreen() {
       // Check if this is a cloud downloading item (has no filePath and is in cloudDownloadingItems)
       const isCloudDownloadingItem =
         !item.photo.filePath && cloudDownloadingItems.some((i) => i.filename === item.photo?.name)
-      // Check if this is the currently downloading item (shows spinner)
-      const isCurrentlyDownloading = cloudCurrentFileName === item.photo.name && isCloudDownloading
       const isDownloading =
         (itemSyncState && (itemSyncState.status === "downloading" || itemSyncState.status === "pending")) ||
         isCloudDownloading
@@ -1030,8 +1061,9 @@ export function GalleryScreen() {
           }}
           disabled={isDownloading}>
           <View style={{position: "relative"}}>
-            {/* Show shimmer for cloud downloading items that haven't been downloaded yet */}
-            {isCloudDownloadingItem && !item.photo.filePath ? (
+            {/* Cloud downloading items: show thumbnail if available, otherwise shimmer */}
+            {isCloudDownloadingItem && !item.photo.filePath && !item.photo.url ? (
+              // No thumbnail URL - show shimmer as fallback
               <View style={{width: itemWidth, height: itemWidth}}>
                 <ShimmerPlaceholder
                   shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
@@ -1042,41 +1074,19 @@ export function GalleryScreen() {
                   }}
                   duration={1500}
                 />
-                {/* Show progress ring for ALL cloud downloading items, not just current */}
-                {(() => {
-                  const itemProgress = cloudFileProgress.get(item.photo.name)
-                  const hasProgress = itemProgress !== undefined && itemProgress >= 0
-                  const isWaiting = !hasProgress // Hasn't started downloading yet
-
-                  if (isCurrentlyDownloading || hasProgress) {
-                    // Show progress ring with actual progress
-                    return (
-                      <View style={themed($progressRingOverlay)}>
-                        <ProgressRing
-                          progress={Math.max(0, Math.min(100, itemProgress || 0))}
-                          size={50}
-                          strokeWidth={4}
-                          progressColor={theme.colors.primary}
-                        />
-                      </View>
-                    )
-                  } else if (isWaiting) {
-                    // Show waiting indicator (queued but not started)
-                    return (
-                      <View style={themed($progressRingOverlay)}>
-                        <View style={themed($waitingIndicator)}>
-                          <Icon name="world-download" size={20} color="white" />
-                        </View>
-                      </View>
-                    )
-                  }
-                  return null
-                })()}
+                {/* Show waiting indicator for shimmer items */}
+                <View style={themed($progressRingOverlay)}>
+                  <View style={themed($waitingIndicator)}>
+                    <Icon name="world-download" size={20} color="white" />
+                  </View>
+                </View>
               </View>
             ) : (
+              // Has thumbnail URL or is regular item - use PhotoImage
               <>
                 <PhotoImage photo={item.photo} style={{...themed($photoImage), width: itemWidth, height: itemWidth}} />
-                {isDownloading && <View style={themed($photoDimmingOverlay)} />}
+                {/* Dim photos that are downloading OR cloud items not yet downloaded */}
+                {(isDownloading || isCloudDownloadingItem) && <View style={themed($photoDimmingOverlay)} />}
               </>
             )}
           </View>
@@ -1101,25 +1111,37 @@ export function GalleryScreen() {
               </View>
             ))}
           {(() => {
+            // Skip shimmer-only cloud items (no thumbnail URL) - they show progress in shimmer block
+            if (isCloudDownloadingItem && !item.photo.filePath && !item.photo.url) {
+              return null
+            }
+
             const syncStateForItem = photoSyncStates.get(item.photo.name)
             const cloudProgress = cloudFileProgress.get(item.photo.name)
-            const isCloudFailed = cloudProgress === -1
-            const isCloudDownloading = cloudProgress !== undefined && cloudProgress >= 0 && cloudProgress < 100
 
-            // Show progress ring for WiFi Direct sync or cloud download
-            if (
-              (syncStateForItem &&
-                (syncStateForItem.status === "pending" ||
-                  syncStateForItem.status === "downloading" ||
-                  syncStateForItem.status === "failed")) ||
-              isCloudDownloading ||
-              isCloudFailed
-            ) {
-              const isFailed = syncStateForItem?.status === "failed" || isCloudFailed
-              const progress =
-                isCloudDownloading || isCloudFailed
-                  ? cloudProgress || 0
-                  : Math.max(0, Math.min(100, syncStateForItem?.progress || 0))
+            // Check if WiFi sync item is syncing
+            const isWifiSyncing =
+              syncStateForItem &&
+              (syncStateForItem.status === "pending" ||
+                syncStateForItem.status === "downloading" ||
+                syncStateForItem.status === "failed")
+
+            // Cloud items with thumbnails should ALWAYS show progress ring (like WiFi sync pending)
+            // Progress 0 = waiting in queue, progress > 0 = actively downloading
+            const shouldShowCloudProgress = isCloudDownloadingItem && item.photo.url
+
+            // Show progress ring for WiFi Direct sync OR cloud items with thumbnails
+            if (isWifiSyncing || shouldShowCloudProgress) {
+              const isFailed = syncStateForItem?.status === "failed"
+
+              // Determine progress: WiFi sync uses syncStateForItem, cloud uses cloudFileProgress
+              let progress = 0
+              if (isWifiSyncing && !shouldShowCloudProgress) {
+                progress = Math.max(0, Math.min(100, syncStateForItem?.progress || 0))
+              } else if (shouldShowCloudProgress) {
+                // Cloud: use cloudFileProgress if available, otherwise 0 (waiting)
+                progress = cloudProgress !== undefined && cloudProgress >= 0 ? cloudProgress : 0
+              }
 
               return (
                 <View style={themed($progressRingOverlay)}>
