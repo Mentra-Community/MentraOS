@@ -73,6 +73,9 @@ async function uploadImage(c: AppContext) {
   const email = c.get("email")!;
   const reqLogger = c.get("logger") || logger;
 
+  // 🔍 DEBUG: Log the upload userId
+  reqLogger.info({ email }, "📸 uploadImage called - uploading for userId");
+
   try {
     // Parse multipart form data
     const formData = await c.req.formData();
@@ -81,6 +84,9 @@ async function uploadImage(c: AppContext) {
     const capturedAt = formData.get("capturedAt") as string | null;
     const deviceId = formData.get("deviceId") as string | null;
     const metadataStr = formData.get("metadata") as string | null;
+
+    // 🔍 DEBUG: Log the file info
+    reqLogger.info({ email, filename, fileSize: file?.size, deviceId }, "📸 Upload file details");
 
     // Validate file exists
     if (!file) {
@@ -179,6 +185,18 @@ async function uploadImage(c: AppContext) {
       deviceId: deviceId || undefined,
       metadata: parsedMetadata,
     });
+
+    // 🔍 DEBUG: Log successful upload with status
+    reqLogger.info(
+      {
+        email,
+        itemId: item._id.toString(),
+        filename,
+        status: item.status,
+        sizeBytes: item.sizeBytes,
+      },
+      "✅ uploadImage SUCCESS - item created with status",
+    );
 
     return c.json({
       success: true,
@@ -345,6 +363,9 @@ async function getPending(c: AppContext) {
   const email = c.get("email")!;
   const reqLogger = c.get("logger") || logger;
 
+  // 🔍 DEBUG: Log the query parameters
+  reqLogger.info({ email, queryParams: c.req.query() }, "📥 getPending called - querying for userId");
+
   try {
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor");
@@ -365,6 +386,18 @@ async function getPending(c: AppContext) {
     }
 
     const result = await GalleryService.getPending(email, { limit, cursor, type });
+
+    // 🔍 DEBUG: Log the results
+    reqLogger.info(
+      {
+        email,
+        pendingCount: result.pendingCount,
+        pendingTotalBytes: result.pendingTotalBytes,
+        itemsReturned: result.items.length,
+        itemFilenames: result.items.map((i) => i.filename),
+      },
+      "📤 getPending result - found items for userId",
+    );
 
     return c.json({
       success: true,

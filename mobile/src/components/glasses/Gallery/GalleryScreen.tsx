@@ -899,6 +899,10 @@ export function GalleryScreen() {
   const renderStatusBar = () => {
     if (!shouldShowSyncButton) return null
 
+    // Hide WiFi sync banner when cloud sync is actively downloading
+    // Cloud download progress takes priority
+    if (cloudSyncActive) return null
+
     const statusContent = () => {
       switch (syncState) {
         case "idle":
@@ -1191,8 +1195,11 @@ export function GalleryScreen() {
     // Hide banner if no pending items, not active, and not showing completion message
     if (cloudPendingCount === 0 && !cloudSyncActive && !cloudSyncComplete) return null
 
-    // Don't show cloud banner if normal WiFi sync is active (to avoid overlap)
-    if (shouldShowSyncButton) return null
+    // Cloud download takes priority when active - only hide for actual WiFi syncing
+    // Don't hide just because glasses have content (hasContent triggers shouldShowSyncButton)
+    const isWifiSyncInProgress =
+      syncState === "syncing" || syncState === "connecting_wifi" || syncState === "requesting_hotspot"
+    if (isWifiSyncInProgress && !cloudSyncActive) return null
 
     // Calculate progress like normal sync: (completedFiles + currentFileProgress / 100) / totalFiles
     const currentFileProgress = cloudCurrentFileName ? cloudFileProgress.get(cloudCurrentFileName) || 0 : 0
