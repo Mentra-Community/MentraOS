@@ -56,6 +56,7 @@ class CloudGallerySyncService {
   private isPolling = false
   private consecutiveEmptyPolls = 0
   private glassesUploadingToCloud = false // Pause downloads while glasses are uploading
+  private activeDownloads = new Set<string>() // Track filenames currently being downloaded
 
   private constructor() {}
 
@@ -123,6 +124,7 @@ class CloudGallerySyncService {
       this.pollInterval = null
     }
     this.isPolling = false
+    this.activeDownloads.clear() // Clear any pending download tracking
     console.log("[CloudGallerySync] Stopped polling")
   }
 
@@ -304,6 +306,15 @@ class CloudGallerySyncService {
 
       for (let i = 0; i < sortedItems.length; i++) {
         const item = sortedItems[i]
+
+        // Skip if this file is already being downloaded (prevents race condition)
+        if (this.activeDownloads.has(item.filename)) {
+          console.log(`[CloudGallerySync] ⏭️ Skipping ${item.filename} - already downloading`)
+          continue
+        }
+
+        // Mark this file as actively downloading
+        this.activeDownloads.add(item.filename)
         store.setCloudProgress(i + 1, sortedItems.length, item.filename)
 
         // Initialize photo sync state for this file
@@ -312,8 +323,13 @@ class CloudGallerySyncService {
         try {
           console.log(`[CloudGallerySync] Downloading: ${item.filename} (${this.formatBytes(item.sizeBytes)})`)
 
+          // Generate unique temp filename to prevent race conditions
+          // Even with activeDownloads guard, use unique suffix for extra safety
+          const uniqueSuffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+          const tempFilename = `temp_${uniqueSuffix}_${item.filename}`
+
           // Download to temp location first with progress tracking
-          const tempPath = await this.downloadFile(item.downloadUrl, `temp_${item.filename}`, (progress) => {
+          const tempPath = await this.downloadFile(item.downloadUrl, tempFilename, (progress) => {
             // Update progress in store for gallery screen to display
             store.setCloudFileProgress(item.filename, progress)
           })
@@ -380,11 +396,16 @@ class CloudGallerySyncService {
           // Delete from cloud immediately after successful download
           await this.markSynced([item.id])
           console.log(`[CloudGallerySync] ✅ Downloaded and deleted from cloud: ${item.filename}`)
+
+          // Remove from active downloads tracking
+          this.activeDownloads.delete(item.filename)
         } catch (error: any) {
           console.error(`[CloudGallerySync] Failed to download ${item.filename}:`, error?.message || error)
           failedDownloads.push(item.filename)
           // Mark as failed in progress tracking
           store.setCloudFileProgress(item.filename, -1) // Use -1 to indicate failed
+          // Remove from active downloads tracking
+          this.activeDownloads.delete(item.filename)
         }
       }
 
@@ -400,6 +421,7 @@ class CloudGallerySyncService {
 
       // Show "Sync complete" message briefly, then hide banner
       this.isDownloading = false
+      this.activeDownloads.clear() // Batch complete, clear tracking
       store.setCloudSyncComplete(true)
       setTimeout(() => {
         store.setCloudSyncComplete(false)
@@ -413,6 +435,7 @@ class CloudGallerySyncService {
     } catch (error: any) {
       console.error("[CloudGallerySync] Download error:", error?.message || error)
       this.isDownloading = false
+      this.activeDownloads.clear() // Batch failed, clear tracking
       store.setCloudSyncActive(false)
       store.setCloudSyncError(error?.message || "Download failed")
       // Reset counters on error (but keep pending count so user can retry)
@@ -436,7 +459,7 @@ class CloudGallerySyncService {
       connectionTimeout: TIMING.REQUEST_TIMEOUT_MS,
       readTimeout: TIMING.DOWNLOAD_TIMEOUT_MS,
       progressDivider: 1, // Get progress updates every 1%
-      progressInterval: 250, // Update progress every 250ms max
+      progressInterval: 50, // Update progress every 250ms max
       progress: (res) => {
         const contentLength = res.contentLength || 0
         const bytesWritten = res.bytesWritten || 0

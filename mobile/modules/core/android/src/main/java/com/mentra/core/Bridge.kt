@@ -459,6 +459,17 @@ public class Bridge private constructor() {
             sendTypedMessage("cloud_upload_complete", eventBody as Map<String, Any>)
         }
 
+        /** Send cloud upload batch complete - entire upload batch finished */
+        @JvmStatic
+        fun sendCloudUploadBatchComplete(successCount: Int, failedCount: Int, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["success_count"] = successCount
+            eventBody["failed_count"] = failedCount
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_batch_complete", eventBody as Map<String, Any>)
+        }
+
         /** Send hotspot status change - matches iOS MentraLive.swift emitHotspotStatusChange */
         @JvmStatic
         fun sendHotspotStatusChange(

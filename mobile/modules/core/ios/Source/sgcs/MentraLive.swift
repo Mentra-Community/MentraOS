@@ -1767,6 +1767,20 @@ class MentraLive: NSObject, SGCManager {
             ]
             Bridge.sendTypedMessage("cloud_upload_complete", body: eventBody)
 
+        case "cloud_upload_batch_complete":
+            // Entire upload batch is complete - phone can resume cloud downloads
+            let successCount = json["success_count"] as? Int ?? 0
+            let failedCount = json["failed_count"] as? Int ?? 0
+            let timestamp = json["timestamp"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+            Bridge.log("LIVE: ✅ Glasses upload batch complete: \(successCount) success, \(failedCount) failed")
+
+            let eventBody: [String: Any] = [
+                "success_count": successCount,
+                "failed_count": failedCount,
+                "timestamp": timestamp,
+            ]
+            Bridge.sendTypedMessage("cloud_upload_batch_complete", body: eventBody)
+
         case "button_press":
             handleButtonPress(json)
 
@@ -2082,10 +2096,13 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func queryGalleryStatus() {
-        Bridge.log("LIVE: 📸 Querying gallery status from glasses")
+        Bridge.log("LIVE: 📸 ==========================================")
+        Bridge.log("LIVE: 📸 PHONE → GLASSES: query_gallery_status")
+        Bridge.log("LIVE: 📸 ==========================================")
 
         let json: [String: Any] = [
             "type": "query_gallery_status",
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
         ]
 
         sendJson(json, wakeUp: true)
@@ -2987,9 +3004,11 @@ class MentraLive: NSObject, SGCManager {
         photoCount: Int, videoCount: Int, totalCount: Int,
         totalSize: Int64, hasContent: Bool
     ) {
-        Bridge.log(
-            "LIVE: 📸 Received gallery status - photos: \(photoCount), videos: \(videoCount), total size: \(totalSize) bytes"
-        )
+        Bridge.log("LIVE: 📸 ==========================================")
+        Bridge.log("LIVE: 📸 PHONE ← GLASSES: gallery_status response")
+        Bridge.log("LIVE: 📸 Photos: \(photoCount), Videos: \(videoCount), Total: \(totalCount)")
+        Bridge.log("LIVE: 📸 Size: \(totalSize) bytes, HasContent: \(hasContent)")
+        Bridge.log("LIVE: 📸 ==========================================")
 
         // Emit gallery status event as CoreMessageEvent like other status events
         let eventBody =

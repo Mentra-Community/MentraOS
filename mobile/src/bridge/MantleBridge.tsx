@@ -150,6 +150,13 @@ export class MantleBridge {
             timestamp: data.timestamp,
           })
           break
+        case "cloud_upload_batch_complete":
+          GlobalEventEmitter.emit("cloud_upload_batch_complete", {
+            success_count: data.success_count,
+            failed_count: data.failed_count,
+            timestamp: data.timestamp,
+          })
+          break
         case "compatible_glasses_search_result":
           console.log("Received compatible_glasses_search_result event from Core", data)
           GlobalEventEmitter.emit("compatible_glasses_search_result", {

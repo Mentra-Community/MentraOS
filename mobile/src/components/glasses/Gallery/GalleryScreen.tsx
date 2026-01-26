@@ -100,7 +100,6 @@ export function GalleryScreen() {
   const cloudSyncComplete = useGallerySyncStore((state) => state.cloudSyncComplete)
   const cloudSyncError = useGallerySyncStore((state) => state.cloudSyncError)
   const cloudTotalFiles = useGallerySyncStore((state) => state.cloudTotalFiles)
-  const cloudCurrentFileName = useGallerySyncStore((state) => state.cloudCurrentFileName)
   const cloudCompletedFiles = useGallerySyncStore((state) => state.cloudCompletedFiles)
   const cloudFileProgress = useGallerySyncStore((state) => state.cloudFileProgress)
   const cloudDownloadingItems = useGallerySyncStore((state) => state.cloudDownloadingItems)
@@ -629,6 +628,29 @@ export function GalleryScreen() {
     }, []),
   )
 
+  // Periodic gallery status polling while screen is focused
+  // This catches any pushed messages that may have been missed over BLE
+  useFocusEffect(
+    useCallback(() => {
+      if (!glassesConnected || !features?.hasCamera) {
+        return
+      }
+
+      // Query immediately on focus
+      gallerySyncService.queryGlassesGalleryStatus()
+
+      // Poll every 10 seconds while gallery is open
+      const pollInterval = setInterval(() => {
+        console.log("[GalleryScreen] 📸 Periodic gallery status poll")
+        gallerySyncService.queryGlassesGalleryStatus()
+      }, 10000)
+
+      return () => {
+        clearInterval(pollInterval)
+      }
+    }, [glassesConnected, features?.hasCamera]),
+  )
+
   // Handle back button
   useFocusEffect(
     useCallback(() => {
@@ -1130,22 +1152,25 @@ export function GalleryScreen() {
                 syncStateForItem.status === "downloading" ||
                 syncStateForItem.status === "failed")
 
-            // Cloud items with thumbnails should ALWAYS show progress ring (like WiFi sync pending)
-            // Progress 0 = waiting in queue, progress > 0 = actively downloading
-            const shouldShowCloudProgress = isCloudDownloadingItem && item.photo.url
+            // Cloud items: show spinner for all, but only track progress for VIDEOS
+            // Pictures download too fast so just show indeterminate spinner (0%)
+            const isCloudVideo = isCloudDownloadingItem && item.photo.is_video
+            const shouldShowCloudSpinner = isCloudDownloadingItem && item.photo.url && !item.photo.filePath
 
             // Show progress ring for WiFi Direct sync OR cloud items with thumbnails
-            if (isWifiSyncing || shouldShowCloudProgress) {
+            if (isWifiSyncing || shouldShowCloudSpinner) {
               const isFailed = syncStateForItem?.status === "failed"
 
-              // Determine progress: WiFi sync uses syncStateForItem, cloud uses cloudFileProgress
+              // Determine progress: WiFi sync uses syncStateForItem, cloud videos use cloudFileProgress
+              // Cloud pictures: always show 0% (indeterminate spinner)
               let progress = 0
-              if (isWifiSyncing && !shouldShowCloudProgress) {
+              if (isWifiSyncing && !shouldShowCloudSpinner) {
                 progress = Math.max(0, Math.min(100, syncStateForItem?.progress || 0))
-              } else if (shouldShowCloudProgress) {
-                // Cloud: use cloudFileProgress if available, otherwise 0 (waiting)
+              } else if (isCloudVideo) {
+                // Cloud videos: use cloudFileProgress if available, otherwise 0 (waiting)
                 progress = cloudProgress !== undefined && cloudProgress >= 0 ? cloudProgress : 0
               }
+              // Cloud pictures: progress stays at 0 (indeterminate)
 
               return (
                 <View style={themed($progressRingOverlay)}>
@@ -1186,7 +1211,6 @@ export function GalleryScreen() {
       enterSelectionMode,
       cloudFileProgress,
       cloudDownloadingItems,
-      cloudCurrentFileName,
     ],
   )
 
@@ -1201,10 +1225,9 @@ export function GalleryScreen() {
       syncState === "syncing" || syncState === "connecting_wifi" || syncState === "requesting_hotspot"
     if (isWifiSyncInProgress && !cloudSyncActive) return null
 
-    // Calculate progress like normal sync: (completedFiles + currentFileProgress / 100) / totalFiles
-    const currentFileProgress = cloudCurrentFileName ? cloudFileProgress.get(cloudCurrentFileName) || 0 : 0
-    const progressPercent =
-      cloudTotalFiles > 0 ? Math.round(((cloudCompletedFiles + currentFileProgress / 100) / cloudTotalFiles) * 100) : 0
+    // Calculate progress based on completed files only (discrete steps, not continuous)
+    // Progress updates only when a file completes, matching the "X of Y" counter
+    const progressPercent = cloudTotalFiles > 0 ? Math.round((cloudCompletedFiles / cloudTotalFiles) * 100) : 0
 
     return (
       <TouchableOpacity

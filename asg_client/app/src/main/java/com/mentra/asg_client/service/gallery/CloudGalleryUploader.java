@@ -259,6 +259,9 @@ public class CloudGalleryUploader {
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             Log.i(TAG, "");
             
+            // Notify phone that upload batch is complete - phone can resume cloud downloads
+            sendCloudUploadBatchCompleteNotification(mCurrentBatchUploaded, failed);
+            
             // Send gallery status update to phone after all uploads complete
             sendGalleryStatusUpdate();
             
@@ -634,6 +637,34 @@ public class CloudGalleryUploader {
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating cloud upload started notification", e);
+        }
+    }
+    
+    /**
+     * Send notification to mobile app that entire upload batch is complete
+     * This signals the phone can resume cloud downloads
+     */
+    private void sendCloudUploadBatchCompleteNotification(int successCount, int failedCount) {
+        if (mCommunicationManager == null) {
+            Log.w(TAG, "⚠️ Cannot send batch complete notification - CommunicationManager not available");
+            return;
+        }
+        
+        try {
+            JSONObject notification = new JSONObject();
+            notification.put("type", "cloud_upload_batch_complete");
+            notification.put("success_count", successCount);
+            notification.put("failed_count", failedCount);
+            notification.put("timestamp", System.currentTimeMillis());
+            
+            boolean sent = mCommunicationManager.sendBluetoothResponse(notification);
+            if (sent) {
+                Log.i(TAG, "📱 Notified mobile app that upload batch complete: " + successCount + " success, " + failedCount + " failed");
+            } else {
+                Log.w(TAG, "⚠️ Failed to notify mobile app that upload batch complete");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error creating batch complete notification", e);
         }
     }
     

@@ -45,24 +45,34 @@ export const CloudGallerySync = () => {
     // Listen for cloud upload completion notifications from glasses (per-file)
     const handleCloudUploadComplete = (data: {filename: string; timestamp: number}) => {
       console.log(`[CloudGallerySync] 📱 Received cloud upload notification: ${data.filename}`)
-      // Don't trigger immediate download - wait for gallery_status with 0 items
-      // to confirm all uploads are done
+      // Don't trigger immediate download - wait for batch complete
     }
 
-    // Listen for gallery status updates - resume downloads when glasses have no more photos
+    // Listen for upload batch complete - this is the definitive signal that glasses finished uploading
+    const handleCloudUploadBatchComplete = (data: {success_count: number; failed_count: number; timestamp: number}) => {
+      console.log(
+        `[CloudGallerySync] ✅ Glasses upload batch complete: ${data.success_count} success, ${data.failed_count} failed - resuming downloads`,
+      )
+      cloudGallerySyncService.setGlassesUploading(false)
+      // Trigger immediate check for pending items
+      cloudGallerySyncService.checkPending()
+    }
+
+    // Listen for gallery status updates - fallback if batch_complete not received
     const handleGalleryStatus = (data: {photos: number; videos: number; total: number; has_content: boolean}) => {
       console.log(`[CloudGallerySync] 📊 Received gallery status: ${data.photos} photos, ${data.videos} videos`)
 
       // If glasses have no content left, they're done uploading
-      // Resume cloud downloads
+      // This is a fallback in case batch_complete wasn't received
       if (data.total === 0 && cloudGallerySyncService.isGlassesUploading()) {
-        console.log("[CloudGallerySync] ✅ Glasses finished uploading (0 items remaining) - resuming downloads")
+        console.log("[CloudGallerySync] ✅ Glasses have 0 items - resuming downloads (fallback)")
         cloudGallerySyncService.setGlassesUploading(false)
       }
     }
 
     GlobalEventEmitter.addListener("cloud_upload_started", handleCloudUploadStarted)
     GlobalEventEmitter.addListener("cloud_upload_complete", handleCloudUploadComplete)
+    GlobalEventEmitter.addListener("cloud_upload_batch_complete", handleCloudUploadBatchComplete)
     GlobalEventEmitter.addListener("gallery_status", handleGalleryStatus)
 
     // Check initial state
@@ -79,6 +89,7 @@ export const CloudGallerySync = () => {
       unsubscribeNetInfo()
       GlobalEventEmitter.removeListener("cloud_upload_started", handleCloudUploadStarted)
       GlobalEventEmitter.removeListener("cloud_upload_complete", handleCloudUploadComplete)
+      GlobalEventEmitter.removeListener("cloud_upload_batch_complete", handleCloudUploadBatchComplete)
       GlobalEventEmitter.removeListener("gallery_status", handleGalleryStatus)
       cloudGallerySyncService.stopPolling()
     }
