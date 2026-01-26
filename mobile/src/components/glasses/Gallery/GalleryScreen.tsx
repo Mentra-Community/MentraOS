@@ -103,6 +103,8 @@ export function GalleryScreen() {
   const cloudCompletedFiles = useGallerySyncStore((state) => state.cloudCompletedFiles)
   const cloudFileProgress = useGallerySyncStore((state) => state.cloudFileProgress)
   const cloudDownloadingItems = useGallerySyncStore((state) => state.cloudDownloadingItems)
+  const glassesUploadingToCloud = useGallerySyncStore((state) => state.glassesUploadingToCloud)
+  const glassesUploadTotalFiles = useGallerySyncStore((state) => state.glassesUploadTotalFiles)
 
   // Permission state - no longer blocking, permission is requested lazily when saving
   const [_hasMediaLibraryPermission, setHasMediaLibraryPermission] = useState(false)
@@ -919,6 +921,22 @@ export function GalleryScreen() {
     syncState === "complete"
 
   const renderStatusBar = () => {
+    // Show glasses uploading banner with highest priority
+    if (glassesUploadingToCloud) {
+      return (
+        <View style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s12}]}>
+          <View style={themed($syncButtonContent)}>
+            <View style={themed($syncButtonRow)}>
+              <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
+              <Text style={themed($syncButtonText)}>
+                Uploading {glassesUploadTotalFiles} {glassesUploadTotalFiles === 1 ? "photo" : "photos"} to cloud...
+              </Text>
+            </View>
+          </View>
+        </View>
+      )
+    }
+
     if (!shouldShowSyncButton) return null
 
     // Hide WiFi sync banner when cloud sync is actively downloading
@@ -1216,6 +1234,9 @@ export function GalleryScreen() {
 
   // Render cloud sync banner - matches sync button design, positioned at bottom
   const renderCloudSyncBanner = () => {
+    // Hide banner when glasses are uploading to cloud (uploading banner takes priority)
+    if (glassesUploadingToCloud) return null
+
     // Hide banner if no pending items, not active, and not showing completion message
     if (cloudPendingCount === 0 && !cloudSyncActive && !cloudSyncComplete) return null
 

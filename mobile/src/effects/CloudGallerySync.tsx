@@ -8,6 +8,7 @@ import NetInfo from "@react-native-community/netinfo"
 import {useEffect} from "react"
 
 import {cloudGallerySyncService} from "@/services/asg/cloudGallerySyncService"
+import {useGallerySyncStore} from "@/stores/gallerySync"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 export const CloudGallerySync = () => {
@@ -36,10 +37,12 @@ export const CloudGallerySync = () => {
       }
     })
 
-    // Listen for glasses starting cloud upload - pause phone downloads
+    // Listen for glasses starting cloud upload - pause phone downloads and update UI
     const handleCloudUploadStarted = (data: {total_files: number; timestamp: number}) => {
       console.log(`[CloudGallerySync] 🚫 Glasses started cloud upload: ${data.total_files} files - pausing downloads`)
       cloudGallerySyncService.setGlassesUploading(true)
+      // Update store so GalleryScreen shows "Uploading to cloud" banner
+      useGallerySyncStore.getState().setGlassesUploadingToCloud(true, data.total_files)
     }
 
     // Listen for cloud upload completion notifications from glasses (per-file)
@@ -54,6 +57,8 @@ export const CloudGallerySync = () => {
         `[CloudGallerySync] ✅ Glasses upload batch complete: ${data.success_count} success, ${data.failed_count} failed - resuming downloads`,
       )
       cloudGallerySyncService.setGlassesUploading(false)
+      // Clear the uploading state in store
+      useGallerySyncStore.getState().setGlassesUploadingToCloud(false)
       // Trigger immediate check for pending items
       cloudGallerySyncService.checkPending()
     }
@@ -67,6 +72,7 @@ export const CloudGallerySync = () => {
       if (data.total === 0 && cloudGallerySyncService.isGlassesUploading()) {
         console.log("[CloudGallerySync] ✅ Glasses have 0 items - resuming downloads (fallback)")
         cloudGallerySyncService.setGlassesUploading(false)
+        useGallerySyncStore.getState().setGlassesUploadingToCloud(false)
       }
     }
 
