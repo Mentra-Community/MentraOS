@@ -2272,8 +2272,11 @@ public class MentraLive extends SGCManager {
                 long totalSize = json.optLong("total_size", 0);
                 boolean hasContent = json.optBoolean("has_content", false);
 
-                Bridge.log("LIVE: 📸 Received gallery status: " + photoCount + " photos, " +
-                      videoCount + " videos, total size: " + totalSize + " bytes");
+                Bridge.log("LIVE: 📸 ==========================================");
+                Bridge.log("LIVE: 📸 PHONE ← GLASSES: gallery_status response");
+                Bridge.log("LIVE: 📸 Photos: " + photoCount + ", Videos: " + videoCount + ", Total: " + totalCount);
+                Bridge.log("LIVE: 📸 Size: " + totalSize + " bytes, HasContent: " + hasContent);
+                Bridge.log("LIVE: 📸 ==========================================");
 
                 // Send gallery status to React Native frontend (matches iOS pattern)
                 Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent);
@@ -2299,6 +2302,29 @@ public class MentraLive extends SGCManager {
 
                 // Send to React Native
                 Bridge.sendCloudUploadComplete(cloudUploadFilename, cloudUploadCompleteTimestamp);
+                break;
+
+            case "cloud_upload_batch_complete":
+                // Entire upload batch is complete - phone can resume cloud downloads
+                int batchSuccessCount = json.optInt("success_count", 0);
+                int batchFailedCount = json.optInt("failed_count", 0);
+                long batchCompleteTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: ✅ Glasses upload batch complete: " + batchSuccessCount + " success, " + batchFailedCount + " failed");
+
+                // Send to React Native to resume cloud downloads
+                Bridge.sendCloudUploadBatchComplete(batchSuccessCount, batchFailedCount, batchCompleteTimestamp);
+                break;
+
+            case "cloud_upload_failed":
+                // Glasses upload failed (e.g., network error) - phone should notify cloud and download pending items
+                String uploadFailureReason = json.optString("reason", "network_error");
+                long uploadFailureTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: ❌ Glasses cloud upload failed: " + uploadFailureReason);
+
+                // Send to React Native to handle failure (notify cloud and download pending items)
+                Bridge.sendCloudUploadFailed(uploadFailureReason, uploadFailureTimestamp);
                 break;
 
             case "touch_event":
@@ -3133,10 +3159,31 @@ public class MentraLive extends SGCManager {
         try {
             JSONObject json = new JSONObject();
             json.put("type", "query_gallery_status");
+            json.put("timestamp", System.currentTimeMillis());
             sendJson(json, true);
-            Bridge.log("LIVE: 📸 Sending gallery status query to glasses");
+            Bridge.log("LIVE: 📸 ==========================================");
+            Bridge.log("LIVE: 📸 PHONE → GLASSES: query_gallery_status");
+            Bridge.log("LIVE: 📸 ==========================================");
         } catch (JSONException e) {
             Log.e(TAG, "📸 Error creating gallery status query", e);
+        }
+    }
+
+    /**
+     * Send cancel cloud upload command to glasses.
+     * Stops any active cloud uploads immediately.
+     */
+    public void sendCancelCloudUpload() {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "cancel_cloud_upload");
+            json.put("timestamp", System.currentTimeMillis());
+            sendJson(json, true);
+            Bridge.log("LIVE: 🛑 ==========================================");
+            Bridge.log("LIVE: 🛑 PHONE → GLASSES: cancel_cloud_upload");
+            Bridge.log("LIVE: 🛑 ==========================================");
+        } catch (JSONException e) {
+            Log.e(TAG, "🛑 Error creating cancel cloud upload command", e);
         }
     }
 

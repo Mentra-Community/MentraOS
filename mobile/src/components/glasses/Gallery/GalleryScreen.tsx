@@ -95,7 +95,6 @@ export function GalleryScreen() {
   )
 
   // Cloud sync state
-  const cloudPendingCount = useGallerySyncStore((state) => state.cloudPendingCount)
   const cloudSyncActive = useGallerySyncStore((state) => state.cloudSyncActive)
   const cloudSyncComplete = useGallerySyncStore((state) => state.cloudSyncComplete)
   const cloudSyncError = useGallerySyncStore((state) => state.cloudSyncError)
@@ -1273,36 +1272,31 @@ export function GalleryScreen() {
 
   // Render cloud sync banner - matches sync button design, positioned at bottom
   const renderCloudSyncBanner = () => {
-    // If actively downloading, ALWAYS show download banner (downloads have priority over uploads)
-    // Don't hide for cloudUploadIsUploading when we're actively downloading
-    if (!cloudSyncActive && cloudUploadIsUploading) return null
+    // Only show banner during active download (automatic downloads only - no manual trigger)
+    // Don't show if not actively downloading
+    if (!cloudSyncActive || cloudTotalFiles === 0) return null
 
-    // Hide banner if no pending items, not active, and not showing completion message
-    if (cloudPendingCount === 0 && !cloudSyncActive && !cloudSyncComplete) return null
+    // Don't show if upload is active (upload banner takes priority)
+    if (cloudUploadIsUploading) return null
 
     // Cloud download takes priority when active - only hide for actual WiFi syncing
-    // Don't hide just because glasses have content (hasContent triggers shouldShowSyncButton)
     const isWifiSyncInProgress =
       syncState === "syncing" || syncState === "connecting_wifi" || syncState === "requesting_hotspot"
-    if (isWifiSyncInProgress && !cloudSyncActive) return null
+    if (isWifiSyncInProgress) return null
 
     // Calculate progress based on completed files only (discrete steps, not continuous)
     // Progress updates only when a file completes, matching the "X of Y" counter
     const progressPercent = cloudTotalFiles > 0 ? Math.round((cloudCompletedFiles / cloudTotalFiles) * 100) : 0
 
     return (
-      <TouchableOpacity
-        style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s12}]}
-        onPress={!cloudSyncActive ? () => cloudGallerySyncService.downloadPending() : undefined}
-        activeOpacity={!cloudSyncActive ? 0.8 : 1}
-        disabled={cloudSyncActive}>
+      <View style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s12}]}>
         <View style={themed($syncButtonContent)}>
           {cloudSyncComplete ? (
-            // Show "Sync complete" message
+            // Show "Sync complete" message briefly
             <View style={themed($syncButtonRow)}>
               <Text style={themed($syncButtonText)}>Cloud sync complete!</Text>
             </View>
-          ) : cloudSyncActive && cloudTotalFiles > 0 ? (
+          ) : (
             <>
               <View style={themed($syncButtonRow)}>
                 <Text style={themed($syncButtonText)}>
@@ -1320,13 +1314,6 @@ export function GalleryScreen() {
                 <View style={[themed($syncButtonProgressFill), {width: `${progressPercent}%`}]} />
               </View>
             </>
-          ) : (
-            <View style={themed($syncButtonRow)}>
-              <Icon name="world-download" size={20} color={theme.colors.text} style={{marginRight: spacing.s2}} />
-              <Text style={themed($syncButtonText)}>
-                Download {cloudPendingCount} {cloudPendingCount === 1 ? "photo" : "photos"} from cloud
-              </Text>
-            </View>
           )}
         </View>
         {cloudSyncError && (
@@ -1334,7 +1321,7 @@ export function GalleryScreen() {
             {cloudSyncError}
           </Text>
         )}
-      </TouchableOpacity>
+      </View>
     )
   }
 

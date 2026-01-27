@@ -60,6 +60,9 @@ class CloudGallerySyncService {
   private activeDownloads = new Set<string>() // Track filenames currently being downloaded
   // Track temp files for active downloads so we can clean them up on cancel
   private activeTempFiles = new Map<string, string>() // filename -> tempPath
+  // Cooldown after cancellation to prevent immediate re-download attempts
+  private downloadCooldownUntil: number | null = null
+  private readonly DOWNLOAD_COOLDOWN_MS = 30 * 1000 // 30 seconds
 
   private constructor() {}
 
@@ -288,6 +291,17 @@ class CloudGallerySyncService {
     if (this.isDownloading) {
       console.log("[CloudGallerySync] Already downloading, skipping poll")
       return
+    }
+
+    // Check cooldown after cancellation
+    if (this.downloadCooldownUntil !== null && Date.now() < this.downloadCooldownUntil) {
+      const remainingSeconds = Math.ceil((this.downloadCooldownUntil - Date.now()) / 1000)
+      console.log(`[CloudGallerySync] ⏸️ Download cooldown active (${remainingSeconds}s remaining) - skipping poll`)
+      return
+    } else if (this.downloadCooldownUntil !== null) {
+      // Cooldown expired, clear it
+      console.log("[CloudGallerySync] ✅ Download cooldown expired - resuming normal polling")
+      this.downloadCooldownUntil = null
     }
 
     // Block cloud downloads during WiFi Direct sync
@@ -804,6 +818,8 @@ class CloudGallerySyncService {
       // Show "Sync complete" message briefly, then hide banner
       this.isDownloading = false
       this.activeDownloads.clear() // Batch complete, clear tracking
+      // Clear cooldown on successful completion
+      this.downloadCooldownUntil = null
       store.setCloudSyncComplete(true)
       setTimeout(() => {
         store.setCloudSyncComplete(false)
@@ -1171,6 +1187,17 @@ class CloudGallerySyncService {
     this.isDownloading = false
     const store = useGallerySyncStore.getState()
     store.setCloudSyncActive(false)
+
+    // Clear UI state (shimmers and downloading items)
+    store.clearCloudFileProgress()
+    store.setCloudDownloadingItems([])
+    console.log("[CloudGallerySync] ✅ Cleared cloud downloading items and progress from UI")
+
+    // Set cooldown to prevent immediate re-download attempts
+    this.downloadCooldownUntil = Date.now() + this.DOWNLOAD_COOLDOWN_MS
+    console.log(
+      `[CloudGallerySync] ⏸️ Download cooldown active for ${this.DOWNLOAD_COOLDOWN_MS / 1000} seconds (until ${new Date(this.downloadCooldownUntil).toLocaleTimeString()})`,
+    )
 
     // Cleanup temp files for active downloads
     const tempFilesToClean = Array.from(this.activeTempFiles.entries())

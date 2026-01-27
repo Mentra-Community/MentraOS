@@ -340,46 +340,10 @@ public class CloudGalleryUploader {
         mInitialTotalFiles = 0;
         mCurrentBatchUploaded = 0;
         
-        // Notify cloud that upload was cancelled (runs on background thread to avoid NetworkOnMainThreadException)
-        new Thread(() -> {
-            notifyCloudUploadCancelled();
-        }).start();
+        // Note: Phone will notify cloud of cancellation via /cancel-upload endpoint
+        // Glasses just need to stop uploading locally and send gallery status update
         
         Log.i(TAG, "✅ Cloud upload cancelled - all state cleared");
-    }
-    
-    /**
-     * Notify cloud that upload was cancelled
-     */
-    private void notifyCloudUploadCancelled() {
-        String token = getAuthToken();
-        if (token == null || token.isEmpty()) {
-            Log.w(TAG, "⚠️ Cannot notify cloud of cancellation - no auth token");
-            return;
-        }
-        
-        String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
-        String endpoint = baseUrl + "/api/client/asg/gallery/cancel-upload";
-        
-        try {
-            Request request = new Request.Builder()
-                .url(endpoint)
-                .addHeader("Authorization", "Bearer " + token)
-                .addHeader("Content-Type", "application/json")
-                .post(RequestBody.create("{}", MediaType.parse("application/json")))
-                .build();
-            
-            Response response = mHttpClient.newCall(request).execute();
-            if (response.isSuccessful()) {
-                Log.i(TAG, "✅ Notified cloud that upload was cancelled");
-            } else {
-                Log.w(TAG, "⚠️ Cloud returned error for cancel-upload: " + response.code());
-            }
-            response.close();
-        } catch (Exception e) {
-            Log.w(TAG, "⚠️ Failed to notify cloud of upload cancellation: " + e.getMessage());
-            // Non-fatal - upload is cancelled locally regardless
-        }
     }
     
     /**
