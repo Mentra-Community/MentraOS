@@ -146,18 +146,32 @@ async function sendGalleryEventToPhone(userId: string, event: any): Promise<void
 }
 
 /**
- * Cleanup stale upload sessions (no progress for 60s)
+ * Cleanup stale upload and download sessions
+ * - Upload sessions: no progress for 60s
+ * - Download sessions: no activity for 10 minutes (downloads can take longer)
  */
 export function cleanupStaleSessions(): number {
   const now = new Date();
-  const staleThreshold = 60 * 1000; // 60 seconds
+  const uploadStaleThreshold = 60 * 1000; // 60 seconds
+  const downloadStaleThreshold = 10 * 60 * 1000; // 10 minutes
   let cleaned = 0;
 
+  // Cleanup stale upload sessions
   for (const [userId, session] of uploadSessions.entries()) {
     const timeSinceProgress = now.getTime() - session.lastProgressAt.getTime();
-    if (timeSinceProgress > staleThreshold) {
+    if (timeSinceProgress > uploadStaleThreshold) {
       logger.warn({ userId, sessionId: session.sessionId, timeSinceProgress }, "Cleaning up stale upload session");
       uploadSessions.delete(userId);
+      cleaned++;
+    }
+  }
+
+  // Cleanup stale download sessions
+  for (const [userId, session] of downloadSessions.entries()) {
+    const timeSinceStart = now.getTime() - session.startedAt.getTime();
+    if (timeSinceStart > downloadStaleThreshold) {
+      logger.warn({ userId, sessionId: session.sessionId, timeSinceStart }, "Cleaning up stale download session");
+      downloadSessions.delete(userId);
       cleaned++;
     }
   }

@@ -1115,6 +1115,15 @@ class CoreManager {
     }
 
     /**
+     * Send cancel cloud upload command to glasses.
+     * Stops any active cloud uploads immediately.
+     */
+    fun sendCancelCloudUpload() {
+        Bridge.log("MAN: 🛑 Sending cancel cloud upload command to glasses")
+        (sgc as? MentraLive)?.sendCancelCloudUpload()
+    }
+
+    /**
      * Send OTA start command to glasses.
      * Called when user approves an update (onboarding or background mode).
      * Triggers glasses to begin download and installation.

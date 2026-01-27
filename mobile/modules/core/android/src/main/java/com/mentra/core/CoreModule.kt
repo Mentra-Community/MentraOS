@@ -86,6 +86,8 @@ class CoreModule : Module() {
 
         AsyncFunction("queryGalleryStatus") { coreManager?.queryGalleryStatus() }
 
+        AsyncFunction("sendCancelCloudUpload") { coreManager?.sendCancelCloudUpload() }
+
         AsyncFunction("photoRequest") {
                 requestId: String,
                 appId: String,
