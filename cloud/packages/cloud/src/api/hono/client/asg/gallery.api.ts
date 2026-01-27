@@ -71,6 +71,54 @@ app.post("/mark-synced", clientAuth, markSynced);
  */
 app.delete("/:id", clientAuth, deleteItem);
 
+/**
+ * GET /api/client/asg/gallery/status
+ * Get current gallery sync status (upload progress, pending count)
+ */
+app.get("/status", clientAuth, getGalleryStatus);
+
+/**
+ * POST /api/client/asg/gallery/upload-started
+ * Glasses notify that upload batch has started
+ */
+app.post("/upload-started", clientAuth, handleUploadStarted);
+
+/**
+ * POST /api/client/asg/gallery/upload-complete
+ * Glasses notify that upload batch has completed
+ */
+app.post("/upload-complete", clientAuth, handleUploadComplete);
+
+/**
+ * POST /api/client/asg/gallery/upload-failed
+ * Phone reports that glasses upload failed (BLE fallback)
+ */
+app.post("/upload-failed", clientAuth, handleUploadFailed);
+
+/**
+ * POST /api/client/asg/gallery/download-started
+ * Phone notifies that download batch has started
+ */
+app.post("/download-started", clientAuth, handleDownloadStarted);
+
+/**
+ * POST /api/client/asg/gallery/download-complete
+ * Phone notifies that download batch has completed
+ */
+app.post("/download-complete", clientAuth, handleDownloadComplete);
+
+/**
+ * POST /api/client/asg/gallery/cancel-upload
+ * Cancel active upload session (can be called by phone or glasses)
+ */
+app.post("/cancel-upload", clientAuth, handleCancelUpload);
+
+/**
+ * POST /api/client/asg/gallery/cancel-download
+ * Cancel active download session (called by phone)
+ */
+app.post("/cancel-download", clientAuth, handleCancelDownload);
+
 // ============================================================================
 // Handler Functions
 // ============================================================================
@@ -621,6 +669,308 @@ async function deleteItem(c: AppContext) {
       },
       500,
     );
+  }
+}
+
+async function getGalleryStatus(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const status = await GalleryService.getGalleryStatus(email);
+
+    reqLogger.debug({ email, status }, "Gallery status requested");
+
+    return c.json({
+      success: true,
+      data: status,
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to get gallery status");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to get gallery status",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleUploadStarted(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { totalFiles } = body as { totalFiles?: number };
+
+    if (!totalFiles || totalFiles <= 0) {
+      return c.json(
+        {
+          success: false,
+          error: "Missing or invalid field: totalFiles (must be > 0)",
+          timestamp: new Date(),
+        },
+        400,
+      );
+    }
+
+    const sessionId = GalleryService.startUploadSession(email, totalFiles);
+
+    // Send WebSocket event to phone
+    await sendGalleryEventToPhone(email, {
+      type: "gallery_upload_started",
+      totalFiles,
+      timestamp: new Date(),
+    });
+
+    reqLogger.info({ email, sessionId, totalFiles }, "Upload session started");
+
+    return c.json({
+      success: true,
+      data: { sessionId },
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle upload started");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle upload started",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleUploadComplete(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    GalleryService.endUploadSession(email);
+
+    // Send WebSocket event to phone
+    await sendGalleryEventToPhone(email, {
+      type: "gallery_upload_complete",
+      timestamp: new Date(),
+    });
+
+    reqLogger.info({ email }, "Upload session completed");
+
+    return c.json({
+      success: true,
+      message: "Upload session completed",
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle upload complete");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle upload complete",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleUploadFailed(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { reason } = body as { reason?: string };
+
+    GalleryService.markUploadSessionFailed(email);
+
+    reqLogger.warn({ email, reason }, "Upload session marked as failed (reported by phone)");
+
+    return c.json({
+      success: true,
+      message: "Upload failure recorded",
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle upload failed");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle upload failed",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleDownloadStarted(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const sessionId = GalleryService.startDownloadSession(email);
+
+    reqLogger.info({ email, sessionId }, "Download session started");
+
+    return c.json({
+      success: true,
+      data: { sessionId },
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle download started");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle download started",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleDownloadComplete(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    GalleryService.endDownloadSession(email);
+
+    reqLogger.info({ email }, "Download session completed");
+
+    return c.json({
+      success: true,
+      message: "Download session completed",
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle download complete");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle download complete",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleCancelUpload(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const userId = email;
+    const cancelled = GalleryService.cancelUploadSession(userId);
+
+    if (cancelled) {
+      reqLogger.info({ userId }, "Upload session cancelled");
+      return c.json({
+        success: true,
+        message: "Upload session cancelled",
+        timestamp: new Date(),
+      });
+    } else {
+      reqLogger.warn({ userId }, "No active upload session to cancel");
+      return c.json(
+        {
+          success: false,
+          error: "No active upload session",
+          timestamp: new Date(),
+        },
+        404,
+      );
+    }
+  } catch (error) {
+    reqLogger.error(error, "Failed to cancel upload");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to cancel upload",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleCancelDownload(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const userId = email;
+    const cancelled = GalleryService.cancelDownloadSession(userId);
+
+    if (cancelled) {
+      reqLogger.info({ userId }, "Download session cancelled");
+      return c.json({
+        success: true,
+        message: "Download session cancelled",
+        timestamp: new Date(),
+      });
+    } else {
+      reqLogger.warn({ userId }, "No active download session to cancel");
+      return c.json(
+        {
+          success: false,
+          error: "No active download session",
+          timestamp: new Date(),
+        },
+        404,
+      );
+    }
+  } catch (error) {
+    reqLogger.error(error, "Failed to cancel download");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to cancel download",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+/**
+ * Send gallery event to phone via WebSocket
+ */
+async function sendGalleryEventToPhone(userId: string, event: any): Promise<void> {
+  try {
+    // Import UserSession dynamically to avoid circular dependencies
+    const { UserSession } = await import("../../../../services/session/UserSession");
+    const userSession = UserSession.getById(userId);
+
+    if (!userSession) {
+      logger.debug({ userId }, "No user session found - cannot send gallery event to phone");
+      return;
+    }
+
+    if (userSession.websocket.readyState !== 1) {
+      logger.debug({ userId }, "Phone WebSocket not open - cannot send gallery event");
+      return;
+    }
+
+    const message = JSON.stringify({
+      type: "gallery_event",
+      data: event,
+      timestamp: new Date(),
+    });
+
+    userSession.websocket.send(message);
+    logger.debug({ userId, eventType: event.type }, "Sent gallery event to phone");
+  } catch (error) {
+    logger.error({ error, userId, event }, "Failed to send gallery event to phone");
   }
 }
 
