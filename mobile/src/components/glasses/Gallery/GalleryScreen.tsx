@@ -103,8 +103,9 @@ export function GalleryScreen() {
   const cloudCompletedFiles = useGallerySyncStore((state) => state.cloudCompletedFiles)
   const cloudFileProgress = useGallerySyncStore((state) => state.cloudFileProgress)
   const cloudDownloadingItems = useGallerySyncStore((state) => state.cloudDownloadingItems)
-  const glassesUploadingToCloud = useGallerySyncStore((state) => state.glassesUploadingToCloud)
-  const glassesUploadTotalFiles = useGallerySyncStore((state) => state.glassesUploadTotalFiles)
+  const cloudUploadIsUploading = useGallerySyncStore((state) => state.cloudUploadIsUploading)
+  const cloudUploadCurrent = useGallerySyncStore((state) => state.cloudUploadCurrent)
+  const cloudUploadTotal = useGallerySyncStore((state) => state.cloudUploadTotal)
 
   // Permission state - no longer blocking, permission is requested lazily when saving
   const [_hasMediaLibraryPermission, setHasMediaLibraryPermission] = useState(false)
@@ -493,11 +494,28 @@ export function GalleryScreen() {
   // }
 
   // Handle sync button press - delegate to service
-  const handleSyncPress = () => {
+  const handleSyncPress = async () => {
     if (gallerySyncService.isSyncing()) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
+
+    // Check cloud status - do not start WiFi Direct sync if cloud operations are active
+    const status = await cloudGallerySyncService.getGalleryStatus()
+    if (status?.isUploading || status?.isDownloading) {
+      console.log(
+        `[GalleryScreen] 🚫 WiFi Direct sync blocked: isUploading=${status.isUploading}, isDownloading=${status.isDownloading}`,
+      )
+      showAlert(
+        "Sync Blocked",
+        status.isUploading
+          ? "Cannot sync while glasses are uploading photos to cloud. Please wait for upload to complete."
+          : "Cannot sync while downloading photos from cloud. Please wait for download to complete.",
+        [{text: "OK"}],
+      )
+      return
+    }
+
     gallerySyncService.startSync()
   }
 
@@ -928,27 +946,40 @@ export function GalleryScreen() {
     syncState === "complete"
 
   const renderStatusBar = () => {
-    // Show glasses uploading banner with highest priority
-    if (glassesUploadingToCloud) {
+    // Cloud downloads have highest priority - hide other banners when actively downloading
+    if (cloudSyncActive) return null
+
+    // Show glasses uploading banner (but only if not downloading from cloud)
+    if (cloudUploadIsUploading) {
+      const uploadProgressPercent = cloudUploadTotal > 0 ? Math.round((cloudUploadCurrent / cloudUploadTotal) * 100) : 0
       return (
         <View style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s12}]}>
           <View style={themed($syncButtonContent)}>
             <View style={themed($syncButtonRow)}>
               <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
               <Text style={themed($syncButtonText)}>
-                Uploading {glassesUploadTotalFiles} {glassesUploadTotalFiles === 1 ? "photo" : "photos"} to cloud...
+                Uploading {cloudUploadCurrent} of {cloudUploadTotal} {cloudUploadTotal === 1 ? "file" : "files"} to
+                cloud
               </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  cloudGallerySyncService.cancelUpload()
+                }}
+                style={{marginLeft: spacing.s2, padding: spacing.s1}}>
+                <Icon name="x" size={18} color={theme.colors.text} />
+              </TouchableOpacity>
             </View>
+            {cloudUploadTotal > 0 && (
+              <View style={themed($syncButtonProgressBar)}>
+                <View style={[themed($syncButtonProgressFill), {width: `${uploadProgressPercent}%`}]} />
+              </View>
+            )}
           </View>
         </View>
       )
     }
 
     if (!shouldShowSyncButton) return null
-
-    // Hide WiFi sync banner when cloud sync is actively downloading
-    // Cloud download progress takes priority
-    if (cloudSyncActive) return null
 
     const statusContent = () => {
       switch (syncState) {
@@ -1241,8 +1272,9 @@ export function GalleryScreen() {
 
   // Render cloud sync banner - matches sync button design, positioned at bottom
   const renderCloudSyncBanner = () => {
-    // Hide banner when glasses are uploading to cloud (uploading banner takes priority)
-    if (glassesUploadingToCloud) return null
+    // If actively downloading, ALWAYS show download banner (downloads have priority over uploads)
+    // Don't hide for cloudUploadIsUploading when we're actively downloading
+    if (!cloudSyncActive && cloudUploadIsUploading) return null
 
     // Hide banner if no pending items, not active, and not showing completion message
     if (cloudPendingCount === 0 && !cloudSyncActive && !cloudSyncComplete) return null
@@ -1269,16 +1301,23 @@ export function GalleryScreen() {
             <View style={themed($syncButtonRow)}>
               <Text style={themed($syncButtonText)}>Cloud sync complete!</Text>
             </View>
-          ) : cloudSyncActive ? (
+          ) : cloudSyncActive && cloudTotalFiles > 0 ? (
             <>
-              <Text style={themed($syncButtonText)}>
-                Downloading {Math.min(cloudCompletedFiles + 1, cloudTotalFiles)} of {cloudTotalFiles} from cloud
-              </Text>
-              {cloudTotalFiles > 0 && (
-                <View style={themed($syncButtonProgressBar)}>
-                  <View style={[themed($syncButtonProgressFill), {width: `${progressPercent}%`}]} />
-                </View>
-              )}
+              <View style={themed($syncButtonRow)}>
+                <Text style={themed($syncButtonText)}>
+                  Downloading {Math.min(cloudCompletedFiles + 1, cloudTotalFiles)} of {cloudTotalFiles} from cloud
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    cloudGallerySyncService.cancelDownload()
+                  }}
+                  style={{marginLeft: spacing.s2, padding: spacing.s1}}>
+                  <Icon name="x" size={18} color={theme.colors.text} />
+                </TouchableOpacity>
+              </View>
+              <View style={themed($syncButtonProgressBar)}>
+                <View style={[themed($syncButtonProgressFill), {width: `${progressPercent}%`}]} />
+              </View>
             </>
           ) : (
             <View style={themed($syncButtonRow)}>
