@@ -105,11 +105,12 @@ cloud/
 ## Key Features
 
 - **Real-time Communication**: WebSocket-based architecture for low-latency glasses ↔ cloud ↔ app communication
-- **Multi-Provider Transcription**: Supports Azure Speech, Soniox, and Deepgram for speech-to-text
-- **Flexible AI Integration**: Compatible with OpenAI, Azure OpenAI, and Anthropic for LLM features
+- **Multi-Provider Transcription**: Supports Soniox (default) and Azure Speech for speech-to-text with automatic failover
 - **App Ecosystem**: SDK and APIs for third-party developers to build apps
 - **Display Management**: Intelligent throttling and prioritization for glasses displays
 - **Session Management**: Robust user session handling with automatic reconnection
+
+> **Note for Self-Hosting**: While the cloud can be self-hosted, transcription services require third-party API keys (Soniox or Azure Speech). There is currently no fully offline transcription option.
 
 ## Development Workflow
 

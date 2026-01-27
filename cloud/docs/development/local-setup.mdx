@@ -7,6 +7,10 @@ description: "Run MentraOS Cloud locally for development and testing"
 
 This guide helps you set up MentraOS Cloud on your local machine for development. You'll learn how to configure the environment, expose your local server using ngrok, and connect the mobile app to your development cloud instance.
 
+<Warning>
+**Self-Hosting Note**: While the cloud can be self-hosted, real-time transcription requires third-party API keys (Soniox or Azure Speech). There is currently no fully offline transcription option.
+</Warning>
+
 ## Prerequisites
 
 Before starting, ensure you have:
@@ -80,29 +84,33 @@ TPA_AUTH_JWT_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----
 Your-RSA-private-key-here
 -----END PRIVATE KEY-----
 
-# Transcription Services (choose one or both)
-# Azure Speech (recommended)
+# Transcription Services (at least one required - no offline option)
+# Soniox is the default provider, Azure Speech is the fallback.
+
+# Soniox Speech (Default provider)
+SONIOX_API_KEY=your-soniox-key
+
+# Azure Speech (Fallback provider)
 AZURE_SPEECH_REGION=centralus
 AZURE_SPEECH_KEY=your-azure-speech-key
 
-# Soniox (alternative)
-SONIOX_API_KEY=your-soniox-key
-
-# LLM Configuration (for AI features)
+# LLM Configuration (Currently Unused)
+# NOTE: The LLM infrastructure exists but is NOT currently used by any features.
+# You can leave these empty or set dummy values. Preserved for future AI features.
 LLM_MODEL=gpt-4o
-LLM_PROVIDER=azure  # or 'openai' or 'anthropic'
+LLM_PROVIDER=azure
 
-# Azure OpenAI (if using Azure)
-AZURE_OPENAI_API_KEY=your-azure-openai-key
-AZURE_OPENAI_API_INSTANCE_NAME=your-instance-name
+# Azure OpenAI (not currently used)
+AZURE_OPENAI_API_KEY=
+AZURE_OPENAI_API_INSTANCE_NAME=
 AZURE_OPENAI_API_DEPLOYMENT_NAME=gpt-4o
 AZURE_OPENAI_API_VERSION=2024-08-01-preview
 
-# OpenAI (if using OpenAI directly)
-OPENAI_API_KEY=sk-proj-your-openai-key
+# OpenAI (not currently used)
+OPENAI_API_KEY=
 
-# Anthropic (if using Claude)
-ANTHROPIC_API_KEY=your-anthropic-key
+# Anthropic (not currently used)
+ANTHROPIC_API_KEY=
 
 # Email Service (for notifications)
 RESEND_API_KEY=re_your-resend-key
@@ -143,13 +151,18 @@ ELEVENLABS_DEFAULT_VOICE_ID=your-default-voice-id
 - `AUGMENTOS_AUTH_JWT_SECRET` - JWT signing secret
 - `TPA_AUTH_JWT_PRIVATE_KEY` - RSA key for app authentication
 
-**Required for specific features:**
-- Transcription: `AZURE_SPEECH_*` or `SONIOX_API_KEY`
-- AI features: LLM configuration (Azure OpenAI, OpenAI, or Anthropic)
+**Required for transcription (at least one):**
+- `SONIOX_API_KEY` - Default transcription provider
+- `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` - Fallback provider
+
+**Optional services:**
 - Email: `RESEND_API_KEY`
 - Video streaming: `CLOUDFLARE_*`
 - Web search: `SERPAPI_API_KEY`
 - TTS: `ELEVENLABS_*`
+
+**Not currently used (infrastructure only):**
+- LLM configuration (Azure OpenAI, OpenAI, Anthropic) - can be left empty
 
 ### Generating Secrets
 
@@ -216,20 +229,11 @@ volumes:
 2. Create a Speech Service resource
 3. Copy the key and region to `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`
 
-#### LLM Provider Setup (Choose One)
+#### LLM Provider Setup (Currently Unused)
 
-**Azure OpenAI:**
-1. Request access to Azure OpenAI
-2. Deploy a GPT-4 model
-3. Copy credentials to the Azure OpenAI variables
-
-**OpenAI:**
-1. Create account at [platform.openai.com](https://platform.openai.com)
-2. Generate API key → `OPENAI_API_KEY`
-
-**Anthropic:**
-1. Create account at [console.anthropic.com](https://console.anthropic.com)
-2. Generate API key → `ANTHROPIC_API_KEY`
+<Note>
+The LLM provider infrastructure exists but is **not currently used** by any cloud features. You can skip this section entirely and leave the LLM variables empty. This is preserved for future AI features.
+</Note>
 
 #### Other Services (Optional)
 
