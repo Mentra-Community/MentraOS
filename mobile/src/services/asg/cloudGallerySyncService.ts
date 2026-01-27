@@ -58,6 +58,8 @@ class CloudGallerySyncService {
   private isPolling = false
   private consecutiveEmptyPolls = 0
   private activeDownloads = new Set<string>() // Track filenames currently being downloaded
+  // Track temp files for active downloads so we can clean them up on cancel
+  private activeTempFiles = new Map<string, string>() // filename -> tempPath
 
   private constructor() {}
 
@@ -593,19 +595,25 @@ class CloudGallerySyncService {
         // Initialize photo sync state for this file
         store.setCloudFileProgress(item.filename, 0)
 
+        // Generate unique temp filename to prevent race conditions
+        // Even with activeDownloads guard, use unique suffix for extra safety
+        const uniqueSuffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+        const tempFilename = `temp_${uniqueSuffix}_${item.filename}`
+        let tempPath: string | null = null
+
         try {
           console.log(`[CloudGallerySync] Downloading: ${item.filename} (${this.formatBytes(item.sizeBytes)})`)
 
-          // Generate unique temp filename to prevent race conditions
-          // Even with activeDownloads guard, use unique suffix for extra safety
-          const uniqueSuffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-          const tempFilename = `temp_${uniqueSuffix}_${item.filename}`
-
           // Download to temp location first with progress tracking
-          const tempPath = await this.downloadFile(item.downloadUrl, tempFilename, (progress) => {
+          tempPath = await this.downloadFile(item.downloadUrl, tempFilename, (progress) => {
             // Update progress in store for gallery screen to display
             store.setCloudFileProgress(item.filename, progress)
           })
+
+          // Track temp file for cleanup if download is cancelled
+          if (tempPath) {
+            this.activeTempFiles.set(item.filename, tempPath)
+          }
 
           // Check for duplicates by hash (skip for large files - too slow)
           // Videos > 5MB would take too long to hash in JS
@@ -644,6 +652,9 @@ class CloudGallerySyncService {
           console.log(`[CloudGallerySync] 📦 Moving ${item.filename} to permanent location: ${finalPath}`)
           await RNFS.moveFile(tempPath, finalPath)
           console.log(`[CloudGallerySync] ✅ File moved successfully: ${item.filename}`)
+
+          // Remove from temp file tracking (file moved successfully)
+          this.activeTempFiles.delete(item.filename)
 
           // Calculate hash for future deduplication (skip for large files - too slow)
           let fileHash: string | undefined
@@ -735,6 +746,24 @@ class CloudGallerySyncService {
           failedDownloads.push(item.filename)
           // Mark as failed in progress tracking
           store.setCloudFileProgress(item.filename, -1) // Use -1 to indicate failed
+
+          // Cleanup temp file if it exists
+          const tempPathToClean = this.activeTempFiles.get(item.filename)
+          if (tempPathToClean) {
+            try {
+              if (await RNFS.exists(tempPathToClean)) {
+                await RNFS.unlink(tempPathToClean)
+                console.log(`[CloudGallerySync] 🗑️ Cleaned up temp file: ${item.filename}`)
+              }
+            } catch (cleanupError: any) {
+              console.warn(
+                `[CloudGallerySync] ⚠️ Failed to cleanup temp file ${item.filename}:`,
+                cleanupError?.message || cleanupError,
+              )
+            }
+            this.activeTempFiles.delete(item.filename)
+          }
+
           // Remove from active downloads tracking
           this.activeDownloads.delete(item.filename)
         }
@@ -1142,6 +1171,28 @@ class CloudGallerySyncService {
     this.isDownloading = false
     const store = useGallerySyncStore.getState()
     store.setCloudSyncActive(false)
+
+    // Cleanup temp files for active downloads
+    const tempFilesToClean = Array.from(this.activeTempFiles.entries())
+    if (tempFilesToClean.length > 0) {
+      console.log(
+        `[CloudGallerySync] 🗑️ Cleaning up ${tempFilesToClean.length} temp file(s) from cancelled downloads...`,
+      )
+      for (const [filename, tempPath] of tempFilesToClean) {
+        try {
+          if (await RNFS.exists(tempPath)) {
+            await RNFS.unlink(tempPath)
+            console.log(`[CloudGallerySync] ✅ Cleaned up temp file: ${filename}`)
+          }
+        } catch (cleanupError: any) {
+          console.warn(
+            `[CloudGallerySync] ⚠️ Failed to cleanup temp file ${filename}:`,
+            cleanupError?.message || cleanupError,
+          )
+        }
+      }
+      this.activeTempFiles.clear()
+    }
 
     // Notify cloud that download was cancelled
     try {
