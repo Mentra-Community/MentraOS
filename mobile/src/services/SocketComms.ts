@@ -10,20 +10,18 @@ import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import restComms from "@/services/RestComms"
 
 class SocketComms {
   private static instance: SocketComms | null = null
   private coreToken: string = ""
   public userid: string = ""
-  
-  private constructor() {
-  }
+
+  private constructor() {}
 
   private setupListeners() {
     ws.removeAllListeners("message")
-    ws.on("message", message => {
+    ws.on("message", (message) => {
       this.handle_message(message)
     })
   }
@@ -347,7 +345,6 @@ class SocketComms {
 
   // MARK: - UDP Audio Methods
 
-
   /**
    * Check if UDP audio is currently enabled.
    */
@@ -368,7 +365,7 @@ class SocketComms {
 
     // Configure audio format (LC3) for bandwidth savings
     // This tells the cloud that we're sending LC3-encoded audio
-    this.configureAudioFormat().catch(err => {
+    this.configureAudioFormat().catch((err) => {
       console.log("SOCKET: Audio format configuration failed (cloud will expect PCM):", err)
     })
 
@@ -392,9 +389,11 @@ class SocketComms {
       udp.configure(udpHost, udpPort, this.userid)
       udp.handleAck()
     } else {
-      console.log("SOCKET: No UDP endpoint in connection_ack, skipping UDP audio. Full message:", JSON.stringify(msg, null, 2))
+      console.log(
+        "SOCKET: No UDP endpoint in connection_ack, skipping UDP audio. Full message:",
+        JSON.stringify(msg, null, 2),
+      )
     }
-
   }
 
   /**
@@ -415,36 +414,50 @@ class SocketComms {
     const backendUrl = useSettingsStore.getState().getSetting(SETTINGS.backend_url.key)
     const coreToken = useSettingsStore.getState().getSetting(SETTINGS.core_token.key)
     const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key) || 20
+    const bypassEncoding =
+      useSettingsStore.getState().getSetting(SETTINGS.bypass_audio_encoding_for_debugging.key) || false
 
     if (!backendUrl || !coreToken) {
       console.log("SOCKET: Cannot configure audio format - missing backend URL or token")
       return
     }
 
-    // Configure the native encoder frame size first
-    try {
-      await CoreModule.setLC3FrameSize(frameSizeBytes)
-      console.log(`SOCKET: Native LC3 encoder configured to ${frameSizeBytes} bytes/frame`)
-    } catch (err) {
-      console.error("SOCKET: Failed to configure native LC3 encoder:", err)
-      // Continue anyway - cloud config is more important
+    // Determine format based on bypass setting
+    const audioFormat = bypassEncoding ? "pcm" : "lc3"
+    console.log(`SOCKET: Configuring audio format: ${audioFormat} (bypass=${bypassEncoding})`)
+
+    // Configure the native encoder frame size first (only needed for LC3)
+    if (!bypassEncoding) {
+      try {
+        await CoreModule.setLC3FrameSize(frameSizeBytes)
+        console.log(`SOCKET: Native LC3 encoder configured to ${frameSizeBytes} bytes/frame`)
+      } catch (err) {
+        console.error("SOCKET: Failed to configure native LC3 encoder:", err)
+        // Continue anyway - cloud config is more important
+      }
     }
 
     try {
+      const body: any = {
+        format: audioFormat,
+      }
+
+      // Only include LC3 config if using LC3 format
+      if (!bypassEncoding) {
+        body.lc3Config = {
+          sampleRate: 16000,
+          frameDurationMs: 10,
+          frameSizeBytes: frameSizeBytes,
+        }
+      }
+
       const response = await fetch(`${backendUrl}/api/client/audio/configure`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${coreToken}`,
         },
-        body: JSON.stringify({
-          format: "lc3",
-          lc3Config: {
-            sampleRate: 16000,
-            frameDurationMs: 10,
-            frameSizeBytes: frameSizeBytes,
-          },
-        }),
+        body: JSON.stringify(body),
       })
 
       if (!response.ok) {
@@ -454,7 +467,11 @@ class SocketComms {
       }
 
       const result = await response.json()
-      console.log(`SOCKET: Audio format configured successfully: ${result.format}, ${frameSizeBytes} bytes/frame`)
+      console.log(
+        `SOCKET: Audio format configured successfully: ${result.format}${
+          bypassEncoding ? " (raw PCM)" : `, ${frameSizeBytes} bytes/frame`
+        }`,
+      )
     } catch (error) {
       console.error("SOCKET: Error configuring audio format:", error)
       throw error

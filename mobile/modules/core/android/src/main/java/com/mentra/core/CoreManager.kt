@@ -1525,6 +1525,13 @@ class CoreManager {
             }
         }
 
+        (settings["bypass_audio_encoding_for_debugging"] as? Boolean)?.let { bypassEncoding ->
+            val newFormat = if (bypassEncoding) AudioOutputFormat.PCM else AudioOutputFormat.LC3
+            if (audioOutputFormat != newFormat) {
+                updateAudioOutputFormat(newFormat)
+            }
+        }
+
         (settings["enforce_local_transcription"] as? Boolean)?.let { newEnforceLocalTranscription ->
             if (enforceLocalTranscription != newEnforceLocalTranscription) {
                 updateEnforceLocalTranscription(newEnforceLocalTranscription)
