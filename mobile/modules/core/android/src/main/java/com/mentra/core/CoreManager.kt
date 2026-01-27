@@ -117,6 +117,10 @@ class CoreManager {
     private var pcmRemainder: ByteArray? = null
     private val LC3_PCM_FRAME_BYTES = 320 // 160 samples * 2 bytes per sample
 
+    // Locks for thread-safe LC3 encoding/decoding - codecs are stateful and not thread-safe
+    private val lc3EncoderLock = Any()
+    private val lc3DecoderLock = Any()
+
     // mic
     public var useOnboardMic = false
     public var preferredMic = "auto"
@@ -411,51 +415,55 @@ class CoreManager {
     private fun sendMicData(pcmData: ByteArray) {
         when (audioOutputFormat) {
             AudioOutputFormat.LC3 -> {
-                if (lc3EncoderPtr == 0L) {
-                    Bridge.log("MAN: ERROR - LC3 encoder not initialized but format is LC3")
-                    return
-                }
+                // Synchronize all LC3 encoder access - encoder is stateful and not thread-safe
+                // This prevents corruption when switching between phone mic and glasses mic
+                synchronized(lc3EncoderLock) {
+                    if (lc3EncoderPtr == 0L) {
+                        Bridge.log("MAN: ERROR - LC3 encoder not initialized but format is LC3")
+                        return
+                    }
 
-                // Prepend any remainder from previous chunk
-                val prevRemainderSize = pcmRemainder?.size ?: 0
-                val dataToEncode = if (pcmRemainder != null && pcmRemainder!!.isNotEmpty()) {
-                    pcmRemainder!! + pcmData
-                } else {
-                    pcmData
-                }
+                    // Prepend any remainder from previous chunk
+                    val prevRemainderSize = pcmRemainder?.size ?: 0
+                    val dataToEncode = if (pcmRemainder != null && pcmRemainder!!.isNotEmpty()) {
+                        pcmRemainder!! + pcmData
+                    } else {
+                        pcmData
+                    }
 
-                // Calculate how many complete frames we can encode
-                val completeFrameBytes = (dataToEncode.size / LC3_PCM_FRAME_BYTES) * LC3_PCM_FRAME_BYTES
-                val remainderBytes = dataToEncode.size % LC3_PCM_FRAME_BYTES
-                val numFrames = completeFrameBytes / LC3_PCM_FRAME_BYTES
+                    // Calculate how many complete frames we can encode
+                    val completeFrameBytes = (dataToEncode.size / LC3_PCM_FRAME_BYTES) * LC3_PCM_FRAME_BYTES
+                    val remainderBytes = dataToEncode.size % LC3_PCM_FRAME_BYTES
+                    val numFrames = completeFrameBytes / LC3_PCM_FRAME_BYTES
 
-                // Save remainder for next chunk
-                pcmRemainder = if (remainderBytes > 0) {
-                    dataToEncode.copyOfRange(completeFrameBytes, dataToEncode.size)
-                } else {
-                    null
-                }
+                    // Save remainder for next chunk
+                    pcmRemainder = if (remainderBytes > 0) {
+                        dataToEncode.copyOfRange(completeFrameBytes, dataToEncode.size)
+                    } else {
+                        null
+                    }
 
-                // Debug logging every 100 chunks
-                lc3EncodeCounter++
-                if (lc3EncodeCounter % 100 == 1) {
-                    Bridge.log("MAN: LC3 encode #$lc3EncodeCounter: input=${pcmData.size}bytes, prevRemainder=$prevRemainderSize, total=${dataToEncode.size}, frames=$numFrames, newRemainder=$remainderBytes")
-                }
+                    // Debug logging every 100 chunks
+                    lc3EncodeCounter++
+                    if (lc3EncodeCounter % 100 == 1) {
+                        Bridge.log("MAN: LC3 encode #$lc3EncodeCounter: input=${pcmData.size}bytes, prevRemainder=$prevRemainderSize, total=${dataToEncode.size}, frames=$numFrames, newRemainder=$remainderBytes")
+                    }
 
-                // Only encode if we have at least one complete frame
-                if (completeFrameBytes == 0) {
-                    Bridge.log("MAN: LC3 encode: no complete frames, buffering ${dataToEncode.size} bytes")
-                    return
-                }
+                    // Only encode if we have at least one complete frame
+                    if (completeFrameBytes == 0) {
+                        Bridge.log("MAN: LC3 encode: no complete frames, buffering ${dataToEncode.size} bytes")
+                        return
+                    }
 
-                // Encode only the complete frames
-                val framesToEncode = dataToEncode.copyOfRange(0, completeFrameBytes)
-                val lc3Data = Lc3Cpp.encodeLC3(lc3EncoderPtr, framesToEncode, lc3FrameSize)
-                if (lc3Data == null || lc3Data.isEmpty()) {
-                    Bridge.log("MAN: ERROR - LC3 encoding returned empty data for $completeFrameBytes bytes ($numFrames frames)")
-                    return
+                    // Encode only the complete frames
+                    val framesToEncode = dataToEncode.copyOfRange(0, completeFrameBytes)
+                    val lc3Data = Lc3Cpp.encodeLC3(lc3EncoderPtr, framesToEncode, lc3FrameSize)
+                    if (lc3Data == null || lc3Data.isEmpty()) {
+                        Bridge.log("MAN: ERROR - LC3 encoding returned empty data for $completeFrameBytes bytes ($numFrames frames)")
+                        return
+                    }
+                    Bridge.sendMicData(lc3Data)
                 }
-                Bridge.sendMicData(lc3Data)
             }
 
             AudioOutputFormat.PCM -> {
@@ -491,8 +499,11 @@ class CoreManager {
         }
 
         try {
-            // Decode glasses LC3 to PCM (glasses may use different LC3 configs)
-            val pcmData = Lc3Cpp.decodeLC3(lc3DecoderPtr, rawLC3Data, frameSize)
+            // Synchronize decoder access - decoder is stateful and not thread-safe
+            val pcmData = synchronized(lc3DecoderLock) {
+                // Decode glasses LC3 to PCM (glasses may use different LC3 configs)
+                Lc3Cpp.decodeLC3(lc3DecoderPtr, rawLC3Data, frameSize)
+            }
             if (pcmData != null && pcmData.isNotEmpty()) {
                 // Re-encode to canonical LC3 via handlePcm
                 handlePcm(pcmData)
