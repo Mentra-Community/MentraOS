@@ -1390,64 +1390,63 @@ public class CameraNeo extends LifecycleService {
                             // Just consume and discard
                         }
                         return;
-            }
+                    }
 
-                // Process the captured JPEG (only when in SHOOTING state)
-                Log.d(TAG, "Processing final photo capture...");
-                try (Image image = reader.acquireLatestImage()) {
-                    if (image == null) {
-                        Log.e(TAG, "Acquired image is null");
-                        notifyPhotoError("Failed to acquire image data");
+                    Log.d(TAG, "Processing final photo capture...");
+                    try (Image image = reader.acquireLatestImage()) {
+                        if (image == null) {
+                            Log.e(TAG, "Acquired image is null");
+                            notifyPhotoError("Failed to acquire image data");
+                            shotState = ShotState.IDLE;
+                            closeCamera();
+                            stopSelf();
+                            return;
+                        }
+
+                        ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+                        byte[] bytes = new byte[buffer.remaining()];
+                        buffer.get(bytes);
+
+                        // Use pending photo path if available (from queued requests), otherwise use the original path
+                        String targetPath = (pendingPhotoPath != null) ? pendingPhotoPath : filePath;
+
+                        // Save the image data to the file
+                        boolean success = saveImageDataToFile(bytes, targetPath);
+
+                        if (success) {
+                            lastPhotoPath = targetPath;
+                            notifyPhotoCaptured(targetPath);
+                            Log.d(TAG, "Photo saved successfully: " + targetPath);
+                            // Clear pending photo path and size after successful capture
+                            pendingPhotoPath = null;
+                            pendingRequestedSize = null;
+                        } else {
+                            notifyPhotoError("Failed to save image");
+                        }
+
+                        // Reset state
                         shotState = ShotState.IDLE;
-                        closeCamera();
-                        stopSelf();
-                        return;
-                    }
 
-                    ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-                    byte[] bytes = new byte[buffer.remaining()];
-                    buffer.get(bytes);
-
-                    // Use pending photo path if available (from queued requests), otherwise use the original path
-                    String targetPath = (pendingPhotoPath != null) ? pendingPhotoPath : filePath;
-                    
-                    // Save the image data to the file
-                    boolean success = saveImageDataToFile(bytes, targetPath);
-
-                    if (success) {
-                        lastPhotoPath = targetPath;
-                        notifyPhotoCaptured(targetPath);
-                        Log.d(TAG, "Photo saved successfully: " + targetPath);
-                        // Clear pending photo path and size after successful capture
-                        pendingPhotoPath = null;
-                        pendingRequestedSize = null;
-                    } else {
-                        notifyPhotoError("Failed to save image");
-                    }
-
-                    // Reset state
-                    shotState = ShotState.IDLE;
-
-                    // Check if there are queued photo requests
-                    processQueuedPhotoRequests();
-                } catch (Exception e) {
-                    Log.e(TAG, "Error handling image data", e);
-                    notifyPhotoError("Error processing photo: " + e.getMessage());
-                    shotState = ShotState.IDLE;
-                    
-                    // Check if there are queued photo requests even after error
-                    if (!photoRequestQueue.isEmpty()) {
+                        // Check if there are queued photo requests
                         processQueuedPhotoRequests();
-                    } else {
-                        // On error with no queued requests, close immediately without keep-alive
-                        cancelKeepAliveTimer();
-                        pendingPhotoPath = null;
-                        pendingRequestedSize = null;
-                        closeCamera();
-                        stopSelf();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error handling image data", e);
+                        notifyPhotoError("Error processing photo: " + e.getMessage());
+                        shotState = ShotState.IDLE;
+
+                        // Check if there are queued photo requests even after error
+                        if (!photoRequestQueue.isEmpty()) {
+                            processQueuedPhotoRequests();
+                        } else {
+                            // On error with no queued requests, close immediately without keep-alive
+                            cancelKeepAliveTimer();
+                            pendingPhotoPath = null;
+                            pendingRequestedSize = null;
+                            closeCamera();
+                            stopSelf();
+                        }
                     }
-                }
-            }, backgroundHandler);
+                }, backgroundHandler);
             }
 
             // Open the camera
@@ -2508,24 +2507,35 @@ public class CameraNeo extends LifecycleService {
      * Fixed 30fps limits max exposure to 33ms, restricting ISO upper bound
      */
     private Range<Integer> chooseOptimalFpsRange(Range<Integer>[] ranges) {
-        // Prefer wider ranges (5-30fps) that allow longer exposures for higher ISO
-        // This helps trigger MFNR in low-light conditions
+        // MOTION BLUR REDUCTION: Prefer tighter FPS ranges [15-30] to limit max exposure time
+        // This caps exposure at ~66ms instead of 200ms (at 5fps), reducing motion blur
+        // Trade-off: May reduce MFNR triggering in very low light
+
+        // First choice: [15, 30] range - good balance of exposure and motion blur reduction
         for (Range<Integer> range : ranges) {
-            if (range.contains(30) && range.getLower() <= 5) {
-                Log.d(TAG, "Selected wide FPS range: " + range + " (allows longer exposure for higher ISO)");
-                return range;
-            }
-        }
-        
-        // Fallback: prefer ranges that include 30fps with lower minimum (allows longer exposure)
-        for (Range<Integer> range : ranges) {
-            if (range.contains(30) && range.getLower() <= 15) {
-                Log.d(TAG, "Selected FPS range: " + range);
+            if (range.contains(30) && range.getLower() >= 15 && range.getLower() <= 20) {
+                Log.d(TAG, "Selected balanced FPS range: " + range + " (limits exposure for motion blur reduction)");
                 return range;
             }
         }
 
-        // Final fallback: choose range with highest minimum FPS
+        // Second choice: [10, 30] range - slightly longer exposure allowed
+        for (Range<Integer> range : ranges) {
+            if (range.contains(30) && range.getLower() >= 10 && range.getLower() < 15) {
+                Log.d(TAG, "Selected FPS range: " + range + " (moderate exposure limit)");
+                return range;
+            }
+        }
+
+        // Third choice: wider ranges if tighter not available (fallback for MFNR)
+        for (Range<Integer> range : ranges) {
+            if (range.contains(30) && range.getLower() <= 10) {
+                Log.d(TAG, "Selected wide FPS range: " + range + " (allows longer exposure for MFNR)");
+                return range;
+            }
+        }
+
+        // Final fallback: choose range with highest minimum FPS (fastest shutter)
         Range<Integer> best = ranges[0];
         for (Range<Integer> range : ranges) {
             if (range.getLower() > best.getLower()) {
@@ -2817,7 +2827,8 @@ public class CameraNeo extends LifecycleService {
     }
 
     /**
-     * Simplified photo capture - relies on AE convergence and automatic CONTINUOUS_PICTURE autofocus
+     * Photo capture with motion blur reduction settings.
+     * Uses ACTION scene mode and capped exposure time for faster shutter speeds.
      */
     private void capturePhoto() {
         try {
@@ -2828,12 +2839,25 @@ public class CameraNeo extends LifecycleService {
                 cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             stillBuilder.addTarget(imageReader.getSurface());
 
+            // MOTION BLUR REDUCTION: Use ACTION scene mode for faster shutter priority
+            // ACTION mode biases the AE algorithm toward shorter exposure times
+            stillBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_USE_SCENE_MODE);
+            stillBuilder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_ACTION);
+            Log.d(TAG, "Using ACTION scene mode for faster shutter (motion blur reduction)");
+
             // Copy settings from preview
             stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
             stillBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);  // Lock AE for capture (XyCamera2 pattern)
             stillBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
             stillBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, userExposureCompensation);
             stillBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
+
+            // MOTION BLUR REDUCTION: Hard cap on exposure time
+            // 1/60s = 16.6ms - guarantees sharp frames even with head movement
+            // Trade-off: darker/grainier in low light
+            long maxExposureTimeNs = 16_666_666L;  // 1/60 second in nanoseconds
+            stillBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, maxExposureTimeNs);
+            Log.d(TAG, "📸 Exposure time capped at 1/60s (16.6ms) for motion blur reduction");
 
             // Set up continuous autofocus (no manual triggers needed)
             if (hasAutoFocus) {
@@ -2872,13 +2896,9 @@ public class CameraNeo extends LifecycleService {
                 mCameraSettings.configureCaptureBuilder(stillBuilder);
             }
 
-            // Capture the photo immediately
-            // CRITICAL: Do NOT call stopRepeating() before capture - this would clear the ZSL buffer
-            // ZSL buffer is required for MFNR to access historical frames for multi-frame merging
-            // The repeating request must continue running to maintain the circular buffer
             // Build the capture request
             CaptureRequest captureRequest = stillBuilder.build();
-            
+
             // Verify ZSL is actually configured in the request
             Boolean zslEnabled = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
             if (zslEnabled != null && zslEnabled) {
@@ -2887,43 +2907,41 @@ public class CameraNeo extends LifecycleService {
                 Log.w(TAG, "⚠ ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = " + zslEnabled + ")");
             }
 
+            // Single frame capture
             cameraCaptureSession.capture(captureRequest, new CameraCaptureSession.CaptureCallback() {
-                @Override
-                public void onCaptureCompleted(@NonNull CameraCaptureSession session,
-                                             @NonNull CaptureRequest request,
-                                             @NonNull TotalCaptureResult result) {
-                    Log.i(TAG, "Photo capture completed successfully");  // Keep as INFO level
-                    
-                    // Verify ZSL was actually used by checking the request
-                    Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
-                    if (zslInRequest != null && zslInRequest) {
-                        Log.d(TAG, "✓ ZSL confirmed active in capture result");
-                    }
-                    
-                    // XyCamera2 pattern: Restore preview after capture (unlock AE, restore repeating request)
-                    restorePreview(session);
-                    
-                    // Image processing will happen in ImageReader callback
-                }
+                    @Override
+                    public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+                                                 @NonNull CaptureRequest request,
+                                                 @NonNull TotalCaptureResult result) {
+                        Log.i(TAG, "Photo capture completed successfully");
 
-                @Override
-                public void onCaptureFailed(@NonNull CameraCaptureSession session,
-                                          @NonNull CaptureRequest request,
-                                          @NonNull CaptureFailure failure) {
-                    Log.e(TAG, "Photo capture failed: " + failure.getReason());
-                    notifyPhotoError("Photo capture failed: " + failure.getReason());
-                    
-                    // XyCamera2 pattern: Restore preview even on failure
-                    restorePreview(session);
-                    
-                    shotState = ShotState.IDLE;
-                    mWaitingForAeConvergence = false;
-                    mAeLockRequested = false;
-                    cancelKeepAliveTimer();
-                    closeCamera();
-                    stopSelf();
-                }
-            }, backgroundHandler);
+                        // Verify ZSL was actually used by checking the request
+                        Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+                        if (zslInRequest != null && zslInRequest) {
+                            Log.d(TAG, "✓ ZSL confirmed active in capture result");
+                        }
+
+                        // XyCamera2 pattern: Restore preview after capture
+                        restorePreview(session);
+                    }
+
+                    @Override
+                    public void onCaptureFailed(@NonNull CameraCaptureSession session,
+                                              @NonNull CaptureRequest request,
+                                              @NonNull CaptureFailure failure) {
+                        Log.e(TAG, "Photo capture failed: " + failure.getReason());
+                        notifyPhotoError("Photo capture failed: " + failure.getReason());
+
+                        restorePreview(session);
+
+                        shotState = ShotState.IDLE;
+                        mWaitingForAeConvergence = false;
+                        mAeLockRequested = false;
+                        cancelKeepAliveTimer();
+                        closeCamera();
+                        stopSelf();
+                    }
+                }, backgroundHandler);
 
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error during photo capture", e);
