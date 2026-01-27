@@ -16,11 +16,13 @@ import {Buffer} from "buffer"
 
 import dgram from "react-native-udp"
 
+import {useSettingsStore, SETTINGS} from "@/stores/settings"
+
 const UDP_PORT = 8000
 const HEADER_SIZE = 6 // 4 bytes userIdHash + 2 bytes sequence
 const MAX_PACKET_SIZE = 1024 // Max UDP payload size (server limit is 1040, leave margin)
-// Must be even number for 16-bit PCM (2 bytes per sample) to avoid splitting samples
-const MAX_AUDIO_CHUNK_SIZE = (MAX_PACKET_SIZE - HEADER_SIZE) & ~1 // 1016 bytes (508 samples)
+// Base max chunk size (will be adjusted for LC3 frame alignment)
+const MAX_AUDIO_CHUNK_SIZE_BASE = MAX_PACKET_SIZE - HEADER_SIZE // 1018 bytes
 const PING_MAGIC = "PING"
 const PING_RETRY_COUNT = 3
 const PING_RETRY_INTERVAL_MS = 200
@@ -169,8 +171,8 @@ class UdpManager {
         this.startUdpRetryInterval()
         return false
       }
-    } catch (error) {
-      // console.log(`UDP: Registration error: ${error}`)
+    } catch {
+      // Registration error - will retry
       this.probeInProgress = false
       // Ensure UDP is stopped on any error
       this.stop()
@@ -206,8 +208,8 @@ class UdpManager {
       }
 
       // console.log("UDP: Periodic retry attempt...")
-      this.registerUdpAudio(true).catch((err) => {
-        // console.log("UDP: Periodic retry failed:", err)
+      this.registerUdpAudio(true).catch((_err) => {
+        // console.log("UDP: Periodic retry failed:", _err)
       })
     }, UDP_RETRY_INTERVAL_MS)
   }
@@ -321,8 +323,8 @@ class UdpManager {
       this.isConnecting = false
       // console.log("UDP: Socket started and bound")
       return true
-    } catch (error) {
-      // console.log(`UDP: Failed to start socket: ${error}`)
+    } catch {
+      // Failed to start socket
       this.isConnecting = false
       this.socket?.close()
       this.socket = null
@@ -363,6 +365,26 @@ class UdpManager {
    * Send audio data via UDP
    * @param pcmData Base64-encoded PCM audio data
    */
+  /**
+   * Calculate max chunk size aligned to LC3 frame boundaries
+   * This prevents splitting LC3 frames across UDP packets which causes decoder corruption
+   */
+  private getMaxChunkSize(): number {
+    const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key) || 20
+    const bypassEncoding =
+      useSettingsStore.getState().getSetting(SETTINGS.bypass_audio_encoding_for_debugging.key) || false
+
+    if (bypassEncoding) {
+      // For raw PCM, align to 2 bytes (sample boundary)
+      return MAX_AUDIO_CHUNK_SIZE_BASE & ~1
+    }
+
+    // For LC3, align to frame size to prevent partial frame corruption
+    // Calculate how many complete frames fit in max packet size
+    const maxFrames = Math.floor(MAX_AUDIO_CHUNK_SIZE_BASE / frameSizeBytes)
+    return maxFrames * frameSizeBytes
+  }
+
   public sendAudio(pcmData: string): void {
     if (!this.isReady || !this.socket || !this.config) {
       return
@@ -372,18 +394,22 @@ class UdpManager {
       // Decode base64 to bytes
       const audioBytes = Buffer.from(pcmData, "base64")
 
+      // Get frame-aligned max chunk size
+      const maxChunkSize = this.getMaxChunkSize()
+
       // Debug log every 100 packets to confirm audio is flowing
-      const numChunks = Math.ceil(audioBytes.length / MAX_AUDIO_CHUNK_SIZE)
+      const numChunks = Math.ceil(audioBytes.length / maxChunkSize)
       if (this.sequenceNumber % 100 === 0) {
         console.log(
-          `UDP: Sending audio #${this.sequenceNumber}, total=${audioBytes.length}bytes, chunks=${numChunks}, maxChunk=${MAX_AUDIO_CHUNK_SIZE} to ${this.config.host}:${this.config.port}`,
+          `UDP: Sending audio #${this.sequenceNumber}, total=${audioBytes.length}bytes, chunks=${numChunks}, maxChunk=${maxChunkSize} to ${this.config.host}:${this.config.port}`,
         )
       }
 
       // Chunk audio data if it exceeds max packet size
+      // Chunks are aligned to LC3 frame boundaries to prevent decoder corruption
       let offset = 0
       while (offset < audioBytes.length) {
-        const chunkSize = Math.min(MAX_AUDIO_CHUNK_SIZE, audioBytes.length - offset)
+        const chunkSize = Math.min(maxChunkSize, audioBytes.length - offset)
         const packet = Buffer.alloc(HEADER_SIZE + chunkSize)
 
         // Write userIdHash (big-endian, 4 bytes)
@@ -423,10 +449,14 @@ class UdpManager {
     }
 
     try {
+      // Get frame-aligned max chunk size
+      const maxChunkSize = this.getMaxChunkSize()
+
       // Chunk audio data if it exceeds max packet size
+      // Chunks are aligned to LC3 frame boundaries to prevent decoder corruption
       let offset = 0
       while (offset < pcmData.length) {
-        const chunkSize = Math.min(MAX_AUDIO_CHUNK_SIZE, pcmData.length - offset)
+        const chunkSize = Math.min(maxChunkSize, pcmData.length - offset)
         const packet = Buffer.alloc(HEADER_SIZE + chunkSize)
 
         // Write userIdHash (big-endian, 4 bytes)
