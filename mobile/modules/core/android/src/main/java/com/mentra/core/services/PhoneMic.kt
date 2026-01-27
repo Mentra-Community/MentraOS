@@ -28,13 +28,14 @@ import kotlinx.coroutines.*
 class PhoneMic private constructor(private val context: Context) {
 
     companion object {
-        @Volatile private var instance: PhoneMic? = null
+        @Volatile
+        private var instance: PhoneMic? = null
 
         fun getInstance(): PhoneMic {
             return instance
-                    ?: synchronized(this) {
-                        instance ?: PhoneMic(Bridge.getContext()).also { instance = it }
-                    }
+                ?: synchronized(this) {
+                    instance ?: PhoneMic(Bridge.getContext()).also { instance = it }
+                }
         }
 
         // Audio configuration constants
@@ -59,7 +60,7 @@ class PhoneMic private constructor(private val context: Context) {
 
     // Audio manager and routing
     private val audioManager: AudioManager =
-            context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var bluetoothHeadset: BluetoothHeadset? = null
 
@@ -135,13 +136,13 @@ class PhoneMic private constructor(private val context: Context) {
             Bridge.log("MIC: Debouncing rapid recording request")
             pendingRecordingRequest = true
             mainHandler.postDelayed(
-                    {
-                        if (pendingRecordingRequest && !isRecording.get()) {
-                            startRecordingInternal()
-                        }
-                        pendingRecordingRequest = false
-                    },
-                    MODE_CHANGE_DEBOUNCE_MS
+                {
+                    if (pendingRecordingRequest && !isRecording.get()) {
+                        startRecordingInternal()
+                    }
+                    pendingRecordingRequest = false
+                },
+                MODE_CHANGE_DEBOUNCE_MS
             )
             return false
         }
@@ -208,7 +209,7 @@ class PhoneMic private constructor(private val context: Context) {
         // recording with a different mode, so stop recording and start recording with the new mode:
         if (isRecording.get()) {
             Bridge.log(
-                    "MIC: Already recording with different mode ($currentMicMode), stopping first"
+                "MIC: Already recording with different mode ($currentMicMode), stopping first"
             )
             stopRecording()
             // Brief delay to ensure clean stop
@@ -255,6 +256,7 @@ class PhoneMic private constructor(private val context: Context) {
                 Bridge.log("MIC: Starting phone internal mic")
                 return startRecordingPhoneInternal()
             }
+
             MicTypes.BT_CLASSIC -> {
                 Bridge.log("MIC: Starting Bluetooth Classic (SCO)")
                 if (!audioManager.isBluetoothScoAvailableOffCall) {
@@ -264,6 +266,7 @@ class PhoneMic private constructor(private val context: Context) {
                 }
                 return startRecordingBtClassic()
             }
+
             MicTypes.BT -> {
                 Bridge.log("MIC: Starting high-quality Bluetooth mic")
                 if (!isHighQualityBluetoothAvailable()) {
@@ -273,6 +276,7 @@ class PhoneMic private constructor(private val context: Context) {
                 }
                 return startRecordingBtHighQuality()
             }
+
             else -> {
                 Bridge.log("MIC: Unknown mic type: $mode")
                 return false
@@ -280,7 +284,7 @@ class PhoneMic private constructor(private val context: Context) {
         }
     }
 
-    
+
     fun stopMode(mode: String): Boolean {
         if (isRecordingWithMode(mode)) {
             stopRecording()
@@ -311,9 +315,11 @@ class PhoneMic private constructor(private val context: Context) {
             }
 
             // Log current audio routing state
-            Bridge.log("MIC: Audio state before recording - Mode: ${audioManager.mode}, " +
-                      "BT SCO: ${audioManager.isBluetoothScoOn}, " +
-                      "Speakerphone: ${audioManager.isSpeakerphoneOn}")
+            Bridge.log(
+                "MIC: Audio state before recording - Mode: ${audioManager.mode}, " +
+                        "BT SCO: ${audioManager.isBluetoothScoOn}, " +
+                        "Speakerphone: ${audioManager.isSpeakerphoneOn}"
+            )
 
             // EXPERIMENTAL: Skip audio focus for phone internal mic to avoid media routing issues
             // This allows YouTube/Spotify to play normally through speakers
@@ -377,11 +383,11 @@ class PhoneMic private constructor(private val context: Context) {
 
             // Use UNPROCESSED if available for highest quality, otherwise MIC
             val audioSource =
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        MediaRecorder.AudioSource.UNPROCESSED
-                    } else {
-                        MediaRecorder.AudioSource.MIC
-                    }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    MediaRecorder.AudioSource.UNPROCESSED
+                } else {
+                    MediaRecorder.AudioSource.MIC
+                }
 
             val success = createAndStartAudioRecord(audioSource)
             if (success) {
@@ -407,9 +413,9 @@ class PhoneMic private constructor(private val context: Context) {
         // Fallback: if any Bluetooth audio device is connected
         return bluetoothAdapter?.let { adapter ->
             if (ActivityCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.BLUETOOTH_CONNECT
-                    ) == PackageManager.PERMISSION_GRANTED
+                    context,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) == PackageManager.PERMISSION_GRANTED
             ) {
                 adapter.bondedDevices.any { device ->
                     device.bluetoothClass?.majorDeviceClass ==
@@ -419,7 +425,7 @@ class PhoneMic private constructor(private val context: Context) {
                 false
             }
         }
-                ?: false
+            ?: false
     }
 
     // MARK: - Private Methods
@@ -519,21 +525,21 @@ class PhoneMic private constructor(private val context: Context) {
 
         // Create AudioRecord
         audioRecord =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    AudioRecord.Builder()
-                            .setAudioSource(audioSource)
-                            .setAudioFormat(
-                                    AudioFormat.Builder()
-                                            .setSampleRate(SAMPLE_RATE)
-                                            .setChannelMask(CHANNEL_CONFIG)
-                                            .setEncoding(AUDIO_FORMAT)
-                                            .build()
-                            )
-                            .setBufferSizeInBytes(bufferSize)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                AudioRecord.Builder()
+                    .setAudioSource(audioSource)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(CHANNEL_CONFIG)
+                            .setEncoding(AUDIO_FORMAT)
                             .build()
-                } else {
-                    AudioRecord(audioSource, SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, bufferSize)
-                }
+                    )
+                    .setBufferSizeInBytes(bufferSize)
+                    .build()
+            } else {
+                AudioRecord(audioSource, SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, bufferSize)
+            }
 
         if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
             Bridge.log("MIC: AudioRecord failed to initialize")
@@ -548,6 +554,14 @@ class PhoneMic private constructor(private val context: Context) {
         // Start recording
         audioRecord?.startRecording()
         isRecording.set(true)
+
+        // Log actual audio format we got (may differ from requested)
+        audioRecord?.let { ar ->
+            Bridge.log("MIC: AudioRecord actual config - SampleRate: ${ar.sampleRate}Hz, Channels: ${ar.channelCount}, Format: ${ar.audioFormat}")
+            if (ar.sampleRate != SAMPLE_RATE) {
+                Bridge.log("MIC: WARNING - Requested ${SAMPLE_RATE}Hz but got ${ar.sampleRate}Hz!")
+            }
+        }
 
         // Start recording thread
         startRecordingThread(bufferSize)
@@ -574,32 +588,32 @@ class PhoneMic private constructor(private val context: Context) {
 
     private fun startRecordingThread(bufferSize: Int) {
         recordingThread =
-                Thread {
-                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+            Thread {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
 
-                    val audioBuffer = ShortArray(bufferSize / 2)
+                val audioBuffer = ShortArray(bufferSize / 2)
 
-                    while (isRecording.get()) {
-                        val readResult = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: 0
+                while (isRecording.get()) {
+                    val readResult = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: 0
 
-                        if (readResult > 0) {
-                            // Convert short array to byte array (16-bit PCM)
-                            val pcmData = ByteArray(readResult * 2)
-                            val byteBuffer = ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN)
+                    if (readResult > 0) {
+                        // Convert short array to byte array (16-bit PCM)
+                        val pcmData = ByteArray(readResult * 2)
+                        val byteBuffer = ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN)
 
-                            for (i in 0 until readResult) {
-                                byteBuffer.putShort(audioBuffer[i])
-                            }
-
-                            // Send PCM data to CoreManager
-                            CoreManager.getInstance().handlePcm(pcmData)
+                        for (i in 0 until readResult) {
+                            byteBuffer.putShort(audioBuffer[i])
                         }
+
+                        // Send PCM data to CoreManager
+                        CoreManager.getInstance().handlePcm(pcmData)
                     }
                 }
-                        .apply {
-                            name = "AudioRecordingThread"
-                            start()
-                        }
+            }
+                .apply {
+                    name = "AudioRecordingThread"
+                    start()
+                }
     }
 
     private fun cleanUpRecording() {
@@ -627,7 +641,7 @@ class PhoneMic private constructor(private val context: Context) {
     private fun setupPhoneCallDetection() {
         // Check for phone state permission
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) !=
-                        PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED
         ) {
             Bridge.log("MIC: READ_PHONE_STATE permission not granted, skipping call detection")
             return
@@ -636,151 +650,153 @@ class PhoneMic private constructor(private val context: Context) {
         telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
 
         phoneStateListener =
-                object : PhoneStateListener() {
-                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                        val wasCallActive = isPhoneCallActive
-                        isPhoneCallActive = (state != TelephonyManager.CALL_STATE_IDLE)
+            object : PhoneStateListener() {
+                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                    val wasCallActive = isPhoneCallActive
+                    isPhoneCallActive = (state != TelephonyManager.CALL_STATE_IDLE)
 
-                        if (wasCallActive != isPhoneCallActive) {
-                            if (isPhoneCallActive) {
-                                Bridge.log("MIC: Phone call started - stopping recording")
-                                if (isRecording.get()) {
-                                    // Notify CoreManager BEFORE stopping - allows switch to glasses
-                                    // mic
-                                    notifyCoreManager("phone_call_interruption", emptyList())
-                                    // Give CoreManager time to switch to glasses mic
-                                    mainHandler.postDelayed(
-                                            { stopRecording() },
-                                            MIC_SWITCH_DELAY_MS
-                                    )
-                                } else {
-                                    // Not currently recording, but still notify about
-                                    // unavailability
-                                    notifyCoreManager("phone_call_interruption", emptyList())
-                                }
-                            } else {
-                                Bridge.log("MIC: Phone call ended")
-                                notifyCoreManager(
-                                        "phone_call_ended",
-                                        getAvailableInputDevices().values.toList()
+                    if (wasCallActive != isPhoneCallActive) {
+                        if (isPhoneCallActive) {
+                            Bridge.log("MIC: Phone call started - stopping recording")
+                            if (isRecording.get()) {
+                                // Notify CoreManager BEFORE stopping - allows switch to glasses
+                                // mic
+                                notifyCoreManager("phone_call_interruption", emptyList())
+                                // Give CoreManager time to switch to glasses mic
+                                mainHandler.postDelayed(
+                                    { stopRecording() },
+                                    MIC_SWITCH_DELAY_MS
                                 )
+                            } else {
+                                // Not currently recording, but still notify about
+                                // unavailability
+                                notifyCoreManager("phone_call_interruption", emptyList())
                             }
+                        } else {
+                            Bridge.log("MIC: Phone call ended")
+                            notifyCoreManager(
+                                "phone_call_ended",
+                                getAvailableInputDevices().values.toList()
+                            )
                         }
                     }
                 }
+            }
 
         telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
     }
 
     private fun setupAudioFocusListener() {
         audioFocusListener =
-                AudioManager.OnAudioFocusChangeListener { focusChange ->
-                    when (focusChange) {
-                        AudioManager.AUDIOFOCUS_LOSS -> {
-                            Bridge.log("MIC: Permanent audio focus loss - mode: $currentMicMode")
-                            hasAudioFocus = false
+            AudioManager.OnAudioFocusChangeListener { focusChange ->
+                when (focusChange) {
+                    AudioManager.AUDIOFOCUS_LOSS -> {
+                        Bridge.log("MIC: Permanent audio focus loss - mode: $currentMicMode")
+                        hasAudioFocus = false
 
-                            // For phone internal mic, ignore AUDIOFOCUS_LOSS to prevent routing changes
-                            // This allows media apps (YouTube, Spotify) to play normally
-                            if (currentMicMode == MicTypes.PHONE_INTERNAL) {
-                                Bridge.log("MIC: Ignoring AUDIOFOCUS_LOSS for phone internal mic (allows media playback)")
-                            } else {
-                                // For other modes (BT, etc), respect audio focus loss
-                                if (isRecording.get()) {
-                                    notifyCoreManager("audio_focus_lost", emptyList())
-                                    stopRecording()
-                                }
-                            }
-                        }
-                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                            Bridge.log("MIC: Transient audio focus loss - mode: $currentMicMode")
-                            hasAudioFocus = false
-
-                            // Check phone internal mic FIRST (before device-specific logic)
-                            if (currentMicMode == MicTypes.PHONE_INTERNAL && isRecording.get()) {
-                                // Phone internal mic - assume AUDIOFOCUS_LOSS_TRANSIENT means recording app (Chrome)
-                                // Chrome uses WebRTC which doesn't always trigger AudioRecordingCallback
-                                Bridge.log("MIC: AUDIOFOCUS_LOSS_TRANSIENT for phone internal - stopping for recording app (Chrome)")
-                                notifyCoreManager("external_app_recording", emptyList())
-                                // Delay for Samsung to allow glasses mic switch, immediate for Pixel (AudioRecordingCallback handles it)
-                                if (isSamsungDevice()) {
-                                    mainHandler.postDelayed({ stopRecording() }, 200)
-                                } else {
-                                    // Pixel: let AudioRecordingCallback handle if it fires, otherwise stop after delay
-                                    mainHandler.postDelayed({
-                                        if (isRecording.get()) {
-                                            Bridge.log("MIC: Stopping for AUDIOFOCUS (Chrome didn't trigger AudioRecordingCallback)")
-                                            stopRecording()
-                                        }
-                                    }, 100)
-                                }
-                            } else if (isSamsungDevice() && isRecording.get()) {
-                                // Samsung non-phone modes need special handling
-                                testMicrophoneAvailabilityOnSamsung()
-                            }
-                        }
-                        AudioManager.AUDIOFOCUS_GAIN -> {
-                            Bridge.log("MIC: Regained audio focus")
-                            hasAudioFocus = true
-
-                            if (isSamsungDevice()) {
-                                isExternalAudioActive = false
-                            }
-
-                            // Notify that focus is available again
-                            if (!isRecording.get()) {
-                                notifyCoreManager(
-                                        "audio_focus_available",
-                                        getAvailableInputDevices().values.toList()
-                                )
+                        // For phone internal mic, ignore AUDIOFOCUS_LOSS to prevent routing changes
+                        // This allows media apps (YouTube, Spotify) to play normally
+                        if (currentMicMode == MicTypes.PHONE_INTERNAL) {
+                            Bridge.log("MIC: Ignoring AUDIOFOCUS_LOSS for phone internal mic (allows media playback)")
+                        } else {
+                            // For other modes (BT, etc), respect audio focus loss
+                            if (isRecording.get()) {
+                                notifyCoreManager("audio_focus_lost", emptyList())
+                                stopRecording()
                             }
                         }
                     }
+
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                        Bridge.log("MIC: Transient audio focus loss - mode: $currentMicMode")
+                        hasAudioFocus = false
+
+                        // Check phone internal mic FIRST (before device-specific logic)
+                        if (currentMicMode == MicTypes.PHONE_INTERNAL && isRecording.get()) {
+                            // Phone internal mic - assume AUDIOFOCUS_LOSS_TRANSIENT means recording app (Chrome)
+                            // Chrome uses WebRTC which doesn't always trigger AudioRecordingCallback
+                            Bridge.log("MIC: AUDIOFOCUS_LOSS_TRANSIENT for phone internal - stopping for recording app (Chrome)")
+                            notifyCoreManager("external_app_recording", emptyList())
+                            // Delay for Samsung to allow glasses mic switch, immediate for Pixel (AudioRecordingCallback handles it)
+                            if (isSamsungDevice()) {
+                                mainHandler.postDelayed({ stopRecording() }, 200)
+                            } else {
+                                // Pixel: let AudioRecordingCallback handle if it fires, otherwise stop after delay
+                                mainHandler.postDelayed({
+                                    if (isRecording.get()) {
+                                        Bridge.log("MIC: Stopping for AUDIOFOCUS (Chrome didn't trigger AudioRecordingCallback)")
+                                        stopRecording()
+                                    }
+                                }, 100)
+                            }
+                        } else if (isSamsungDevice() && isRecording.get()) {
+                            // Samsung non-phone modes need special handling
+                            testMicrophoneAvailabilityOnSamsung()
+                        }
+                    }
+
+                    AudioManager.AUDIOFOCUS_GAIN -> {
+                        Bridge.log("MIC: Regained audio focus")
+                        hasAudioFocus = true
+
+                        if (isSamsungDevice()) {
+                            isExternalAudioActive = false
+                        }
+
+                        // Notify that focus is available again
+                        if (!isRecording.get()) {
+                            notifyCoreManager(
+                                "audio_focus_available",
+                                getAvailableInputDevices().values.toList()
+                            )
+                        }
+                    }
                 }
+            }
     }
 
     private fun setupAudioRecordingDetection() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             audioRecordingCallback =
-                    object : AudioManager.AudioRecordingCallback() {
-                        override fun onRecordingConfigChanged(
-                                configs: MutableList<AudioRecordingConfiguration>?
-                        ) {
-                            configs ?: return
+                object : AudioManager.AudioRecordingCallback() {
+                    override fun onRecordingConfigChanged(
+                        configs: MutableList<AudioRecordingConfiguration>?
+                    ) {
+                        configs ?: return
 
-                            // Filter out our own recordings
-                            val otherAppRecordings =
-                                    configs.filter { config ->
-                                        !ourAudioSessionIds.contains(config.clientAudioSessionId)
-                                    }
+                        // Filter out our own recordings
+                        val otherAppRecordings =
+                            configs.filter { config ->
+                                !ourAudioSessionIds.contains(config.clientAudioSessionId)
+                            }
 
-                            val wasExternalActive = isExternalAudioActive
-                            isExternalAudioActive = otherAppRecordings.isNotEmpty()
+                        val wasExternalActive = isExternalAudioActive
+                        isExternalAudioActive = otherAppRecordings.isNotEmpty()
 
-                            if (wasExternalActive != isExternalAudioActive) {
-                                if (isExternalAudioActive) {
-                                    Bridge.log("MIC: External app started recording - isRecording: ${isRecording.get()}")
-                                    if (isRecording.get()) {
-                                        // Notify CoreManager BEFORE stopping - allows switch to glasses mic
-                                        notifyCoreManager("external_app_recording", emptyList())
-                                        // Stop IMMEDIATELY to prevent audio corruption with Gboard
-                                        stopRecording()
-                                    } else {
-                                        // Not currently recording, but still notify about
-                                        // unavailability
-                                        notifyCoreManager("external_app_recording", emptyList())
-                                    }
+                        if (wasExternalActive != isExternalAudioActive) {
+                            if (isExternalAudioActive) {
+                                Bridge.log("MIC: External app started recording - isRecording: ${isRecording.get()}")
+                                if (isRecording.get()) {
+                                    // Notify CoreManager BEFORE stopping - allows switch to glasses mic
+                                    notifyCoreManager("external_app_recording", emptyList())
+                                    // Stop IMMEDIATELY to prevent audio corruption with Gboard
+                                    stopRecording()
                                 } else {
-                                    Bridge.log("MIC: External app stopped recording")
-                                    // Notify CoreManager that phone mic is available again
-                                    notifyCoreManager(
-                                            "external_app_stopped",
-                                            getAvailableInputDevices().values.toList()
-                                    )
+                                    // Not currently recording, but still notify about
+                                    // unavailability
+                                    notifyCoreManager("external_app_recording", emptyList())
                                 }
+                            } else {
+                                Bridge.log("MIC: External app stopped recording")
+                                // Notify CoreManager that phone mic is available again
+                                notifyCoreManager(
+                                    "external_app_stopped",
+                                    getAvailableInputDevices().values.toList()
+                                )
                             }
                         }
                     }
+                }
 
             if (audioRecordingCallback != null) {
                 audioManager.registerAudioRecordingCallback(audioRecordingCallback!!, mainHandler)
@@ -790,84 +806,88 @@ class PhoneMic private constructor(private val context: Context) {
 
     private fun setupAudioRouteListener() {
         audioRouteReceiver =
-                object : BroadcastReceiver() {
-                    override fun onReceive(context: Context?, intent: Intent?) {
-                        when (intent?.action) {
-                            AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
-                                Bridge.log("MIC: Audio becoming noisy")
-                                handleAudioRouteChange()
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    when (intent?.action) {
+                        AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
+                            Bridge.log("MIC: Audio becoming noisy")
+                            handleAudioRouteChange()
+                        }
+
+                        AudioManager.ACTION_HEADSET_PLUG -> {
+                            val state = intent.getIntExtra("state", -1)
+                            if (state == 1) {
+                                Bridge.log("MIC: Headset connected")
+                            } else if (state == 0) {
+                                Bridge.log("MIC: Headset disconnected")
                             }
-                            AudioManager.ACTION_HEADSET_PLUG -> {
-                                val state = intent.getIntExtra("state", -1)
-                                if (state == 1) {
-                                    Bridge.log("MIC: Headset connected")
-                                } else if (state == 0) {
-                                    Bridge.log("MIC: Headset disconnected")
+                            handleAudioRouteChange()
+                        }
+
+                        AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED -> {
+                            val state =
+                                intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+                            when (state) {
+                                AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
+                                    Bridge.log("MIC: Bluetooth SCO connected")
+                                    handleAudioRouteChange()
                                 }
-                                handleAudioRouteChange()
-                            }
-                            AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED -> {
-                                val state =
-                                        intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
-                                when (state) {
-                                    AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
-                                        Bridge.log("MIC: Bluetooth SCO connected")
-                                        handleAudioRouteChange()
-                                    }
-                                    AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> {
-                                        Bridge.log("MIC: Bluetooth SCO disconnected")
-                                        handleAudioRouteChange()
-                                    }
+
+                                AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> {
+                                    Bridge.log("MIC: Bluetooth SCO disconnected")
+                                    handleAudioRouteChange()
                                 }
                             }
                         }
                     }
                 }
+            }
 
         val filter =
-                IntentFilter().apply {
-                    addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
-                    addAction(AudioManager.ACTION_HEADSET_PLUG)
-                    addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
-                }
+            IntentFilter().apply {
+                addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+                addAction(AudioManager.ACTION_HEADSET_PLUG)
+                addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+            }
 
         context.registerReceiver(audioRouteReceiver, filter)
     }
 
     private fun setupBluetoothListener() {
         bluetoothReceiver =
-                object : BroadcastReceiver() {
-                    override fun onReceive(context: Context?, intent: Intent?) {
-                        when (intent?.action) {
-                            BluetoothDevice.ACTION_ACL_CONNECTED -> {
-                                val device =
-                                        intent.getParcelableExtra<BluetoothDevice>(
-                                                BluetoothDevice.EXTRA_DEVICE
-                                        )
-                                Bridge.log(
-                                        "MIC: Bluetooth device connected: ${device?.name ?: "Unknown"}"
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    when (intent?.action) {
+                        BluetoothDevice.ACTION_ACL_CONNECTED -> {
+                            val device =
+                                intent.getParcelableExtra<BluetoothDevice>(
+                                    BluetoothDevice.EXTRA_DEVICE
                                 )
-                                handleAudioRouteChange()
-                            }
-                            BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
-                                val device =
-                                        intent.getParcelableExtra<BluetoothDevice>(
-                                                BluetoothDevice.EXTRA_DEVICE
-                                        )
-                                Bridge.log(
-                                        "MIC: Bluetooth device disconnected: ${device?.name ?: "Unknown"}"
+                            Bridge.log(
+                                "MIC: Bluetooth device connected: ${device?.name ?: "Unknown"}"
+                            )
+                            handleAudioRouteChange()
+                        }
+
+                        BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                            val device =
+                                intent.getParcelableExtra<BluetoothDevice>(
+                                    BluetoothDevice.EXTRA_DEVICE
                                 )
-                                handleAudioRouteChange()
-                            }
+                            Bridge.log(
+                                "MIC: Bluetooth device disconnected: ${device?.name ?: "Unknown"}"
+                            )
+                            handleAudioRouteChange()
                         }
                     }
                 }
+            }
 
         val filter =
-                IntentFilter().apply {
-                    addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
-                    addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
-                }
+            IntentFilter().apply {
+                addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+                addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            }
 
         context.registerReceiver(bluetoothReceiver, filter)
     }
@@ -880,31 +900,31 @@ class PhoneMic private constructor(private val context: Context) {
     private fun requestAudioFocus(): Boolean {
         Bridge.log("MIC: Requesting audio focus with USAGE_VOICE_COMMUNICATION")
         val result =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val audioAttributes =
-                            AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                                    .build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val audioAttributes =
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
 
-                    audioFocusRequest =
-                            AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-                                    .setAudioAttributes(audioAttributes)
-                                    .setOnAudioFocusChangeListener(
-                                            audioFocusListener!!,
-                                            mainHandler
-                                    )
-                                    .setAcceptsDelayedFocusGain(false)
-                                    .build()
+                audioFocusRequest =
+                    AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                        .setAudioAttributes(audioAttributes)
+                        .setOnAudioFocusChangeListener(
+                            audioFocusListener!!,
+                            mainHandler
+                        )
+                        .setAcceptsDelayedFocusGain(false)
+                        .build()
 
-                    audioManager.requestAudioFocus(audioFocusRequest!!)
-                } else {
-                    audioManager.requestAudioFocus(
-                            audioFocusListener,
-                            AudioManager.STREAM_VOICE_CALL,
-                            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
-                    )
-                }
+                audioManager.requestAudioFocus(audioFocusRequest!!)
+            } else {
+                audioManager.requestAudioFocus(
+                    audioFocusListener,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                )
+            }
 
         hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
         Bridge.log("MIC: Audio focus ${if (hasAudioFocus) "GRANTED" else "DENIED"}")
@@ -934,18 +954,18 @@ class PhoneMic private constructor(private val context: Context) {
 
         // Wait and try to recreate
         mainHandler.postDelayed(
-                {
-                    if (tryCreateTestAudioRecord()) {
-                        Bridge.log("MIC: Samsung - mic available, just playback app")
-                        // Restart recording
-                        startRecordingInternal()
-                    } else {
-                        Bridge.log("MIC: Samsung - mic taken by another app")
-                        isExternalAudioActive = true
-                        notifyCoreManager("samsung_mic_conflict", emptyList())
-                    }
-                },
-                SAMSUNG_MIC_TEST_DELAY_MS
+            {
+                if (tryCreateTestAudioRecord()) {
+                    Bridge.log("MIC: Samsung - mic available, just playback app")
+                    // Restart recording
+                    startRecordingInternal()
+                } else {
+                    Bridge.log("MIC: Samsung - mic taken by another app")
+                    isExternalAudioActive = true
+                    notifyCoreManager("samsung_mic_conflict", emptyList())
+                }
+            },
+            SAMSUNG_MIC_TEST_DELAY_MS
         )
     }
 
@@ -953,16 +973,16 @@ class PhoneMic private constructor(private val context: Context) {
         var testRecorder: AudioRecord? = null
         try {
             val minBufferSize =
-                    AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+                AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
 
             testRecorder =
-                    AudioRecord(
-                            MediaRecorder.AudioSource.MIC,
-                            SAMPLE_RATE,
-                            CHANNEL_CONFIG,
-                            AUDIO_FORMAT,
-                            minBufferSize
-                    )
+                AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    SAMPLE_RATE,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    minBufferSize
+                )
 
             return testRecorder.state == AudioRecord.STATE_INITIALIZED
         } catch (e: Exception) {
@@ -988,13 +1008,13 @@ class PhoneMic private constructor(private val context: Context) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
             for (device in devices) {
                 val name =
-                        when (device.type) {
-                            AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Built-in Microphone"
-                            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth Headset"
-                            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired Headset"
-                            AudioDeviceInfo.TYPE_USB_HEADSET -> "USB Headset"
-                            else -> device.productName.toString()
-                        }
+                    when (device.type) {
+                        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Built-in Microphone"
+                        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth Headset"
+                        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired Headset"
+                        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB Headset"
+                        else -> device.productName.toString()
+                    }
                 deviceInfo[device.id.toString()] = name
             }
         } else {
@@ -1033,7 +1053,7 @@ class PhoneMic private constructor(private val context: Context) {
     private fun notifyCoreManager(reason: String, availableInputs: List<String>) {
         mainHandler.post {
             CoreManager.getInstance()
-                    .onRouteChange(reason = reason, availableInputs = availableInputs)
+                .onRouteChange(reason = reason, availableInputs = availableInputs)
         }
     }
 
