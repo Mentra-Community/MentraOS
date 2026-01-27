@@ -405,6 +405,9 @@ class CoreManager {
      * Encodes to LC3 if audioOutputFormat is LC3, otherwise sends raw PCM.
      * All audio destined for cloud should go through this function.
      */
+    // Debug counter for logging
+    private var lc3EncodeCounter = 0
+
     private fun sendMicData(pcmData: ByteArray) {
         when (audioOutputFormat) {
             AudioOutputFormat.LC3 -> {
@@ -414,6 +417,7 @@ class CoreManager {
                 }
 
                 // Prepend any remainder from previous chunk
+                val prevRemainderSize = pcmRemainder?.size ?: 0
                 val dataToEncode = if (pcmRemainder != null && pcmRemainder!!.isNotEmpty()) {
                     pcmRemainder!! + pcmData
                 } else {
@@ -423,6 +427,7 @@ class CoreManager {
                 // Calculate how many complete frames we can encode
                 val completeFrameBytes = (dataToEncode.size / LC3_PCM_FRAME_BYTES) * LC3_PCM_FRAME_BYTES
                 val remainderBytes = dataToEncode.size % LC3_PCM_FRAME_BYTES
+                val numFrames = completeFrameBytes / LC3_PCM_FRAME_BYTES
 
                 // Save remainder for next chunk
                 pcmRemainder = if (remainderBytes > 0) {
@@ -431,8 +436,15 @@ class CoreManager {
                     null
                 }
 
+                // Debug logging every 100 chunks
+                lc3EncodeCounter++
+                if (lc3EncodeCounter % 100 == 1) {
+                    Bridge.log("MAN: LC3 encode #$lc3EncodeCounter: input=${pcmData.size}bytes, prevRemainder=$prevRemainderSize, total=${dataToEncode.size}, frames=$numFrames, newRemainder=$remainderBytes")
+                }
+
                 // Only encode if we have at least one complete frame
                 if (completeFrameBytes == 0) {
+                    Bridge.log("MAN: LC3 encode: no complete frames, buffering ${dataToEncode.size} bytes")
                     return
                 }
 
@@ -440,7 +452,7 @@ class CoreManager {
                 val framesToEncode = dataToEncode.copyOfRange(0, completeFrameBytes)
                 val lc3Data = Lc3Cpp.encodeLC3(lc3EncoderPtr, framesToEncode, lc3FrameSize)
                 if (lc3Data == null || lc3Data.isEmpty()) {
-                    Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
+                    Bridge.log("MAN: ERROR - LC3 encoding returned empty data for $completeFrameBytes bytes ($numFrames frames)")
                     return
                 }
                 Bridge.sendMicData(lc3Data)
