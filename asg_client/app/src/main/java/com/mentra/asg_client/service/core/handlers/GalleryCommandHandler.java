@@ -7,6 +7,7 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
+import com.mentra.asg_client.service.gallery.CloudGalleryUploader;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
 
 import org.json.JSONObject;
@@ -21,16 +22,19 @@ public class GalleryCommandHandler implements ICommandHandler {
     
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
+    private final CloudGalleryUploader cloudGalleryUploader;
 
     public GalleryCommandHandler(AsgClientServiceManager serviceManager, 
-                                ICommunicationManager communicationManager) {
+                                ICommunicationManager communicationManager,
+                                CloudGalleryUploader cloudGalleryUploader) {
         this.serviceManager = serviceManager;
         this.communicationManager = communicationManager;
+        this.cloudGalleryUploader = cloudGalleryUploader;
     }
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("query_gallery_status");
+        return Set.of("query_gallery_status", "cancel_cloud_upload");
     }
 
     @Override
@@ -39,6 +43,8 @@ public class GalleryCommandHandler implements ICommandHandler {
             switch (commandType) {
                 case "query_gallery_status":
                     return handleQueryGalleryStatus();
+                case "cancel_cloud_upload":
+                    return handleCancelCloudUpload();
                 default:
                     Log.e(TAG, "Unsupported gallery command: " + commandType);
                     return false;
@@ -173,6 +179,31 @@ public class GalleryCommandHandler implements ICommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error checking camera busy state", e);
             return null;
+        }
+    }
+    
+    /**
+     * Handle cancel cloud upload command from phone.
+     * Stops any active cloud uploads immediately and sends gallery status update.
+     */
+    private boolean handleCancelCloudUpload() {
+        try {
+            Log.i(TAG, "🛑 Received cancel_cloud_upload command from phone");
+            
+            if (cloudGalleryUploader != null) {
+                cloudGalleryUploader.cancelUpload();
+                Log.i(TAG, "✅ Cloud upload cancelled successfully");
+            } else {
+                Log.w(TAG, "⚠️ CloudGalleryUploader not available");
+            }
+            
+            // Send gallery status update to phone after canceling
+            // This ensures phone knows upload has stopped
+            Log.d(TAG, "📸 Sending gallery status update after cancel");
+            return handleQueryGalleryStatus();
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error cancelling cloud upload", e);
+            return false;
         }
     }
 }

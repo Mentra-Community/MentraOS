@@ -178,6 +178,33 @@ public class CloudGalleryUploader {
     }
     
     /**
+     * Cancel the current upload completely (stops upload and clears state)
+     */
+    public void cancelUpload() {
+        Log.i(TAG, "🛑 Cancelling cloud upload");
+        
+        // Set flags first to stop any processing loops
+        mIsPaused.set(true);
+        mIsUploading.set(false);
+        
+        // Cancel current HTTP request if any (this will stop the active upload immediately)
+        if (mCurrentCall != null) {
+            Log.i(TAG, "🛑 Cancelling active HTTP request");
+            mCurrentCall.cancel();
+            mCurrentCall = null;
+        }
+        
+        // Clear current file name
+        mCurrentFileName = null;
+        
+        // Reset progress tracking
+        mInitialTotalFiles = 0;
+        mCurrentBatchUploaded = 0;
+        
+        Log.i(TAG, "✅ Cloud upload cancelled - all state cleared");
+    }
+    
+    /**
      * Resume upload after pause
      */
     public void resumeUpload() {
@@ -234,6 +261,12 @@ public class CloudGalleryUploader {
     private void processNextFile() {
         try {
             Log.i(TAG, "🔄 processNextFile() called - isPaused=" + mIsPaused.get() + ", isUploading=" + mIsUploading.get());
+            
+            // Check if upload was cancelled or paused
+            if (!mIsUploading.get()) {
+                Log.i(TAG, "🛑 Upload cancelled - stopping processing");
+                return;
+            }
             
             // Check if paused
             if (mIsPaused.get()) {
@@ -398,6 +431,12 @@ public class CloudGalleryUploader {
             mCurrentCall.enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
+                    // Check if upload was cancelled - don't process if cancelled
+                    if (!mIsUploading.get()) {
+                        Log.d(TAG, "🛑 Upload cancelled - ignoring failure callback");
+                        return;
+                    }
+
                     int currentFileNumber = mUploadQueue.getCurrentIndex();
                     if (call.isCanceled()) {
                         Log.d(TAG, "⏸️ [" + currentFileNumber + "/" + mInitialTotalFiles + "] Upload cancelled: " + metadata.getFileName());
@@ -414,6 +453,13 @@ public class CloudGalleryUploader {
                 
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
+                    // Check if upload was cancelled - don't process if cancelled
+                    if (!mIsUploading.get()) {
+                        Log.d(TAG, "🛑 Upload cancelled - ignoring response callback");
+                        response.close(); // Close response to free resources
+                        return;
+                    }
+                    
                     mCurrentCall = null;
                     long uploadDuration = System.currentTimeMillis() - uploadStartTime;
                     int uploadedBefore = mUploadQueue.getUploadedCount();

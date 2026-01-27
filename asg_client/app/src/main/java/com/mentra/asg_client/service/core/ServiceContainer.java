@@ -27,6 +27,7 @@ import com.mentra.asg_client.service.system.managers.StateManager;
 import com.mentra.asg_client.service.gallery.BackgroundGallerySyncManager;
 import com.mentra.asg_client.service.gallery.CloudGalleryUploader;
 import com.mentra.asg_client.service.gallery.GalleryUploadQueue;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 
 
 /**
@@ -112,7 +113,14 @@ public class ServiceContainer {
         });
         
         this.cloudGalleryUploader = new CloudGalleryUploader(context, fileManager, galleryUploadQueue, communicationManager);
-        this.backgroundSyncManager = new BackgroundGallerySyncManager(context, stateManager, cloudGalleryUploader, galleryUploadQueue);
+        INetworkManager networkManager = serviceManager != null ? serviceManager.getNetworkManager() : null;
+        this.backgroundSyncManager = new BackgroundGallerySyncManager(context, stateManager, cloudGalleryUploader, galleryUploadQueue, networkManager);
+        
+        // Register GalleryCommandHandler with CloudGalleryUploader now that it's created
+        if (commandProcessor != null) {
+            commandProcessor.setCloudGalleryUploader(cloudGalleryUploader);
+        }
+        
         Log.i("ServiceContainer", "✅ Gallery cloud sync components initialized");
     }
 

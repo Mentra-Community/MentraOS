@@ -13,6 +13,7 @@ import androidx.preference.PreferenceManager;
 
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -51,6 +52,7 @@ public class BackgroundGallerySyncManager {
     private final GalleryUploadQueue mUploadQueue;
     private final SharedPreferences mPrefs;
     private final Handler mHandler;
+    private final INetworkManager mNetworkManager;
     
     private BroadcastReceiver mWifiReceiver;
     private boolean mIsMonitoring = false;
@@ -60,15 +62,55 @@ public class BackgroundGallerySyncManager {
     // State tracking
     private boolean mLastWifiState = false;
     private boolean mSyncInProgress = false; // Track if sync is currently running
+    private boolean mHotspotEnabled = false; // Track hotspot state to block cloud uploads during WiFi Direct sync
     
     public BackgroundGallerySyncManager(Context context, IStateManager stateManager, 
-                                       CloudGalleryUploader cloudUploader, GalleryUploadQueue uploadQueue) {
+                                       CloudGalleryUploader cloudUploader, GalleryUploadQueue uploadQueue,
+                                       INetworkManager networkManager) {
         this.mContext = context;
         this.mStateManager = stateManager;
         this.mCloudUploader = cloudUploader;
         this.mUploadQueue = uploadQueue;
         this.mPrefs = PreferenceManager.getDefaultSharedPreferences(context);
         this.mHandler = new Handler(Looper.getMainLooper());
+        this.mNetworkManager = networkManager;
+        
+        // Register as network state listener to track hotspot state
+        if (mNetworkManager != null) {
+            mNetworkManager.addWifiListener(new com.mentra.asg_client.io.network.interfaces.NetworkStateListener() {
+                @Override
+                public void onWifiStateChanged(boolean isConnected) {
+                    // Not used
+                }
+                
+                @Override
+                public void onHotspotStateChanged(boolean isEnabled) {
+                    mHotspotEnabled = isEnabled;
+                    Log.i(TAG, "🔥 Hotspot state changed: " + (isEnabled ? "ENABLED" : "DISABLED") + 
+                              " - " + (isEnabled ? "cancelling cloud uploads" : "resuming cloud upload check"));
+                    
+                    // If hotspot enabled (WiFi Direct sync active), cancel any active uploads
+                    if (isEnabled && mCloudUploader.isUploading()) {
+                        Log.i(TAG, "🛑 Cancelling cloud upload due to WiFi Direct sync (hotspot enabled)");
+                        mCloudUploader.cancelUpload();
+                        mSyncInProgress = false; // Reset sync state since we cancelled
+                    }
+                    
+                    // Re-check conditions when hotspot state changes
+                    checkConditionsAndScheduleSync();
+                }
+                
+                @Override
+                public void onWifiCredentialsReceived(String ssid, String password, String authToken) {
+                    // Not used
+                }
+                
+                @Override
+                public void onHotspotError(String errorMessage) {
+                    // Not used
+                }
+            });
+        }
         
         // Register for EventBus immediately so we don't miss battery events
         if (!EventBus.getDefault().isRegistered(this)) {
@@ -248,6 +290,27 @@ public class BackgroundGallerySyncManager {
             return;
         }
         
+        // BLOCK cloud uploads during WiFi Direct sync (when hotspot is enabled)
+        if (mHotspotEnabled) {
+            Log.i(TAG, "🚫 WiFi Direct sync active (hotspot enabled) - blocking cloud uploads");
+            
+            // Cancel any pending sync
+            if (mSyncDebounceRunnable != null) {
+                Log.d(TAG, "❌ Cancelling pending cloud upload due to WiFi Direct sync");
+                mHandler.removeCallbacks(mSyncDebounceRunnable);
+                mSyncDebounceRunnable = null;
+            }
+            
+            // Cancel any active upload
+            if (mCloudUploader.isUploading()) {
+                Log.i(TAG, "🛑 Cancelling active cloud upload due to WiFi Direct sync");
+                mCloudUploader.cancelUpload();
+                mSyncInProgress = false; // Reset sync state since we cancelled
+            }
+            
+            return;
+        }
+        
         // Use GLASSES hardware battery status from StateManager (reported via Bluetooth from MCU)
         // boolean isCharging = mStateManager.isCharging(); // COMMENTED OUT - controlled by REQUIRE_CHARGING constant
         boolean isWifiConnected = mStateManager.isConnectedToWifi();
@@ -293,8 +356,9 @@ public class BackgroundGallerySyncManager {
             
             // Stop any active upload
             if (mCloudUploader.isUploading()) {
-                Log.i(TAG, "⏸️ Conditions no longer met - pausing active upload");
-                mCloudUploader.pauseUpload();
+                Log.i(TAG, "⏸️ Conditions no longer met - cancelling active upload");
+                mCloudUploader.cancelUpload();
+                mSyncInProgress = false; // Reset sync state since we cancelled
             }
         }
     }
@@ -325,6 +389,12 @@ public class BackgroundGallerySyncManager {
      */
     private void onConditionsMetForSync() {
         Log.i(TAG, "✅ All conditions met for background sync");
+        
+        // BLOCK if hotspot is enabled (WiFi Direct sync active)
+        if (mHotspotEnabled) {
+            Log.i(TAG, "🚫 WiFi Direct sync active (hotspot enabled) - blocking cloud upload start");
+            return;
+        }
         
         // Double-check if already uploading (race condition protection)
         if (mSyncInProgress || mCloudUploader.isUploading()) {
