@@ -56,36 +56,9 @@ class CloudGallerySyncService {
   private isDownloading = false
   private isPolling = false
   private consecutiveEmptyPolls = 0
-  private glassesUploadingToCloud = false // Pause downloads while glasses are uploading
   private activeDownloads = new Set<string>() // Track filenames currently being downloaded
 
   private constructor() {}
-
-  /**
-   * Called when glasses start uploading to cloud.
-   * Pauses cloud downloads to prevent race conditions.
-   */
-  setGlassesUploading(uploading: boolean): void {
-    const wasUploading = this.glassesUploadingToCloud
-    this.glassesUploadingToCloud = uploading
-
-    if (uploading) {
-      console.log("[CloudGallerySync] 🚫 Glasses uploading to cloud - pausing downloads")
-    } else if (wasUploading) {
-      console.log("[CloudGallerySync] ✅ Glasses finished uploading - resuming downloads")
-      // Immediately check for pending items after upload completes
-      if (this.isPolling && !this.isDownloading) {
-        setTimeout(() => this.checkPending(), 2000) // Brief delay to let cloud process
-      }
-    }
-  }
-
-  /**
-   * Check if glasses are currently uploading to cloud
-   */
-  isGlassesUploading(): boolean {
-    return this.glassesUploadingToCloud
-  }
 
   static getInstance(): CloudGallerySyncService {
     if (!CloudGallerySyncService.instance) {
@@ -130,19 +103,109 @@ class CloudGallerySyncService {
   }
 
   /**
+   * Get current gallery status from cloud
+   */
+  async getGalleryStatus(): Promise<{
+    isUploading: boolean
+    isDownloading: boolean
+    uploadProgress?: {current: number; total: number; currentFile?: string}
+    pendingCount: number
+  } | null> {
+    try {
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
+      const token = restComms.getCoreToken()
+      if (!token) {
+        console.log("[CloudGallerySync] ⚠️ No auth token available for status check")
+        return null
+      }
+
+      const response = await axios.get<{
+        success: boolean
+        data: {
+          isUploading: boolean
+          isDownloading: boolean
+          uploadProgress?: {current: number; total: number; currentFile?: string}
+          pendingCount: number
+        }
+      }>(`${baseUrl}/api/client/asg/gallery/status`, {
+        headers: {Authorization: `Bearer ${token}`},
+        timeout: TIMING.REQUEST_TIMEOUT_MS,
+      })
+
+      if (response.data.success) {
+        const status = response.data.data
+        console.log(
+          `[CloudGallerySync] 📊 Gallery status: isUploading=${status.isUploading}, isDownloading=${status.isDownloading}, pendingCount=${status.pendingCount}`,
+        )
+        if (status.isUploading && status.uploadProgress) {
+          console.log(
+            `[CloudGallerySync] 📊 Upload progress: ${status.uploadProgress.current}/${status.uploadProgress.total}`,
+          )
+        }
+        return status
+      }
+      console.warn("[CloudGallerySync] ⚠️ Status check returned success=false")
+      return null
+    } catch (error: any) {
+      console.warn("[CloudGallerySync] ❌ Failed to get gallery status:", error?.message || error)
+      return null
+    }
+  }
+
+  /**
    * Check for pending files in cloud
    */
-  async checkPending(): Promise<void> {
+  async checkPending(ignoreUploadStatus = false): Promise<void> {
     if (this.isDownloading) {
       console.log("[CloudGallerySync] Already downloading, skipping poll")
       return
     }
 
-    // Don't check for pending items while glasses are uploading to cloud
-    // This prevents race conditions where phone downloads incomplete uploads
-    if (this.glassesUploadingToCloud) {
-      console.log("[CloudGallerySync] 🚫 Glasses uploading to cloud - skipping poll to avoid race condition")
+    // Block cloud downloads during WiFi Direct sync
+    const store = useGallerySyncStore.getState()
+    const isWifiDirectSyncActive =
+      store.syncState === "syncing" || store.syncState === "connecting_wifi" || store.syncState === "requesting_hotspot"
+    if (isWifiDirectSyncActive) {
+      console.log(`[CloudGallerySync] 🚫 WiFi Direct sync active (state: ${store.syncState}) - blocking cloud download`)
       return
+    }
+
+    // Check cloud status first - wait if glasses are uploading (unless explicitly ignored)
+    const status = await this.getGalleryStatus()
+    if (status?.isUploading && !ignoreUploadStatus) {
+      console.log(
+        `[CloudGallerySync] 🚫 Glasses uploading to cloud (${status.uploadProgress?.current || 0}/${status.uploadProgress?.total || 0}) - skipping poll`,
+      )
+      // Update store with upload progress
+      const store = useGallerySyncStore.getState()
+      if (status.uploadProgress) {
+        store.setCloudUploadStatus(
+          true,
+          status.uploadProgress.current,
+          status.uploadProgress.total,
+          status.uploadProgress.currentFile,
+        )
+      }
+      return
+    }
+
+    // If cloud says not uploading but local state says uploading, clear local state
+    if (!status?.isUploading) {
+      const store = useGallerySyncStore.getState()
+      if (store.cloudUploadIsUploading) {
+        console.log("[CloudGallerySync] 🔄 Clearing stale upload state (cloud says no active upload)")
+        store.setCloudUploadStatus(false, 0, 0, undefined)
+      }
+    }
+
+    // If we're ignoring upload status (e.g., after failure notification), log it
+    if (ignoreUploadStatus && status?.isUploading) {
+      console.log(
+        `[CloudGallerySync] ⚠️ Cloud still shows uploading, but proceeding anyway due to failure notification`,
+      )
     }
 
     try {
@@ -222,15 +285,25 @@ class CloudGallerySyncService {
       return
     }
 
-    // NEVER download while glasses are uploading - prevents race conditions
-    if (this.glassesUploadingToCloud) {
-      console.log("[CloudGallerySync] 🚫 BLOCKED: Cannot download while glasses are uploading to cloud")
+    // Block cloud downloads during WiFi Direct sync
+    const store = useGallerySyncStore.getState()
+    const isWifiDirectSyncActive =
+      store.syncState === "syncing" || store.syncState === "connecting_wifi" || store.syncState === "requesting_hotspot"
+    if (isWifiDirectSyncActive) {
+      console.log(
+        `[CloudGallerySync] 🚫 BLOCKED: Cannot download from cloud while WiFi Direct sync is active (state: ${store.syncState})`,
+      )
       return
     }
 
-    this.isDownloading = true
-    const store = useGallerySyncStore.getState()
-    store.setCloudSyncActive(true)
+    // Check cloud status - wait if glasses are uploading (prevents race conditions)
+    const status = await this.getGalleryStatus()
+    if (status?.isUploading) {
+      console.log(
+        `[CloudGallerySync] 🚫 BLOCKED: Cannot download while glasses are uploading (${status.uploadProgress?.current || 0}/${status.uploadProgress?.total || 0})`,
+      )
+      return
+    }
 
     try {
       // Get items if not provided
@@ -259,6 +332,33 @@ class CloudGallerySyncService {
       if (!items || items.length === 0) {
         console.log("[CloudGallerySync] No items to download")
         return
+      }
+
+      // Only set active state after confirming there are items to download
+      this.isDownloading = true
+      const store = useGallerySyncStore.getState()
+      store.setCloudSyncActive(true)
+
+      // Notify cloud that download has started
+      try {
+        // TEMPORARY OVERRIDE - DO NOT COMMIT
+        const baseUrl = "https://clouddev.ngrok.app"
+        // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+        const token = restComms.getCoreToken()
+        if (token) {
+          await axios.post(
+            `${baseUrl}/api/client/asg/gallery/download-started`,
+            {},
+            {
+              headers: {Authorization: `Bearer ${token}`},
+              timeout: TIMING.REQUEST_TIMEOUT_MS,
+            },
+          )
+          console.log("[CloudGallerySync] ✅ Notified cloud: download started")
+        }
+      } catch (error: any) {
+        console.warn("[CloudGallerySync] Failed to notify cloud of download start:", error?.message || error)
+        // Non-fatal - continue with download
       }
 
       console.log(`[CloudGallerySync] Downloading ${items.length} items`)
@@ -314,10 +414,14 @@ class CloudGallerySyncService {
       for (let i = 0; i < sortedItems.length; i++) {
         const item = sortedItems[i]
 
-        // Abort download batch if glasses started uploading
-        if (this.glassesUploadingToCloud) {
-          console.log("[CloudGallerySync] 🛑 ABORT: Glasses started uploading - stopping download batch")
-          break
+        // Check if glasses started uploading (check status periodically)
+        if (i % 5 === 0) {
+          // Check every 5 files to avoid too many status checks
+          const status = await this.getGalleryStatus()
+          if (status?.isUploading) {
+            console.log("[CloudGallerySync] 🛑 ABORT: Glasses started uploading - stopping download batch")
+            break
+          }
         }
 
         // Skip if this file is already being downloaded (prevents race condition)
@@ -490,6 +594,28 @@ class CloudGallerySyncService {
         store.setCloudSyncError(null)
       }
 
+      // Notify cloud that download has completed
+      try {
+        // TEMPORARY OVERRIDE - DO NOT COMMIT
+        const baseUrl = "https://clouddev.ngrok.app"
+        // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+        const token = restComms.getCoreToken()
+        if (token) {
+          await axios.post(
+            `${baseUrl}/api/client/asg/gallery/download-complete`,
+            {},
+            {
+              headers: {Authorization: `Bearer ${token}`},
+              timeout: TIMING.REQUEST_TIMEOUT_MS,
+            },
+          )
+          console.log("[CloudGallerySync] ✅ Notified cloud: download completed")
+        }
+      } catch (error: any) {
+        console.warn("[CloudGallerySync] Failed to notify cloud of download completion:", error?.message || error)
+        // Non-fatal - continue with cleanup
+      }
+
       // Show "Sync complete" message briefly, then hide banner
       this.isDownloading = false
       this.activeDownloads.clear() // Batch complete, clear tracking
@@ -505,8 +631,32 @@ class CloudGallerySyncService {
       }, 2000) // Show "Sync complete" for 2 seconds, then hide banner
     } catch (error: any) {
       console.error("[CloudGallerySync] Download error:", error?.message || error)
+
+      // Notify cloud that download failed/completed (cleanup session)
+      try {
+        // TEMPORARY OVERRIDE - DO NOT COMMIT
+        const baseUrl = "https://clouddev.ngrok.app"
+        // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+        const token = restComms.getCoreToken()
+        if (token) {
+          await axios.post(
+            `${baseUrl}/api/client/asg/gallery/download-complete`,
+            {},
+            {
+              headers: {Authorization: `Bearer ${token}`},
+              timeout: TIMING.REQUEST_TIMEOUT_MS,
+            },
+          )
+          console.log("[CloudGallerySync] ✅ Notified cloud: download ended (error cleanup)")
+        }
+      } catch (notifyError: any) {
+        console.warn("[CloudGallerySync] Failed to notify cloud of download end:", notifyError?.message || notifyError)
+        // Non-fatal
+      }
+
       this.isDownloading = false
       this.activeDownloads.clear() // Batch failed, clear tracking
+      const store = useGallerySyncStore.getState()
       store.setCloudSyncActive(false)
       store.setCloudSyncError(error?.message || "Download failed")
       // Reset counters on error (but keep pending count so user can retry)
@@ -713,6 +863,103 @@ class CloudGallerySyncService {
    */
   isCurrentlyDownloading(): boolean {
     return this.isDownloading
+  }
+
+  /**
+   * Cancel active download session
+   */
+  async cancelDownload(): Promise<void> {
+    if (!this.isDownloading) {
+      console.log("[CloudGallerySync] No active download to cancel")
+      return
+    }
+
+    console.log("[CloudGallerySync] 🛑 Cancelling download...")
+
+    // Stop downloading
+    this.isDownloading = false
+    const store = useGallerySyncStore.getState()
+    store.setCloudSyncActive(false)
+
+    // Notify cloud that download was cancelled
+    try {
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+      const token = restComms.getCoreToken()
+      if (token) {
+        await axios.post(
+          `${baseUrl}/api/client/asg/gallery/cancel-download`,
+          {},
+          {
+            headers: {Authorization: `Bearer ${token}`},
+            timeout: TIMING.REQUEST_TIMEOUT_MS,
+          },
+        )
+        console.log("[CloudGallerySync] ✅ Notified cloud: download cancelled")
+      }
+    } catch (error: any) {
+      console.warn("[CloudGallerySync] Failed to notify cloud of download cancellation:", error?.message || error)
+    }
+
+    // Clear active downloads set
+    this.activeDownloads.clear()
+  }
+
+  private isCancellingUpload = false
+
+  /**
+   * Cancel active upload session (notify cloud)
+   */
+  async cancelUpload(): Promise<void> {
+    // Prevent multiple rapid calls
+    if (this.isCancellingUpload) {
+      console.log("[CloudGallerySync] ⏳ Upload cancellation already in progress")
+      return
+    }
+
+    this.isCancellingUpload = true
+    console.log("[CloudGallerySync] 🛑 Cancelling upload...")
+
+    try {
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+      const token = restComms.getCoreToken()
+      if (token) {
+        const response = await axios.post(
+          `${baseUrl}/api/client/asg/gallery/cancel-upload`,
+          {},
+          {
+            headers: {Authorization: `Bearer ${token}`},
+            timeout: TIMING.REQUEST_TIMEOUT_MS,
+          },
+        )
+
+        if (response.data.success) {
+          console.log("[CloudGallerySync] ✅ Upload cancelled")
+          // Clear upload status in store
+          const store = useGallerySyncStore.getState()
+          store.setCloudUploadStatus(false, 0, 0, undefined)
+        } else {
+          console.log("[CloudGallerySync] ℹ️ No active upload session to cancel")
+          // Still clear local state in case it's stale
+          const store = useGallerySyncStore.getState()
+          store.setCloudUploadStatus(false, 0, 0, undefined)
+        }
+      }
+    } catch (error: any) {
+      // 404 means no active upload session - this is fine, just clear local state
+      if (error?.response?.status === 404) {
+        console.log("[CloudGallerySync] ℹ️ No active upload session to cancel (404)")
+        const store = useGallerySyncStore.getState()
+        store.setCloudUploadStatus(false, 0, 0, undefined)
+      } else {
+        console.warn("[CloudGallerySync] Failed to cancel upload:", error?.message || error)
+      }
+    } finally {
+      this.isCancellingUpload = false
+    }
   }
 
   /**

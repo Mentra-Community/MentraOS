@@ -76,9 +76,11 @@ export interface GallerySyncInfo {
     thumbnailUrl?: string
   }> // Items currently being downloaded (for preview)
 
-  // Glasses uploading to cloud state
-  glassesUploadingToCloud: boolean
-  glassesUploadTotalFiles: number
+  // Cloud upload status (from WebSocket)
+  cloudUploadIsUploading: boolean
+  cloudUploadCurrent: number
+  cloudUploadTotal: number
+  cloudUploadCurrentFile?: string
 
   // Error tracking
   lastError: string | null
@@ -122,7 +124,7 @@ interface GallerySyncState extends GallerySyncInfo {
   setCloudDownloadingItems: (
     items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean; thumbnailUrl?: string}>,
   ) => void
-  setGlassesUploadingToCloud: (uploading: boolean, totalFiles?: number) => void
+  setCloudUploadStatus: (isUploading: boolean, current: number, total: number, currentFile?: string) => void
 
   // Queue management (for resume)
   setQueue: (files: PhotoInfo[], startIndex?: number) => void
@@ -160,8 +162,10 @@ const initialState: GallerySyncInfo = {
   cloudCompletedFiles: 0,
   cloudFileProgress: new Map<string, number>(),
   cloudDownloadingItems: [],
-  glassesUploadingToCloud: false,
-  glassesUploadTotalFiles: 0,
+  cloudUploadIsUploading: false,
+  cloudUploadCurrent: 0,
+  cloudUploadTotal: 0,
+  cloudUploadCurrentFile: undefined,
   lastError: null,
 }
 
@@ -372,10 +376,12 @@ export const useGallerySyncStore = create<GallerySyncState>()(
       items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean; thumbnailUrl?: string}>,
     ) => set({cloudDownloadingItems: items}),
 
-    setGlassesUploadingToCloud: (uploading: boolean, totalFiles?: number) =>
+    setCloudUploadStatus: (isUploading: boolean, current: number, total: number, currentFile?: string) =>
       set({
-        glassesUploadingToCloud: uploading,
-        glassesUploadTotalFiles: totalFiles ?? (uploading ? get().glassesUploadTotalFiles : 0),
+        cloudUploadIsUploading: isUploading,
+        cloudUploadCurrent: current,
+        cloudUploadTotal: total,
+        cloudUploadCurrentFile: currentFile,
       }),
 
     // Queue management

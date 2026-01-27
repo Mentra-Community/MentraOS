@@ -10,7 +10,6 @@ import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import restComms from "@/services/RestComms"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 
@@ -18,13 +17,12 @@ class SocketComms {
   private static instance: SocketComms | null = null
   private coreToken: string = ""
   public userid: string = ""
-  
-  private constructor() {
-  }
+
+  private constructor() {}
 
   private setupListeners() {
     ws.removeAllListeners("message")
-    ws.on("message", message => {
+    ws.on("message", (message) => {
       this.handle_message(message)
     })
   }
@@ -348,7 +346,6 @@ class SocketComms {
 
   // MARK: - UDP Audio Methods
 
-
   /**
    * Check if UDP audio is currently enabled.
    */
@@ -369,7 +366,7 @@ class SocketComms {
 
     // Configure audio format (LC3) for bandwidth savings
     // This tells the cloud that we're sending LC3-encoded audio
-    this.configureAudioFormat().catch(err => {
+    this.configureAudioFormat().catch((err) => {
       console.log("SOCKET: Audio format configuration failed (cloud will expect PCM):", err)
     })
 
@@ -393,9 +390,11 @@ class SocketComms {
       udp.configure(udpHost, udpPort, this.userid)
       udp.handleAck()
     } else {
-      console.log("SOCKET: No UDP endpoint in connection_ack, skipping UDP audio. Full message:", JSON.stringify(msg, null, 2))
+      console.log(
+        "SOCKET: No UDP endpoint in connection_ack, skipping UDP audio. Full message:",
+        JSON.stringify(msg, null, 2),
+      )
     }
-
   }
 
   /**
@@ -821,8 +820,55 @@ class SocketComms {
         this.handle_udp_ping_ack(msg)
         break
 
+      case "gallery_event":
+        this.handle_gallery_event(msg)
+        break
+
       default:
         console.log(`SOCKET: Unknown message type: ${type} / full: ${JSON.stringify(msg)}`)
+    }
+  }
+
+  private handle_gallery_event(msg: any) {
+    const event = msg.data
+    if (!event) return
+
+    // Import services dynamically to avoid circular dependencies
+    const {cloudGallerySyncService} = require("@/services/asg/cloudGallerySyncService")
+    const {useGallerySyncStore} = require("@/stores/gallerySync")
+
+    switch (event.type) {
+      case "gallery_upload_progress": {
+        // Update store with real-time upload progress
+        const store = useGallerySyncStore.getState()
+        store.setCloudUploadStatus(true, event.current || 0, event.total || 0, event.currentFile)
+        console.log(
+          `[SocketComms] 📤 Gallery upload progress ${event.current}/${event.total} - ${event.currentFile || ""}`,
+        )
+        break
+      }
+
+      case "gallery_upload_complete": {
+        // Upload batch finished
+        console.log("[SocketComms] ✅ Gallery upload batch complete")
+        const store2 = useGallerySyncStore.getState()
+        store2.setCloudUploadStatus(false, 0, 0, undefined)
+        // Trigger check for pending items
+        cloudGallerySyncService.checkPending()
+        break
+      }
+
+      case "gallery_upload_started": {
+        // Upload batch started
+        console.log(`[SocketComms] 🚀 Gallery upload started - ${event.totalFiles || 0} files`)
+        const store3 = useGallerySyncStore.getState()
+        store3.setCloudUploadStatus(true, 0, event.totalFiles || 0, undefined)
+        break
+      }
+
+      default:
+        // Ignore unknown event types
+        break
     }
   }
 }
