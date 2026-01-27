@@ -36,6 +36,9 @@ const uploadSessions = new Map<string, UploadSession>();
  * Start a new upload session
  */
 export function startUploadSession(userId: string, totalFiles: number): string {
+  // Claim reservation if it exists
+  claimUploadReservation(userId);
+
   const sessionId = `${userId}-${Date.now()}`;
   const session: UploadSession = {
     userId,
@@ -149,24 +152,52 @@ async function sendGalleryEventToPhone(userId: string, event: any): Promise<void
  * Cleanup stale upload and download sessions
  * - Upload sessions: no progress for 60s
  * - Download sessions: no activity for 10 minutes (downloads can take longer)
+ * - Reservations: expired reservations
+ * - Sessions: no progress for 5+ minutes
  */
 export function cleanupStaleSessions(): number {
   const now = new Date();
   const uploadStaleThreshold = 60 * 1000; // 60 seconds
   const downloadStaleThreshold = 10 * 60 * 1000; // 10 minutes
+  const sessionStaleThreshold = 5 * 60 * 1000; // 5 minutes
   let cleaned = 0;
 
-  // Cleanup stale upload sessions
+  // Cleanup expired reservations
+  for (const [userId, reservation] of uploadReservations.entries()) {
+    if (reservation.expiresAt <= now) {
+      logger.debug({ userId }, "Cleaning up expired upload reservation");
+      uploadReservations.delete(userId);
+      cleaned++;
+    }
+  }
+
+  for (const [userId, reservation] of downloadReservations.entries()) {
+    if (reservation.expiresAt <= now) {
+      logger.debug({ userId }, "Cleaning up expired download reservation");
+      downloadReservations.delete(userId);
+      cleaned++;
+    }
+  }
+
+  for (const [userId, reservation] of wifiDirectReservations.entries()) {
+    if (reservation.expiresAt <= now) {
+      logger.debug({ userId }, "Cleaning up expired WiFi Direct reservation");
+      wifiDirectReservations.delete(userId);
+      cleaned++;
+    }
+  }
+
+  // Cleanup stale upload sessions (no progress for 5+ minutes)
   for (const [userId, session] of uploadSessions.entries()) {
     const timeSinceProgress = now.getTime() - session.lastProgressAt.getTime();
-    if (timeSinceProgress > uploadStaleThreshold) {
+    if (timeSinceProgress > sessionStaleThreshold) {
       logger.warn({ userId, sessionId: session.sessionId, timeSinceProgress }, "Cleaning up stale upload session");
       uploadSessions.delete(userId);
       cleaned++;
     }
   }
 
-  // Cleanup stale download sessions
+  // Cleanup stale download sessions (no activity for 10+ minutes)
   for (const [userId, session] of downloadSessions.entries()) {
     const timeSinceStart = now.getTime() - session.startedAt.getTime();
     if (timeSinceStart > downloadStaleThreshold) {
@@ -193,10 +224,29 @@ interface DownloadSession {
 // In production, consider using Redis for multi-instance deployments
 const downloadSessions = new Map<string, DownloadSession>();
 
+// ============================================================================
+// Permission Reservations
+// ============================================================================
+
+interface Reservation {
+  userId: string;
+  expiresAt: Date;
+}
+
+// Reservation tracking (expires after 30 seconds if not claimed)
+const uploadReservations = new Map<string, Reservation>();
+const downloadReservations = new Map<string, Reservation>();
+const wifiDirectReservations = new Map<string, Reservation>();
+
+const RESERVATION_TIMEOUT_MS = 30 * 1000; // 30 seconds
+
 /**
  * Start a new download session
  */
 export function startDownloadSession(userId: string): string {
+  // Claim reservation if it exists
+  claimDownloadReservation(userId);
+
   const sessionId = `${userId}-${Date.now()}`;
   const session: DownloadSession = {
     userId,
@@ -224,6 +274,208 @@ export function endDownloadSession(userId: string): void {
  */
 export function getDownloadSession(userId: string): DownloadSession | undefined {
   return downloadSessions.get(userId);
+}
+
+// ============================================================================
+// Permission Requests
+// ============================================================================
+
+export interface PermissionResult {
+  allowed: boolean;
+  reason?: string;
+}
+
+/**
+ * Request permission to start cloud upload
+ */
+export function requestUploadPermission(userId: string): PermissionResult {
+  // Check if there's an active download session
+  const downloadSession = getDownloadSession(userId);
+  if (downloadSession) {
+    return {
+      allowed: false,
+      reason: "Cloud download in progress",
+    };
+  }
+
+  // Check if there's an active upload session
+  const uploadSession = getUploadSession(userId);
+  if (uploadSession) {
+    return {
+      allowed: false,
+      reason: "Cloud upload already in progress",
+    };
+  }
+
+  // Check if there's an active WiFi Direct reservation
+  const wifiDirectReservation = wifiDirectReservations.get(userId);
+  if (wifiDirectReservation && wifiDirectReservation.expiresAt > new Date()) {
+    return {
+      allowed: false,
+      reason: "WiFi Direct sync in progress",
+    };
+  }
+
+  // Check if there's an active download reservation
+  const downloadReservation = downloadReservations.get(userId);
+  if (downloadReservation && downloadReservation.expiresAt > new Date()) {
+    return {
+      allowed: false,
+      reason: "Cloud download reservation active",
+    };
+  }
+
+  // Create reservation
+  const reservation: Reservation = {
+    userId,
+    expiresAt: new Date(Date.now() + RESERVATION_TIMEOUT_MS),
+  };
+  uploadReservations.set(userId, reservation);
+
+  logger.info({ userId }, "Upload permission granted (reservation created)");
+  return {
+    allowed: true,
+  };
+}
+
+/**
+ * Request permission to start cloud download
+ */
+export function requestDownloadPermission(userId: string): PermissionResult {
+  // Check if there's an active upload session
+  const uploadSession = getUploadSession(userId);
+  if (uploadSession) {
+    return {
+      allowed: false,
+      reason: "Cloud upload in progress",
+    };
+  }
+
+  // Check if there's an active download session
+  const downloadSession = getDownloadSession(userId);
+  if (downloadSession) {
+    return {
+      allowed: false,
+      reason: "Cloud download already in progress",
+    };
+  }
+
+  // Check if there's an active WiFi Direct reservation
+  const wifiDirectReservation = wifiDirectReservations.get(userId);
+  if (wifiDirectReservation && wifiDirectReservation.expiresAt > new Date()) {
+    return {
+      allowed: false,
+      reason: "WiFi Direct sync in progress",
+    };
+  }
+
+  // Check if there's an active upload reservation
+  const uploadReservation = uploadReservations.get(userId);
+  if (uploadReservation && uploadReservation.expiresAt > new Date()) {
+    return {
+      allowed: false,
+      reason: "Cloud upload reservation active",
+    };
+  }
+
+  // Create reservation
+  const reservation: Reservation = {
+    userId,
+    expiresAt: new Date(Date.now() + RESERVATION_TIMEOUT_MS),
+  };
+  downloadReservations.set(userId, reservation);
+
+  logger.info({ userId }, "Download permission granted (reservation created)");
+  return {
+    allowed: true,
+  };
+}
+
+/**
+ * Request permission to start WiFi Direct sync
+ */
+export function requestWifiDirectPermission(userId: string): PermissionResult {
+  // Check if there's an active upload session
+  const uploadSession = getUploadSession(userId);
+  if (uploadSession) {
+    return {
+      allowed: false,
+      reason: "Cloud upload in progress",
+    };
+  }
+
+  // Check if there's an active download session
+  const downloadSession = getDownloadSession(userId);
+  if (downloadSession) {
+    return {
+      allowed: false,
+      reason: "Cloud download in progress",
+    };
+  }
+
+  // Check if there's an active upload reservation
+  const uploadReservation = uploadReservations.get(userId);
+  if (uploadReservation && uploadReservation.expiresAt > new Date()) {
+    return {
+      allowed: false,
+      reason: "Cloud upload reservation active",
+    };
+  }
+
+  // Check if there's an active download reservation
+  const downloadReservation = downloadReservations.get(userId);
+  if (downloadReservation && downloadReservation.expiresAt > new Date()) {
+    return {
+      allowed: false,
+      reason: "Cloud download reservation active",
+    };
+  }
+
+  // Create reservation
+  const reservation: Reservation = {
+    userId,
+    expiresAt: new Date(Date.now() + RESERVATION_TIMEOUT_MS),
+  };
+  wifiDirectReservations.set(userId, reservation);
+
+  logger.info({ userId }, "WiFi Direct permission granted (reservation created)");
+  return {
+    allowed: true,
+  };
+}
+
+/**
+ * Claim upload reservation (called when upload-started is received)
+ */
+export function claimUploadReservation(userId: string): boolean {
+  const reservation = uploadReservations.get(userId);
+  if (reservation && reservation.expiresAt > new Date()) {
+    uploadReservations.delete(userId);
+    logger.debug({ userId }, "Upload reservation claimed");
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Claim download reservation (called when download-started is received)
+ */
+export function claimDownloadReservation(userId: string): boolean {
+  const reservation = downloadReservations.get(userId);
+  if (reservation && reservation.expiresAt > new Date()) {
+    downloadReservations.delete(userId);
+    logger.debug({ userId }, "Download reservation claimed");
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Clear WiFi Direct reservation (called when WiFi Direct sync completes or fails)
+ */
+export function clearWifiDirectReservation(userId: string): void {
+  wifiDirectReservations.delete(userId);
+  logger.debug({ userId }, "WiFi Direct reservation cleared");
 }
 
 /**
@@ -406,23 +658,44 @@ export async function uploadImage(params: UploadImageParams): Promise<GalleryIte
     await item.save();
 
     // Update upload progress and send WebSocket event
-    updateUploadProgress(params.userId, params.filename);
     const session = getUploadSession(params.userId);
     if (session) {
+      // Update session progress tracking
+      updateUploadProgress(params.userId, params.filename);
+
       // Calculate current progress by counting pending items in this session
+      // Note: Items transition from "uploading" -> "pending" when upload completes
       const pendingItemsInSession = await GalleryItem.countDocuments({
         userId: params.userId,
         status: "pending",
         uploadedAt: { $gte: session.startedAt },
       });
 
+      // Also count items still uploading in this session (for more accurate progress)
+      const uploadingItemsInSession = await GalleryItem.countDocuments({
+        userId: params.userId,
+        status: "uploading",
+        createdAt: { $gte: session.startedAt },
+      });
+
+      // Total completed = pending (completed) + uploading (in progress)
+      // But for progress display, we show pending as "completed" since they're done uploading
+      const currentProgress = pendingItemsInSession;
+
+      logger.debug(
+        { userId: params.userId, pendingItemsInSession, uploadingItemsInSession, total: session.totalFiles },
+        "Upload progress calculated",
+      );
+
       // Send WebSocket event to phone
       await sendGalleryEventToPhone(params.userId, {
         type: "gallery_upload_progress",
-        current: pendingItemsInSession,
+        current: currentProgress,
         total: session.totalFiles,
         currentFile: params.filename,
       });
+    } else {
+      logger.warn({ userId: params.userId }, "No upload session found - cannot send progress update");
     }
 
     logger.info(
@@ -523,15 +796,19 @@ export async function completeVideoUpload(userId: string, itemId: string): Promi
   await item.save();
 
   // Update upload progress and send WebSocket event
-  updateUploadProgress(userId, item.filename);
   const session = getUploadSession(userId);
   if (session) {
+    // Update session progress tracking
+    updateUploadProgress(userId, item.filename);
+
     // Calculate current progress by counting pending items in this session
     const pendingItemsInSession = await GalleryItem.countDocuments({
       userId,
       status: "pending",
       uploadedAt: { $gte: session.startedAt },
     });
+
+    logger.debug({ userId, pendingItemsInSession, total: session.totalFiles }, "Video upload progress calculated");
 
     // Send WebSocket event to phone
     await sendGalleryEventToPhone(userId, {
@@ -540,6 +817,8 @@ export async function completeVideoUpload(userId: string, itemId: string): Promi
       total: session.totalFiles,
       currentFile: item.filename,
     });
+  } else {
+    logger.warn({ userId }, "No upload session found for video - cannot send progress update");
   }
 
   logger.info({ itemId: item._id, userId }, "Video upload completed");

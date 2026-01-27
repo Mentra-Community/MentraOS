@@ -107,6 +107,109 @@ public class CloudGalleryUploader {
     }
     
     /**
+     * Request permission from cloud to start upload
+     * Returns true if allowed, false if denied or unreachable
+     */
+    public boolean requestUploadPermission() {
+        String token = getAuthToken();
+        if (token == null || token.isEmpty()) {
+            Log.w(TAG, "⚠️ Cannot request upload permission - no auth token");
+            return false;
+        }
+        
+        String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
+        String endpoint = baseUrl + "/api/client/asg/gallery/request-upload";
+        
+        Log.d(TAG, "🔐 Requesting upload permission from: " + endpoint);
+        Log.d(TAG, "   Token length: " + (token != null ? token.length() : 0) + " chars");
+        
+        try {
+            Request request = new Request.Builder()
+                .url(endpoint)
+                .addHeader("Authorization", "Bearer " + token)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create("{}", MediaType.parse("application/json")))
+                .build();
+            
+            // Use synchronous call with timeout for permission check
+            OkHttpClient permissionClient = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .writeTimeout(10, TimeUnit.SECONDS)
+                .build();
+            
+            Log.d(TAG, "   Executing permission request...");
+            try (Response response = permissionClient.newCall(request).execute()) {
+                Log.d(TAG, "   Response code: " + response.code());
+                if (response.isSuccessful()) {
+                    String responseBody = response.body() != null ? response.body().string() : "{}";
+                    Log.d(TAG, "   Response body: " + responseBody);
+                    JSONObject jsonResponse = new JSONObject(responseBody);
+                    
+                    if (jsonResponse.has("success") && jsonResponse.getBoolean("success")) {
+                        if (jsonResponse.has("data")) {
+                            JSONObject data = jsonResponse.getJSONObject("data");
+                            boolean allowed = data.getBoolean("allowed");
+                            
+                            if (allowed) {
+                                Log.i(TAG, "✅ Upload permission granted by cloud");
+                                return true;
+                            } else {
+                                String reason = data.has("reason") ? data.getString("reason") : "Unknown reason";
+                                Log.w(TAG, "❌ Upload permission denied by cloud: " + reason);
+                                return false;
+                            }
+                        }
+                    }
+                    
+                    Log.w(TAG, "⚠️ Invalid response format from permission endpoint");
+                    return false;
+                } else {
+                    Log.w(TAG, "⚠️ Cloud returned error for permission request: " + response.code());
+                    // Treat error as denial (fail-safe)
+                    return false;
+                }
+            }
+        } catch (java.net.SocketTimeoutException e) {
+            Log.w(TAG, "⏱️ Upload permission request timed out (cloud unreachable or slow)");
+            // Treat timeout as denial (fail-safe - block operation if cloud unreachable)
+            return false;
+        } catch (java.net.UnknownHostException e) {
+            Log.w(TAG, "🌐 Upload permission request failed - unknown host (cloud unreachable): " + baseUrl);
+            // Treat unknown host as denial (fail-safe)
+            return false;
+        } catch (java.net.ConnectException e) {
+            String errorMsg = e.getMessage();
+            if (errorMsg == null || errorMsg.isEmpty()) {
+                errorMsg = "Connection refused";
+            }
+            Log.w(TAG, "📡 Upload permission request failed - connection refused: " + errorMsg);
+            // Treat connection error as denial (fail-safe)
+            return false;
+        } catch (java.io.IOException e) {
+            String errorMsg = e.getMessage();
+            if (errorMsg == null || errorMsg.isEmpty()) {
+                errorMsg = e.getClass().getSimpleName();
+            }
+            Log.w(TAG, "📡 Upload permission request failed - network error: " + errorMsg);
+            // Treat network error as denial (fail-safe)
+            return false;
+        } catch (org.json.JSONException e) {
+            Log.e(TAG, "💥 Error parsing permission response: " + e.getMessage());
+            // Treat parse error as denial (fail-safe)
+            return false;
+        } catch (Exception e) {
+            String errorMsg = e.getMessage();
+            if (errorMsg == null || errorMsg.isEmpty()) {
+                errorMsg = e.getClass().getSimpleName();
+            }
+            Log.e(TAG, "💥 Unexpected error requesting upload permission: " + errorMsg, e);
+            // Treat any exception as denial (fail-safe - block operation if cloud unreachable)
+            return false;
+        }
+    }
+    
+    /**
      * Start uploading files from queue
      */
     public void startUpload() {
@@ -119,32 +222,68 @@ public class CloudGalleryUploader {
                 return;
             }
             
+            // Request permission from cloud before starting upload (must run on background thread)
+            Log.i(TAG, "🔐 Requesting upload permission from cloud...");
+            
+            // Run permission check on background thread to avoid NetworkOnMainThreadException
+            new Thread(() -> {
+                boolean permissionGranted = requestUploadPermission();
+                
+                // Post continuation to main thread handler
+                mHandler.post(() -> {
+                    if (!permissionGranted) {
+                        Log.w(TAG, "❌ Upload permission denied or cloud unreachable - blocking upload");
+                        mIsUploading.set(false);
+                        if (mCallback != null) {
+                            mCallback.onError("", "Upload permission denied by cloud");
+                        }
+                        return;
+                    }
+                    
+                    // Permission granted - continue with upload
+                    continueStartUpload();
+                });
+            }).start();
+            
+            return; // Exit early, continuation will happen in handler
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Exception in startUpload()", e);
+            mIsUploading.set(false);
+        }
+    }
+    
+    /**
+     * Continue upload after permission is granted (runs on main thread)
+     */
+    private void continueStartUpload() {
+        try {
+            
             Log.i(TAG, "📋 Building upload queue...");
             // Build queue first (forced to ensure fresh state at upload time)
             mUploadQueue.buildQueue(true);
             mInitialTotalFiles = mUploadQueue.getTotalFiles();
             Log.i(TAG, "📋 Queue built - total files: " + mInitialTotalFiles);
         
-        if (mInitialTotalFiles == 0) {
-            Log.i(TAG, "📋 No files to upload - queue is empty");
-            mIsUploading.set(false);
-            if (mCallback != null) {
-                mCallback.onComplete(0, 0);
+            if (mInitialTotalFiles == 0) {
+                Log.i(TAG, "📋 No files to upload - queue is empty");
+                mIsUploading.set(false);
+                if (mCallback != null) {
+                    mCallback.onComplete(0, 0);
+                }
+                return;
             }
-            return;
-        }
-        
-        // Count photos vs videos for logging
-        int photoCount = 0;
-        int videoCount = 0;
-        long totalSize = 0;
-        // Note: We can't easily count here without accessing the queue internals
-        // But we'll log it as we process each file
-        
-        mIsPaused.set(false);
-        mIsUploading.set(true);
-        mCurrentBatchUploaded = 0; // Reset counter for new batch
-        
+            
+            // Count photos vs videos for logging
+            int photoCount = 0;
+            int videoCount = 0;
+            long totalSize = 0;
+            // Note: We can't easily count here without accessing the queue internals
+            // But we'll log it as we process each file
+            
+            mIsPaused.set(false);
+            mIsUploading.set(true);
+            mCurrentBatchUploaded = 0; // Reset counter for new batch
+            
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             Log.i(TAG, "🚀 STARTING CLOUD GALLERY UPLOAD");
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
@@ -158,7 +297,7 @@ public class CloudGalleryUploader {
             processNextFile();
             Log.i(TAG, "▶️ processNextFile() returned");
         } catch (Exception e) {
-            Log.e(TAG, "💥 Exception in startUpload()", e);
+            Log.e(TAG, "💥 Exception in continueStartUpload()", e);
             mIsUploading.set(false);
         }
     }

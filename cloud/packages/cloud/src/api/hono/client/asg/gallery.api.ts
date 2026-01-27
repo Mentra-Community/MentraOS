@@ -119,6 +119,30 @@ app.post("/cancel-upload", clientAuth, handleCancelUpload);
  */
 app.post("/cancel-download", clientAuth, handleCancelDownload);
 
+/**
+ * POST /api/client/asg/gallery/request-upload
+ * Glasses request permission to start cloud upload
+ */
+app.post("/request-upload", clientAuth, handleRequestUpload);
+
+/**
+ * POST /api/client/asg/gallery/request-download
+ * Mobile request permission to start cloud download
+ */
+app.post("/request-download", clientAuth, handleRequestDownload);
+
+/**
+ * POST /api/client/asg/gallery/request-wifi-direct
+ * Mobile request permission to start WiFi Direct sync
+ */
+app.post("/request-wifi-direct", clientAuth, handleRequestWifiDirect);
+
+/**
+ * POST /api/client/asg/gallery/wifi-direct-complete
+ * Mobile notifies that WiFi Direct sync completed (clears reservation)
+ */
+app.post("/wifi-direct-complete", clientAuth, handleWifiDirectComplete);
+
 // ============================================================================
 // Handler Functions
 // ============================================================================
@@ -935,6 +959,114 @@ async function handleCancelDownload(c: AppContext) {
       {
         success: false,
         error: "Failed to cancel download",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleRequestUpload(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const result = await GalleryService.requestUploadPermission(email);
+
+    reqLogger.info({ email, allowed: result.allowed, reason: result.reason }, "Upload permission requested");
+
+    return c.json({
+      success: true,
+      data: result,
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle upload permission request");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle upload permission request",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleRequestDownload(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const result = await GalleryService.requestDownloadPermission(email);
+
+    reqLogger.info({ email, allowed: result.allowed, reason: result.reason }, "Download permission requested");
+
+    return c.json({
+      success: true,
+      data: result,
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle download permission request");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle download permission request",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleRequestWifiDirect(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    const result = await GalleryService.requestWifiDirectPermission(email);
+
+    reqLogger.info({ email, allowed: result.allowed, reason: result.reason }, "WiFi Direct permission requested");
+
+    return c.json({
+      success: true,
+      data: result,
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle WiFi Direct permission request");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle WiFi Direct permission request",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleWifiDirectComplete(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    GalleryService.clearWifiDirectReservation(email);
+
+    reqLogger.info({ email }, "WiFi Direct sync completed - reservation cleared");
+
+    return c.json({
+      success: true,
+      message: "WiFi Direct reservation cleared",
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    reqLogger.error(error, "Failed to handle WiFi Direct complete");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to handle WiFi Direct complete",
         timestamp: new Date(),
       },
       500,
