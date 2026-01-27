@@ -338,10 +338,12 @@ export const useGallerySyncStore = create<GallerySyncState>()(
     setCloudFileProgress: (fileName: string, progress: number) =>
       set((state) => {
         const newProgress = new Map(state.cloudFileProgress)
-        if (progress >= 100) {
-          // Remove when complete (like normal sync)
+        if (progress === -1) {
+          // Only remove on failure (not on completion)
           newProgress.delete(fileName)
         } else {
+          // Keep 100% in map - shows "completed" state while post-processing
+          // Will be cleared when entire sync batch completes via clearCloudFileProgress()
           newProgress.set(fileName, progress)
         }
         return {cloudFileProgress: newProgress}

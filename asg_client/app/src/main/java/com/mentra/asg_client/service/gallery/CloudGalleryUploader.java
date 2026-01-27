@@ -28,6 +28,12 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
+import java.io.FileInputStream;
+
+import okio.BufferedSink;
+import okio.Okio;
+import okio.Source;
+
 /**
  * Cloud Gallery Uploader
  * Handles HTTP uploads of photos and videos to MentraOS Cloud
@@ -475,28 +481,377 @@ public class CloudGalleryUploader {
     }
     
     /**
-     * Upload video via presigned URL (two-phase upload)
+     * Upload video via presigned URL (four-phase upload)
+     * Phase 1: Request presigned URL from backend (get uploadId)
+     * Phase 1b: Upload thumbnail using uploadId (synchronous, before video)
+     * Phase 2: Upload video directly to storage (R2/OSS) via presigned URL
+     * Phase 3: Confirm upload completion with backend
      */
     private void uploadVideo(File videoFile, FileManager.FileMetadata metadata) {
-        Log.i(TAG, "📤 Uploading video: " + metadata.getFileName() + " (" + formatBytes(metadata.getFileSize()) + ")");
+        int currentFileNumber = mUploadQueue.getCurrentIndex();
+        long uploadStartTime = System.currentTimeMillis();
+        
+        Log.i(TAG, "▶️ ═══════════════════════════════════════════════════════════");
+        Log.i(TAG, "▶️ [" + currentFileNumber + "/" + mInitialTotalFiles + "] VIDEO UPLOAD: " + metadata.getFileName());
+        Log.i(TAG, "▶️ ═══════════════════════════════════════════════════════════");
+        Log.i(TAG, "   📁 Size: " + formatBytes(metadata.getFileSize()));
         
         // Check size limit
         if (metadata.getFileSize() > MAX_VIDEO_SIZE) {
-            Log.e(TAG, "Video too large: " + metadata.getFileSize() + " bytes (max: " + MAX_VIDEO_SIZE + ")");
+            Log.e(TAG, "❌ Video too large: " + formatBytes(metadata.getFileSize()) + " (max: " + formatBytes(MAX_VIDEO_SIZE) + ")");
             mUploadQueue.markAsFailed(metadata.getFileName(), "File too large");
             processNextFile();
             return;
         }
         
-        // TODO: Implement video upload via presigned URL
-        // Phase 1: Request presigned URL from POST /api/client/asg/gallery/video-upload-url
-        // Phase 2: Upload directly to R2/OSS using presigned URL
-        // Phase 3: Confirm completion via POST /api/client/asg/gallery/video-upload-complete
+        // Get auth token
+        String token = getAuthToken();
+        if (token == null || token.isEmpty()) {
+            Log.e(TAG, "❌ No auth token available for video upload");
+            handleAuthError(metadata.getFileName());
+            return;
+        }
         
-        // For now, mark as not implemented
-        Log.w(TAG, "⚠️ Video upload not yet implemented - skipping " + metadata.getFileName());
-        mUploadQueue.markAsFailed(metadata.getFileName(), "Video upload not yet implemented");
-        processNextFile();
+        Log.d(TAG, "   🔐 Auth token found (length: " + token.length() + " chars)");
+        
+        // Build URL for Phase 1: Request presigned URL
+        String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
+        String videoUploadUrlEndpoint = baseUrl + "/api/client/asg/gallery/video-upload-url";
+        
+        // Build request body for Phase 1
+        String mimeType = getMimeType(metadata.getFileName());
+        JSONObject requestBody = new JSONObject();
+        try {
+            requestBody.put("filename", metadata.getFileName());
+            requestBody.put("mimeType", mimeType);
+            requestBody.put("sizeBytes", metadata.getFileSize());
+            requestBody.put("capturedAt", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+                .format(new java.util.Date(metadata.getLastModified())));
+            requestBody.put("deviceId", getDeviceId());
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error building video upload request", e);
+            handleUploadFailure(metadata.getFileName(), "Failed to build request");
+            return;
+        }
+        
+        Log.i(TAG, "   📡 Phase 1: Requesting presigned URL...");
+        
+        // Phase 1: Request presigned URL
+        Request phase1Request = new Request.Builder()
+            .url(videoUploadUrlEndpoint)
+            .addHeader("Authorization", "Bearer " + token)
+            .addHeader("Content-Type", "application/json")
+            .post(RequestBody.create(requestBody.toString(), MediaType.parse("application/json")))
+            .build();
+        
+        mCurrentCall = mHttpClient.newCall(phase1Request);
+        mCurrentCall.enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                if (call.isCanceled()) {
+                    Log.d(TAG, "⏸️ Video upload cancelled: " + metadata.getFileName());
+                    return;
+                }
+                Log.e(TAG, "❌ Phase 1 failed: " + e.getMessage());
+                handleUploadFailure(metadata.getFileName(), "Failed to get upload URL: " + e.getMessage());
+            }
+            
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                mCurrentCall = null;
+                
+                if (!response.isSuccessful()) {
+                    String errorBody = response.body() != null ? response.body().string() : "Unknown error";
+                    Log.e(TAG, "❌ Phase 1 HTTP " + response.code() + ": " + errorBody);
+                    
+                    if (response.code() == 401) {
+                        handleAuthError(metadata.getFileName());
+                    } else {
+                        handleUploadFailure(metadata.getFileName(), "HTTP " + response.code());
+                    }
+                    response.close();
+                    return;
+                }
+                
+                try {
+                    String responseBody = response.body().string();
+                    response.close();
+                    
+                    JSONObject json = new JSONObject(responseBody);
+                    if (!json.optBoolean("success", false)) {
+                        Log.e(TAG, "❌ Phase 1 returned success=false");
+                        handleUploadFailure(metadata.getFileName(), "Server returned error");
+                        return;
+                    }
+                    
+                    JSONObject data = json.getJSONObject("data");
+                    String uploadId = data.getString("id");
+                    String presignedUrl = data.getString("uploadUrl");
+                    
+                    Log.i(TAG, "   ✅ Phase 1 complete - got presigned URL (id: " + uploadId + ")");
+                    
+                    // Phase 1b: Upload thumbnail BEFORE video (synchronous)
+                    // This ensures mobile app has thumbnail when it polls for pending items
+                    uploadVideoThumbnailSync(videoFile, uploadId, token);
+                    
+                    // Phase 2: Upload video to presigned URL
+                    uploadVideoToPresignedUrl(videoFile, metadata, presignedUrl, uploadId, uploadStartTime);
+                    
+                } catch (JSONException e) {
+                    Log.e(TAG, "❌ Phase 1 JSON parse error", e);
+                    handleUploadFailure(metadata.getFileName(), "Invalid server response");
+                }
+            }
+        });
+    }
+    
+    /**
+     * Phase 2: Upload video bytes directly to presigned URL (streaming)
+     */
+    private void uploadVideoToPresignedUrl(File videoFile, FileManager.FileMetadata metadata, 
+                                            String presignedUrl, String uploadId, long uploadStartTime) {
+        int currentFileNumber = mUploadQueue.getCurrentIndex();
+        Log.i(TAG, "   📡 Phase 2: Uploading video to storage...");
+        
+        String mimeType = getMimeType(metadata.getFileName());
+        
+        // Create streaming request body to avoid loading entire video into memory
+        RequestBody streamingBody = new RequestBody() {
+            @Override
+            public MediaType contentType() {
+                return MediaType.parse(mimeType);
+            }
+            
+            @Override
+            public long contentLength() {
+                return metadata.getFileSize();
+            }
+            
+            @Override
+            public void writeTo(BufferedSink sink) throws IOException {
+                try (Source source = Okio.source(videoFile)) {
+                    long totalBytes = metadata.getFileSize();
+                    long bytesWritten = 0;
+                    long lastLoggedPercent = -1;
+                    
+                    // Read in chunks and write to sink
+                    long read;
+                    okio.Buffer buffer = new okio.Buffer();
+                    while ((read = source.read(buffer, 8192)) != -1) {
+                        sink.write(buffer, read);
+                        bytesWritten += read;
+                        
+                        // Log progress every 10%
+                        long percent = (bytesWritten * 100) / totalBytes;
+                        if (percent / 10 > lastLoggedPercent / 10) {
+                            lastLoggedPercent = percent;
+                            Log.d(TAG, "   📊 Upload progress: " + percent + "% (" + formatBytes(bytesWritten) + " / " + formatBytes(totalBytes) + ")");
+                        }
+                    }
+                }
+            }
+        };
+        
+        // PUT to presigned URL (presigned URLs require PUT, not POST)
+        Request phase2Request = new Request.Builder()
+            .url(presignedUrl)
+            .put(streamingBody)
+            .build();
+        
+        // Use a separate client with longer timeout for video uploads
+        OkHttpClient videoClient = mHttpClient.newBuilder()
+            .writeTimeout(30, TimeUnit.MINUTES) // 30 minutes for large videos
+            .readTimeout(5, TimeUnit.MINUTES)
+            .build();
+        
+        mCurrentCall = videoClient.newCall(phase2Request);
+        mCurrentCall.enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                if (call.isCanceled()) {
+                    Log.d(TAG, "⏸️ Video upload cancelled: " + metadata.getFileName());
+                    return;
+                }
+                Log.e(TAG, "❌ Phase 2 failed: " + e.getMessage());
+                handleUploadFailure(metadata.getFileName(), "Upload to storage failed: " + e.getMessage());
+            }
+            
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                mCurrentCall = null;
+                
+                if (!response.isSuccessful()) {
+                    String errorBody = response.body() != null ? response.body().string() : "Unknown error";
+                    Log.e(TAG, "❌ Phase 2 HTTP " + response.code() + ": " + errorBody);
+                    handleUploadFailure(metadata.getFileName(), "Storage returned HTTP " + response.code());
+                    response.close();
+                    return;
+                }
+                
+                response.close();
+                Log.i(TAG, "   ✅ Phase 2 complete - video uploaded to storage");
+                
+                // Phase 3: Confirm upload completion
+                confirmVideoUpload(metadata, uploadId, uploadStartTime);
+            }
+        });
+    }
+    
+    /**
+     * Phase 3: Confirm video upload completion with backend
+     */
+    private void confirmVideoUpload(FileManager.FileMetadata metadata, String uploadId, long uploadStartTime) {
+        int currentFileNumber = mUploadQueue.getCurrentIndex();
+        Log.i(TAG, "   📡 Phase 3: Confirming upload completion...");
+        
+        String token = getAuthToken();
+        if (token == null || token.isEmpty()) {
+            Log.e(TAG, "❌ No auth token for confirmation");
+            handleAuthError(metadata.getFileName());
+            return;
+        }
+        
+        String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
+        String confirmEndpoint = baseUrl + "/api/client/asg/gallery/video-upload-complete";
+        
+        JSONObject requestBody = new JSONObject();
+        try {
+            requestBody.put("id", uploadId);
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error building confirmation request", e);
+            handleUploadFailure(metadata.getFileName(), "Failed to build confirmation request");
+            return;
+        }
+        
+        Request phase3Request = new Request.Builder()
+            .url(confirmEndpoint)
+            .addHeader("Authorization", "Bearer " + token)
+            .addHeader("Content-Type", "application/json")
+            .post(RequestBody.create(requestBody.toString(), MediaType.parse("application/json")))
+            .build();
+        
+        mCurrentCall = mHttpClient.newCall(phase3Request);
+        mCurrentCall.enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                if (call.isCanceled()) {
+                    Log.d(TAG, "⏸️ Video confirmation cancelled: " + metadata.getFileName());
+                    return;
+                }
+                Log.e(TAG, "❌ Phase 3 failed: " + e.getMessage());
+                // Note: Video is already in storage, so this is a partial success
+                // We still mark as failed so it gets retried
+                handleUploadFailure(metadata.getFileName(), "Confirmation failed: " + e.getMessage());
+            }
+            
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                mCurrentCall = null;
+                long uploadDuration = System.currentTimeMillis() - uploadStartTime;
+                int currentFileNumber = mUploadQueue.getCurrentIndex();
+                
+                if (!response.isSuccessful()) {
+                    String errorBody = response.body() != null ? response.body().string() : "Unknown error";
+                    Log.e(TAG, "❌ Phase 3 HTTP " + response.code() + ": " + errorBody);
+                    
+                    if (response.code() == 401) {
+                        handleAuthError(metadata.getFileName());
+                    } else {
+                        handleUploadFailure(metadata.getFileName(), "Confirmation HTTP " + response.code());
+                    }
+                    response.close();
+                    return;
+                }
+                
+                response.close();
+                
+                // ✅ Video upload complete!
+                mUploadQueue.markAsUploaded(metadata.getFileName());
+                mCurrentBatchUploaded++;
+                int percent = mInitialTotalFiles > 0 ? (mCurrentBatchUploaded * 100 / mInitialTotalFiles) : 0;
+                
+                Log.i(TAG, "✅ [" + currentFileNumber + "/" + mInitialTotalFiles + "] VIDEO UPLOAD SUCCESSFUL: " + metadata.getFileName());
+                Log.i(TAG, "   ⏱️ Duration: " + (uploadDuration / 1000.0) + "s");
+                Log.i(TAG, "   📊 Progress: " + mCurrentBatchUploaded + "/" + mInitialTotalFiles + " (" + percent + "%)");
+                Log.i(TAG, "   📈 Speed: " + formatBytes(metadata.getFileSize() * 1000 / (uploadDuration > 0 ? uploadDuration : 1)) + "/s");
+                
+                // Delete video from glasses after successful upload
+                String packageName = mFileManager.getDefaultPackageName();
+                FileManager.FileOperationResult deleteResult = 
+                    mFileManager.deleteFile(packageName, metadata.getFileName());
+                
+                if (deleteResult.isSuccess()) {
+                    Log.i(TAG, "   🗑️ Deleted from glasses: " + metadata.getFileName());
+                } else {
+                    Log.w(TAG, "   ⚠️ Failed to delete from glasses: " + metadata.getFileName() + " - " + deleteResult.getMessage());
+                }
+                
+                // Notify mobile app that video was uploaded to cloud
+                sendCloudUploadNotification(metadata.getFileName());
+                
+                if (mCallback != null) {
+                    mHandler.post(() -> mCallback.onProgress(
+                        metadata.getFileName(),
+                        mCurrentBatchUploaded,
+                        mInitialTotalFiles
+                    ));
+                }
+                
+                // Process next file
+                mHandler.post(() -> processNextFile());
+            }
+        });
+    }
+    
+    /**
+     * Phase 1b: Upload video thumbnail BEFORE the video upload (synchronous, best effort)
+     * This is called after getting presigned URL but before uploading video bytes.
+     * Ensures mobile app has thumbnail URL when polling for pending items.
+     * Failures don't block the video upload process.
+     */
+    private void uploadVideoThumbnailSync(File videoFile, String videoId, String token) {
+        Log.i(TAG, "   🖼️ Phase 1b: Generating and uploading video thumbnail...");
+        
+        // Get thumbnail from ThumbnailManager
+        File thumbnailFile = mFileManager.getThumbnailManager().getOrCreateThumbnail(videoFile);
+        if (thumbnailFile == null || !thumbnailFile.exists()) {
+            Log.w(TAG, "   ⚠️ Could not generate thumbnail for video: " + videoFile.getName());
+            return;
+        }
+        
+        Log.d(TAG, "   📸 Thumbnail ready: " + thumbnailFile.getName() + " (" + formatBytes(thumbnailFile.length()) + ")");
+        
+        String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
+        String thumbnailEndpoint = baseUrl + "/api/client/asg/gallery/video-thumbnail";
+        
+        try {
+            // Build multipart request
+            MultipartBody body = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", thumbnailFile.getName(),
+                    RequestBody.create(thumbnailFile, MediaType.parse("image/jpeg")))
+                .addFormDataPart("videoId", videoId)
+                .build();
+            
+            Request request = new Request.Builder()
+                .url(thumbnailEndpoint)
+                .addHeader("Authorization", "Bearer " + token)
+                .post(body)
+                .build();
+            
+            // Execute synchronously - wait for thumbnail to upload before video
+            // This is intentionally blocking to ensure thumbnail is available when mobile polls
+            Response response = mHttpClient.newCall(request).execute();
+            if (response.isSuccessful()) {
+                Log.i(TAG, "   ✅ Thumbnail uploaded successfully (before video upload)");
+            } else {
+                Log.w(TAG, "   ⚠️ Thumbnail upload failed with HTTP " + response.code());
+            }
+            response.close();
+        } catch (Exception e) {
+            Log.w(TAG, "   ⚠️ Thumbnail upload failed: " + e.getMessage());
+            // Continue with video upload even if thumbnail fails
+        }
     }
     
     /**
@@ -504,6 +859,23 @@ public class CloudGalleryUploader {
      */
     private void handleUploadFailure(String filename, String error) {
         int attempts = mUploadQueue.getAttempts(filename);
+        
+        // Check if this looks like a network error (WiFi disconnect)
+        boolean isNetworkError = error != null && (
+            error.contains("Unable to resolve host") ||
+            error.contains("Network is unreachable") ||
+            error.contains("Failed to connect") ||
+            error.contains("Connection refused") ||
+            error.contains("timeout") ||
+            error.contains("ENETUNREACH") ||
+            error.contains("ECONNREFUSED")
+        );
+        
+        if (isNetworkError) {
+            Log.e(TAG, "🌐 Network error detected - WiFi may have disconnected");
+            // Send gallery status immediately so phone knows uploads stopped
+            sendGalleryStatusUpdate();
+        }
         
         if (attempts < MAX_RETRY_ATTEMPTS) {
             // Retry with exponential backoff
@@ -521,6 +893,9 @@ public class CloudGalleryUploader {
             // Max retries exceeded
             Log.e(TAG, "❌ Max retries exceeded for " + filename);
             mUploadQueue.markAsFailed(filename, error);
+            
+            // Send gallery status so phone knows there are still files remaining
+            sendGalleryStatusUpdate();
             
             if (mCallback != null) {
                 mHandler.post(() -> mCallback.onError(filename, error));
@@ -540,6 +915,9 @@ public class CloudGalleryUploader {
         // Pause upload and wait for new token
         mIsPaused.set(true);
         mIsUploading.set(false);
+        
+        // Send gallery status so phone knows uploads stopped and files remain
+        sendGalleryStatusUpdate();
         
         // TODO: Send BLE command to mobile requesting new token
         // For now, just log and stop

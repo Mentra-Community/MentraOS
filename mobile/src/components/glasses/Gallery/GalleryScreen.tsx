@@ -754,6 +754,13 @@ export function GalleryScreen() {
             : `file://${downloadedVersion.filePath}`
         }
 
+        // For videos: use downloaded thumbnail path, or fall back to cloud thumbnail URL
+        let thumbnailPath: string | undefined = downloadedVersion?.thumbnailPath
+        if (!thumbnailPath && item.is_video && item.thumbnailUrl) {
+          // Use cloud thumbnail URL as fallback while local thumbnail downloads
+          thumbnailPath = item.thumbnailUrl
+        }
+
         return {
           name: item.filename,
           url: photoUrl,
@@ -763,7 +770,7 @@ export function GalleryScreen() {
           modified: item.capturedAt,
           mime_type: item.mimeType,
           is_video: item.is_video,
-          thumbnailPath: undefined,
+          thumbnailPath, // Use local thumbnail if available, cloud URL as fallback
           glassesModel: undefined,
         }
       })

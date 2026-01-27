@@ -63,16 +63,24 @@ export const CloudGallerySync = () => {
       cloudGallerySyncService.checkPending()
     }
 
-    // Listen for gallery status updates - fallback if batch_complete not received
+    // Listen for gallery status updates - only clear uploading state if glasses have NO files
+    // (meaning all uploads completed successfully)
     const handleGalleryStatus = (data: {photos: number; videos: number; total: number; has_content: boolean}) => {
       console.log(`[CloudGallerySync] 📊 Received gallery status: ${data.photos} photos, ${data.videos} videos`)
 
-      // If glasses have no content left, they're done uploading
-      // This is a fallback in case batch_complete wasn't received
-      if (data.total === 0 && cloudGallerySyncService.isGlassesUploading()) {
-        console.log("[CloudGallerySync] ✅ Glasses have 0 items - resuming downloads (fallback)")
+      const store = useGallerySyncStore.getState()
+
+      // ONLY clear uploading state if glasses have ZERO files
+      // This is a fallback for when batch_complete wasn't received but all files uploaded
+      // DO NOT clear if glasses still have files - they might still be uploading!
+      if (store.glassesUploadingToCloud && data.total === 0) {
+        console.log("[CloudGallerySync] ✅ Glasses have 0 items - uploads complete (fallback)")
         cloudGallerySyncService.setGlassesUploading(false)
-        useGallerySyncStore.getState().setGlassesUploadingToCloud(false)
+        store.setGlassesUploadingToCloud(false)
+      } else if (store.glassesUploadingToCloud) {
+        // Glasses still have files - DO NOT clear uploading state
+        // Wait for explicit cloud_upload_batch_complete message
+        console.log(`[CloudGallerySync] ⏳ Glasses still have ${data.total} items - waiting for batch_complete`)
       }
     }
 

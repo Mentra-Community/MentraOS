@@ -49,7 +49,20 @@ public class AsgCameraServer extends AsgServer {
         void onPictureRequest();
     }
 
+    /**
+     * Callback interface for checking if a video is currently being recorded.
+     * This is used to filter out incomplete videos from sync operations.
+     */
+    public interface RecordingStatusProvider {
+        /**
+         * Get the filename of the currently recording video (if any).
+         * @return The filename of the currently recording video, or null if not recording
+         */
+        String getCurrentRecordingVideoFilename();
+    }
+
     private OnPictureRequestListener pictureRequestListener;
+    private RecordingStatusProvider recordingStatusProvider;
 
     /**
      * Constructor for camera web server with dependency injection.
@@ -84,6 +97,15 @@ public class AsgCameraServer extends AsgServer {
     public void setOnPictureRequestListener(OnPictureRequestListener listener) {
         this.pictureRequestListener = listener;
         logger.debug(TAG, "📸 Picture request listener " + (listener != null ? "set" : "cleared"));
+    }
+
+    /**
+     * Set the provider that will be used to check if a video is currently being recorded.
+     * This is used to filter out incomplete videos from sync operations.
+     */
+    public void setRecordingStatusProvider(RecordingStatusProvider provider) {
+        this.recordingStatusProvider = provider;
+        logger.debug(TAG, "📸 Recording status provider " + (provider != null ? "set" : "cleared"));
     }
 
     /**
@@ -1057,6 +1079,16 @@ public class AsgCameraServer extends AsgServer {
 
             // For now, we'll return all files since we don't track deletions
             // In a more sophisticated implementation, you'd track deletions separately
+            
+            // Get the currently recording video filename (if any) to exclude from sync
+            String currentlyRecordingFilename = null;
+            if (recordingStatusProvider != null) {
+                currentlyRecordingFilename = recordingStatusProvider.getCurrentRecordingVideoFilename();
+                if (currentlyRecordingFilename != null) {
+                    logger.debug(TAG, "🔄 Currently recording video: " + currentlyRecordingFilename + " - will skip from sync");
+                }
+            }
+            
             for (FileMetadata fileMetadata : allFiles) {
                 if (fileMetadata.getLastModified() > lastSyncTime) {
                     // Skip and delete AVIF transfer artifacts - these should not be synced to mobile
@@ -1074,6 +1106,14 @@ public class AsgCameraServer extends AsgServer {
                         } catch (Exception e) {
                             logger.error(TAG, "💥 Error deleting AVIF transfer artifact: " + fileMetadata.getFileName(), e);
                         }
+                        continue;
+                    }
+                    
+                    // Skip videos that are currently being recorded - they are incomplete
+                    if (isVideoFile(fileMetadata.getFileName()) && 
+                        currentlyRecordingFilename != null && 
+                        fileMetadata.getFileName().equals(currentlyRecordingFilename)) {
+                        logger.debug(TAG, "🔄 Skipping video currently being recorded: " + fileMetadata.getFileName());
                         continue;
                     }
 

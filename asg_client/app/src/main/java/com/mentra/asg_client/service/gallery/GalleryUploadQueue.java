@@ -54,6 +54,16 @@ public class GalleryUploadQueue {
     private final AtomicBoolean mIsBuilding = new AtomicBoolean(false);
     private volatile long mLastBuildTimestamp = 0;
     
+    // Recording status provider - to exclude currently recording videos
+    private RecordingStatusProvider mRecordingStatusProvider;
+    
+    /**
+     * Interface to check if a video is currently being recorded
+     */
+    public interface RecordingStatusProvider {
+        String getCurrentRecordingFilename();
+    }
+    
     public GalleryUploadQueue(Context context, FileManager fileManager) {
         this.mContext = context;
         this.mFileManager = fileManager;
@@ -63,6 +73,13 @@ public class GalleryUploadQueue {
         loadState();
         
         Log.i(TAG, "📋 GalleryUploadQueue initialized");
+    }
+    
+    /**
+     * Set the recording status provider to exclude currently recording videos
+     */
+    public void setRecordingStatusProvider(RecordingStatusProvider provider) {
+        this.mRecordingStatusProvider = provider;
     }
     
     /**
@@ -155,16 +172,33 @@ public class GalleryUploadQueue {
         // Get last sync timestamp
         long lastSyncTime = mPrefs.getLong(PREF_LAST_SYNC_TIMESTAMP, 0);
         
+        // Get currently recording filename (if any) to exclude from queue
+        String currentlyRecordingFilename = null;
+        if (mRecordingStatusProvider != null) {
+            currentlyRecordingFilename = mRecordingStatusProvider.getCurrentRecordingFilename();
+            if (currentlyRecordingFilename != null) {
+                Log.i(TAG, "🎥 Currently recording video (will be excluded): " + currentlyRecordingFilename);
+            }
+        }
+        
         // Filter files
         mPendingFiles = new ArrayList<>();
         int skippedUploaded = 0;
         int skippedFailed = 0;
         int skippedOld = 0;
+        int skippedRecording = 0;
         
         Log.d(TAG, "📋 Filtering " + allFiles.size() + " files (lastSyncTime: " + lastSyncTime + 
                   ", uploaded: " + mUploadedFiles.size() + ", failed: " + mFailedUploads.size() + ")");
         
         for (FileMetadata file : allFiles) {
+            // Skip currently recording video (file is still being written)
+            if (currentlyRecordingFilename != null && file.getFileName().equals(currentlyRecordingFilename)) {
+                skippedRecording++;
+                Log.d(TAG, "   🎥 Skipping (currently recording): " + file.getFileName());
+                continue;
+            }
+            
             // Skip if already uploaded
             if (mUploadedFiles.contains(file.getFileName())) {
                 skippedUploaded++;
@@ -199,7 +233,8 @@ public class GalleryUploadQueue {
         Log.i(TAG, "📋 Filter results: " + mPendingFiles.size() + " pending, " + 
                   skippedUploaded + " already uploaded, " + 
                   skippedFailed + " failed, " + 
-                  skippedOld + " too old");
+                  skippedOld + " too old, " +
+                  skippedRecording + " currently recording");
         
         // Sort by capture time (oldest first)
         Collections.sort(mPendingFiles, new Comparator<FileMetadata>() {

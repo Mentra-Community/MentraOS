@@ -22,6 +22,18 @@ public class GalleryStatusHelper {
      * @throws JSONException if JSON building fails
      */
     public static JSONObject buildGalleryStatus(FileManager fileManager) throws JSONException {
+        return buildGalleryStatus(fileManager, null);
+    }
+
+    /**
+     * Build gallery status JSON from FileManager files, optionally excluding a file.
+     *
+     * @param fileManager The FileManager instance to query for files
+     * @param excludeFilename Optional filename to exclude (e.g., currently recording video)
+     * @return JSONObject containing gallery status information
+     * @throws JSONException if JSON building fails
+     */
+    public static JSONObject buildGalleryStatus(FileManager fileManager, String excludeFilename) throws JSONException {
         if (fileManager == null) {
             throw new IllegalArgumentException("FileManager cannot be null");
         }
@@ -35,10 +47,17 @@ public class GalleryStatusHelper {
 
         // Count photos and videos
         for (FileManager.FileMetadata metadata : allFiles) {
-            String fileName = metadata.getFileName().toLowerCase();
+            String fileName = metadata.getFileName();
+            
+            // Skip the excluded file (e.g., currently recording video)
+            if (excludeFilename != null && fileName.equals(excludeFilename)) {
+                Log.d(TAG, "🔄 Skipping file currently being recorded: " + fileName);
+                continue;
+            }
+            
             totalSize += metadata.getFileSize();
 
-            if (isVideoFile(fileName)) {
+            if (isVideoFile(fileName.toLowerCase())) {
                 videoCount++;
             } else {
                 photoCount++;  // Assume non-video files are photos
@@ -55,7 +74,8 @@ public class GalleryStatusHelper {
         response.put("has_content", (photoCount + videoCount) > 0);
 
         Log.d(TAG, "Gallery status: " + photoCount + " photos, " + videoCount + " videos, " +
-                   formatBytes(totalSize) + " total size");
+                   formatBytes(totalSize) + " total size" + 
+                   (excludeFilename != null ? " (excluded: " + excludeFilename + ")" : ""));
 
         return response;
     }

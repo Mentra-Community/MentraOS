@@ -54,6 +54,7 @@ public class GalleryCommandHandler implements ICommandHandler {
      * Returns the count of photos and videos in the gallery using the same
      * FileManager approach as the HTTP server.
      * Also includes camera busy state if camera is being used.
+     * Excludes currently recording videos from the count.
      */
     private boolean handleQueryGalleryStatus() {
         try {
@@ -70,8 +71,11 @@ public class GalleryCommandHandler implements ICommandHandler {
                 return sendEmptyGalleryStatus();
             }
 
-            // Build gallery status using shared utility
-            JSONObject response = GalleryStatusHelper.buildGalleryStatus(fileManager);
+            // Get currently recording video filename (if any) to exclude from count
+            String currentlyRecordingFilename = getCurrentlyRecordingFilename();
+
+            // Build gallery status using shared utility, excluding recording video
+            JSONObject response = GalleryStatusHelper.buildGalleryStatus(fileManager, currentlyRecordingFilename);
 
             // Check camera busy state - only include if camera is actually busy
             String cameraState = getCameraBusyState();
@@ -110,6 +114,32 @@ public class GalleryCommandHandler implements ICommandHandler {
         }
     }
     
+    /**
+     * Get the filename of the currently recording video (if any).
+     * @return The filename of the video being recorded, or null if not recording
+     */
+    private String getCurrentlyRecordingFilename() {
+        try {
+            MediaCaptureService mediaCaptureService = null;
+            if (serviceManager != null) {
+                mediaCaptureService = serviceManager.getMediaCaptureService();
+            }
+            
+            if (mediaCaptureService != null && mediaCaptureService.isRecordingVideo()) {
+                String filename = mediaCaptureService.getCurrentRecordingVideoFilename();
+                if (filename != null) {
+                    Log.d(TAG, "📸 Currently recording video: " + filename);
+                }
+                return filename;
+            }
+            
+            return null;
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting currently recording filename", e);
+            return null;
+        }
+    }
+
     /**
      * Check if camera is busy with recording or streaming.
      * @return "video" if recording, "stream" if streaming, null if camera is available

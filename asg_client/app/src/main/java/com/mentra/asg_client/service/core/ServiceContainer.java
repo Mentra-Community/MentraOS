@@ -102,6 +102,15 @@ public class ServiceContainer {
         // Initialize gallery cloud sync components
         Log.i("ServiceContainer", "☁️ Initializing gallery cloud sync components");
         this.galleryUploadQueue = new GalleryUploadQueue(context, fileManager);
+        
+        // Wire up recording status provider to exclude currently recording videos from upload queue
+        this.galleryUploadQueue.setRecordingStatusProvider(() -> {
+            if (serviceManager != null && serviceManager.getMediaCaptureService() != null) {
+                return serviceManager.getMediaCaptureService().getCurrentRecordingVideoFilename();
+            }
+            return null;
+        });
+        
         this.cloudGalleryUploader = new CloudGalleryUploader(context, fileManager, galleryUploadQueue, communicationManager);
         this.backgroundSyncManager = new BackgroundGallerySyncManager(context, stateManager, cloudGalleryUploader, galleryUploadQueue);
         Log.i("ServiceContainer", "✅ Gallery cloud sync components initialized");

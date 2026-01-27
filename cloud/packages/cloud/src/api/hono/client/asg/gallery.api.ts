@@ -43,6 +43,12 @@ app.post("/video-upload-url", clientAuth, createVideoUploadUrl);
  */
 app.post("/video-upload-complete", clientAuth, completeVideoUpload);
 
+/**
+ * POST /api/client/asg/gallery/video-thumbnail
+ * Upload thumbnail for a video (multipart/form-data)
+ */
+app.post("/video-thumbnail", clientAuth, handleUploadVideoThumbnail);
+
 // ============================================================================
 // Mobile Sync Endpoints
 // ============================================================================
@@ -352,6 +358,106 @@ async function completeVideoUpload(c: AppContext) {
       {
         success: false,
         error: "Failed to complete video upload",
+        timestamp: new Date(),
+      },
+      500,
+    );
+  }
+}
+
+async function handleUploadVideoThumbnail(c: AppContext) {
+  const email = c.get("email")!;
+  const reqLogger = c.get("logger") || logger;
+
+  try {
+    // Parse multipart form data
+    const formData = await c.req.formData();
+    const file = formData.get("file") as File | null;
+    const videoId = formData.get("videoId") as string | null;
+
+    // Validate required fields
+    if (!file) {
+      return c.json(
+        {
+          success: false,
+          error: "No thumbnail file provided",
+          timestamp: new Date(),
+        },
+        400,
+      );
+    }
+
+    if (!videoId) {
+      return c.json(
+        {
+          success: false,
+          error: "Missing required field: videoId",
+          timestamp: new Date(),
+        },
+        400,
+      );
+    }
+
+    // Validate MIME type (should be JPEG)
+    if (!file.type.startsWith("image/")) {
+      return c.json(
+        {
+          success: false,
+          error: "Thumbnail must be an image",
+          timestamp: new Date(),
+        },
+        415,
+      );
+    }
+
+    // Validate size (thumbnails should be small, max 1MB)
+    const MAX_THUMBNAIL_SIZE = 1 * 1024 * 1024;
+    if (file.size > MAX_THUMBNAIL_SIZE) {
+      return c.json(
+        {
+          success: false,
+          error: "Thumbnail too large (max 1MB)",
+          timestamp: new Date(),
+        },
+        413,
+      );
+    }
+
+    // Convert File to Buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const item = await GalleryService.uploadVideoThumbnail(email, videoId, buffer);
+
+    reqLogger.info({ email, videoId, thumbnailSize: file.size }, "Video thumbnail uploaded successfully");
+
+    return c.json({
+      success: true,
+      data: {
+        id: item._id.toString(),
+        hasThumbnail: !!item.thumbnailKey,
+      },
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+    if (errorMessage.includes("not found")) {
+      return c.json(
+        {
+          success: false,
+          error: errorMessage,
+          timestamp: new Date(),
+        },
+        404,
+      );
+    }
+
+    reqLogger.error(error, "Failed to upload video thumbnail");
+    return c.json(
+      {
+        success: false,
+        error: "Failed to upload video thumbnail",
         timestamp: new Date(),
       },
       500,

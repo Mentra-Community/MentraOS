@@ -31,7 +31,8 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
   // Determine the image URL to use:
   // 1. For synced videos, use thumbnailPath if available
   // 2. For server videos, use thumbnail_data if available (base64 data URL)
-  // 3. Otherwise use the main URL
+  // 3. For cloud videos, use url if it's a valid HTTP(S) URL (presigned thumbnail URL)
+  // 4. Otherwise use the main URL
   // Note: Relative URLs (starting with /) are from server during sync and won't load
   const imageUrl = (() => {
     if (photo.is_video) {
@@ -43,6 +44,10 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
         return photo.thumbnail_data.startsWith("data:")
           ? photo.thumbnail_data
           : `data:image/jpeg;base64,${photo.thumbnail_data}`
+      }
+      // For cloud downloads, url contains the presigned thumbnail URL
+      if (photo.url && (photo.url.startsWith("http://") || photo.url.startsWith("https://"))) {
+        return photo.url
       }
       // No thumbnail available - return null to show video placeholder
       return null

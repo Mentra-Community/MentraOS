@@ -46,7 +46,8 @@ const TIMING = {
   BACKGROUND_POLL_INTERVAL_MS: 300000, // 5min when background
   IDLE_POLL_INTERVAL_MS: 600000, // 10min when no pending items
   REQUEST_TIMEOUT_MS: 30000, // 30s timeout for API requests
-  DOWNLOAD_TIMEOUT_MS: 120000, // 2min timeout for file downloads
+  DOWNLOAD_TIMEOUT_MS: 120000, // 2min timeout for image downloads
+  VIDEO_DOWNLOAD_TIMEOUT_MS: 600000, // 10min timeout for video downloads
 } as const
 
 class CloudGallerySyncService {
@@ -221,6 +222,12 @@ class CloudGallerySyncService {
       return
     }
 
+    // NEVER download while glasses are uploading - prevents race conditions
+    if (this.glassesUploadingToCloud) {
+      console.log("[CloudGallerySync] 🚫 BLOCKED: Cannot download while glasses are uploading to cloud")
+      return
+    }
+
     this.isDownloading = true
     const store = useGallerySyncStore.getState()
     store.setCloudSyncActive(true)
@@ -307,6 +314,12 @@ class CloudGallerySyncService {
       for (let i = 0; i < sortedItems.length; i++) {
         const item = sortedItems[i]
 
+        // Abort download batch if glasses started uploading
+        if (this.glassesUploadingToCloud) {
+          console.log("[CloudGallerySync] 🛑 ABORT: Glasses started uploading - stopping download batch")
+          break
+        }
+
         // Skip if this file is already being downloaded (prevents race condition)
         if (this.activeDownloads.has(item.filename)) {
           console.log(`[CloudGallerySync] ⏭️ Skipping ${item.filename} - already downloading`)
@@ -334,8 +347,28 @@ class CloudGallerySyncService {
             store.setCloudFileProgress(item.filename, progress)
           })
 
-          // Check for duplicates by hash
-          const isDuplicate = await isDuplicateFile(tempPath, existingFilesArray)
+          // Check for duplicates by hash (skip for large files - too slow)
+          // Videos > 5MB would take too long to hash in JS
+          const SKIP_HASH_THRESHOLD = 5 * 1024 * 1024 // 5MB
+          let isDuplicate = false
+
+          if (item.sizeBytes < SKIP_HASH_THRESHOLD) {
+            console.log(
+              `[CloudGallerySync] 🔍 Checking for duplicates: ${item.filename} (${this.formatBytes(item.sizeBytes)})`,
+            )
+            const duplicateCheckStart = Date.now()
+            isDuplicate = await isDuplicateFile(tempPath, existingFilesArray)
+            const duplicateCheckDuration = Date.now() - duplicateCheckStart
+            console.log(
+              `[CloudGallerySync] ✅ Duplicate check complete: ${item.filename} (took ${duplicateCheckDuration}ms, isDuplicate: ${isDuplicate})`,
+            )
+          } else {
+            console.log(
+              `[CloudGallerySync] ⏭️ Skipping duplicate check for large file: ${item.filename} (${this.formatBytes(
+                item.sizeBytes,
+              )} > 5MB threshold)`,
+            )
+          }
 
           if (isDuplicate) {
             console.log(`[CloudGallerySync] Skipping duplicate: ${item.filename}`)
@@ -348,12 +381,42 @@ class CloudGallerySyncService {
 
           // Move to permanent location
           const finalPath = localStorageService.getPhotoFilePath(item.filename)
+          console.log(`[CloudGallerySync] 📦 Moving ${item.filename} to permanent location: ${finalPath}`)
           await RNFS.moveFile(tempPath, finalPath)
+          console.log(`[CloudGallerySync] ✅ File moved successfully: ${item.filename}`)
 
-          // Calculate hash for future deduplication
-          const fileHash = await calculateFileHash(finalPath)
+          // Calculate hash for future deduplication (skip for large files - too slow)
+          let fileHash: string | undefined
+          if (item.sizeBytes < SKIP_HASH_THRESHOLD) {
+            console.log(`[CloudGallerySync] 🔐 Calculating hash for: ${item.filename}`)
+            fileHash = await calculateFileHash(finalPath)
+            console.log(`[CloudGallerySync] ✅ Hash calculated: ${item.filename} -> ${fileHash?.slice(0, 16)}...`)
+          } else {
+            console.log(`[CloudGallerySync] ⏭️ Skipping hash calculation for large file: ${item.filename}`)
+          }
 
-          // Save to app storage with hash
+          // Download video thumbnail if available (so it persists after download completes)
+          let thumbnailPath: string | undefined
+          if (item.type === "video" && item.thumbnailUrl) {
+            try {
+              console.log(`[CloudGallerySync] 🖼️ Downloading video thumbnail for: ${item.filename}`)
+              const thumbnailFilename = item.filename.replace(/\.(mp4|mov)$/i, "_thumb.jpg")
+              thumbnailPath = localStorageService.getThumbnailFilePath(thumbnailFilename)
+              await RNFS.downloadFile({
+                fromUrl: item.thumbnailUrl,
+                toFile: thumbnailPath,
+              }).promise
+              console.log(`[CloudGallerySync] ✅ Thumbnail downloaded: ${thumbnailFilename}`)
+            } catch (thumbError: any) {
+              console.warn(
+                `[CloudGallerySync] ⚠️ Failed to download thumbnail for ${item.filename}:`,
+                thumbError?.message || thumbError,
+              )
+              thumbnailPath = undefined // Clear path if download failed
+            }
+          }
+
+          // Save to app storage with hash and thumbnail path
           const downloadedFile: DownloadedFile = {
             name: item.filename,
             filePath: finalPath,
@@ -363,12 +426,16 @@ class CloudGallerySyncService {
             is_video: item.type === "video",
             downloaded_at: Date.now(),
             fileHash, // Store hash for deduplication
+            thumbnailPath, // Path to downloaded thumbnail (videos only)
           }
 
+          console.log(`[CloudGallerySync] 💾 Saving to local storage: ${item.filename}`)
           await localStorageService.saveDownloadedFile(downloadedFile)
+          console.log(`[CloudGallerySync] ✅ Saved to local storage: ${item.filename}`)
 
           // Mark file as complete (100% progress) - this removes it from cloudFileProgress immediately
           store.setCloudFileProgress(item.filename, 100)
+          console.log(`[CloudGallerySync] ✅ Marked as 100% complete: ${item.filename}`)
 
           // Increment completed files count (like normal sync)
           store.onCloudFileComplete(item.filename)
@@ -384,16 +451,20 @@ class CloudGallerySyncService {
 
           // Save to camera roll if enabled
           if (shouldAutoSave) {
+            console.log(`[CloudGallerySync] 📸 Saving to camera roll: ${item.filename}`)
             const captureTime = new Date(item.capturedAt).getTime()
             const saved = await MediaLibraryPermissions.saveToLibrary(finalPath, captureTime)
             if (saved) {
-              console.log(`[CloudGallerySync] Saved to camera roll: ${item.filename}`)
+              console.log(`[CloudGallerySync] ✅ Saved to camera roll: ${item.filename}`)
             } else {
-              console.warn(`[CloudGallerySync] Failed to save to camera roll: ${item.filename}`)
+              console.warn(`[CloudGallerySync] ❌ Failed to save to camera roll: ${item.filename}`)
             }
           }
 
           // Delete from cloud immediately after successful download
+          console.log(
+            `[CloudGallerySync] 🗑️ Marking as synced (deleting from cloud): ${item.filename} (id: ${item.id})`,
+          )
           await this.markSynced([item.id])
           console.log(`[CloudGallerySync] ✅ Downloaded and deleted from cloud: ${item.filename}`)
 
@@ -450,17 +521,42 @@ class CloudGallerySyncService {
    */
   private async downloadFile(url: string, filename: string, onProgress?: (progress: number) => void): Promise<string> {
     const tempPath = `${RNFS.TemporaryDirectoryPath}/${filename}`
+    const isVideo = filename.toLowerCase().endsWith(".mp4") || filename.toLowerCase().endsWith(".mov")
+    const downloadStartTime = Date.now()
+    let lastLoggedPercent = -5 // Will log at 0%, 5%, 10%, etc.
+    let progressCallbackCount = 0
 
-    console.log(`[CloudGallerySync] Downloading to temp: ${tempPath}`)
+    console.log(`[CloudGallerySync] 📥 ========================================`)
+    console.log(`[CloudGallerySync] 📥 Starting download: ${filename}`)
+    console.log(`[CloudGallerySync] 📥 ========================================`)
+    console.log(`[CloudGallerySync]    URL: ${url.slice(0, 100)}...`)
+    console.log(`[CloudGallerySync]    Temp path: ${tempPath}`)
+    console.log(`[CloudGallerySync]    Is video: ${isVideo}`)
+    console.log(
+      `[CloudGallerySync]    Read timeout: ${
+        isVideo ? TIMING.VIDEO_DOWNLOAD_TIMEOUT_MS : TIMING.DOWNLOAD_TIMEOUT_MS
+      }ms`,
+    )
 
-    const result = await RNFS.downloadFile({
+    // Use longer timeout for videos
+    const readTimeout = isVideo ? TIMING.VIDEO_DOWNLOAD_TIMEOUT_MS : TIMING.DOWNLOAD_TIMEOUT_MS
+
+    const downloadResult = RNFS.downloadFile({
       fromUrl: url,
       toFile: tempPath,
       connectionTimeout: TIMING.REQUEST_TIMEOUT_MS,
-      readTimeout: TIMING.DOWNLOAD_TIMEOUT_MS,
+      readTimeout,
       progressDivider: 1, // Get progress updates every 1%
-      progressInterval: 50, // Update progress every 250ms max
+      progressInterval: 250, // 250ms - balanced update frequency
+      begin: (res) => {
+        console.log(`[CloudGallerySync] 📥 Download began: ${filename}`)
+        console.log(`[CloudGallerySync]    Content-Length: ${res.contentLength || "unknown"} bytes`)
+        console.log(`[CloudGallerySync]    Status: ${res.statusCode}`)
+        console.log(`[CloudGallerySync]    Job ID: ${res.jobId}`)
+        console.log(`[CloudGallerySync]    Headers received at: ${Date.now() - downloadStartTime}ms`)
+      },
       progress: (res) => {
+        progressCallbackCount++
         const contentLength = res.contentLength || 0
         const bytesWritten = res.bytesWritten || 0
         let percentage = 0
@@ -468,14 +564,57 @@ class CloudGallerySyncService {
           percentage = Math.round((bytesWritten / contentLength) * 100)
           percentage = Math.max(0, Math.min(100, percentage))
         }
+
+        // Log progress every 5%
+        if (percentage >= lastLoggedPercent + 5) {
+          lastLoggedPercent = percentage
+          const elapsed = (Date.now() - downloadStartTime) / 1000
+          const speed = elapsed > 0 ? bytesWritten / elapsed / 1024 : 0 // KB/s
+          console.log(
+            `[CloudGallerySync] 📊 ${filename}: ${percentage}% (${this.formatBytes(bytesWritten)}/${this.formatBytes(
+              contentLength,
+            )}) - ${speed.toFixed(1)} KB/s`,
+          )
+        }
+
         if (onProgress) {
           onProgress(percentage)
         }
       },
-    }).promise
+    })
+
+    // Store job ID for potential cancellation
+    console.log(`[CloudGallerySync] 📥 Download job started: ${downloadResult.jobId}`)
+
+    const result = await downloadResult.promise
+
+    const elapsed = (Date.now() - downloadStartTime) / 1000
+    const avgSpeed = result.bytesWritten / elapsed / 1024 / 1024 // MB/s
+    console.log(`[CloudGallerySync] ✅ ========================================`)
+    console.log(`[CloudGallerySync] ✅ Download complete: ${filename}`)
+    console.log(`[CloudGallerySync] ✅ ========================================`)
+    console.log(`[CloudGallerySync]    Status: ${result.statusCode}`)
+    console.log(`[CloudGallerySync]    Bytes: ${result.bytesWritten} (${this.formatBytes(result.bytesWritten)})`)
+    console.log(`[CloudGallerySync]    Duration: ${elapsed.toFixed(1)}s`)
+    console.log(`[CloudGallerySync]    Avg speed: ${avgSpeed.toFixed(2)} MB/s`)
+    console.log(`[CloudGallerySync]    Total progress callbacks: ${progressCallbackCount}`)
 
     if (result.statusCode !== 200) {
+      console.error(`[CloudGallerySync] ❌ Download failed: HTTP ${result.statusCode}`)
       throw new Error(`Download failed with status ${result.statusCode}`)
+    }
+
+    // Verify file exists and has correct size
+    try {
+      const fileInfo = await RNFS.stat(tempPath)
+      console.log(`[CloudGallerySync]    File verified: ${fileInfo.size} bytes on disk`)
+      if (fileInfo.size !== result.bytesWritten) {
+        console.warn(
+          `[CloudGallerySync] ⚠️ Size mismatch! Downloaded ${result.bytesWritten} but file is ${fileInfo.size}`,
+        )
+      }
+    } catch (statError: any) {
+      console.error(`[CloudGallerySync] ❌ Failed to verify downloaded file: ${statError?.message}`)
     }
 
     return tempPath
@@ -485,6 +624,9 @@ class CloudGallerySyncService {
    * Mark items as synced (triggers cloud deletion)
    */
   async markSynced(ids: string[]): Promise<void> {
+    const startTime = Date.now()
+    console.log(`[CloudGallerySync] 🗑️ markSynced() called with ${ids.length} ids: ${ids.join(", ")}`)
+
     try {
       // TEMPORARY OVERRIDE - DO NOT COMMIT
       const baseUrl = "https://clouddev.ngrok.app"
@@ -494,12 +636,13 @@ class CloudGallerySyncService {
       const token = restComms.getCoreToken()
 
       if (!token) {
+        console.error("[CloudGallerySync] ❌ markSynced failed: No auth token available")
         throw new Error("No auth token available")
       }
 
-      console.log(`[CloudGallerySync] Marking ${ids.length} items as synced`)
+      console.log(`[CloudGallerySync] 📤 POSTing to mark-synced endpoint...`)
 
-      await axios.post(
+      const response = await axios.post(
         `${baseUrl}/api/client/asg/gallery/mark-synced`,
         {ids},
         {
@@ -511,9 +654,18 @@ class CloudGallerySyncService {
         },
       )
 
+      const elapsed = Date.now() - startTime
       console.log(`[CloudGallerySync] ✅ Marked ${ids.length} items as synced (deleted from cloud)`)
+      console.log(`[CloudGallerySync]    Response status: ${response.status}`)
+      console.log(`[CloudGallerySync]    Response data: ${JSON.stringify(response.data)}`)
+      console.log(`[CloudGallerySync]    Duration: ${elapsed}ms`)
     } catch (error: any) {
-      console.error("[CloudGallerySync] Error marking as synced:", error?.message || error)
+      const elapsed = Date.now() - startTime
+      console.error(`[CloudGallerySync] ❌ markSynced FAILED after ${elapsed}ms`)
+      console.error(`[CloudGallerySync]    IDs: ${ids.join(", ")}`)
+      console.error(`[CloudGallerySync]    Error: ${error?.message || error}`)
+      console.error(`[CloudGallerySync]    Response status: ${error?.response?.status}`)
+      console.error(`[CloudGallerySync]    Response data: ${JSON.stringify(error?.response?.data)}`)
       // Don't throw - this is cleanup, not critical
     }
   }

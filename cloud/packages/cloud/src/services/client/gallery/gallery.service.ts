@@ -281,6 +281,47 @@ export async function completeVideoUpload(userId: string, itemId: string): Promi
   return item;
 }
 
+/**
+ * Upload a thumbnail for a video that was already uploaded.
+ * Called by glasses after video upload is confirmed.
+ */
+export async function uploadVideoThumbnail(
+  userId: string,
+  itemId: string,
+  thumbnailBuffer: Buffer,
+): Promise<GalleryItemI> {
+  const provider = getProvider();
+
+  // Find the video item
+  const item = await GalleryItem.findOne({
+    _id: itemId,
+    userId,
+    type: "video",
+  });
+
+  if (!item) {
+    throw new Error("Video not found");
+  }
+
+  // Generate thumbnail key based on video storage key
+  const thumbnailKey = getThumbnailKey(item.storageKey);
+
+  try {
+    // Upload thumbnail to storage
+    await provider.uploadObject(thumbnailKey, thumbnailBuffer, "image/jpeg");
+
+    // Update item with thumbnail key
+    item.thumbnailKey = thumbnailKey;
+    await item.save();
+
+    logger.info({ itemId: item._id, userId, thumbnailKey }, "Video thumbnail uploaded");
+    return item;
+  } catch (error) {
+    logger.error({ error, itemId, userId }, "Failed to upload video thumbnail");
+    throw error;
+  }
+}
+
 // ============================================================================
 // Pending Items (for Mobile)
 // ============================================================================
@@ -294,7 +335,7 @@ export interface PendingItem {
   capturedAt: Date;
   uploadedAt: Date;
   downloadUrl: string;
-  thumbnailUrl?: string; // Presigned URL for thumbnail (images only)
+  thumbnailUrl?: string; // Presigned URL for thumbnail (images auto-generated, videos uploaded from glasses)
   metadata?: {
     width?: number;
     height?: number;
@@ -349,7 +390,7 @@ export async function getPending(
     items.map(async (item) => {
       const downloadUrl = await provider.getPresignedDownloadUrl(item.storageKey);
 
-      // Get thumbnail URL if available (images only)
+      // Get thumbnail URL if available (images & videos with thumbnails)
       let thumbnailUrl: string | undefined;
       if (item.thumbnailKey) {
         try {

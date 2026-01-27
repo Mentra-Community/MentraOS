@@ -439,6 +439,15 @@ public class AsgClientServiceManager {
                 });
                 Log.d(TAG, "📡 Picture request listener set");
 
+                // Set recording status provider to filter out incomplete videos during sync
+                cameraServer.setRecordingStatusProvider(() -> {
+                    if (mediaCaptureService != null) {
+                        return mediaCaptureService.getCurrentRecordingVideoFilename();
+                    }
+                    return null;
+                });
+                Log.d(TAG, "📹 Recording status provider set");
+
                 serverManager.registerServer("camera", cameraServer);
                 Log.d(TAG, "📝 Camera server registered with server manager");
 
