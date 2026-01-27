@@ -29,7 +29,6 @@ const logger = rootLogger.child({ service: "app.service" });
 const APPSTORE_ENABLED = true;
 export const SYSTEM_DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "dev.augmentos.dashboard";
 export const PRE_INSTALLED = [
-  "com.augmentos.livecaptions",
   "cloud.augmentos.notify",
   // "cloud.augmentos.mira",
 ];

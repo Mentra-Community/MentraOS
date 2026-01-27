@@ -138,6 +138,7 @@ export default function MentraLiveOnboarding() {
       transition: false,
       subtitle: translate("onboarding:liveEndTitle"),
       subtitle2: translate("onboarding:liveEndMessage"),
+      title: " ", // for spacing so it's consistent with the other steps
     },
   ]
 

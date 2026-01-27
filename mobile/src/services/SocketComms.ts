@@ -12,6 +12,7 @@ import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import restComms from "@/services/RestComms"
+import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -474,7 +475,7 @@ class SocketComms {
     console.error("SOCKET: auth error")
   }
 
-  private handle_microphone_state_change(msg: any) {
+  private async handle_microphone_state_change(msg: any) {
     // const bypassVad = msg.bypassVad ?? true
     const bypassVad = true
     const requiredDataStrings = msg.requiredData || []
@@ -491,6 +492,19 @@ class SocketComms {
       shouldSendPcmData = true
       shouldSendTranscript = true
     }
+
+    // check permission if we're turning the mic ON.
+    // Turning it off is always allowed and should go through regardless.
+    // This prevents setting systemMicUnavailable=true before permissions are granted,
+    // which would cause the mic to never start even after permissions are granted.
+    if (shouldSendPcmData || shouldSendTranscript) {
+      const hasMicPermission = await checkFeaturePermissions(PermissionFeatures.MICROPHONE)
+      if (!hasMicPermission) {
+        console.log("SOCKET: mic_state_change ignored - microphone permission not granted yet")
+        return
+      }
+    }
+
     CoreModule.setMicState(shouldSendPcmData, shouldSendTranscript, bypassVad)
   }
 

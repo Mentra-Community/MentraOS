@@ -5,7 +5,7 @@
 name: Deploy to end-to-end-tests-prod
 jobs:
   porter-deploy:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

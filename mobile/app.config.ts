@@ -26,7 +26,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     android: {
       icon: "./assets/app-icons/ic_launcher.png",
       package: "com.mentra.mentra",
-      versionCode: 73,
+      versionCode: 77,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
         backgroundImage: "./assets/app-icons/ic_launcher.png",

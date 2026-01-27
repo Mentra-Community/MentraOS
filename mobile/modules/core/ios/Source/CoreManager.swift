@@ -1081,11 +1081,11 @@ struct ViewState {
 
         viewStates[stateIndex] = newViewState
 
-        let headUp = isHeadUp
+        let headUp = isHeadUp && contextualDashboard
         // send the state we just received if the user is currently in that state:
-        if stateIndex == 0, !headUp {
+        if stateIndex == 0 && !headUp {
             sendCurrentState()
-        } else if stateIndex == 1, headUp {
+        } else if stateIndex == 1 && headUp {
             sendCurrentState()
         }
     }

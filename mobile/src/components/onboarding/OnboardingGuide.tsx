@@ -5,7 +5,7 @@ import {View, ViewStyle, ActivityIndicator, Platform} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Text, Button, Header, Icon} from "@/components/ignite"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 
@@ -596,7 +596,7 @@ export function OnboardingGuide({
         />
       )}
       <View id="main" className="flex flex-1">
-        <View id="top" className="flex">
+        <View id="top" className="flex mt-10">
           {step.title && <Text className="text-center text-2xl font-semibold" text={step.title} />}
 
           <View className="-mx-6">
@@ -605,16 +605,26 @@ export function OnboardingGuide({
             </View>
 
             {showReplayButton && isCurrentStepVideo && (
-              <View className="absolute bottom-8 left-0 right-0 items-center z-10">
+              <View className="absolute bottom-0 left-0 right-0 items-center z-10">
                 <Button preset="secondary" className="min-w-24" tx="onboarding:replay" onPress={handleReplay} />
               </View>
             )}
           </View>
 
+          {/* <View className="flex flex-row justify-center items-center">
+            <View className="bg-primary rounded-full p-1">
+              <Icon name="check" size={20} color={theme.colors.background} />
+            </View>
+          </View> */}
+        </View>
+
+        <View id="bottom" className="flex justify-end flex-grow">
           {hasStarted && (
-            <View className="flex flex-col gap-2 mt-4">
+            <View className="flex flex-col gap-2 mb-10">
               {step.subtitle && <Text className="text-center text-xl font-semibold" text={step.subtitle} />}
-              {step.subtitle2 && <Text className="text-center text-xl font-semibold" text={step.subtitle2} />}
+              {step.subtitle2 && (
+                <Text className="text-center text-lg text-foreground font-medium" text={step.subtitle2} />
+              )}
               {step.info && (
                 <View className="flex flex-row gap-2 justify-center items-center px-12">
                   <Icon name="info" size={20} color={theme.colors.muted_foreground} />
@@ -627,9 +637,7 @@ export function OnboardingGuide({
               )}
             </View>
           )}
-        </View>
 
-        <View id="bottom" className="flex justify-end flex-grow">
           {!hasStarted && (mainTitle || mainSubtitle) && (
             <View className="flex flex-col gap-2">
               {mainTitle && <Text className="text-center text-xl font-semibold" text={mainTitle} />}

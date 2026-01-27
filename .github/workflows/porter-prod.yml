@@ -10,7 +10,7 @@ on:
       - ".github/workflows/porter-prod.yml"
 jobs:
   us-central:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
           PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
           PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_4689 }}
   east-asia:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -66,7 +66,7 @@ jobs:
 
   # France
   france:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

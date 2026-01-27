@@ -15,6 +15,7 @@ import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {Spacer} from "@/components/ui/Spacer"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
+import {useAppletStatusStore} from "@/stores/applets"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -206,6 +207,10 @@ export default function PairingPrepScreen() {
 
     console.log("needsBluetoothPermissions", needsBluetoothPermissions)
 
+    // Stop any running apps from previous sessions to prevent mic race conditions
+    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing
+    await useAppletStatusStore.getState().stopAllApplets()
+
     // skip pairing for simulated glasses:
     if (modelName.startsWith(DeviceTypes.SIMULATED)) {
       await CoreModule.connectSimulated()
@@ -230,15 +235,18 @@ export default function PairingPrepScreen() {
   }
 
   const MentraLivePairingGuide = () => {
+    const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
     let steps: OnboardingStep[] = [
       {
         name: "power_on_tutorial",
-        type: "image",
-        source: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
+        type: "video",
+        source: `https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light/ONB1_power_button.mp4`,
+        poster: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
         transition: false,
         title: translate("pairing:powerOn"), // for spacing so it's consistent with the other steps
         subtitle: translate("onboarding:livePowerOnTutorial"),
         info: translate("onboarding:livePowerOnInfo"),
+        playCount: 1,
       },
     ]
 

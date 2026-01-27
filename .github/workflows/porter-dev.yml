@@ -10,7 +10,7 @@ on:
       - ".github/workflows/porter-dev.yml"
 jobs:
   us-central:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

@@ -35,10 +35,10 @@
 <div align="center">
   <h4>Nightly Builds</h4>
   <p>
-    <a href="https://github.com/Mentra-Community/MentraOS/releases/download/nightly-builds/mobile-latest.apk">
+    <a href="https://github.com/TeamOpenSmartGlasses/DiscussPlusPlus/releases/download/nightly-builds/mobile-latest.apk">
       <img src="https://img.shields.io/badge/Mobile_App-Download_APK-blue?style=for-the-badge&logo=android" alt="Download Mobile APK" />
     </a>
-    <a href="https://github.com/Mentra-Community/MentraOS/releases/download/nightly-builds/asg-latest.apk">
+    <a href="https://github.com/TeamOpenSmartGlasses/DiscussPlusPlus/releases/download/nightly-builds/asg-latest.apk">
       <img src="https://img.shields.io/badge/ASG_Client-Download_APK-green?style=for-the-badge&logo=android" alt="Download ASG APK" />
     </a>
   </p>

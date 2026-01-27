@@ -10,7 +10,7 @@ class Simulated : SGCManager() {
     init {
         ready = true
         type = DeviceTypes.SIMULATED
-        connectionState = ConnTypes.DISCONNECTED
+        connectionState = ConnTypes.CONNECTED
         batteryLevel = 100
         micEnabled = false
     }
