@@ -470,6 +470,16 @@ public class Bridge private constructor() {
             sendTypedMessage("cloud_upload_batch_complete", eventBody as Map<String, Any>)
         }
 
+        /** Send cloud upload failed - glasses upload failed (e.g., network error) */
+        @JvmStatic
+        fun sendCloudUploadFailed(reason: String, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["reason"] = reason
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_failed", eventBody as Map<String, Any>)
+        }
+
         /** Send hotspot status change - matches iOS MentraLive.swift emitHotspotStatusChange */
         @JvmStatic
         fun sendHotspotStatusChange(

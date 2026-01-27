@@ -151,8 +151,8 @@ public class CloudGalleryUploader {
             Log.i(TAG, "📊 Total files to upload: " + mInitialTotalFiles);
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             
-            // Notify phone that glasses are uploading - phone should pause cloud downloads
-            sendCloudUploadStartedNotification(mInitialTotalFiles);
+            // Notify cloud that upload batch has started
+            notifyCloudUploadStarted(mInitialTotalFiles);
             
             Log.i(TAG, "▶️ Calling processNextFile() to start processing...");
             processNextFile();
@@ -265,8 +265,8 @@ public class CloudGalleryUploader {
             Log.i(TAG, "═══════════════════════════════════════════════════════════");
             Log.i(TAG, "");
             
-            // Notify phone that upload batch is complete - phone can resume cloud downloads
-            sendCloudUploadBatchCompleteNotification(mCurrentBatchUploaded, failed);
+            // Notify cloud that upload batch is complete - cloud will send WebSocket event to phone
+            notifyCloudUploadComplete();
             
             // Send gallery status update to phone after all uploads complete
             sendGalleryStatusUpdate();
@@ -440,8 +440,8 @@ public class CloudGalleryUploader {
                             Log.w(TAG, "   ⚠️ Failed to delete from glasses: " + metadata.getFileName() + " - " + deleteResult.getMessage());
                         }
                         
-                        // Notify mobile app that a picture was uploaded to cloud
-                        sendCloudUploadNotification(metadata.getFileName());
+                        // Cloud automatically sends WebSocket event to phone when file uploads
+                        // No need for BLE notification
                         
                         if (mCallback != null) {
                             mHandler.post(() -> mCallback.onProgress(
@@ -786,8 +786,8 @@ public class CloudGalleryUploader {
                     Log.w(TAG, "   ⚠️ Failed to delete from glasses: " + metadata.getFileName() + " - " + deleteResult.getMessage());
                 }
                 
-                // Notify mobile app that video was uploaded to cloud
-                sendCloudUploadNotification(metadata.getFileName());
+                // Cloud automatically sends WebSocket event to phone when video uploads
+                // No need for BLE notification
                 
                 if (mCallback != null) {
                     mHandler.post(() -> mCallback.onProgress(
@@ -875,6 +875,9 @@ public class CloudGalleryUploader {
             Log.e(TAG, "🌐 Network error detected - WiFi may have disconnected");
             // Send gallery status immediately so phone knows uploads stopped
             sendGalleryStatusUpdate();
+            // Send BLE notification to phone (fallback when can't reach cloud)
+            // Phone will notify cloud and start downloading available items
+            sendCloudUploadFailedNotification("network_error");
         }
         
         if (attempts < MAX_RETRY_ATTEMPTS) {
@@ -992,83 +995,118 @@ public class CloudGalleryUploader {
     }
     
     /**
-     * Send notification to mobile app that cloud upload is starting.
-     * Phone should pause downloading from cloud until upload completes.
+     * Notify cloud that upload batch has started (HTTP POST)
+     * Cloud will send WebSocket event to phone
      */
-    private void sendCloudUploadStartedNotification(int totalFiles) {
-        if (mCommunicationManager == null) {
-            Log.w(TAG, "⚠️ Cannot send cloud upload started notification - CommunicationManager not available");
+    private void notifyCloudUploadStarted(int totalFiles) {
+        String token = getAuthToken();
+        if (token == null || token.isEmpty()) {
+            Log.w(TAG, "⚠️ Cannot notify cloud - no auth token");
             return;
         }
         
+        String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
+        String endpoint = baseUrl + "/api/client/asg/gallery/upload-started";
+        
         try {
-            JSONObject notification = new JSONObject();
-            notification.put("type", "cloud_upload_started");
-            notification.put("total_files", totalFiles);
-            notification.put("timestamp", System.currentTimeMillis());
+            JSONObject body = new JSONObject();
+            body.put("totalFiles", totalFiles);
             
-            boolean sent = mCommunicationManager.sendBluetoothResponse(notification);
-            if (sent) {
-                Log.i(TAG, "📱 Notified mobile app that cloud upload started: " + totalFiles + " files");
-            } else {
-                Log.w(TAG, "⚠️ Failed to notify mobile app that cloud upload started");
-            }
+            Request request = new Request.Builder()
+                .url(endpoint)
+                .addHeader("Authorization", "Bearer " + token)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create(body.toString(), MediaType.parse("application/json")))
+                .build();
+            
+            mHttpClient.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    Log.w(TAG, "⚠️ Failed to notify cloud of upload start: " + e.getMessage());
+                }
+                
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    if (response.isSuccessful()) {
+                        Log.i(TAG, "✅ Notified cloud that upload started: " + totalFiles + " files");
+                    } else {
+                        Log.w(TAG, "⚠️ Cloud returned error for upload-started: " + response.code());
+                    }
+                    response.close();
+                }
+            });
         } catch (JSONException e) {
-            Log.e(TAG, "💥 Error creating cloud upload started notification", e);
+            Log.e(TAG, "💥 Error creating upload-started request", e);
         }
     }
     
     /**
-     * Send notification to mobile app that entire upload batch is complete
-     * This signals the phone can resume cloud downloads
+     * Notify cloud that upload batch has completed (HTTP POST)
+     * Cloud will send WebSocket event to phone
      */
-    private void sendCloudUploadBatchCompleteNotification(int successCount, int failedCount) {
-        if (mCommunicationManager == null) {
-            Log.w(TAG, "⚠️ Cannot send batch complete notification - CommunicationManager not available");
+    private void notifyCloudUploadComplete() {
+        String token = getAuthToken();
+        if (token == null || token.isEmpty()) {
+            Log.w(TAG, "⚠️ Cannot notify cloud - no auth token");
             return;
         }
         
+        String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
+        String endpoint = baseUrl + "/api/client/asg/gallery/upload-complete";
+        
         try {
-            JSONObject notification = new JSONObject();
-            notification.put("type", "cloud_upload_batch_complete");
-            notification.put("success_count", successCount);
-            notification.put("failed_count", failedCount);
-            notification.put("timestamp", System.currentTimeMillis());
+            Request request = new Request.Builder()
+                .url(endpoint)
+                .addHeader("Authorization", "Bearer " + token)
+                .addHeader("Content-Type", "application/json")
+                .post(RequestBody.create("{}", MediaType.parse("application/json")))
+                .build();
             
-            boolean sent = mCommunicationManager.sendBluetoothResponse(notification);
-            if (sent) {
-                Log.i(TAG, "📱 Notified mobile app that upload batch complete: " + successCount + " success, " + failedCount + " failed");
-            } else {
-                Log.w(TAG, "⚠️ Failed to notify mobile app that upload batch complete");
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "💥 Error creating batch complete notification", e);
+            mHttpClient.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    Log.w(TAG, "⚠️ Failed to notify cloud of upload complete: " + e.getMessage());
+                }
+                
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    if (response.isSuccessful()) {
+                        Log.i(TAG, "✅ Notified cloud that upload batch completed");
+                    } else {
+                        Log.w(TAG, "⚠️ Cloud returned error for upload-complete: " + response.code());
+                    }
+                    response.close();
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error creating upload-complete request", e);
         }
     }
     
     /**
-     * Send notification to mobile app that a picture was uploaded to cloud
+     * Send BLE message to phone when upload fails (fallback when WiFi dies, can't reach cloud)
+     * Phone will notify cloud and start downloading available items
      */
-    private void sendCloudUploadNotification(String filename) {
+    private void sendCloudUploadFailedNotification(String reason) {
         if (mCommunicationManager == null) {
-            Log.w(TAG, "⚠️ Cannot send cloud upload notification - CommunicationManager not available");
+            Log.w(TAG, "⚠️ Cannot send cloud upload failed notification - CommunicationManager not available");
             return;
         }
         
         try {
             JSONObject notification = new JSONObject();
-            notification.put("type", "cloud_upload_complete");
-            notification.put("filename", filename);
+            notification.put("type", "cloud_upload_failed");
+            notification.put("reason", reason);
             notification.put("timestamp", System.currentTimeMillis());
             
             boolean sent = mCommunicationManager.sendBluetoothResponse(notification);
             if (sent) {
-                Log.d(TAG, "📱 Notified mobile app of cloud upload: " + filename);
+                Log.i(TAG, "📱 Notified phone via BLE that cloud upload failed: " + reason);
             } else {
-                Log.w(TAG, "⚠️ Failed to notify mobile app of cloud upload: " + filename);
+                Log.w(TAG, "⚠️ Failed to notify phone that cloud upload failed");
             }
         } catch (JSONException e) {
-            Log.e(TAG, "💥 Error creating cloud upload notification", e);
+            Log.e(TAG, "💥 Error creating cloud upload failed notification", e);
         }
     }
     

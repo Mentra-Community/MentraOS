@@ -1781,6 +1781,18 @@ class MentraLive: NSObject, SGCManager {
             ]
             Bridge.sendTypedMessage("cloud_upload_batch_complete", body: eventBody)
 
+        case "cloud_upload_failed":
+            // Glasses upload failed (e.g., network error) - phone should notify cloud and download pending items
+            let uploadFailureReason = json["reason"] as? String ?? "network_error"
+            let uploadFailureTimestamp = json["timestamp"] as? Int64 ?? Int64(Date().timeIntervalSince1970 * 1000)
+            Bridge.log("LIVE: ❌ Glasses cloud upload failed: \(uploadFailureReason)")
+
+            let eventBody: [String: Any] = [
+                "reason": uploadFailureReason,
+                "timestamp": uploadFailureTimestamp,
+            ]
+            Bridge.sendTypedMessage("cloud_upload_failed", body: eventBody)
+
         case "button_press":
             handleButtonPress(json)
 
