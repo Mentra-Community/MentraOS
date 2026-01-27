@@ -166,6 +166,120 @@ class CloudGallerySyncService {
   }
 
   /**
+   * Request permission to start cloud download
+   */
+  async requestDownloadPermission(): Promise<{allowed: boolean; reason?: string}> {
+    try {
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
+      const token = restComms.getCoreToken()
+      if (!token) {
+        console.warn("[CloudGallerySync] ⚠️ No auth token - denying download permission")
+        return {allowed: false, reason: "No auth token"}
+      }
+
+      const response = await axios.post<{
+        success: boolean
+        data: {allowed: boolean; reason?: string}
+      }>(
+        `${baseUrl}/api/client/asg/gallery/request-download`,
+        {},
+        {
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          timeout: 10000, // 10 second timeout for permission check
+        },
+      )
+
+      if (response.data.success && response.data.data) {
+        const result = response.data.data
+        if (result.allowed) {
+          console.log("[CloudGallerySync] ✅ Download permission granted by cloud")
+        } else {
+          console.warn(`[CloudGallerySync] ❌ Download permission denied: ${result.reason || "Unknown reason"}`)
+        }
+        return result
+      }
+
+      console.warn("[CloudGallerySync] ⚠️ Invalid response format from permission endpoint")
+      return {allowed: false, reason: "Invalid response format"}
+    } catch (error: any) {
+      // Timeout or network error - treat as denial (fail-safe)
+      const statusCode = error?.response?.status
+      if (statusCode === 503 || statusCode === 502 || statusCode === 504) {
+        console.warn(`[CloudGallerySync] ⚠️ Server temporarily unavailable (${statusCode}) - denying permission`)
+        return {allowed: false, reason: "Server temporarily unavailable"}
+      }
+      console.error(
+        "[CloudGallerySync] ❌ Error requesting download permission (cloud unreachable):",
+        error?.message || error,
+      )
+      return {allowed: false, reason: "Cloud unreachable"}
+    }
+  }
+
+  /**
+   * Request permission to start WiFi Direct sync
+   */
+  async requestWifiDirectPermission(): Promise<{allowed: boolean; reason?: string}> {
+    try {
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
+      const token = restComms.getCoreToken()
+      if (!token) {
+        console.warn("[CloudGallerySync] ⚠️ No auth token - denying WiFi Direct permission")
+        return {allowed: false, reason: "No auth token"}
+      }
+
+      const response = await axios.post<{
+        success: boolean
+        data: {allowed: boolean; reason?: string}
+      }>(
+        `${baseUrl}/api/client/asg/gallery/request-wifi-direct`,
+        {},
+        {
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          timeout: 10000, // 10 second timeout for permission check
+        },
+      )
+
+      if (response.data.success && response.data.data) {
+        const result = response.data.data
+        if (result.allowed) {
+          console.log("[CloudGallerySync] ✅ WiFi Direct permission granted by cloud")
+        } else {
+          console.warn(`[CloudGallerySync] ❌ WiFi Direct permission denied: ${result.reason || "Unknown reason"}`)
+        }
+        return result
+      }
+
+      console.warn("[CloudGallerySync] ⚠️ Invalid response format from permission endpoint")
+      return {allowed: false, reason: "Invalid response format"}
+    } catch (error: any) {
+      // Timeout or network error - treat as denial (fail-safe)
+      const statusCode = error?.response?.status
+      if (statusCode === 503 || statusCode === 502 || statusCode === 504) {
+        console.warn(`[CloudGallerySync] ⚠️ Server temporarily unavailable (${statusCode}) - denying permission`)
+        return {allowed: false, reason: "Server temporarily unavailable"}
+      }
+      console.error(
+        "[CloudGallerySync] ❌ Error requesting WiFi Direct permission (cloud unreachable):",
+        error?.message || error,
+      )
+      return {allowed: false, reason: "Cloud unreachable"}
+    }
+  }
+
+  /**
    * Check for pending files in cloud
    */
   async checkPending(ignoreUploadStatus = false): Promise<void> {
@@ -313,6 +427,18 @@ class CloudGallerySyncService {
       console.log(
         `[CloudGallerySync] 🚫 BLOCKED: Cannot download from cloud while WiFi Direct sync is active (state: ${store.syncState})`,
       )
+      return
+    }
+
+    // Request permission from cloud before starting download
+    console.log("[CloudGallerySync] 🔐 Requesting download permission from cloud...")
+    const permission = await this.requestDownloadPermission()
+    if (!permission.allowed) {
+      console.warn(
+        `[CloudGallerySync] ❌ Download permission denied or cloud unreachable: ${permission.reason || "Unknown reason"}`,
+      )
+      const store = useGallerySyncStore.getState()
+      store.setCloudSyncError(permission.reason || "Download permission denied")
       return
     }
 
@@ -877,6 +1003,43 @@ class CloudGallerySyncService {
     } catch (error: any) {
       console.error("[CloudGallerySync] Error deleting item:", error?.message || error)
       throw error
+    }
+  }
+
+  /**
+   * Notify cloud that WiFi Direct sync completed (clears reservation)
+   */
+  async notifyWifiDirectComplete(): Promise<void> {
+    try {
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
+      const token = restComms.getCoreToken()
+      if (!token) {
+        console.warn("[CloudGallerySync] ⚠️ No auth token - cannot notify WiFi Direct complete")
+        return
+      }
+
+      await axios.post(
+        `${baseUrl}/api/client/asg/gallery/wifi-direct-complete`,
+        {},
+        {
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          timeout: TIMING.REQUEST_TIMEOUT_MS,
+        },
+      )
+
+      console.log("[CloudGallerySync] ✅ Notified cloud: WiFi Direct sync completed")
+    } catch (error: any) {
+      console.warn(
+        "[CloudGallerySync] ⚠️ Failed to notify cloud of WiFi Direct completion (non-fatal):",
+        error?.message || error,
+      )
+      // Non-fatal - reservation will expire automatically
     }
   }
 
