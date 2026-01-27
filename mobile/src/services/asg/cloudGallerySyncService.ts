@@ -7,6 +7,7 @@
 import NetInfo from "@react-native-community/netinfo"
 import axios from "axios"
 import * as RNFS from "@dr.pogodin/react-native-fs"
+import CoreModule from "core"
 
 import restComms from "@/services/RestComms"
 import {useGallerySyncStore} from "@/stores/gallerySync"
@@ -150,6 +151,15 @@ class CloudGallerySyncService {
       console.warn("[CloudGallerySync] ⚠️ Status check returned success=false")
       return null
     } catch (error: any) {
+      // 503/502/504 are temporary server errors - don't log as errors, just return null
+      const statusCode = error?.response?.status
+      if (statusCode === 503 || statusCode === 502 || statusCode === 504) {
+        console.log(`[CloudGallerySync] ⏸️ Server temporarily unavailable (${statusCode}) - will retry on next poll`)
+        // Clear any previous error since this is just a temporary server issue
+        const store = useGallerySyncStore.getState()
+        store.setCloudSyncError(null)
+        return null
+      }
       console.warn("[CloudGallerySync] ❌ Failed to get gallery status:", error?.message || error)
       return null
     }
@@ -270,6 +280,16 @@ class CloudGallerySyncService {
         }
       }
     } catch (error: any) {
+      // 503/502/504 are temporary server errors - don't show as user-facing errors
+      const statusCode = error?.response?.status
+      if (statusCode === 503 || statusCode === 502 || statusCode === 504) {
+        console.log(`[CloudGallerySync] ⏸️ Server temporarily unavailable (${statusCode}) - will retry on next poll`)
+        // Clear any previous error since this is just a temporary server issue
+        const store = useGallerySyncStore.getState()
+        store.setCloudSyncError(null)
+        return
+      }
+
       console.error("[CloudGallerySync] Error checking pending:", error?.message || error)
       const store = useGallerySyncStore.getState()
       store.setCloudSyncError(error?.message || "Failed to check pending files")
@@ -361,7 +381,17 @@ class CloudGallerySyncService {
         // Non-fatal - continue with download
       }
 
-      console.log(`[CloudGallerySync] Downloading ${items.length} items`)
+      // Filter out items that are in WiFi sync queue (WiFi sync takes priority)
+      const syncQueue = store.queue || []
+      const syncQueueNames = new Set(syncQueue.map((p) => p.name))
+      const itemsToDownload = items.filter((item) => !syncQueueNames.has(item.filename))
+      const skippedWiFiSync = items.length - itemsToDownload.length
+
+      if (skippedWiFiSync > 0) {
+        console.log(`[CloudGallerySync] ⏭️ Skipping ${skippedWiFiSync} item(s) - already in WiFi Direct sync queue`)
+      }
+
+      console.log(`[CloudGallerySync] Downloading ${itemsToDownload.length} items`)
 
       // Get existing files for deduplication
       const existingFiles = await localStorageService.getDownloadedFiles()
@@ -385,7 +415,7 @@ class CloudGallerySyncService {
       const failedDownloads: string[] = []
 
       // Sort items by capture time (oldest first) for chronological order
-      const sortedItems = [...items].sort((a, b) => {
+      const sortedItems = [...itemsToDownload].sort((a, b) => {
         const timeA = new Date(a.capturedAt).getTime()
         const timeB = new Date(b.capturedAt).getTime()
         return timeA - timeB
@@ -851,6 +881,75 @@ class CloudGallerySyncService {
   }
 
   /**
+   * Delete cloud copies of files that were synced via WiFi Direct.
+   * Called after WiFi Direct sync completes to clean up cloud duplicates.
+   */
+  async deleteCloudCopiesByFilenames(filenames: string[]): Promise<void> {
+    if (filenames.length === 0) {
+      return
+    }
+
+    try {
+      console.log(
+        `[CloudGallerySync] 🗑️ Checking cloud for ${filenames.length} files synced via WiFi Direct to delete cloud copies...`,
+      )
+
+      // TEMPORARY OVERRIDE - DO NOT COMMIT
+      const baseUrl = "https://clouddev.ngrok.app"
+      console.warn("[CloudGallerySync] ⚠️ TEMPORARY OVERRIDE ACTIVE:", baseUrl, "- DO NOT COMMIT THIS!")
+      // const baseUrl = useSettingsStore.getState().getRestUrl() // Original code
+
+      const token = restComms.getCoreToken()
+
+      if (!token) {
+        console.warn("[CloudGallerySync] ⚠️ No auth token - skipping cloud cleanup")
+        return
+      }
+
+      // Query cloud for pending items
+      const response = await axios.get<{success: boolean; data: PendingResponse}>(
+        `${baseUrl}/api/client/asg/gallery/pending?limit=100`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          timeout: TIMING.REQUEST_TIMEOUT_MS,
+        },
+      )
+
+      if (!response.data.success) {
+        console.warn("[CloudGallerySync] ⚠️ Failed to query cloud for cleanup")
+        return
+      }
+
+      const {items} = response.data.data
+      const filenameSet = new Set(filenames)
+
+      // Find cloud items matching the synced filenames
+      const itemsToDelete = items.filter((item) => filenameSet.has(item.filename))
+
+      if (itemsToDelete.length === 0) {
+        console.log(
+          `[CloudGallerySync] ✅ No cloud copies found for ${filenames.length} WiFi Direct synced files (already cleaned up or not uploaded yet)`,
+        )
+        return
+      }
+
+      const idsToDelete = itemsToDelete.map((item) => item.id)
+      console.log(
+        `[CloudGallerySync] 🗑️ Found ${itemsToDelete.length} cloud copies to delete: ${itemsToDelete.map((i) => i.filename).join(", ")}`,
+      )
+
+      // Delete them from cloud
+      await this.markSynced(idsToDelete)
+      console.log(`[CloudGallerySync] ✅ Deleted ${itemsToDelete.length} cloud copies of WiFi Direct synced files`)
+    } catch (error: any) {
+      console.warn(`[CloudGallerySync] ⚠️ Failed to delete cloud copies (non-fatal):`, error?.message || error)
+      // Don't throw - this is cleanup, not critical
+    }
+  }
+
+  /**
    * Force an immediate check (for manual trigger)
    */
   async forceCheck(): Promise<void> {
@@ -937,15 +1036,31 @@ class CloudGallerySyncService {
         )
 
         if (response.data.success) {
-          console.log("[CloudGallerySync] ✅ Upload cancelled")
+          console.log("[CloudGallerySync] ✅ Upload cancelled on cloud")
           // Clear upload status in store
           const store = useGallerySyncStore.getState()
           store.setCloudUploadStatus(false, 0, 0, undefined)
+
+          // Send BLE message to glasses to stop uploading
+          try {
+            CoreModule.sendCancelCloudUpload()
+            console.log("[CloudGallerySync] ✅ Sent cancel_cloud_upload command to glasses via BLE")
+          } catch (error: any) {
+            console.warn("[CloudGallerySync] Failed to send cancel command to glasses:", error?.message || error)
+          }
         } else {
           console.log("[CloudGallerySync] ℹ️ No active upload session to cancel")
           // Still clear local state in case it's stale
           const store = useGallerySyncStore.getState()
           store.setCloudUploadStatus(false, 0, 0, undefined)
+
+          // Still send cancel command to glasses in case they're uploading
+          try {
+            CoreModule.sendCancelCloudUpload()
+            console.log("[CloudGallerySync] ✅ Sent cancel_cloud_upload command to glasses via BLE (preventive)")
+          } catch (error: any) {
+            console.warn("[CloudGallerySync] Failed to send cancel command to glasses:", error?.message || error)
+          }
         }
       }
     } catch (error: any) {
@@ -956,6 +1071,15 @@ class CloudGallerySyncService {
         store.setCloudUploadStatus(false, 0, 0, undefined)
       } else {
         console.warn("[CloudGallerySync] Failed to cancel upload:", error?.message || error)
+      }
+
+      // Always send cancel command to glasses regardless of cloud response
+      // (glasses might still be uploading even if cloud says no session)
+      try {
+        CoreModule.sendCancelCloudUpload()
+        console.log("[CloudGallerySync] ✅ Sent cancel_cloud_upload command to glasses via BLE")
+      } catch (error: any) {
+        console.warn("[CloudGallerySync] Failed to send cancel command to glasses:", error?.message || error)
       }
     } finally {
       this.isCancellingUpload = false

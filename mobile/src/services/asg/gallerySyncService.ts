@@ -18,6 +18,7 @@ import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 import {asgCameraApi} from "./asgCameraApi"
+import {cloudGallerySyncService} from "./cloudGallerySyncService"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
 import {localStorageService} from "./localStorageService"
@@ -1355,6 +1356,19 @@ class GallerySyncService {
 
       // Complete
       store.setSyncComplete()
+
+      // Delete cloud copies of files that were synced via WiFi Direct
+      const syncedFilenames = downloadResult.downloaded.map((file) => file.name)
+      if (syncedFilenames.length > 0) {
+        console.log(
+          `[GallerySyncService] 🗑️ Cleaning up ${syncedFilenames.length} cloud copies of WiFi Direct synced files...`,
+        )
+        // Don't await - this is cleanup, shouldn't block sync completion
+        cloudGallerySyncService.deleteCloudCopiesByFilenames(syncedFilenames).catch((error) => {
+          console.warn("[GallerySyncService] ⚠️ Failed to cleanup cloud copies (non-fatal):", error)
+        })
+      }
+
       await this.onSyncComplete(downloadedCount, failedCount)
     } catch (error: any) {
       if (error?.message === "Sync cancelled") {

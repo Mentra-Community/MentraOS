@@ -236,9 +236,9 @@ export function GalleryScreen() {
         "ms",
       )
       console.log(`[GalleryScreen] ✅ Loaded ${validPhotoInfos.length} valid photos`)
-      validPhotoInfos.forEach((photo, idx) => {
-        console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name}`)
-      })
+      // validPhotoInfos.forEach((photo, idx) => {
+      //   console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name}`)
+      // })
 
       // Add test data in development mode
       if (ENABLE_TEST_GALLERY_DATA) {
@@ -516,6 +516,8 @@ export function GalleryScreen() {
       return
     }
 
+    // Always trigger WiFi Direct sync (not cloud sync) when user taps "Sync x photos" button
+    console.log("[GalleryScreen] 🚀 Starting WiFi Direct gallery sync (not cloud sync)")
     gallerySyncService.startSync()
   }
 
@@ -707,9 +709,9 @@ export function GalleryScreen() {
     // Keep showing queue even when state transitions to idle after sync
     if (syncQueue.length > 0) {
       console.log(`[GalleryScreen] 📋 syncQueue contains:`)
-      syncQueue.forEach((photo, idx) => {
-        console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name} (filePath: ${photo.filePath ? "✅" : "❌"})`)
-      })
+      // syncQueue.forEach((photo, idx) => {
+      //   console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name} (filePath: ${photo.filePath ? "✅" : "❌"})`)
+      // })
 
       const sortedQueue = [...syncQueue].sort((a, b) => {
         const aTime = typeof a.modified === "string" ? new Date(a.modified).getTime() : a.modified || 0
@@ -950,8 +952,9 @@ export function GalleryScreen() {
     if (cloudSyncActive) return null
 
     // Show glasses uploading banner (but only if not downloading from cloud)
-    if (cloudUploadIsUploading) {
-      const uploadProgressPercent = cloudUploadTotal > 0 ? Math.round((cloudUploadCurrent / cloudUploadTotal) * 100) : 0
+    // Only show if we have valid upload data (total > 0) to prevent showing stale state
+    if (cloudUploadIsUploading && cloudUploadTotal > 0) {
+      const uploadProgressPercent = Math.round((cloudUploadCurrent / cloudUploadTotal) * 100)
       return (
         <View style={[themed($syncButtonFixed), {bottom: insets.bottom + spacing.s12}]}>
           <View style={themed($syncButtonContent)}>
@@ -969,11 +972,9 @@ export function GalleryScreen() {
                 <Icon name="x" size={18} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
-            {cloudUploadTotal > 0 && (
-              <View style={themed($syncButtonProgressBar)}>
-                <View style={[themed($syncButtonProgressFill), {width: `${uploadProgressPercent}%`}]} />
-              </View>
-            )}
+            <View style={themed($syncButtonProgressBar)}>
+              <View style={[themed($syncButtonProgressFill), {width: `${uploadProgressPercent}%`}]} />
+            </View>
           </View>
         </View>
       )
