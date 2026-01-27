@@ -2120,6 +2120,19 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendCancelCloudUpload() {
+        Bridge.log("LIVE: 🛑 ==========================================")
+        Bridge.log("LIVE: 🛑 PHONE → GLASSES: cancel_cloud_upload")
+        Bridge.log("LIVE: 🛑 ==========================================")
+
+        let json: [String: Any] = [
+            "type": "cancel_cloud_upload",
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
     func sendGalleryMode() {
         let active = CoreManager.shared.galleryMode
         Bridge.log("LIVE: 📸 Sending gallery mode active to glasses: \(active)")

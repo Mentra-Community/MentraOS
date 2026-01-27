@@ -1140,6 +1140,11 @@ struct ViewState {
         sgc?.queryGalleryStatus()
     }
 
+    func sendCancelCloudUpload() {
+        Bridge.log("MAN: 🛑 Sending cancel cloud upload command to glasses")
+        sgc?.sendCancelCloudUpload()
+    }
+
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
