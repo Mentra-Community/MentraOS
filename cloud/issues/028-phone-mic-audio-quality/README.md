@@ -56,33 +56,44 @@ synchronized(lc3EncoderLock) {
 
 **File**: `mobile/src/services/UdpManager.ts`
 
-When LC3 audio exceeded 1018 bytes, UDP chunking split at arbitrary byte boundaries → partial LC3 frames sent → cloud decoder failed.
+When LC3 audio exceeded max packet size, UDP chunking split at arbitrary byte boundaries → partial LC3 frames sent → cloud decoder failed.
 
 **Example with 60-byte frames (48kbps)**:
 
 - Before: 1440 bytes → 1016 + 424 (partial frames!)
 - After: 1440 bytes → 960 + 480 (16 + 8 complete frames)
 
-**Fix**: Align chunk size to LC3 frame boundaries:
+**Fix**: Align chunk size to LC3 frame boundaries, accounting for encryption overhead when enabled:
 
 ```typescript
 private getMaxChunkSize(): number {
   const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key) || 20
-  // Calculate how many complete frames fit in max packet size
-  const maxFrames = Math.floor(MAX_AUDIO_CHUNK_SIZE_BASE / frameSizeBytes)
+
+  // Account for encryption overhead if enabled (40 bytes: 24-byte nonce + 16-byte auth tag)
+  const availableForAudio = this.encryptionConfig
+    ? MAX_AUDIO_CHUNK_SIZE_BASE - ENCRYPTION_OVERHEAD  // 1018 - 40 = 978
+    : MAX_AUDIO_CHUNK_SIZE_BASE                         // 1018
+
+  // Calculate how many complete frames fit
+  const maxFrames = Math.floor(availableForAudio / frameSizeBytes)
   return maxFrames * frameSizeBytes
 }
 ```
 
+**Note**: This fix interacts with UDP encryption (Issue 027). When encryption is enabled, the 40-byte overhead must be subtracted _before_ calculating frame alignment, not after.
+
 ## Key Numbers
 
-| Parameter       | Value                                                   |
-| --------------- | ------------------------------------------------------- |
-| PCM frame size  | 320 bytes (160 samples × 2 bytes)                       |
-| LC3 frame sizes | 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps) |
-| Max UDP payload | 1018 bytes (after 6-byte header)                        |
-| Sample rate     | 16kHz                                                   |
-| Frame duration  | 10ms                                                    |
+| Parameter              | Value                                                   |
+| ---------------------- | ------------------------------------------------------- |
+| PCM frame size         | 320 bytes (160 samples × 2 bytes)                       |
+| LC3 frame sizes        | 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps) |
+| Max UDP payload        | 1018 bytes (after 6-byte header)                        |
+| Encryption overhead    | 40 bytes (24-byte nonce + 16-byte tag)                  |
+| Max audio (no encrypt) | 960 bytes (16 × 60-byte frames)                         |
+| Max audio (encrypted)  | 960 bytes (16 × 60-byte frames, from 978 available)     |
+| Sample rate            | 16kHz                                                   |
+| Frame duration         | 10ms                                                    |
 
 ## Debug Tools Added
 
@@ -107,3 +118,7 @@ private getMaxChunkSize(): number {
 - [x] Fix UDP packet frame alignment (TypeScript)
 - [x] Add debug bypass for testing
 - [x] Verify audio quality at 48kbps (60-byte frames)
+
+## Related
+
+- **027-udp-audio-encryption** - UDP encryption feature that this fix must account for (40-byte overhead)
