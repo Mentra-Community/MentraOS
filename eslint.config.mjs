@@ -4,13 +4,12 @@ import tseslint from "typescript-eslint"
 import pluginReact from "eslint-plugin-react"
 import pluginReactNative from "eslint-plugin-react-native"
 import pluginReactotron from "eslint-plugin-reactotron"
-import pluginPrettier from "eslint-plugin-prettier"
 import prettierConfig from "eslint-config-prettier"
 import expoConfig from "eslint-config-expo/flat.js"
-import {defineConfig} from "eslint/config"
+import { defineConfig } from "eslint/config"
 
 export default defineConfig([
-  // Recommended configs
+  // Base configs
   expoConfig,
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -18,22 +17,14 @@ export default defineConfig([
   pluginReact.configs.flat["jsx-runtime"],
   prettierConfig,
 
-  // custom config:
+  // Shared rules (all packages)
   {
     files: ["**/*.{js,mjs,cjs,ts,jsx,tsx}"],
     ignores: ["eslint.config.mjs", "metro.config.js"],
-    plugins: {
-      "@typescript-eslint": tseslint.plugin,
-      "react": pluginReact,
-      "react-native": pluginReactNative,
-      "reactotron": pluginReactotron,
-      "prettier": pluginPrettier,
-    },
     languageOptions: {
       globals: {
         ...globals.node,
         ...globals.browser,
-        __DEV__: "readonly", // React Native global
       },
       parser: tseslint.parser,
       parserOptions: {
@@ -42,19 +33,11 @@ export default defineConfig([
       },
     },
     settings: {
-      "react": {
-        version: "detect", // Automatically detect the React version
-      },
-      "import/resolver": {
-        typescript: {
-          project: ["./mobile/tsconfig.json", "./cloud/tsconfig.json"],
-        },
+      react: {
+        version: "detect",
       },
     },
     rules: {
-      // Prettier
-      "prettier/prettier": "error",
-
       // TypeScript
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-unused-vars": [
@@ -73,11 +56,6 @@ export default defineConfig([
       // React
       "react/prop-types": "off",
 
-      // React Native rules are scoped to RN files via an overrides block below
-
-      // Reactotron
-      "reactotron/no-tron-in-production": "error",
-
       // Core ESLint
       "prefer-const": "off",
       "no-use-before-define": "off",
@@ -86,6 +64,40 @@ export default defineConfig([
       "quotes": "off",
       "space-before-function-paren": "off",
       "no-case-declarations": "warn",
+    },
+  },
+
+  // Mobile-specific
+  {
+    files: ["mobile/**/*.{js,ts,jsx,tsx}"],
+    plugins: {
+      "react-native": pluginReactNative,
+      "reactotron": pluginReactotron,
+    },
+    languageOptions: {
+      globals: {
+        __DEV__: "readonly",
+      },
+    },
+    settings: {
+      "import/resolver": {
+        typescript: {
+          project: "./mobile/tsconfig.json",
+        },
+      },
+    },
+    rules: {
+      // React Native
+      "react-native/no-unused-styles": "error",
+      "react-native/split-platform-components": "warn",
+      "react-native/no-inline-styles": "warn",
+      "react-native/no-color-literals": "off",
+      "react-native/no-raw-text": "error",
+
+      // Reactotron
+      "reactotron/no-tron-in-production": "error",
+
+      // Mobile-specific import restrictions
       "no-restricted-imports": [
         "error",
         {
@@ -93,22 +105,22 @@ export default defineConfig([
             {
               name: "react",
               importNames: ["default"],
-              message: "Import named exports from 'react' instead / don't import React.",
+              message: "Import named exports from 'react' instead.",
             },
             {
               name: "react-native",
               importNames: ["StyleSheet"],
-              message: "Do not import StyleSheet from 'react-native'. Use ThemedStyles / the useTheme() hook instead.",
+              message: "Use ThemedStyles / useTheme() hook instead.",
             },
             {
               name: "expo-router",
               importNames: ["useRouter"],
-              message: "Do not use useRouter from expo-router. Use our useNavigationHistory hook instead.",
+              message: "Use useNavigationHistory hook instead.",
             },
             {
               name: "react-native",
               importNames: ["Text"],
-              message: "Do not import Text from 'react-native'. Use the Ignite component with the tx prop instead.",
+              message: "Use the Ignite Text component with tx prop instead.",
             },
           ],
           patterns: [
@@ -119,33 +131,47 @@ export default defineConfig([
           ],
         },
       ],
-      // Disabled: import/order causes mass file changes across PRs
-      // "import/order": "off",
     },
   },
 
-  // Jest setup files configuration
+  // Cloud-specific
   {
-    files: ["**/jest.setup.js", "**/jest.config.js", "**/*.test.{js,ts,jsx,tsx}", "**/*.spec.{js,ts,jsx,tsx}"],
+    files: ["cloud/**/*.{js,ts,jsx,tsx}"],
+    settings: {
+      "import/resolver": {
+        typescript: {
+          project: "./cloud/tsconfig.json",
+        },
+      },
+    },
+    rules: {
+      // Add cloud-specific rules here
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["../*"],
+              message: "Use @/ path aliases instead of relative imports",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // Test files
+  {
+    files: [
+      "**/jest.setup.js",
+      "**/jest.config.js",
+      "**/*.test.{js,ts,jsx,tsx}",
+      "**/*.spec.{js,ts,jsx,tsx}",
+    ],
     languageOptions: {
       globals: {
         ...globals.jest,
       },
-    },
-  },
-
-  // React Native-only rules (scoped override)
-  // NOTE: eslint-plugin-react-native rules were being applied to web code (e.g., the console),
-  // triggering RN-only checks like react-native/no-raw-text in regular React. The plugin does not
-  // auto-detect platform, so we explicitly scope these rules to RN files and paths.
-  {
-    files: ["mobile/**/*.{js,ts,jsx,tsx}", "**/*.native.{js,ts,jsx,tsx}"],
-    rules: {
-      "react-native/no-unused-styles": "error",
-      "react-native/split-platform-components": "warn",
-      "react-native/no-inline-styles": "warn",
-      "react-native/no-color-literals": "off",
-      "react-native/no-raw-text": "error",
     },
   },
 
