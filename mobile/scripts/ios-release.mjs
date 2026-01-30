@@ -1,5 +1,5 @@
 #!/usr/bin/env zx
-import {setBuildEnv} from "./set-build-env.mjs"
+import setBuildEnv from "./set-build-env.mjs"
 await setBuildEnv()
 
 // Build iOS archive

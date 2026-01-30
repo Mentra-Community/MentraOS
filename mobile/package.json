@@ -15,6 +15,7 @@
     "android:flash:prebuilt": "zx ./scripts/android-flash-prebuilt.mjs",
     "build:google:play": "zx ./scripts/build-google-play.mjs",
     "upload:google:play": "zx ./scripts/upload-google-play.mjs",
+    "check:deps": "zx ./scripts/check-deps.mjs",
     "compile": "tsc --noEmit -p . --pretty",
     "lint": "eslint . --fix",
     "lint:check": "eslint .",

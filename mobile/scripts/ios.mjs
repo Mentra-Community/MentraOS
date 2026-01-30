@@ -1,6 +1,6 @@
 #!/usr/bin/env zx
-import { setBuildEnv } from './set-build-env.mjs';
-await setBuildEnv();
+import setBuildEnv from "./set-build-env.mjs"
+await setBuildEnv()
 
 // prebuild ios:
 await $({stdio: "inherit"})`bun expo prebuild --platform ios`
@@ -9,4 +9,4 @@ await $({stdio: "inherit"})`bun expo prebuild --platform ios`
 await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
 
 // Run expo iOS command with stdin enabled for interactive prompts
-await $({ stdio: 'inherit' })`bun expo run:ios --device`;
+await $({stdio: "inherit"})`bun expo run:ios --device`

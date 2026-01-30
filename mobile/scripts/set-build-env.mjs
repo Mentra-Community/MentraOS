@@ -2,7 +2,7 @@
 import {config} from "dotenv"
 import {writeFile} from "fs/promises"
 
-export async function setBuildEnv() {
+async function setBuildEnv() {
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
   const gitBranch = (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
   const gitUsername = (await $`git config user.name`).stdout.trim().replace(/ /g, "_")  // format: 2025-11-18_12-00
@@ -55,6 +55,8 @@ export async function setBuildEnv() {
 
   console.log("\n.env file updated successfully")
 }
+
+export default setBuildEnv
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   await setBuildEnv()
