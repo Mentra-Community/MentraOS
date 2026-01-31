@@ -1,0 +1,484 @@
+package com.mentra.asg_client.service.gallery;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.util.Log;
+import androidx.preference.PreferenceManager;
+
+import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.io.file.core.FileManager.FileMetadata;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Gallery Upload Queue
+ * Manages the queue of files to upload to cloud
+ * Tracks upload state, failures, and retries
+ */
+public class GalleryUploadQueue {
+    private static final String TAG = "GalleryUploadQueue";
+    
+    // SharedPreferences keys
+    private static final String PREF_LAST_SYNC_TIMESTAMP = "cloud_last_sync_timestamp";
+    private static final String PREF_UPLOADED_FILES = "cloud_uploaded_files";
+    private static final String PREF_FAILED_UPLOADS = "cloud_failed_uploads";
+    private static final String PREF_UPLOAD_ATTEMPTS = "cloud_upload_attempts";
+    
+    // Queue build protection
+    private static final long MIN_BUILD_INTERVAL_MS = 1000; // Minimum 1 second between builds
+    
+    private final Context mContext;
+    private final FileManager mFileManager;
+    private final SharedPreferences mPrefs;
+    
+    // In-memory queue state
+    private List<FileMetadata> mPendingFiles;
+    private int mCurrentIndex;
+    private Set<String> mUploadedFiles;
+    private Map<String, String> mFailedUploads;
+    private Map<String, Integer> mUploadAttempts;
+    
+    // Build protection state
+    private final AtomicBoolean mIsBuilding = new AtomicBoolean(false);
+    private volatile long mLastBuildTimestamp = 0;
+    
+    // Recording status provider - to exclude currently recording videos
+    private RecordingStatusProvider mRecordingStatusProvider;
+    
+    /**
+     * Interface to check if a video is currently being recorded
+     */
+    public interface RecordingStatusProvider {
+        String getCurrentRecordingFilename();
+    }
+    
+    public GalleryUploadQueue(Context context, FileManager fileManager) {
+        this.mContext = context;
+        this.mFileManager = fileManager;
+        this.mPrefs = PreferenceManager.getDefaultSharedPreferences(context);
+        
+        // Load persisted state
+        loadState();
+        
+        Log.i(TAG, "📋 GalleryUploadQueue initialized");
+    }
+    
+    /**
+     * Set the recording status provider to exclude currently recording videos
+     */
+    public void setRecordingStatusProvider(RecordingStatusProvider provider) {
+        this.mRecordingStatusProvider = provider;
+    }
+    
+    /**
+     * Load queue state from SharedPreferences
+     */
+    private void loadState() {
+        // Load uploaded files set
+        mUploadedFiles = new HashSet<>();
+        try {
+            String uploadedJson = mPrefs.getString(PREF_UPLOADED_FILES, "[]");
+            JSONArray uploadedArray = new JSONArray(uploadedJson);
+            for (int i = 0; i < uploadedArray.length(); i++) {
+                mUploadedFiles.add(uploadedArray.getString(i));
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error loading uploaded files", e);
+        }
+        
+        // Load failed uploads map
+        mFailedUploads = new HashMap<>();
+        try {
+            String failedJson = mPrefs.getString(PREF_FAILED_UPLOADS, "{}");
+            JSONObject failedObj = new JSONObject(failedJson);
+            JSONArray names = failedObj.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    String key = names.getString(i);
+                    mFailedUploads.put(key, failedObj.getString(key));
+                }
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error loading failed uploads", e);
+        }
+        
+        // Load upload attempts map
+        mUploadAttempts = new HashMap<>();
+        try {
+            String attemptsJson = mPrefs.getString(PREF_UPLOAD_ATTEMPTS, "{}");
+            JSONObject attemptsObj = new JSONObject(attemptsJson);
+            JSONArray names = attemptsObj.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    String key = names.getString(i);
+                    mUploadAttempts.put(key, attemptsObj.getInt(key));
+                }
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error loading upload attempts", e);
+        }
+        
+        Log.d(TAG, "📋 Loaded state: " + mUploadedFiles.size() + " uploaded, " + 
+                  mFailedUploads.size() + " failed");
+    }
+    
+    /**
+     * Build the upload queue from FileManager
+     * Filters out already-uploaded files and sorts by capture time
+     * Protected against concurrent builds and rapid rebuilds
+     */
+    public void buildQueue() {
+        buildQueue(false);
+    }
+    
+    /**
+     * Build the upload queue from FileManager
+     * @param force If true, bypasses the debounce protection (use sparingly)
+     */
+    public void buildQueue(boolean force) {
+        // Guard against concurrent builds
+        if (!mIsBuilding.compareAndSet(false, true)) {
+            Log.d(TAG, "⏸️ Queue build already in progress - skipping duplicate build");
+            return;
+        }
+        
+        try {
+            // Guard against rapid rebuilds (debounce)
+            long now = System.currentTimeMillis();
+            long timeSinceLastBuild = now - mLastBuildTimestamp;
+            if (!force && mLastBuildTimestamp > 0 && timeSinceLastBuild < MIN_BUILD_INTERVAL_MS) {
+                Log.d(TAG, "⏸️ Queue was built " + timeSinceLastBuild + "ms ago - skipping rebuild (min interval: " + MIN_BUILD_INTERVAL_MS + "ms)");
+                return;
+            }
+            
+            Log.i(TAG, "🔨 Building upload queue" + (force ? " (forced)" : ""));
+            mLastBuildTimestamp = now;
+            
+            // Get all files from FileManager
+            List<FileMetadata> allFiles = mFileManager.listFiles(mFileManager.getDefaultPackageName());
+        
+        // Get last sync timestamp
+        long lastSyncTime = mPrefs.getLong(PREF_LAST_SYNC_TIMESTAMP, 0);
+        
+        // Get currently recording filename (if any) to exclude from queue
+        String currentlyRecordingFilename = null;
+        if (mRecordingStatusProvider != null) {
+            currentlyRecordingFilename = mRecordingStatusProvider.getCurrentRecordingFilename();
+            if (currentlyRecordingFilename != null) {
+                Log.i(TAG, "🎥 Currently recording video (will be excluded): " + currentlyRecordingFilename);
+            }
+        }
+        
+        // Filter files
+        mPendingFiles = new ArrayList<>();
+        int skippedUploaded = 0;
+        int skippedFailed = 0;
+        int skippedOld = 0;
+        int skippedRecording = 0;
+        
+        Log.d(TAG, "📋 Filtering " + allFiles.size() + " files (lastSyncTime: " + lastSyncTime + 
+                  ", uploaded: " + mUploadedFiles.size() + ", failed: " + mFailedUploads.size() + ")");
+        
+        for (FileMetadata file : allFiles) {
+            // Skip currently recording video (file is still being written)
+            if (currentlyRecordingFilename != null && file.getFileName().equals(currentlyRecordingFilename)) {
+                skippedRecording++;
+                Log.d(TAG, "   🎥 Skipping (currently recording): " + file.getFileName());
+                continue;
+            }
+            
+            // Skip if already uploaded
+            if (mUploadedFiles.contains(file.getFileName())) {
+                skippedUploaded++;
+                Log.d(TAG, "   ⏭️ Skipping (already uploaded): " + file.getFileName());
+                continue;
+            }
+            
+            // Check if file previously failed - always allow retry on new sync cycle
+            if (mFailedUploads.containsKey(file.getFileName())) {
+                String error = mFailedUploads.get(file.getFileName());
+                Log.i(TAG, "   🔄 Retrying previously failed file: " + file.getFileName() + " - " + error);
+                // Remove from failed list to allow retry
+                mFailedUploads.remove(file.getFileName());
+                saveFailedUploads();
+                // Continue to add to queue for retry
+            }
+            
+            // Skip if modified before last sync (should have been synced already)
+            // Allow 10 second buffer for clock skew
+            if (file.getLastModified() < lastSyncTime - 10000) {
+                skippedOld++;
+                Log.d(TAG, "   ⏭️ Skipping (too old): " + file.getFileName() + 
+                          " (modified: " + file.getLastModified() + 
+                          ", lastSync: " + lastSyncTime + ")");
+                continue;
+            }
+            
+            mPendingFiles.add(file);
+            Log.d(TAG, "   ✅ Adding to queue: " + file.getFileName());
+        }
+        
+        Log.i(TAG, "📋 Filter results: " + mPendingFiles.size() + " pending, " + 
+                  skippedUploaded + " already uploaded, " + 
+                  skippedFailed + " failed, " + 
+                  skippedOld + " too old, " +
+                  skippedRecording + " currently recording");
+        
+        // Sort by capture time (oldest first)
+        Collections.sort(mPendingFiles, new Comparator<FileMetadata>() {
+            @Override
+            public int compare(FileMetadata f1, FileMetadata f2) {
+                return Long.compare(f1.getLastModified(), f2.getLastModified());
+            }
+        });
+        
+        mCurrentIndex = 0;
+        
+        Log.i(TAG, "📋 Queue built: " + mPendingFiles.size() + " files to upload");
+        
+        // Log summary
+        int photoCount = 0;
+        int videoCount = 0;
+        long totalSize = 0;
+        
+        for (FileMetadata file : mPendingFiles) {
+            if (isVideoFile(file.getFileName())) {
+                videoCount++;
+            } else {
+                photoCount++;
+            }
+            totalSize += file.getFileSize();
+        }
+        
+        Log.i(TAG, "📊 Queue summary: " + photoCount + " photos, " + videoCount + " videos, " + 
+                  formatBytes(totalSize) + " total");
+        
+        // Clean up stale failure records for files that no longer exist on glasses
+        // This prevents ghost entries from accumulating in statistics
+        if (!mFailedUploads.isEmpty()) {
+            Set<String> existingFileNames = new HashSet<>();
+            for (FileMetadata file : allFiles) {
+                existingFileNames.add(file.getFileName());
+            }
+            
+            // Find failure records for files that no longer exist
+            Set<String> staleFailures = new HashSet<>();
+            for (String failedFileName : mFailedUploads.keySet()) {
+                if (!existingFileNames.contains(failedFileName) && 
+                    !mUploadedFiles.contains(failedFileName)) {
+                    staleFailures.add(failedFileName);
+                }
+            }
+            
+            // Remove stale failure records
+            if (!staleFailures.isEmpty()) {
+                for (String stale : staleFailures) {
+                    mFailedUploads.remove(stale);
+                }
+                saveFailedUploads();
+                Log.i(TAG, "🧹 Cleaned up " + staleFailures.size() + " stale failure records (files no longer exist)");
+            }
+        }
+        } finally {
+            // Always release the build lock
+            mIsBuilding.set(false);
+        }
+    }
+    
+    /**
+     * Check if queue is currently being built
+     */
+    public boolean isBuilding() {
+        return mIsBuilding.get();
+    }
+    
+    /**
+     * Get timestamp of last queue build
+     */
+    public long getLastBuildTimestamp() {
+        return mLastBuildTimestamp;
+    }
+    
+    /**
+     * Get next file to upload
+     */
+    public FileMetadata getNextFile() {
+        if (mPendingFiles == null || mCurrentIndex >= mPendingFiles.size()) {
+            return null;
+        }
+        
+        FileMetadata file = mPendingFiles.get(mCurrentIndex);
+        mCurrentIndex++;
+        return file;
+    }
+    
+    /**
+     * Mark file as successfully uploaded
+     */
+    public void markAsUploaded(String filename) {
+        mUploadedFiles.add(filename);
+        
+        // Remove from attempts tracking
+        mUploadAttempts.remove(filename);
+        
+        // Persist to SharedPreferences
+        saveUploadedFiles();
+        saveUploadAttempts();
+        
+        Log.d(TAG, "✅ Marked as uploaded: " + filename);
+    }
+    
+    /**
+     * Mark file as failed
+     */
+    public void markAsFailed(String filename, String error) {
+        mFailedUploads.put(filename, error);
+        
+        // Remove from attempts tracking
+        mUploadAttempts.remove(filename);
+        
+        // Persist to SharedPreferences
+        saveFailedUploads();
+        saveUploadAttempts();
+        
+        Log.e(TAG, "❌ Marked as failed: " + filename + " - " + error);
+    }
+    
+    /**
+     * Get number of upload attempts for a file
+     */
+    public int getAttempts(String filename) {
+        return mUploadAttempts.getOrDefault(filename, 0);
+    }
+    
+    /**
+     * Increment upload attempts for a file
+     */
+    public void incrementAttempts(String filename) {
+        int current = mUploadAttempts.getOrDefault(filename, 0);
+        mUploadAttempts.put(filename, current + 1);
+        saveUploadAttempts();
+    }
+    
+    /**
+     * Get count of uploaded files
+     */
+    public int getUploadedCount() {
+        return mUploadedFiles.size();
+    }
+    
+    /**
+     * Get count of failed files
+     */
+    public int getFailedCount() {
+        return mFailedUploads.size();
+    }
+    
+    /**
+     * Get total files in queue
+     */
+    public int getTotalFiles() {
+        return mPendingFiles != null ? mPendingFiles.size() : 0;
+    }
+    
+    /**
+     * Get current index in queue (0-based)
+     */
+    public int getCurrentIndex() {
+        return mCurrentIndex;
+    }
+    
+    /**
+     * Clear uploaded files history (after successful sync)
+     */
+    public void clearUploaded() {
+        mUploadedFiles.clear();
+        saveUploadedFiles();
+        Log.d(TAG, "🧹 Cleared uploaded files history");
+    }
+    
+    /**
+     * Clear failed uploads (for retry)
+     */
+    public void clearFailed() {
+        mFailedUploads.clear();
+        saveFailedUploads();
+        Log.d(TAG, "🧹 Cleared failed uploads");
+    }
+    
+    /**
+     * Update last sync timestamp
+     */
+    public void updateLastSyncTime() {
+        mPrefs.edit()
+            .putLong(PREF_LAST_SYNC_TIMESTAMP, System.currentTimeMillis())
+            .apply();
+        Log.d(TAG, "⏰ Updated last sync timestamp");
+    }
+    
+    // Persistence methods
+    
+    private void saveUploadedFiles() {
+        try {
+            JSONArray array = new JSONArray(mUploadedFiles);
+            mPrefs.edit()
+                .putString(PREF_UPLOADED_FILES, array.toString())
+                .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving uploaded files", e);
+        }
+    }
+    
+    private void saveFailedUploads() {
+        try {
+            JSONObject obj = new JSONObject(mFailedUploads);
+            mPrefs.edit()
+                .putString(PREF_FAILED_UPLOADS, obj.toString())
+                .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving failed uploads", e);
+        }
+    }
+    
+    private void saveUploadAttempts() {
+        try {
+            JSONObject obj = new JSONObject(mUploadAttempts);
+            mPrefs.edit()
+                .putString(PREF_UPLOAD_ATTEMPTS, obj.toString())
+                .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving upload attempts", e);
+        }
+    }
+    
+    // Helper methods
+    
+    private boolean isVideoFile(String filename) {
+        String lower = filename.toLowerCase();
+        return lower.endsWith(".mp4") || 
+               lower.endsWith(".mov") || 
+               lower.endsWith(".avi") ||
+               lower.endsWith(".mkv") ||
+               lower.endsWith(".webm") ||
+               lower.endsWith(".3gp");
+    }
+    
+    private String formatBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+}

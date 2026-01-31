@@ -22,22 +22,28 @@ public class ServerConfigUtil {
      * @throws IllegalStateException if required configuration is missing
      */
     public static String getServerBaseUrl(Context context) {
+        // TEMPORARY OVERRIDE - DO NOT COMMIT
+        String tempOverride = "https://clouddev.ngrok.app";
+        Log.w("ServerConfigUtil", "⚠️ TEMPORARY OVERRIDE ACTIVE: " + tempOverride + " - DO NOT COMMIT THIS!");
+        return tempOverride;
+        // END TEMPORARY OVERRIDE
+        
         // Try to get override from SharedPreferences
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        String overrideUrl = prefs.getString("augmentos_server_url_override", null);
-        if (overrideUrl != null && !overrideUrl.isEmpty()) {
-            Log.d("ServerConfigUtil", "Using override URL: " + overrideUrl);
-            return overrideUrl;
-        }
-        String host = BuildConfig.MENTRAOS_HOST;
-        String port = BuildConfig.MENTRAOS_PORT;
-        boolean secureServer = Boolean.parseBoolean(BuildConfig.MENTRAOS_SECURE);
-        
-        if (host == null || port == null) {
-            throw new IllegalStateException("AugmentOS Server Config Not Found");
-        }
-        
-        return String.format("%s://%s:%s", secureServer ? "https" : "http", host, port);
+//        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+//        String overrideUrl = prefs.getString("augmentos_server_url_override", null);
+//        if (overrideUrl != null && !overrideUrl.isEmpty()) {
+//            Log.d("ServerConfigUtil", "Using override URL: " + overrideUrl);
+//            return overrideUrl;
+//        }
+//        String host = BuildConfig.MENTRAOS_HOST;
+//        String port = BuildConfig.MENTRAOS_PORT;
+//        boolean secureServer = Boolean.parseBoolean(BuildConfig.MENTRAOS_SECURE);
+//
+//        if (host == null || port == null) {
+//            throw new IllegalStateException("AugmentOS Server Config Not Found");
+//        }
+//
+//        return String.format("%s://%s:%s", secureServer ? "https" : "http", host, port);
     }
     
     /**

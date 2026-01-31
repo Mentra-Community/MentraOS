@@ -22,6 +22,8 @@ export default function GallerySettingsScreen() {
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   const [autoSaveToCameraRoll, setAutoSaveToCameraRoll] = useState(true)
+  const [enableCloudSync, setEnableCloudSync] = useState(true)
+  const [cloudSyncWifiOnly, setCloudSyncWifiOnly] = useState(true)
   const [localPhotoCount, setLocalPhotoCount] = useState(0)
   const [localVideoCount, setLocalVideoCount] = useState(0)
   const [glassesPhotoCount, setGlassesPhotoCount] = useState(0)
@@ -38,6 +40,8 @@ export default function GallerySettingsScreen() {
   const loadSettings = async () => {
     const settings = await gallerySettingsService.getSettings()
     setAutoSaveToCameraRoll(settings.autoSaveToCameraRoll)
+    setEnableCloudSync(settings.enableCloudSync)
+    setCloudSyncWifiOnly(settings.cloudSyncWifiOnly)
   }
 
   const loadStats = async () => {
@@ -80,6 +84,16 @@ export default function GallerySettingsScreen() {
   const handleToggleAutoSave = async (value: boolean) => {
     setAutoSaveToCameraRoll(value)
     await gallerySettingsService.setAutoSaveToCameraRoll(value)
+  }
+
+  const handleToggleCloudSync = async (value: boolean) => {
+    setEnableCloudSync(value)
+    await gallerySettingsService.setEnableCloudSync(value)
+  }
+
+  const handleToggleCloudSyncWifiOnly = async (value: boolean) => {
+    setCloudSyncWifiOnly(value)
+    await gallerySettingsService.setCloudSyncWifiOnly(value)
   }
 
   const handleDeleteAll = async () => {
@@ -140,11 +154,28 @@ export default function GallerySettingsScreen() {
         )}
 
         <View style={themed($sectionCompact)}>
-          <Text style={themed($sectionTitle)}>Automatic Sync</Text>
+          <Text style={themed($sectionTitle)}>WiFi Direct Sync</Text>
           <ToggleSetting
             label="Save to Camera Roll"
             value={autoSaveToCameraRoll}
             onValueChange={handleToggleAutoSave}
+          />
+        </View>
+
+        <View style={themed($sectionCompact)}>
+          <Text style={themed($sectionTitle)}>Cloud Sync</Text>
+          <ToggleSetting
+            label="Enable Cloud Sync"
+            description="Automatically download photos uploaded to cloud"
+            value={enableCloudSync}
+            onValueChange={handleToggleCloudSync}
+          />
+          <ToggleSetting
+            label="WiFi Only"
+            description="Only download from cloud when connected to WiFi"
+            value={cloudSyncWifiOnly}
+            onValueChange={handleToggleCloudSyncWifiOnly}
+            disabled={!enableCloudSync}
           />
         </View>
 

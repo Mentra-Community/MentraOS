@@ -15,6 +15,7 @@ export {
   minVersionApi,
   notificationsApi,
   userSettingsApi,
+  asgGalleryApi,
 } from "./client";
 
 // SDK APIs (third-party apps)

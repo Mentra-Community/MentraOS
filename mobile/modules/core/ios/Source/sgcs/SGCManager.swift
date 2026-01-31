@@ -119,6 +119,7 @@ protocol SGCManager {
 
     func queryGalleryStatus()
     func sendGalleryMode()
+    func sendCancelCloudUpload()
 }
 
 extension SGCManager {

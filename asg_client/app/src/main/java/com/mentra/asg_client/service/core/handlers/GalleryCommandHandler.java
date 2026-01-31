@@ -7,6 +7,7 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
+import com.mentra.asg_client.service.gallery.CloudGalleryUploader;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
 
 import org.json.JSONObject;
@@ -21,16 +22,19 @@ public class GalleryCommandHandler implements ICommandHandler {
     
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
+    private final CloudGalleryUploader cloudGalleryUploader;
 
     public GalleryCommandHandler(AsgClientServiceManager serviceManager, 
-                                ICommunicationManager communicationManager) {
+                                ICommunicationManager communicationManager,
+                                CloudGalleryUploader cloudGalleryUploader) {
         this.serviceManager = serviceManager;
         this.communicationManager = communicationManager;
+        this.cloudGalleryUploader = cloudGalleryUploader;
     }
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("query_gallery_status");
+        return Set.of("query_gallery_status", "cancel_cloud_upload");
     }
 
     @Override
@@ -39,6 +43,8 @@ public class GalleryCommandHandler implements ICommandHandler {
             switch (commandType) {
                 case "query_gallery_status":
                     return handleQueryGalleryStatus();
+                case "cancel_cloud_upload":
+                    return handleCancelCloudUpload();
                 default:
                     Log.e(TAG, "Unsupported gallery command: " + commandType);
                     return false;
@@ -54,6 +60,7 @@ public class GalleryCommandHandler implements ICommandHandler {
      * Returns the count of photos and videos in the gallery using the same
      * FileManager approach as the HTTP server.
      * Also includes camera busy state if camera is being used.
+     * Excludes currently recording videos from the count.
      */
     private boolean handleQueryGalleryStatus() {
         try {
@@ -70,8 +77,11 @@ public class GalleryCommandHandler implements ICommandHandler {
                 return sendEmptyGalleryStatus();
             }
 
-            // Build gallery status using shared utility
-            JSONObject response = GalleryStatusHelper.buildGalleryStatus(fileManager);
+            // Get currently recording video filename (if any) to exclude from count
+            String currentlyRecordingFilename = getCurrentlyRecordingFilename();
+
+            // Build gallery status using shared utility, excluding recording video
+            JSONObject response = GalleryStatusHelper.buildGalleryStatus(fileManager, currentlyRecordingFilename);
 
             // Check camera busy state - only include if camera is actually busy
             String cameraState = getCameraBusyState();
@@ -111,6 +121,32 @@ public class GalleryCommandHandler implements ICommandHandler {
     }
     
     /**
+     * Get the filename of the currently recording video (if any).
+     * @return The filename of the video being recorded, or null if not recording
+     */
+    private String getCurrentlyRecordingFilename() {
+        try {
+            MediaCaptureService mediaCaptureService = null;
+            if (serviceManager != null) {
+                mediaCaptureService = serviceManager.getMediaCaptureService();
+            }
+            
+            if (mediaCaptureService != null && mediaCaptureService.isRecordingVideo()) {
+                String filename = mediaCaptureService.getCurrentRecordingVideoFilename();
+                if (filename != null) {
+                    Log.d(TAG, "📸 Currently recording video: " + filename);
+                }
+                return filename;
+            }
+            
+            return null;
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting currently recording filename", e);
+            return null;
+        }
+    }
+
+    /**
      * Check if camera is busy with recording or streaming.
      * @return "video" if recording, "stream" if streaming, null if camera is available
      */
@@ -143,6 +179,31 @@ public class GalleryCommandHandler implements ICommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error checking camera busy state", e);
             return null;
+        }
+    }
+    
+    /**
+     * Handle cancel cloud upload command from phone.
+     * Stops any active cloud uploads immediately and sends gallery status update.
+     */
+    private boolean handleCancelCloudUpload() {
+        try {
+            Log.i(TAG, "🛑 Received cancel_cloud_upload command from phone");
+            
+            if (cloudGalleryUploader != null) {
+                cloudGalleryUploader.cancelUpload();
+                Log.i(TAG, "✅ Cloud upload cancelled successfully");
+            } else {
+                Log.w(TAG, "⚠️ CloudGalleryUploader not available");
+            }
+            
+            // Send gallery status update to phone after canceling
+            // This ensures phone knows upload has stopped
+            Log.d(TAG, "📸 Sending gallery status update after cancel");
+            return handleQueryGalleryStatus();
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error cancelling cloud upload", e);
+            return false;
         }
     }
 }

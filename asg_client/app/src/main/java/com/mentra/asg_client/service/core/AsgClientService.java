@@ -552,6 +552,23 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                       ", StateManager: " + (stateManager != null ? "valid" : "null") +
                       ", StreamingManager: " + (streamingManager != null ? "valid" : "null") +
                       ", CommandProcessor: " + (commandProcessor != null ? "valid" : "null"));
+            
+            // Check if Bluetooth is already connected and start monitoring if so
+            // (onConnectionStateChanged won't fire if BT was already connected before listener registration)
+            if (serviceContainer != null && serviceContainer.getServiceManager() != null) {
+                com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager bluetoothManager = 
+                    serviceContainer.getServiceManager().getBluetoothManager();
+                if (bluetoothManager != null && bluetoothManager.isConnected()) {
+                    Log.i(TAG, "📶 Bluetooth already connected when service started - starting background sync monitoring");
+                    if (serviceContainer.getBackgroundSyncManager() != null) {
+                        serviceContainer.getBackgroundSyncManager().startMonitoring();
+                    } else {
+                        Log.w(TAG, "⚠️ BackgroundSyncManager not available yet");
+                    }
+                } else {
+                    Log.d(TAG, "📶 Bluetooth not connected yet - will start monitoring when connection established");
+                }
+            }
 
 
         } catch (Exception e) {
@@ -790,8 +807,24 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             
             Log.d(TAG, "🎯 Enabling swipe volume control on Bluetooth connection");
             handleSwipeVolumeControl(false);
+            
+            // Start background gallery sync monitoring
+            Log.i(TAG, "☁️ Starting background gallery sync monitoring");
+            if (serviceContainer == null) {
+                Log.e(TAG, "❌ Cannot start background sync: serviceContainer is null");
+            } else if (serviceContainer.getBackgroundSyncManager() == null) {
+                Log.e(TAG, "❌ Cannot start background sync: BackgroundSyncManager is null");
+            } else {
+                Log.i(TAG, "✅ ServiceContainer and BackgroundSyncManager are available, calling startMonitoring()");
+                serviceContainer.getBackgroundSyncManager().startMonitoring();
+            }
         } else {
-            Log.d(TAG, "📶 Bluetooth disconnected - no additional actions needed");
+            Log.d(TAG, "📶 Bluetooth disconnected - stopping background sync");
+            
+            // Stop background gallery sync monitoring
+            if (serviceContainer != null && serviceContainer.getBackgroundSyncManager() != null) {
+                serviceContainer.getBackgroundSyncManager().stopMonitoring();
+            }
         }
     }
 

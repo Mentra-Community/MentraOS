@@ -942,6 +942,23 @@ public class MediaCaptureService {
     }
 
     /**
+     * Get the filename of the currently recording video (if any).
+     * This is used to filter out incomplete videos from sync operations.
+     * @return The filename (not full path) of the currently recording video, or null if not recording
+     */
+    public String getCurrentRecordingVideoFilename() {
+        if (!isRecordingVideo || currentVideoPath == null) {
+            return null;
+        }
+        // Extract just the filename from the full path
+        int lastSlash = currentVideoPath.lastIndexOf('/');
+        if (lastSlash >= 0 && lastSlash < currentVideoPath.length() - 1) {
+            return currentVideoPath.substring(lastSlash + 1);
+        }
+        return currentVideoPath;
+    }
+
+    /**
      * Get the current recording duration in milliseconds
      * @return Duration in milliseconds, or 0 if not recording
      */

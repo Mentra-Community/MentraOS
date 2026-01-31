@@ -1474,22 +1474,51 @@ public class MentraLive extends SGCManager {
      * Send a JSON object to the glasses with message ID and ACK tracking
      */
     private void sendJson(JSONObject json, boolean wakeup) {
+        boolean isAuthToken = json != null && "auth_token".equals(json.optString("type", ""));
+        
+        if (isAuthToken) {
+            Bridge.log("LIVE: 🔐 sendJson(JSONObject, wakeup=" + wakeup + ") called for auth_token");
+        }
+        
         if (json != null) {
             try {
                 if (glassesBuildNumberInt < 5) {
                     String jsonStr = json.toString();
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Build < 5: Converting JSON to string");
+                        Bridge.log("LIVE: 🔐 JSON string (redacted): " + jsonStr.replace(json.optString("coreToken", ""), "[TOKEN_REDACTED]"));
+                    }
                     Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID: " + jsonStr);
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Calling sendDataToGlasses() for auth_token");
+                    }
                     sendDataToGlasses(jsonStr, wakeup);
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 sendDataToGlasses() returned for auth_token");
+                    }
                 } else {
                     // Add esoteric message ID to the JSON
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Build >= 5: Adding message ID to JSON");
+                    }
                     long messageId = generateEsotericMessageId();
                     json.put("mId", messageId);
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Message ID generated: " + messageId);
+                    }
 
                     String jsonStr = json.toString();
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 JSON string created (length: " + jsonStr.length() + " chars)");
+                        Bridge.log("LIVE: 🔐 JSON string (redacted): " + jsonStr.replace(json.optString("coreToken", ""), "[TOKEN_REDACTED]"));
+                    }
                     Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID " + messageId + ": " + jsonStr);
 
                     // Check if this message will be chunked to determine timeout
                     long ackTimeout = ACK_TIMEOUT_MS;
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Checking if message needs chunking");
+                    }
                     try {
                         // Create a test C-wrapped version to check size
                         JSONObject testWrapper = new JSONObject();
@@ -1504,27 +1533,66 @@ public class MentraLive extends SGCManager {
                             int estimatedChunks = (int) Math.ceil(jsonStr.length() / 300.0);
                             ackTimeout = ACK_TIMEOUT_MS + (estimatedChunks * 50L) + 2000L;
                             Bridge.log("LIVE: Message will be chunked into ~" + estimatedChunks + " chunks, using dynamic timeout: " + ackTimeout + "ms");
+                            if (isAuthToken) {
+                                Bridge.log("LIVE: 🔐 Auth token message will be chunked into " + estimatedChunks + " chunks");
+                            }
+                        } else {
+                            if (isAuthToken) {
+                                Bridge.log("LIVE: 🔐 Auth token message does not need chunking");
+                            }
                         }
                     } catch (JSONException e) {
                         // If we can't determine, use default timeout
                         Log.w(TAG, "Could not determine if message needs chunking, using default timeout");
+                        if (isAuthToken) {
+                            Bridge.log("LIVE: 🔐 Warning: Could not determine chunking, using default timeout");
+                        }
                     }
 
                     // Track the message for ACK with appropriate timeout
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Tracking message for ACK (timeout: " + ackTimeout + "ms)");
+                    }
                     trackMessageForAck(messageId, jsonStr, ackTimeout);
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Message tracked for ACK");
+                    }
 
                     // Send the data
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 Calling sendDataToGlasses() for auth_token");
+                    }
                     sendDataToGlasses(jsonStr, wakeup);
+                    if (isAuthToken) {
+                        Bridge.log("LIVE: 🔐 sendDataToGlasses() returned for auth_token");
+                    }
                 }
             } catch (JSONException e) {
                 Log.e(TAG, "Error adding message ID to JSON", e);
+                if (isAuthToken) {
+                    Bridge.log("LIVE: 🔐 ❌ JSONException in sendJson() for auth_token: " + e.getMessage());
+                    Bridge.log("LIVE: 🔐 ❌ Stack trace: " + android.util.Log.getStackTraceString(e));
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Unexpected error in sendJson()", e);
+                if (isAuthToken) {
+                    Bridge.log("LIVE: 🔐 ❌ Unexpected exception in sendJson() for auth_token: " + e.getMessage());
+                    Bridge.log("LIVE: 🔐 ❌ Stack trace: " + android.util.Log.getStackTraceString(e));
+                }
             }
         } else {
             Bridge.log("LIVE: Cannot send JSON to ASG, JSON is null");
+            if (isAuthToken) {
+                Bridge.log("LIVE: 🔐 ❌ Cannot send auth_token - JSON is null");
+            }
         }
     }
 
     private void sendJson(JSONObject json){
+        if (json != null && "auth_token".equals(json.optString("type", ""))) {
+            Bridge.log("LIVE: 🔐 sendJson() called for auth_token message");
+            Bridge.log("LIVE: 🔐 JSON object: " + json.toString().replace(json.optString("coreToken", ""), "[TOKEN_REDACTED]"));
+        }
         sendJson(json, false);
     }
 
@@ -2204,11 +2272,59 @@ public class MentraLive extends SGCManager {
                 long totalSize = json.optLong("total_size", 0);
                 boolean hasContent = json.optBoolean("has_content", false);
 
-                Bridge.log("LIVE: 📸 Received gallery status: " + photoCount + " photos, " +
-                      videoCount + " videos, total size: " + totalSize + " bytes");
+                Bridge.log("LIVE: 📸 ==========================================");
+                Bridge.log("LIVE: 📸 PHONE ← GLASSES: gallery_status response");
+                Bridge.log("LIVE: 📸 Photos: " + photoCount + ", Videos: " + videoCount + ", Total: " + totalCount);
+                Bridge.log("LIVE: 📸 Size: " + totalSize + " bytes, HasContent: " + hasContent);
+                Bridge.log("LIVE: 📸 ==========================================");
 
                 // Send gallery status to React Native frontend (matches iOS pattern)
                 Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent);
+                break;
+
+            case "cloud_upload_started":
+                // Glasses started uploading to cloud - phone should pause cloud downloads
+                int cloudUploadTotalFiles = json.optInt("total_files", 0);
+                long cloudUploadStartTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: 🚀 Glasses started cloud upload: " + cloudUploadTotalFiles + " files");
+
+                // Send to React Native to pause cloud downloads
+                Bridge.sendCloudUploadStarted(cloudUploadTotalFiles, cloudUploadStartTimestamp);
+                break;
+
+            case "cloud_upload_complete":
+                // A file was uploaded to cloud by glasses
+                String cloudUploadFilename = json.optString("filename", "");
+                long cloudUploadCompleteTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: ☁️ Glasses uploaded file to cloud: " + cloudUploadFilename);
+
+                // Send to React Native
+                Bridge.sendCloudUploadComplete(cloudUploadFilename, cloudUploadCompleteTimestamp);
+                break;
+
+            case "cloud_upload_batch_complete":
+                // Entire upload batch is complete - phone can resume cloud downloads
+                int batchSuccessCount = json.optInt("success_count", 0);
+                int batchFailedCount = json.optInt("failed_count", 0);
+                long batchCompleteTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: ✅ Glasses upload batch complete: " + batchSuccessCount + " success, " + batchFailedCount + " failed");
+
+                // Send to React Native to resume cloud downloads
+                Bridge.sendCloudUploadBatchComplete(batchSuccessCount, batchFailedCount, batchCompleteTimestamp);
+                break;
+
+            case "cloud_upload_failed":
+                // Glasses upload failed (e.g., network error) - phone should notify cloud and download pending items
+                String uploadFailureReason = json.optString("reason", "network_error");
+                long uploadFailureTimestamp = json.optLong("timestamp", System.currentTimeMillis());
+
+                Bridge.log("LIVE: ❌ Glasses cloud upload failed: " + uploadFailureReason);
+
+                // Send to React Native to handle failure (notify cloud and download pending items)
+                Bridge.sendCloudUploadFailed(uploadFailureReason, uploadFailureTimestamp);
                 break;
 
             case "touch_event":
@@ -2833,30 +2949,55 @@ public class MentraLive extends SGCManager {
      * Send the coreToken to the ASG client for direct backend authentication
      */
     private void sendCoreTokenToAsgClient() {
-        Bridge.log("LIVE: Preparing to send coreToken to ASG client");
+        Bridge.log("LIVE: 🔐 ========== sendCoreTokenToAsgClient() START ==========");
+        Bridge.log("LIVE: 🔐 Step 1: Preparing to send coreToken to ASG client");
 
-        // Get the coreToken from SharedPreferences
-        SharedPreferences prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE);
-        String coreToken = prefs.getString(KEY_CORE_TOKEN, null);
+        // Get the coreToken using getCoreToken() function
+        Bridge.log("LIVE: 🔐 Step 2: Calling getCoreToken() to retrieve token");
+        String coreToken = getCoreToken();
+        Bridge.log("LIVE: 🔐 Step 3: Token retrieved - " + (coreToken != null && !coreToken.isEmpty() ? "exists (length: " + coreToken.length() + ")" : "NULL/EMPTY"));
 
         if (coreToken == null || coreToken.isEmpty()) {
-            Log.e(TAG, "No coreToken available to send to ASG client");
+            Log.e(TAG, "LIVE: ❌ No coreToken available to send to ASG client");
+            Bridge.log("LIVE: ❌ Token is null or empty - cannot send");
+            Bridge.log("LIVE: 🔐 ========== sendCoreTokenToAsgClient() END (FAILED) ==========");
             return;
         }
 
+        Bridge.log("LIVE: 🔐 Step 5: Token validation passed (length: " + coreToken.length() + " chars)");
+        Bridge.log("LIVE: 🔐 Step 6: Token preview: " + coreToken.substring(0, Math.min(20, coreToken.length())) + "...");
+
         try {
+            Bridge.log("LIVE: 🔐 Step 7: Creating JSON message object");
             // Create a JSON object with the token
             JSONObject tokenMsg = new JSONObject();
+            Bridge.log("LIVE: 🔐 Step 8: Adding 'type' field: 'auth_token'");
             tokenMsg.put("type", "auth_token");
+            Bridge.log("LIVE: 🔐 Step 9: Adding 'coreToken' field (length: " + coreToken.length() + ")");
             tokenMsg.put("coreToken", coreToken);
-            tokenMsg.put("timestamp", System.currentTimeMillis());
+            Bridge.log("LIVE: 🔐 Step 10: Adding 'timestamp' field");
+            long timestamp = System.currentTimeMillis();
+            tokenMsg.put("timestamp", timestamp);
+            Bridge.log("LIVE: 🔐 Step 11: JSON message created successfully");
+            Bridge.log("LIVE: 🔐 Step 12: JSON content: " + tokenMsg.toString().replace(coreToken, "[TOKEN_REDACTED]"));
 
             // Send the JSON object
-            Bridge.log("LIVE: Sending coreToken to ASG client");
+            Bridge.log("LIVE: 🔐 Step 13: Calling sendJson() to transmit message");
+            Bridge.log("LIVE: 🔐 Step 14: Message will be sent via BLE to glasses");
             sendJson(tokenMsg);
+            Bridge.log("LIVE: 🔐 Step 15: sendJson() returned - message queued for transmission");
+            Bridge.log("LIVE: ✅ ========== sendCoreTokenToAsgClient() END (SUCCESS) ==========");
 
         } catch (JSONException e) {
-            Log.e(TAG, "Error creating coreToken JSON message", e);
+            Log.e(TAG, "LIVE: 💥 Error creating coreToken JSON message", e);
+            Bridge.log("LIVE: 💥 JSONException: " + e.getMessage());
+            Bridge.log("LIVE: 💥 Stack trace: " + android.util.Log.getStackTraceString(e));
+            Bridge.log("LIVE: ❌ ========== sendCoreTokenToAsgClient() END (EXCEPTION) ==========");
+        } catch (Exception e) {
+            Log.e(TAG, "LIVE: 💥 Unexpected error in sendCoreTokenToAsgClient()", e);
+            Bridge.log("LIVE: 💥 Exception: " + e.getMessage());
+            Bridge.log("LIVE: 💥 Stack trace: " + android.util.Log.getStackTraceString(e));
+            Bridge.log("LIVE: ❌ ========== sendCoreTokenToAsgClient() END (EXCEPTION) ==========");
         }
     }
 
@@ -3018,10 +3159,31 @@ public class MentraLive extends SGCManager {
         try {
             JSONObject json = new JSONObject();
             json.put("type", "query_gallery_status");
+            json.put("timestamp", System.currentTimeMillis());
             sendJson(json, true);
-            Bridge.log("LIVE: 📸 Sending gallery status query to glasses");
+            Bridge.log("LIVE: 📸 ==========================================");
+            Bridge.log("LIVE: 📸 PHONE → GLASSES: query_gallery_status");
+            Bridge.log("LIVE: 📸 ==========================================");
         } catch (JSONException e) {
             Log.e(TAG, "📸 Error creating gallery status query", e);
+        }
+    }
+
+    /**
+     * Send cancel cloud upload command to glasses.
+     * Stops any active cloud uploads immediately.
+     */
+    public void sendCancelCloudUpload() {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "cancel_cloud_upload");
+            json.put("timestamp", System.currentTimeMillis());
+            sendJson(json, true);
+            Bridge.log("LIVE: 🛑 ==========================================");
+            Bridge.log("LIVE: 🛑 PHONE → GLASSES: cancel_cloud_upload");
+            Bridge.log("LIVE: 🛑 ==========================================");
+        } catch (JSONException e) {
+            Log.e(TAG, "🛑 Error creating cancel cloud upload command", e);
         }
     }
 
@@ -5288,8 +5450,18 @@ public class MentraLive extends SGCManager {
      * Get the core authentication token
      */
     private String getCoreToken() {
+        // TEMPORARY HARDCODED TOKEN - DO NOT COMMIT
+        final String HARDCODED_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiODJjZTlhYS1hZmY1LTRmNWYtYmNlYy00Zjk0YmZlMTY3ZjAiLCJlbWFpbCI6ImxvcmlhbWlzdGFkaTc1KzVAZ21haWwuY29tIiwib3JnYW5pemF0aW9ucyI6WyI2OTYxODIxZDYyY2ZlODhlYTQwZWE1MDciXSwiZGVmYXVsdE9yZyI6IjY5NjE4MjFkNjJjZmU4OGVhNDBlYTUwNyIsImlhdCI6MTc2OTIxNzQwMX0.EtMMeUhLgtnf2vwVvEwupELXlytf_IPa4Mb8jFoVkWY";
+        Bridge.log("LIVE: 🔐 ⚠️ TEMPORARY HARDCODED TOKEN ACTIVE - DO NOT COMMIT THIS!");
+        Bridge.log("LIVE: 🔐 Using hardcoded token (length: " + HARDCODED_TOKEN.length() + " chars)");
+        return HARDCODED_TOKEN;
+        // END TEMPORARY HARDCODED TOKEN
+        
+        // Original code (commented out for temporary override):
+        /*
         SharedPreferences prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE);
         return prefs.getString(KEY_CORE_TOKEN, "");
+        */
     }
 
     /**

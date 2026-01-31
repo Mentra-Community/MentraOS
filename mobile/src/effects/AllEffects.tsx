@@ -1,4 +1,5 @@
 import {ButtonActions} from "@/effects/ButtonActions"
+import {CloudGallerySync} from "@/effects/CloudGallerySync"
 import {GalleryModeSync} from "@/effects/GalleryModeSync"
 import {MtkUpdateAlert} from "@/effects/MtkUpdateAlert"
 import {NetworkMonitoring} from "@/effects/NetworkMonitoring"
@@ -19,6 +20,7 @@ export const AllEffects = () => {
       <NetworkMonitoring />
       <ButtonActions />
       <GalleryModeSync />
+      <CloudGallerySync />
       <ConsoleLogger />
     </>
   )

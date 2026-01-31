@@ -28,6 +28,7 @@ import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
+import com.mentra.asg_client.service.gallery.CloudGalleryUploader;
 import com.mentra.asg_client.reporting.core.ReportManager;
 
 import org.json.JSONObject;
@@ -185,6 +186,20 @@ public class CommandProcessor {
 
         // processJsonCommand() completed
     }
+    
+    /**
+     * Set CloudGalleryUploader and register GalleryCommandHandler.
+     * Called after ServiceContainer creates CloudGalleryUploader.
+     */
+    public void setCloudGalleryUploader(CloudGalleryUploader cloudGalleryUploader) {
+        if (cloudGalleryUploader != null) {
+            commandHandlerRegistry.registerHandler(new GalleryCommandHandler(serviceManager, communicationManager, cloudGalleryUploader));
+            Log.d(TAG, "✅ Registered GalleryCommandHandler with CloudGalleryUploader");
+        } else {
+            Log.w(TAG, "⚠️ CloudGalleryUploader is null, registering GalleryCommandHandler without it");
+            commandHandlerRegistry.registerHandler(new GalleryCommandHandler(serviceManager, communicationManager, null));
+        }
+    }
 
     /**
      * Extract and validate command data from JSON using improved protocol detector.
@@ -330,8 +345,9 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new ImuCommandHandler(context, responseSender));
             Log.d(TAG, "✅ Registered ImuCommandHandler");
             
-            commandHandlerRegistry.registerHandler(new GalleryCommandHandler(serviceManager, communicationManager));
-            Log.d(TAG, "✅ Registered GalleryCommandHandler");
+            // GalleryCommandHandler will be registered later with CloudGalleryUploader
+            // (registered in setCloudGalleryUploader method after ServiceContainer creates it)
+            Log.d(TAG, "⏳ GalleryCommandHandler registration deferred (waiting for CloudGalleryUploader)");
 
             commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered TransferCompleteCommandHandler");

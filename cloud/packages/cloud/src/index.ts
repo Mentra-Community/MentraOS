@@ -16,6 +16,7 @@ dotenv.config();
 import * as mongoConnection from "./connections/mongodb.connection";
 import honoApp from "./hono-app";
 import * as AppUptimeService from "./services/core/app-uptime.service";
+import * as GalleryService from "./services/client/gallery/gallery.service";
 import { memoryTelemetryService } from "./services/debug/MemoryTelemetryService";
 import { logger as rootLogger } from "./services/logging/pino-logger";
 import { udpAudioServer } from "./services/udp/UdpAudioServer";
@@ -145,6 +146,18 @@ memoryTelemetryService.start();
 if (process.env.UPTIME_SERVICE_RUNNING === "true") {
   AppUptimeService.startUptimeScheduler();
 }
+
+// Start gallery session cleanup (runs every minute to clean stale upload/download sessions)
+setInterval(() => {
+  try {
+    const cleaned = GalleryService.cleanupStaleSessions();
+    if (cleaned > 0) {
+      logger.info({ cleaned }, "Cleaned up stale gallery sessions");
+    }
+  } catch (error) {
+    logger.error({ error }, "Failed to cleanup stale gallery sessions");
+  }
+}, 60 * 1000); // Run every minute
 
 logger.info(`\n
     ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️

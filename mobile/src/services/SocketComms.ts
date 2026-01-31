@@ -896,8 +896,55 @@ class SocketComms {
         this.handle_udp_ping_ack(msg)
         break
 
+      case "gallery_event":
+        this.handle_gallery_event(msg)
+        break
+
       default:
         console.log(`SOCKET: Unknown message type: ${type} / full: ${JSON.stringify(msg)}`)
+    }
+  }
+
+  private handle_gallery_event(msg: any) {
+    const event = msg.data
+    if (!event) return
+
+    // Import services dynamically to avoid circular dependencies
+    const {cloudGallerySyncService} = require("@/services/asg/cloudGallerySyncService")
+    const {useGallerySyncStore} = require("@/stores/gallerySync")
+
+    switch (event.type) {
+      case "gallery_upload_progress": {
+        // Update store with real-time upload progress
+        const store = useGallerySyncStore.getState()
+        store.setCloudUploadStatus(true, event.current || 0, event.total || 0, event.currentFile)
+        console.log(
+          `[SocketComms] 📤 Gallery upload progress ${event.current}/${event.total} - ${event.currentFile || ""}`,
+        )
+        break
+      }
+
+      case "gallery_upload_complete": {
+        // Upload batch finished
+        console.log("[SocketComms] ✅ Gallery upload batch complete")
+        const store2 = useGallerySyncStore.getState()
+        store2.setCloudUploadStatus(false, 0, 0, undefined)
+        // Trigger check for pending items
+        cloudGallerySyncService.checkPending()
+        break
+      }
+
+      case "gallery_upload_started": {
+        // Upload batch started
+        console.log(`[SocketComms] 🚀 Gallery upload started - ${event.totalFiles || 0} files`)
+        const store3 = useGallerySyncStore.getState()
+        store3.setCloudUploadStatus(true, 0, event.totalFiles || 0, undefined)
+        break
+      }
+
+      default:
+        // Ignore unknown event types
+        break
     }
   }
 }

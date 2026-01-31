@@ -56,6 +56,32 @@ export interface GallerySyncInfo {
   glassesTotalCount: number
   glassesHasContent: boolean
 
+  // Cloud sync state
+  cloudPendingCount: number
+  cloudPendingBytes: number
+  cloudSyncActive: boolean
+  cloudSyncComplete: boolean
+  cloudSyncError: string | null
+  lastCloudPollTime: number | null
+  cloudCurrentFile: number
+  cloudTotalFiles: number
+  cloudCurrentFileName: string | null
+  cloudCompletedFiles: number
+  cloudFileProgress: Map<string, number> // Track progress per file (filename -> progress 0-100)
+  cloudDownloadingItems: Array<{
+    filename: string
+    capturedAt: number
+    mimeType: string
+    is_video: boolean
+    thumbnailUrl?: string
+  }> // Items currently being downloaded (for preview)
+
+  // Cloud upload status (from WebSocket)
+  cloudUploadIsUploading: boolean
+  cloudUploadCurrent: number
+  cloudUploadTotal: number
+  cloudUploadCurrentFile?: string
+
   // Error tracking
   lastError: string | null
 }
@@ -85,6 +111,21 @@ interface GallerySyncState extends GallerySyncInfo {
   setGlassesGalleryStatus: (photos: number, videos: number, total: number, hasContent: boolean) => void
   clearGlassesGalleryStatus: () => void
 
+  // Cloud sync management
+  setCloudPending: (count: number, bytes: number) => void
+  setCloudSyncActive: (active: boolean) => void
+  setCloudSyncComplete: (complete: boolean) => void
+  setCloudSyncError: (error: string | null) => void
+  setLastCloudPollTime: (time: number) => void
+  setCloudProgress: (current: number, total: number, fileName?: string | null) => void
+  setCloudFileProgress: (fileName: string, progress: number) => void
+  onCloudFileComplete: (fileName: string) => void
+  clearCloudFileProgress: () => void
+  setCloudDownloadingItems: (
+    items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean; thumbnailUrl?: string}>,
+  ) => void
+  setCloudUploadStatus: (isUploading: boolean, current: number, total: number, currentFile?: string) => void
+
   // Queue management (for resume)
   setQueue: (files: PhotoInfo[], startIndex?: number) => void
   advanceQueue: () => void
@@ -109,6 +150,22 @@ const initialState: GallerySyncInfo = {
   glassesVideoCount: 0,
   glassesTotalCount: 0,
   glassesHasContent: false,
+  cloudPendingCount: 0,
+  cloudPendingBytes: 0,
+  cloudSyncActive: false,
+  cloudSyncComplete: false,
+  cloudSyncError: null,
+  lastCloudPollTime: null,
+  cloudCurrentFile: 0,
+  cloudTotalFiles: 0,
+  cloudCurrentFileName: null,
+  cloudCompletedFiles: 0,
+  cloudFileProgress: new Map<string, number>(),
+  cloudDownloadingItems: [],
+  cloudUploadIsUploading: false,
+  cloudUploadCurrent: 0,
+  cloudUploadTotal: 0,
+  cloudUploadCurrentFile: undefined,
   lastError: null,
 }
 
@@ -212,7 +269,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
 
     updateFileInQueue: (fileName: string, updatedFile: PhotoInfo) => {
       const state = get()
-      const updatedQueue = state.queue.map(file => (file.name === fileName ? updatedFile : file))
+      const updatedQueue = state.queue.map((file) => (file.name === fileName ? updatedFile : file))
       set({queue: updatedQueue})
     },
 
@@ -244,6 +301,87 @@ export const useGallerySyncStore = create<GallerySyncState>()(
         glassesVideoCount: 0,
         glassesTotalCount: 0,
         glassesHasContent: false,
+      }),
+
+    // Cloud sync management
+    setCloudPending: (count: number, bytes: number) =>
+      set({
+        cloudPendingCount: count,
+        cloudPendingBytes: bytes,
+      }),
+
+    setCloudSyncActive: (active: boolean) =>
+      set({
+        cloudSyncActive: active,
+        cloudSyncComplete: false, // Reset complete state when starting new download
+        ...(active === false ? {cloudCurrentFile: 0, cloudTotalFiles: 0, cloudCurrentFileName: null} : {}), // Reset progress when stopping
+      }),
+
+    setCloudSyncComplete: (complete: boolean) =>
+      set({
+        cloudSyncComplete: complete,
+      }),
+
+    setCloudSyncError: (error: string | null) =>
+      set({
+        cloudSyncError: error,
+      }),
+
+    setLastCloudPollTime: (time: number) =>
+      set({
+        lastCloudPollTime: time,
+      }),
+
+    setCloudProgress: (current: number, total: number, fileName?: string | null) =>
+      set({
+        cloudCurrentFile: current,
+        cloudTotalFiles: total,
+        cloudCurrentFileName: fileName ?? null,
+      }),
+
+    setCloudFileProgress: (fileName: string, progress: number) =>
+      set((state) => {
+        const newProgress = new Map(state.cloudFileProgress)
+        if (progress === -1) {
+          // Only remove on failure (not on completion)
+          newProgress.delete(fileName)
+        } else {
+          // Keep 100% in map - shows "completed" state while post-processing
+          // Will be cleared when entire sync batch completes via clearCloudFileProgress()
+          newProgress.set(fileName, progress)
+        }
+        return {cloudFileProgress: newProgress}
+      }),
+
+    onCloudFileComplete: (fileName: string) => {
+      const state = get()
+      const nextCompletedFiles = state.cloudCompletedFiles + 1
+      // Find next file to download
+      const currentIndex = state.cloudDownloadingItems.findIndex((item) => item.filename === fileName)
+      const nextItem =
+        currentIndex >= 0 && currentIndex < state.cloudDownloadingItems.length - 1
+          ? state.cloudDownloadingItems[currentIndex + 1]
+          : null
+
+      set({
+        cloudCompletedFiles: nextCompletedFiles,
+        cloudCurrentFileName: nextItem?.filename ?? null,
+        cloudCurrentFile: nextCompletedFiles + 1, // For display: "Downloading X of Y"
+      })
+    },
+
+    clearCloudFileProgress: () => set({cloudFileProgress: new Map<string, number>()}),
+
+    setCloudDownloadingItems: (
+      items: Array<{filename: string; capturedAt: number; mimeType: string; is_video: boolean; thumbnailUrl?: string}>,
+    ) => set({cloudDownloadingItems: items}),
+
+    setCloudUploadStatus: (isUploading: boolean, current: number, total: number, currentFile?: string) =>
+      set({
+        cloudUploadIsUploading: isUploading,
+        cloudUploadCurrent: current,
+        cloudUploadTotal: total,
+        cloudUploadCurrentFile: currentFile,
       }),
 
     // Queue management

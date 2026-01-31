@@ -18,6 +18,7 @@ import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 import {asgCameraApi} from "./asgCameraApi"
+import {cloudGallerySyncService} from "./cloudGallerySyncService"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
 import {localStorageService} from "./localStorageService"
@@ -341,6 +342,18 @@ class GallerySyncService {
       connected: glassesStore.connected,
       hotspotEnabled: glassesStore.hotspotEnabled,
     })
+
+    // Request permission from cloud before starting WiFi Direct sync
+    console.log("[GallerySyncService] 🔐 Requesting WiFi Direct sync permission from cloud...")
+    const permission = await cloudGallerySyncService.requestWifiDirectPermission()
+    if (!permission.allowed) {
+      const reason = permission.reason || "Unknown reason"
+      console.error(`[GallerySyncService] ❌ WiFi Direct sync permission denied or cloud unreachable: ${reason}`)
+      store.setSyncError(reason)
+      await gallerySyncNotifications.showSyncError(reason)
+      return
+    }
+    console.log("[GallerySyncService] ✅ WiFi Direct sync permission granted by cloud")
 
     // Request all permissions upfront so user isn't interrupted during WiFi/download
     console.log("[GallerySyncService] 🔐 Step 1/6: Requesting permissions...")
@@ -1355,8 +1368,26 @@ class GallerySyncService {
 
       // Complete
       store.setSyncComplete()
+
+      // Delete cloud copies of files that were synced via WiFi Direct
+      const syncedFilenames = downloadResult.downloaded.map((file) => file.name)
+      if (syncedFilenames.length > 0) {
+        console.log(
+          `[GallerySyncService] 🗑️ Cleaning up ${syncedFilenames.length} cloud copies of WiFi Direct synced files...`,
+        )
+        // Don't await - this is cleanup, shouldn't block sync completion
+        cloudGallerySyncService.deleteCloudCopiesByFilenames(syncedFilenames).catch((error) => {
+          console.warn("[GallerySyncService] ⚠️ Failed to cleanup cloud copies (non-fatal):", error)
+        })
+      }
+
       await this.onSyncComplete(downloadedCount, failedCount)
     } catch (error: any) {
+      // Notify cloud that WiFi Direct sync ended (clears reservation)
+      cloudGallerySyncService.notifyWifiDirectComplete().catch((err) => {
+        console.warn("[GallerySyncService] ⚠️ Failed to notify cloud of WiFi Direct completion (non-fatal):", err)
+      })
+
       if (error?.message === "Sync cancelled") {
         console.log("[GallerySyncService] Sync was cancelled")
         store.setSyncCancelled()
@@ -1541,6 +1572,12 @@ class GallerySyncService {
     console.log("[GallerySyncService]   🔍 Querying glasses for post-sync gallery status...")
     console.log("[GallerySyncService]   ℹ️ This detects new photos taken during the sync")
     await this.queryGlassesGalleryStatus()
+
+    // Notify cloud that WiFi Direct sync completed (clears reservation)
+    console.log("[GallerySyncService]   ☁️ Notifying cloud that WiFi Direct sync completed...")
+    cloudGallerySyncService.notifyWifiDirectComplete().catch((error) => {
+      console.warn("[GallerySyncService] ⚠️ Failed to notify cloud of WiFi Direct completion (non-fatal):", error)
+    })
 
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] ✅ SYNC FULLY COMPLETE")

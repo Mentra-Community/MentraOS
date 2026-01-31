@@ -62,7 +62,26 @@ export class MantleBridge {
     // Create a fresh subscription
     this.messageEventSubscription = CoreModule.addListener("CoreMessageEvent", (event: any) => {
       // expo adds the body to the event object
-      this.handleCoreMessage(event.body)
+      const messageBody = event.body
+
+      // Log cloud_upload_failed messages specifically for debugging
+      try {
+        if (messageBody && typeof messageBody === "string") {
+          const parsed = JSON.parse(messageBody)
+          if (parsed.type === "cloud_upload_failed") {
+            console.log(`[MantleBridge] 🔍 CoreMessageEvent received cloud_upload_failed:`, messageBody)
+          }
+        } else if (messageBody && messageBody.type === "cloud_upload_failed") {
+          console.log(
+            `[MantleBridge] 🔍 CoreMessageEvent received cloud_upload_failed (already parsed):`,
+            JSON.stringify(messageBody),
+          )
+        }
+      } catch {
+        // Ignore parse errors for logging
+      }
+
+      this.handleCoreMessage(messageBody)
     })
 
     console.log("BRIDGE: Core message event listener initialized")
@@ -84,6 +103,11 @@ export class MantleBridge {
     try {
       const data = JSON.parse(jsonString)
 
+      // Log cloud_upload_failed messages specifically for debugging
+      if (data.type === "cloud_upload_failed") {
+        console.log(`[MantleBridge] 🔍 handleCoreMessage received cloud_upload_failed:`, JSON.stringify(data))
+      }
+
       // Only check for duplicates on core status messages, not other event types
       if ("core_status" in data) {
         if (this.lastMessage === jsonString) {
@@ -94,8 +118,8 @@ export class MantleBridge {
       }
 
       this.parseDataFromCore(data)
-    } catch (e) {
-      console.error("BRIDGE: Failed to parse JSON from core message:", e)
+    } catch (error) {
+      console.error("BRIDGE: Failed to parse JSON from core message:", error)
       console.log(jsonString)
     }
   }
@@ -109,6 +133,11 @@ export class MantleBridge {
     try {
       if (!("type" in data)) {
         return
+      }
+
+      // Log cloud_upload_failed messages specifically for debugging
+      if (data.type === "cloud_upload_failed") {
+        console.log(`[MantleBridge] 🔍 parseDataFromCore processing cloud_upload_failed:`, JSON.stringify(data))
       }
 
       let binaryString
@@ -150,6 +179,35 @@ export class MantleBridge {
             has_content: data.has_content,
             camera_busy: data.camera_busy, // Add camera busy state
           })
+          break
+        case "cloud_upload_started":
+          GlobalEventEmitter.emit("cloud_upload_started", {
+            total_files: data.total_files,
+            timestamp: data.timestamp,
+          })
+          break
+        case "cloud_upload_complete":
+          GlobalEventEmitter.emit("cloud_upload_complete", {
+            filename: data.filename,
+            timestamp: data.timestamp,
+          })
+          break
+        case "cloud_upload_batch_complete":
+          GlobalEventEmitter.emit("cloud_upload_batch_complete", {
+            success_count: data.success_count,
+            failed_count: data.failed_count,
+            timestamp: data.timestamp,
+          })
+          break
+        case "cloud_upload_failed":
+          console.log(
+            `[MantleBridge] 📡 Received cloud_upload_failed from glasses: reason=${data.reason}, timestamp=${data.timestamp}`,
+          )
+          GlobalEventEmitter.emit("cloud_upload_failed", {
+            reason: data.reason,
+            timestamp: data.timestamp,
+          })
+          console.log(`[MantleBridge] ✅ Emitted cloud_upload_failed event to GlobalEventEmitter`)
           break
         case "compatible_glasses_search_result":
           console.log("Received compatible_glasses_search_result event from Core", data)

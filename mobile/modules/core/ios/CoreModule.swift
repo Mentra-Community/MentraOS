@@ -121,6 +121,12 @@ public class CoreModule: Module {
             }
         }
 
+        AsyncFunction("sendCancelCloudUpload") {
+            await MainActor.run {
+                CoreManager.shared.sendCancelCloudUpload()
+            }
+        }
+
         AsyncFunction("photoRequest") {
             (
                 requestId: String, appId: String, size: String, webhookUrl: String?,

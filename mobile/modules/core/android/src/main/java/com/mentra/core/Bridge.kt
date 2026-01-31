@@ -439,6 +439,47 @@ public class Bridge private constructor() {
             sendTypedMessage("gallery_status", galleryData as Map<String, Any>)
         }
 
+        /** Send cloud upload started - glasses started uploading to cloud, phone should pause downloads */
+        @JvmStatic
+        fun sendCloudUploadStarted(totalFiles: Int, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["total_files"] = totalFiles
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_started", eventBody as Map<String, Any>)
+        }
+
+        /** Send cloud upload complete - a file was uploaded to cloud by glasses */
+        @JvmStatic
+        fun sendCloudUploadComplete(filename: String, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["filename"] = filename
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_complete", eventBody as Map<String, Any>)
+        }
+
+        /** Send cloud upload batch complete - entire upload batch finished */
+        @JvmStatic
+        fun sendCloudUploadBatchComplete(successCount: Int, failedCount: Int, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["success_count"] = successCount
+            eventBody["failed_count"] = failedCount
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_batch_complete", eventBody as Map<String, Any>)
+        }
+
+        /** Send cloud upload failed - glasses upload failed (e.g., network error) */
+        @JvmStatic
+        fun sendCloudUploadFailed(reason: String, timestamp: Long) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["reason"] = reason
+            eventBody["timestamp"] = timestamp
+
+            sendTypedMessage("cloud_upload_failed", eventBody as Map<String, Any>)
+        }
+
         /** Send hotspot status change - matches iOS MentraLive.swift emitHotspotStatusChange */
         @JvmStatic
         fun sendHotspotStatusChange(

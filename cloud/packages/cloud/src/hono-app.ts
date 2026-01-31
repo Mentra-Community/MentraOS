@@ -30,6 +30,7 @@ import {
   locationApi,
   notificationsApi,
   deviceStateApi,
+  asgGalleryApi,
   // SDK APIs (third-party apps)
   sdkVersionApi,
   simpleStorageApi,
@@ -233,6 +234,7 @@ app.route("/api/client/calendar", calendarApi);
 app.route("/api/client/location", locationApi);
 app.route("/api/client/notifications", notificationsApi);
 app.route("/api/client/device/state", deviceStateApi);
+app.route("/api/client/asg/gallery", asgGalleryApi);
 app.route("/api/client/audio/configure", audioConfigApi);
 
 // ============================================================================
