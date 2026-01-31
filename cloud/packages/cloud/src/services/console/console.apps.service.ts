@@ -7,6 +7,26 @@ import { slackService } from "../notifications/slack.service";
 import { logger as rootLogger } from "../logging/pino-logger";
 const logger = rootLogger.child({ service: "console.apps.service" });
 
+
+/**
+ * Auto-install an app for the developer who created it.
+ * This ensures the developer can immediately test their app without manual installation.
+ */
+async function autoInstallAppForDeveloper(packageName: string, user: UserI): Promise<void> {
+  try {
+    if (user.installedApps?.some((app) => app.packageName === packageName)) {
+      return;
+    }
+    if (!user.installedApps) {
+      user.installedApps = [];
+    }
+    user.installedApps.push({ packageName, installedDate: new Date() });
+    await user.save();
+    logger.info({ packageName, email: user.email }, "Auto-installed app for developer");
+  } catch (error) {
+    logger.error({ error, packageName, email: user.email }, "Error auto-installing app for developer");
+  }
+}
 /**
  * Typed service-layer error that carries an HTTP status code.
  * Route handlers should map this to res.status(err.statusCode).
@@ -215,6 +235,9 @@ export async function createApp(
       },
       email,
     ).catch(() => {});
+
+    // Auto-install the app for the developer who created it
+    await autoInstallAppForDeveloper(packageName, user);
 
     return {
       app: sanitizeApp(leanCreated),
