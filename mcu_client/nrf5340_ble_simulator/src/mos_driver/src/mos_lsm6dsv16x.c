@@ -66,7 +66,7 @@ int lsm6dsv16x_init(void)
     LOG_INF("🔍 LSM6DSV16X Sensor Initialization");
     LOG_INF("========================================");
 
-    lsm6dsv16x_dev = DEVICE_DT_GET(LSM6DSV16X_NODE);
+    lsm6dsv16x_dev = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
     if (lsm6dsv16x_dev == NULL || !device_is_ready(lsm6dsv16x_dev))
     {
         LOG_ERR("❌ LSM6DSV16X device not available or not ready");
@@ -506,7 +506,7 @@ int lsm6dsv16x_read_device_id(uint8_t* device_id)
         }
         else
         {
-            i2c_bus = DEVICE_DT_GET(LSM6DSV16X_NODE);
+            i2c_bus = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
         }
         if (i2c_bus == NULL)
         {

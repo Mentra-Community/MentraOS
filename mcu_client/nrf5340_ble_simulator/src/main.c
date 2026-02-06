@@ -46,6 +46,8 @@
 #include "mos_opt3006.h"     // OPT3006 ambient light sensor
 #include "mos_usb_detect.h"  // USB cable detection (polling mode)
 
+#include "mos_imu.h"
+
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 #define STACKSIZE 2048
@@ -71,6 +73,17 @@ static struct bt_data ad[] = {
 static struct bt_data sd[] = {
     BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_MENTRA_VAL),
 };
+
+static void imu_cb(mos_imu_event_t ev, float pitch_deg, void *user_data)
+{
+    ARG_UNUSED(user_data);
+
+    if (ev == MOS_IMU_EVENT_LOOK_UP_CROSSED)
+    {
+        LOG_INF("IMU: LOOK_UP_CROSSED at pitch=%.1f deg", (double)pitch_deg);
+        // or: printk("IMU: LOOK_UP_CROSSED at pitch=%.1f deg\n", (double)pitch_deg);
+    }
+}
 
 static void setup_dynamic_advertising(void)
 {
@@ -598,7 +611,9 @@ int main(void)
 
     opt3006_initialize();
 
-    lsm6dsv16x_init();
+    // lsm6dsv16x_init();
+
+    mos_imu_thread_start(imu_cb, NULL);
 
     usb_detect_init();
 

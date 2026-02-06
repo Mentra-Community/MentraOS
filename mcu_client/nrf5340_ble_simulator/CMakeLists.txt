@@ -25,6 +25,7 @@ add_subdirectory(src/mos_components/mos_interrupt)
 add_subdirectory(src/mos_components/mos_lvgl_display)
 add_subdirectory(src/mos_components/mos_jlink_usb_switch)
 add_subdirectory(src/mos_components/mos_dfu_progress)
+add_subdirectory(src/mos_components/mos_imu)
 add_subdirectory(src/protobuf)
 add_subdirectory(src/proto)
 
