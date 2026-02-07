@@ -108,12 +108,18 @@ static void imu_thread_fn(void *a, void *b, void *c)
         int err = lsm6dsv16x_read_all(&ax, &ay, &az, &gx, &gy, &gz);
         if (err == 0)
         {
-            s.ax_f = lpf(s.ax_f, ax, s.cfg.accel_lpf_alpha);
-            s.ay_f = lpf(s.ay_f, ay, s.cfg.accel_lpf_alpha);
-            s.az_f = lpf(s.az_f, az, s.cfg.accel_lpf_alpha);
+            float ax_m = ax;
+            float ay_m = az;
+            float az_m = -ay;
+ 
+            s.ax_f = lpf(s.ax_f, ax_m, s.cfg.accel_lpf_alpha);
+            s.ay_f = lpf(s.ay_f, ay_m, s.cfg.accel_lpf_alpha);
+            s.az_f = lpf(s.az_f, az_m, s.cfg.accel_lpf_alpha);
 
             s.pitch_deg = calc_pitch_deg(s.ax_f, s.ay_f, s.az_f);
             s.roll_deg = calc_roll_deg(s.ax_f, s.ay_f, s.az_f);
+
+            LOG_INF("IMU: pitch=%.1f deg, roll=%.1f deg", (double)s.pitch_deg, (double)s.roll_deg);
 
             maybe_fire_events();
         }
@@ -305,12 +311,16 @@ int mos_imu_thread_start_with_config(const mos_imu_config_t *cfg,
 {
     int err;
 
+    LOG_INF("mos_imu_thread_start_with_config: starting IMU thread");
+
     err = lsm6dsv16x_init();
     if (err != 0)
     {
         LOG_ERR("mos_imu_thread_start_with_config: lsm6dsv16x_init failed: %d", err);
         return err;
     }
+
+    LOG_INF("mos_imu_thread_start_with_config: mos_imu_init");
 
     err = mos_imu_init();
     if (err != 0)
@@ -321,6 +331,7 @@ int mos_imu_thread_start_with_config(const mos_imu_config_t *cfg,
 
     if (cfg != NULL)
     {
+        LOG_INF("mos_imu_thread_start_with_config: mos_imu_set_config");
         err = mos_imu_set_config(cfg);
         if (err != 0)
         {
@@ -329,6 +340,7 @@ int mos_imu_thread_start_with_config(const mos_imu_config_t *cfg,
         }
     }
 
+    LOG_INF("mos_imu_thread_start_with_config: mos_imu_register_callback");
     err = mos_imu_register_callback(cb, user_data);
     if (err != 0)
     {
