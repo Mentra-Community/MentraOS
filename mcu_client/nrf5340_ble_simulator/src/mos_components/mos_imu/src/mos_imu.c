@@ -109,8 +109,8 @@ static void imu_thread_fn(void *a, void *b, void *c)
         if (err == 0)
         {
             float ax_m = ax;
-            float ay_m = az;
-            float az_m = -ay;
+            float ay_m = -az;
+            float az_m = ay;
  
             s.ax_f = lpf(s.ax_f, ax_m, s.cfg.accel_lpf_alpha);
             s.ay_f = lpf(s.ay_f, ay_m, s.cfg.accel_lpf_alpha);
@@ -119,7 +119,7 @@ static void imu_thread_fn(void *a, void *b, void *c)
             s.pitch_deg = calc_pitch_deg(s.ax_f, s.ay_f, s.az_f);
             s.roll_deg = calc_roll_deg(s.ax_f, s.ay_f, s.az_f);
 
-            LOG_INF("IMU: pitch=%.1f deg, roll=%.1f deg", (double)s.pitch_deg, (double)s.roll_deg);
+            LOG_DBG("IMU: pitch=%.1f deg, roll=%.1f deg", (double)s.pitch_deg, (double)s.roll_deg);
 
             maybe_fire_events();
         }
