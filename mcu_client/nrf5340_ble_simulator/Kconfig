@@ -53,6 +53,29 @@ config USER_STEREO_2RX_L
 config USER_STEREO_2RX_LR
 	bool "encode fifo enable"
 	default n
+
+config FONT_STORAGE_LOAD_AT_RUNTIME
+	bool "Load CJK font from external flash (font_storage) at runtime"
+	default n
+	depends on LVGL && FLASH_MAP
+	help
+	  When enabled, display_get_font(\"cjk\") loads a LVGL binfont from the
+	  font_storage partition on first use.
+
+config FONT_STORAGE_FILE_SIZE
+	int "Font storage file size (bytes, 0 = partition size)"
+	default 0
+	depends on LVGL && FLASH_MAP
+	help
+	  Size of the .bin font in font_storage. If 0, use partition size.
+
+config FONT_STORAGE_USE_XIP
+	bool "Use XIP address for font buffer (no RAM copy)"
+	default n
+	depends on LVGL && FLASH_MAP
+	help
+	  Use external flash XIP address (0x10000000 + PM_FONT_STORAGE_ADDRESS)
+	  as the binfont buffer to avoid RAM copy.
 endmenu
 
 # Include custom driver module Kconfig (projector display)

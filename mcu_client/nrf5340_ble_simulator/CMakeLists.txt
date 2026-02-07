@@ -22,6 +22,7 @@ add_subdirectory(src/mos_components/mos_pdm)
 add_subdirectory(src/mos_components/mos_battery)
 add_subdirectory(src/mos_components/mos_button)
 add_subdirectory(src/mos_components/mos_interrupt)
+add_subdirectory(src/mos_components/mos_font_storage)
 add_subdirectory(src/mos_components/mos_lvgl_display)
 add_subdirectory(src/mos_components/mos_jlink_usb_switch)
 add_subdirectory(src/mos_components/mos_dfu_progress)
@@ -32,6 +33,7 @@ target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_sources(app PRIVATE
     src/main.c
+    src/shell_font_storage.c
     src/shell_display_control.c
     src/shell_opt3006.c
     src/shell_battery_control.c

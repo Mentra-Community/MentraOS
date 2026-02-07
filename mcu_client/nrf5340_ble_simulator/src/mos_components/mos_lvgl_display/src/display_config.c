@@ -1,14 +1,13 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-01-30 09:35:59
+ * @LastEditTime : 2026-02-07 14:13:57
  * @FilePath     : display_config.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2026 
+ * @Description  :
+ *
+ *  Copyright (c) MentraOS Contributors 2026
  *  SPDX-License-Identifier: Apache-2.0
  */
-
 
 #include "display_config.h"
 
@@ -17,6 +16,10 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/display.h>
 #include <zephyr/logging/log.h>
+
+#include "mos_font_storage.h"
+#include "mos_binfont_lvgl.h"
+#include "mos_xbf_font.h"
 
 LOG_MODULE_REGISTER(display_config, LOG_LEVEL_DBG);
 
@@ -126,7 +129,7 @@ static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
             .secondary = &lv_font_montserrat_18,  // Use 18 for secondary text
             // .secondary = &lv_font_simsun_16_cjk,  // Use 18 for secondary text
             .large = &lv_font_montserrat_48,      // Use 14 instead of 48 (not available)
-            .cjk = &lv_font_montserrat_48,        // Only CJK font available
+            .cjk = &lv_font_montserrat_48,        // Only GBK font available
             .line_spacing = 4
         },
         .patterns = {
@@ -279,7 +282,47 @@ const lv_font_t* display_get_font(const char* text_type)
     }
     else if (strcmp(text_type, "cjk") == 0)
     {
-        return config->fonts.secondary;
+#if defined(CONFIG_FONT_STORAGE_USE_XIP)
+        /* XIP path: prefer XBF (simple external font), then binfont adapter */
+        const lv_font_t* ext_font = mos_xbf_get_font();
+        if (ext_font)
+        {
+            LOG_INF("display_get_font(cjk): using XBF font @%p", ext_font);
+            return ext_font;
+        }
+
+        ext_font = mos_binfont_get_lvgl_font();
+        if (ext_font)
+        {
+            LOG_INF("display_get_font(cjk): using binfont adapter @%p", ext_font);
+            return ext_font;
+        }
+        LOG_WRN("display_get_font(cjk): binfont adapter not ready, falling back");
+#else
+        /* RAM path: LVGL binfont loader from buffer */
+        const lv_font_t* ext_font = mos_font_storage_get_lv_font();
+        if (!ext_font)
+        {
+            int load_ret = mos_font_storage_load();
+            if (load_ret == 0)
+            {
+                ext_font = mos_font_storage_get_lv_font();
+            }
+            else
+            {
+                LOG_WRN("display_get_font(cjk): font not ready (ret=%d), falling back", load_ret);
+            }
+        }
+
+        if (ext_font)
+        {
+            LOG_INF("display_get_font(cjk): using LVGL binfont loader @%p", ext_font);
+            return ext_font;
+        }
+        LOG_WRN("display_get_font(cjk): no GBK font available, falling back");
+#endif
+
+        return config->fonts.cjk ? config->fonts.cjk : config->fonts.secondary;
     }
 
     // Default fallback
@@ -289,11 +332,15 @@ const lv_font_t* display_get_font(const char* text_type)
 void display_calculate_container_dimensions(uint16_t* width, uint16_t* height, uint16_t* x, uint16_t* y)
 {
     const display_config_t *config = display_get_config();
-    
-    if (width) *width = config->layout.usable_width;
-    if (height) *height = config->layout.usable_height;
-    if (x) *x = config->layout.margin_left;
-    if (y) *y = config->layout.margin_top;
+
+    if (width)
+        *width = config->layout.usable_width;
+    if (height)
+        *height = config->layout.usable_height;
+    if (x)
+        *x = config->layout.margin_left;
+    if (y)
+        *y = config->layout.margin_top;
 }
 
 lv_color_t display_get_text_color(void)

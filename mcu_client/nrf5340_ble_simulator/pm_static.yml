@@ -11,16 +11,18 @@ mcuboot_secondary:
   - mcuboot_primary
   size: 0xf0000
 
-# 中文字库区：8 MB
+
 font_storage:
   address: 0xf0000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
   end_address: 0x8f0000
   region: external_flash
   size: 0x800000
 
-# 用户空间：剩余约 23 MB（0x8f0000 ~ 0x2000000）
+#  23 MB（0x8f0000 ~ 0x2000000）
 user_storage:
   address: 0x8f0000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
   end_address: 0x2000000
   region: external_flash
   size: 0x1710000

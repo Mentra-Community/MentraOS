@@ -156,8 +156,13 @@ static void disconnected(struct bt_conn* conn, uint8_t reason)
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
     LOG_INF("Disconnected: %s, reason 0x%02x %s", addr, reason, bt_hci_err_to_str(reason));
+   
+    bool was_connected = get_ble_connected_status();
     set_ble_connected_status(false);
-    display_show_welcome_screen(); /* 断开后自动回到欢迎界面 | Return to welcome screen on disconnect */
+    if (was_connected)
+    {
+        display_show_welcome_screen();  /* 断开后自动回到欢迎界面 | Return to welcome screen on disconnect */
+    }
     if (auth_conn)
     {
         bt_conn_unref(auth_conn);
@@ -286,7 +291,8 @@ static void bt_receive_cb(struct bt_conn* conn, const uint8_t* const data, uint1
     protobuf_analyze_message(data, len);
 
     // Generate and send echo response
-    uint8_t echo_buffer[128];
+    static uint8_t echo_buffer[251];
+    memset(echo_buffer, 0, sizeof(echo_buffer));
     int echo_len = protobuf_generate_echo_response(data, len, echo_buffer, sizeof(echo_buffer));
 
     if (echo_len > 0)

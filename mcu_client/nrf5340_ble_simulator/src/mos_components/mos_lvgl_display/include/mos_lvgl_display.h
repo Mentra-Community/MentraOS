@@ -29,9 +29,11 @@ typedef enum
     LCD_CMD_CLOSE,
     LCD_CMD_TEXT,
     LCD_CMD_DATA,
-    LCD_CMD_CYCLE_PATTERN,  // **NEW: Pattern cycling command**
-    LCD_CMD_UPDATE_PROTOBUF_TEXT,  // **NEW: Update container with protobuf text**
-    LCD_CMD_UPDATE_XY_TEXT,        // **NEW: Pattern 5 XY positioned text**
+    LCD_CMD_CYCLE_PATTERN,           // **NEW: Pattern cycling command**
+    LCD_CMD_UPDATE_PROTOBUF_TEXT,    // **NEW: Update container with protobuf text**
+    LCD_CMD_UPDATE_XY_TEXT,          // **NEW: Pattern 5 XY positioned text**
+    LCD_CMD_GBK_TEST,                // **NEW: Simple GBK test text**
+    LCD_CMD_CJK_CHARS_TEST,          // **NEW: GBK per-character test**
     LCD_CMD_UPDATE_WELCOME_BATTERY,  // **NEW: Refresh welcome label with current battery (60s period)**
     LCD_CMD_SHOW_WELCOME_SCREEN,      // **NEW: Return to welcome screen (e.g. after BLE disconnect)**
     LCD_CMD_UPDATE_DFU_PROGRESS,      // **NEW: Show/update DFU progress bar below battery on welcome screen**
@@ -47,7 +49,7 @@ typedef enum
 void set_display_onoff(bool state);
 bool get_display_onoff(void);
 
-#define MAX_TEXT_LEN 128
+#define MAX_TEXT_LEN 247
 typedef struct
 {
     char text[MAX_TEXT_LEN + 1];
@@ -120,6 +122,10 @@ void display_open(void);
 
 // **NEW: Thread-safe pattern cycling function**
 void display_cycle_pattern(void);
+
+// **NEW: Thread-safe GBK test render (no serial input needed)**
+void display_show_gbk_test(void);
+void display_show_gbk_chars_test(void);
 
 // **NEW: Thread-safe protobuf text update function**
 void display_update_protobuf_text(const char *text_content);

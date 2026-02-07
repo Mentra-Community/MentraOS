@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-11-19 20:05:11
- * @LastEditTime : 2026-02-05 10:19:31
+ * @LastEditTime : 2026-02-07 14:15:23
  * @FilePath     : mos_lsm6dsv16x.c
  * @Description  : LSM6DSV16X 6-axis IMU sensor driver wrapper
  *
@@ -66,7 +66,7 @@ int lsm6dsv16x_init(void)
     LOG_INF("🔍 LSM6DSV16X Sensor Initialization");
     LOG_INF("========================================");
 
-    lsm6dsv16x_dev = DEVICE_DT_GET(LSM6DSV16X_NODE);
+    lsm6dsv16x_dev = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
     if (lsm6dsv16x_dev == NULL || !device_is_ready(lsm6dsv16x_dev))
     {
         LOG_ERR("❌ LSM6DSV16X device not available or not ready");
@@ -506,7 +506,7 @@ int lsm6dsv16x_read_device_id(uint8_t* device_id)
         }
         else
         {
-            i2c_bus = DEVICE_DT_GET(LSM6DSV16X_NODE);
+            i2c_bus = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
         }
         if (i2c_bus == NULL)
         {
