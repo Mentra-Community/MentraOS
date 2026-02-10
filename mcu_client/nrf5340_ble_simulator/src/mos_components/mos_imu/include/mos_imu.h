@@ -23,6 +23,16 @@ typedef struct
     float accel_lpf_alpha;            // 0..1 (higher = less smoothing)
 } mos_imu_config_t;
 
+/**
+ * Optional: mount compensation (tilt correction) quaternion.
+ * This rotates the (axis-remapped) accel vector into the corrected body frame.
+ */
+typedef struct
+{
+    float w, x, y, z;   // unit quaternion
+    bool valid;
+} mos_imu_mount_q_t;
+
 int mos_imu_init(void);
 int mos_imu_start(void);
 int mos_imu_stop(void);
@@ -36,9 +46,23 @@ float mos_imu_get_pitch_deg(void);
 float mos_imu_get_roll_deg(void);
 
 /**
+ * Calibrate mount compensation so that, in the current pose,
+ * gravity aligns to -Z in the (axis-remapped) body frame.
+ * Call while glasses are held in the desired "neutral" orientation.
+ */
+int mos_imu_calibrate_mount_neutral(void);
+
+/**
+ * Set/Get mount quaternion (useful if you persist calibration in flash).
+ */
+int mos_imu_set_mount_q(const mos_imu_mount_q_t *q);
+int mos_imu_get_mount_q(mos_imu_mount_q_t *q);
+
+/**
  * One-call convenience entrypoint:
  * - inits the IMU driver
  * - inits mos_imu
+ * - (optionally) calibrates mount (if you call mos_imu_calibrate_mount_neutral yourself)
  * - registers callback
  * - starts the imu thread
  */
@@ -48,8 +72,8 @@ int mos_imu_thread_start(mos_imu_event_cb_t cb, void *user_data);
  * Same as mos_imu_thread_start(), but allows overriding config (pass NULL to use defaults).
  */
 int mos_imu_thread_start_with_config(const mos_imu_config_t *cfg,
-                                    mos_imu_event_cb_t cb,
-                                    void *user_data);
+                                     mos_imu_event_cb_t cb,
+                                     void *user_data);
 
 #ifdef __cplusplus
 }
