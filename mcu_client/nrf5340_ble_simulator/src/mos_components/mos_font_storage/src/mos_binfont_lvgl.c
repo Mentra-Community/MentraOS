@@ -1,11 +1,11 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-02-05 14:53:31
- * @LastEditTime : 2026-02-07 14:59:55
+ * @LastEditTime : 2026-02-10 15:46:58
  * @FilePath     : mos_binfont_lvgl.c
- * @Description  : 
+ * @Description  :
  * 
- *  Copyright (c) MentraOS Contributors 2026 
+ *  Copyright (c) MentraOS Contributors 2026
  *  SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,6 +19,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/util.h>
 
 LOG_MODULE_REGISTER(mos_binfont_lvgl, LOG_LEVEL_WRN); /* Reduce log spam from glyph callbacks */
 
@@ -26,10 +27,14 @@ LOG_MODULE_REGISTER(mos_binfont_lvgl, LOG_LEVEL_WRN); /* Reduce log spam from gl
 #define PM_QSPI_NOR_BASE_ADDRESS 0x10000000u
 #endif
 
+#if defined(CONFIG_FONT_STORAGE_USE_PARTITION_2) && defined(PM_FONT_STORAGE2_ADDRESS)
+#define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE2_ADDRESS)
+#else
 #define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE_ADDRESS)
+#endif
 
 /* Binfont头部结构（LVGL v9格式） */
-typedef struct
+typedef struct __packed
 {
     uint32_t version;
     uint16_t tables_count;
@@ -57,7 +62,7 @@ typedef struct
     uint16_t underline_thickness;
 } font_header_bin_t;
 
-typedef struct
+typedef struct __packed
 {
     uint32_t data_offset;
     uint32_t range_start;
@@ -83,9 +88,11 @@ static font_header_bin_t        s_font_header;
 static cmap_table_bin_t*        s_cmap_tables;
 static uint32_t                 s_cmap_count;
 static uint32_t                 s_cmap_start_offset;
-static uint32_t                 s_glyf_start_offset; /* glyf section起始偏移 */
-static uint32_t                 s_loca_start_offset; /* loca section起始偏移 */
-static uint32_t                 s_glyf_length;
+static uint32_t                 s_glyf_start_offset; /* glyf section 起始偏移（含 8 字节 label） */
+static uint32_t                 s_glyf_data_offset;  /* glyf section 数据起始偏移（仅 init 日志用） */
+static uint32_t                 s_loca_start_offset;  /* loca section 起始偏移 */
+static uint32_t                 s_glyf_length;        /* glyf section 总长（含 8 字节 label）= loca 边界 */
+static uint32_t                 s_glyf_data_length;   /* = s_glyf_length - 8，仅日志用 */
 static uint32_t                 s_loca_count;
 static off_t                    s_loca_offsets_start;
 static const struct flash_area* s_fa;
@@ -94,8 +101,9 @@ static size_t                   s_font_size_limit;
 static bool                     s_use_xip;
 
 /* Glyph bitmap缓存（静态buffer） */
-#define MAX_GLYPH_BITMAP_SIZE 1024 /* 18x18 @ 1bpp = 324字节，留余量 */
+#define MAX_GLYPH_BITMAP_SIZE 4096 /* 64x64 @ 4bpp = 2048字节，留余量 */
 static uint8_t s_glyph_bitmap_buf[MAX_GLYPH_BITMAP_SIZE];
+static lv_draw_buf_t s_glyph_draw_buf;
 /* Safety limits to avoid pathological glyph sizes blocking the system */
 #define MAX_GLYPH_BOX_W 64
 #define MAX_GLYPH_BOX_H 64
@@ -142,7 +150,8 @@ static int read_loca_offset(uint32_t index, uint32_t* out_offset)
         {
             return -EIO;
         }
-        *out_offset = sys_get_le16(buf);
+        /* LVGL binfont format: short loca offsets are direct byte offsets (NOT *2 like TrueType) */
+        *out_offset = (uint32_t)sys_get_le16(buf);
         return 0;
     }
     else if (s_font_header.index_to_loc_format == 1)
@@ -201,9 +210,6 @@ static unsigned int read_bits(bit_iterator_t* it, int n_bits, int* err)
             return 0;
         }
 
-        it->byte_value = (uint8_t)(it->byte_value << 1);
-        it->bit_pos--;
-
         if (it->bit_pos < 0)
         {
             it->bit_pos = 7;
@@ -234,8 +240,9 @@ static unsigned int read_bits(bit_iterator_t* it, int n_bits, int* err)
             }
         }
 
-        int8_t bit = (it->byte_value & 0x80) ? 1 : 0;
-        value |= (unsigned int)(bit << n_bits);
+        int8_t bit = (int8_t)((it->byte_value >> it->bit_pos) & 0x01);
+        it->bit_pos--;
+        value = (value << 1) | (unsigned int)bit;
     }
     if (err)
     {
@@ -246,6 +253,14 @@ static unsigned int read_bits(bit_iterator_t* it, int n_bits, int* err)
 
 static int read_bits_signed(bit_iterator_t* it, int n_bits, int* err)
 {
+    if (n_bits <= 0)
+    {
+        if (err)
+        {
+            *err = 0;
+        }
+        return 0;
+    }
     unsigned int value = read_bits(it, n_bits, err);
     if (err && *err != 0)
     {
@@ -380,37 +395,34 @@ static int find_glyph_id_in_cmap(uint32_t unicode, uint32_t* out_glyph_id)
 static bool mos_binfont_get_glyph_dsc(const lv_font_t* font, lv_font_glyph_dsc_t* dsc_out, uint32_t unicode,
                                       uint32_t unicode_next)
 {
-    ARG_UNUSED(font);
     ARG_UNUSED(unicode_next);
 
     if (!s_initialized || !dsc_out)
     {
-        LOG_ERR("get_glyph_dsc: not initialized=%d or dsc_out=%p", !s_initialized, dsc_out);
         return false;
     }
 
-    /* 1. 从cmap查找glyph ID */
+    memset(dsc_out, 0, sizeof(*dsc_out));
+
     uint32_t glyph_id = 0;
     if (find_glyph_id_in_cmap(unicode, &glyph_id) != 0)
     {
-        LOG_WRN("Glyph not found for U+%04X in cmap (cmap_count=%u)", unicode, s_cmap_count);
-        return false; /* 未找到对应glyph */
+        return false;
     }
-
-    LOG_INF("get_glyph_dsc: U+%04X → glyph_id=%u", unicode, glyph_id);
 
     if (glyph_id >= s_loca_count)
     {
-        LOG_ERR("Glyph ID out of range: %u (loca_count=%u)", glyph_id, s_loca_count);
         return false;
     }
 
     uint32_t glyph_offset = 0;
-    uint32_t next_offset  = s_glyf_length;
+    uint32_t next_offset  = s_glyf_length; /* section length, not data length – matches official loader */
+
     if (read_loca_offset(glyph_id, &glyph_offset) != 0)
     {
         return false;
     }
+
     if (glyph_id + 1 < s_loca_count)
     {
         if (read_loca_offset(glyph_id + 1, &next_offset) != 0)
@@ -418,12 +430,29 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t* font, lv_font_glyph_dsc_t
             return false;
         }
     }
-    uint32_t start = s_glyf_start_offset + glyph_offset;
 
-    bit_iterator_t bit_it = init_bit_iterator((off_t)start);
-    int            err    = 0;
+    if (glyph_offset > next_offset || next_offset > s_glyf_length)
+    {
+        return false;
+    }
 
-    uint16_t adv_w = 0;
+    if (glyph_offset == next_offset)
+    {
+        dsc_out->gid.index      = glyph_id;
+        dsc_out->resolved_font  = font;
+        dsc_out->format         = LV_FONT_GLYPH_FORMAT_NONE;
+        dsc_out->is_placeholder = 1;
+        dsc_out->req_raw_bitmap = 0;
+        return true;
+    }
+
+    /* loca offsets are relative to glyf SECTION start (including 8-byte label),
+     * matching the official LVGL binfont loader (lv_binfont_loader.c line 334). */
+    const off_t start = (off_t)(s_glyf_start_offset + glyph_offset);
+    bit_iterator_t bit_it = init_bit_iterator(start);
+    int err = 0;
+
+    uint16_t adv_w;
     if (s_font_header.advance_width_bits == 0)
     {
         adv_w = s_font_header.default_advance_width;
@@ -431,88 +460,62 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t* font, lv_font_glyph_dsc_t
     else
     {
         adv_w = (uint16_t)read_bits(&bit_it, s_font_header.advance_width_bits, &err);
-        if (err != 0)
-        {
-            return false;
-        }
+        if (err) return false;
     }
 
     if (s_font_header.advance_width_format == 0)
     {
-        adv_w = (uint16_t)(adv_w * 16);
+        adv_w = (uint16_t)(adv_w * 16U);
     }
 
+    /* 固定顺序：adv -> ofs_x -> ofs_y -> box_w -> box_h */
     int16_t ofs_x = (int16_t)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
-    if (err != 0)
-    {
-        return false;
-    }
+    if (err) return false;
     int16_t ofs_y = (int16_t)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
-    if (err != 0)
-    {
-        return false;
-    }
+    if (err) return false;
     uint16_t box_w = (uint16_t)read_bits(&bit_it, s_font_header.wh_bits, &err);
-    if (err != 0)
-    {
-        return false;
-    }
+    if (err) return false;
     uint16_t box_h = (uint16_t)read_bits(&bit_it, s_font_header.wh_bits, &err);
-    if (err != 0)
-    {
-        return false;
-    }
+    if (err) return false;
 
     if (box_w > MAX_GLYPH_BOX_W || box_h > MAX_GLYPH_BOX_H)
     {
-        LOG_WRN("Glyph U+%04X: box too large %ux%u (limit %ux%u)", unicode, box_w, box_h,
-                MAX_GLYPH_BOX_W, MAX_GLYPH_BOX_H);
+        LOG_WRN("U+%04X gid=%u REJECTED: box=%ux%u exceeds max", unicode, glyph_id, box_w, box_h);
         return false;
     }
 
-    if (glyph_id == 0)
-    {
-        adv_w = 0;
-        box_w = 0;
-        box_h = 0;
-        ofs_x = 0;
-        ofs_y = 0;
-    }
+    LOG_DBG("U+%04X gid=%u adv_w=%u box=%ux%u ofs=(%d,%d)", unicode, glyph_id, adv_w, box_w, box_h, ofs_x, ofs_y);
 
     dsc_out->adv_w = adv_w;
     dsc_out->box_w = box_w;
     dsc_out->box_h = box_h;
     dsc_out->ofs_x = ofs_x;
     dsc_out->ofs_y = ofs_y;
+    dsc_out->gid.index = glyph_id;
+    dsc_out->resolved_font = font;
+    dsc_out->entry = NULL;
+    dsc_out->is_placeholder = 0;
 
-    switch (s_font_header.bits_per_pixel)
-    {
-        case 1:
-            dsc_out->format = LV_FONT_GLYPH_FORMAT_A1;
-            break;
-        case 2:
-            dsc_out->format = LV_FONT_GLYPH_FORMAT_A2;
-            break;
-        case 4:
-            dsc_out->format = LV_FONT_GLYPH_FORMAT_A4;
-            break;
-        case 8:
-            dsc_out->format = LV_FONT_GLYPH_FORMAT_A8;
-            break;
-        default:
-            dsc_out->format = LV_FONT_GLYPH_FORMAT_A1;
-            break;
-    }
+    /* Match official lv_font_fmt_txt.c: format = bpp value.
+     * We provide A8-converted data in get_glyph_bitmap (req_raw_bitmap=0),
+     * matching the official lv_font_get_bitmap_fmt_txt behavior. */
+    dsc_out->format = (uint8_t)s_font_header.bits_per_pixel;
 
-    dsc_out->is_placeholder = (glyph_id == 0);
     dsc_out->req_raw_bitmap = 0;
-    dsc_out->gid.index      = glyph_id;
-    dsc_out->resolved_font  = font;
-
-    LOG_DBG("get_glyph_dsc: U+%04X → glyph_id=%u, adv=%u, box=%ux%u, ofs=(%d,%d), next_ofs=0x%X", unicode, glyph_id,
-            adv_w, box_w, box_h, ofs_x, ofs_y, next_offset);
-
     return true;
+}
+
+static uint8_t s_fallback_pixel[1] = {0};
+
+static lv_draw_buf_t* binfont_set_fallback_buf(lv_draw_buf_t* buf)
+{
+    buf->data          = s_fallback_pixel;
+    buf->data_size     = sizeof(s_fallback_pixel);
+    buf->header.w      = 1;
+    buf->header.h      = 1;
+    buf->header.cf     = LV_COLOR_FORMAT_A4;
+    buf->header.stride = (uint32_t)lv_draw_buf_width_to_stride(1, LV_COLOR_FORMAT_A4);
+    return buf;
 }
 
 /* LVGL回调：获取字形位图数据（LVGL v9实际接口） */
@@ -520,157 +523,143 @@ static const void* mos_binfont_get_glyph_bitmap(lv_font_glyph_dsc_t* dsc, lv_dra
 {
     if (!s_initialized || !dsc)
     {
-        LOG_ERR("get_glyph_bitmap: not initialized or invalid dsc");
-        return NULL;
+        if (!draw_buf) draw_buf = &s_glyph_draw_buf;
+        return binfont_set_fallback_buf(draw_buf);
     }
 
-    uint32_t glyph_id = dsc->gid.index;
-    LOG_DBG("get_glyph_bitmap: glyph_id=%u, box=%ux%u", glyph_id, dsc->box_w, dsc->box_h);
-
-    if (!draw_buf || !draw_buf->data)
+    if (!draw_buf)
     {
-        LOG_ERR("get_glyph_bitmap: draw_buf not provided");
-        return NULL;
+        draw_buf = &s_glyph_draw_buf;
     }
 
-    if (glyph_id >= s_loca_count)
+    const uint32_t glyph_id = dsc->gid.index;
+    if (glyph_id >= s_loca_count || dsc->box_w == 0 || dsc->box_h == 0)
     {
-        return NULL;
+        return binfont_set_fallback_buf(draw_buf);
     }
 
-    /* 检查glyf section是否已解析 */
-    if (s_glyf_start_offset == 0)
+    if (s_font_header.compression_id != 0)
     {
-        LOG_ERR("glyf section not found, cannot read bitmap");
-        return NULL;
+        LOG_WRN("compressed binfont not supported, compression_id=%u", s_font_header.compression_id);
+        return binfont_set_fallback_buf(draw_buf);
     }
 
     uint32_t glyph_offset = 0;
-    uint32_t next_offset  = s_glyf_length;
+    uint32_t next_offset  = s_glyf_length; /* section length – matches official loader */
+
     if (read_loca_offset(glyph_id, &glyph_offset) != 0)
     {
-        return NULL;
+        return binfont_set_fallback_buf(draw_buf);
     }
+
     if (glyph_id + 1 < s_loca_count)
     {
         if (read_loca_offset(glyph_id + 1, &next_offset) != 0)
         {
-            return NULL;
+            return binfont_set_fallback_buf(draw_buf);
         }
     }
-    uint32_t start = s_glyf_start_offset + glyph_offset;
 
-    bit_iterator_t bit_it = init_bit_iterator((off_t)start);
-    int            err    = 0;
-
-    if (s_font_header.advance_width_bits == 0)
+    if (glyph_offset > next_offset || next_offset > s_glyf_length)
     {
-        (void)s_font_header.default_advance_width;
+        return binfont_set_fallback_buf(draw_buf);
     }
-    else
+
+    const uint32_t record_bytes = next_offset - glyph_offset;
+    if (record_bytes == 0)
+    {
+        return binfont_set_fallback_buf(draw_buf);
+    }
+
+    const uint8_t bpp = s_font_header.bits_per_pixel;
+    if (!(bpp == 1 || bpp == 2 || bpp == 4 || bpp == 8))
+    {
+        return binfont_set_fallback_buf(draw_buf);
+    }
+
+    const uint32_t w = dsc->box_w;
+    const uint32_t h = dsc->box_h;
+
+    /*
+     * Output format: A8 (1 byte per pixel), stride-aligned.
+     * Matching official lv_font_fmt_txt.c behavior (lines 96-125):
+     * each bpp-packed pixel is expanded to a full A8 byte (0xFF or 0x00 for 1bpp).
+     */
+    const uint32_t row_stride = (uint32_t)lv_draw_buf_width_to_stride((int32_t)w, LV_COLOR_FORMAT_A8);
+    const uint32_t out_size   = row_stride * h;
+    if (out_size == 0 || out_size > MAX_GLYPH_BITMAP_SIZE)
+    {
+        return binfont_set_fallback_buf(draw_buf);
+    }
+
+    memset(s_glyph_bitmap_buf, 0, out_size);
+
+    /* loca offsets are section-relative (see get_glyph_dsc comment) */
+    const off_t start = (off_t)(s_glyf_start_offset + glyph_offset);
+    bit_iterator_t bit_it = init_bit_iterator(start);
+    int err = 0;
+
+    /* 跳过 header bits（顺序与 get_glyph_dsc 一致） */
+    if (s_font_header.advance_width_bits != 0)
     {
         (void)read_bits(&bit_it, s_font_header.advance_width_bits, &err);
-        if (err != 0)
-        {
-            return NULL;
-        }
+        if (err) return binfont_set_fallback_buf(draw_buf);
     }
 
     (void)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
-    if (err != 0)
-    {
-        return NULL;
-    }
+    if (err) return binfont_set_fallback_buf(draw_buf);
     (void)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
-    if (err != 0)
-    {
-        return NULL;
-    }
-    uint16_t box_w = (uint16_t)read_bits(&bit_it, s_font_header.wh_bits, &err);
-    if (err != 0)
-    {
-        return NULL;
-    }
-    uint16_t box_h = (uint16_t)read_bits(&bit_it, s_font_header.wh_bits, &err);
-    if (err != 0)
-    {
-        return NULL;
-    }
+    if (err) return binfont_set_fallback_buf(draw_buf);
+    (void)read_bits(&bit_it, s_font_header.wh_bits, &err);
+    if (err) return binfont_set_fallback_buf(draw_buf);
+    (void)read_bits(&bit_it, s_font_header.wh_bits, &err);
+    if (err) return binfont_set_fallback_buf(draw_buf);
 
-    if (box_w > MAX_GLYPH_BOX_W || box_h > MAX_GLYPH_BOX_H)
-    {
-        LOG_WRN("glyph_id=%u: box too large %ux%u (limit %ux%u)", glyph_id, box_w, box_h,
-                MAX_GLYPH_BOX_W, MAX_GLYPH_BOX_H);
-        return NULL;
-    }
+    /* A8 opacity lookup tables (matching official lv_font_fmt_txt.c) */
+    static const uint8_t opa2_table[4] = {0, 85, 170, 255};
+    static const uint8_t opa4_table[16] = {0, 17, 34, 51, 68, 85, 102, 119,
+                                           136, 153, 170, 187, 204, 221, 238, 255};
 
-    if (glyph_id == 0 || box_w == 0 || box_h == 0)
+    /* Read pixels from flash bitstream and convert to A8, row by row.
+     * This matches the official lv_font_get_bitmap_fmt_txt non-aligned path. */
+    for (uint32_t y = 0; y < h; y++)
     {
-        return NULL;
-    }
-
-    int nbits = (int)s_font_header.advance_width_bits + (2 * (int)s_font_header.xy_bits)
-                + (2 * (int)s_font_header.wh_bits);
-    int header_bytes = (nbits + 7) >> 3;
-    int bmp_size     = (int)next_offset - (int)glyph_offset - header_bytes;
-
-    if (bmp_size <= 0)
-    {
-        LOG_DBG("glyph_id=%u: invalid bmp_size=%d", glyph_id, bmp_size);
-        return NULL;
-    }
-
-    /* LVGL v9: 写入 draw_buf 并返回 draw_buf->data */
-    uint32_t w = dsc->box_w;
-    uint32_t h = dsc->box_h;
-    if (w == 0 || h == 0)
-    {
-        return NULL;
-    }
-
-    uint32_t bytes_per_row = (w + 7u) >> 3; /* A1 每行字节数 */
-    uint32_t size          = bytes_per_row * h;
-    if (size > draw_buf->data_size)
-    {
-        LOG_ERR("glyph_id=%u: draw_buf too small (need=%u have=%u)", glyph_id, size, draw_buf->data_size);
-        return NULL;
-    }
-    if (size > MAX_GLYPH_BITMAP_SIZE)
-    {
-        LOG_ERR("glyph_id=%u: bitmap_size too large (need=%u max=%u)", glyph_id, size, MAX_GLYPH_BITMAP_SIZE);
-        return NULL;
-    }
-
-    memset(s_glyph_bitmap_buf, 0, MAX_GLYPH_BITMAP_SIZE);
-
-    /* 必须按 bit_iterator 解包，确保字节对齐 */
-    for (uint16_t y = 0; y < box_h; y++)
-    {
-        for (uint16_t x = 0; x < box_w; x++)
+        uint8_t* row = &s_glyph_bitmap_buf[y * row_stride];
+        for (uint32_t x = 0; x < w; x++)
         {
-            int bit = (int)read_bits(&bit_it, 1, &err);
-            if (err != 0)
+            uint32_t px = read_bits(&bit_it, bpp, &err);
+            if (err) return binfont_set_fallback_buf(draw_buf);
+
+            if (bpp == 1)
             {
-                LOG_ERR("glyph_id=%u: read_bits failed at (%u,%u), err=%d", glyph_id, x, y, err);
-                return NULL;
+                row[x] = px ? 0xFF : 0x00;
             }
-            if (bit)
+            else if (bpp == 2)
             {
-                size_t byte_index = (size_t)y * bytes_per_row + (x >> 3);
-                s_glyph_bitmap_buf[byte_index] |= (uint8_t)(0x80u >> (x & 7));
+                row[x] = opa2_table[px & 0x3];
+            }
+            else if (bpp == 4)
+            {
+                row[x] = opa4_table[px & 0xF];
+            }
+            else /* bpp == 8 */
+            {
+                row[x] = (uint8_t)(px & 0xFF);
             }
         }
     }
 
-    memcpy(draw_buf->data, s_glyph_bitmap_buf, size);
+    draw_buf->data          = s_glyph_bitmap_buf;
+    draw_buf->data_size     = out_size;
+    draw_buf->header.w      = (lv_coord_t)w;
+    draw_buf->header.h      = (lv_coord_t)h;
+    draw_buf->header.stride = row_stride;
+    draw_buf->header.cf     = LV_COLOR_FORMAT_A8;
 
-    draw_buf->header.w  = (lv_coord_t)w;
-    draw_buf->header.h  = (lv_coord_t)h;
-    draw_buf->header.cf = LV_COLOR_FORMAT_A1;
-
-    LOG_DBG("glyph_id=%u: bitmap loaded into draw_buf, size=%u", glyph_id, size);
-    return draw_buf->data;
+    return draw_buf;
 }
+
+
 
 /* LVGL回调：释放字形资源（我们用静态缓存，无需释放） */
 static void mos_binfont_release_glyph(const lv_font_t* font, lv_font_glyph_dsc_t* dsc)
@@ -704,7 +693,11 @@ int mos_binfont_lvgl_init(void)
         return 0;
     }
 
+#if defined(CONFIG_FONT_STORAGE_USE_PARTITION_2) && defined(PM_FONT_STORAGE2_ID)
+    int ret = flash_area_open(PM_FONT_STORAGE2_ID, &s_fa);
+#else
     int ret = flash_area_open(PM_FONT_STORAGE_ID, &s_fa);
+#endif
     if (ret != 0)
     {
         LOG_ERR("flash_area_open failed: %d", ret);
@@ -721,22 +714,8 @@ int mos_binfont_lvgl_init(void)
     }
     s_font_size_limit = size;
 
+    /* 强制关闭XIP：NS侧读取XIP会触发TF-M安全错误，改为flash_area_read流式读取 */
     s_use_xip = false;
-#if defined(CONFIG_FONT_STORAGE_USE_XIP)
-#if DT_NODE_EXISTS(DT_CHOSEN(nordic_pm_ext_flash))
-    const struct device* dev = DEVICE_DT_GET(DT_CHOSEN(nordic_pm_ext_flash));
-    if (device_is_ready(dev))
-    {
-        s_use_xip = true;
-    }
-    else
-    {
-        LOG_WRN("font_storage device not ready; XIP disabled for now");
-    }
-#else
-    LOG_WRN("nordic_pm_ext_flash not found; XIP disabled");
-#endif
-#endif
 
     /* 读取binfont header */
     uint8_t label_buf[8];
@@ -747,6 +726,14 @@ int mos_binfont_lvgl_init(void)
     }
 
     uint32_t head_len = sys_get_le32(label_buf);
+    /* Erased partition (0xFF) or invalid: no valid binfont */
+    if (head_len == 0 || head_len == 0xFFFFFFFF ||
+        label_buf[4] != 'h' || label_buf[5] != 'e' || label_buf[6] != 'a' || label_buf[7] != 'd')
+    {
+        LOG_ERR("font_storage2: no valid binfont (erased or wrong format). Program font .hex to partition.");
+        flash_area_close(s_fa);
+        return -ENODEV;
+    }
     LOG_INF("Head section: offset=0x0, len=%u, label='%c%c%c%c'", head_len, label_buf[4], label_buf[5], label_buf[6],
             label_buf[7]);
 
@@ -866,25 +853,65 @@ int mos_binfont_lvgl_init(void)
     }
 
     s_glyf_length = glyf_len;
-    if (s_font_size_limit > 0 && (s_glyf_start_offset + s_glyf_length) > s_font_size_limit)
+    if (s_glyf_length < 8)
+    {
+        LOG_ERR("glyf length too small: %u", s_glyf_length);
+        flash_area_close(s_fa);
+        return -EINVAL;
+    }
+    s_glyf_data_offset = s_glyf_start_offset + 8;
+    s_glyf_data_length = s_glyf_length - 8;
+    if (s_font_size_limit > 0 && (s_glyf_data_offset + s_glyf_data_length) > s_font_size_limit)
     {
         flash_area_close(s_fa);
         return -EINVAL;
     }
-    LOG_INF("Glyf section: offset=0x%X, len=%u", s_glyf_start_offset, s_glyf_length);
+    /* Loca offsets are always section-relative in LVGL binfont format
+     * (matching lv_binfont_loader.c: seek to glyf_section_start + loca_value). */
+    LOG_INF("Glyf section: offset=0x%X, len=%u (data_off=0x%X data_len=%u)",
+            s_glyf_start_offset, s_glyf_length, s_glyf_data_offset, s_glyf_data_length);
 
-    /* 更新LVGL字体参数 */
-    s_binfont_lvgl.line_height = (int32_t)s_font_header.ascent - (int32_t)s_font_header.descent;
-    s_binfont_lvgl.base_line   = 0;
+    /* 更新LVGL字体参数（优先用min/max，避免基线/行高偏差导致重影） */
+    int32_t min_y       = (int32_t)s_font_header.min_y;
+    int32_t max_y       = (int32_t)s_font_header.max_y;
+    int32_t line_height = max_y - min_y;
+    int32_t base_line   = -min_y;
+
+    if (line_height <= 0)
+    {
+        line_height = (int32_t)s_font_header.font_size;
+    }
+    if (line_height <= 0)
+    {
+        line_height = (int32_t)s_font_header.ascent - (int32_t)s_font_header.descent;
+    }
+    if (line_height <= 0)
+    {
+        line_height = 18; /* 最终兜底，避免异常值 */
+    }
+
+    if (base_line < 0 || base_line > line_height)
+    {
+        base_line = (int32_t)s_font_header.ascent;
+        if (base_line < 0 || base_line > line_height)
+        {
+            base_line = 0;
+        }
+    }
+
+    s_binfont_lvgl.line_height = line_height;
+    s_binfont_lvgl.base_line   = base_line;
 
     s_initialized = true;
     LOG_WRN("========================================");
     LOG_WRN("Binfont LVGL init SUCCESS!");
     LOG_WRN("Font: size=%u, cmap_tables=%u", s_font_header.font_size, s_cmap_count);
-    LOG_WRN("Header: adv_w_bits=%u, xy_bits=%u, wh_bits=%u, bpp=%u", s_font_header.advance_width_bits,
-            s_font_header.xy_bits, s_font_header.wh_bits, s_font_header.bits_per_pixel);
+    LOG_WRN("Header: adv_w_bits=%u, xy_bits=%u, wh_bits=%u, bpp=%u, compression_id=%u (0=raw)",
+            s_font_header.advance_width_bits, s_font_header.xy_bits, s_font_header.wh_bits,
+            s_font_header.bits_per_pixel, s_font_header.compression_id);
     LOG_WRN("Loca: count=%u, format=%u", s_loca_count, s_font_header.index_to_loc_format);
-    LOG_WRN("Glyf: offset=0x%X, len=%u", s_glyf_start_offset, s_glyf_length);
+    LOG_WRN("Glyf: offset=0x%X, len=%u (data_off=0x%X data_len=%u)", s_glyf_start_offset, s_glyf_length,
+            s_glyf_data_offset, s_glyf_data_length);
     LOG_WRN("========================================");
 
     return 0;
@@ -911,7 +938,9 @@ void mos_binfont_lvgl_deinit(void)
 
     s_initialized        = false;
     s_glyf_start_offset  = 0;
+    s_glyf_data_offset   = 0;
     s_glyf_length        = 0;
+    s_glyf_data_length   = 0;
     s_loca_start_offset  = 0;
     s_loca_count         = 0;
     s_loca_offsets_start = 0;
@@ -936,6 +965,52 @@ const lv_font_t* mos_binfont_get_lvgl_font(void)
 
     LOG_WRN("Returning binfont @%p", &s_binfont_lvgl);
     return &s_binfont_lvgl;
+}
+
+int mos_binfont_debug_glyph_region(uint32_t unicode, uint32_t *out_glyph_id,
+                                   uint32_t *out_start, uint32_t *out_len)
+{
+    if (!s_initialized || !out_glyph_id || !out_start || !out_len)
+    {
+        return -EINVAL;
+    }
+
+    uint32_t glyph_id = 0;
+    if (find_glyph_id_in_cmap(unicode, &glyph_id) != 0)
+    {
+        return -ENOENT;
+    }
+
+    if (glyph_id >= s_loca_count)
+    {
+        return -EINVAL;
+    }
+
+    uint32_t glyph_offset = 0;
+    uint32_t next_offset  = s_glyf_length; /* section length – matches official loader */
+
+    if (read_loca_offset(glyph_id, &glyph_offset) != 0)
+    {
+        return -EIO;
+    }
+    if (glyph_id + 1 < s_loca_count)
+    {
+        if (read_loca_offset(glyph_id + 1, &next_offset) != 0)
+        {
+            return -EIO;
+        }
+    }
+
+    if (glyph_offset > next_offset || next_offset > s_glyf_length)
+    {
+        return -EINVAL;
+    }
+
+    *out_glyph_id = glyph_id;
+    /* loca offsets are section-relative (include 8-byte glyf label) */
+    *out_start    = s_glyf_start_offset + glyph_offset;
+    *out_len      = next_offset - glyph_offset;
+    return 0;
 }
 
 #endif /* CONFIG_LVGL */

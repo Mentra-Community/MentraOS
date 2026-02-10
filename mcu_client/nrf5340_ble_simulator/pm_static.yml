@@ -1,6 +1,6 @@
 # Static partition layout (external flash)
 # 静态分区表（外置 Flash）
-# mcuboot_secondary: OTA 备用槽 | font_storage: 中文字库 8MB | user_storage: 用户空间（剩余）
+# mcuboot_secondary / font_storage / font_storage2 / user_storage
 
 mcuboot_secondary:
   address: 0x0
@@ -10,19 +10,25 @@ mcuboot_secondary:
   share_size:
   - mcuboot_primary
   size: 0xf0000
-
-
+#xbf
 font_storage:
   address: 0xf0000
   device: DT_CHOSEN(nordic_pm_ext_flash)
-  end_address: 0x8f0000
+  end_address: 0x6ca000
   region: external_flash
-  size: 0x800000
+  size: 0x5da000
+#LVGL binfont
+font_storage2:
+  address: 0x6ca000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0xae8000
+  region: external_flash
+  size: 0x41e000
 
-#  23 MB（0x8f0000 ~ 0x2000000）
+#  user_storage（0xae8000 ~ 0x2000000）
 user_storage:
-  address: 0x8f0000
+  address: 0xae8000
   device: DT_CHOSEN(nordic_pm_ext_flash)
   end_address: 0x2000000
   region: external_flash
-  size: 0x1710000
+  size: 0x1518000

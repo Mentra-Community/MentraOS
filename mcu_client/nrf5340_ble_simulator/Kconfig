@@ -76,6 +76,40 @@ config FONT_STORAGE_USE_XIP
 	help
 	  Use external flash XIP address (0x10000000 + PM_FONT_STORAGE_ADDRESS)
 	  as the binfont buffer to avoid RAM copy.
+
+config FONT_STORAGE_USE_PARTITION_2
+	bool "Use font_storage2 partition for font data"
+	default n
+	depends on LVGL && FLASH_MAP
+	help
+	  When enabled, load font data from the font_storage2 partition instead
+	  of font_storage. This is useful when you split fonts across partitions.
+
+config FONT_STORAGE_PREFER_BINFONT
+	bool "Prefer LVGL binfont over XBF when using XIP"
+	default n
+	depends on LVGL && FLASH_MAP
+	help
+	  When enabled, display_get_font(\"cjk\") will prefer the LVGL binfont
+	  adapter over XBF on the XIP path.
+
+config BINFONT_GLYPH_ORDER_WHXY
+	bool "Use glyf order (adv,W,H,X,Y) instead of spec (adv,X,Y,W,H)"
+	default n
+	depends on LVGL && FLASH_MAP
+	help
+	  LVGL font_spec: advanceWidth, BBox X, Y, Width, Height. Some tools
+	  output (adv, Width, Height, X, Y). Enable this if you get bitmap
+	  overflow with an uncompressed binfont.
+
+config BINFONT_A1_INVERT
+	bool "Invert 1bpp (A1) glyph bits for correct contrast"
+	default n
+	depends on LVGL && FLASH_MAP
+	help
+	  When enabled, invert each byte of the A1 bitmap. Try this if 1bpp
+	  text appears faint or blurry (font may use 0=ink vs LVGL 1=ink).
+	  Disable if text becomes inverted or wrong.
 endmenu
 
 # Include custom driver module Kconfig (projector display)

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-02-07 14:42:30
+ * @LastEditTime : 2026-02-07 16:39:37
  * @FilePath     : mos_lvgl_display.c
  * @Description  :
  *
@@ -1825,7 +1825,7 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
                     /* 配置 Bank0 寄存器 50%=127/255 / Configure Bank0 registers (50% = 127/255) */
                     /* a6n_set_brightness(0x7f); */
                     /* 初始亮度 30% / Set initial brightness to 30% */
-                    protobuf_set_brightness_level(30);
+                    protobuf_set_brightness_level(100);
                     mos_delay_us(6);
 
                     /* 设置显示格式为 GRAY16 (4-bit) / Set display format to GRAY16 (4-bit) */

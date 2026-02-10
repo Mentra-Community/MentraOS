@@ -35,6 +35,7 @@
 #include <pm_config.h>
 
 #include "mos_lvgl_display.h"
+#include "mos_binfont_lvgl.h"
 
 // Include protobuf handler for battery functions
 #include "protobuf_handler.h"
@@ -97,7 +98,8 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "✏️  Text Commands:");
     shell_print(shell, "  display text \"Hello\"              - Text overlay (center position, for patterns)");
     shell_print(shell, "  display text \"Hello\" <x> <y> <size> - Write text at specific position");
-    shell_print(shell, "  display gbk [\"中文\"]               - Show Chinese text (default if omitted)");
+    shell_print(shell, "  display b_t                      - Show binfont test text");
+    shell_print(shell, "  display cjk_hex <hex> [x] [y]     - Show CJK from UTF-8 hex (no Chinese input needed)");
     shell_print(shell, "");
     shell_print(shell, "📐 Layout Control:");
     shell_print(shell, "  display layout margin <pixels>     - Set container margin (current: margin from edges)");
@@ -123,6 +125,8 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display battery 85 true          - Set 85%% battery, charging");
     shell_print(shell, "  display text \"Pattern 3\"          - Overlay text on current pattern");
     shell_print(shell, "  display text \"MentraOS\" 10 20 14  - Write 'MentraOS' at (10,20) with size 14");
+    shell_print(shell, "  display b_t                      - Show binfont test text");
+    shell_print(shell, "  display cjk_hex E6B58BE8AF95E4B8ADE69687  - Show CJK (test) at (10,10)");
     shell_print(shell, "  display clear                    - Clear the screen");
     shell_print(shell, "  display fill                     - Fill screen with white");
     shell_print(shell, "");
@@ -354,39 +358,99 @@ static int cmd_display_text(const struct shell *shell, size_t argc, char **argv)
 }
 
 /**
- * Display GBK text command - renders Chinese using external font
+ * Display binfont test command - renders a fixed Unicode string
  */
-static int cmd_display_gbk(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_binfont_test(const struct shell* shell, size_t argc, char** argv)
 {
-    const char* text = "你好，MentraOS";
-    int         x    = 10;
-    int         y    = 10;
+    ARG_UNUSED(argv);
 
-    if (argc == 2)
-    {
-        text = argv[1];
-    }
-    else if (argc != 1)
+    if (argc != 1)
     {
         shell_error(shell, "❌ Usage:");
-        shell_print(shell, "  display gbk                 - Show default Chinese test text");
-        shell_print(shell, "  display gbk \"中文\"          - Show custom Chinese text");
+        shell_print(shell, "  display b_t                - Show binfont test text");
         return -EINVAL;
     }
 
-    static char clean_text[256];
-    if (text[0] == '"' && text[strlen(text) - 1] == '"')
+    /* 强制使用 UTF-8 字节序列，避免源文件编码导致乱码 */
+    const char* text = "\xE4\xBD\xA0\xE5\xA5\xBD, MentraOS";
+    int         x    = 10;
+    int         y    = 10;
+
+    /* 字体大小由 binfont 自身决定，这里传 0 表示不指定尺寸 */
+    /* Binfont size is determined by the font itself, passing 0 means no specific size */
+    /* 强制重新加载 binfont，确保使用刚烧录的新字库 */
+    mos_binfont_lvgl_deinit();
+    display_update_xy_text((uint16_t)x, (uint16_t)y, text, 0, 0xFFFF);
+    shell_print(shell, "✅ Binfont test text written at (%d,%d)", x, y);
+
+    return 0;
+}
+
+/* 将十六进制字符串解析为 UTF-8 字节写入 buf，返回写入字节数，-1 表示错误 */
+static int hex_string_to_utf8(const char* hex, uint8_t* buf, size_t buf_size)
+{
+    size_t out = 0;
+    for (; *hex && out < buf_size; )
     {
-        strncpy(clean_text, text + 1, sizeof(clean_text) - 1);
-        clean_text[strlen(text) - 2] = '\0';
-        text                         = clean_text;
+        while (*hex == ' ' || *hex == '\t') hex++;
+        if (!*hex) break;
+        int hi = -1, lo = -1;
+        char c = *hex++;
+        if (c >= '0' && c <= '9') hi = c - '0';
+        else if (c >= 'A' && c <= 'F') hi = c - 'A' + 10;
+        else if (c >= 'a' && c <= 'f') hi = c - 'a' + 10;
+        else return -1;
+        if (!*hex) return -1;
+        c = *hex++;
+        if (c >= '0' && c <= '9') lo = c - '0';
+        else if (c >= 'A' && c <= 'F') lo = c - 'A' + 10;
+        else if (c >= 'a' && c <= 'f') lo = c - 'a' + 10;
+        else return -1;
+        buf[out++] = (uint8_t)((hi << 4) | lo);
+    }
+    return (int)out;
+}
+
+/**
+ * Display CJK text from UTF-8 hex string (for terminals that cannot type Chinese).
+ * Example: display cjk_hex E6B58BE8AF95E4B8ADE69687
+ *          display cjk_hex E4BDA0E5A5BD 10 20
+ */
+#define CJK_HEX_UTF8_BUF_SIZE 128
+static int cmd_display_cjk_hex(const struct shell* shell, size_t argc, char** argv)
+{
+    if (argc < 2)
+    {
+        shell_print(shell, "Usage: display cjk_hex <hex> [x] [y]");
+        shell_print(shell, "  hex = UTF-8 bytes in hex, e.g. E6B58BE8AF95 = test");
+        shell_print(shell, "  Optional: x y = position (default 10 10)");
+        shell_print(shell, "Example: display cjk_hex E4BDA0E5A5BD, MentraOS = ni hao");
+        return -EINVAL;
     }
 
-    /* GBK 字库由字体本身决定大小，这里传 0 表示不指定尺寸 */
-    /* GBK font size is determined by the font itself, passing 0 means no specific size */
-    display_update_xy_text((uint16_t)x, (uint16_t)y, text, 0, 0xFFFF);
-    shell_print(shell, "✅ GBK text \"%s\" written at (%d,%d)", text, x, y);
+    static uint8_t utf8_buf[CJK_HEX_UTF8_BUF_SIZE];
+    int len = hex_string_to_utf8(argv[1], utf8_buf, CJK_HEX_UTF8_BUF_SIZE - 1);
+    if (len < 0)
+    {
+        shell_error(shell, "Invalid hex (use 0-9 A-F, spaces allowed)");
+        return -EINVAL;
+    }
+    utf8_buf[len] = '\0';
 
+    int x = 10, y = 10;
+    if (argc >= 4)
+    {
+        x = atoi(argv[2]);
+        y = atoi(argv[3]);
+    }
+    else if (argc >= 3)
+    {
+        x = atoi(argv[2]);
+    }
+
+    mos_binfont_lvgl_deinit();
+    display_update_xy_text((uint16_t)x, (uint16_t)y, (const char*)utf8_buf, 0, 0xFFFF);
+    shell_print(shell, "OK text at (%d,%d) (%d bytes)", x, y, len);
     return 0;
 }
 
@@ -1216,6 +1280,11 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_fonts,
                                SHELL_CMD(test, NULL, "Test all font sizes with sample text", cmd_display_fonts_test),
                                SHELL_SUBCMD_SET_END);
 
+/* Shell command definitions for binfont test */
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_binfont,
+                               SHELL_CMD(test, NULL, "Show binfont test text", cmd_display_binfont_test),
+                               SHELL_SUBCMD_SET_END);
+
 /* Shell subcommand definitions for layout */
 SHELL_STATIC_SUBCMD_SET_CREATE(
     sub_layout, SHELL_CMD(info, NULL, "Show current layout configuration", cmd_display_layout_info),
@@ -1247,7 +1316,11 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD(clear, NULL, "Clear display", cmd_display_clear),
     SHELL_CMD(fill, NULL, "Fill display with white", cmd_display_fill),
     SHELL_CMD_ARG(text, NULL, "Write text: \"string\" [x y size] (overlay or positioned)", cmd_display_text, 2, 3),
-    SHELL_CMD_ARG(gbk, NULL, "Show Chinese text: [\"text\"]", cmd_display_gbk, 1, 2),
+    SHELL_CMD(binfont, &sub_binfont, "Binfont test command", NULL),
+    SHELL_CMD(bin_test, NULL, "Show binfont test text", cmd_display_binfont_test),
+    SHELL_CMD(bt, NULL, "Show binfont test text", cmd_display_binfont_test),
+    SHELL_CMD(b_t, NULL, "Show binfont test text", cmd_display_binfont_test),
+    SHELL_CMD_ARG(cjk_hex, NULL, "Show CJK from UTF-8 hex: cjk_hex <hex> [x] [y]", cmd_display_cjk_hex, 2, 2),
     SHELL_CMD_ARG(pattern, NULL, "Select pattern (0-5): 0=chess, 1=h-zebra, 2=v-zebra, 3=scroll, 4=container, 5=xy",
                   cmd_display_pattern, 2, 0),
     SHELL_CMD_ARG(battery, NULL, "Set battery level & charging: <level> [true/false]", cmd_display_battery, 2, 1),

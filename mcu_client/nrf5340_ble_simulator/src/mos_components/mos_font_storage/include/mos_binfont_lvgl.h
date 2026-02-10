@@ -1,7 +1,7 @@
 /*** 
  * @Author       : Cole
  * @Date         : 2026-02-05 14:53:31
- * @LastEditTime : 2026-02-07 15:00:23
+ * @LastEditTime : 2026-02-10 15:46:31
  * @FilePath     : mos_binfont_lvgl.h
  * @Description  : 
  * @
@@ -34,6 +34,10 @@ int mos_binfont_lvgl_init(void);
  * 释放binfont LVGL字体资源
  */
 void mos_binfont_lvgl_deinit(void);
+
+
+int mos_binfont_debug_glyph_region(uint32_t unicode, uint32_t *out_glyph_id,
+                                   uint32_t *out_start, uint32_t *out_len);
 
 #endif /* CONFIG_LVGL */
 

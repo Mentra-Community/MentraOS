@@ -27,7 +27,11 @@ LOG_MODULE_REGISTER(mos_font_storage, LOG_LEVEL_INF);
 #define PM_QSPI_NOR_BASE_ADDRESS 0x10000000u
 #endif
 
+#if defined(CONFIG_FONT_STORAGE_USE_PARTITION_2) && defined(PM_FONT_STORAGE2_ADDRESS)
+#define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE2_ADDRESS)
+#else
 #define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE_ADDRESS)
+#endif
 
 static lv_font_t *font_handle;
 static void *font_buf;
@@ -65,7 +69,11 @@ int mos_font_storage_load(void)
 #endif
 
     const struct flash_area* fa;
+#if defined(CONFIG_FONT_STORAGE_USE_PARTITION_2) && defined(PM_FONT_STORAGE2_ID)
+    int ret = flash_area_open(PM_FONT_STORAGE2_ID, &fa);
+#else
     int ret = flash_area_open(PM_FONT_STORAGE_ID, &fa);
+#endif
     if (ret != 0)
     {
         LOG_ERR("flash_area_open(font_storage) failed: %d", ret);
