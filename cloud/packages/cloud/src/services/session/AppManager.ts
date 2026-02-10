@@ -1210,16 +1210,28 @@ export class AppManager {
       const user = await User.findOrCreateUser(this.userSession.userId);
       const userSettings = user.getAppSettings(packageName) || app?.settings || [];
 
-      // Load MentraOS system settings from UserSettingsManager (single source of truth)
-      // Maps from REST keys (snake_case) to SDK keys (camelCase) for backward compatibility
-      const mentraosSettings = this.userSession.userSettingsManager.buildMentraosSettings();
+      // Get user's AugmentOS system settings with fallback to defaults
+      // NOTE: user.augmentosSettings is legacy - new settings go through UserSettings model
+      // This fallback is kept for backward compatibility with apps expecting augmentosSettings in CONNECTION_ACK
+      const userAugmentosSettings = user.augmentosSettings || {
+        useOnboardMic: false,
+        contextualDashboard: true,
+        headUpAngle: 20,
+        brightness: 50,
+        autoBrightness: false,
+        sensingEnabled: true,
+        alwaysOnStatusBar: false,
+        bypassVad: false,
+        bypassAudioEncoding: false,
+        metricSystemEnabled: false,
+      };
 
       // Send connection acknowledgment with capabilities
       const ackMessage = {
         type: CloudToAppMessageType.CONNECTION_ACK,
         sessionId: sessionId,
         settings: userSettings,
-        mentraosSettings: mentraosSettings,
+        augmentosSettings: userAugmentosSettings,
         capabilities: this.userSession.getCapabilities(),
         timestamp: new Date(),
       };

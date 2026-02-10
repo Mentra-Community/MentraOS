@@ -4,16 +4,15 @@ import com.mentra.core.Bridge
 import com.mentra.core.CoreManager
 import com.mentra.core.utils.ConnTypes
 import com.mentra.core.utils.DeviceTypes
-import com.mentra.core.GlassesStore
 
 class Simulated : SGCManager() {
 
     init {
+        ready = true
         type = DeviceTypes.SIMULATED
-        GlassesStore.apply("glasses", "fullyBooted", true)
-        GlassesStore.apply("glasses", "connected", true)
-        GlassesStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
-        GlassesStore.apply("glasses", "micEnabled", false)
+        connectionState = ConnTypes.CONNECTED
+        batteryLevel = 100
+        micEnabled = false
     }
 
     // Audio Control
@@ -165,9 +164,11 @@ class Simulated : SGCManager() {
     }
 
     override fun connectById(id: String) {
+        CoreManager.getInstance().handleConnectionStateChanged()
     }
 
     override fun getConnectedBluetoothName(): String {
+        Bridge.log("getConnectedBluetoothName")
         return ""
     }
 

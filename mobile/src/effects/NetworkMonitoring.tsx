@@ -5,12 +5,12 @@ import {useGlassesStore} from "@/stores/glasses"
 
 export function NetworkMonitoring() {
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>(networkConnectivityService.getStatus())
-  const wifiLocalIp = useGlassesStore((state) => state.wifiLocalIp)
-  const wifiConnected = useGlassesStore((state) => state.wifiConnected)
-  const wifiSsid = useGlassesStore((state) => state.wifiSsid)
-  const hotspotEnabled = useGlassesStore((state) => state.hotspotEnabled)
-  const hotspotGatewayIp = useGlassesStore((state) => state.hotspotGatewayIp)
-  const hotspotSsid = useGlassesStore((state) => state.hotspotSsid)
+  const wifiLocalIp = useGlassesStore(state => state.wifiLocalIp)
+  const wifiConnected = useGlassesStore(state => state.wifiConnected)
+  const wifiSsid = useGlassesStore(state => state.wifiSsid)
+  const hotspotEnabled = useGlassesStore(state => state.hotspotEnabled)
+  const hotspotGatewayIp = useGlassesStore(state => state.hotspotGatewayIp)
+  const hotspotSsid = useGlassesStore(state => state.hotspotSsid)
 
   // Determine the active IP - ONLY use hotspot gateway IP when phone is connected to hotspot
   // Never use local WiFi IP - we only support hotspot mode for gallery
@@ -40,7 +40,7 @@ export function NetworkMonitoring() {
     networkConnectivityService.initialize()
 
     // Subscribe to network changes
-    const unsubscribe = networkConnectivityService.subscribe((status) => {
+    const unsubscribe = networkConnectivityService.subscribe(status => {
       console.log("[NetworkConnectivityProvider] Network status updated:", status)
       setNetworkStatus(status)
     })
@@ -61,17 +61,17 @@ export function NetworkMonitoring() {
 
   // Update glasses status when it changes
   useEffect(() => {
-    // console.log("[NetworkConnectivityProvider] Glasses status changed:", {
-    //   wifiConnected,
-    //   wifiSsid,
-    //   wifiLocalIp,
-    //   hotspotEnabled,
-    //   hotspotGatewayIp,
-    //   hotspotSsid,
-    //   activeConnection,
-    //   activeGlassesIp,
-    //   activeSSID,
-    // })
+    console.log("[NetworkConnectivityProvider] Glasses status changed:", {
+      wifiConnected,
+      wifiSsid,
+      wifiLocalIp,
+      hotspotEnabled,
+      hotspotGatewayIp,
+      hotspotSsid,
+      activeConnection,
+      activeGlassesIp,
+      activeSSID,
+    })
 
     if (activeConnection !== undefined) {
       networkConnectivityService.updateGlassesStatus(wifiConnected, activeSSID || null, activeGlassesIp || undefined)

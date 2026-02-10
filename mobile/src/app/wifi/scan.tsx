@@ -1,4 +1,4 @@
-import CoreModule, {WifiSearchResult} from "core"
+import CoreModule from "core"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
@@ -14,16 +14,22 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
+import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {translate} from "@/i18n"
 import {ConnectionOverlay} from "@/components/glasses/ConnectionOverlay"
-import {BackgroundTimer} from "@/utils/timers"
-import {useCoreStore} from "@/stores/core"
+import { BackgroundTimer } from "@/utils/timers"
+
+interface NetworkInfo {
+  ssid: string
+  requiresPassword: boolean
+  signalStrength?: number
+}
 
 export default function WifiScanScreen() {
   const {theme} = useAppTheme()
 
-  const [networks, setNetworks] = useState<WifiSearchResult[]>([])
+  const [networks, setNetworks] = useState<NetworkInfo[]>([])
   const [savedNetworks, setSavedNetworks] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(true)
   const scanTimeoutRef = useRef<number | null>(null)
@@ -33,7 +39,6 @@ export default function WifiScanScreen() {
   const wifiConnected = useGlassesStore((state) => state.wifiConnected)
   const {push, goBack, pushPrevious, getPreviousRoute, incPreventBack, decPreventBack, setAndroidBackFn} =
     useNavigationHistory()
-  const wifiScanResults: WifiSearchResult[] = useCoreStore((state) => state.wifiScanResults)
 
   // if the previous route is in this list, or the second to last route is in this list
   // show / allow the back button:
@@ -47,7 +52,7 @@ export default function WifiScanScreen() {
     if (showBack) {
       goBack()
     } else {
-      pushPrevious(1)
+      pushPrevious(2)
     }
   }
 
@@ -70,50 +75,83 @@ export default function WifiScanScreen() {
   )
 
   useEffect(() => {
-    const savedCredentials = WifiCredentialsService.getAllCredentials()
-    setSavedNetworks(savedCredentials.map((cred) => cred.ssid))
-    startScan()
-  }, [])
+    const loadSavedNetworks = () => {
+      const savedCredentials = WifiCredentialsService.getAllCredentials()
+      setSavedNetworks(savedCredentials.map((cred) => cred.ssid))
+    }
 
-  useEffect(() => {
-    const handleWifiScanResults = (scanResults: WifiSearchResult[]) => {
-      if (scanResults.length === 0) {
-        return
+    loadSavedNetworks()
+    startScan()
+
+    const handleWifiScanResults = (data: {networks: string[]; networksEnhanced?: any[]}) => {
+      // console.log("WIFI_SCAN: ========= SCAN.TSX RECEIVED WIFI RESULTS =========")
+      // console.log("WIFI_SCAN: Data received:", data)
+
+      let processedNetworks: NetworkInfo[]
+      if (data.networks && data.networks.length > 0) {
+        // console.log("WIFI_SCAN: Processing enhanced networks:", data.networks)
+        processedNetworks = data.networks.map((network: any) => ({
+          ssid: network.ssid || "",
+          requiresPassword: network.requiresPassword !== false,
+          signalStrength: network.signalStrength || -100,
+        }))
+        // console.log("WIFI_SCAN: Enhanced networks count:", processedNetworks.length)
       }
 
-      let processedNetworks = scanResults?.map((network: any) => ({
-        ssid: network.ssid || "",
-        requiresPassword: network.requiresPassword !== false,
-        signalStrength: network.signalStrength || -100,
-      }))
-
       if (scanTimeoutRef.current) {
+        // console.log("WIFI_SCAN: Clearing scan timeout - results received")
         BackgroundTimer.clearTimeout(scanTimeoutRef.current)
         scanTimeoutRef.current = null
       }
 
-      setNetworks(processedNetworks)
+      setNetworks((prevNetworks) => {
+        // console.log("WIFI_SCAN: Current scan session ID:", currentScanSessionRef.current)
+        // console.log("WIFI_SCAN: Previous networks count:", prevNetworks.length)
+        // console.log("WIFI_SCAN: Is first result of this scan session?", !receivedResultsForSessionRef.current)
+
+        let baseNetworks: NetworkInfo[]
+        if (receivedResultsForSessionRef.current) {
+          // console.log("WIFI_SCAN: APPENDING: Adding to existing networks from current scan session")
+          baseNetworks = prevNetworks
+        } else {
+          console.log("WIFI_SCAN: REPLACING: Starting fresh with new scan session results")
+          baseNetworks = []
+        }
+
+        const existingMap = new Map<string, NetworkInfo>()
+        baseNetworks.forEach((network) => existingMap.set(network.ssid, network))
+        processedNetworks.forEach((network) => {
+          if (network.ssid) {
+            existingMap.set(network.ssid, network)
+          }
+        })
+        const newNetworks = Array.from(existingMap.values())
+        // console.log("WIFI_SCAN: Final networks count:", newNetworks.length)
+        return newNetworks
+      })
 
       receivedResultsForSessionRef.current = true
       setIsScanning(false)
+      // console.log("WIFI_SCAN: ========= END SCAN.TSX WIFI RESULTS =========")
     }
 
-    handleWifiScanResults(wifiScanResults)
+    GlobalEventEmitter.on("wifi_scan_results", handleWifiScanResults)
 
     return () => {
+      GlobalEventEmitter.removeListener("wifi_scan_results", handleWifiScanResults)
       if (scanTimeoutRef.current) {
         BackgroundTimer.clearTimeout(scanTimeoutRef.current)
         scanTimeoutRef.current = null
       }
     }
-  }, [wifiScanResults])
+  }, [])
 
   const startScan = async () => {
-    console.log("WIFI_SCAN: ========= STARTING NEW WIFI SCAN =========")
+    // console.log("WIFI_SCAN: ========= STARTING NEW WIFI SCAN =========")
     setIsScanning(true)
-    setNetworks([])
     currentScanSessionRef.current = Date.now()
     receivedResultsForSessionRef.current = false
+    setNetworks([])
 
     if (scanTimeoutRef.current) {
       BackgroundTimer.clearTimeout(scanTimeoutRef.current)
@@ -126,7 +164,7 @@ export default function WifiScanScreen() {
 
     try {
       await CoreModule.requestWifiScan()
-      console.log("WIFI_SCAN: WiFi scan request sent successfully")
+      // console.log("WIFI_SCAN: WiFi scan request sent successfully")
     } catch (error) {
       console.error("WIFI_SCAN: Error scanning for WiFi networks:", error)
       if (scanTimeoutRef.current) {
@@ -141,7 +179,7 @@ export default function WifiScanScreen() {
     }
   }
 
-  const handleNetworkSelect = (selectedNetwork: WifiSearchResult) => {
+  const handleNetworkSelect = (selectedNetwork: NetworkInfo) => {
     if (wifiConnected && wifiSsid === selectedNetwork.ssid) {
       showAlert(
         "Forget Network",
@@ -199,16 +237,14 @@ export default function WifiScanScreen() {
     })
   }
 
-  const renderNetworkItem = (item: WifiSearchResult) => {
+  const renderNetworkItem = (item: NetworkInfo) => {
     const isConnected = wifiConnected && wifiSsid === item.ssid
     const isSaved = savedNetworks.includes(item.ssid)
 
     return (
       <TouchableOpacity
         key={item.ssid}
-        className={`flex-row justify-between items-center bg-primary-foreground py-4 px-4 rounded-xl ${
-          isConnected ? "opacity-70" : ""
-        }`}
+        className={`flex-row justify-between items-center bg-primary-foreground py-4 px-4 rounded-xl ${isConnected ? "opacity-70" : ""}`}
         onPress={() => handleNetworkSelect(item)}>
         <View className="flex-1 flex-row items-center justify-between">
           <View className="flex-row items-center flex-1">
@@ -268,7 +304,7 @@ export default function WifiScanScreen() {
         <View className="flex-1 flex-shrink min-h-0 pb-4">
           {isScanning ? (
             <View className="flex-1 justify-center items-center py-12">
-              <ActivityIndicator size="large" color={theme.colors.foreground} />
+              <ActivityIndicator size="large" color={theme.colors.text} />
               <Text className="mt-4 text-base text-text-dim" tx="wifi:scanningForNetworks" />
             </View>
           ) : networks.length > 0 ? (

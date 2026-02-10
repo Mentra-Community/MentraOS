@@ -152,7 +152,6 @@ const tablerIcons = {
   "mail": 1,
   "chevron-down": 1,
   "chevron-up": 1,
-  "alert-triangle": 1,
 }
 
 /**

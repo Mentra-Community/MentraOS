@@ -90,6 +90,7 @@ const LEGACY_EXPRESS_PATHS = [
   "/api/tools",
   "/api/permissions",
   "/api/hardware",
+  "/api/user-data",
   "/api/account",
   "/api/onboarding",
   "/api/app-uptime",

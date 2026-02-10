@@ -15,7 +15,6 @@ WORKDIR /app
 # Copy package.json and tsconfig files
 COPY package.json tsconfig.json tsconfig.base.json ./
 COPY packages/types/package.json packages/types/tsconfig.json ./packages/types/
-COPY packages/display-utils/package.json packages/display-utils/tsconfig.json ./packages/display-utils/
 COPY packages/sdk/package.json packages/sdk/tsconfig.json ./packages/sdk/
 COPY packages/cloud/package.json packages/cloud/tsconfig.json ./packages/cloud/
 

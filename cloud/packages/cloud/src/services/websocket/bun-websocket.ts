@@ -290,7 +290,7 @@ async function handleGlassesOpen(ws: GlassesServerWebSocket): Promise<void> {
     }
 
     userSession.logger.info(
-      { reconnection, livekitRequested, udpEncryptionRequested },
+      { reconnection, livekitRequested },
       `Glasses WebSocket connection opened for user: ${userId}`,
     );
 
@@ -404,13 +404,16 @@ async function handleGlassesConnectionInit(
   if (udpEncryptionRequested) {
     const encryptionKey = userSession.udpAudioManager.getEncryptionKey();
     if (encryptionKey) {
-      (ackMessage as any).udpEncryption = {
+      ackMessage.udpEncryption = {
         key: encryptionKey,
         algorithm: "xsalsa20-poly1305",
       };
       userSession.logger.info({ feature: "udp-audio-encryption" }, "Included UDP encryption key in CONNECTION_ACK");
     } else {
-      userSession.logger.warn({ feature: "udp-audio-encryption" }, "UDP encryption requested but key not available");
+      userSession.logger.warn(
+        { feature: "udp-audio-encryption" },
+        "UDP encryption requested but no encryption key available",
+      );
     }
   }
 

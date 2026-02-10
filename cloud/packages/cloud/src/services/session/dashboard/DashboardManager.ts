@@ -343,7 +343,7 @@ export class DashboardManager {
         currentMode: this.currentMode,
         mainContentCount: this.mainContent.size,
         expandedContentCount: this.expandedContent.size,
-        userTimezone: this.userSession.userTimezone,
+        userDatetime: this.userSession.userDatetime,
       },
       "Dashboard update triggered",
     );

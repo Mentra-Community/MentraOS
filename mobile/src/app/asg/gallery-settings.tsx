@@ -51,7 +51,7 @@ export default function GallerySettingsScreen() {
       let videos = 0
       let size = 0
 
-      fileArray.forEach((file) => {
+      fileArray.forEach(file => {
         if (file.is_video) {
           videos++
         } else {

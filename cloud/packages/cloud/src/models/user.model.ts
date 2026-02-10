@@ -22,6 +22,21 @@ export interface UserI extends Document {
   email: string;
   runningApps: string[];
   appSettings: Map<string, AppSetting[]>;
+  augmentosSettings: {
+    useOnboardMic: boolean;
+    contextualDashboard: boolean;
+    headUpAngle: number;
+    dashboardHeight: number;
+    dashboardDepth: number;
+    brightness: number;
+    autoBrightness: boolean;
+    sensingEnabled: boolean;
+    alwaysOnStatusBar: boolean;
+    bypassVad: boolean;
+    bypassAudioEncoding: boolean;
+    metricSystemEnabled: boolean;
+    enforceLocalTranscription: boolean;
+  };
   location?: Location;
   locationSubscriptions?: Map<string, { rate: string }>;
   effectiveLocationTier?: string;
@@ -70,7 +85,10 @@ export interface UserI extends Document {
   setLocation(location: Location): Promise<void>;
   addRunningApp(appName: string): Promise<void>;
   removeRunningApp(appName: string): Promise<void>;
-  updateAppSettings(appName: string, settings: { key: string; value: any }[]): Promise<void>;
+  updateAppSettings(
+    appName: string,
+    settings: { key: string; value: any }[],
+  ): Promise<void>;
   // getAppSettings(appName: string): AppSetting[] | undefined;
   getAppSettings(appName: string): any[] | undefined;
   isAppRunning(appName: string): boolean;
@@ -80,6 +98,10 @@ export interface UserI extends Document {
   uninstallApp(packageName: string): Promise<void>;
   isAppInstalled(packageName: string): boolean;
 
+  updateAugmentosSettings(
+    settings: Partial<UserI["augmentosSettings"]>,
+  ): Promise<void>;
+  getAugmentosSettings(): UserI["augmentosSettings"];
   updateAppLastActive(packageName: string): Promise<void>;
 
   // Glasses model tracking methods
@@ -144,6 +166,40 @@ const UserSchema = new Schema<UserI>(
         message: "Invalid email format",
       },
     },
+    augmentosSettings: {
+      type: {
+        useOnboardMic: { type: Boolean, default: false },
+        contextualDashboard: { type: Boolean, default: true },
+        metricSystemEnabled: { type: Boolean, default: false },
+        headUpAngle: { type: Number, default: 20 },
+        dashboardHeight: { type: Number, default: 4 },
+        dashboardDepth: { type: Number, default: 5 },
+        brightness: { type: Number, default: 50 },
+        autoBrightness: { type: Boolean, default: false },
+        sensingEnabled: { type: Boolean, default: true },
+        alwaysOnStatusBar: { type: Boolean, default: false },
+        bypassVad: { type: Boolean, default: false },
+        bypassAudioEncoding: { type: Boolean, default: false },
+        enforceLocalTranscription: { type: Boolean, default: false },
+      },
+      default: function () {
+        return {
+          useOnboardMic: false,
+          contextualDashboard: true,
+          metricSystemEnabled: false,
+          headUpAngle: 20,
+          dashboardHeight: 4,
+          dashboardDepth: 5,
+          brightness: 50,
+          autoBrightness: false,
+          sensingEnabled: true,
+          alwaysOnStatusBar: false,
+          bypassVad: false,
+          bypassAudioEncoding: false,
+          enforceLocalTranscription: false,
+        };
+      },
+    },
     // Cache location so timezones can be calculated by dashboard manager immediately.
     location: {
       type: {
@@ -181,7 +237,16 @@ const UserSchema = new Schema<UserI>(
     effectiveLocationTier: {
       type: String,
       default: "reduced",
-      enum: ["reduced", "threeKilometers", "kilometer", "hundredMeters", "tenMeters", "high", "realtime", "standard"],
+      enum: [
+        "reduced",
+        "threeKilometers",
+        "kilometer",
+        "hundredMeters",
+        "tenMeters",
+        "high",
+        "realtime",
+        "standard",
+      ],
     },
 
     /**
@@ -292,7 +357,10 @@ UserSchema.index({ email: 1, runningApps: 1 }, { unique: true });
 
 // Install / uninstall.
 // Add methods for managing installed apps
-UserSchema.methods.installApp = async function (this: UserI, packageName: string): Promise<void> {
+UserSchema.methods.installApp = async function (
+  this: UserI,
+  packageName: string,
+): Promise<void> {
   if (!this.isAppInstalled(packageName)) {
     if (!this.installedApps) {
       this.installedApps = [];
@@ -305,34 +373,53 @@ UserSchema.methods.installApp = async function (this: UserI, packageName: string
   }
 };
 
-UserSchema.methods.uninstallApp = async function (this: UserI, packageName: string): Promise<void> {
+UserSchema.methods.uninstallApp = async function (
+  this: UserI,
+  packageName: string,
+): Promise<void> {
   if (this.isAppInstalled(packageName)) {
     if (!this.installedApps) {
       this.installedApps = [];
     }
-    this.installedApps = this.installedApps.filter((app) => app.packageName !== packageName);
+    this.installedApps = this.installedApps.filter(
+      (app) => app.packageName !== packageName,
+    );
     await this.save();
   }
 };
 
-UserSchema.methods.isAppInstalled = function (this: UserI, packageName: string): boolean {
-  return this.installedApps?.some((app) => app.packageName === packageName) ?? false;
+UserSchema.methods.isAppInstalled = function (
+  this: UserI,
+  packageName: string,
+): boolean {
+  return (
+    this.installedApps?.some((app) => app.packageName === packageName) ?? false
+  );
 };
 
 // Update location.
-UserSchema.methods.setLocation = async function (this: UserI, location: Location): Promise<void> {
+UserSchema.methods.setLocation = async function (
+  this: UserI,
+  location: Location,
+): Promise<void> {
   this.location = location;
   await this.save();
 };
 
-UserSchema.methods.addRunningApp = async function (this: UserI, appName: string): Promise<void> {
+UserSchema.methods.addRunningApp = async function (
+  this: UserI,
+  appName: string,
+): Promise<void> {
   if (!this.runningApps.includes(appName)) {
     this.runningApps.push(appName);
     await this.save();
   }
 };
 
-UserSchema.methods.removeRunningApp = async function (this: UserI, appName: string): Promise<void> {
+UserSchema.methods.removeRunningApp = async function (
+  this: UserI,
+  appName: string,
+): Promise<void> {
   const maxRetries = 3;
   let lastError: any;
 
@@ -347,7 +434,9 @@ UserSchema.methods.removeRunningApp = async function (this: UserI, appName: stri
       }
 
       if (freshUser.runningApps.includes(appName)) {
-        freshUser.runningApps = freshUser.runningApps.filter((app: string) => app !== appName);
+        freshUser.runningApps = freshUser.runningApps.filter(
+          (app: string) => app !== appName,
+        );
         await freshUser.save();
         return;
       }
@@ -363,7 +452,9 @@ UserSchema.methods.removeRunningApp = async function (this: UserI, appName: stri
         );
         if (attempt < maxRetries - 1) {
           // Wait a bit before retrying (exponential backoff)
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 50));
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.pow(2, attempt) * 50),
+          );
           continue;
         }
       }
@@ -400,7 +491,10 @@ UserSchema.methods.updateAppSettings = async function (
   appName: string,
   settings: { key: string; value: any }[],
 ): Promise<void> {
-  console.log("Settings update payload (before saving):", JSON.stringify(settings));
+  console.log(
+    "Settings update payload (before saving):",
+    JSON.stringify(settings),
+  );
 
   // Sanitize the appName since it's used as a Map key
   const sanitizedAppName = MongoSanitizer.sanitizeKey(appName);
@@ -411,11 +505,15 @@ UserSchema.methods.updateAppSettings = async function (
   const existingSettings = this.appSettings.get(sanitizedAppName);
   let existingSettingsPlain: { key: string; value: any }[] = [];
   if (existingSettings && Array.isArray(existingSettings)) {
-    existingSettingsPlain = existingSettings.map((s: any) => (typeof s.toObject === "function" ? s.toObject() : s));
+    existingSettingsPlain = existingSettings.map((s: any) =>
+      typeof s.toObject === "function" ? s.toObject() : s,
+    );
   }
 
   // Create a map from the existing settings.
-  const existingSettingsMap = new Map(existingSettingsPlain.map((s) => [s.key, s.value]));
+  const existingSettingsMap = new Map(
+    existingSettingsPlain.map((s) => [s.key, s.value]),
+  );
 
   // Merge updates from the payload.
   settings.forEach((update) => {
@@ -426,7 +524,9 @@ UserSchema.methods.updateAppSettings = async function (
   });
 
   // Convert the merged map back into an array of settings.
-  const updatedSettingsArray = Array.from(existingSettingsMap.entries()).map(([key, value]) => ({ key, value }));
+  const updatedSettingsArray = Array.from(existingSettingsMap.entries()).map(
+    ([key, value]) => ({ key, value }),
+  );
 
   // Use the merged settings array instead of just the new settings
   this.appSettings.set(sanitizedAppName, updatedSettingsArray);
@@ -439,18 +539,70 @@ UserSchema.methods.updateAppSettings = async function (
   return afterUpdate;
 };
 
-UserSchema.methods.getAppSettings = function (this: UserI, appName: string): AppSetting[] | undefined {
+UserSchema.methods.getAppSettings = function (
+  this: UserI,
+  appName: string,
+): AppSetting[] | undefined {
   const sanitizedAppName = MongoSanitizer.sanitizeKey(appName);
   const settings = this.appSettings.get(sanitizedAppName);
   return settings;
 };
 
-UserSchema.methods.isAppRunning = function (this: UserI, appName: string): boolean {
+UserSchema.methods.isAppRunning = function (
+  this: UserI,
+  appName: string,
+): boolean {
   return this.runningApps.includes(appName);
 };
 
+UserSchema.methods.updateAugmentosSettings = async function (
+  this: UserI,
+  settings: Partial<UserI["augmentosSettings"]>,
+): Promise<void> {
+  // Convert to plain objects for clean logging
+  const currentSettingsClean = JSON.parse(
+    JSON.stringify(this.augmentosSettings),
+  );
+  const newSettingsClean = JSON.parse(JSON.stringify(settings));
+
+  logger.info(
+    {
+      userId: this.email,
+      currentSettings: currentSettingsClean,
+      newSettings: newSettingsClean,
+    },
+    "Updating AugmentOS settings:",
+  );
+
+  // Directly apply each setting to ensure updates happen properly
+  Object.entries(settings).forEach(([key, value]) => {
+    if (value !== undefined) {
+      // @ts-ignore - We're dynamically updating the settings
+      this.augmentosSettings[key] = value;
+    }
+  });
+
+  // Convert to plain object for clean logging
+  const mergedSettingsClean = JSON.parse(
+    JSON.stringify(this.augmentosSettings),
+  );
+  logger.info({ mergedSettingsClean }, "Merged settings:");
+
+  await this.save();
+  logger.info("Settings saved successfully");
+};
+
+UserSchema.methods.getAugmentosSettings = function (
+  this: UserI,
+): UserI["augmentosSettings"] {
+  return this.augmentosSettings;
+};
+
 // Update last active timestamp for an app
-UserSchema.methods.updateAppLastActive = async function (this: UserI, packageName: string): Promise<void> {
+UserSchema.methods.updateAppLastActive = async function (
+  this: UserI,
+  packageName: string,
+): Promise<void> {
   const maxRetries = 3;
   let lastError: any;
 
@@ -461,14 +613,18 @@ UserSchema.methods.updateAppLastActive = async function (this: UserI, packageNam
         _id: this._id,
       });
       if (!freshUser) {
-        throw new Error(`User ${this.email} not found during updateAppLastActive`);
+        throw new Error(
+          `User ${this.email} not found during updateAppLastActive`,
+        );
       }
 
       if (!freshUser.installedApps) {
         freshUser.installedApps = [];
       }
 
-      const app = freshUser.installedApps.find((app: any) => app.packageName === packageName);
+      const app = freshUser.installedApps.find(
+        (app: any) => app.packageName === packageName,
+      );
 
       if (app) {
         // App exists in list, update timestamp
@@ -478,7 +634,9 @@ UserSchema.methods.updateAppLastActive = async function (this: UserI, packageNam
       } else {
         // Check if this is a pre-installed app that's missing from user's list
         try {
-          const { getPreInstalledForThisServer } = require("../services/core/app.service");
+          const {
+            getPreInstalledForThisServer,
+          } = require("../services/core/app.service");
           const serverPreInstalled = getPreInstalledForThisServer();
 
           if (serverPreInstalled.includes(packageName)) {
@@ -489,15 +647,21 @@ UserSchema.methods.updateAppLastActive = async function (this: UserI, packageNam
               lastActiveAt: new Date(),
             });
             await freshUser.save();
-            logger.info(`Auto-added missing pre-installed app ${packageName} for user ${freshUser.email}`);
+            logger.info(
+              `Auto-added missing pre-installed app ${packageName} for user ${freshUser.email}`,
+            );
             return;
           }
           // If not pre-installed, silently ignore (app might be starting before installation completes)
           return;
         } catch (error) {
           {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error(err, "Error checking pre-installed apps in updateAppLastActive:");
+            const err =
+              error instanceof Error ? error : new Error(String(error));
+            logger.error(
+              err,
+              "Error checking pre-installed apps in updateAppLastActive:",
+            );
           }
           // Don't fail the operation if checking pre-installed apps fails
           return;
@@ -513,7 +677,9 @@ UserSchema.methods.updateAppLastActive = async function (this: UserI, packageNam
         );
         if (attempt < maxRetries - 1) {
           // Wait a bit before retrying (exponential backoff)
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 50));
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.pow(2, attempt) * 50),
+          );
           continue;
         }
       }
@@ -528,7 +694,9 @@ UserSchema.methods.updateAppLastActive = async function (this: UserI, packageNam
 };
 
 // --- Glasses Model Methods ---
-UserSchema.methods.addGlassesModel = async function (modelName: string): Promise<void> {
+UserSchema.methods.addGlassesModel = async function (
+  modelName: string,
+): Promise<void> {
   if (!modelName || typeof modelName !== "string") {
     throw new Error("Model name must be a non-empty string");
   }
@@ -563,11 +731,15 @@ UserSchema.pre("save", function (this: UserI, next) {
 });
 
 // --- Static Methods ---
-UserSchema.statics.findByEmail = async function (email: string): Promise<UserI | null> {
+UserSchema.statics.findByEmail = async function (
+  email: string,
+): Promise<UserI | null> {
   return this.findOne({ email: email.toLowerCase() });
 };
 
-UserSchema.statics.findOrCreateUser = async function (email: string): Promise<UserI> {
+UserSchema.statics.findOrCreateUser = async function (
+  email: string,
+): Promise<UserI> {
   email = email.toLowerCase();
   let user = await this.findOne({ email });
   let isNewUser = false;
@@ -580,7 +752,9 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
 
       // Create personal organization for new user if they don't have one
       // Import OrganizationService to avoid circular dependency
-      const { OrganizationService } = require("../services/core/organization.service");
+      const {
+        OrganizationService,
+      } = require("../services/core/organization.service");
 
       // Check if the user already has organizations
       if (!user.organizations || user.organizations.length === 0) {
@@ -600,11 +774,14 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
 
   // Auto-install pre-installed apps for new users OR existing users missing them
   try {
-    const { getPreInstalledForThisServer } = require("../services/core/app.service");
+    const {
+      getPreInstalledForThisServer,
+    } = require("../services/core/app.service");
     const serverPreInstalled = getPreInstalledForThisServer();
 
     const missingPreInstalled = serverPreInstalled.filter(
-      (pkg: string) => !user.installedApps?.some((app: any) => app.packageName === pkg),
+      (pkg: string) =>
+        !user.installedApps?.some((app: any) => app.packageName === pkg),
     );
 
     if (missingPreInstalled.length > 0) {
@@ -620,7 +797,9 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
       await user.save();
 
       if (isNewUser) {
-        logger.info(`Auto-installed ${missingPreInstalled.length} pre-installed apps for new user: ${email}`);
+        logger.info(
+          `Auto-installed ${missingPreInstalled.length} pre-installed apps for new user: ${email}`,
+        );
       } else {
         logger.info(
           `Auto-installed ${missingPreInstalled.length} missing pre-installed apps for existing user: ${email}`,
@@ -682,9 +861,13 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
   return user;
 };
 
-UserSchema.statics.findUserInstalledApps = async function (email: string): Promise<any[]> {
+UserSchema.statics.findUserInstalledApps = async function (
+  email: string,
+): Promise<any[]> {
   if (!email) {
-    console.warn("[User.findUserInstalledApps] Called with null or empty email");
+    console.warn(
+      "[User.findUserInstalledApps] Called with null or empty email",
+    );
     return [];
   }
 
@@ -696,7 +879,8 @@ UserSchema.statics.findUserInstalledApps = async function (email: string): Promi
     const { LOCAL_APPS, SYSTEM_AppS } = require("../services/core/app.service");
 
     // Get package names from installed apps (or empty array if no user or no installed apps)
-    const userInstalledPackages = user?.installedApps?.map((app: any) => app.packageName) || [];
+    const userInstalledPackages =
+      user?.installedApps?.map((app: any) => app.packageName) || [];
 
     // Create a map of package names to installation dates
     const installDates = new Map();
@@ -714,7 +898,9 @@ UserSchema.statics.findUserInstalledApps = async function (email: string): Promi
     for (const app of predefinedApps) {
       // Use actual installation date if available, otherwise use current date
       const isInstalled = userInstalledPackages.includes(app.packageName);
-      const installedDate = isInstalled ? installDates.get(app.packageName) : new Date(); // Default to current date for system apps
+      const installedDate = isInstalled
+        ? installDates.get(app.packageName)
+        : new Date(); // Default to current date for system apps
 
       // Add isSystemApp flag
       result.push({
@@ -728,7 +914,9 @@ UserSchema.statics.findUserInstalledApps = async function (email: string): Promi
     if (userInstalledPackages.length > 0) {
       // Filter out packages that are already in the result (system apps)
       const existingPackages = result.map((app: any) => app.packageName);
-      const remainingPackages = userInstalledPackages.filter((pkg: string) => !existingPackages.includes(pkg));
+      const remainingPackages = userInstalledPackages.filter(
+        (pkg: string) => !existingPackages.includes(pkg),
+      );
 
       if (remainingPackages.length > 0) {
         // Then check database apps
@@ -760,7 +948,10 @@ UserSchema.statics.findUserInstalledApps = async function (email: string): Promi
 
     return result;
   } catch (error) {
-    console.error(error, `[User.findUserInstalledApps] Error finding apps for user ${email}:`);
+    console.error(
+      error,
+      `[User.findUserInstalledApps] Error finding apps for user ${email}:`,
+    );
     // In case of error, return at least the system apps
     const { LOCAL_APPS, SYSTEM_AppS } = require("../services/core/app.service");
     return [...LOCAL_APPS, ...SYSTEM_AppS].map((app) => ({
@@ -781,9 +972,13 @@ UserSchema.statics.findUserInstalledApps = async function (email: string): Promi
  * @param user The user document
  * @returns The ObjectId of the personal organization
  */
-UserSchema.statics.ensurePersonalOrg = async function (user: UserI): Promise<Types.ObjectId> {
+UserSchema.statics.ensurePersonalOrg = async function (
+  user: UserI,
+): Promise<Types.ObjectId> {
   // Import Organization service to avoid circular dependency
-  const { OrganizationService } = require("../services/core/organization.service");
+  const {
+    OrganizationService,
+  } = require("../services/core/organization.service");
 
   if (user.defaultOrg) {
     // User already has a default org, return it
@@ -807,7 +1002,11 @@ UserSchema.statics.ensurePersonalOrg = async function (user: UserI): Promise<Typ
   }
 
   // Add to organizations array if not already present
-  if (!user.organizations.some((orgId) => orgId.toString() === personalOrgId.toString())) {
+  if (
+    !user.organizations.some(
+      (orgId) => orgId.toString() === personalOrgId.toString(),
+    )
+  ) {
     user.organizations.push(personalOrgId);
   }
 
@@ -828,4 +1027,5 @@ interface UserModel extends Model<UserI> {
   ensurePersonalOrg(user: UserI): Promise<Types.ObjectId>;
 }
 
-export const User = (mongoose.models.User || mongoose.model<UserI, UserModel>("User", UserSchema)) as UserModel;
+export const User = (mongoose.models.User ||
+  mongoose.model<UserI, UserModel>("User", UserSchema)) as UserModel;

@@ -49,7 +49,7 @@ const InfoCardSection: React.FC<InfoCardSectionProps> = ({items, style}) => {
   const {themed} = useAppTheme()
 
   // Filter out empty items
-  const validItems = items.filter((item) => item.value !== null && item.value !== undefined && item.value !== "")
+  const validItems = items.filter(item => item.value !== null && item.value !== undefined && item.value !== "")
 
   if (validItems.length === 0) {
     return null

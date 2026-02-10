@@ -1,7 +1,7 @@
-import CoreModule, {DeviceSearchResult} from "core"
+import CoreModule from "core"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useRef, useState} from "react"
-import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
+import {ActivityIndicator, BackHandler, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -9,50 +9,154 @@ import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
+import {MOCK_CONNECTION} from "@/utils/Constants"
+import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useCoreStore} from "@/stores/core"
+
+class SearchResultDevice {
+  deviceMode: string
+  deviceName: string
+  deviceAddress: string
+  constructor(deviceMode: string, deviceName: string, deviceAddress: string) {
+    this.deviceMode = deviceMode
+    this.deviceName = deviceName
+    this.deviceAddress = deviceAddress
+  }
+}
 
 export default function SelectGlassesBluetoothScreen() {
-  const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
+  const [searchResults, setSearchResults] = useState<SearchResultDevice[]>([])
+  const {modelName}: {modelName: string} = useLocalSearchParams()
   const {theme} = useAppTheme()
   const {goBack, replace, pushUnder} = useNavigationHistory()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const btcConnected = useGlassesStore((state) => state.btcConnected)
+  const backHandlerRef = useRef<any>(null)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
-  const searchResults = useCoreStore((state) => state.searchResults)
-  const [rememberedSearchResults, setRememberedSearchResults] = useState<DeviceSearchResult[]>(searchResults)
-
-  // useFocusEffect(
-  //   useCallback(() => {
-  //     setSearchResults([])
-  //   }, [setSearchResults]),
-  // )
-
-  // focusEffectPreventBack()
 
   useEffect(() => {
-    if (searchResults.some((result) => result.deviceName === "NOTREQUIREDSKIP")) {
-      triggerGlassesPairingGuide(deviceModel, "NOTREQUIREDSKIP")
-      return
+    if (Platform.OS !== "android") return
+
+    const onBackPress = () => {
+      goBack()
+      return true
     }
-  }, [searchResults])
+
+    const timeout = setTimeout(() => {
+      const backHandler = BackHandler.addEventListener("hardwareBackPress", onBackPress)
+      backHandlerRef.current = backHandler
+    }, 100)
+
+    return () => {
+      clearTimeout(timeout)
+      if (backHandlerRef.current) {
+        backHandlerRef.current.remove()
+        backHandlerRef.current = null
+      }
+    }
+  }, [goBack])
+
+  useEffect(() => {
+    const handleSearchResult = ({
+      modelName,
+      deviceName,
+      deviceAddress,
+    }: {
+      modelName: string
+      deviceName: string
+      deviceAddress: string
+    }) => {
+      if (deviceName === "NOTREQUIREDSKIP") {
+        console.log("SKIPPING")
+        GlobalEventEmitter.removeListener("compatible_glasses_search_result", handleSearchResult)
+        triggerGlassesPairingGuide(modelName as string, deviceName)
+        return
+      }
+      const newDevice = new SearchResultDevice(modelName, deviceName, deviceAddress)
+
+      // Use functional update to avoid stale closure issues with rapid results (e.g. G1)
+      // Also update the ref directly to ensure immediate availability for render
+      setSearchResults((prevResults) => {
+        const isDuplicate = deviceAddress
+          ? prevResults.some((device) => device.deviceAddress === deviceAddress)
+          : prevResults.some((device) => device.deviceName === deviceName)
+
+        if (!isDuplicate) {
+          const newResults = [...prevResults, newDevice]
+          // Update ref immediately so render sees it without waiting for state
+          rememberedSearchResults.current = newResults
+          return newResults
+        }
+        return prevResults
+      })
+    }
+
+    const stopSearch = ({modelName}: {modelName: string}) => {
+      console.log("SEARCH RESULTS:")
+      console.log(JSON.stringify(searchResults))
+      if (searchResults.length === 0) {
+        showAlert(
+          "No " + modelName + " found",
+          "Retry search?",
+          [
+            {
+              text: "No",
+              onPress: () => goBack(),
+              style: "cancel",
+            },
+            {
+              text: "Yes",
+              onPress: () => CoreModule.findCompatibleDevices(modelName),
+            },
+          ],
+          {cancelable: false},
+        )
+      }
+    }
+
+    if (!MOCK_CONNECTION) {
+      GlobalEventEmitter.on("compatible_glasses_search_result", handleSearchResult)
+      GlobalEventEmitter.on("compatible_glasses_search_stop", stopSearch)
+    }
+
+    return () => {
+      if (!MOCK_CONNECTION) {
+        GlobalEventEmitter.removeListener("compatible_glasses_search_result", handleSearchResult)
+        GlobalEventEmitter.removeListener("compatible_glasses_search_stop", stopSearch)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
-      CoreModule.findCompatibleDevices(deviceModel)
+      console.log("Searching for compatible devices for: ", modelName)
+      setSearchResults([])
+      CoreModule.findCompatibleDevices(modelName)
     }
 
-    initializeAndSearchForDevices()
+    if (Platform.OS === "ios") {
+      setTimeout(() => {
+        initializeAndSearchForDevices()
+      }, 3000)
+    } else {
+      initializeAndSearchForDevices()
+    }
   }, [])
 
-  const triggerGlassesPairingGuide = async (deviceModel: string, deviceName: string) => {
+  // useEffect(() => {
+  //   if (glassesConnected) {
+  //     clearHistoryAndGoHome()
+  //   }
+  // }, [glassesConnected])
+
+  const triggerGlassesPairingGuide = async (modelName: string, deviceName: string) => {
     if (Platform.OS === "android") {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
@@ -77,23 +181,24 @@ export default function SelectGlassesBluetoothScreen() {
       return
     }
 
-    startPairing(deviceModel, deviceName)
+    startPairing(modelName, deviceName)
   }
 
-  const startPairing = async (deviceModel: string, deviceName: string) => {
+  const startPairing = async (modelName: string, deviceName: string) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(deviceModel as DeviceTypes)) {
+    if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(modelName as DeviceTypes)) {
       setTimeout(() => {
         CoreModule.connectByName(deviceName)
       }, 2000)
-      replace("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+      replace("/pairing/loading", {modelName: modelName, deviceName: deviceName})
       return
     }
 
+    // CoreModule.updateSettings({"device_name": deviceName})
     setDeviceName(deviceName)
     // pair bt classic first:
     replace("/pairing/btclassic")
-    pushUnder("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+    pushUnder("/pairing/loading", {modelName: modelName, deviceName: deviceName})
   }
 
   const filterDeviceName = (deviceName: string) => {
@@ -105,16 +210,20 @@ export default function SelectGlassesBluetoothScreen() {
   }
 
   // remember the search results to ensure consistent ordering:
+  const rememberedSearchResults = useRef<SearchResultDevice[]>(searchResults)
   useEffect(() => {
-    setRememberedSearchResults((prev) => {
-      const combined = [...prev]
-      for (const result of searchResults) {
-        if (!combined.some((r) => r.deviceAddress === result.deviceAddress && r.deviceName === result.deviceName)) {
-          combined.push(result)
-        }
+    // ensure remembered search results is a set:
+    for (const result of searchResults) {
+      if (!rememberedSearchResults.current.includes(result)) {
+        rememberedSearchResults.current.push(result)
       }
-      return combined
-    })
+    }
+
+    // ensure remembered search results has no duplicates:
+    rememberedSearchResults.current = rememberedSearchResults.current.filter(
+      (result, index, self) =>
+        index === self.findIndex((t) => t.deviceAddress === result.deviceAddress && t.deviceName === result.deviceName),
+    )
   }, [searchResults])
 
   return (
@@ -122,27 +231,27 @@ export default function SelectGlassesBluetoothScreen() {
       <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
       <View className="flex-1 pt-[35%]">
         <View className="gap-6 rounded-3xl bg-primary-foreground p-6">
-          <Image source={getGlassesOpenImage(deviceModel)} className="h-[90px] w-full" resizeMode="contain" />
+          <Image source={getGlassesOpenImage(modelName)} className="h-[90px] w-full px-14" resizeMode="contain" />
           <Text
             className="text-center text-xl font-semibold text-text-dim"
-            text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
+            text={translate("pairing:scanningForGlassesModel", {model: modelName})}
           />
 
-          {!rememberedSearchResults || rememberedSearchResults.length === 0 ? (
+          {!rememberedSearchResults.current || rememberedSearchResults.current.length === 0 ? (
             <View className="flex-1 justify-center py-4">
-              <ActivityIndicator size="large" color={theme.colors.foreground} />
+              <ActivityIndicator size="large" color={theme.colors.text} />
             </View>
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4">
               <Group>
-                {rememberedSearchResults.map((res: DeviceSearchResult, index: number) => (
+                {rememberedSearchResults.current.map((device, index) => (
                   <TouchableOpacity
                     key={index}
                     className="h-[50px] flex-row items-center justify-between bg-background px-4 py-3"
-                    onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                    onPress={() => triggerGlassesPairingGuide(device.deviceMode, device.deviceName)}>
                     <View className="flex-1 px-2.5">
                       <Text
-                        text={`${deviceModel} - ${filterDeviceName(res.deviceName)}`}
+                        text={`${modelName} - ${filterDeviceName(device.deviceName)}`}
                         className="flex-wrap text-sm font-semibold"
                         numberOfLines={2}
                       />
@@ -168,7 +277,7 @@ export default function SelectGlassesBluetoothScreen() {
       <GlassesTroubleshootingModal
         isVisible={showTroubleshootingModal}
         onClose={() => setShowTroubleshootingModal(false)}
-        deviceModel={deviceModel}
+        modelName={modelName}
       />
     </Screen>
   )

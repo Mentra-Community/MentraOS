@@ -15,10 +15,10 @@ interface BatteryStatusProps {
 export function BatteryStatus({compact}: BatteryStatusProps) {
   const {theme, themed} = useAppTheme()
 
-  const caseBatteryLevel = useGlassesStore((state) => state.caseBatteryLevel)
-  const caseCharging = useGlassesStore((state) => state.caseCharging)
-  const caseRemoved = useGlassesStore((state) => state.caseRemoved)
-  const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
+  const caseBatteryLevel = useGlassesStore(state => state.caseBatteryLevel)
+  const caseCharging = useGlassesStore(state => state.caseCharging)
+  const caseRemoved = useGlassesStore(state => state.caseRemoved)
+  const glassesBatteryLevel = useGlassesStore(state => state.batteryLevel)
 
   if (glassesBatteryLevel === undefined || glassesBatteryLevel === -1) {
     return null

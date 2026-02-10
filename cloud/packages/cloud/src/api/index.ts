@@ -37,7 +37,7 @@ import galleryRoutes from "../routes/gallery.routes";
 import toolsRoutes from "../routes/tools.routes";
 import hardwareRoutes from "../routes/hardware.routes";
 import audioRoutes from "../routes/audio.routes";
-
+import userDataRoutes from "../routes/user-data.routes";
 import permissionsRoutes from "../routes/permissions.routes";
 import accountRoutes from "../routes/account.routes";
 import organizationRoutes from "../routes/organization.routes";
@@ -85,7 +85,12 @@ export function registerApi(app: Application) {
     next();
   };
 
-  app.use("/api/cli/apps", authenticateCLI, transformCLIToConsole, consoleAppsApi);
+  app.use(
+    "/api/cli/apps",
+    authenticateCLI,
+    transformCLIToConsole,
+    consoleAppsApi,
+  );
   app.use("/api/cli/orgs", authenticateCLI, transformCLIToConsole, orgsApi);
 
   // Legacy mounts (to be migrated)
@@ -109,7 +114,7 @@ export function registerApi(app: Application) {
   app.use(errorReportRoutes);
   app.use(transcriptRoutes);
   app.use(audioRoutes);
-
+  app.use("/api/user-data", userDataRoutes);
   app.use("/api/account", accountRoutes);
   app.use("/api/onboarding", onboardingRoutes);
   app.use("/api/app-uptime", appUptimeRoutes);

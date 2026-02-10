@@ -144,20 +144,9 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
-    public void setRgbLedBrightness(int brightness) {
-        Log.d(TAG, "setRgbLedBrightness(" + brightness + ") called - no-op on base hardware");
-    }
-
-    @Override
     public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count) {
         Log.d(TAG, String.format("setRgbLedOn(%d, %d, %d, %d) called - no-op on base hardware",
-                ledIndex, ontime, offtime, count));
-    }
-
-    @Override
-    public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count, int brightness) {
-        Log.d(TAG, String.format("setRgbLedOn(%d, %d, %d, %d, %d) called - no-op on base hardware",
-                ledIndex, ontime, offtime, count, brightness));
+                                 ledIndex, ontime, offtime, count));
     }
 
     @Override
@@ -168,11 +157,6 @@ public class BaseHardwareManager implements IHardwareManager {
     @Override
     public void flashRgbLedWhite(int durationMs) {
         Log.d(TAG, "flashRgbLedWhite(" + durationMs + ") called - no-op on base hardware");
-    }
-
-    @Override
-    public void flashRgbLedWhite(int durationMs, int brightness) {
-        Log.d(TAG, "flashRgbLedWhite(" + durationMs + ", " + brightness + ") called - no-op on base hardware");
     }
 
     @Override
@@ -194,11 +178,6 @@ public class BaseHardwareManager implements IHardwareManager {
     public boolean getChargingStatus() {
         Log.d(TAG, "getChargingStatus() called - returning false on base hardware");
         return false;
-    }
-
-    @Override
-    public void setRgbLedSolidWhite(int durationMs, int brightness) {
-        Log.d(TAG, "setRgbLedSolidWhite(" + durationMs + ", " + brightness + ") called - no-op on base hardware");
     }
 
     @Override

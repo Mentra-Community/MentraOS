@@ -68,8 +68,8 @@ function addPostInstallConfiguration(podfileContent: string): string {
   return podfileContent
 }
 
-const modifyPodfile: ConfigPlugin = (config) => {
-  return withPodfile(config, (config) => {
+const modifyPodfile: ConfigPlugin = config => {
+  return withPodfile(config, config => {
     const podfileContent = config.modResults.contents
     // Apply all Podfile modifications
     let modifiedContent = podfileContent
@@ -84,10 +84,10 @@ const modifyPodfile: ConfigPlugin = (config) => {
   })
 }
 
-const withXcodeEnvLocal: ConfigPlugin = (config) => {
+const withXcodeEnvLocal: ConfigPlugin = config => {
   return withDangerousMod(config, [
     "ios",
-    async (config) => {
+    async config => {
       try {
         // Get node executable path
         const nodeExecutable = execSync("which node", {encoding: "utf-8"}).trim()

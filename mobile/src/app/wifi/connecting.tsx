@@ -120,7 +120,7 @@ export default function WifiConnectingScreen() {
       case "connecting":
         return (
           <View className="flex-1 justify-center">
-            <ActivityIndicator size="large" color={theme.colors.foreground} />
+            <ActivityIndicator size="large" color={theme.colors.primary} />
             <Text
               className="text-xl font-medium text-foreground mt-6 text-center"
               text={translate("wifi:connectingToNetwork", {network: ssid})}

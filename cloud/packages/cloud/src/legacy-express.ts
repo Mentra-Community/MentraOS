@@ -30,7 +30,7 @@ import galleryRoutes from "./routes/gallery.routes";
 import toolsRoutes from "./routes/tools.routes";
 import hardwareRoutes from "./routes/hardware.routes";
 import audioRoutes from "./routes/audio.routes";
-
+import userDataRoutes from "./routes/user-data.routes";
 import permissionsRoutes from "./routes/permissions.routes";
 import accountRoutes from "./routes/account.routes";
 import organizationRoutes from "./routes/organization.routes";
@@ -143,7 +143,7 @@ function createExpressApp() {
   expressApp.use(errorReportRoutes);
   expressApp.use(transcriptRoutes);
   expressApp.use(audioRoutes);
-
+  expressApp.use("/api/user-data", userDataRoutes);
   expressApp.use("/api/account", accountRoutes);
   expressApp.use("/api/onboarding", onboardingRoutes);
   expressApp.use("/api/app-uptime", appUptimeRoutes);

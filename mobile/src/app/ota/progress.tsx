@@ -16,9 +16,9 @@ const RETRY_INTERVAL_MS = 5000 // 5 seconds between retries
 export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {pushPrevious} = useNavigationHistory()
-  const otaProgress = useGlassesStore((state) => state.otaProgress)
-  const glassesConnected = useGlassesStore((state) => state.connected)
-  const buildNumber = useGlassesStore((state) => state.buildNumber)
+  const otaProgress = useGlassesStore(state => state.otaProgress)
+  const glassesConnected = useGlassesStore(state => state.connected)
+  const buildNumber = useGlassesStore(state => state.buildNumber)
 
   const [progressState, setProgressState] = useState<ProgressState>("starting")
   const [retryCount, setRetryCount] = useState(0)
@@ -66,7 +66,7 @@ export default function OtaProgressScreen() {
         if (!hasReceivedProgress.current && progressState === "starting") {
           if (retryCount < MAX_RETRIES - 1) {
             console.log("OTA: No progress received, retrying...")
-            setRetryCount((prev) => prev + 1)
+            setRetryCount(prev => prev + 1)
           } else {
             console.log("OTA: Max retries reached, failing")
             setErrorMessage("Unable to start update. Glasses did not respond.")
@@ -77,7 +77,7 @@ export default function OtaProgressScreen() {
     } catch (error) {
       console.error("OTA: Failed to send start command:", error)
       if (retryCount < MAX_RETRIES - 1) {
-        setRetryCount((prev) => prev + 1)
+        setRetryCount(prev => prev + 1)
       } else {
         setErrorMessage("Failed to communicate with glasses.")
         setProgressState("failed")
@@ -162,7 +162,7 @@ export default function OtaProgressScreen() {
           <View className="h-6" />
           <Text tx="ota:startingUpdate" className="font-semibold text-xl text-center" />
           <View className="h-4" />
-          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <ActivityIndicator size="large" color={theme.colors.secondary_foreground} />
           <View className="h-4" />
           <Text tx="ota:doNotDisconnect" className="text-sm text-center text-secondary-foreground" />
         </View>
@@ -179,7 +179,7 @@ export default function OtaProgressScreen() {
           <View className="h-4" />
           <Text text={`${progress}%`} className="text-3xl font-bold" style={{color: theme.colors.primary}} />
           <View className="h-4" />
-          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <ActivityIndicator size="large" color={theme.colors.secondary_foreground} />
           <View className="h-4" />
           <Text tx="ota:doNotDisconnect" className="text-sm text-center" style={{color: theme.colors.textDim}} />
         </View>
@@ -194,7 +194,7 @@ export default function OtaProgressScreen() {
           <View className="h-6" />
           <Text tx="ota:installing" className="font-semibold text-xl text-center" />
           <View className="h-4" />
-          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <ActivityIndicator size="large" color={theme.colors.secondary_foreground} />
           <View className="h-4" />
           <Text tx="ota:doNotDisconnect" className="text-sm text-center" style={{color: theme.colors.textDim}} />
         </View>

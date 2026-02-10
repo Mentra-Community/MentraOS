@@ -214,7 +214,7 @@ function ScreenWithScrolling(props: ScreenProps) {
       bottomOffset={keyboardBottomOffset}
       {...{keyboardShouldPersistTaps, scrollEnabled, ref}}
       {...ScrollViewProps}
-      onLayout={(e) => {
+      onLayout={e => {
         onLayout(e)
         ScrollViewProps?.onLayout?.(e)
       }}
@@ -251,46 +251,36 @@ export function Screen(props: ScreenProps) {
     statusBarStyle,
   } = props
 
-  let $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
+  const $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
   const {theme} = useAppTheme()
-  // const [debugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
-
-  if (Platform.OS === "android") {
-    if (safeAreaEdges?.includes("top")) {
-      if ($containerInsets.paddingTop) {
-        $containerInsets.paddingTop += theme.spacing.s4
-      } else {
-        $containerInsets.paddingTop = theme.spacing.s4
-      }
-    }
-    if (safeAreaEdges?.includes("bottom")) {
-      if ($containerInsets.paddingBottom) {
-        $containerInsets.paddingBottom += theme.spacing.s6
-      } else {
-        $containerInsets.paddingBottom = theme.spacing.s6
-      }
-    }
-  }
-
+  
   return (
     <View
       style={[
         {paddingHorizontal: theme.spacing.s6},
-        {backgroundColor: backgroundColor || colors.background},
-        {...$containerInsets},
-        {flex: 1},
+        $containerStyle,
+        {backgroundColor: backgroundColor || colors.background} /*, $containerInsets*/,
       ]}>
-      <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />
-      <KeyboardAvoidingView
-        behavior={isIos ? "padding" : "height"}
-        keyboardVerticalOffset={keyboardOffset}
-        {...KeyboardAvoidingViewProps}
-        style={[$styles.flex1, KeyboardAvoidingViewProps?.style]}>
-        {isNonScrolling(props.preset) ? <ScreenWithoutScrolling {...props} /> : <ScreenWithScrolling {...props} />}
-      </KeyboardAvoidingView>
-      {/* {debugCoreStatusBarEnabled && <CoreStatusBar />} */}
+      {/*<BackgroundGradient colors={props.gradientColors}>*/}
+      <View style={[$containerInsets, {flex: 1}]}>
+        <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />
+        <KeyboardAvoidingView
+          behavior={isIos ? "padding" : "height"}
+          keyboardVerticalOffset={keyboardOffset}
+          {...KeyboardAvoidingViewProps}
+          style={[$styles.flex1, KeyboardAvoidingViewProps?.style]}>
+          {isNonScrolling(props.preset) ? <ScreenWithoutScrolling {...props} /> : <ScreenWithScrolling {...props} />}
+        </KeyboardAvoidingView>
+      </View>
+      {/*</BackgroundGradient>*/}
     </View>
   )
+}
+
+const $containerStyle: ViewStyle = {
+  flex: 1,
+  height: "100%",
+  width: "100%",
 }
 
 const $outerStyle: ViewStyle = {

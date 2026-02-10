@@ -1,5 +1,5 @@
 # Name of the workflow
-name: Run Cloud Tests ☁️
+name: Test AugmentOS Cloud ☁️
 
 # trigger
 on:
@@ -11,7 +11,7 @@ on:
 jobs:
   build_and_test:
     name: Build & Test
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     env:
       # (Optional) Specify Node environment, could also set BUN_ENV if needed.
       NODE_ENV: development

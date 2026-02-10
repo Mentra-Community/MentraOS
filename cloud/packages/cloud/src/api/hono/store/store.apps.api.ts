@@ -11,7 +11,6 @@ import { User } from "../../../models/user.model";
 import UserSession from "../../../services/session/UserSession";
 import { clientAuth, requireUser } from "../middleware/client.middleware";
 import storeService from "../../../services/core/store.service";
-import { batchEnrichAppsWithProfiles } from "../../../services/core/app-enrichment.service";
 
 const logger = rootLogger.child({ service: "store.apps.api" });
 
@@ -52,8 +51,7 @@ app.get("/:packageName", getAppDetails);
 async function getPublicApps(c: AppContext) {
   try {
     const apps = await storeService.getPublishedApps();
-    const enrichedApps = await batchEnrichAppsWithProfiles(apps);
-    return c.json({ success: true, data: enrichedApps });
+    return c.json({ success: true, data: apps });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get public apps");
@@ -84,9 +82,8 @@ async function getPublishedAppsForUser(c: AppContext) {
     }
 
     const appsWithStatus = await storeService.getPublishedAppsForUser(user);
-    const enrichedApps = await batchEnrichAppsWithProfiles(appsWithStatus);
 
-    return c.json({ success: true, data: enrichedApps });
+    return c.json({ success: true, data: appsWithStatus });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get available apps");
@@ -117,9 +114,8 @@ async function getInstalledApps(c: AppContext) {
     }
 
     const installedApps = await storeService.getInstalledAppsForUser(user);
-    const enrichedApps = await batchEnrichAppsWithProfiles(installedApps);
 
-    return c.json({ success: true, data: enrichedApps });
+    return c.json({ success: true, data: installedApps });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get installed apps");
@@ -151,9 +147,7 @@ async function getAppDetails(c: AppContext) {
       return c.json({ error: "App not found" }, 404);
     }
 
-    const enrichedApps = await batchEnrichAppsWithProfiles([app]);
-
-    return c.json({ success: true, data: enrichedApps[0] || app });
+    return c.json({ success: true, data: app });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get app details");
@@ -180,9 +174,8 @@ async function searchApps(c: AppContext) {
     }
 
     const filteredApps = await storeService.searchApps(query);
-    const enrichedApps = await batchEnrichAppsWithProfiles(filteredApps);
 
-    return c.json({ success: true, data: enrichedApps });
+    return c.json({ success: true, data: filteredApps });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to search apps");

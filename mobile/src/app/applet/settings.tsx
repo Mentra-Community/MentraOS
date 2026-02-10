@@ -60,7 +60,7 @@ export default function AppSettings() {
   const stopApp = useStopApplet()
 
   const appInfo = useMemo(() => {
-    return applets.find((app) => app.packageName === packageName) || null
+    return applets.find(app => app.packageName === packageName) || null
   }, [applets, packageName])
 
   const SETTINGS_CACHE_KEY = (packageName: string) => `app_settings_cache_${packageName}`
@@ -87,7 +87,7 @@ export default function AppSettings() {
             "") +
           " "
         ).replace("  ", " ")
-        const proceed = await new Promise<boolean>((resolve) => {
+        const proceed = await new Promise<boolean>(resolve => {
           // Use the shared alert utility
           showAlert(
             translate("appSettings:appDownForMaintenance"),
@@ -263,7 +263,7 @@ export default function AppSettings() {
 
   // When a setting changes, update local state and send the full updated settings payload.
   const handleSettingChange = (key: string, value: any) => {
-    setSettingsState((prevState) => ({
+    setSettingsState(prevState => ({
       ...prevState,
       [key]: value,
     }))
@@ -271,10 +271,10 @@ export default function AppSettings() {
     // Build an array of settings to send.
     restComms
       .updateAppSetting(packageName, {key, value})
-      .then((data) => {
+      .then(data => {
         console.log("Server update response:", data)
       })
-      .catch((error) => {
+      .catch(error => {
         console.error("Error updating setting on server:", error)
       })
   }
@@ -308,7 +308,7 @@ export default function AppSettings() {
         // Check if this is the first setting after a group title or at the start
         const isFirstInGroup =
           currentGroupStart === result.length ||
-          (currentGroupStart === -1 && result.filter((r) => r.isGrouped).length === 0)
+          (currentGroupStart === -1 && result.filter(r => r.isGrouped).length === 0)
 
         // Check if next is a group or end
         const nextSetting = settings[i + 1]
@@ -337,7 +337,7 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            onValueChange={val => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -348,7 +348,7 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onChangeText={(text) => handleSettingChange(setting.key, text)}
+            onChangeText={text => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
             isFirst={isFirst}
             isLast={isLast}
@@ -360,7 +360,7 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onChangeText={(text) => handleSettingChange(setting.key, text)}
+            onChangeText={text => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
             isFirst={isFirst}
             isLast={isLast}
@@ -374,13 +374,13 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             min={setting.min}
             max={setting.max}
-            onValueChange={(val) =>
-              setSettingsState((prevState) => ({
+            onValueChange={val =>
+              setSettingsState(prevState => ({
                 ...prevState,
                 [setting.key]: val,
               }))
             }
-            onValueSet={(val) => handleSettingChange(setting.key, val)}
+            onValueSet={val => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -393,7 +393,7 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             options={setting.options}
             defaultValue={setting.defaultValue}
-            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            onValueChange={val => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -406,7 +406,7 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             options={setting.options}
             defaultValue={setting.defaultValue}
-            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            onValueChange={val => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -421,7 +421,7 @@ export default function AppSettings() {
             max={setting.max}
             step={setting.step}
             placeholder={setting.placeholder}
-            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            onValueChange={val => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -433,7 +433,7 @@ export default function AppSettings() {
             label={setting.label}
             value={settingsState[setting.key] || 0}
             showSeconds={setting.showSeconds !== false}
-            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            onValueChange={val => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -445,7 +445,7 @@ export default function AppSettings() {
             label={setting.label}
             values={settingsState[setting.key]}
             options={setting.options}
-            onValueChange={(vals) => handleSettingChange(setting.key, vals)}
+            onValueChange={vals => handleSettingChange(setting.key, vals)}
             isFirst={isFirst}
             isLast={isLast}
           />

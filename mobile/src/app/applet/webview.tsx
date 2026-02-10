@@ -205,7 +205,7 @@ export default function AppWebView() {
           retry={() => {
             // Reset state and retry token generation
             setTokenError(null)
-            setRetryTrigger((prev) => prev + 1) // Trigger useEffect to retry
+            setRetryTrigger(prev => prev + 1) // Trigger useEffect to retry
           }}
           message={tokenError}
         />
@@ -233,7 +233,7 @@ export default function AppWebView() {
 
   // Render WebView only when finalUrl is ready
   return (
-    <Screen preset="fixed" KeyboardAvoidingViewProps={{enabled: false}}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
       <Header
         title={appName}
         titleMode="center"

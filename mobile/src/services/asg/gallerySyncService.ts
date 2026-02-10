@@ -1526,12 +1526,6 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ℹ️ Hotspot was not opened by service - leaving it enabled")
     }
 
-    // Clear glasses gallery count immediately after successful sync
-    // This ensures UI shows 0 items remaining right away
-    // The subsequent query will update this if new photos were taken during sync
-    console.log("[GallerySyncService]   🔄 Clearing glasses gallery count (synced all items)")
-    store.clearGlassesGalleryStatus()
-
     // Auto-reset to idle after 3 seconds to clear "Sync complete!" message
     console.log("[GallerySyncService]   ⏲️ Scheduling auto-reset to idle in 4 seconds...")
     setTimeout(() => {

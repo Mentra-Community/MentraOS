@@ -1,6 +1,7 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import DontHaveGlassesSvg from "@assets/glasses/dont-have.svg"
 import HaveGlassesSvg from "@assets/glasses/have.svg"
+import LogoSvg from "@assets/logo/logo.svg"
 import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 import {SvgProps} from "react-native-svg"
 
@@ -11,7 +12,6 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 
 // Import SVG components
 
@@ -84,7 +84,7 @@ export default function OnboardingWelcome() {
     // analytics.track('onboarding_no_glasses_selected')
     setOnboardingCompleted(true)
     // Go directly to simulated glasses pairing screen
-    push("/pairing/prep", {deviceModel: DeviceTypes.SIMULATED})
+    push("/pairing/prep", {modelName: DeviceTypes.SIMULATED})
   }
 
   return (
@@ -94,7 +94,7 @@ export default function OnboardingWelcome() {
       style={[{paddingHorizontal: theme.spacing.s2}]}
       safeAreaEdges={["top"]}>
       <View style={themed($logoContainer)}>
-        <MentraLogoStandalone width={100} height={48} />
+        <LogoSvg width={108} height={58} />
       </View>
 
       <View style={themed($infoContainer)}>

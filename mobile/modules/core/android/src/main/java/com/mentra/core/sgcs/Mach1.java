@@ -26,7 +26,6 @@ import com.mentra.core.utils.K900ProtocolUtils;
 import com.mentra.core.utils.MessageChunker;
 import com.mentra.core.utils.audio.Lc3Player;
 import com.mentra.core.utils.BlePhotoUploadService;
-import com.mentra.core.GlassesStore;
 
 // import com.augmentos.augmentos_core.R;
 // import com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunicators.SmartGlassesCommunicator;
@@ -97,18 +96,20 @@ public class Mach1 extends SGCManager {
     private int totalDashboardsIdk = 0;
 
     private void updateConnectionState(String state) {
-        boolean isEqual = state.equals(getConnectionState());
+        boolean isEqual = state.equals(connectionState);
         if (isEqual) {
             return;
         }
 
         // Update the connection state
-        GlassesStore.INSTANCE.apply("glasses", "connectionState", state);
+        connectionState = state;
 
         if (state.equals(ConnTypes.CONNECTED)) {
-            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+            ready = true;
+            CoreManager.getInstance().handleConnectionStateChanged();
         } else if (state.equals(ConnTypes.DISCONNECTED)) {
-            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
+            ready = false;
+            CoreManager.getInstance().handleConnectionStateChanged();
         }
     }
 
@@ -384,7 +385,7 @@ public class Mach1 extends SGCManager {
             if (tapCount >= 2) {
                 isHeadUp = !isHeadUp;
                 // Notify CoreManager of head up state change (same as G1 does with IMU)
-                GlassesStore.INSTANCE.apply("glasses", "headUp", isHeadUp);
+                CoreManager.getInstance().updateHeadUp(isHeadUp);
                 Log.d(TAG, "Mach1: Dashboard toggled via tap, isHeadUp: " + isHeadUp);
 
                 // Auto turn off the dashboard after 15 seconds
@@ -392,7 +393,7 @@ public class Mach1 extends SGCManager {
                     goHomeHandler.postDelayed(() -> {
                         if (isHeadUp) {
                             isHeadUp = false;
-                            GlassesStore.INSTANCE.apply("glasses", "headUp", false);
+                            CoreManager.getInstance().updateHeadUp(false);
                             Log.d(TAG, "Mach1: Auto-disabling dashboard after 15 seconds");
                         }
                     }, 15000);
@@ -496,6 +497,7 @@ public class Mach1 extends SGCManager {
             });
 
             Log.d(TAG, "Mach1 initialized with context and observers");
+            CoreManager.getInstance().getStatus();
         } catch (Exception e) {
             Log.e(TAG, "Mach1 constructor FAILED with exception: " + e.getMessage(), e);
             Bridge.log("Mach1 constructor FAILED: " + e.getMessage());
@@ -552,7 +554,7 @@ public class Mach1 extends SGCManager {
         }
         Log.d(TAG, "Ultralite new battery status: " + batteryStatus.getLevel());
         // Update the class field, not a local variable
-        GlassesStore.INSTANCE.apply("glasses", "batteryLevel", batteryStatus.getLevel());
+        this.batteryLevel = batteryStatus.getLevel();
         updateConnectionState(ConnTypes.CONNECTED);
     }
 
@@ -868,7 +870,7 @@ public class Mach1 extends SGCManager {
 
         String title = maybeReverseRTLString(titleStr);
         String body = maybeReverseRTLString(bodyStr);
-        if (!getConnectionState().equals(ConnTypes.CONNECTED)) {
+        if (connectionState != ConnTypes.CONNECTED) {
             Log.d(TAG, "Not showing reference card because not connected to Ultralites...");
             return;
         }
@@ -940,7 +942,7 @@ public class Mach1 extends SGCManager {
         }
 
         String[] rowStrings = maybeReverseRTLStringList(rowStringList);
-        if (!getConnectionState().equals(ConnTypes.CONNECTED)) {
+        if (connectionState != ConnTypes.CONNECTED) {
             Log.d(TAG, "Not showing rows card because not connected to Ultralites...");
             return;
         }
@@ -1001,7 +1003,7 @@ public class Mach1 extends SGCManager {
         }
 
         String[] bullets = maybeReverseRTLStringList(bulletList);
-        if (!getConnectionState().equals(ConnTypes.CONNECTED)) {
+        if (connectionState != ConnTypes.CONNECTED) {
             Log.d(TAG, "Not showing bullet point list because not connected to Ultralites...");
             return;
         }
@@ -1173,7 +1175,7 @@ public class Mach1 extends SGCManager {
     }
 
     public void scrollingTextViewFinalText(String text){
-        if (!getConnectionState().equals(ConnTypes.CONNECTED)) {
+        if (connectionState != ConnTypes.CONNECTED) {
             return;
         }
 
@@ -1269,7 +1271,7 @@ public class Mach1 extends SGCManager {
     }
 
     public void displayPromptView(String prompt, String [] options){
-        if (!getConnectionState().equals(ConnTypes.CONNECTED)) {
+        if (connectionState != ConnTypes.CONNECTED) {
             return;
         }
 

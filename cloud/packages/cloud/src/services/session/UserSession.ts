@@ -146,8 +146,8 @@ export class UserSession {
   // App health status cache (for client apps API)
   public appHealthCache: Map<string, boolean> = new Map();
 
-  // User's timezone (IANA name like "America/New_York")
-  public userTimezone?: string;
+  // Other state
+  public userDatetime?: string;
 
   // LiveKit transport preference
   public livekitRequested?: boolean;
@@ -428,14 +428,6 @@ export class UserSession {
 
     // Create a fresh session
     const userSession = new UserSession(userId, ws);
-
-    // Wait for user settings to load before proceeding
-    // This ensures CONNECTION_ACK sent to apps has correct settings, not defaults
-    try {
-      await userSession.userSettingsManager.waitForLoad();
-    } catch (error) {
-      userSession.logger.error({ error }, "Error waiting for user settings to load");
-    }
 
     // Bootstrap installed apps
     try {

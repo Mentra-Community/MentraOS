@@ -57,7 +57,7 @@ import onboardingRoutes from "./api/hono/routes/onboarding.routes";
 import permissionsRoutes from "./api/hono/routes/permissions.routes";
 import photosRoutes from "./api/hono/routes/photos.routes";
 import galleryRoutes from "./api/hono/routes/gallery.routes";
-
+import userDataRoutes from "./api/hono/routes/user-data.routes";
 import streamsRoutes from "./api/hono/routes/streams.routes";
 import hardwareRoutes from "./api/hono/routes/hardware.routes";
 import toolsRoutes from "./api/hono/routes/tools.routes";
@@ -318,6 +318,9 @@ app.route("/api/photos", photosRoutes);
 
 // Gallery routes
 app.route("/api/gallery", galleryRoutes);
+
+// User data routes
+app.route("/api/user-data", userDataRoutes);
 
 // Streams routes
 app.route("/api/streams", streamsRoutes);

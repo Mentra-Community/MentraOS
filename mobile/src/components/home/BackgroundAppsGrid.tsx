@@ -25,7 +25,7 @@ export const BackgroundAppsGrid = () => {
 
   const gridData = useMemo(() => {
     // Filter out incompatible apps and running apps
-    let inactiveApps = inactive.filter((app) => {
+    let inactiveApps = inactive.filter(app => {
       if (!app.compatibility?.isCompatible) {
         return false
       }
@@ -103,7 +103,7 @@ export const BackgroundAppsGrid = () => {
       <FlatList
         data={gridData}
         renderItem={renderItem}
-        keyExtractor={(item) => item.packageName}
+        keyExtractor={item => item.packageName}
         numColumns={GRID_COLUMNS}
         scrollEnabled={false}
         showsVerticalScrollIndicator={false}

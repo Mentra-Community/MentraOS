@@ -28,6 +28,7 @@ import {
   PermissionType,
   RgbLedControlRequest,
   OwnershipReleaseMessage,
+  StreamType,
   AppStateChange,
 } from "@mentra/sdk";
 
@@ -231,6 +232,22 @@ async function handleSubscriptionUpdate(
         }
       }, SUBSCRIPTION_DEBOUNCE_MS),
     );
+  }
+
+  // Send cached userDatetime if app just subscribed to custom_message
+  const isNewCustomMessageSubscription = message.subscriptions.includes(StreamType.CUSTOM_MESSAGE as any);
+
+  if (isNewCustomMessageSubscription && userSession.userDatetime) {
+    logger.info(`Sending cached userDatetime to app ${message.packageName} on custom_message subscription`);
+    if (appWebsocket && appWebsocket.readyState === WebSocketReadyState.OPEN) {
+      const customMessage = {
+        type: CloudToAppMessageType.CUSTOM_MESSAGE,
+        action: "update_datetime",
+        payload: { datetime: userSession.userDatetime, section: "topLeft" },
+        timestamp: new Date(),
+      };
+      appWebsocket.send(JSON.stringify(customMessage));
+    }
   }
 
   // Notify glasses of app state change

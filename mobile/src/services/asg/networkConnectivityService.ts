@@ -39,7 +39,7 @@ class NetworkConnectivityService {
    * Initialize the service and start monitoring
    */
   initialize() {
-    console.log("NETWORK: Initializing service")
+    console.log("[NetworkConnectivity] Initializing service")
 
     // Subscribe to network state changes
     this.netInfoSubscription = NetInfo.addEventListener(this.handleNetworkChange)
@@ -52,7 +52,7 @@ class NetworkConnectivityService {
    * Clean up subscriptions
    */
   destroy() {
-    console.log("NETWORK: Destroying service")
+    console.log("[NetworkConnectivity] Destroying service")
     if (this.netInfoSubscription) {
       this.netInfoSubscription()
       this.netInfoSubscription = null
@@ -64,7 +64,7 @@ class NetworkConnectivityService {
    * Handle network state changes from the phone
    */
   private handleNetworkChange = async (state: NetInfoState) => {
-    console.log("NETWORK: Phone network changed:", {
+    console.log("[NetworkConnectivity] Phone network changed:", {
       type: state.type,
       isConnected: state.isConnected,
       isWifiEnabled: state.isWifiEnabled,
@@ -81,10 +81,10 @@ class NetworkConnectivityService {
       // Try to get SSID using WifiManager for iOS
       try {
         const ssid = await WifiManager.getCurrentWifiSSID()
-        console.log("NETWORK: Got WiFi SSID from WifiManager:", ssid)
+        console.log("[NetworkConnectivity] Got WiFi SSID from WifiManager:", ssid)
         this.currentStatus.phoneSSID = ssid || null
       } catch (error) {
-        console.log("NETWORK: Failed to get WiFi SSID:", error)
+        console.log("[NetworkConnectivity] Failed to get WiFi SSID:", error)
         // Fallback to NetInfo details if available
         const wifiDetails = state.details as any
         this.currentStatus.phoneSSID = wifiDetails?.ssid || null
@@ -104,7 +104,7 @@ class NetworkConnectivityService {
       prevStatus.phoneConnected !== this.currentStatus.phoneConnected ||
       prevStatus.phoneSSID !== this.currentStatus.phoneSSID
     ) {
-      console.log("NETWORK: Network changed, checking gallery connectivity")
+      console.log("[NetworkConnectivity] Network changed, checking gallery connectivity")
       this.checkGalleryConnectivity() // Disabled - only check when gallery is open
     }
   }
@@ -113,7 +113,7 @@ class NetworkConnectivityService {
    * Update glasses WiFi status from status object
    */
   updateGlassesStatus(wifiConnected: boolean, wifiSSID: string | null, glassesIp?: string) {
-    console.log("NETWORK: Updating glasses status:", {
+    console.log("[NetworkConnectivity] Updating glasses status:", {
       wifiConnected,
       wifiSSID,
       glassesIp,
@@ -129,11 +129,11 @@ class NetworkConnectivityService {
       this.glassesIp = glassesIp
       // Update the camera API with the new IP
       asgCameraApi.setServer(glassesIp, 8089)
-      console.log("NETWORK: Updated glasses IP from", oldIp, "to:", glassesIp)
+      console.log("[NetworkConnectivity] Updated glasses IP from", oldIp, "to:", glassesIp)
     } else if (!glassesIp && this.glassesIp) {
-      console.log("NETWORK: WARNING: Glasses IP cleared (was:", this.glassesIp, ")")
+      console.log("[NetworkConnectivity] WARNING: Glasses IP cleared (was:", this.glassesIp, ")")
     } else if (!glassesIp) {
-      console.log("NETWORK: No glasses IP provided and none stored")
+      console.log("[NetworkConnectivity] No glasses IP provided and none stored")
     }
 
     // Check if this might be a hotspot scenario
@@ -153,7 +153,7 @@ class NetworkConnectivityService {
         ssid.includes("mobile")
       ) {
         this.currentStatus.isHotspot = true
-        console.log("NETWORK: Detected hotspot connection")
+        console.log("[NetworkConnectivity] Detected hotspot connection")
       }
     }
 
@@ -162,7 +162,7 @@ class NetworkConnectivityService {
       prevStatus.glassesConnected !== this.currentStatus.glassesConnected ||
       prevStatus.glassesSSID !== this.currentStatus.glassesSSID
     ) {
-      // console.log("NETWORK: Glasses status changed, checking gallery connectivity")
+      console.log("[NetworkConnectivity] Glasses status changed, checking gallery connectivity")
       this.checkGalleryConnectivity() // Disabled - only check when gallery is open
     }
   }
@@ -173,7 +173,7 @@ class NetworkConnectivityService {
   private async checkGalleryConnectivity() {
     // Prevent multiple simultaneous checks
     if (this.checkInProgress) {
-      console.log("NETWORK: Check already in progress, skipping")
+      console.log("[NetworkConnectivity] Check already in progress, skipping")
       return
     }
 
@@ -182,7 +182,7 @@ class NetworkConnectivityService {
     try {
       // Mark as unreachable if glasses are not connected OR we don't have an IP
       if (!this.currentStatus.glassesConnected) {
-        console.log("NETWORK: Glasses not connected to WiFi, marking unreachable")
+        console.log("[NetworkConnectivity] Glasses not connected to WiFi, marking unreachable")
         this.currentStatus.galleryReachable = false
         this.currentStatus.lastCheckTime = Date.now()
         this.notifyListeners()
@@ -190,7 +190,7 @@ class NetworkConnectivityService {
       }
 
       if (!this.glassesIp) {
-        console.log("NETWORK: No glasses IP available, marking unreachable")
+        console.log("[NetworkConnectivity] No glasses IP available, marking unreachable")
         // Even if glasses claim to be connected, without IP we can't reach them
         this.currentStatus.galleryReachable = false
         this.currentStatus.lastCheckTime = Date.now()
@@ -198,16 +198,16 @@ class NetworkConnectivityService {
         return
       }
 
-      console.log("NETWORK: Checking gallery reachability at:", this.glassesIp)
+      console.log("[NetworkConnectivity] Checking gallery reachability at:", this.glassesIp)
       const healthUrl = `http://${this.glassesIp}:8089/api/health`
-      console.log("NETWORK: Health check URL:", healthUrl)
+      console.log("[NetworkConnectivity] Health check URL:", healthUrl)
 
       // Try to reach the health endpoint with a short timeout
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 3000) // 3 second timeout
 
       try {
-        console.log("NETWORK: Starting GET request to health endpoint...")
+        console.log("[NetworkConnectivity] Starting GET request to health endpoint...")
         const response = await fetch(healthUrl, {
           method: "GET", // Changed from HEAD to GET
           signal: controller.signal,
@@ -220,14 +220,14 @@ class NetworkConnectivityService {
         clearTimeout(timeoutId)
 
         this.currentStatus.galleryReachable = response.ok
-        console.log("NETWORK: Gallery reachability check completed:", {
+        console.log("[NetworkConnectivity] Gallery reachability check completed:", {
           ok: response.ok,
           status: response.status,
           statusText: response.statusText,
         })
       } catch (error) {
         clearTimeout(timeoutId)
-        console.log("NETWORK: Gallery not reachable:", error)
+        console.log("[NetworkConnectivity] Gallery not reachable:", error)
         this.currentStatus.galleryReachable = false
       }
 
@@ -242,8 +242,8 @@ class NetworkConnectivityService {
    * Perform a full connectivity check
    */
   async checkConnectivity(): Promise<NetworkStatus> {
-    console.log("NETWORK: Performing full connectivity check")
-    console.log("NETWORK: Current state before check:", {
+    console.log("[NetworkConnectivity] Performing full connectivity check")
+    console.log("[NetworkConnectivity] Current state before check:", {
       glassesIp: this.glassesIp,
       glassesConnected: this.currentStatus.glassesConnected,
       glassesSSID: this.currentStatus.glassesSSID,
@@ -262,7 +262,7 @@ class NetworkConnectivityService {
     // Check gallery if we have glasses info
     await this.checkGalleryConnectivity()
 
-    console.log("NETWORK: Check complete. New state:", {
+    console.log("[NetworkConnectivity] Check complete. New state:", {
       galleryReachable: this.currentStatus.galleryReachable,
       shouldShowWarning: this.shouldShowWarning(),
     })
@@ -355,11 +355,11 @@ class NetworkConnectivityService {
    */
   private notifyListeners() {
     const status = this.getStatus()
-    this.listeners.forEach((listener) => {
+    this.listeners.forEach(listener => {
       try {
         listener(status)
       } catch (error) {
-        console.error("NETWORK: Error in listener:", error)
+        console.error("[NetworkConnectivity] Error in listener:", error)
       }
     })
   }

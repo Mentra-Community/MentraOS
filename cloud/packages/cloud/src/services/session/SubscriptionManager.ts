@@ -9,6 +9,7 @@ import {
   SubscriptionRequest,
 } from "@mentra/sdk";
 
+
 import App from "../../models/app.model";
 import { SimplePermissionChecker } from "../permissions/simple-permission-checker";
 
@@ -122,26 +123,6 @@ export class SubscriptionManager {
       const subs = appSession.subscriptions;
       for (const sub of subs) {
         if (sub === target || sub === ("augmentos:*" as any) || sub === ("augmentos:all" as any)) {
-          subscribed.push(packageName);
-          break;
-        }
-      }
-    }
-    return subscribed;
-  }
-
-  /**
-   * Get all apps that have any AugmentOS setting subscription
-   * Used for broadcasting full settings snapshots
-   */
-  getAllAppsWithAugmentosSubscriptions(): string[] {
-    const subscribed: string[] = [];
-
-    for (const [packageName, appSession] of this.getAppSessionEntries()) {
-      const subs = appSession.subscriptions;
-      for (const sub of subs) {
-        // Check if subscription starts with "augmentos:" prefix
-        if (typeof sub === "string" && sub.startsWith("augmentos:")) {
           subscribed.push(packageName);
           break;
         }

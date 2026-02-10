@@ -83,6 +83,10 @@ static const uint16_t defaultOutputByteCount = 20;
     _outputFrameSize = (uint16_t)frameSize;
 }
 
+- (NSInteger)getOutputFrameSize {
+    return (NSInteger)_outputFrameSize;
+}
+
 - (void)setupDecoder {
     if (_decoderInitialized) {
         return; // Already initialized
@@ -188,7 +192,7 @@ static const uint16_t defaultOutputByteCount = 20;
     _encoderInitialized = YES;
 }
 
-- (NSMutableData *)encode:(NSData *)pcmdata frameSize:(NSInteger)frameSize {
+- (NSMutableData *)encode:(NSData *)pcmdata {
     if (pcmdata == nil || pcmdata.length == 0) {
         return [[NSMutableData alloc] init];
     }
@@ -199,11 +203,6 @@ static const uint16_t defaultOutputByteCount = 20;
     if (!_encoderInitialized) {
         printf("Encoder not initialized\n");
         return [[NSMutableData alloc] init];
-    }
-
-    // if the frame size is not set to the passed in frame size, we need to reallocate the output buffer:
-    if (frameSize != _outputFrameSize) {
-        [self setOutputFrameSize:frameSize];
     }
 
     // LC3 frame size: 160 samples * 2 bytes = 320 bytes per frame

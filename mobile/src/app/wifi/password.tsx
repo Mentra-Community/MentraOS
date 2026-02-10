@@ -6,9 +6,10 @@ import {EyeIcon} from "@/components/icons/EyeIcon"
 import {EyeOffIcon} from "@/components/icons/EyeOffIcon"
 import {WifiIcon} from "@/components/icons/WifiIcon"
 import {Screen, Header, Checkbox, Button, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {ConnectionOverlay} from "@/components/glasses/ConnectionOverlay"
@@ -21,7 +22,7 @@ export default function WifiPasswordScreen() {
   const nextRoute = params.nextRoute as string | undefined
 
   const {theme} = useAppTheme()
-  const {push, goBack} = useNavigationHistory()
+  const {push, goBack, pushPrevious} = useNavigationHistory()
   const [ssid, setSsid] = useState(initialSsid)
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -73,18 +74,18 @@ export default function WifiPasswordScreen() {
     <Screen preset="fixed">
       <Header title={translate("wifi:wifi")} leftIcon="chevron-left" onLeftPress={goBack} />
       <ConnectionOverlay />
+
       <View className="bg-primary-foreground rounded-3xl p-6 w-full items-center mt-12">
         {/* WiFi Icon */}
         <View className="mb-3">
           <WifiIcon size={48} color={theme.colors.primary} />
         </View>
 
-        <View className="gap-4 mt-6 w-full">
-          <Text
-            className="text-xl font-semibold text-text text-center mb-4"
-            text={ssid || translate("wifi:enterNetworkDetails")}
-          />
+        <View className="gap-4 mt-6">
+          {/* SSID Title */}
+          <Text className="text-xl font-semibold text-text text-center mb-4">{ssid || "Enter Network Details"}</Text>
 
+          {/* Manual entry shows SSID input */}
           {!initialSsid && (
             <View className="">
               <Text className="text-base text-text mb-2" tx="wifi:networkName" />
@@ -100,6 +101,7 @@ export default function WifiPasswordScreen() {
             </View>
           )}
 
+          {/* Password input */}
           <View className="">
             <Text className="text-base text-text mb-2" tx="wifi:wifiPassword" />
             <View className="flex-row items-center relative">
@@ -128,6 +130,7 @@ export default function WifiPasswordScreen() {
             )}
           </View>
 
+          {/* Remember password checkbox */}
           <Checkbox
             value={rememberPassword}
             onValueChange={setRememberPassword}
@@ -140,7 +143,7 @@ export default function WifiPasswordScreen() {
           />
         </View>
 
-        <View className="w-full h-px bg-border my-6" />
+        <View className="w-full h-px bg-border mt-6 mb-6" />
 
         <View className="flex-row gap-3 w-full justify-end">
           <Button tx="common:cancel" onPress={goBack} preset="alternate" className="min-w-[100px]" />

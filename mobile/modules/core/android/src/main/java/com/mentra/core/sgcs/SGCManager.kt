@@ -1,12 +1,49 @@
 package com.mentra.core.sgcs
 
-import com.mentra.core.GlassesStore
 import com.mentra.core.utils.ConnTypes
 
 abstract class SGCManager {
-    // Hard coded device properties:
+    // Device Information
     @JvmField var type: String = ""
+    @JvmField var ready: Boolean = false
+    @JvmField
+    var connectionState: String =
+            ConnTypes.DISCONNECTED // "disconnected" | "connected" | "connecting"
+
+    @JvmField var protobufSchemaVersion: String = ""
+    @JvmField var glassesProtobufVersion: String = ""
+
+    @JvmField var glassesAppVersion: String = ""
+    @JvmField var glassesBuildNumber: String = ""
+    @JvmField var glassesDeviceModel: String = ""
+    @JvmField var glassesAndroidVersion: String = ""
+    @JvmField var glassesOtaVersionUrl: String = ""
+    @JvmField var glassesFirmwareVersion: String = ""
+    @JvmField var glassesBtMacAddress: String = ""
+    @JvmField var glassesSerialNumber: String = ""
+    @JvmField var glassesStyle: String = ""
+    @JvmField var glassesColor: String = ""
+
+    // Hardware Status
     @JvmField var hasMic: Boolean = false
+    @JvmField var micEnabled: Boolean = false
+    @JvmField var batteryLevel: Int = -1
+    @JvmField var isHeadUp: Boolean = false
+
+    // Case Status
+    @JvmField var caseOpen: Boolean = false
+    @JvmField var caseRemoved: Boolean = false
+    @JvmField var caseCharging: Boolean = false
+    @JvmField var caseBatteryLevel: Int = -1
+
+    // Network Status
+    @JvmField var wifiSsid: String = ""
+    @JvmField var wifiConnected: Boolean = false
+    @JvmField var wifiLocalIp: String = ""
+    @JvmField var isHotspotEnabled: Boolean = false
+    @JvmField var hotspotSsid: String = ""
+    @JvmField var hotspotPassword: String = ""
+    @JvmField var hotspotGatewayIp: String = ""
 
     // Audio Control
     abstract fun setMicEnabled(enabled: Boolean)
@@ -82,89 +119,4 @@ abstract class SGCManager {
     // Gallery
     abstract fun queryGalleryStatus()
     abstract fun sendGalleryMode()
-
-    // GlassesStore-backed read-only getters for convenience
-    val fullyBooted: Boolean
-        get() = GlassesStore.get("glasses", "fullyBooted") as? Boolean ?: false
-
-    val connected: Boolean
-        get() = GlassesStore.get("glasses", "connected") as? Boolean ?: false
-
-    val connectionState: String
-        get() = GlassesStore.get("glasses", "connectionState") as? String ?: ConnTypes.DISCONNECTED
-
-    val appVersion: String
-        get() = GlassesStore.get("glasses", "appVersion") as? String ?: ""
-
-    val buildNumber: String
-        get() = GlassesStore.get("glasses", "buildNumber") as? String ?: ""
-
-    val deviceModel: String
-        get() = GlassesStore.get("glasses", "deviceModel") as? String ?: ""
-
-    val androidVersion: String
-        get() = GlassesStore.get("glasses", "androidVersion") as? String ?: ""
-
-    val otaVersionUrl: String
-        get() = GlassesStore.get("glasses", "otaVersionUrl") as? String ?: ""
-
-    val firmwareVersion: String
-        get() = GlassesStore.get("glasses", "firmwareVersion") as? String ?: ""
-
-    val btMacAddress: String
-        get() = GlassesStore.get("glasses", "btMacAddress") as? String ?: ""
-
-    val serialNumber: String
-        get() = GlassesStore.get("glasses", "serialNumber") as? String ?: ""
-
-    val style: String
-        get() = GlassesStore.get("glasses", "style") as? String ?: ""
-
-    val color: String
-        get() = GlassesStore.get("glasses", "color") as? String ?: ""
-
-    val micEnabled: Boolean
-        get() = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
-
-    val batteryLevel: Int
-        get() = GlassesStore.get("glasses", "batteryLevel") as? Int ?: -1
-
-    val headUp: Boolean
-        get() = GlassesStore.get("glasses", "headUp") as? Boolean ?: false
-
-    val charging: Boolean
-        get() = GlassesStore.get("glasses", "charging") as? Boolean ?: false
-
-    val caseOpen: Boolean
-        get() = GlassesStore.get("glasses", "caseOpen") as? Boolean ?: true
-
-    val caseRemoved: Boolean
-        get() = GlassesStore.get("glasses", "caseRemoved") as? Boolean ?: true
-
-    val caseCharging: Boolean
-        get() = GlassesStore.get("glasses", "caseCharging") as? Boolean ?: false
-
-    val caseBatteryLevel: Int
-        get() = GlassesStore.get("glasses", "caseBatteryLevel") as? Int ?: -1
-
-    val wifiSsid: String
-        get() = GlassesStore.get("glasses", "wifiSsid") as? String ?: ""
-
-    val wifiConnected: Boolean
-        get() = GlassesStore.get("glasses", "wifiConnected") as? Boolean ?: false
-
-    val wifiLocalIp: String
-        get() = GlassesStore.get("glasses", "wifiLocalIp") as? String ?: ""
-
-    val hotspotEnabled: Boolean
-        get() = GlassesStore.get("glasses", "hotspotEnabled") as? Boolean ?: false
-
-    val hotspotSsid: String
-        get() = GlassesStore.get("glasses", "hotspotSsid") as? String ?: ""
-
-    val hotspotPassword: String
-        get() = GlassesStore.get("glasses", "hotspotPassword") as? String ?: ""
-
-    val hotspotGatewayIp: String
-        get() = GlassesStore.get("glasses", "hotspotGatewayIp") as? String ?: ""
 }

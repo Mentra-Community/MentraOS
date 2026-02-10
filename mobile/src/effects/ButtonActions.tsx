@@ -19,7 +19,7 @@ export function ButtonActions() {
       // 1. If camera app is available and compatible, ALWAYS prefer it
       // This ensures glasses with cameras always default to camera app
       const cameraApp = applets.find(
-        (app) => app.packageName === "com.mentra.camera" && app.compatibility?.isCompatible !== false,
+        app => app.packageName === "com.mentra.camera" && app.compatibility?.isCompatible !== false,
       )
 
       if (cameraApp) {
@@ -31,7 +31,7 @@ export function ButtonActions() {
       }
 
       // 2. For glasses WITHOUT camera, keep current app if compatible
-      const currentApp = applets.find((app) => app.packageName === currentDefaultApp)
+      const currentApp = applets.find(app => app.packageName === currentDefaultApp)
       const isCurrentAppCompatible = currentApp?.compatibility?.isCompatible !== false
 
       if (isCurrentAppCompatible && currentDefaultApp) {
@@ -41,7 +41,7 @@ export function ButtonActions() {
 
       // 3. Fallback: find first compatible standard app
       const firstCompatibleApp = applets.find(
-        (app) => app.type === "standard" && app.compatibility?.isCompatible !== false,
+        app => app.type === "standard" && app.compatibility?.isCompatible !== false,
       )
 
       if (firstCompatibleApp) {
@@ -78,7 +78,7 @@ export function ButtonActions() {
       }
 
       // Check if any foreground app is running
-      const activeForegroundApp = applets.find((app) => app.type === "standard" && app.running)
+      const activeForegroundApp = applets.find(app => app.type === "standard" && app.running)
 
       if (activeForegroundApp) {
         console.log(
@@ -97,7 +97,7 @@ export function ButtonActions() {
       }
 
       // Validate app compatibility before starting
-      const targetApp = applets.find((app) => app.packageName === defaultAppPackageName)
+      const targetApp = applets.find(app => app.packageName === defaultAppPackageName)
       if (!targetApp) {
         console.log("🔘 Default app not found:", defaultAppPackageName)
         return

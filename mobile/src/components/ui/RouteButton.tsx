@@ -95,12 +95,13 @@ export function RouteButton({
   return (
     <View style={[themed($settingsGroup), {paddingVertical: 0}, disabled && {opacity: 0.5}, style]}>
       <TouchableOpacity onPress={onPress} disabled={disabled || !onPress}>
-        <View style={{flexDirection: "row", paddingVertical: 8, alignItems: "center"}}>
+        <View style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, alignItems: "center"}}>
           <View
             style={{
               flexDirection: "column",
+              justifyContent: "space-between",
               paddingVertical: 8,
-              flex: 1,
+              maxWidth: "90%",
               gap: theme.spacing.s1,
             }}>
             <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4}}>
@@ -110,12 +111,12 @@ export function RouteButton({
             {subtitle && <Text style={themed($subtitle)}>{subtitle}</Text>}
           </View>
           {onPress && (
-            <View style={[themed($iconContainer), {flexShrink: 0, marginLeft: theme.spacing.s3}]}>
+            <View style={themed($iconContainer)}>
               <Icon name="arrow-right" size={24} color={disabled ? theme.colors.textDim : theme.colors.text} />
             </View>
           )}
           {text && (
-            <Text style={[themed($text), {flexShrink: 0, marginLeft: theme.spacing.s3}]} weight="light">
+            <Text style={themed($text)} weight="light">
               {text}
             </Text>
           )}

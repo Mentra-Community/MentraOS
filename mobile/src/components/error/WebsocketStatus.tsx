@@ -17,13 +17,13 @@ const STATUS_CONFIG: Record<DisplayStatus, {icon: string; label: () => string; b
   connected: {
     icon: "wifi",
     label: () => translate("connection:connected"),
-    bgClass: "bg-primary",
+    bgClass: "bg-green-500",
     iconColor: "#fff",
   },
   warning: {
     icon: "wifi",
     label: () => translate("connection:connecting"),
-    bgClass: "bg-chart-3",
+    bgClass: "bg-orange-500",
     iconColor: "#fff",
   },
   disconnected: {
@@ -38,7 +38,7 @@ export default function WebsocketStatus() {
   const connectionStatus = useConnectionStore((state) => state.status)
   const [displayStatus, setDisplayStatus] = useState<DisplayStatus>("connected")
   const [offlineMode] = useSetting(SETTINGS.offline_mode.key)
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [devMode] = useSetting(SETTINGS.dev_mode.key)
   const refreshApplets = useRefreshApplets()
   const {theme} = useAppTheme()
   const disconnectionTimerRef = useRef<number | null>(null)
@@ -85,7 +85,7 @@ export default function WebsocketStatus() {
 
   const config = STATUS_CONFIG[displayStatus]
 
-  if (!superMode && displayStatus == "connected") {
+  if (!devMode && displayStatus == "connected") {
     return null
   }
 

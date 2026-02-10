@@ -1,11 +1,46 @@
-import Foundation
-
 @MainActor
 protocol SGCManager {
+    // MARK: - Device Information
 
-    // MARK: - hard coded device properties:
     var type: String { get set }
+    var ready: Bool { get }
+    var connectionState: String { get }
+
+    // info:
+    var glassesAppVersion: String { get }
+    var glassesBuildNumber: String { get }
+    var glassesDeviceModel: String { get }
+    var glassesAndroidVersion: String { get }
+    var glassesOtaVersionUrl: String { get }
+    var glassesFirmwareVersion: String { get }
+    var glassesBtMacAddress: String { get }
+    var glassesSerialNumber: String { get }
+    var glassesStyle: String { get }
+    var glassesColor: String { get }
+
+    // MARK: - Hardware Status
+
     var hasMic: Bool { get }
+    var micEnabled: Bool { get }
+    var batteryLevel: Int { get }
+    var isHeadUp: Bool { get }
+
+    // MARK: - Case Status
+
+    var caseOpen: Bool { get }
+    var caseRemoved: Bool { get }
+    var caseCharging: Bool { get }
+    var caseBatteryLevel: Int { get }
+
+    // MARK: - Network Status
+
+    var wifiSsid: String { get }
+    var wifiConnected: Bool { get }
+    var wifiLocalIp: String { get }
+    var isHotspotEnabled: Bool { get }
+    var hotspotSsid: String { get }
+    var hotspotPassword: String { get }
+    var hotspotGatewayIp: String { get }
 
     // MARK: - Audio Control
 
@@ -75,7 +110,6 @@ protocol SGCManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
-    func sendOtaStart()
 
     // MARK: - User Context (for crash reporting)
 
@@ -87,118 +121,30 @@ protocol SGCManager {
     func sendGalleryMode()
 }
 
-
-// doesn't seem to work for concurrency reasons :(
-// we can make read-only getters for convienence though:
 extension SGCManager {
-
-    // MARK: - Default GlassesStore-backed property implementations
-
-    var fullyBooted: Bool {
-        get { GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }
-    }
-
-    var connected: Bool {
-        get { GlassesStore.shared.get("glasses", "connected") as? Bool ?? false }
-    }
-
-    var appVersion: String {
-        get { GlassesStore.shared.get("glasses", "appVersion") as? String ?? "" }
-    }
-
-    var buildNumber: String {
-        get { GlassesStore.shared.get("glasses", "buildNumber") as? String ?? "" }
-    }
-
-    var deviceModel: String {
-        get { GlassesStore.shared.get("glasses", "deviceModel") as? String ?? "" }
-    }
-
-    var androidVersion: String {
-        get { GlassesStore.shared.get("glasses", "androidVersion") as? String ?? "" }
-    }
-
-    var otaVersionUrl: String {
-        get { GlassesStore.shared.get("glasses", "otaVersionUrl") as? String ?? "" }
-    }
-
-    var firmwareVersion: String {
-        get { GlassesStore.shared.get("glasses", "fwVersion") as? String ?? "" }
-    }
-
-    var btMacAddress: String {
-        get { GlassesStore.shared.get("glasses", "btMacAddress") as? String ?? "" }
-    }
-
-    var serialNumber: String {
-        get { GlassesStore.shared.get("glasses", "serialNumber") as? String ?? "" }
-    }
-
-    var style: String {
-        get { GlassesStore.shared.get("glasses", "style") as? String ?? "" }
-    }
-
-    var color: String {
-        get { GlassesStore.shared.get("glasses", "color") as? String ?? "" }
-    }
-
-    var micEnabled: Bool {
-        get { GlassesStore.shared.get("glasses", "micEnabled") as? Bool ?? false }
-    }
-
-    var batteryLevel: Int {
-        get { GlassesStore.shared.get("glasses", "batteryLevel") as? Int ?? -1 }
-    }
-
-    var headUp: Bool {
-        get { GlassesStore.shared.get("glasses", "headUp") as? Bool ?? false }
-    }
-
-    var charging: Bool {
-        get { GlassesStore.shared.get("glasses", "charging") as? Bool ?? false }
-    }
-
-    var caseOpen: Bool {
-        get { GlassesStore.shared.get("glasses", "caseOpen") as? Bool ?? true }
-    }
-
-    var caseRemoved: Bool {
-        get { GlassesStore.shared.get("glasses", "caseRemoved") as? Bool ?? true }
-    }
-
-    var caseCharging: Bool {
-        get { GlassesStore.shared.get("glasses", "caseCharging") as? Bool ?? false }
-    }
-
-    var caseBatteryLevel: Int {
-        get { GlassesStore.shared.get("glasses", "caseBatteryLevel") as? Int ?? -1 }
-    }
-
-    var wifiSsid: String {
-        get { GlassesStore.shared.get("glasses", "wifiSsid") as? String ?? "" }
-    }
-
-    var wifiConnected: Bool {
-        get { GlassesStore.shared.get("glasses", "wifiConnected") as? Bool ?? false }
-    }
-
-    var wifiLocalIp: String {
-        get { GlassesStore.shared.get("glasses", "wifiLocalIp") as? String ?? "" }
-    }
-
-    var hotspotEnabled: Bool {
-        get { GlassesStore.shared.get("glasses", "hotspotEnabled") as? Bool ?? false }
-    }
-
-    var hotspotSsid: String {
-        get { GlassesStore.shared.get("glasses", "hotspotSsid") as? String ?? "" }
-    }
-
-    var hotspotPassword: String {
-        get { GlassesStore.shared.get("glasses", "hotspotPassword") as? String ?? "" }
-    }
-
-    var hotspotGatewayIp: String {
-        get { GlassesStore.shared.get("glasses", "hotspotGatewayIp") as? String ?? "" }
+    func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool) {
+        sendJson(jsonOriginal, wakeUp: wakeUp, requireAck: true)
     }
 }
+
+//// template:
+// var glassesBuildNumber = ""
+// var glassesDeviceModel = ""
+// var glassesAndroidVersion = ""
+// var glassesOtaVersionUrl = ""
+// var glassesSerialNumber = ""
+// var glassesStyle = ""
+// var glassesColor = ""
+// var caseBatteryLevel = 0
+// var glassesAppVersion = ""
+//
+//// Data Properties
+// @Published var batteryLevel: Int = -1
+// @Published var isCharging: Bool = false
+// @Published var wifiConnected: Bool = false
+// @Published var wifiSsid: String = ""
+// @Published var wifiLocalIp: String = ""
+// @Published var isHotspotEnabled: Bool = false
+// @Published var hotspotSsid: String = ""
+// @Published var hotspotPassword: String = ""
+// @Published var hotspotGatewayIp: String = "" // The gateway IP to connect to when on hotspot

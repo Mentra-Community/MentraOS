@@ -17,31 +17,14 @@ import {AllProviders} from "@/contexts/AllProviders"
 import "@/global.css"
 
 // prevent the annoying warning box at the bottom of the screen from getting in the way:
-const IGNORED_LOGS = [
-  /Failed to open debugger. Please check that the dev server is running and reload the app./,
-  /Require cycle:/,
-  /is missing the required default export./,
-  /Attempted to import the module/,
-  /The action 'RESET' with payload/,
-  /The action 'POP_TO_TOP' was not handled/,
-]
-
-LogBox.ignoreLogs(IGNORED_LOGS);
-
-if (__DEV__) {
-  const withoutIgnored = (logger: any) => (...args: any[]) => {
-    const output = args.join(' ');
-
-    if (!IGNORED_LOGS.some(log => log.test(output))) {
-      logger(...args);
-    }
-  };
-
-  console.log = withoutIgnored(console.log);
-  console.info = withoutIgnored(console.info);
-  console.warn = withoutIgnored(console.warn);
-  console.error = withoutIgnored(console.error);
-}
+LogBox.ignoreLogs([
+  "Failed to open debugger. Please check that the dev server is running and reload the app.",
+  "Require cycle:",
+  "is missing the required default export.",
+  "Attempted to import the module",
+  "The action 'RESET' with payload",
+  "The action 'POP_TO_TOP' was not handled",
+])
 
 SentrySetup()
 

@@ -466,13 +466,6 @@ export function GalleryScreen() {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
-
-    // Check if glasses are connected before starting sync
-    if (!glassesConnected) {
-      showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
-      return
-    }
-
     gallerySyncService.startSync()
   }
 
@@ -840,7 +833,7 @@ export function GalleryScreen() {
         case "requesting_hotspot":
           return (
             <View style={themed($syncButtonRow)}>
-              <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
+              <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
               <Text style={themed($syncButtonText)}>Starting connection...</Text>
             </View>
           )
@@ -848,7 +841,7 @@ export function GalleryScreen() {
         case "connecting_wifi":
           return (
             <View style={themed($syncButtonRow)}>
-              <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
+              <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
               <Text style={themed($syncButtonText)}>Connecting...</Text>
             </View>
           )
@@ -857,7 +850,7 @@ export function GalleryScreen() {
           if (totalFiles === 0) {
             return (
               <View style={themed($syncButtonRow)}>
-                <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
+                <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
                 <Text style={themed($syncButtonText)}>Preparing sync...</Text>
               </View>
             )
@@ -885,7 +878,7 @@ export function GalleryScreen() {
           if (isValidating && validatingCount > 0) {
             return (
               <View style={themed($syncButtonRow)}>
-                <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
+                <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
                 <Text style={themed($syncButtonText)}>
                   Validating {validatingCount} {validatingCount === 1 ? "picture" : "pictures"}...
                 </Text>
@@ -1081,7 +1074,7 @@ export function GalleryScreen() {
             if (showSpinner) {
               return (
                 <View style={themed($loadingSpinnerContainer)}>
-                  <ActivityIndicator size="large" color={theme.colors.foreground} />
+                  <ActivityIndicator size="large" color={theme.colors.primary} />
                   <Text style={themed($loadingSpinnerText)}>Loading gallery...</Text>
                 </View>
               )

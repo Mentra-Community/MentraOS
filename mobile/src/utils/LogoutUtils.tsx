@@ -27,6 +27,9 @@ export class LogoutUtils {
       // Step 3: Clear backend communication tokens
       await this.clearBackendTokens()
 
+      // Step 4: Stop and cleanup core services
+      await this.stopCoreServices()
+
       // Step 5: Clear all app settings and user data
       await this.clearAppSettings()
 
@@ -108,6 +111,21 @@ export class LogoutUtils {
       console.log(`${this.TAG}: Cleared backend core token`)
     } catch (error) {
       console.error(`${this.TAG}: Error clearing backend tokens:`, error)
+    }
+  }
+
+  /**
+   * Stop core services and cleanup connections
+   */
+  private static async stopCoreServices(): Promise<void> {
+    console.log(`${this.TAG}: Stopping core services...`)
+
+    try {
+      // Clean up communicator resources
+      bridge.cleanup()
+      console.log(`${this.TAG}: Cleaned up core communicator resources`)
+    } catch (error) {
+      console.error(`${this.TAG}: Error cleaning up communicator:`, error)
     }
   }
 

@@ -54,7 +54,7 @@ export const SentrySetup = () => {
     maxBreadcrumbs: 50,
 
     // Truncate noisy BLE breadcrumbs to prevent Sentry crashes (see MENTRA-OS-13Z, 13K, 13N, 13P)
-    beforeBreadcrumb: (breadcrumb) => {
+    beforeBreadcrumb: breadcrumb => {
       if (breadcrumb.category === "console" && breadcrumb.message) {
         const msg = breadcrumb.message
         // Truncate high-frequency BLE reconnection logs

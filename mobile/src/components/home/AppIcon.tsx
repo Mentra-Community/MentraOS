@@ -73,7 +73,7 @@ const AppIcon = ({app, onClick, style}: AppIconProps) => {
           <>
             {app.loading && (
               <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
-                <ActivityIndicator size="large" color={theme.colors.palette.white} />
+                <ActivityIndicator size="large" color={theme.colors.tint} />
               </View>
             )}
             <Image

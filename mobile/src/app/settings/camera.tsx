@@ -1,6 +1,7 @@
 import {getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {View, ScrollView, TouchableOpacity, Platform, ViewStyle, TextStyle} from "react-native"
 
+import bridge from "@/bridge/MantleBridge"
 import {Icon, Text, Screen, Header} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -8,7 +9,6 @@ import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
-import CoreModule from "core"
 
 type PhotoSize = "small" | "medium" | "large"
 type VideoResolution = "720p" | "1080p" // | "1440p" | "4K"
@@ -44,7 +44,7 @@ export default function CameraSettingsScreen() {
   const [videoSettings, setVideoSettings] = useSetting(SETTINGS.button_video_settings.key)
   const [maxRecordingTime, setMaxRecordingTime] = useSetting(SETTINGS.button_max_recording_time.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(state => state.connected)
 
   // Derive video resolution from settings
   const videoResolution: VideoResolution = (() => {
@@ -63,7 +63,7 @@ export default function CameraSettingsScreen() {
 
     try {
       setPhotoSize(size)
-      await CoreModule.updateButtonPhotoSize(size)
+      await bridge.updateButtonPhotoSize(size)
     } catch (error) {
       console.error("Failed to update photo size:", error)
     }
@@ -82,6 +82,7 @@ export default function CameraSettingsScreen() {
       const fps = resolution === "4K" ? 15 : 30
 
       setVideoSettings({width, height, fps})
+      await bridge.updateButtonVideoSettings(width, height, fps)
     } catch (error) {
       console.error("Failed to update video resolution:", error)
     }

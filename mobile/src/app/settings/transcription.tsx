@@ -193,10 +193,10 @@ export default function TranscriptionSettingsScreen() {
 
       await STTModelManager.downloadModel(
         targetModelId,
-        (progress) => {
+        progress => {
           setDownloadProgress(progress.percentage)
         },
-        (progress) => {
+        progress => {
           setExtractionProgress(progress.percentage)
         },
       )
@@ -272,6 +272,16 @@ export default function TranscriptionSettingsScreen() {
     initSelectedModel()
   }, [])
 
+  useEffect(() => {
+    const subscription = CoreModule.addListener("CoreMessageEvent", (_event: any) => {
+      // console.log("CoreMessageEvent:", event)
+      // let _type = event.body.type
+      // if (type === "") {
+      // }
+    })
+    return () => subscription.remove()
+  }, [])
+
   return (
     <Screen preset="fixed">
       <Header
@@ -303,7 +313,7 @@ export default function TranscriptionSettingsScreen() {
 
         {isCheckingModel ? (
           <View style={{alignItems: "center", padding: theme.spacing.s6}}>
-            <ActivityIndicator size="large" color={theme.colors.foreground} />
+            <ActivityIndicator size="large" color={theme.colors.text} />
             <Spacer height={theme.spacing.s3} />
             <Text>Checking model status...</Text>
           </View>

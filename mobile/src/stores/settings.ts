@@ -23,7 +23,6 @@ interface Setting {
 export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
-  super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   enable_squircles: {
     key: "enable_squircles",
     defaultValue: () => true,
@@ -40,13 +39,6 @@ export const SETTINGS: Record<string, Setting> = {
   },
   debug_navigation_history: {
     key: "debug_navigation_history",
-    defaultValue: () => false,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
-  debug_core_status_bar: {
-    key: "debug_core_status_bar",
     defaultValue: () => false,
     writable: true,
     saveOnServer: true,
@@ -96,7 +88,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   reconnect_on_app_foreground: {
     key: "reconnect_on_app_foreground",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -104,8 +96,6 @@ export const SETTINGS: Record<string, Setting> = {
   location_tier: {key: "location_tier", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
   // state:
   core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
-  auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
-  auth_token: {key: "auth_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   pending_wearable: {
     key: "pending_wearable",
     defaultValue: () => "",
@@ -329,6 +319,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  button_video_settings_width: {
+    key: "button_video_settings_width",
+    defaultValue: () => 1920,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   button_max_recording_time: {
     key: "button_max_recording_time",
     defaultValue: () => 10,
@@ -420,7 +417,6 @@ export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra
 
 // these settings are automatically synced to the core:
 const CORE_SETTINGS_KEYS: string[] = [
-  // core settings:
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
   SETTINGS.always_on_status_bar.key,
@@ -431,8 +427,6 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.lc3_frame_size.key,
   SETTINGS.preferred_mic.key,
   SETTINGS.screen_disabled.key,
-  SETTINGS.auth_email.key,
-  SETTINGS.auth_token.key,
   // glasses settings:
   SETTINGS.contextual_dashboard.key,
   SETTINGS.head_up_angle.key,
@@ -446,16 +440,15 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.button_video_settings.key,
   SETTINGS.button_camera_led.key,
   SETTINGS.button_max_recording_time.key,
-  // device / pairing:
   SETTINGS.pending_wearable.key,
   SETTINGS.pending_device_name.key,
   SETTINGS.default_wearable.key,
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
   // offline applets:
-  SETTINGS.offline_mode.key,
   SETTINGS.offline_captions_running.key,
   SETTINGS.gallery_mode.key,
+  // SETTINGS.offline_camera_running.key,
   // notifications:
   SETTINGS.notifications_enabled.key,
   SETTINGS.notifications_blocklist.key,

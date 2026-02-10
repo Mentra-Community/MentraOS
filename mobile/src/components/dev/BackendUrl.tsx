@@ -122,7 +122,7 @@ export default function BackendUrl() {
     if (timeDiff > 2000) {
       setAsiaButtonTapCount(1)
     } else {
-      setAsiaButtonTapCount((prev) => prev + 1)
+      setAsiaButtonTapCount(prev => prev + 1)
     }
 
     setAsiaButtonLastTapTime(currentTime)

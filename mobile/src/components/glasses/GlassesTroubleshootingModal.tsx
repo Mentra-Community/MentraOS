@@ -10,7 +10,7 @@ import {getGlassesImage} from "@/utils/getGlassesImage"
 interface TroubleshootingModalProps {
   isVisible: boolean
   onClose: () => void
-  deviceModel: string
+  modelName: string
 }
 
 export interface PairingTip {
@@ -76,7 +76,11 @@ export const getModelSpecificTips = (model: string): PairingTip[] => {
         },
         {
           title: "Pairing Mode",
-          body: "Check that your Mentra Live isn't already connected to another phone.",
+          body: "Check that your Mentra Live is in pairing mode.",
+        },
+        {
+          title: "Check Connected Apps",
+          body: "Ensure no other app is currently connected to your glasses.",
         },
         {
           title: "Restart Glasses",
@@ -109,9 +113,9 @@ export const getModelSpecificTips = (model: string): PairingTip[] => {
   }
 }
 
-const GlassesTroubleshootingModal: React.FC<TroubleshootingModalProps> = ({isVisible, onClose, deviceModel}) => {
+const GlassesTroubleshootingModal: React.FC<TroubleshootingModalProps> = ({isVisible, onClose, modelName}) => {
   const {theme, themed} = useAppTheme()
-  const tips = getModelSpecificTips(deviceModel)
+  const tips = getModelSpecificTips(modelName)
   const [currentIndex, setCurrentIndex] = useState(0)
   const fadeAnim = useRef(new Animated.Value(1)).current
 
@@ -160,7 +164,7 @@ const GlassesTroubleshootingModal: React.FC<TroubleshootingModalProps> = ({isVis
   }
 
   const currentTip = tips[currentIndex]
-  const fallbackImage = getGlassesImage(deviceModel)
+  const fallbackImage = getGlassesImage(modelName)
 
   return (
     <Modal visible={isVisible} animationType="fade" transparent onRequestClose={onClose}>

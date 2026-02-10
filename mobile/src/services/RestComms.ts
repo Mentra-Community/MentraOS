@@ -481,23 +481,6 @@ class RestComms {
     const res = this.authenticatedRequest<Response>(config)
     return res.map(() => undefined)
   }
-
-  public configureAudioFormat(
-    format: string,
-    lc3Config: {
-      sampleRate: number
-      frameDurationMs: number
-      frameSizeBytes: number
-    },
-  ): AsyncResult<void, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: "/api/client/audio/configure",
-      data: {format, lc3Config},
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(() => undefined)
-  }
 }
 
 const restComms = RestComms.getInstance()

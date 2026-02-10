@@ -1,6 +1,7 @@
 // src/message-types.ts
 
-import {StreamType} from "./streams"
+import { StreamType } from "./streams";
+
 /**
  * Types of messages from glasses to cloud
  */
@@ -185,11 +186,7 @@ export enum CloudToAppMessageType {
   // Permissions
   PERMISSION_ERROR = "permission_error",
 
-  /**
-   * @deprecated Use the settings system (mentraosSettings) instead.
-   * This message type was used for datetime updates but is no longer needed.
-   * Will be removed in a future version.
-   */
+  // General purpose messaging
   CUSTOM_MESSAGE = "custom_message",
 
   // TODO(isaiah): Remove after confirming not in use.
@@ -210,7 +207,7 @@ export const ControlActionTypes = [
   GlassesToCloudMessageType.STOP_APP,
   GlassesToCloudMessageType.DASHBOARD_STATE,
   GlassesToCloudMessageType.OPEN_DASHBOARD,
-] as const
+] as const;
 
 /**
  * Event message types (subset of GlassesToCloudMessageType)
@@ -230,7 +227,7 @@ export const EventTypes = [
   GlassesToCloudMessageType.MENTRAOS_SETTINGS_UPDATE_REQUEST,
   GlassesToCloudMessageType.CORE_STATUS_UPDATE,
   GlassesToCloudMessageType.LOCAL_TRANSCRIPTION,
-] as const
+] as const;
 
 /**
  * Response message types (subset of CloudToGlassesMessageType)
@@ -239,7 +236,7 @@ export const ResponseTypes = [
   CloudToGlassesMessageType.CONNECTION_ACK,
   CloudToGlassesMessageType.CONNECTION_ERROR,
   CloudToGlassesMessageType.AUTH_ERROR,
-] as const
+] as const;
 
 /**
  * Update message types (subset of CloudToGlassesMessageType)
@@ -259,7 +256,7 @@ export const UpdateTypes = [
   CloudToGlassesMessageType.STOP_RTMP_STREAM,
   CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE,
   CloudToGlassesMessageType.LIVEKIT_INFO,
-] as const
+] as const;
 
 /**
  * Dashboard message types
@@ -270,4 +267,4 @@ export const DashboardMessageTypes = [
   AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE,
   CloudToAppMessageType.DASHBOARD_MODE_CHANGED,
   CloudToAppMessageType.DASHBOARD_ALWAYS_ON_CHANGED,
-] as const
+] as const;

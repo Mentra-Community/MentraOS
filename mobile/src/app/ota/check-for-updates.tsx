@@ -100,11 +100,11 @@ export default function OtaCheckForUpdatesScreen() {
           </View>
 
           <View className="flex-1 items-center justify-center">
-            <ActivityIndicator size="large" color={theme.colors.foreground} />
+            <ActivityIndicator size="large" color={theme.colors.secondary_foreground} />
           </View>
 
           <View className="justify-center items-center">
-            <Button preset="primary" tx="common:continue" flexContainer disabled />
+            <Button preset="primary" tx="common:skip" flexContainer onPress={handleSkip} />
           </View>
         </>
       )
@@ -112,9 +112,6 @@ export default function OtaCheckForUpdatesScreen() {
 
     // Update available state
     if (checkState === "update_available") {
-      // If isRequired is not specified in version.json, default to true (forced update)
-      const isUpdateRequired = versionInfo?.isRequired !== false
-
       return (
         <>
           <View className="flex-1 items-center justify-center px-6">
@@ -131,9 +128,9 @@ export default function OtaCheckForUpdatesScreen() {
             <Text tx="ota:updateDescription" className="text-sm text-center" style={{color: theme.colors.textDim}} />
           </View>
 
-          <View className="gap-3 mb-6">
+          <View className="gap-3 pb-2">
             <Button preset="primary" tx="ota:updateNow" onPress={handleUpdateNow} />
-            {!isUpdateRequired && <Button preset="secondary" tx="ota:updateLater" onPress={handleSkip} />}
+            <Button preset="secondary" tx="ota:updateLater" onPress={handleSkip} />
           </View>
         </>
       )

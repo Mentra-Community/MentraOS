@@ -6,85 +6,12 @@ public class CoreModule: Module {
         Name("Core")
 
         // Define events that can be sent to JavaScript
-        Events(
-            "glasses_status",
-            "core_status",
-            "log",
-            // Individual event handlers
-            "glasses_not_ready",
-            "button_press",
-            "touch_event",
-            "head_up",
-            "battery_status",
-            "local_transcription",
-            "wifi_status_change",
-            "hotspot_status_change",
-            "hotspot_error",
-            "gallery_status",
-            "compatible_glasses_search_stop",
-            "heartbeat_sent",
-            "heartbeat_received",
-            "swipe_volume_status",
-            "switch_status",
-            "rgb_led_control_response",
-            "pair_failure",
-            "audio_pairing_needed",
-            "audio_connected",
-            "audio_disconnected",
-            "save_setting",
-            "phone_notification",
-            "phone_notification_dismissed",
-            "ws_text",
-            "ws_bin",
-            "mic_data",
-            "rtmp_stream_status",
-            "keep_alive_ack",
-            "mtk_update_complete",
-            "ota_update_available",
-            "ota_progress",
-            "version_info"
-        )
+        Events("CoreMessageEvent", "onChange")
 
         OnCreate {
             // Initialize Bridge with event callback
             Bridge.initialize { [weak self] eventName, data in
                 self?.sendEvent(eventName, data)
-            }
-
-            // Configure observable store event emission
-            Task { @MainActor [weak self] in
-                GlassesStore.shared.store.configure { [weak self] category, changes in
-                    switch category {
-                    case "glasses":
-                        self?.sendEvent("glasses_status", changes)
-                    case "core":
-                        self?.sendEvent("core_status", changes)
-                    default:
-                        break
-                    }
-                }
-            }
-        }
-
-        // MARK: - Observable Store Functions
-
-        AsyncFunction("getGlassesStatus") {
-            await MainActor.run {
-                GlassesStore.shared.store.getCategory("glasses")
-            }
-        }
-
-        AsyncFunction("getCoreStatus") {
-            await MainActor.run {
-                GlassesStore.shared.store.getCategory("core")
-            }
-        }
-
-        AsyncFunction("update") { (category: String, values: [String: Any]) in
-            await MainActor.run {
-                for (key, value) in values {
-                    GlassesStore.shared.apply(category, key, value)
-                }
             }
         }
 
@@ -103,6 +30,12 @@ public class CoreModule: Module {
         }
 
         // MARK: - Connection Commands
+
+        AsyncFunction("getStatus") {
+            await MainActor.run {
+                CoreManager.shared.getStatus()
+            }
+        }
 
         AsyncFunction("connectDefault") {
             await MainActor.run {
@@ -134,9 +67,9 @@ public class CoreModule: Module {
             }
         }
 
-        AsyncFunction("findCompatibleDevices") { (deviceModel: String) in
+        AsyncFunction("findCompatibleDevices") { (modelName: String) in
             await MainActor.run {
-                CoreManager.shared.findCompatibleDevices(deviceModel)
+                CoreManager.shared.findCompatibleDevices(modelName)
             }
         }
 
@@ -169,6 +102,14 @@ public class CoreModule: Module {
         AsyncFunction("setHotspotState") { (enabled: Bool) in
             await MainActor.run {
                 CoreManager.shared.setHotspotState(enabled)
+            }
+        }
+
+        // MARK: - User Context Commands
+
+        AsyncFunction("setUserEmail") { (email: String) in
+            await MainActor.run {
+                CoreManager.shared.setUserEmail(email)
             }
         }
 
@@ -266,6 +207,14 @@ public class CoreModule: Module {
             }
         }
 
+        // MARK: - Audio Encoding Commands
+
+        AsyncFunction("setLC3FrameSize") { (frameSize: Int) in
+            await MainActor.run {
+                CoreManager.shared.setLC3FrameSize(frameSize)
+            }
+        }
+
         // MARK: - RGB LED Control
 
         AsyncFunction("rgbLedControl") {
@@ -283,6 +232,14 @@ public class CoreModule: Module {
                     offtime: offtime,
                     count: count
                 )
+            }
+        }
+
+        // MARK: - Settings Commands
+
+        AsyncFunction("updateSettings") { (params: [String: Any]) in
+            await MainActor.run {
+                CoreManager.shared.updateSettings(params)
             }
         }
 

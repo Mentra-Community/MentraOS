@@ -72,7 +72,7 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
       startInLoadingState={true}
       renderLoading={() => (
         <View className="absolute inset-0 items-center bg-background justify-center">
-          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text text="Loading Local Mini App..." className="text-foreground text-sm mt-2" />
         </View>
       )}
