@@ -85,14 +85,6 @@ config FONT_STORAGE_USE_PARTITION_2
 	  When enabled, load font data from the font_storage2 partition instead
 	  of font_storage. This is useful when you split fonts across partitions.
 
-config FONT_STORAGE_PREFER_BINFONT
-	bool "Prefer LVGL binfont over XBF when using XIP"
-	default n
-	depends on LVGL && FLASH_MAP
-	help
-	  When enabled, display_get_font(\"cjk\") will prefer the LVGL binfont
-	  adapter over XBF on the XIP path.
-
 config BINFONT_GLYPH_ORDER_WHXY
 	bool "Use glyf order (adv,W,H,X,Y) instead of spec (adv,X,Y,W,H)"
 	default n

@@ -288,7 +288,7 @@ const lv_font_t* display_get_font(const char* text_type)
             LOG_INF("display_get_font(cjk): using binfont adapter @%p", ext_font);
             return ext_font;
         }
-        LOG_ERR("display_get_font(cjk): binfont required but init failed - program font hex to font_storage2");
+        LOG_ERR("display_get_font(cjk): binfont required but init failed - program font hex to font_storage");
         return config->fonts.cjk ? config->fonts.cjk : config->fonts.secondary;
     }
 
