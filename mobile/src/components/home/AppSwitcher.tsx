@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useMemo} from "react"
+import React, {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {View, Dimensions, Pressable, Image, TouchableOpacity} from "react-native"
 import {Text} from "@/components/ignite/"
 import Animated, {
@@ -23,6 +23,11 @@ const CARD_HEIGHT = SCREEN_HEIGHT * 0.67
 const CARD_SPACING = 0
 const DISMISS_THRESHOLD = -180
 const VELOCITY_THRESHOLD = -800
+
+interface InternalAppEntry {
+  app: ClientAppletInterface
+  dismissed: boolean
+}
 
 interface AppCard {
   id: string
@@ -114,7 +119,7 @@ function AppCardItem({
     }
     let power = Math.pow(lin, 1.7) * howFar
     let res = stat + power
-    
+
     let howFarPercent = (1 / (howFar / SCREEN_WIDTH)) * howFar
     let linearProgress = power / howFarPercent
     let scale = interpolate(linearProgress, [0, 0.8], [0.96, 1], Extrapolation.CLAMP)
@@ -193,6 +198,35 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
   const insets = useSafeAreaInsets()
   const apps = useActiveApps()
 
+  const liveApps = useActiveApps()
+
+  // Internal stable copy of apps - only syncs on open/close transitions
+  const [internalApps, setInternalApps] = useState<InternalAppEntry[]>([])
+  const prevVisibleRef = useRef(false)
+
+  // Only sync the apps list when visibility changes (open/close)
+  useEffect(() => {
+    const wasVisible = prevVisibleRef.current
+    prevVisibleRef.current = visible
+
+    if (visible && !wasVisible) {
+      // Opening: snapshot the current live apps
+      setInternalApps(liveApps.map((app) => ({app, dismissed: false})))
+    } else if (!visible && wasVisible) {
+      // Closing: we can clear or leave stale — clear after animation
+      // (the return null below handles not rendering anyway)
+    }
+  }, [visible, liveApps])
+
+  // Derived visible (non-dismissed) apps for rendering & indexing
+  const visibleApps = useMemo(() => {
+    return internalApps.filter((entry) => !entry.dismissed)
+  }, [internalApps])
+
+  const visibleAppsList = useMemo(() => {
+    return visibleApps.map((entry) => entry.app)
+  }, [visibleApps])
+
   // const activePackageNames = useActiveAppPackageNames()
   // const apps = useMemo(() => {
   //   return useAppletStatusStore.getState().apps.filter((a) => activePackageNames.includes(a.packageName))
@@ -204,8 +238,10 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
       containerTranslateY.value = withSpring(0, {damping: 20, stiffness: 2000, velocity: 100, overshootClamping: true})
       containerOpacity.value = withTiming(1, {duration: 200})
       // start at the end of the cards:
-      translateX.value = -((apps.length - 2) * CARD_WIDTH)
-      activeIndex.value = apps.length
+      // translateX.value = -((apps.length - 2) * CARD_WIDTH)
+      // activeIndex.value = apps.length
+      translateX.value = -((visibleAppsList.length - 2) * CARD_WIDTH)
+      activeIndex.value = visibleAppsList.length
     } else {
       backdropOpacity.value = withTiming(0, {duration: 200})
       containerTranslateY.value = withTiming(100, {duration: 200})
@@ -322,7 +358,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
         newTarget = velocity > 0 ? newTarget - 1 : newTarget + 1
       }
 
-      newTarget = Math.max(-1, Math.min(newTarget, apps.length - 2))
+      newTarget = Math.max(-1, Math.min(newTarget, visibleAppsList.length - 2))
 
       targetIndex.value = newTarget
 
@@ -333,39 +369,78 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
       })
     })
 
+  // const handleDismiss = useCallback(
+  //   (packageName: string) => {
+  //     let lastApp = visibleAppsList[visibleAppsList.length - 1]
+  //     // Adjust if we were on the last card
+  //     if (lastApp.packageName === packageName) {
+  //       goToIndex(apps.length - 2)
+  //     }
+
+  //     setTimeout(() => {
+  //       useAppletStatusStore.getState().stopApplet(packageName)
+  //     }, 100)
+  //   },
+  //   [apps.length],
+  // )
+
   const handleDismiss = useCallback(
     (packageName: string) => {
-      let lastApp = apps[apps.length - 1]
-      // Adjust if we were on the last card
-      if (lastApp.packageName === packageName) {
-        goToIndex(apps.length - 2)
+      const visibleCount = internalApps.filter((e) => !e.dismissed).length
+      const visibleList = internalApps.filter((e) => !e.dismissed)
+      const lastVisible = visibleList[visibleList.length - 1]
+
+      // If dismissing the last visible card, shift carousel first
+      if (lastVisible?.app.packageName === packageName) {
+        goToIndex(visibleCount - 2)
       }
 
+      // Mark as dismissed in our internal list (hide, don't remove)
+      setInternalApps((prev) =>
+        prev.map((entry) => (entry.app.packageName === packageName ? {...entry, dismissed: true} : entry)),
+      )
+
+      // Actually stop the applet after a short delay
       setTimeout(() => {
         useAppletStatusStore.getState().stopApplet(packageName)
       }, 100)
     },
-    [apps.length],
+    [internalApps],
   )
+
+  // const goToIndex = useCallback(
+  //   (index: number) => {
+  //     index = index - 1
+  //     const cardWidth = CARD_WIDTH + CARD_SPACING
+  //     const clamped = Math.max(-1, Math.min(index, apps.length - 2))
+  //     targetIndex.value = clamped
+  //     translateX.value = withSpring(-clamped * cardWidth, {
+  //       damping: 20,
+  //       stiffness: 90,
+  //     })
+  //   },
+  //   [apps.length],
+  // )
 
   const goToIndex = useCallback(
     (index: number) => {
       index = index - 1
       const cardWidth = CARD_WIDTH + CARD_SPACING
-      const clamped = Math.max(-1, Math.min(index, apps.length - 2))
+      const visibleCount = internalApps.filter((e) => !e.dismissed).length
+      const clamped = Math.max(-1, Math.min(index, visibleCount - 2))
       targetIndex.value = clamped
       translateX.value = withSpring(-clamped * cardWidth, {
         damping: 20,
         stiffness: 90,
       })
     },
-    [apps.length],
+    [internalApps],
   )
 
   const handleSelect = (packageName: string) => {
     console.log("selecting", packageName)
 
-    const applet = apps.find((app) => app.packageName === packageName)
+    const applet = visibleAppsList.find((app) => app.packageName === packageName)
     if (!applet) {
       console.error("SWITCH: no applet found!")
       return
@@ -414,7 +489,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
           <Text className="text-white/50 text-sm font-medium" tx="appSwitcher:swipeUpToClose" />
         </View> */}
 
-        {apps.length == 0 && (
+        {visibleAppsList.length == 0 && (
           <View className="flex-1 items-center justify-center">
             <Text className="text-white text-[22px] font-semibold mb-2" tx="appSwitcher:noAppsOpen" />
             <Text className="text-white/50 text-base" tx="appSwitcher:yourRecentlyUsedAppsWillAppearHere" />
@@ -426,7 +501,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
           <Animated.View className="flex-1 justify-center" pointerEvents="box-none">
             <Pressable className="absolute inset-0" onPress={onClose} />
             <Animated.View className="flex-row items-center" pointerEvents="box-none">
-              {apps.map((app, index) => (
+              {visibleAppsList.map((app, index) => (
                 <AppCardItem
                   key={app.packageName}
                   app={app}
