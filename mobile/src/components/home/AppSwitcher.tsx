@@ -39,6 +39,7 @@ interface AppCardItemProps {
   onSelect: (packageName: string) => void
   translateX: Animated.SharedValue<number>
   count: number
+  hidden: boolean
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable)
@@ -49,6 +50,7 @@ function AppCardItem({
   // activeIndex,
   count,
   translateX,
+  hidden,
   onDismiss,
   onSelect,
 }: AppCardItemProps) {
@@ -64,20 +66,39 @@ function AppCardItem({
 
   useEffect(() => {
     // setTimeout(() => {
-      // indexSv.value = index
+    // indexSv.value = index
     // }, 1000)
-    indexSv.value = withTiming(index, {duration: 500})
   }, [index])
+  
+
+  useEffect(() => {
+    if (hidden) {
+      cardOpacity.value = 0.1
+    } else {
+      cardOpacity.value = 1
+    }
+  }, [hidden])
 
   useEffect(() => {
     // animatedIndex.value = 0
     // animatedIndex.value = withTiming(0, {duration: 500})
     // setTimeout(() => {
-      // animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
-    // }, 1000)
     // animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
-    animatedIndex.value = withTiming(index, {duration: 500})
-  }, [index])
+    // }, 1000)
+    // cardOpacity.value = 0.1
+    // indexSv.value = index+1
+    // animatedIndex.value = index+1
+    // setTimeout(() => {
+      // cardOpacity.value = 1
+      indexSv.value = index
+      // indexSv.value = withTiming(index, {duration: 5000})
+      // animatedIndex.value = index+1
+      animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
+    // }, 2500)
+    // setTimeout(() => {
+    //   animatedIndex.value = withTiming(index, {duration: 500})
+    // }, 1000)
+  }, [count])
 
   const dismissCard = useCallback(() => {
     onDismiss(app.packageName)
@@ -133,7 +154,7 @@ function AppCardItem({
     }
     let power = Math.pow(lin, 1.7) * howFar
     let res = stat + power
-    
+
     let howFarPercent = (1 / (howFar / SCREEN_WIDTH)) * howFar
     let linearProgress = power / howFarPercent
     let scale = interpolate(linearProgress, [0, 0.8], [0.96, 1], Extrapolation.CLAMP)
@@ -211,6 +232,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
   const {push} = useNavigationHistory()
   const insets = useSafeAreaInsets()
   const apps = useActiveApps()
+  const hiddenIndex = useSharedValue(0)
 
   // const activePackageNames = useActiveAppPackageNames()
   // const apps = useMemo(() => {
@@ -359,6 +381,12 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
       if (lastApp.packageName === packageName) {
         goToIndex(apps.length - 2)
       }
+      // get the index of the packageName being dismissed:
+      const index = apps.findIndex((app) => app.packageName === packageName)
+      hiddenIndex.value = index
+      setTimeout(() => {
+        hiddenIndex.value = -1
+      }, 1000)
 
       setTimeout(() => {
         useAppletStatusStore.getState().stopApplet(packageName)
@@ -454,6 +482,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
                   count={apps.length}
                   // activeIndex={activeIndex}
                   translateX={translateX}
+                  hidden={hiddenIndex.value == index}
                   index={index}
                 />
               ))}
