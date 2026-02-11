@@ -27,6 +27,7 @@ const VELOCITY_THRESHOLD = -800
 interface InternalAppEntry {
   app: ClientAppletInterface
   dismissed: boolean
+  offset: number
 }
 
 interface AppCard {
@@ -44,27 +45,31 @@ interface AppCardItemProps {
   onSelect: (packageName: string) => void
   translateX: Animated.SharedValue<number>
   count: number
+  offset: number
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable)
 
-function AppCardItem({
-  app,
-  index,
-  // activeIndex,
-  count,
-  translateX,
-  onDismiss,
-  onSelect,
-}: AppCardItemProps) {
+function AppCardItem({app, index, count, offset, translateX, onDismiss, onSelect}: AppCardItemProps) {
   const translateY = useSharedValue(0)
   const cardOpacity = useSharedValue(1)
   const animatedIndex = useSharedValue(index)
   // const cardScale = useSharedValue(1)
 
+  // console.log("index", index)
+
+  // useEffect(() => {
+  //   animatedIndex.value = index
+  // }, [count])
+
   useEffect(() => {
-    animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
-  }, [count])
+    let newIndex = index - offset
+    animatedIndex.value = withSpring(newIndex, {damping: 20, stiffness: 90})
+  }, [offset, index])
+
+  // useEffect(() => {
+    // animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
+  // }, [index])
 
   const dismissCard = useCallback(() => {
     onDismiss(app.packageName)
@@ -211,7 +216,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
 
     if (visible && !wasVisible) {
       // Opening: snapshot the current live apps
-      setInternalApps(liveApps.map((app) => ({app, dismissed: false})))
+      setInternalApps(liveApps.map((app) => ({app, dismissed: false, offset: 0})))
     } else if (!visible && wasVisible) {
       // Closing: we can clear or leave stale — clear after animation
       // (the return null below handles not rendering anyway)
@@ -221,6 +226,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
   // Derived visible (non-dismissed) apps for rendering & indexing
   const visibleApps = useMemo(() => {
     return internalApps.filter((entry) => !entry.dismissed)
+    // return internalApps
   }, [internalApps])
 
   const visibleAppsList = useMemo(() => {
@@ -240,8 +246,8 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
       // start at the end of the cards:
       // translateX.value = -((apps.length - 2) * CARD_WIDTH)
       // activeIndex.value = apps.length
-      translateX.value = -((visibleAppsList.length - 2) * CARD_WIDTH)
-      activeIndex.value = visibleAppsList.length
+      translateX.value = -((internalApps.length - 2) * CARD_WIDTH)
+      activeIndex.value = internalApps.length
     } else {
       backdropOpacity.value = withTiming(0, {duration: 200})
       containerTranslateY.value = withTiming(100, {duration: 200})
@@ -358,7 +364,7 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
         newTarget = velocity > 0 ? newTarget - 1 : newTarget + 1
       }
 
-      newTarget = Math.max(-1, Math.min(newTarget, visibleAppsList.length - 2))
+      newTarget = Math.max(-1, Math.min(newTarget, internalApps.length - 2))
 
       targetIndex.value = newTarget
 
@@ -391,14 +397,38 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
       const lastVisible = visibleList[visibleList.length - 1]
 
       // If dismissing the last visible card, shift carousel first
-      if (lastVisible?.app.packageName === packageName) {
-        goToIndex(visibleCount - 2)
-      }
+      // if (lastVisible?.app.packageName === packageName) {
+      //   goToIndex(visibleCount - 2)
+      // }
 
-      // Mark as dismissed in our internal list (hide, don't remove)
-      setInternalApps((prev) =>
-        prev.map((entry) => (entry.app.packageName === packageName ? {...entry, dismissed: true} : entry)),
-      )
+      // // Mark as dismissed in our internal list (hide, don't remove)
+      // setInternalApps((prev) =>
+      //   prev.map((entry) => (entry.app.packageName === packageName ? {...entry, dismissed: true} : entry)),
+      // )
+
+      // update the offset of the cards (every card after this index should add an offset of 1):
+      // setInternalApps((prev) =>
+      //   prev.map((entry) => (entry.app.packageName === packageName ? {...entry, offset: entry.offset + 1} : entry)),
+      // )
+      let newApps = []
+      let index = 0
+      for (let i = 0; i < internalApps.length; i++) {
+        console.log("internalApps[i].app?.packageName", internalApps[i].app?.packageName)
+        console.log("packageName", packageName)
+        console.log("index", index)
+        if (internalApps[i].app?.packageName === packageName) {
+          index = i
+          newApps.push({...internalApps[i], offset: internalApps[i].offset, dismissed: true})
+          continue
+        }
+        let offset = internalApps[i].offset
+        if (i > index) {
+          offset = offset + 1
+        }
+        newApps.push({...internalApps[i], offset: offset})
+      }
+      console.log("newApps offsets", newApps.map((entry) => entry.offset))
+      setInternalApps(newApps)
 
       // Actually stop the applet after a short delay
       setTimeout(() => {
@@ -473,6 +503,11 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
 
   // console.log("apps", apps.map((app) => app.packageName))
 
+  console.log(
+    "internalApps",
+    internalApps.map((entry) => entry.offset),
+  )
+
   return (
     <View
       className="absolute -mx-6 inset-0 z-[1000]"
@@ -501,26 +536,26 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
           <Animated.View className="flex-1 justify-center" pointerEvents="box-none">
             <Pressable className="absolute inset-0" onPress={onClose} />
             <Animated.View className="flex-row items-center" pointerEvents="box-none">
-              {visibleAppsList.map((app, index) => (
+              {internalApps.map((entry, index) => (
                 <AppCardItem
-                  key={app.packageName}
-                  app={app}
+                  key={entry.app.packageName}
+                  app={entry.app}
                   onDismiss={handleDismiss}
                   onSelect={handleSelect}
-                  count={apps.length}
+                  count={internalApps.length}
                   // activeIndex={activeIndex}
                   translateX={translateX}
-                  index={index}
+                  index={index - entry.offset}
                 />
               ))}
             </Animated.View>
           </Animated.View>
         </GestureDetector>
 
-        {apps.length > 0 && (
+        {visibleApps.length > 0 && (
           <View className="flex-row justify-center items-center gap-1.5 mb-5">
-            {apps.map((_, index) => (
-              <PageDot key={index} index={index} activeIndex={activeIndex} />
+            {visibleApps.map((entry, index) => (
+              <PageDot key={entry.app.packageName} entry={entry} index={index} activeIndex={activeIndex} />
             ))}
           </View>
         )}
@@ -556,9 +591,13 @@ export default function AppSwitcher({visible, onClose}: AppSwitcherProps) {
   )
 }
 
-function PageDot({index, activeIndex}: {index: number; activeIndex: Animated.SharedValue<number>}) {
+function PageDot({entry, index, activeIndex}: {entry: InternalAppEntry; index: number; activeIndex: Animated.SharedValue<number>}) {
   const dotStyle = useAnimatedStyle(() => {
-    const isActive = Math.abs(activeIndex.value - 1 - index) < 0.5
+    // console.log("activeIndex.value", activeIndex.value)
+    console.log("entry.offset", entry.offset)
+    console.log("index", index)
+    // console.log("activeIndex.value", activeIndex.value)
+    const isActive = Math.abs(activeIndex.value - 1 - (index - entry.offset)) < 0.5
     return {
       width: withSpring(isActive ? 24 : 8),
       opacity: withTiming(isActive ? 1 : 0.4),
