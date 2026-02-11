@@ -55,11 +55,29 @@ function AppCardItem({
   const translateY = useSharedValue(0)
   const cardOpacity = useSharedValue(1)
   const animatedIndex = useSharedValue(index)
+  const indexSv = useSharedValue(index)
   // const cardScale = useSharedValue(1)
 
   useEffect(() => {
-    animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
+    // animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
   }, [count])
+
+  useEffect(() => {
+    // setTimeout(() => {
+      // indexSv.value = index
+    // }, 1000)
+    indexSv.value = withTiming(index, {duration: 500})
+  }, [index])
+
+  useEffect(() => {
+    // animatedIndex.value = 0
+    // animatedIndex.value = withTiming(0, {duration: 500})
+    // setTimeout(() => {
+      // animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
+    // }, 1000)
+    // animatedIndex.value = withSpring(index, {damping: 20, stiffness: 90})
+    animatedIndex.value = withTiming(index, {duration: 500})
+  }, [index])
 
   const dismissCard = useCallback(() => {
     onDismiss(app.packageName)
@@ -102,10 +120,11 @@ function AppCardItem({
 
   const cardAnimatedStyle = useAnimatedStyle(() => {
     let animIndex = animatedIndex.value
+    let realIndex = indexSv.value
 
     let cardWidth = CARD_WIDTH + CARD_SPACING
     // let stat = -animIndex * cardWidth
-    let stat = -index * cardWidth // use real index for stat!!
+    let stat = -realIndex * cardWidth // use real index for stat!!
 
     let howFar = SCREEN_WIDTH / 4
     let lin = translateX.value / cardWidth + animIndex
