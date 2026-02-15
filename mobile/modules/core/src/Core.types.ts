@@ -74,16 +74,12 @@ export type CompatibleGlassesSearchStopEvent = {
 
 export type HeartbeatSentEvent = {
   type: "heartbeat_sent"
-  heartbeat_sent: {
-    timestamp: string
-  }
+  timestamp: number
 }
 
 export type HeartbeatReceivedEvent = {
   type: "heartbeat_received"
-  heartbeat_received: {
-    timestamp: string
-  }
+  timestamp: number
 }
 
 export type SwipeVolumeStatusEvent = {

@@ -894,13 +894,13 @@ class MentraNex : SGCManager() {
             val data = characteristic.value
             val deviceName = mainGlassGatt?.device?.name ?: return
             val packetHex = data.joinToString("") { "%02X".format(it) }
-            Bridge.log("onCharacteristicChangedHandler len: ${data.size}")
-            Bridge.log("onCharacteristicChangedHandler: $packetHex")
+            // Bridge.log("onCharacteristicChangedHandler len: ${data.size}")
+            // Bridge.log("onCharacteristicChangedHandler: $packetHex")
             
             if (data.isEmpty()) return
             
             val packetType = data[0]
-            Bridge.log("onCharacteristicChangedHandler packetType: ${String.format("%02X ", packetType)}")
+            // Bridge.log("onCharacteristicChangedHandler packetType: ${String.format("%02X ", packetType)}")
             
             when (packetType) {
                 NexBluetoothPacketTypes.PACKET_TYPE_JSON -> {
@@ -919,23 +919,23 @@ class MentraNex : SGCManager() {
 
                         // Basic sequence validation
                         if (lastReceivedLc3Sequence != -1 && (lastReceivedLc3Sequence + 1).toByte() != sequenceNumber) {
-                            Bridge.log("LC3 packet sequence mismatch. Expected: ${lastReceivedLc3Sequence + 1}, Got: $sequenceNumber")
+                            // Bridge.log("LC3 packet sequence mismatch. Expected: ${lastReceivedLc3Sequence + 1}, Got: $sequenceNumber")
                         }
                         lastReceivedLc3Sequence = sequenceNumber.toInt()
 
                         val lc3Data = data.copyOfRange(2, data.size)
 
-                        Bridge.log("Received LC3 audio packet seq=$sequenceNumber, size=${lc3Data.size}")
+                        // Bridge.log("Received LC3 audio packet seq=$sequenceNumber, size=${lc3Data.size}")
 
                         // Play LC3 audio directly through LC3 player
                         if (lc3AudioPlayer != null && isLc3AudioEnabled) {
                             // Use the original packet format that LC3 player expects
                             lc3AudioPlayer?.write(data, 0, data.size)
-                            Bridge.log("Playing LC3 audio directly through LC3 player: ${data.size} bytes")
+                            // Bridge.log("Playing LC3 audio directly through LC3 player: ${data.size} bytes")
                         } else if (!isLc3AudioEnabled) {
-                            Bridge.log("LC3 audio disabled - skipping LC3 audio output")
+                            // Bridge.log("LC3 audio disabled - skipping LC3 audio output")
                         } else {
-                            Bridge.log("LC3 player not available - skipping LC3 audio output")
+                            // Bridge.log("LC3 player not available - skipping LC3 audio output")
                         }
 
                         CoreManager.getInstance().handleGlassesMicData(lc3Data);

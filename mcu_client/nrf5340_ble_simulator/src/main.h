@@ -2,6 +2,7 @@
 #define MAIN_H
 
 #include <stdbool.h>
+#include <zephyr/types.h>
 
 /**
  * @brief Get the current BLE device name (includes MAC address suffix)
@@ -14,5 +15,17 @@ const char *get_ble_device_name(void);
  * @return true if a BLE client is connected, false otherwise
  */
 bool get_ble_connected_status(void);
+
+/**
+ * @brief Send data over BLE to connected client(s)
+ *
+ * Handles MTU-based chunking and retries internally.
+ * Returns immediately if no BLE client is connected.
+ *
+ * @param data Pointer to the data to send
+ * @param len  Length of the data to send
+ * @return 0 on success, -1 on failure
+ */
+int ble_send_data(const uint8_t *data, uint16_t len);
 
 #endif /* MAIN_H */
