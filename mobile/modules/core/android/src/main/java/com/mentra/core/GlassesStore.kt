@@ -269,6 +269,17 @@ object GlassesStore {
             "core" to "device_name" -> {
                 // Device name changed - no additional action needed
             }
+            "core" to "notifications_enabled" -> {
+                (value as? Boolean)?.let { enabled ->
+                    CoreManager.getInstance().notificationsEnabled = enabled
+                }
+            }
+            "core" to "notifications_blocklist" -> {
+                @Suppress("UNCHECKED_CAST")
+                (value as? List<String>)?.let { blocklist ->
+                    CoreManager.getInstance().notificationsBlocklist = blocklist
+                }
+            }
             "core" to "lastLog" -> {
                 (value as? MutableList<String>)?.let { logs ->
                     // ensure the list is trimmed to 100 items (remove oldest items)

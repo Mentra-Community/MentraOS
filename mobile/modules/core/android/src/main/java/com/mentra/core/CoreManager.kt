@@ -55,7 +55,7 @@ class CoreManager {
     private var permissionCheckRunnable: Runnable? = null
 
     // notifications settings
-    public var notificationsEnabled = false
+    public var notificationsEnabled = true
     public var notificationsBlocklist = listOf<String>()
     // MARK: - End Unique
 

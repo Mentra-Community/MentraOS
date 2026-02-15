@@ -102,6 +102,10 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
       icon: string | null
     }>
   >
+  setNotificationsEnabled(enabled: boolean): void
+  getNotificationsEnabled(): boolean
+  setNotificationsBlocklist(blocklist: string[]): void
+  getNotificationsBlocklist(): string[]
 
   // Media Library Commands
   saveToGalleryWithDate(

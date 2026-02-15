@@ -298,6 +298,24 @@ class CoreModule : Module() {
             NotificationListener.getInstance(context).getInstalledApps()
         }
 
+        // MARK: - Notification Settings
+
+        Function("setNotificationsEnabled") { enabled: Boolean ->
+            CoreManager.getInstance().notificationsEnabled = enabled
+        }
+
+        Function("getNotificationsEnabled") {
+            CoreManager.getInstance().notificationsEnabled
+        }
+
+        Function("setNotificationsBlocklist") { blocklist: List<String> ->
+            CoreManager.getInstance().notificationsBlocklist = blocklist
+        }
+
+        Function("getNotificationsBlocklist") {
+            CoreManager.getInstance().notificationsBlocklist.toList()
+        }
+
         // MARK: - Settings Navigation
 
         AsyncFunction("openBluetoothSettings") {
