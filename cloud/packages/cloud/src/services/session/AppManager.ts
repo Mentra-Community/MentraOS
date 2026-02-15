@@ -42,7 +42,7 @@ const CLOUD_PUBLIC_HOST_NAME = process.env.CLOUD_PUBLIC_HOST_NAME; // e.g., "pro
 const CLOUD_LOCAL_HOST_NAME = process.env.CLOUD_LOCAL_HOST_NAME; // e.g., "localhost:8002" | "cloud" | "cloud-debug-cloud.default.svc.cluster.local:80"
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET;
 
-const APP_SESSION_TIMEOUT_MS = 5000; // 5 seconds
+const APP_SESSION_TIMEOUT_MS = 30000; // 30 seconds - increased from 5s to handle slow external app servers
 
 // Note: Connection states are now managed by AppSession (AppSessionState)
 // The old AppConnectionState enum has been removed in Phase 4b
@@ -841,6 +841,8 @@ export class AppManager {
           packageName,
           service: "AppManager",
           duration: Date.now() - startTime,
+          webhookURL,
+          sessionId: this.userSession.userId + "-" + packageName,
         },
         `Webhook sent successfully for app ${packageName}, waiting for App connection`,
       );
