@@ -386,12 +386,9 @@ async function stopApp(c: AppContext) {
 
     await userSession.appManager.stopApp(packageName);
 
-    // Broadcast state change
-    try {
-      userSession.appManager.broadcastAppState();
-    } catch (e) {
-      logger.warn({ e }, "Failed to broadcast app state");
-    }
+    // NOTE: broadcastAppState() is already called inside stopApp(),
+    // so we do NOT call it again here to avoid sending duplicate
+    // APP_STATE_CHANGE messages to the client over WebSocket.
 
     logger.info({ email, packageName }, "App stopped");
 
@@ -483,10 +480,11 @@ async function uninstallApp(c: AppContext) {
     await user.save();
 
     // Stop the app if running
+    // NOTE: stopApp() already calls broadcastAppState() internally,
+    // so we do NOT call it again here to avoid duplicate APP_STATE_CHANGE messages.
     if (userSession) {
       try {
         await userSession.appManager.stopApp(packageName);
-        userSession.appManager.broadcastAppState();
       } catch (e) {
         logger.warn(e, "Error stopping app during uninstall");
       }

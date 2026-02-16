@@ -33,6 +33,7 @@ import {
 
 import App from "../../../models/app.model";
 import { SimplePermissionChecker } from "../../permissions/simple-permission-checker";
+import { metricsService } from "../../metrics/MetricsService";
 import { IWebSocket, WebSocketReadyState } from "../../websocket/types";
 import type UserSession from "../UserSession";
 
@@ -241,6 +242,7 @@ async function handleSubscriptionUpdate(
   };
 
   userSession.websocket.send(JSON.stringify(clientResponse));
+  metricsService.incrementClientMessagesOut();
 }
 
 /**
@@ -273,6 +275,7 @@ async function handleRgbLedControl(
 
     if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
       userSession.websocket.send(JSON.stringify(glassesLedRequest));
+      metricsService.incrementClientMessagesOut();
       logger.info({ requestId: message.requestId, action: message.action }, "💡 RGB LED control request forwarded");
     } else {
       sendError(appWebsocket, AppErrorCode.INTERNAL_ERROR, "Glasses not connected", logger);
@@ -426,6 +429,7 @@ async function handleAudioPlayRequest(
 
     if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
       userSession.websocket.send(JSON.stringify(glassesAudioRequest));
+      metricsService.incrementClientMessagesOut();
       logger.debug(`🔊 Forwarded audio request ${message.requestId} to glasses`);
       // Disabled: Server-side playback via Go bridge/LiveKit - now handled client-side via expo-av
       // void userSession.speakerManager.start(message);
@@ -465,6 +469,7 @@ async function handleAudioStopRequest(
 
     if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
       userSession.websocket.send(JSON.stringify(glassesAudioStopRequest));
+      metricsService.incrementClientMessagesOut();
       logger.debug(`🔇 Forwarded audio stop request from ${message.packageName} to glasses`);
       // Disabled: Server-side stop via Go bridge/LiveKit - now handled client-side via expo-av
       // void userSession.speakerManager.stop(message);
@@ -595,6 +600,7 @@ async function handleStreamStatusCheck(
     }
 
     appWebsocket.send(JSON.stringify(response));
+    metricsService.incrementMiniappMessagesOut();
 
     logger.info(
       {
@@ -629,6 +635,7 @@ async function handleWifiSetupRequest(userSession: UserSession, message: any, lo
 
     if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
       userSession.websocket.send(JSON.stringify(showWifiSetup));
+      metricsService.incrementClientMessagesOut();
       logger.info({ packageName: message.packageName, reason: message.reason }, "WiFi setup request forwarded");
     } else {
       logger.error({ packageName: message.packageName }, "Cannot send WiFi setup request - mobile not connected");

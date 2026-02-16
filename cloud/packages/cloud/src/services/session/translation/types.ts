@@ -12,15 +12,12 @@ dotenv.config();
 export const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY || "";
 export const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "";
 export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || "";
-export const SONIOX_ENDPOINT =
-  process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
+export const SONIOX_ENDPOINT = process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
+export const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v4";
 
-export const ALIBABA_ENDPOINT =
-  process.env.ALIBABA_ENDPOINT ||
-  "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+export const ALIBABA_ENDPOINT = process.env.ALIBABA_ENDPOINT || "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
 export const ALIBABA_WORKSPACE = process.env.ALIBABA_WORKSPACE || "";
-export const ALIBABA_DASHSCOPE_API_KEY =
-  process.env.ALIBABA_DASHSCOPE_API_KEY || "";
+export const ALIBABA_DASHSCOPE_API_KEY = process.env.ALIBABA_DASHSCOPE_API_KEY || "";
 
 // Log warning if environment variables are not set
 if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
@@ -29,9 +26,7 @@ if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
   );
 }
 if (!SONIOX_API_KEY) {
-  console.warn(
-    "[TranslationManager] Warning: Soniox environment variable not set (SONIOX_API_KEY)",
-  );
+  console.warn("[TranslationManager] Warning: Soniox environment variable not set (SONIOX_API_KEY)");
 }
 
 //===========================================================
@@ -90,7 +85,7 @@ export interface AzureTranslationConfig {
 export interface SonioxTranslationConfig {
   apiKey: string;
   endpoint: string;
-  model?: string;
+  model?: string; // Default: SONIOX_MODEL env var or 'stt-rt-v4'
   maxConnections?: number;
 }
 
@@ -162,9 +157,7 @@ export interface TranslationProvider {
   dispose(): Promise<void>;
 
   // Stream Management
-  createTranslationStream(
-    options: TranslationStreamOptions,
-  ): Promise<TranslationStreamInstance>;
+  createTranslationStream(options: TranslationStreamOptions): Promise<TranslationStreamInstance>;
 
   // Capabilities
   supportsLanguagePair(source: string, target: string): boolean;
@@ -307,7 +300,7 @@ export interface TranslationProviderSelectionOptions {
 export const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
   providers: {
     defaultProvider: TranslationProviderType.SONIOX,
-    fallbackProvider: TranslationProviderType.AZURE,
+    fallbackProvider: TranslationProviderType.SONIOX,
   },
 
   azure: {
@@ -319,7 +312,7 @@ export const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
   soniox: {
     apiKey: SONIOX_API_KEY,
     endpoint: SONIOX_ENDPOINT,
-    model: "stt-rt-v3-preview", // Default model, can be overridden
+    model: SONIOX_MODEL,
   },
 
   alibaba: {

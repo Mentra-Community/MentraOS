@@ -13,12 +13,13 @@
  * Consolidating it here makes the system easier to understand and maintain.
  */
 
-import {Logger} from "pino"
+import { Logger } from "pino";
 
-import {ExtendedStreamType, StreamType, isLanguageStream, parseLanguageStream} from "@mentra/sdk"
+import { ExtendedStreamType, StreamType, isLanguageStream, parseLanguageStream } from "@mentra/sdk";
 
-import {ResourceTracker} from "../../utils/resource-tracker"
-import {IWebSocket, WebSocketReadyState, hasEventEmitter} from "../websocket/types"
+import { ResourceTracker } from "../../utils/resource-tracker";
+import { metricsService } from "../metrics/MetricsService";
+import { IWebSocket, WebSocketReadyState, hasEventEmitter } from "../websocket/types";
 
 /**
  * Location rate/accuracy tier for location subscriptions
@@ -31,7 +32,7 @@ export type LocationRate =
   | "hundredMeters"
   | "kilometer"
   | "threeKilometers"
-  | "reduced"
+  | "reduced";
 
 /**
  * Connection states for an app session
@@ -50,45 +51,45 @@ export enum AppConnectionState {
  * Configuration for creating an AppSession
  */
 export interface AppSessionConfig {
-  packageName: string
-  logger: Logger
-  onGracePeriodExpired: (appSession: AppSession) => Promise<void>
+  packageName: string;
+  logger: Logger;
+  onGracePeriodExpired: (appSession: AppSession) => Promise<void>;
   onSubscriptionsChanged?: (
     appSession: AppSession,
     oldSubs: Set<ExtendedStreamType>,
     newSubs: Set<ExtendedStreamType>,
-  ) => void
-  onDisconnect?: (code: number, reason: string) => void
+  ) => void;
+  onDisconnect?: (code: number, reason: string) => void;
 }
 
 /**
  * Subscription history entry for debugging
  */
 interface SubscriptionHistoryEntry {
-  timestamp: Date
-  subscriptions: ExtendedStreamType[]
-  action: "add" | "remove" | "update"
+  timestamp: Date;
+  subscriptions: ExtendedStreamType[];
+  action: "add" | "remove" | "update";
 }
 
 /**
  * Ownership release info
  */
 interface OwnershipReleaseInfo {
-  reason: string
-  timestamp: Date
+  reason: string;
+  timestamp: Date;
 }
 
 // Heartbeat interval in milliseconds
-const HEARTBEAT_INTERVAL_MS = 10000 // 10 seconds
+const HEARTBEAT_INTERVAL_MS = 10000; // 10 seconds
 
 // Grace period before resurrection attempt
-const GRACE_PERIOD_MS = 5000 // 5 seconds
+const GRACE_PERIOD_MS = 5000; // 5 seconds
 
 // Grace period for ignoring empty subscription updates after reconnect
-const SUBSCRIPTION_GRACE_MS = 8000 // 8 seconds
+const SUBSCRIPTION_GRACE_MS = 8000; // 8 seconds
 
 // Enable detailed ping/pong logging
-const LOG_PING_PONG = false
+const LOG_PING_PONG = false;
 
 /**
  * AppSession - Consolidated per-app state within a user session
@@ -103,134 +104,134 @@ const LOG_PING_PONG = false
  */
 export class AppSession {
   // ===== Identity =====
-  public readonly packageName: string
-  private readonly logger: Logger
+  public readonly packageName: string;
+  private readonly logger: Logger;
 
   // ===== WebSocket Connection =====
-  private _webSocket: IWebSocket | null = null
-  private _state: AppConnectionState = AppConnectionState.STOPPED
+  private _webSocket: IWebSocket | null = null;
+  private _state: AppConnectionState = AppConnectionState.STOPPED;
 
   // ===== Timing =====
-  private _connectedAt: Date | null = null
-  private _disconnectedAt: Date | null = null
-  private _startTime: Date | null = null // When app was first started (for session duration)
-  private _lastReconnectAt: number = 0 // Timestamp for subscription grace handling
+  private _connectedAt: Date | null = null;
+  private _disconnectedAt: Date | null = null;
+  private _startTime: Date | null = null; // When app was first started (for session duration)
+  private _lastReconnectAt: number = 0; // Timestamp for subscription grace handling
 
   // ===== Heartbeat =====
-  private heartbeatInterval: NodeJS.Timeout | null = null
-  private pongHandler: (() => void) | null = null
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private pongHandler: (() => void) | null = null;
 
   // ===== Resource Tracking =====
-  private resources = new ResourceTracker()
-  private disposed = false
+  private resources = new ResourceTracker();
+  private disposed = false;
 
   // ===== Close Handler (for proper cleanup) =====
-  private closeHandler: ((code: number, reason: Buffer) => void) | null = null
-  private onDisconnectCallback: ((code: number, reason: string) => void) | null = null
+  private closeHandler: ((code: number, reason: Buffer) => void) | null = null;
+  private onDisconnectCallback: ((code: number, reason: string) => void) | null = null;
 
   // ===== Grace Period =====
-  private graceTimer: NodeJS.Timeout | null = null
-  private readonly onGracePeriodExpired: (appSession: AppSession) => Promise<void>
+  private graceTimer: NodeJS.Timeout | null = null;
+  private readonly onGracePeriodExpired: (appSession: AppSession) => Promise<void>;
 
   // ===== Ownership Release =====
-  private _ownershipReleased: OwnershipReleaseInfo | null = null
+  private _ownershipReleased: OwnershipReleaseInfo | null = null;
 
   // ===== Subscriptions =====
-  private _subscriptions: Set<ExtendedStreamType> = new Set()
+  private _subscriptions: Set<ExtendedStreamType> = new Set();
 
   // ===== Update Queue (Issue 008) =====
   // Serializes async operations to prevent race conditions when multiple
   // subscription updates arrive rapidly during app startup.
-  private updateQueue: Promise<void> = Promise.resolve()
-  private subscriptionHistory: SubscriptionHistoryEntry[] = []
+  private updateQueue: Promise<void> = Promise.resolve();
+  private subscriptionHistory: SubscriptionHistoryEntry[] = [];
   private readonly onSubscriptionsChanged?: (
     appSession: AppSession,
     oldSubs: Set<ExtendedStreamType>,
     newSubs: Set<ExtendedStreamType>,
-  ) => void
+  ) => void;
 
   // ===== Location Subscription Metadata =====
   // Location is the only subscription type with additional metadata (rate/accuracy tier)
   // This is stored separately rather than changing the subscription storage type
-  private _locationRate: LocationRate | null = null
+  private _locationRate: LocationRate | null = null;
 
   // ===== Pending Connection (for startApp promise) =====
   private pendingConnection: {
-    resolve: (success: boolean) => void
-    reject: (error: Error) => void
-    timeout: NodeJS.Timeout
-    startTime: number
-  } | null = null
+    resolve: (success: boolean) => void;
+    reject: (error: Error) => void;
+    timeout: NodeJS.Timeout;
+    startTime: number;
+  } | null = null;
 
   constructor(config: AppSessionConfig) {
-    this.packageName = config.packageName
+    this.packageName = config.packageName;
     this.logger = config.logger.child({
       service: "AppSession",
       packageName: config.packageName,
-    })
-    this.onGracePeriodExpired = config.onGracePeriodExpired
-    this.onSubscriptionsChanged = config.onSubscriptionsChanged
-    this.onDisconnectCallback = config.onDisconnect ?? null
+    });
+    this.onGracePeriodExpired = config.onGracePeriodExpired;
+    this.onSubscriptionsChanged = config.onSubscriptionsChanged;
+    this.onDisconnectCallback = config.onDisconnect ?? null;
 
-    this.logger.debug("AppSession created")
+    this.logger.debug("AppSession created");
   }
 
   // ===== Getters =====
 
   get webSocket(): IWebSocket | null {
-    return this._webSocket
+    return this._webSocket;
   }
 
   get state(): AppConnectionState {
-    return this._state
+    return this._state;
   }
 
   get connectedAt(): Date | null {
-    return this._connectedAt
+    return this._connectedAt;
   }
 
   get disconnectedAt(): Date | null {
-    return this._disconnectedAt
+    return this._disconnectedAt;
   }
 
   get startTime(): Date | null {
-    return this._startTime
+    return this._startTime;
   }
 
   get subscriptions(): Set<ExtendedStreamType> {
-    return this._subscriptions
+    return this._subscriptions;
   }
 
   get locationRate(): LocationRate | null {
-    return this._locationRate
+    return this._locationRate;
   }
 
   get isRunning(): boolean {
-    return this._state === AppConnectionState.RUNNING
+    return this._state === AppConnectionState.RUNNING;
   }
 
   get isConnecting(): boolean {
-    return this._state === AppConnectionState.CONNECTING
+    return this._state === AppConnectionState.CONNECTING;
   }
 
   get isInGracePeriod(): boolean {
-    return this._state === AppConnectionState.GRACE_PERIOD
+    return this._state === AppConnectionState.GRACE_PERIOD;
   }
 
   get isStopped(): boolean {
-    return this._state === AppConnectionState.STOPPED
+    return this._state === AppConnectionState.STOPPED;
   }
 
   get isDormant(): boolean {
-    return this._state === AppConnectionState.DORMANT
+    return this._state === AppConnectionState.DORMANT;
   }
 
   get ownershipReleased(): boolean {
-    return this._ownershipReleased !== null
+    return this._ownershipReleased !== null;
   }
 
   get ownershipReleaseInfo(): OwnershipReleaseInfo | null {
-    return this._ownershipReleased
+    return this._ownershipReleased;
   }
 
   // ===== Update Queue API =====
@@ -246,32 +247,32 @@ export class AppSession {
    * @returns Promise that resolves with the operation's result
    */
   async enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    let result!: T
-    let operationError: Error | null = null
+    let result!: T;
+    let operationError: Error | null = null;
 
     this.updateQueue = this.updateQueue.then(async () => {
       try {
-        result = await operation()
+        result = await operation();
       } catch (e) {
-        operationError = e as Error
-        this.logger.error({error: e, packageName: this.packageName}, "Queued operation failed")
+        operationError = e as Error;
+        this.logger.error({ error: e, packageName: this.packageName }, "Queued operation failed");
       }
-    })
+    });
 
-    await this.updateQueue
+    await this.updateQueue;
 
     if (operationError) {
-      throw operationError
+      throw operationError;
     }
-    return result
+    return result;
   }
 
   // ===== State Machine =====
 
   private setState(newState: AppConnectionState): void {
-    const oldState = this._state
-    this._state = newState
-    this.logger.debug({oldState, newState}, `State transition: ${oldState} -> ${newState}`)
+    const oldState = this._state;
+    this._state = newState;
+    this.logger.debug({ oldState, newState }, `State transition: ${oldState} -> ${newState}`);
   }
 
   // ===== Connection Lifecycle =====
@@ -280,9 +281,9 @@ export class AppSession {
    * Mark app as connecting (webhook sent, waiting for WebSocket)
    */
   startConnecting(): void {
-    this.setState(AppConnectionState.CONNECTING)
+    this.setState(AppConnectionState.CONNECTING);
     if (!this._startTime) {
-      this._startTime = new Date()
+      this._startTime = new Date();
     }
   }
 
@@ -292,56 +293,62 @@ export class AppSession {
   handleConnect(ws: IWebSocket): void {
     // Log if this is a reconnection during grace period or dormant state
     if (this._state === AppConnectionState.GRACE_PERIOD) {
-      this.logger.info({previousState: this._state}, "✅ SDK reconnected during grace period - resurrection avoided!")
+      this.logger.info(
+        { previousState: this._state },
+        "✅ SDK reconnected during grace period - resurrection avoided!",
+      );
     } else if (this._state === AppConnectionState.DORMANT) {
-      this.logger.info({previousState: this._state}, "✅ SDK reconnected while DORMANT - late reconnection accepted!")
+      this.logger.info(
+        { previousState: this._state },
+        "✅ SDK reconnected while DORMANT - late reconnection accepted!",
+      );
     } else {
-      this.logger.info("App connected")
+      this.logger.info("App connected");
     }
 
     // Remove old close handler if exists (from previous connection)
-    this.removeCloseHandler()
+    this.removeCloseHandler();
 
     // Cancel any pending grace period
-    this.cancelGracePeriod()
+    this.cancelGracePeriod();
 
     // Clear ownership release flag (fresh connection)
-    this._ownershipReleased = null
+    this._ownershipReleased = null;
 
     // Update connection state
-    this._webSocket = ws
-    this._connectedAt = new Date()
-    this._disconnectedAt = null
-    this._lastReconnectAt = Date.now()
-    this.setState(AppConnectionState.RUNNING)
+    this._webSocket = ws;
+    this._connectedAt = new Date();
+    this._disconnectedAt = null;
+    this._lastReconnectAt = Date.now();
+    this.setState(AppConnectionState.RUNNING);
 
     // Set up close handler (owned by AppSession for proper cleanup)
     this.closeHandler = (code: number, reason: Buffer) => {
-      const reasonStr = reason.toString()
-      this.logger.debug({code, reason: reasonStr}, "WebSocket close event received")
+      const reasonStr = reason.toString();
+      this.logger.debug({ code, reason: reasonStr }, "WebSocket close event received");
 
       // First handle internal state
-      this.handleDisconnect(code, reasonStr)
+      this.handleDisconnect(code, reasonStr);
 
       // Then notify AppManager if callback provided
       if (this.onDisconnectCallback) {
-        this.onDisconnectCallback(code, reasonStr)
+        this.onDisconnectCallback(code, reasonStr);
       }
-    }
+    };
     // Only set up event-based close handler for ws package (not Bun's ServerWebSocket)
     // Bun's close handling is done in websocketHandlers.close()
     if (hasEventEmitter(ws)) {
-      ws.on("close", this.closeHandler)
+      ws.on("close", this.closeHandler);
     }
 
     // Start heartbeat
-    this.setupHeartbeat(ws)
+    this.setupHeartbeat(ws);
 
     // Resolve pending connection if exists
     if (this.pendingConnection) {
-      clearTimeout(this.pendingConnection.timeout)
-      this.pendingConnection.resolve(true)
-      this.pendingConnection = null
+      clearTimeout(this.pendingConnection.timeout);
+      this.pendingConnection.resolve(true);
+      this.pendingConnection = null;
     }
   }
 
@@ -351,31 +358,31 @@ export class AppSession {
    */
   private removeCloseHandler(): void {
     if (this._webSocket && this.closeHandler && hasEventEmitter(this._webSocket)) {
-      this._webSocket.off("close", this.closeHandler)
-      this.logger.debug("Removed WebSocket close handler")
+      this._webSocket.off("close", this.closeHandler);
+      this.logger.debug("Removed WebSocket close handler");
     }
-    this.closeHandler = null
+    this.closeHandler = null;
   }
 
   /**
    * Handle WebSocket disconnection
    */
   handleDisconnect(code: number, reason: string): void {
-    this.logger.info({code, reason}, "App disconnected")
+    this.logger.info({ code, reason }, "App disconnected");
 
-    this._disconnectedAt = new Date()
+    this._disconnectedAt = new Date();
 
     // Clear heartbeat
-    this.clearHeartbeat()
+    this.clearHeartbeat();
 
     // Clear WebSocket reference
-    this._webSocket = null
+    this._webSocket = null;
 
     // Check if we're already stopping
     if (this._state === AppConnectionState.STOPPING) {
-      this.logger.debug("App was stopping, completing stop")
-      this.setState(AppConnectionState.STOPPED)
-      return
+      this.logger.debug("App was stopping, completing stop");
+      this.setState(AppConnectionState.STOPPED);
+      return;
     }
 
     // Check if ownership was released (clean handoff to another cloud)
@@ -387,18 +394,18 @@ export class AppSession {
     // - If user stays on the new cloud, this DORMANT app gets cleaned up when UserSession disposes
     if (this._ownershipReleased) {
       this.logger.info(
-        {reason: this._ownershipReleased.reason},
+        { reason: this._ownershipReleased.reason },
         "Ownership was released (handoff to another cloud) - marking DORMANT for potential resurrection if user returns",
-      )
-      this.setState(AppConnectionState.DORMANT)
-      this.cleanup()
-      return
+      );
+      this.setState(AppConnectionState.DORMANT);
+      this.cleanup();
+      return;
     }
 
     // Start grace period for potential reconnection
-    this.logger.info("Starting grace period for reconnection")
-    this.setState(AppConnectionState.GRACE_PERIOD)
-    this.startGracePeriod()
+    this.logger.info("Starting grace period for reconnection");
+    this.setState(AppConnectionState.GRACE_PERIOD);
+    this.startGracePeriod();
   }
 
   /**
@@ -408,33 +415,33 @@ export class AppSession {
     this._ownershipReleased = {
       reason,
       timestamp: new Date(),
-    }
-    this.logger.info({reason}, "Ownership released - will not resurrect on disconnect")
+    };
+    this.logger.info({ reason }, "Ownership released - will not resurrect on disconnect");
   }
 
   /**
    * Mark app as stopping (user/system initiated)
    */
   markStopping(): void {
-    this.setState(AppConnectionState.STOPPING)
-    this.cancelGracePeriod()
+    this.setState(AppConnectionState.STOPPING);
+    this.cancelGracePeriod();
   }
 
   /**
    * Mark app as stopped
    */
   markStopped(): void {
-    this.setState(AppConnectionState.STOPPED)
-    this.clearHeartbeat()
-    this.cancelGracePeriod()
-    this._webSocket = null
+    this.setState(AppConnectionState.STOPPED);
+    this.clearHeartbeat();
+    this.cancelGracePeriod();
+    this._webSocket = null;
   }
 
   /**
    * Mark app as resurrecting
    */
   markResurrecting(): void {
-    this.setState(AppConnectionState.RESURRECTING)
+    this.setState(AppConnectionState.RESURRECTING);
   }
 
   /**
@@ -452,92 +459,92 @@ export class AppSession {
    * we ensure we only manage apps for users actively using THIS cloud.
    */
   markDormant(): void {
-    this.setState(AppConnectionState.DORMANT)
-    this.cancelGracePeriod()
+    this.setState(AppConnectionState.DORMANT);
+    this.cancelGracePeriod();
   }
 
   // ===== Heartbeat Management =====
 
   private setupHeartbeat(ws: IWebSocket): void {
-    this.clearHeartbeat()
+    this.clearHeartbeat();
 
     this.heartbeatInterval = setInterval(() => {
-      if (this.disposed) return // Guard against stale callback
+      if (this.disposed) return; // Guard against stale callback
       if (ws.readyState === WebSocketReadyState.OPEN) {
-        ws.ping?.()
+        ws.ping?.();
         if (LOG_PING_PONG) {
-          this.logger.debug("Sent ping")
+          this.logger.debug("Sent ping");
         }
       } else {
-        this.logger.warn("WebSocket not open during heartbeat, clearing")
-        this.clearHeartbeat()
+        this.logger.warn("WebSocket not open during heartbeat, clearing");
+        this.clearHeartbeat();
       }
-    }, HEARTBEAT_INTERVAL_MS)
+    }, HEARTBEAT_INTERVAL_MS);
 
     // Track interval for automatic cleanup
-    this.resources.trackInterval(this.heartbeatInterval)
+    this.resources.trackInterval(this.heartbeatInterval);
 
     // Setup pong handler (store reference for cleanup)
     this.pongHandler = () => {
-      if (this.disposed) return // Guard against stale callback
+      if (this.disposed) return; // Guard against stale callback
       if (LOG_PING_PONG) {
-        this.logger.debug("Received pong")
+        this.logger.debug("Received pong");
       }
-    }
+    };
 
     // Only set up event-based pong handler for ws package (not Bun's ServerWebSocket)
     // Bun's pong handling is done in websocketHandlers.pong()
     if (hasEventEmitter(ws)) {
-      ws.on("pong", this.pongHandler)
+      ws.on("pong", this.pongHandler);
 
       // Track pong handler for cleanup
-      const pongRef = this.pongHandler
+      const pongRef = this.pongHandler;
       this.resources.track(() => {
         if (hasEventEmitter(ws)) {
-          ws.off("pong", pongRef)
+          ws.off("pong", pongRef);
         }
-      })
+      });
     }
 
-    this.logger.debug("Heartbeat started")
+    this.logger.debug("Heartbeat started");
   }
 
   private clearHeartbeat(): void {
     if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval)
-      this.heartbeatInterval = null
-      this.logger.debug("Heartbeat cleared")
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+      this.logger.debug("Heartbeat cleared");
     }
-    this.pongHandler = null
+    this.pongHandler = null;
   }
 
   // ===== Grace Period Management =====
 
   private startGracePeriod(): void {
-    this.cancelGracePeriod()
+    this.cancelGracePeriod();
 
     this.graceTimer = setTimeout(async () => {
-      this.logger.info("Grace period expired")
+      this.logger.info("Grace period expired");
 
       if (this._state === AppConnectionState.GRACE_PERIOD && !this._ownershipReleased) {
         // No reconnect, no ownership release - trigger resurrection
-        this.setState(AppConnectionState.RESURRECTING)
+        this.setState(AppConnectionState.RESURRECTING);
         try {
-          await this.onGracePeriodExpired(this)
+          await this.onGracePeriodExpired(this);
         } catch (error) {
-          this.logger.error(error, "Error in grace period expiration handler")
+          this.logger.error(error, "Error in grace period expiration handler");
         }
       }
-    }, GRACE_PERIOD_MS)
+    }, GRACE_PERIOD_MS);
 
-    this.logger.debug({gracePeriodMs: GRACE_PERIOD_MS}, "Grace period started")
+    this.logger.debug({ gracePeriodMs: GRACE_PERIOD_MS }, "Grace period started");
   }
 
   private cancelGracePeriod(): void {
     if (this.graceTimer) {
-      clearTimeout(this.graceTimer)
-      this.graceTimer = null
-      this.logger.debug("Grace period cancelled")
+      clearTimeout(this.graceTimer);
+      this.graceTimer = null;
+      this.logger.debug("Grace period cancelled");
     }
   }
 
@@ -553,38 +560,38 @@ export class AppSession {
     newSubscriptions: ExtendedStreamType[],
     locationRate?: LocationRate | null,
   ): {
-    applied: boolean
-    reason?: string
+    applied: boolean;
+    reason?: string;
   } {
-    const now = Date.now()
-    const timeSinceReconnect = now - this._lastReconnectAt
+    const now = Date.now();
+    const timeSinceReconnect = now - this._lastReconnectAt;
 
     // Check for empty subscription update during reconnect grace window
     if (newSubscriptions.length === 0 && timeSinceReconnect <= SUBSCRIPTION_GRACE_MS) {
       this.logger.warn(
-        {timeSinceReconnect, graceMs: SUBSCRIPTION_GRACE_MS},
+        { timeSinceReconnect, graceMs: SUBSCRIPTION_GRACE_MS },
         "Ignoring empty subscription update within reconnect grace window",
-      )
+      );
       return {
         applied: false,
         reason: "Empty subscription ignored during grace window",
-      }
+      };
     }
 
-    const oldSubs = this._subscriptions
-    const newSubs = new Set(newSubscriptions)
+    const oldSubs = this._subscriptions;
+    const newSubs = new Set(newSubscriptions);
 
     // Store in history
-    this.addToHistory(newSubscriptions, "update")
+    this.addToHistory(newSubscriptions, "update");
 
     // Update subscriptions
-    this._subscriptions = newSubs
+    this._subscriptions = newSubs;
 
     // Update location rate if provided or clear if no longer subscribed to location
     if (locationRate !== undefined) {
-      this._locationRate = locationRate
+      this._locationRate = locationRate;
     } else if (!newSubs.has(StreamType.LOCATION_STREAM)) {
-      this._locationRate = null
+      this._locationRate = null;
     }
 
     this.logger.info(
@@ -595,14 +602,14 @@ export class AppSession {
         locationRate: this._locationRate,
       },
       "Subscriptions updated",
-    )
+    );
 
     // Notify callback
     if (this.onSubscriptionsChanged) {
-      this.onSubscriptionsChanged(this, oldSubs, newSubs)
+      this.onSubscriptionsChanged(this, oldSubs, newSubs);
     }
 
-    return {applied: true}
+    return { applied: true };
   }
 
   /**
@@ -610,14 +617,14 @@ export class AppSession {
    */
   addSubscription(stream: ExtendedStreamType): void {
     if (!this._subscriptions.has(stream)) {
-      const oldSubs = new Set(this._subscriptions)
-      this._subscriptions.add(stream)
-      this.addToHistory([...this._subscriptions], "add")
+      const oldSubs = new Set(this._subscriptions);
+      this._subscriptions.add(stream);
+      this.addToHistory([...this._subscriptions], "add");
 
-      this.logger.debug({stream}, "Subscription added")
+      this.logger.debug({ stream }, "Subscription added");
 
       if (this.onSubscriptionsChanged) {
-        this.onSubscriptionsChanged(this, oldSubs, this._subscriptions)
+        this.onSubscriptionsChanged(this, oldSubs, this._subscriptions);
       }
     }
   }
@@ -627,14 +634,14 @@ export class AppSession {
    */
   removeSubscription(stream: ExtendedStreamType): void {
     if (this._subscriptions.has(stream)) {
-      const oldSubs = new Set(this._subscriptions)
-      this._subscriptions.delete(stream)
-      this.addToHistory([...this._subscriptions], "remove")
+      const oldSubs = new Set(this._subscriptions);
+      this._subscriptions.delete(stream);
+      this.addToHistory([...this._subscriptions], "remove");
 
-      this.logger.debug({stream}, "Subscription removed")
+      this.logger.debug({ stream }, "Subscription removed");
 
       if (this.onSubscriptionsChanged) {
-        this.onSubscriptionsChanged(this, oldSubs, this._subscriptions)
+        this.onSubscriptionsChanged(this, oldSubs, this._subscriptions);
       }
     }
   }
@@ -643,52 +650,52 @@ export class AppSession {
    * Get all subscriptions as array
    */
   getSubscriptions(): ExtendedStreamType[] {
-    return Array.from(this._subscriptions)
+    return Array.from(this._subscriptions);
   }
 
   /**
    * Check if app has a specific subscription
    */
   hasSubscription(subscription: ExtendedStreamType): boolean {
-    if (this._subscriptions.has(subscription)) return true
-    if (this._subscriptions.has(StreamType.WILDCARD)) return true
-    if (this._subscriptions.has(StreamType.ALL)) return true
+    if (this._subscriptions.has(subscription)) return true;
+    if (this._subscriptions.has(StreamType.WILDCARD)) return true;
+    if (this._subscriptions.has(StreamType.ALL)) return true;
 
     // For language streams, check if we have a matching base type + language
     if (isLanguageStream(subscription as string)) {
-      const incomingParsed = parseLanguageStream(subscription as string)
+      const incomingParsed = parseLanguageStream(subscription as string);
       if (incomingParsed) {
         for (const sub of this._subscriptions) {
           if (isLanguageStream(sub as string)) {
-            const subParsed = parseLanguageStream(sub as string)
+            const subParsed = parseLanguageStream(sub as string);
             if (
               subParsed &&
               subParsed.type === incomingParsed.type &&
               subParsed.transcribeLanguage === incomingParsed.transcribeLanguage
             ) {
-              return true
+              return true;
             }
           }
         }
       }
     }
 
-    return false
+    return false;
   }
 
   /**
    * Clear all subscriptions
    */
   clearSubscriptions(): void {
-    const oldSubs = this._subscriptions
-    this._subscriptions = new Set()
-    this._locationRate = null
-    this.addToHistory([], "remove")
+    const oldSubs = this._subscriptions;
+    this._subscriptions = new Set();
+    this._locationRate = null;
+    this.addToHistory([], "remove");
 
-    this.logger.debug("All subscriptions cleared")
+    this.logger.debug("All subscriptions cleared");
 
     if (this.onSubscriptionsChanged && oldSubs.size > 0) {
-      this.onSubscriptionsChanged(this, oldSubs, this._subscriptions)
+      this.onSubscriptionsChanged(this, oldSubs, this._subscriptions);
     }
   }
 
@@ -697,15 +704,15 @@ export class AppSession {
    * Used when app subscribes to location_stream with a specific rate
    */
   setLocationRate(rate: LocationRate | null): void {
-    this._locationRate = rate
-    this.logger.debug({rate}, "Location rate updated")
+    this._locationRate = rate;
+    this.logger.debug({ rate }, "Location rate updated");
   }
 
   /**
    * Get location rate/accuracy tier
    */
   getLocationRate(): LocationRate | null {
-    return this._locationRate
+    return this._locationRate;
   }
 
   private addToHistory(subscriptions: ExtendedStreamType[], action: "add" | "remove" | "update"): void {
@@ -713,11 +720,11 @@ export class AppSession {
       timestamp: new Date(),
       subscriptions: [...subscriptions],
       action,
-    })
+    });
 
     // Keep only last 50 entries
     if (this.subscriptionHistory.length > 50) {
-      this.subscriptionHistory = this.subscriptionHistory.slice(-50)
+      this.subscriptionHistory = this.subscriptionHistory.slice(-50);
     }
   }
 
@@ -725,7 +732,7 @@ export class AppSession {
    * Get subscription history for debugging
    */
   getSubscriptionHistory(): SubscriptionHistoryEntry[] {
-    return [...this.subscriptionHistory]
+    return [...this.subscriptionHistory];
   }
 
   // ===== Pending Connection (for startApp) =====
@@ -736,37 +743,37 @@ export class AppSession {
   setPendingConnection(resolve: (success: boolean) => void, reject: (error: Error) => void, timeoutMs: number): void {
     // Clear existing pending connection
     if (this.pendingConnection) {
-      clearTimeout(this.pendingConnection.timeout)
-      this.pendingConnection.reject(new Error("New connection attempt started"))
+      clearTimeout(this.pendingConnection.timeout);
+      this.pendingConnection.reject(new Error("New connection attempt started"));
     }
 
     const timeout = setTimeout(() => {
       if (this.pendingConnection) {
-        this.pendingConnection.reject(new Error(`Connection timeout after ${timeoutMs}ms`))
-        this.pendingConnection = null
+        this.pendingConnection.reject(new Error(`Connection timeout after ${timeoutMs}ms`));
+        this.pendingConnection = null;
       }
-    }, timeoutMs)
+    }, timeoutMs);
 
     this.pendingConnection = {
       resolve,
       reject,
       timeout,
       startTime: Date.now(),
-    }
+    };
   }
 
   /**
    * Check if there's a pending connection
    */
   hasPendingConnection(): boolean {
-    return this.pendingConnection !== null
+    return this.pendingConnection !== null;
   }
 
   /**
    * Get pending connection start time
    */
   getPendingConnectionStartTime(): number | null {
-    return this.pendingConnection?.startTime ?? null
+    return this.pendingConnection?.startTime ?? null;
   }
 
   /**
@@ -774,9 +781,9 @@ export class AppSession {
    */
   rejectPendingConnection(error: Error): void {
     if (this.pendingConnection) {
-      clearTimeout(this.pendingConnection.timeout)
-      this.pendingConnection.reject(error)
-      this.pendingConnection = null
+      clearTimeout(this.pendingConnection.timeout);
+      this.pendingConnection.reject(error);
+      this.pendingConnection = null;
     }
   }
 
@@ -787,16 +794,17 @@ export class AppSession {
    */
   send(message: any): boolean {
     if (!this._webSocket || this._webSocket.readyState !== WebSocketReadyState.OPEN) {
-      this.logger.warn({messageType: message?.type}, "Cannot send message - WebSocket not open")
-      return false
+      this.logger.warn({ messageType: message?.type }, "Cannot send message - WebSocket not open");
+      return false;
     }
 
     try {
-      this._webSocket.send(JSON.stringify(message))
-      return true
+      this._webSocket.send(JSON.stringify(message));
+      metricsService.incrementMiniappMessagesOut();
+      return true;
     } catch (error) {
-      this.logger.error(error, "Error sending message")
-      return false
+      this.logger.error(error, "Error sending message");
+      return false;
     }
   }
 
@@ -806,11 +814,11 @@ export class AppSession {
   closeConnection(code: number = 1000, reason: string = ""): void {
     if (this._webSocket) {
       try {
-        this._webSocket.close(code, reason)
+        this._webSocket.close(code, reason);
       } catch (error) {
-        this.logger.error(error, "Error closing WebSocket")
+        this.logger.error(error, "Error closing WebSocket");
       }
-      this._webSocket = null
+      this._webSocket = null;
     }
   }
 
@@ -820,49 +828,49 @@ export class AppSession {
    * Full cleanup - call when app is being removed
    */
   cleanup(): void {
-    if (this.disposed) return // Idempotent
-    this.disposed = true
+    if (this.disposed) return; // Idempotent
+    this.disposed = true;
 
-    this.logger.debug("Cleaning up AppSession")
+    this.logger.debug("Cleaning up AppSession");
 
     // Clean up all tracked resources (removes event listeners, clears timers)
-    this.resources.dispose()
+    this.resources.dispose();
 
-    this.clearHeartbeat()
-    this.cancelGracePeriod()
+    this.clearHeartbeat();
+    this.cancelGracePeriod();
 
     // Remove close handler BEFORE closing connection to prevent it from firing
-    this.removeCloseHandler()
+    this.removeCloseHandler();
 
-    this.closeConnection(1000, "App session cleanup")
+    this.closeConnection(1000, "App session cleanup");
 
     if (this.pendingConnection) {
-      clearTimeout(this.pendingConnection.timeout)
-      this.pendingConnection.reject(new Error("App session cleanup"))
-      this.pendingConnection = null
+      clearTimeout(this.pendingConnection.timeout);
+      this.pendingConnection.reject(new Error("App session cleanup"));
+      this.pendingConnection = null;
     }
 
-    this._subscriptions.clear()
-    this._ownershipReleased = null
-    this._connectedAt = null
-    this._disconnectedAt = null
-    this.onDisconnectCallback = null
+    this._subscriptions.clear();
+    this._ownershipReleased = null;
+    this._connectedAt = null;
+    this._disconnectedAt = null;
+    this.onDisconnectCallback = null;
   }
 
   /**
    * Dispose - full cleanup and mark as stopped
    */
   dispose(): void {
-    this.cleanup()
-    this.setState(AppConnectionState.STOPPED)
-    this.logger.info("AppSession disposed")
+    this.cleanup();
+    this.setState(AppConnectionState.STOPPED);
+    this.logger.info("AppSession disposed");
   }
 
   /**
    * Check if this AppSession has been disposed
    */
   get isDisposed(): boolean {
-    return this.disposed
+    return this.disposed;
   }
 
   // ===== Debug/Inspection =====
@@ -871,16 +879,16 @@ export class AppSession {
    * Get a snapshot of the current state for debugging
    */
   getSnapshot(): {
-    packageName: string
-    state: AppConnectionState
-    isConnected: boolean
-    subscriptionCount: number
-    subscriptions: ExtendedStreamType[]
-    connectedAt: Date | null
-    disconnectedAt: Date | null
-    startTime: Date | null
-    ownershipReleased: boolean
-    ownershipReleaseReason: string | null
+    packageName: string;
+    state: AppConnectionState;
+    isConnected: boolean;
+    subscriptionCount: number;
+    subscriptions: ExtendedStreamType[];
+    connectedAt: Date | null;
+    disconnectedAt: Date | null;
+    startTime: Date | null;
+    ownershipReleased: boolean;
+    ownershipReleaseReason: string | null;
   } {
     return {
       packageName: this.packageName,
@@ -893,8 +901,8 @@ export class AppSession {
       startTime: this._startTime,
       ownershipReleased: this._ownershipReleased !== null,
       ownershipReleaseReason: this._ownershipReleased?.reason ?? null,
-    }
+    };
   }
 }
 
-export default AppSession
+export default AppSession;

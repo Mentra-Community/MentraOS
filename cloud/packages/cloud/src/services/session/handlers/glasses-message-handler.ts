@@ -33,6 +33,7 @@ import {
 
 import { PosthogService } from "../../logging/posthog.service";
 import { WebSocketReadyState } from "../../websocket/types";
+import { metricsService } from "../../metrics/MetricsService";
 import type UserSession from "../UserSession";
 
 const SERVICE_NAME = "GlassesMessageHandler";
@@ -311,6 +312,7 @@ async function handleTouchEvent(userSession: UserSession, touchEvent: TouchEvent
 
       try {
         connection.send(JSON.stringify(dataStream));
+        metricsService.incrementMiniappMessagesOut();
       } catch (sendError) {
         logger.error({ error: sendError, packageName }, "Error sending touch event to app");
       }

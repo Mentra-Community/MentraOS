@@ -12,6 +12,7 @@ import { CloudToGlassesMessageType, ConnectionAck, StreamType } from "@mentra/sd
 
 import { AudioWriter } from "../debug/audio-writer";
 import { createLC3Service, LC3Service } from "../lc3/lc3.service";
+import { metricsService } from "../metrics/MetricsService";
 import { WebSocketReadyState } from "../websocket/types";
 
 import UserSession from "./UserSession";
@@ -428,6 +429,7 @@ export class AudioManager {
       }
 
       websocket.send(JSON.stringify(ackMessage));
+      metricsService.incrementClientMessagesOut();
 
       this.logger.info(
         {

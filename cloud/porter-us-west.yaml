@@ -4,26 +4,26 @@ namespace: ${PORTER_NAMESPACE}
 build:
   method: docker
   context: ./cloud/.
-  dockerfile: ./cloud/docker/Dockerfile.livekit
+  dockerfile: ./cloud/docker/Dockerfile.stress
 
 services:
   - name: cloud
     type: web
-    run: ./start.sh
-    port: 80 # Main Cloud API port
+    run: doppler run -- bun run start
+    port: 80
     cpuCores: 5
     ramMegabytes: 4096
     env:
-      HOST: "0.0.0.0"
-      SERVICE_NAME: "cloud"
-      RTMP_RELAY_URLS: "rtmp-relay-uscentral.mentra.glass:1935"
-      LIVEKIT_GRPC_SOCKET: "/tmp/livekit-bridge.sock"
-      LIVEKIT_PCM_ENDIAN: "off"
-      # Add any Go service environment variables here
-      LOG_LEVEL: "info"
-      # Better Stack logging for Go bridge
-      BETTERSTACK_SOURCE_TOKEN: "${BETTERSTACK_SOURCE_TOKEN}"
-      BETTERSTACK_INGESTING_HOST: "s1311181.eu-nbg-2.betterstackdata.com"
+      HOST: 0.0.0.0
+      SERVICE_NAME: cloud
+      REGION: us-west
+      NODE_ENV: ${NODE_ENV}
+      PORTER_APP_NAME: ${PORTER_APP_NAME}
+      DOPPLER_TOKEN: ${DOPPLER_TOKEN}
+      DOPPLER_PROJECT: mentraos-cloud
+      DOPPLER_CONFIG: prod_us-west
+    domains:
+      - name: uswestapi.mentraglass.com
     # Extended timeouts for WebSocket connections (/glasses-ws, /app-ws).
     # Porter sets proxy-send-timeout: 60s by default, which kills idle WS
     # connections because no client→server traffic flows after audio moved to UDP.
@@ -33,8 +33,6 @@ services:
       nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
-    # Additional ports for internal services
-    # UDP audio listener on port 8000
     additionalPorts:
       - port: 8000
         protocol: UDP

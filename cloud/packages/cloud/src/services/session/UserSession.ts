@@ -138,8 +138,14 @@ export class UserSession {
   private pongTimeoutTimer?: NodeJS.Timeout;
   private readonly PONG_TIMEOUT_MS = 30000; // 30 seconds - 3x heartbeat interval
 
-  // SAFETY FLAG: Set to false to disable pong timeout behavior entirely
-  private static readonly PONG_TIMEOUT_ENABLED = true; // Enabled to track phone connection reliability in production
+  // DISABLED: Cloudflare absorbs protocol-level ping/pong at the edge, so pongs from
+  // the mobile client never reach Bun — they terminate at Cloudflare's edge. This causes
+  // the timeout to fire on every idle connection after 30s, killing healthy connections.
+  // Clients then take 3-7 minutes to detect the dead connection and reconnect, making
+  // the cure worse than the disease. The server still sends pings and tracks lastPongTime
+  // for observability — it just doesn't kill connections based on missing pongs.
+  // See: cloud/issues/035-nginx-ws-timeout/spike.md
+  private static readonly PONG_TIMEOUT_ENABLED = false;
 
   // Audio play request tracking - maps requestId to packageName
   public audioPlayRequestMapping: Map<string, string> = new Map();

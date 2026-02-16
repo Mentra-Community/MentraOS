@@ -13,6 +13,7 @@ import path from "path";
 
 import { CORS_ORIGINS } from "./config/cors";
 import { logger as rootLogger } from "./services/logging/pino-logger";
+import { metricsService } from "./services/metrics";
 import UserSession from "./services/session/UserSession";
 import { udpAudioServer } from "./services/udp/UdpAudioServer";
 import type { AppEnv } from "./types/hono";
@@ -137,6 +138,9 @@ app.use(async (c, next) => {
   const status = c.res.status;
   const responseContentType = c.res.headers.get("content-type");
 
+  // Track HTTP request metrics for Prometheus / Porter dashboard
+  metricsService.incrementHttpRequests(status);
+
   // Capture userId from auth middleware (populated during next())
   // This enables filtering by user in Better Stack
   const userId = c.get("email") || c.get("console")?.email || undefined;
@@ -196,16 +200,19 @@ app.use(async (c, next) => {
 app.get("/health", (c) => {
   try {
     const activeSessions = UserSession.getAllSessions();
-    const udpStatus = udpAudioServer.getStatus();
+
+    // Update session gauges so metrics are fresh
+    let miniappCount = 0;
+    for (const session of activeSessions) {
+      miniappCount += session.appWebsockets.size;
+    }
+    metricsService.setUserSessions(activeSessions.length);
+    metricsService.setMiniappSessions(miniappCount);
 
     return c.json({
       status: "ok",
       timestamp: new Date().toISOString(),
-      sessions: {
-        activeCount: activeSessions.length,
-      },
-      udp: udpStatus,
-      uptime: process.uptime(),
+      ...metricsService.toJSON(),
     });
   } catch (error) {
     logger.error(error, "Health check error");
@@ -217,6 +224,30 @@ app.get("/health", (c) => {
       },
       500,
     );
+  }
+});
+
+// ============================================================================
+// Prometheus Metrics Endpoint (for Porter dashboard + custom autoscaling)
+// ============================================================================
+
+app.get("/metrics", (c) => {
+  try {
+    // Update session gauges before generating output
+    const activeSessions = UserSession.getAllSessions();
+    let miniappCount = 0;
+    for (const session of activeSessions) {
+      miniappCount += session.appWebsockets.size;
+    }
+    metricsService.setUserSessions(activeSessions.length);
+    metricsService.setMiniappSessions(miniappCount);
+
+    return c.text(metricsService.toPrometheus(), 200, {
+      "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    });
+  } catch (error) {
+    logger.error(error, "Metrics endpoint error");
+    return c.text("# error generating metrics\n", 500);
   }
 });
 

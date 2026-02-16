@@ -138,7 +138,8 @@ object GlassesStore {
                 }
             }
             "core" to "brightness" -> {
-                val b = (value as? Int) ?: 50
+                val b = (value as? Number)?.toInt()  ?: 50
+                Bridge.log("Yayyieeeeee yashhhh, brightness: ${value} ${b}")
                 val auto = (store.get("core", "auto_brightness") as? Boolean) ?: true
                 CoroutineScope(Dispatchers.Main).launch {
                     CoreManager.getInstance().sgc?.setBrightness(b, auto)
