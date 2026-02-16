@@ -168,7 +168,7 @@ static int Opt3006VerifyDevice(void)
     uint16_t value;
     int ret;
 
-    // Check manufacturer ID | 检查制造商ID
+    LOG_INF("Reading manufacturer ID...");
     ret = opt3006_read_reg(OPT3006_REG_MANUFACTURER_ID, &value);
     if (ret != 0)
     {
@@ -220,6 +220,11 @@ int opt3006_init(void)
         return -ENODEV;
     }
 
+
+    if (!device_is_ready(i2c_dev)) {
+        LOG_ERR("I2C device not ready: %s", i2c_dev->name);
+        return -ENODEV;
+    }
     // Configure I2C | 配置I2C
     uint32_t i2c_cfg = I2C_SPEED_SET(I2C_SPEED_STANDARD) | I2C_MODE_CONTROLLER;
     ret = i2c_configure(i2c_dev, i2c_cfg);
@@ -233,12 +238,14 @@ int opt3006_init(void)
     LOG_INF("OPT3006 I2C address: 0x%02x", OPT3006_I2C_ADDR);
 
     // Check device ID | 检查设备ID
+    LOG_INF("Checking OPT3006 device ID (manufacturer + device ID)...");
     ret = opt3006_check_id();
     if (ret != 0)
     {
-        LOG_ERR("OPT3006 check id failed");
+        LOG_ERR("OPT3006 check id failed: %d (see ERR above for manufacturer/device ID)", ret);
         return ret;
     }
+    LOG_INF("OPT3006 device ID check passed");
 
     // Configure settings: continuous mode, 800ms conversion time, auto range
     // 配置设置: 连续模式, 800ms转换时间, 自动量程
@@ -260,38 +267,44 @@ int opt3006_init(void)
         return ret;
     }
 
+    /* Give OPT3006 time to latch config before read-back (avoids I2C -5 EIO on some hardware) */
+    k_sleep(K_MSEC(20));
+
     // Read back and verify | 回读验证
     uint16_t read_back;
     ret = opt3006_read_reg(OPT3006_REG_CONFIG, &read_back);
-    if (ret == 0)
+    if (ret != 0)
     {
-        LOG_INF("📖 Config read back: 0x%04x", read_back);
+        LOG_ERR("Failed to read back config (reg 0x01): %d", ret);
+        return ret;
+    }
 
-        // Parse configuration bits | 解析配置位
-        uint8_t rn    = (read_back >> OPT3006_CONFIG_RN_SHIFT) & 0x0F;  // Bits 15:12
-        uint8_t ct    = (read_back >> OPT3006_CONFIG_CT_BIT) & 0x01;    // Bit 11
-        uint8_t mode  = (read_back >> OPT3006_CONFIG_M_SHIFT) & 0x03;   // Bits 10:9
-        uint8_t ovf   = (read_back >> OPT3006_CONFIG_OVF_BIT) & 0x01;   // Bit 8
-        uint8_t crf   = (read_back >> OPT3006_CONFIG_CRF_BIT) & 0x01;   // Bit 7
-        uint8_t latch = (read_back >> OPT3006_CONFIG_L_BIT) & 0x01;     // Bit 4
+    LOG_INF("📖 Config read back: 0x%04x", read_back);
 
-        LOG_INF("   RN (Range,15:12): 0x%X (%s)", rn, rn == 0x0C ? "AUTO" : "Manual");
-        LOG_INF("   CT (ConvTime,11): %d (%s)", ct, ct == 0 ? "100ms" : "800ms");
-        LOG_INF("   M (Mode,10:9): %d (%s)", mode,
-                mode == 0 ? "Shutdown" :
-                mode == 1 ? "Single-shot" :
-                mode >= 2 ? "Continuous" : "?");
-        LOG_INF("   OVF,CRF,L: %d,%d,%d", ovf, crf, latch);
+    // Parse configuration bits | 解析配置位
+    uint8_t rn    = (read_back >> OPT3006_CONFIG_RN_SHIFT) & 0x0F;  // Bits 15:12
+    uint8_t ct    = (read_back >> OPT3006_CONFIG_CT_BIT) & 0x01;    // Bit 11
+    uint8_t mode  = (read_back >> OPT3006_CONFIG_M_SHIFT) & 0x03;   // Bits 10:9
+    uint8_t ovf   = (read_back >> OPT3006_CONFIG_OVF_BIT) & 0x01;   // Bit 8
+    uint8_t crf   = (read_back >> OPT3006_CONFIG_CRF_BIT) & 0x01;   // Bit 7
+    uint8_t latch = (read_back >> OPT3006_CONFIG_L_BIT) & 0x01;     // Bit 4
 
-        if (read_back != config)
-        {
-            LOG_WRN("⚠️ Config mismatch! Written: 0x%04x, Read: 0x%04x", config, read_back);
-            LOG_WRN("   Difference: 0x%04x", config ^ read_back);
-        }
-        else
-        {
-            LOG_INF("✅ Config verified successfully");
-        }
+    LOG_INF("   RN (Range,15:12): 0x%X (%s)", rn, rn == 0x0C ? "AUTO" : "Manual");
+    LOG_INF("   CT (ConvTime,11): %d (%s)", ct, ct == 0 ? "100ms" : "800ms");
+    LOG_INF("   M (Mode,10:9): %d (%s)", mode,
+            mode == 0 ? "Shutdown" :
+            mode == 1 ? "Single-shot" :
+            mode >= 2 ? "Continuous" : "?");
+    LOG_INF("   OVF,CRF,L: %d,%d,%d", ovf, crf, latch);
+
+    if (read_back != config)
+    {
+        LOG_WRN("⚠️ Config mismatch! Written: 0x%04x, Read: 0x%04x", config, read_back);
+        LOG_WRN("   Difference: 0x%04x", config ^ read_back);
+    }
+    else
+    {
+        LOG_INF("✅ Config verified successfully");
     }
 
     LOG_INF("OPT3006 initialized successfully (continuous mode, 800ms)");
@@ -427,27 +440,26 @@ int opt3006_initialize(void)
 {
     uint16_t config;
     int      ret;
+
     ret = opt3006_init();
     if (ret != 0)
     {
         LOG_ERR("✗ Initialization failed: %d", ret);
+        return ret;
     }
-    else
-    {
-        LOG_INF("✓ Initialization successful");
-    }
+    LOG_INF("✓ Initialization successful");
+
     k_sleep(K_MSEC(100));
     ret = opt3006_get_config(&config);
     if (ret != 0)
     {
         LOG_ERR("✗ Failed to read config: %d", ret);
+        return ret;
     }
-    else
-    {
-        LOG_INF("✓ Config read: 0x%04x", config);
-        LOG_INF("  Mode: %d, CT: %d, RN: 0x%X", (config >> OPT3006_CONFIG_M_SHIFT) & 0x03,
-                (config >> OPT3006_CONFIG_CT_BIT) & 0x01, (config >> OPT3006_CONFIG_RN_SHIFT) & 0x0F);
-    }
+    LOG_INF("✓ Config read: 0x%04x", config);
+    LOG_INF("  Mode: %d, CT: %d, RN: 0x%X", (config >> OPT3006_CONFIG_M_SHIFT) & 0x03,
+            (config >> OPT3006_CONFIG_CT_BIT) & 0x01, (config >> OPT3006_CONFIG_RN_SHIFT) & 0x0F);
+
     k_sleep(K_MSEC(100));
     ret = opt3006_set_mode(OPT3006_MODE_CONTINUOUS);
     if (ret != 0)
@@ -465,4 +477,5 @@ int opt3006_initialize(void)
 
     // Wait for first conversion | 等待第一次转换完成
     k_sleep(K_MSEC(OPT3006_CONVERSION_100MS));
+    return 0;
 }

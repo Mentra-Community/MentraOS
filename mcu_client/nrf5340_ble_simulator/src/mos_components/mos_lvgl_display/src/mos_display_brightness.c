@@ -93,7 +93,7 @@ static void auto_brightness_thread_entry(void *p1, void *p2, void *p3)
 
         uint32_t level = lux_to_brightness_level(lux);
         set_hardware_level(level);
-        LOG_DBG("Auto brightness: lux=%.1f -> %u%%", (double)lux, level);
+        LOG_INF("Auto brightness: lux=%.1f -> %u%%", (double)lux, level);
     }
 }
 
