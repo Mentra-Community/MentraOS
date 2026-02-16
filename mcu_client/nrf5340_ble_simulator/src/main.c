@@ -20,6 +20,7 @@
 #include <zephyr/types.h>
 
 #include "mos_ble_service.h"
+#include "mos_display_brightness.h"
 #include "mos_lvgl_display.h"  // Working LVGL display integration
 #include "pdm_audio_stream.h"
 #include "protobuf_handler.h"
@@ -600,6 +601,8 @@ int main(void)
     protobuf_init_ping_monitoring();
 
     opt3006_initialize();
+
+    display_brightness_thread_start();
 
     lsm6dsv16x_init();
 

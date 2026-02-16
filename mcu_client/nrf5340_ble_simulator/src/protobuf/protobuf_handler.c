@@ -49,9 +49,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#include "../../custom_driver_module/drivers/display/lcd/a6n.h"
 #include "mos_ble_service.h"
-#include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
+#include "mos_components/mos_lvgl_display/include/mos_display_brightness.h"
+#include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // For protobuf text display
 #include "pdm_audio_stream.h"                                          // **NEW: For microphone audio streaming**
 #include "proto/mentraos_ble.pb.h"
 
@@ -62,12 +62,6 @@ static uint32_t current_battery_level = 85;
 
 // Global battery charging state
 static bool current_charging_state = false;
-
-// Global brightness level state (0-100%)
-static uint32_t current_brightness_level = 50;
-
-// Global auto brightness state
-static bool auto_brightness_enabled = false;
 
 // Audio streaming error counter
 static uint32_t streaming_errors = 0;
@@ -761,49 +755,22 @@ int protobuf_generate_echo_response(const uint8_t* input_data, uint16_t input_le
 }
 
 // ============== BRIGHTNESS CONTROL FUNCTIONS ==============
+// Thin wrappers so existing callers keep working; state lives in display_brightness.
 
 uint32_t protobuf_get_brightness_level(void)
 {
-    return current_brightness_level;
+    return display_brightness_get_level();
 }
 
 bool protobuf_get_auto_brightness_enabled(void)
 {
-    return auto_brightness_enabled;
+    return display_brightness_get_auto_enabled();
 }
 
 void protobuf_set_brightness_level(uint32_t level)
 {
-    // Clamp level to 0-100
-    if (level > 100)
-    {
-        level = 100;
-    }
-
-    // Manual brightness setting automatically disables auto brightness
-    if (auto_brightness_enabled)
-    {
-        LOG_INF("Manual brightness setting - disabling auto brightness");
-        auto_brightness_enabled = false;
-    }
-
-    current_brightness_level = level;
-
-    // Update display projector brightness (0-100% -> 0x00-0xFF register values)
-    // Map 0-100% to 0x00-0xFF register values for A6N projector
-    uint8_t projector_reg_value = (level * 255) / 100;  // Linear mapping: 0%->0x00, 100%->0xFF
-
-    LOG_INF("Setting projector brightness: %u%% -> reg_value 0x%02X (0x00-0xFF)", level, projector_reg_value);
-
-    int ret = a6n_set_brightness(projector_reg_value);
-    if (ret == 0)
-    {
-        LOG_INF("✅ Display projector brightness set to reg_value 0x%02X/0xFF", projector_reg_value);
-    }
-    else
-    {
-        LOG_ERR("❌ Failed to set display projector brightness: %d", ret);
-    }
+    display_brightness_set_level(level);
+    LOG_INF("Setting projector brightness: %u%%", level);
 }
 
 void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig* brightness_config)
@@ -822,9 +789,9 @@ void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig* bri
     LOG_INF("Brightness Configuration:");
     LOG_INF("  - Field 1 (uint32 value): %u%%", new_level);
     LOG_INF("  - Valid Range: 0-100%%");
-    LOG_INF("  - Current Level: %u%%", current_brightness_level);
+    LOG_INF("  - Current Level: %u%%", display_brightness_get_level());
     LOG_INF("  - Requested Level: %u%%", new_level);
-    LOG_INF("  - Auto Brightness: %s -> DISABLED (manual override)", auto_brightness_enabled ? "ENABLED" : "DISABLED");
+    LOG_INF("  - Auto Brightness: %s -> DISABLED (manual override)", display_brightness_get_auto_enabled() ? "ENABLED" : "DISABLED");
 
     // Value validation
     bool valid_range = (new_level <= 100);
@@ -847,19 +814,17 @@ void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig* bri
 
     // Print to UART
     LOG_INF("\n[Phone->Glasses BRIGHTNESS] %u%% -> Projector: %u/9, Auto: %s->OFF\n",
-            current_brightness_level, (clamped_level * 9) / 100, auto_brightness_enabled ? "ON" : "OFF");
+            display_brightness_get_level(), (clamped_level * 9) / 100, display_brightness_get_auto_enabled() ? "ON" : "OFF");
 
     // Clamp and set the new brightness level (this will disable auto brightness)
     protobuf_set_brightness_level(new_level);
 
+    uint32_t level_after = display_brightness_get_level();
     LOG_INF("Brightness Update Result:");
-    LOG_INF("  - Previous Level: %u%%",
-            current_brightness_level == clamped_level ? new_level : current_brightness_level);
-    LOG_INF("  - New Level: %u%%", current_brightness_level);
+    LOG_INF("  - Previous Level: %u%%", level_after == clamped_level ? new_level : level_after);
+    LOG_INF("  - New Level: %u%%", level_after);
     LOG_INF("  - Auto Brightness: DISABLED (manual override)");
-    LOG_INF("  - Change: %+d%%",
-            (int32_t)current_brightness_level
-                - (int32_t)(current_brightness_level == clamped_level ? new_level : current_brightness_level));
+    LOG_INF("  - Change: %+d%%", (int32_t)level_after - (int32_t)(level_after == clamped_level ? new_level : level_after));
 
     LOG_INF("=== END BRIGHTNESS CONFIG MESSAGE ===");
 }
@@ -1170,10 +1135,10 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
     LOG_INF("=== AUTO BRIGHTNESS CONFIG MESSAGE (Tag 38) ===");
 
     bool enabled        = auto_brightness_config->enabled;
-    bool previous_state = auto_brightness_enabled;
+    bool previous_state = display_brightness_get_auto_enabled();
 
-    // Update the global auto brightness state
-    auto_brightness_enabled = enabled;
+    /* Enable or disable auto brightness; display_brightness thread reads this flag. */
+    display_brightness_set_auto_enabled(enabled);
 
     // Auto brightness configuration analysis
     LOG_INF("Auto Brightness Configuration:");
@@ -1199,7 +1164,7 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
         LOG_INF("  - Brightness Control: Automatic based on ambient light");
         LOG_INF("  - Manual Override: DISABLED (auto mode takes priority)");
         LOG_INF("  - Current Manual Level: %u%% (will be overridden by sensor)", protobuf_get_brightness_level());
-        LOG_INF("  - Sensor Integration: TODO - Light sensor driver pending");
+        LOG_INF("  - Sensor Integration: OPT3006 ambient light sensor via display_brightness thread");
     }
     else
     {
@@ -1214,9 +1179,9 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
     LOG_INF("Implementation Details:");
     if (enabled)
     {
-        LOG_INF("  - Light Sensor Driver: TODO - Will be integrated later");
-        LOG_INF("  - Brightness Algorithm: TODO - Automatic adjustment curve");
-        LOG_INF("  - Response Time: TODO - Real-time sensor monitoring");
+        LOG_INF("  - Light Sensor Driver: OPT3006 (integrated)");
+        LOG_INF("  - Brightness Algorithm: Log-scale mapping (lux 10-10000 -> 10-100%%)");
+        LOG_INF("  - Response Time: display_brightness thread polls every 500 ms");
         LOG_INF("  - Brightness Range: 0-100%% (sensor-controlled)");
         LOG_INF("  - Override Behavior: Manual brightness messages will disable auto mode");
     }
@@ -1239,7 +1204,7 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
         if (enabled)
         {
             LOG_INF("  - Transition: Manual → Automatic");
-            LOG_INF("  - Light Sensor: Activating (pending driver integration)");
+            LOG_INF("  - Light Sensor: Activating (OPT3006 + auto brightness thread)");
             LOG_INF("  - Brightness Control: Sensor will override manual setting");
             LOG_INF("  - Manual Level Preserved: %u%% (for fallback)", protobuf_get_brightness_level());
         }
