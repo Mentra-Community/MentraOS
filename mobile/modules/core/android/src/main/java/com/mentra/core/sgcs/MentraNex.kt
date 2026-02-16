@@ -632,6 +632,8 @@ class MentraNex : SGCManager() {
                 Bridge.log("Called forceSideDisconnection() after connection failure")
                 Bridge.log("GATT connection disconnected and closed due to failure")
 
+                updateConnectionState()
+
                 mainTaskHandler?.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_RECONNECT_DEVICE, 0)
             }
 
