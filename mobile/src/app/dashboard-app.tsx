@@ -96,6 +96,18 @@ export default function DashboardApp() {
     await updateWidgetInfo();
   };
 
+  const handleLoadFile = async () => {
+    try {
+      const { default: TeleprompterWidget } = await import('../services/widgets/TeleprompterWidget');
+      const content = await TeleprompterWidget.loadFromFile();
+      if (content) {
+        await updateWidgetInfo();
+      }
+    } catch (error) {
+      console.error('[Dashboard] Load file error:', error);
+    }
+  };
+
   return (
     <Screen preset="scroll">
       <Header
@@ -140,6 +152,13 @@ export default function DashboardApp() {
             <Button
               text="Next ➡️"
               onPress={handleNext}
+              preset="default"
+              style={{ minHeight: 80, paddingVertical: theme.spacing.s6 }}
+              textStyle={{ fontSize: 24 }}
+            />
+            <Button
+              text="📄 Load File"
+              onPress={handleLoadFile}
               preset="default"
               style={{ minHeight: 80, paddingVertical: theme.spacing.s6 }}
               textStyle={{ fontSize: 24 }}
