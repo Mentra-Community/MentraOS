@@ -1,5 +1,7 @@
 import { BaseWidget, WidgetData } from './Widget';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 
 interface TeleprompterData extends WidgetData {
   text?: string;
@@ -114,6 +116,25 @@ export class TeleprompterWidget extends BaseWidget {
   // Load saved script
   static async loadScript(): Promise<string | null> {
     return await AsyncStorage.getItem(STORAGE_KEY);
+  }
+
+  // Load script from file
+  static async loadFromFile(): Promise<string | null> {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'text/plain',
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return null;
+
+      const content = await FileSystem.readAsStringAsync(result.assets[0].uri);
+      await this.saveScript(content);
+      return content;
+    } catch (error) {
+      console.error('[TeleprompterWidget] File load error:', error);
+      return null;
+    }
   }
 
   private splitIntoLines(text: string): string[] {
