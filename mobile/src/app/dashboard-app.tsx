@@ -5,6 +5,7 @@ import { useNavigationHistory } from '@/contexts/NavigationHistoryContext';
 import { useAppTheme } from '@/contexts/ThemeContext';
 import { Group } from '@/components/ui';
 import DashboardManager from '@/services/DashboardManager';
+import TeleprompterWidget from '@/services/widgets/TeleprompterWidget';
 
 const { MediaButtonHandlerModule } = NativeModules;
 
@@ -98,7 +99,6 @@ export default function DashboardApp() {
 
   const handleLoadFile = async () => {
     try {
-      const { default: TeleprompterWidget } = await import('../services/widgets/TeleprompterWidget');
       const content = await TeleprompterWidget.loadFromFile();
       if (content) {
         await updateWidgetInfo();
