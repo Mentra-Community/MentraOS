@@ -28,4 +28,13 @@ bool get_ble_connected_status(void);
  */
 int ble_send_data(const uint8_t *data, uint16_t len);
 
+/**
+ * @brief Force-disconnect the current BLE connection
+ *
+ * Terminates the active BLE link. Triggers the normal disconnected() callback
+ * which shows the disconnect screen and recycled_cb() which restarts advertising.
+ * Safe to call when already disconnected (no-op if current_conn is NULL).
+ */
+void ble_force_disconnect(void);
+
 #endif /* MAIN_H */

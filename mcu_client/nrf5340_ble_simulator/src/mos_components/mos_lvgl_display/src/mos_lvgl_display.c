@@ -138,6 +138,13 @@ void display_show_welcome_screen(void)
     (void)mos_msgq_send(&lvgl_display_msgq, &cmd, (int64_t)100);
 }
 
+/* Thread-safe: show "Disconnected" warning screen (BLE drop or ping failure) */
+void display_show_disconnected_screen(void)
+{
+    display_cmd_t cmd = { .type = LCD_CMD_SHOW_DISCONNECTED_SCREEN };
+    (void)mos_msgq_send(&lvgl_display_msgq, &cmd, (int64_t)100);
+}
+
 /* 线程安全：更新欢迎界面 DFU 进度条（电量下方）| Thread-safe: update DFU progress bar on welcome screen (below battery) */
 void display_update_dfu_progress(uint8_t show, uint8_t percent)
 {
@@ -932,6 +939,20 @@ static void update_protobuf_text_content(const char *text_content)
     LOG_INF("📱 Protobuf text updated: %.50s%s", text_content, strlen(text_content) > 50 ? "..." : "");
 }
 
+/* Show "Disconnected" warning on screen; call from LVGL thread only */
+static void update_disconnected_label(void)
+{
+    if (!protobuf_label)
+    {
+        return;
+    }
+    welcome_screen_active = false;
+    lv_label_set_text(protobuf_label, "Disconnected\n\nPlease connect\nto your phone.");
+    lv_obj_set_style_text_align(protobuf_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(protobuf_label, LV_ALIGN_CENTER, 0, 0);
+    LOG_INF("Disconnect warning displayed");
+}
+
 /* 用当前电量重建欢迎标签文案（60s 刷新）；仅由 LVGL 线程调用 / Rebuild welcome label text with current battery (60s refresh); call from LVGL thread only */
 static void update_welcome_label_with_battery(void)
 {
@@ -1209,6 +1230,10 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     /* 回到欢迎界面（如 BLE 断开后）/ Return to welcome screen (e.g. after BLE disconnect) */
                     welcome_screen_active = true;
                     update_welcome_label_with_battery();
+                    break;
+                case LCD_CMD_SHOW_DISCONNECTED_SCREEN:
+                    /* Show "Disconnected" warning (BLE drop or ping failure) */
+                    update_disconnected_label();
                     break;
                 case LCD_CMD_UPDATE_DFU_PROGRESS:
                     /* 显示/隐藏并更新 DFU 进度条：前景条宽度 = 百分比，随 % 滑动 | Progress bar: fill width = percent */

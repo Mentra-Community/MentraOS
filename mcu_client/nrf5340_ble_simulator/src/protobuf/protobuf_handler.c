@@ -1517,29 +1517,19 @@ static void protobuf_handle_ping_success(void)
 }
 
 // Handle ping failure (no pong response after max retries)
+// Shows disconnect screen and force-cuts BLE. The BLE disconnect triggers
+// disconnected() -> recycled_cb() -> advertising_start(), so the glasses
+// immediately begin advertising for reconnection.
 static void protobuf_handle_ping_failure(void)
 {
     phone_connected       = false;
     ping_retry_count      = 0;
     ping_waiting_for_pong = false;
 
-    if (ping_logging_enabled)
-    {
-        LOG_ERR("[PING] Phone connection lost - entering sleep mode");
-    }
+    LOG_ERR("[PING] Phone connection lost after %d retries - disconnecting BLE", PING_MAX_RETRIES);
 
-    // TODO: Implement sleep/disconnect logic:
-    // 1. Stop all non-essential operations
-    // 2. Reduce display brightness or turn off display
-    // 3. Stop audio streaming
-    // 4. Enter low-power mode
-    // 5. Wake up periodically to check for reconnection
-
-    if (ping_logging_enabled)
-    {
-        LOG_WRN("[PING] TODO: Implement sleep mode (display off, low power)");
-        LOG_WRN("[PING] TODO: Wake up periodically to check for phone reconnection");
-    }
+    display_show_disconnected_screen();
+    ble_force_disconnect();
 }
 
 // Initialize ping/pong monitoring system
@@ -1554,6 +1544,16 @@ void protobuf_init_ping_monitoring(void)
 
     LOG_INF("[PING] Ping monitoring started (interval: %d ms, timeout: %d ms, max retries: %d)", PING_INTERVAL_MS,
             PING_TIMEOUT_MS, PING_MAX_RETRIES);
+}
+
+// Reset ping state on BLE connect/disconnect to prevent stale state leaking across sessions
+void protobuf_reset_ping_state(void)
+{
+    phone_connected       = true;
+    ping_retry_count      = 0;
+    ping_waiting_for_pong = false;
+    k_work_cancel_delayable(&ping_timeout_dwork);
+    LOG_INF("[PING] Ping state reset");
 }
 
 // =============================================================================
