@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import com.mentra.core.services.ForegroundService
 import com.mentra.core.services.PhoneMic
 import com.mentra.core.sgcs.G1
+import com.mentra.core.sgcs.G2
 import com.mentra.core.sgcs.Mach1
 import com.mentra.core.sgcs.MentraLive
 import com.mentra.core.sgcs.SGCManager
@@ -913,6 +914,8 @@ class CoreManager {
 
         if (wearable.contains(DeviceTypes.SIMULATED)) {
             sgc = Simulated()
+        } else if (wearable.contains(DeviceTypes.G2)) {
+            sgc = G2()
         } else if (wearable.contains(DeviceTypes.G1)) {
             sgc = G1()
         } else if (wearable.contains(DeviceTypes.LIVE)) {
@@ -971,7 +974,9 @@ class CoreManager {
         }
 
         // Call device-specific setup handlers
-        if (defaultWearable.contains(DeviceTypes.G1)) {
+        if (defaultWearable.contains(DeviceTypes.G2)) {
+            handleG2Ready()
+        } else if (defaultWearable.contains(DeviceTypes.G1)) {
             handleG1Ready()
         } else if (defaultWearable.contains(DeviceTypes.MACH1)) {
             handleMach1Ready()
@@ -990,6 +995,11 @@ class CoreManager {
         // save the default_wearable now that we're connected:
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
+    }
+
+    private fun handleG2Ready() {
+        sgc?.getBatteryStatus()
+        sgc?.setBrightness(brightness, autoBrightness)
     }
 
     private fun handleG1Ready() {
@@ -1309,6 +1319,17 @@ class CoreManager {
         }
 
         if (sgc is G1) {
+            glassesInfo["caseRemoved"] = sgc!!.caseRemoved
+            glassesInfo["caseOpen"] = sgc!!.caseOpen
+            glassesInfo["caseCharging"] = sgc!!.caseCharging
+            glassesInfo["caseBatteryLevel"] = sgc!!.caseBatteryLevel
+
+            glassesInfo["serialNumber"] = sgc!!.glassesSerialNumber
+            glassesInfo["style"] = sgc!!.glassesStyle
+            glassesInfo["color"] = sgc!!.glassesColor
+        }
+
+        if (sgc is G2) {
             glassesInfo["caseRemoved"] = sgc!!.caseRemoved
             glassesInfo["caseOpen"] = sgc!!.caseOpen
             glassesInfo["caseCharging"] = sgc!!.caseCharging
