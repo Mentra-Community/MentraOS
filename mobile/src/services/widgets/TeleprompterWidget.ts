@@ -116,28 +116,6 @@ export class TeleprompterWidget extends BaseWidget {
     return await AsyncStorage.getItem(STORAGE_KEY);
   }
 
-  // Load script from file
-  static async loadFromFile(): Promise<string | null> {
-    try {
-      const DocumentPicker = await import('expo-document-picker');
-      const FileSystem = await import('expo-file-system');
-      
-      const result = await DocumentPicker.getDocumentAsync({
-        type: 'text/plain',
-        copyToCacheDirectory: true,
-      });
-
-      if (result.canceled) return null;
-
-      const content = await FileSystem.readAsStringAsync(result.assets[0].uri);
-      await this.saveScript(content);
-      return content;
-    } catch (error) {
-      console.error('[TeleprompterWidget] File load error:', error);
-      return null;
-    }
-  }
-
   private splitIntoLines(text: string): string[] {
     const words = text.split(/\s+/);
     const lines: string[] = [];
