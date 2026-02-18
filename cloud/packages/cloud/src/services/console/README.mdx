@@ -1,0 +1,241 @@
+---
+title: "Console Services – Plan"
+description: "Stateless function services for /api/console with endpoint mapping, org resolution, and error semantics"
+---
+
+# Console Services – Plan (Stateless Functions)
+
+This document outlines new, console‑scoped services implemented as stateless functions (no classes), and how they back the new `/api/console` endpoints. These live under `src/services/console/*` and do not modify legacy services or routes.
+
+Goals:
+- Keep old routes and services untouched.
+- Provide a clean, testable service layer composed of stateless functions.
+- Make org context explicit and well‑defined.
+- Centralize security and error handling (no secrets in logs, typed errors).
+- Enable incremental wiring of the new API without a big‑bang refactor.
+
+---
+
+## Principles
+
+- Stateless functions: export named async functions; no classes or shared mutable state.
+- Explicit inputs: each function receives an authenticated console context `(email)` and any required identifiers (e.g., `orgId`, `packageName`).
+- Handlers stay thin: routes parse/validate inputs, then call service functions and map domain errors to HTTP responses.
+- No DB/network calls in middleware: only auth attaches `req.console = { email }`.
+- Security: never return or log secrets (API keys, tokens). Return only hashed metadata where appropriate.
+- Backward‑compatibility: services may temporarily fallback to legacy behaviors (e.g., developerId) during migration, but do not alter legacy code.
+
+---
+
+## Folder & Files
+
+```
+src/services/console/
+  console.auth.service.ts
+  org.service.ts
+  console.app.service.ts
+  README.mdx   (this file)
+```
+
+- `console.auth.service.ts` – Auth/identity view for console audience; may ensure org existence via bootstrap.
+- `org.service.ts` – Console organization use cases (list, create, update, member/role, invites).
+- `console.app.service.ts` – App management under console audience; flat namespace; org resolution for writes.
+
+Each file exports named async functions. No classes.
+
+---
+
+## Endpoint → Service Mapping (Initial Scope)
+
+Auth (console.auth.api)
+- GET /api/console/auth/me
+  - console.auth.service.getMe(email: string): Promise<AuthMeResult>
+  - Option: may auto‑bootstrap a personal org when none exists (see policy below)
+
+Orgs (org.api)
+- GET    /api/console/orgs
+  - org.service.listUserOrgs(email)
+- POST   /api/console/orgs
+  - org.service.createOrg(email, name)
+- GET    /api/console/orgs/:orgId
+  - org.service.getOrg(email, orgId)
+- PUT    /api/console/orgs/:orgId
+  - org.service.updateOrg(email, orgId, patch)
+- DELETE /api/console/orgs/:orgId
+  - org.service.deleteOrg(email, orgId)
+- POST   /api/console/orgs/:orgId/members
+  - org.service.inviteMember(email, orgId, inviteeEmail, role)
+- PATCH  /api/console/orgs/:orgId/members/:memberId
+  - org.service.changeMemberRole(email, orgId, memberId, role)
+- DELETE /api/console/orgs/:orgId/members/:memberId
+  - org.service.removeMember(email, orgId, memberId)
+- POST   /api/console/orgs/accept/:token
+  - org.service.acceptInvite(email, token)
+- POST   /api/console/orgs/:orgId/invites/resend
+  - org.service.resendInvite(email, orgId, inviteeEmail)
+- POST   /api/console/orgs/:orgId/invites/rescind
+  - org.service.rescindInvite(email, orgId, inviteeEmail)
+
+Apps (console.app.api, flat namespace)
+- GET    /api/console/apps?orgId=...
+  - console.app.service.listApps(email, { orgId? })
+- POST   /api/console/apps
+  - console.app.service.createApp(email, appInput, { orgId?, allowBootstrap: true })
+- GET    /api/console/app/:packageName
+  - console.app.service.getApp(email, packageName)
+- PUT    /api/console/app/:packageName
+  - console.app.service.updateApp(email, packageName, patch)
+- DELETE /api/console/app/:packageName
+  - console.app.service.deleteApp(email, packageName)
+- POST   /api/console/app/:packageName/publish
+  - console.app.service.publishApp(email, packageName, { allowBootstrap: true })
+- POST   /api/console/app/:packageName/api-key
+  - console.app.service.regenerateApiKey(email, packageName, { allowBootstrap: true })
+- POST   /api/console/app/:packageName/move
+  - console.app.service.moveApp(email, packageName, targetOrgId)
+
+---
+
+## Org Resolution & Bootstrap Policy
+
+We avoid org logic in middleware. Services resolve orgs explicitly:
+
+Resolution precedence:
+1) Provided `orgId` argument (query for reads, body for writes).
+2) User’s `defaultOrg` (from DB).
+3) If still missing:
+   - For specific write endpoints that allow bootstrap (createApp, publishApp, regenerateApiKey, moveApp): create a personal org (“<emailPrefix> Org”), set as default, then proceed.
+   - For reads and other writes: throw a domain error with status 409 (Conflict) and guidance.
+
+Notes:
+- “Bootstrap allowed” endpoints are narrowly scoped to minimize unexpected org creations.
+- Bootstrap is idempotent: at most one personal org per user.
+
+---
+
+## Function Signatures (Proposed)
+
+Auth
+```ts
+export type AuthMeResult = {
+  email: string;
+  organizations: Array<{ id: string; name: string }>;
+  defaultOrgId: string | null;
+};
+
+export async function getMe(email: string, opts?: { allowBootstrap?: boolean }): Promise<AuthMeResult>;
+```
+
+Orgs
+```ts
+export async function listUserOrgs(email: string): Promise<any[]>;
+export async function createOrg(email: string, name: string): Promise<any>;
+export async function getOrg(email: string, orgId: string): Promise<any>;
+export async function updateOrg(email: string, orgId: string, patch: Partial<{ name: string; profile: any }>): Promise<any>;
+export async function deleteOrg(email: string, orgId: string): Promise<void>;
+
+export type OrgRole = "admin" | "member";
+export async function inviteMember(email: string, orgId: string, inviteeEmail: string, role?: OrgRole): Promise<{ token: string }>;
+export async function changeMemberRole(email: string, orgId: string, memberId: string, role: OrgRole): Promise<any>;
+export async function removeMember(email: string, orgId: string, memberId: string): Promise<void>;
+
+export async function acceptInvite(email: string, token: string): Promise<any>;
+export async function resendInvite(email: string, orgId: string, inviteeEmail: string): Promise<void>;
+export async function rescindInvite(email: string, orgId: string, inviteeEmail: string): Promise<void>;
+```
+
+Apps (flat)
+```ts
+export type ListAppsOptions = { orgId?: string };
+export async function listApps(email: string, opts?: ListAppsOptions): Promise<any[]>;
+
+export type CreateAppOptions = { orgId?: string; allowBootstrap?: boolean };
+export async function createApp(email: string, appInput: Record<string, any>, opts?: CreateAppOptions): Promise<{ app: any; apiKey?: string }>;
+
+export async function getApp(email: string, packageName: string): Promise<any>;
+export async function updateApp(email: string, packageName: string, patch: Record<string, any>): Promise<any>;
+export async function deleteApp(email: string, packageName: string): Promise<void>;
+
+export type WriteWithBootstrap = { allowBootstrap?: boolean };
+export async function publishApp(email: string, packageName: string, opts?: WriteWithBootstrap): Promise<any>;
+export async function regenerateApiKey(email: string, packageName: string, opts?: WriteWithBootstrap): Promise<{ apiKey: string; createdAt?: string }>;
+export async function moveApp(email: string, packageName: string, targetOrgId: string): Promise<any>;
+```
+
+Migration fallback (optional, during transition):
+- For legacy apps missing `organizationId`, the app service may temporarily fallback to `developerId` (as a last resort) only to:
+  - infer default org assignment for migration/bootstrap,
+  - permit access for the original creator while migrating data.
+- Remove this fallback after all apps have an org.
+
+---
+
+## Error Model
+
+Service functions throw domain errors; handlers translate to HTTP.
+
+```ts
+export class ApiError extends Error {
+  statusCode: number;
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+```
+
+Common cases:
+- 400 Bad Request – invalid/missing parameters
+- 401 Unauthorized – missing/invalid `email` (auth issue)
+- 403 Forbidden – not a member/admin of the org
+- 404 Not Found – resource missing
+- 409 Conflict – org context missing (and bootstrap not allowed here)
+- 422 Unprocessable Entity – validation errors (e.g., tools/settings)
+- 500 Internal Server Error – unexpected
+
+Handlers should:
+- Validate inputs early.
+- Catch `ApiError` and set `res.status(err.statusCode)`.
+- Log errors without secrets; return structured JSON errors.
+
+---
+
+## Security & Logging
+
+- Never log raw API keys or secrets. When returning keys (e.g., newly generated API key), return once in response and never persist plaintext.
+- Use constant‑time comparisons when applicable (hash checks).
+- Consider rate limiting sensitive endpoints (API key regen, publish).
+- Add basic audit logs for bootstrap events, membership changes, and API key operations.
+
+---
+
+## Data Sources & Reuse
+
+- Reuse existing Mongoose models (`User`, `Organization`, `App`).
+- Where it reduces duplication and risk, delegate to existing core services (e.g., OrganizationService) but keep the console service as the single entry point for console behavior and policies.
+- Do not modify legacy route logic; implement console policies in the new console services only.
+
+---
+
+## Out of Scope (For Now)
+
+- Assets/Images – covered in a separate planning doc. Legacy routes remain unchanged; future console assets service will be introduced independently.
+- Permissions as a separate store/service – keep minimal endpoints via app service initially; expand later if needed.
+
+---
+
+## Implementation Notes
+
+- Keep functions small and composable; separate org resolution helpers (e.g., `resolveOrgOrBootstrap(email, orgId, { allowBootstrap })`).
+- Normalize return shapes to match UI expectations; handlers can shape the HTTP response if needed.
+- Add unit tests around org resolution, bootstrap, role checks, and side‑effecting writes first (create app, publish, regenerate API key, move).
+
+---
+
+## Next Steps
+
+1) Implement `console.auth.service.getMe(email, { allowBootstrap })` and wire to `GET /api/console/auth/me`.
+2) Implement `org.service.listUserOrgs` and `org.service.createOrg` and wire corresponding endpoints.
+3) Implement `console.app.service.listApps` and `createApp` with org resolution; wire `/apps` endpoints.
+4) Expand to detail/update/delete/publish/api-key/move with the same org resolution policy.
+5) Add tests and basic metrics/audit logging.

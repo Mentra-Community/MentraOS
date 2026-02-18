@@ -5,7 +5,7 @@ description: "Extends video streaming with Cloudflare-managed streams for multi-
 
 ## Overview
 
-ManagedStreamingExtension works alongside VideoManager to provide managed streaming capabilities. It enables multiple apps to view the same stream, handles Cloudflare Live streaming infrastructure, supports restreaming to multiple destinations, and provides automatic URL discovery for HLS/DASH/WebRTC playback.
+ManagedStreamingExtension works alongside UnmanagedStreamingExtension to provide managed streaming capabilities. It enables multiple apps to view the same stream, handles Cloudflare Live streaming infrastructure, supports restreaming to multiple destinations, and provides automatic URL discovery for HLS/DASH/WebRTC playback.
 
 **File**: `packages/cloud/src/services/streaming/ManagedStreamingExtension.ts`
 
@@ -533,15 +533,15 @@ dispose(): void {
 
 ## Integration Points
 
-- **VideoManager**: Works alongside for stream management
+- **UnmanagedStreamingExtension**: Works alongside for stream management
 - **CloudflareStreamService**: Manages live input infrastructure
-- **StreamStateManager**: Tracks stream state and conflicts
+- **StreamRegistry**: Tracks stream state and conflicts
 - **SessionService**: Retrieves user sessions
 - **WebSocket**: Communicates with glasses
 
 ## Related Documentation
 
-- **[VideoManager](/cloud-architecture/managers/video-manager)**: Unmanaged streaming
+- **[UnmanagedStreamingExtension](/cloud-architecture/managers/unmanaged-streaming-extension)**: Unmanaged streaming
 - **[AppManager](/cloud-architecture/managers/app-manager)**: App state validation
 - **[Message Types](/cloud-overview/message-types)**: Managed stream messages
 - **[WebSocket Service](/cloud-architecture/services/websocket-service)**: Glasses connection

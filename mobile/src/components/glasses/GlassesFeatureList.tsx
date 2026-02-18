@@ -1,82 +1,67 @@
-import React from "react"
-import {View, Text, StyleSheet} from "react-native"
-import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {glassesFeatures, featureLabels, GlassesFeature, hasMicrophone} from "@/config/glassesFeatures"
+import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {View, ViewStyle, TextStyle, ImageStyle} from "react-native"
+
+import {Icon, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 
 interface GlassesFeatureListProps {
   glassesModel: string
 }
 
-export function GlassesFeatureList({glassesModel}: GlassesFeatureListProps) {
-  const {theme} = useAppTheme()
-  const features = glassesFeatures[glassesModel]
+export type GlassesFeature = "camera" | "microphone" | "speakers" | "display"
 
-  if (!features) {
-    console.warn(`No features defined for glasses model: ${glassesModel}`)
+const featureLabels: Record<GlassesFeature, string> = {
+  camera: "Camera",
+  microphone: "Microphone",
+  speakers: "Speakers",
+  display: "Display",
+}
+
+export function GlassesFeatureList({glassesModel}: GlassesFeatureListProps) {
+  const {theme, themed} = useAppTheme()
+  const capabilities = getModelCapabilities(glassesModel as DeviceTypes)
+
+  if (!capabilities) {
+    console.warn(`No capabilities defined for glasses model: ${glassesModel}`)
     return null
   }
 
   const featureOrder: GlassesFeature[] = ["camera", "microphone", "speakers", "display"]
 
   const getFeatureValue = (feature: GlassesFeature): boolean => {
-    if (feature === "microphone") {
-      return hasMicrophone(features)
+    switch (feature) {
+      case "camera":
+        return capabilities.hasCamera
+      case "microphone":
+        return capabilities.hasMicrophone
+      case "speakers":
+        return capabilities.hasSpeaker
+      case "display":
+        return capabilities.hasDisplay
+      default:
+        return false
     }
-    return features[feature as keyof typeof features] as boolean
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.featureRow}>
-        {featureOrder.slice(0, 2).map(feature => (
-          <View key={feature} style={styles.featureItem}>
-            <MaterialCommunityIcons
-              name={getFeatureValue(feature) ? "check" : "close"}
-              size={24}
-              color={theme.colors.text}
-              style={styles.icon}
-            />
-            <Text style={[styles.featureText, {color: theme.colors.text}]}>{featureLabels[feature]}</Text>
+    <View className="my-4 w-70 self-center">
+      <View className="flex-row mb-2">
+        {featureOrder.slice(0, 2).map((feature) => (
+          <View key={feature} className="gap-2 flex-row items-center w-1/2">
+            <Icon name={getFeatureValue(feature) ? "check" : "x"} size={24} color={theme.colors.secondary_foreground} />
+            <Text text={featureLabels[feature]} className="text-sm font-medium" />
           </View>
         ))}
       </View>
-      <View style={styles.featureRow}>
-        {featureOrder.slice(2, 4).map(feature => (
-          <View key={feature} style={styles.featureItem}>
-            <MaterialCommunityIcons
-              name={getFeatureValue(feature) ? "check" : "close"}
-              size={24}
-              color={theme.colors.text}
-              style={styles.icon}
-            />
-            <Text style={[styles.featureText, {color: theme.colors.text}]}>{featureLabels[feature]}</Text>
+      <View className="flex-row">
+        {featureOrder.slice(2, 4).map((feature) => (
+          <View key={feature} className="gap-2 flex-row items-center w-1/2">
+            <Icon name={getFeatureValue(feature) ? "check" : "x"} size={24} color={theme.colors.secondary_foreground} />
+            <Text text={featureLabels[feature]} className="text-sm font-medium" />
           </View>
         ))}
       </View>
     </View>
   )
 }
-
-const styles = StyleSheet.create({
-  container: {
-    marginVertical: 20,
-  },
-  featureItem: {
-    alignItems: "center",
-    flexDirection: "row",
-    flex: 1,
-  },
-  featureRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginVertical: 6,
-  },
-  featureText: {
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  icon: {
-    marginRight: 10,
-  },
-})

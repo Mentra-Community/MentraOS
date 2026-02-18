@@ -1,6 +1,5 @@
 import { Logger } from "pino";
 import WebSocket from "ws";
-import crypto from "crypto";
 import {
   CloudToGlassesMessageType,
   CloudToAppMessageType,
@@ -13,49 +12,34 @@ import {
   KeepRtmpStreamAlive,
   RtmpStreamStatus,
   KeepAliveAck,
-  GlassesToCloudMessageType,
 } from "@mentra/sdk";
 import UserSession from "../session/UserSession";
+import { CloudflareStreamService } from "./CloudflareStreamService";
 import {
-  CloudflareStreamService,
-  LiveInputResult,
-} from "./CloudflareStreamService";
-import {
-  StreamStateManager,
-  StreamType,
+  StreamRegistry,
   ManagedStreamState,
   StreamState,
-} from "./StreamStateManager";
+} from "./StreamRegistry";
+import { StreamLifecycleController } from "./StreamLifecycleController";
+import { ConnectionValidator } from "../validators/ConnectionValidator";
 
-/**
- * Tracks keep-alive state for managed streams
- */
-interface ManagedStreamKeepAlive {
-  userId: string;
-  streamId: string;
-  cfLiveInputId: string;
-  keepAliveTimer?: NodeJS.Timeout;
-  lastKeepAlive: Date;
-  pendingAcks: Map<string, { sentAt: Date; timeout: NodeJS.Timeout }>;
-  missedAcks: number;
-}
-
-// Keep-alive constants matching VideoManager
+// Keep-alive constants matching UnmanagedStreamingExtension
 const KEEP_ALIVE_INTERVAL_MS = 15000; // 15 seconds
-const ACK_TIMEOUT_MS = 5000; // 5 seconds to wait for ACK
+const ACK_TIMEOUT_MS = 10000; // 10 seconds to wait for ACK
 const MAX_MISSED_ACKS = 3; // Max consecutive missed ACKs
 
 /**
- * Extension to VideoManager that adds managed streaming capabilities
- * Works alongside existing VideoManager without modifying core logic
+ * Extension to UnmanagedStreamingExtension that adds managed streaming capabilities
+ * Works alongside the unmanaged streaming pipeline without modifying core logic
  */
 export class ManagedStreamingExtension {
   private logger: Logger;
   private cloudflareService: CloudflareStreamService;
-  private stateManager: StreamStateManager;
+  private stateManager: StreamRegistry;
 
-  // Keep-alive tracking for managed streams (per user, not per app)
-  private managedKeepAlive: Map<string, ManagedStreamKeepAlive> = new Map(); // userId -> keepAlive
+  // Per-stream lifecycle controllers keyed by streamId
+  private lifecycleControllers: Map<string, StreamLifecycleController> =
+    new Map();
 
   // Polling intervals for URL discovery
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map(); // userId -> interval
@@ -63,10 +47,10 @@ export class ManagedStreamingExtension {
   // Track last sent status per stream+app to prevent duplicates
   private lastSentStatus: Map<string, ManagedStreamStatus> = new Map(); // key: `${streamId}:${packageName}`
 
-  constructor(logger: Logger) {
+  constructor(logger: Logger, streamRegistry: StreamRegistry) {
     this.logger = logger.child({ service: "ManagedStreamingExtension" });
     this.cloudflareService = new CloudflareStreamService(logger);
-    this.stateManager = new StreamStateManager(logger);
+    this.stateManager = streamRegistry;
 
     this.logger.info("ManagedStreamingExtension initialized");
 
@@ -115,6 +99,51 @@ export class ManagedStreamingExtension {
       throw new Error(`App ${packageName} is not running`);
     }
 
+    const validation = ConnectionValidator.validateForHardwareRequest(
+      userSession,
+      "stream",
+    );
+    if (!validation.valid) {
+      const connectionStatus =
+        ConnectionValidator.getConnectionStatus(userSession);
+      this.logger.error(
+        {
+          userId,
+          packageName,
+          error: validation.error,
+          errorCode: validation.errorCode,
+          connectionStatus,
+        },
+        "Managed stream request blocked by connection validator",
+      );
+      const error = new Error(
+        validation.error ||
+          "Cannot process stream request - connection validation failed",
+      );
+      (error as any).code = validation.errorCode;
+      throw error;
+    }
+
+    // WiFi validation for glasses that require it
+    const wifiValidation =
+      ConnectionValidator.validateWifiForOperation(userSession);
+    if (!wifiValidation.valid) {
+      this.logger.error(
+        {
+          userId,
+          packageName,
+          error: wifiValidation.error,
+          errorCode: wifiValidation.errorCode,
+        },
+        "Managed stream request blocked - WiFi required",
+      );
+      const error = new Error(
+        wifiValidation.error || "WiFi connection required for streaming",
+      );
+      (error as any).code = wifiValidation.errorCode;
+      throw error;
+    }
+
     // Check WebSocket connection
     if (
       !userSession.websocket ||
@@ -159,6 +188,10 @@ export class ManagedStreamingExtension {
         undefined,
         undefined,
       );
+
+      const lifecycle = this.ensureLifecycle(userSession, managedStream);
+      lifecycle.recordActivity();
+      lifecycle.setActive(true);
 
       return managedStream.streamId;
     }
@@ -215,12 +248,10 @@ export class ManagedStreamingExtension {
       liveInput,
     });
 
-    // Start keep-alive for this user's managed stream
-    this.startKeepAlive(
-      userId,
-      managedStream.streamId,
-      managedStream.cfLiveInputId,
-    );
+    // Ensure lifecycle controller is active
+    const lifecycle = this.ensureLifecycle(userSession, managedStream);
+    lifecycle.recordActivity();
+    lifecycle.setActive(true);
 
     // Wait for Cloudflare live input to fully initialize
     this.logger.info(
@@ -274,7 +305,7 @@ export class ManagedStreamingExtension {
     } catch (error) {
       // Cleanup on error
       this.stateManager.removeStream(userId);
-      this.stopKeepAlive(userId);
+      // Keep-alive is now managed by lifecycle, no manual stop needed
       await this.cloudflareService.deleteLiveInput(liveInput.liveInputId);
       throw error;
     }
@@ -328,7 +359,9 @@ export class ManagedStreamingExtension {
 
     // If no more viewers, stop the stream entirely
     if (shouldCleanup) {
-      await this.cleanupManagedStream(userSession, userId, stream);
+      await this.cleanupManagedStream(userSession, userId, stream, {
+        status: "stopped",
+      });
     }
   }
 
@@ -349,7 +382,7 @@ export class ManagedStreamingExtension {
 
     const stream = this.stateManager.getStreamByStreamId(streamId);
     if (!stream || stream.type !== "managed") {
-      return false; // Let VideoManager handle unmanaged streams
+      return false; // Let the unmanaged extension handle direct RTMP streams
     }
 
     this.logger.info(
@@ -364,6 +397,9 @@ export class ManagedStreamingExtension {
     // Update last activity
     this.stateManager.updateLastActivity(stream.userId);
 
+    const lifecycle = this.ensureLifecycle(userSession, stream);
+    lifecycle.recordActivity();
+
     // Map glasses status to our status
     let mappedStatus: ManagedStreamStatus["status"] = "active";
     switch (glassesStatus) {
@@ -376,26 +412,37 @@ export class ManagedStreamingExtension {
         mappedStatus = "active";
         // When stream becomes active, try to get updated URLs
         this.updateStreamUrls(stream);
+        lifecycle.setActive(true);
         break;
       case "stopping":
         mappedStatus = "stopping";
+        lifecycle.setActive(false);
         break;
       case "stopped":
         mappedStatus = "stopped";
+        lifecycle.setActive(false);
         break;
       case "error":
         mappedStatus = "error";
+        lifecycle.setActive(false);
         break;
+      default:
+        lifecycle.setActive(true);
     }
 
     // Send status to all viewers
+    const messageForViewers =
+      mappedStatus === "error"
+        ? status.errorDetails || "Stream error reported by glasses"
+        : undefined;
+
     for (const appId of stream.activeViewers) {
       await this.sendManagedStreamStatus(
         userSession,
         appId,
         stream.streamId,
         mappedStatus,
-        undefined,
+        messageForViewers,
         undefined,
         undefined,
         undefined,
@@ -406,7 +453,10 @@ export class ManagedStreamingExtension {
 
     // If stream stopped or errored, cleanup
     if (mappedStatus === "stopped" || mappedStatus === "error") {
-      await this.cleanupManagedStream(userSession, stream.userId, stream);
+      await this.cleanupManagedStream(userSession, stream.userId, stream, {
+        status: mappedStatus,
+        message: messageForViewers,
+      });
     }
 
     return true; // Handled by managed streaming
@@ -495,25 +545,18 @@ export class ManagedStreamingExtension {
    * Handle keep-alive ACK from glasses
    */
   handleKeepAliveAck(userId: string, ack: KeepAliveAck): void {
-    const keepAlive = this.managedKeepAlive.get(userId);
-    if (!keepAlive) return;
-
-    const ackInfo = keepAlive.pendingAcks.get(ack.ackId);
-    if (ackInfo) {
-      clearTimeout(ackInfo.timeout);
-      keepAlive.pendingAcks.delete(ack.ackId);
-      keepAlive.missedAcks = 0; // Reset on successful ACK
-      keepAlive.lastKeepAlive = new Date();
-
-      this.logger.debug(
-        {
-          userId,
-          ackId: ack.ackId,
-          streamId: keepAlive.streamId,
-        },
-        "Received keep-alive ACK for managed stream",
-      );
+    const stream = this.stateManager.getStreamState(userId);
+    if (!stream || stream.type !== "managed") {
+      return;
     }
+
+    const lifecycle = this.lifecycleControllers.get(stream.streamId);
+    if (!lifecycle) {
+      return;
+    }
+
+    lifecycle.handleAck(ack.ackId);
+    this.stateManager.updateLastActivity(userId);
   }
 
   /**
@@ -1124,7 +1167,7 @@ export class ManagedStreamingExtension {
         lastStatus.webrtcUrl === statusMessage.webrtcUrl &&
         lastStatus.message === statusMessage.message &&
         JSON.stringify(lastStatus.outputs) ===
-        JSON.stringify(statusMessage.outputs);
+          JSON.stringify(statusMessage.outputs);
 
       if (isDuplicate) {
         this.logger.debug(
@@ -1159,120 +1202,126 @@ export class ManagedStreamingExtension {
   }
 
   /**
-   * Start keep-alive timer for managed stream
+   * Fetch the active user session for a userId.
    */
-  private startKeepAlive(
-    userId: string,
-    streamId: string,
-    cfLiveInputId: string,
-  ): void {
-    // Clear any existing keep-alive
-    this.stopKeepAlive(userId);
-
-    const keepAlive: ManagedStreamKeepAlive = {
-      userId,
-      streamId,
-      cfLiveInputId,
-      lastKeepAlive: new Date(),
-      pendingAcks: new Map(),
-      missedAcks: 0,
-    };
-
-    // Schedule periodic keep-alive
-    keepAlive.keepAliveTimer = setInterval(() => {
-      this.sendKeepAlive(userId);
-    }, KEEP_ALIVE_INTERVAL_MS);
-
-    this.managedKeepAlive.set(userId, keepAlive);
+  private getUserSession(userId: string): UserSession | undefined {
+    return UserSession.getById(userId) || undefined;
   }
 
-  /**
-   * Send keep-alive message to glasses
-   */
-  private async sendKeepAlive(userId: string): Promise<void> {
-    const keepAlive = this.managedKeepAlive.get(userId);
-    if (!keepAlive) return;
+  private ensureLifecycle(
+    userSession: UserSession,
+    stream: ManagedStreamState,
+  ): StreamLifecycleController {
+    let lifecycle = this.lifecycleControllers.get(stream.streamId);
+    if (lifecycle) {
+      return lifecycle;
+    }
 
-    const userSession = this.getUserSession(userId);
-    if (!userSession || userSession.websocket?.readyState !== WebSocket.OPEN) {
+    lifecycle = new StreamLifecycleController(
+      {
+        logger: this.logger.child({
+          streamId: stream.streamId,
+          userId: stream.userId,
+        }),
+        streamId: stream.streamId,
+        keepAliveIntervalMs: KEEP_ALIVE_INTERVAL_MS,
+        ackTimeoutMs: ACK_TIMEOUT_MS,
+        maxMissedAcks: MAX_MISSED_ACKS,
+        shouldSendKeepAlive: () =>
+          !!userSession.websocket &&
+          userSession.websocket.readyState === WebSocket.OPEN,
+      },
+      {
+        sendKeepAlive: (ackId) =>
+          this.sendKeepAliveMessage(userSession, stream.streamId, ackId),
+        onTimeout: () => this.onLifecycleTimeout(userSession, stream),
+        onKeepAliveSent: (ackId) => {
+          this.logger.debug(
+            { userId: stream.userId, streamId: stream.streamId, ackId },
+            "Sent keep-alive for managed stream",
+          );
+        },
+        onKeepAliveAcked: (ackId, ageMs) => {
+          this.logger.debug(
+            { userId: stream.userId, streamId: stream.streamId, ackId, ageMs },
+            "Received keep-alive ACK for managed stream",
+          );
+        },
+        onKeepAliveMissed: (ackId, ageMs, missedCount) => {
+          this.logger.warn(
+            {
+              userId: stream.userId,
+              streamId: stream.streamId,
+              ackId,
+              ageMs,
+              missedAcks: missedCount,
+            },
+            "Keep-alive ACK missed for managed stream",
+          );
+        },
+      },
+    );
+
+    this.lifecycleControllers.set(stream.streamId, lifecycle);
+    return lifecycle;
+  }
+
+  private async sendKeepAliveMessage(
+    userSession: UserSession,
+    streamId: string,
+    ackId: string,
+  ): Promise<void> {
+    if (
+      !userSession.websocket ||
+      userSession.websocket.readyState !== WebSocket.OPEN
+    ) {
       this.logger.warn(
-        { userId },
-        "Cannot send keep-alive - WebSocket not connected",
+        { streamId, sessionId: userSession.sessionId },
+        "Cannot send keep-alive because WebSocket is not open",
       );
       return;
     }
 
-    // Short ACK ID for BLE efficiency
-    const ackId = `a${Date.now().toString(36).slice(-5)}`;
     const message: KeepRtmpStreamAlive = {
       type: CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE,
-      streamId: keepAlive.streamId,
+      streamId,
       ackId,
     };
-
-    // Set up ACK timeout
-    const timeout = setTimeout(() => {
-      keepAlive.pendingAcks.delete(ackId);
-      keepAlive.missedAcks++;
-
-      this.logger.warn(
-        {
-          userId,
-          ackId,
-          missedAcks: keepAlive.missedAcks,
-        },
-        "Keep-alive ACK timeout for managed stream",
-      );
-
-      if (keepAlive.missedAcks >= MAX_MISSED_ACKS) {
-        this.logger.error(
-          { userId },
-          "Max missed ACKs reached - cleaning up dead stream",
-        );
-
-        // Get user session and clean up the stream
-        const userSession = this.getUserSession(userId);
-        const stream = this.stateManager.getStreamState(userId);
-
-        if (userSession && stream && stream.type === "managed") {
-          // Clean up the stream (this will stop keep-alive)
-          this.cleanupManagedStream(userSession, userId, stream).catch(
-            (err) => {
-              this.logger.error(
-                { userId, error: err },
-                "Error cleaning up stream after max missed ACKs",
-              );
-            },
-          );
-        }
-      }
-    }, ACK_TIMEOUT_MS);
-
-    keepAlive.pendingAcks.set(ackId, {
-      sentAt: new Date(),
-      timeout,
-    });
 
     userSession.websocket.send(JSON.stringify(message));
   }
 
-  /**
-   * Stop keep-alive timer
-   */
-  private stopKeepAlive(userId: string): void {
-    const keepAlive = this.managedKeepAlive.get(userId);
-    if (!keepAlive) return;
+  private async onLifecycleTimeout(
+    userSession: UserSession,
+    stream: ManagedStreamState,
+  ): Promise<void> {
+    this.logger.error(
+      { userId: stream.userId, streamId: stream.streamId },
+      "Managed stream timed out after missed keep-alive ACKs",
+    );
 
-    if (keepAlive.keepAliveTimer) {
-      clearInterval(keepAlive.keepAliveTimer);
+    await this.cleanupManagedStream(userSession, stream.userId, stream, {
+      status: "error",
+      message: "Stream timed out waiting for keep-alive",
+    });
+  }
+
+  private disposeLifecycle(streamId: string): void {
+    const lifecycle = this.lifecycleControllers.get(streamId);
+    if (lifecycle) {
+      lifecycle.dispose();
+      this.lifecycleControllers.delete(streamId);
     }
+  }
 
-    // Clear pending ACKs
-    for (const [, ackInfo] of keepAlive.pendingAcks) {
-      clearTimeout(ackInfo.timeout);
+  private disposeLifecycleForUser(userId: string): void {
+    for (const [streamId, controller] of this.lifecycleControllers) {
+      const stream = this.stateManager.getStreamByStreamId(streamId);
+      if (!stream || stream.userId === userId) {
+        controller.dispose();
+        this.lifecycleControllers.delete(streamId);
+      }
     }
-
-    this.managedKeepAlive.delete(userId);
   }
 
   /**
@@ -1281,15 +1330,37 @@ export class ManagedStreamingExtension {
   private async cleanupManagedStream(
     userSession: UserSession,
     userId: string,
-    stream: any,
+    stream: ManagedStreamState,
+    options?: { status?: ManagedStreamStatus["status"]; message?: string },
   ): Promise<void> {
     this.logger.info(
       { userId, streamId: stream.streamId },
       "Cleaning up managed stream",
     );
 
-    // Stop keep-alive
-    this.stopKeepAlive(userId);
+    this.disposeLifecycle(stream.streamId);
+
+    const status = options?.status ?? "stopped";
+    const message = options?.message;
+
+    // Notify all active viewers before removing stream state
+    const viewers = Array.from(stream.activeViewers);
+    for (const viewerPackage of viewers) {
+      try {
+        await this.sendManagedStreamStatus(
+          userSession,
+          viewerPackage,
+          stream.streamId,
+          status,
+          message,
+        );
+      } catch (error) {
+        this.logger.warn(
+          { streamId: stream.streamId, viewerPackage, error },
+          "Failed to notify viewer about managed stream cleanup",
+        );
+      }
+    }
 
     // Stop polling for URLs if still active
     const pollInterval = this.pollingIntervals.get(userId);
@@ -1319,15 +1390,6 @@ export class ManagedStreamingExtension {
         this.lastSentStatus.delete(key);
       }
     }
-
-    // No Cloudflare cleanup needed
-  }
-
-  /**
-   * Get user session by userId
-   */
-  private getUserSession(userId: string): UserSession | undefined {
-    return UserSession.getById(userId) || undefined;
   }
 
   /**
@@ -1335,10 +1397,10 @@ export class ManagedStreamingExtension {
    */
   private async performCleanup(): Promise<void> {
     try {
-      // Clean up inactive streams
       const removedUsers = this.stateManager.cleanupInactiveStreams(60);
-
-      // No Cloudflare cleanup needed
+      for (const userId of removedUsers) {
+        this.disposeLifecycleForUser(userId);
+      }
 
       this.logger.info(
         {
@@ -1355,18 +1417,16 @@ export class ManagedStreamingExtension {
    * Dispose of all resources
    */
   dispose(): void {
-    // Stop all keep-alive timers
-    for (const userId of this.managedKeepAlive.keys()) {
-      this.stopKeepAlive(userId);
+    for (const lifecycle of this.lifecycleControllers.values()) {
+      lifecycle.dispose();
     }
+    this.lifecycleControllers.clear();
 
-    // Stop all polling intervals
-    for (const [userId, interval] of this.pollingIntervals) {
+    for (const [, interval] of this.pollingIntervals) {
       clearInterval(interval);
     }
     this.pollingIntervals.clear();
 
-    // Clear last sent status tracking
     this.lastSentStatus.clear();
 
     this.logger.info("ManagedStreamingExtension disposed");

@@ -1,14 +1,14 @@
-import React, {useCallback} from "react"
-import {GalleryScreen} from "../../components/glasses/Gallery/GalleryScreen"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useFocusEffect} from "expo-router"
-import {BackHandler, View, ViewStyle} from "react-native"
-import {Header, Screen} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
+import {useCallback} from "react"
+import {BackHandler} from "react-native"
+
+import {GalleryScreen} from "@/components/glasses/Gallery/GalleryScreen"
+import {Screen} from "@/components/ignite"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function AsgGallery() {
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const {goBack} = useNavigationHistory()
 
   const handleGoBack = useCallback(() => {
@@ -25,17 +25,8 @@ export default function AsgGallery() {
   )
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.lg}}>
+    <Screen preset="fixed">
       <GalleryScreen />
     </Screen>
   )
 }
-
-const $screenContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
-  flex: 1,
-  backgroundColor: colors.background,
-})
-
-const $container: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-})

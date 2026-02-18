@@ -1,55 +1,43 @@
-// cloud/src/api/client/feedback.routes.ts
+// cloud/src/api/client/feedback.api.ts
 // API endpoints for sending user feedback
 
 import { Router, Request, Response } from "express";
-import { logger } from "../../services/logging/pino-logger";
 import * as FeedbackService from "../../services/client/feedback.service";
-import { authWithUser, RequestWithUser } from "../../middleware/client/client-auth-middleware";
+import {
+  clientAuthWithEmail,
+  RequestWithEmail,
+} from "../middleware/client.middleware";
 
 const router = Router();
 
 // API Endpoints // /api/client/feedback*
-router.post("/", authWithUser, submitFeedback);
-router.post("/test", authWithUser, submitFeedbackTest);
+router.post("/", clientAuthWithEmail, submitFeedback);
 
 // Handler functions
 // Get all settings for a user
 async function submitFeedback(req: Request, res: Response) {
-  const user = (req as RequestWithUser).user;
+  const _req = req as RequestWithEmail;
+  const email = _req.email;
   try {
-    const feedback = await FeedbackService.submitFeedback(user.email, req.body.feedback);
+    const feedback = await FeedbackService.submitFeedback(
+      email,
+      req.body.feedback,
+    );
     res.json({
       success: true,
       data: { feedback },
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   } catch (error) {
-    logger.error(error, `Error submitting feedback for user ${user.email}`,);
+    _req.logger.error(error, `Error submitting feedback for user ${email}`);
     res.status(500).json({
       success: false,
       message: "Failed to submit feedback",
-      timestamp: new Date()
-    });
-  }
-}
-
-async function submitFeedbackTest(req: Request, res: Response) {
-  const email = "test@mentra.glass";
-  try {
-    const feedback = await FeedbackService.submitFeedback(email, req.body.feedback);
-    res.json({
-      success: true,
-      data: { feedback },
-      timestamp: new Date()
-    });
-  } catch (error) {
-    logger.error(error, `Error submitting feedback for user ${email}`,);
-    res.status(500).json({
-      success: false,
-      message: "Failed to submit feedback",
-      timestamp: new Date()
+      timestamp: new Date(),
     });
   }
 }
 
 export default router;
+
+console.log("testing");

@@ -118,8 +118,8 @@ static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
         .name = "A6N Projector 640x480", 
         .width = 640, .height = 480,
         .layout = {
-            .margin_left = 80, .margin_top = 200, .padding = 8, .border_width = 2,
-            .usable_width = 480, .usable_height = 480
+            .margin_left = 80, .margin_top = 80, .padding = 8, .border_width = 2,
+            .usable_width = 480, .usable_height = 320
         },
         .fonts = {
             .primary = &lv_font_montserrat_14,    // Use 14 instead of 30 (not available)

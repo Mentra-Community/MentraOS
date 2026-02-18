@@ -1,82 +1,57 @@
+import {getAllColors} from "./colorTools"
+
 const palette = {
-  // Neutrals
-  neutral100: "#FFFFFF",
-  neutral200: "#F4F2F1",
-  neutral300: "#D7CEC9",
-  neutral400: "#B6ACA6",
+  neutral900: "#fffaf0",
+  neutral800: "#F4F2F1",
+  neutral700: "#D7CEC9",
+  neutral600: "#F5F5F5",
   neutral500: "#978F8A",
-  neutral600: "#564E4A",
-  neutral700: "#3C3836",
-  neutral800: "#191015",
-  neutral900: "#000000",
+  neutral400: "#564E4A",
+  neutral300: "#3C3836",
+  neutral200: "#222222",
+  neutral100: "#000000",
 
   // Primary
-  primary100: "#DCDDE9",
-  primary200: "#E0E0E0",
-  primary300: "#9196B9",
-  primary400: "#626894",
-  primary500: "#41476E",
-  primary600: "#21476E",
+  primary900: "#F4E0D9",
+  primary800: "#E6D0E0",
+  primary700: "#D8C0E7",
+  primary600: "#C4B0EE",
+  primary500: "#00B869",
+  primary400: "#8070DE",
+  primary300: "#6054D6",
+  primary200: "#4040CE",
+  primary100: "#2030C6",
 
   // Secondary
-  secondary100: "#DCDDE9",
-  secondary200: "#BCC0D6",
+  secondary900: "#F0F0F5",
+  secondary800: "#E6E7F0",
+  secondary700: "#DCDDE9",
+  secondary600: "#CCD0E0",
+  secondary500: "#BCC0D6",
+  secondary400: "#A6ABCC",
   secondary300: "#9196B9",
-  secondary400: "#626894",
-  secondary500: "#41476E",
+  secondary200: "#626894",
+  secondary100: "#41476E",
 
   // Accent
-  accent100: "#FFEED4",
-  accent200: "#FFE1B2",
-  accent300: "#FDD495",
-  accent400: "#FBC878",
-  accent500: "#FFBB50",
+  accent900: "#FFF8F0",
+  accent800: "#FFF4E6",
+  accent700: "#FFEED4",
+  accent600: "#FFE6C2",
+  accent500: "#FFDEB0",
+  accent400: "#FFD49E",
+  accent300: "#FFCA8C",
+  accent200: "#FFC07A",
+  accent100: "#FFB668",
 
   // Angry/Error
   angry100: "#F2D6CD",
   angry500: "#C03403",
-  angry600: "#FE98EB",
-
-  // Blues
-  blue100: "#E3F2FD",
-  blue200: "#BBDEFB",
-  blue300: "#90CAF9",
-  blue400: "#42A5F5",
-  blue500: "#2196F3",
-  blue600: "#1976D2",
-  blue700: "#1565C0",
-  blue800: "#0D47A1",
-
-  // Grays
-  gray100: "#F5F5F5",
-  gray200: "#EEEEEE",
-  gray300: "#E0E0E0",
-  gray350: "#CECECE",
-  gray400: "#BDBDBD",
-  gray500: "#9E9E9E",
-  gray600: "#757575",
-  gray700: "#616161",
-  gray800: "#424242",
-  gray900: "#212121",
-  lightGray: "#CCCCCC",
-  mediumGray: "#999999",
+  angry600: "#FC7DE3",
 
   // Success
-  success100: "#22C55E",
-  success500: "#4CAF50",
-
-  // Overlays
-  overlay90: "rgba(0, 0, 0, 0.9)",
-  overlay70: "rgba(0, 0, 0, 0.7)",
-  overlay60: "rgba(0, 0, 0, 0.6)",
-  overlay40: "rgba(0, 0, 0, 0.4)",
-  overlay30: "rgba(0, 0, 0, 0.3)",
-  overlay20: "rgba(25, 16, 21, 0.2)",
-  overlay10: "rgba(0, 0, 0, 0.1)",
-  overlay50: "rgba(25, 16, 21, 0.5)",
-  whiteOverlay90: "rgba(255, 255, 255, 0.9)",
-  whiteOverlay85: "rgba(255, 255, 255, 0.85)",
-  whiteOverlay70: "rgba(255, 255, 255, 0.7)",
+  success500: "#22C55E",
+  success100: "#4CAF50",
 
   // Pure colors
   black: "#000000",
@@ -84,13 +59,7 @@ const palette = {
   transparent: "rgba(0, 0, 0, 0)",
 
   // Additional unique colors
-  lightBackground: "#F9F9F9",
   blueTintedWhite: "#F8FAFF",
-  borderGray: "#E4E8EE",
-  darkGalleryBg: "#121212",
-  lightGalleryBg: "#f0f0f0",
-  warmGradient1: "#F5E6D3",
-  warmGradient2: "#FEFCFA",
   purpleBlue1: "#4340D3",
   purpleBlue2: "#06114D",
   purpleBlue3: "#4240D1",
@@ -108,203 +77,125 @@ const palette = {
   warningPink: "rgba(254, 152, 235, 0.2)",
   warningPinkStrong: "rgba(254, 152, 235, 0.4)",
   warningPinkBorder: "rgba(254, 152, 235, 0.16)",
+
+  // special:
   tagBackground: "rgba(66, 64, 209, 0.1)",
 } as const
 
-const semantic = {
-  // Tab bar colors
-  tabBarGradientStart: palette.blueTintedWhite,
-  tabBarGradientEnd: palette.blueTintedWhite,
-  altTabBarGradientStart: palette.warmGradient1,
-  altTabBarGradientEnd: palette.warmGradient2,
-
-  // Button gradients
-  buttonGradientStart: palette.purpleBlue1,
-  buttonGradientEnd: palette.purpleBlue2,
-
-  // Warning colors
-  warningBackground: palette.warningPink,
-  warningBackgroundDestructive: palette.warningPinkStrong,
-  warningBorderDestructive: palette.warningPinkBorder,
-  warningPink: palette.angry600,
-
-  // Input states
-  inputBorderHighlight: palette.mediumBlue,
-
-  // Button pill variants
-  buttonPillPrimary: palette.purpleBlue4,
-  buttonPillSecondary: palette.transparent,
-  buttonPillSecondaryBorder: palette.purpleBlue3,
-  buttonPillIcon: palette.primary200,
-  buttonPillPrimaryText: palette.white,
-  buttonPillSecondaryText: palette.darkText1,
-  buttonPillIconText: palette.darkText2,
-
-  // Gallery
-  galleryBg: palette.lightGalleryBg,
+const unique = {
+  backgroundStart: palette.neutral900,
+  backgroundEnd: palette.neutral800,
 
   // Switch/toggle states
   switchTrackOff: palette.lightPurple1,
   switchTrackOn: palette.purpleBlue7,
-  switchThumb: palette.neutral100,
-  switchThumbOn: palette.neutral100,
-  switchThumbOff: palette.neutral100,
+  switchThumb: palette.neutral900,
+  switchThumbOn: palette.neutral900,
+  switchThumbOff: palette.neutral900,
   switchBorder: palette.purpleBlue3,
-  switchBorderWidth: 2,
 
   // Slider states
-  sliderThumb: palette.gray700,
-  sliderTrackActive: palette.primary300,
-  sliderTrackInactive: palette.neutral300,
-
-  // Tab bar states
-  tabBarIconActive: palette.purpleBlue3,
-  tabBarTextActive: palette.purpleBlue5,
-  tabBarIconInactive: palette.purpleGray1,
-  tabBarTextInactive: palette.purpleGray2,
-
-  // List items
-  chevron: palette.purpleGray3,
-
-  // Tags
-  foregroundTagBackground: palette.tagBackground,
-  foregroundTagText: palette.purpleBlue6,
-
-  // Status indicators
-  statusIcon: palette.purpleGray1,
-  statusText: palette.darkText1,
-
-  // Checkmark
-  checkmark: palette.blue500,
-
-  // Search
-  searchIcon: palette.purpleBlue3,
-
-  // Backgrounds
-  backgroundGradient1: palette.neutral600,
-  backgroundGradient2: palette.primary100,
-  loginGradientStart: palette.blue100,
-  loginGradientEnd: palette.neutral100,
+  sliderThumb: palette.neutral300,
+  sliderTrackActive: palette.primary500,
+  sliderTrackInactive: palette.neutral700,
 } as const
+
+const design = {
+  ...getAllColors("light mode"),
+}
 
 export const colors = {
   palette,
-  transparent: palette.transparent,
-  trueBlack: palette.black,
-  trueWhite: palette.white,
 
   // Text colors
-  text: palette.neutral900,
-  textDim: palette.neutral700,
-  textAlt: palette.neutral200,
+  text: palette.neutral100,
+  textDim: palette.neutral300,
+  textAlt: palette.neutral800,
 
   // Backgrounds
-  background: palette.lightBackground,
-  modalBackground: palette.neutral100,
-  galleryBackground: semantic.galleryBg,
-  fullscreenBackground: palette.neutral900,
-  backgroundGradient1: semantic.backgroundGradient1,
-  backgroundGradient2: semantic.backgroundGradient2,
+  // background: palette.white,
+  backgroundAlt: palette.neutral600,
+  backgroundNeo: palette.neutral900,
+  modalOverlay: "rgba(0, 0, 0, 0.7)",
 
   // Borders
-  border: palette.borderGray,
-  borderLight: palette.overlay10,
+  // border: palette.neutral700,
 
   // Primary colors
   tint: palette.primary500,
-  tintInactive: palette.neutral300,
-  separator: palette.neutral300,
+  // tintInactive: palette.neutral700,
+  buttonIconBackground: palette.neutral700, // Icon pill buttons - same as tintInactive for light theme
+  separator: palette.neutral700,
 
   // Error states
   error: palette.angry500,
   errorBackground: palette.angry100,
-
-  // Login screen
-  loginGradientStart: semantic.loginGradientStart,
-  loginGradientEnd: semantic.loginGradientEnd,
-
-  // Buttons
-  buttonPrimary: semantic.buttonPillPrimary,
-  buttonSecondary: palette.blue500,
-  buttonDisabled: palette.lightGray,
-  buttonDanger: palette.angry500,
-  buttonPressed: palette.gray200,
-
-  // Button gradients
-  buttonGradientStart: semantic.buttonGradientStart,
-  buttonGradientEnd: semantic.buttonGradientEnd,
-
-  // Pill buttons
-  buttonPillPrimary: semantic.buttonPillPrimary,
-  buttonPillSecondary: semantic.buttonPillSecondary,
-  buttonPillSecondaryBorder: semantic.buttonPillSecondaryBorder,
-  buttonPillIcon: semantic.buttonPillIcon,
-  buttonPillPrimaryText: semantic.buttonPillPrimaryText,
-  buttonPillSecondaryText: semantic.buttonPillSecondaryText,
-  buttonPillIconText: semantic.buttonPillIconText,
-
-  // Overlays
-  modalOverlay: palette.overlay70,
-  fullscreenOverlay: palette.overlay60,
-  pickerBackground: palette.whiteOverlay70,
-
-  // Success states
   success: palette.success500,
+  warning: palette.accent300,
 
-  // Switch/toggle
-  switchTrackOff: semantic.switchTrackOff,
-  switchTrackOn: semantic.switchTrackOn,
-  switchThumb: semantic.switchThumb,
-  switchThumbOn: semantic.switchThumbOn,
-  switchThumbOff: semantic.switchThumbOff,
-  switchBorder: semantic.switchBorder,
-  switchBorderWidth: semantic.switchBorderWidth,
+  // Common:
+  // primary: palette.primary500,
+  // secondary: palette.secondary600,
+  // accent: palette.accent500,
 
-  // Icons
-  icon: palette.neutral800,
-  iconSecondary: palette.neutral700,
+  // Iconography
+  icon: palette.neutral100,
+  iconSecondary: palette.neutral300,
 
-  // Tab bar
-  tabBarBackground1: semantic.tabBarGradientStart,
-  tabBarBackground2: semantic.tabBarGradientEnd,
-  tabBarBackground: palette.blueTintedWhite,
-  altTabBarBackground1: semantic.altTabBarGradientStart,
-  altTabBarBackground2: semantic.altTabBarGradientEnd,
-  tabBarIconActive: semantic.tabBarIconActive,
-  tabBarTextActive: semantic.tabBarTextActive,
-  tabBarIconInactive: semantic.tabBarIconInactive,
-  tabBarTextInactive: semantic.tabBarTextInactive,
+  // Status chips
+  statusIcon: palette.secondary200,
+  statusText: palette.neutral100,
 
-  // Gallery
-  galleryLoadingIndicator: palette.blue500,
+  ...unique,
 
-  // Warning states
-  warningBackground: semantic.warningBackground,
-  warningBackgroundDestructive: semantic.warningBackgroundDestructive,
-  warningBorderDestructive: semantic.warningBorderDestructive,
+  ...design,
 
-  // Input states
-  inputBorderHighlight: semantic.inputBorderHighlight,
+  // defined here so auto-complete works:
+  primary: design.primary,
+  primary_foreground: design.primary_foreground,
 
-  // Checkmark
-  checkmark: semantic.checkmark,
+  ring: design.ring,
 
-  // Slider
-  sliderThumb: semantic.sliderThumb,
-  sliderTrackActive: semantic.sliderTrackActive,
-  sliderTrackInactive: semantic.sliderTrackInactive,
+  input: design.input,
+  border: design.border,
 
-  // Chevron
-  chevron: semantic.chevron,
+  secondary: design.secondary,
+  secondary_foreground: design.secondary_foreground,
 
-  // Tags
-  foregroundTagBackground: semantic.foregroundTagBackground,
-  foregroundTagText: semantic.foregroundTagText,
+  muted: design.muted,
+  muted_foreground: design.muted_foreground,
 
-  // Status indicators
-  statusIcon: semantic.statusIcon,
-  statusText: semantic.statusText,
+  accent: design.accent,
+  accent_foreground: design.accent_foreground,
 
-  // Search
-  searchIcon: semantic.searchIcon,
+  destructive: design.destructive,
+  destructive_foreground: design.destructive_foreground,
+
+  background: design.background,
+  foreground: design.foreground,
+
+  card: design.card,
+  card_foreground: design.card_foreground,
+
+  popover: design.popover,
+  popover_foreground: design.popover_foreground,
+
+  chart_1: design.chart_1,
+  chart_2: design.chart_2,
+  chart_3: design.chart_3,
+  chart_4: design.chart_4,
+  chart_5: design.chart_5,
+
+  sidebar: design.sidebar,
+  sidebar_foreground: design.sidebar_foreground,
+
+  sidebar_primary: design.sidebar_primary,
+  sidebar_primary_foreground: design.sidebar_primary_foreground,
+
+  sidebar_accent: design.sidebar_accent,
+  sidebar_accent_foreground: design.sidebar_accent_foreground,
+
+  sidebar_border: design.sidebar_border,
+  sidebar_ring: design.sidebar_ring,
+  background_color: design.background_color,
 } as const

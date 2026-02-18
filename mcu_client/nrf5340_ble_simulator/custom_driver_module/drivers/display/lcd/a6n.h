@@ -216,6 +216,8 @@ void a6n_power_on(void);
 
 void a6n_power_off(void);
 
+void a6n_io_off(void);
+
 int a6n_set_mirror(mirror_mode_t mode);
 
 int a6n_clear_screen(bool color_on);

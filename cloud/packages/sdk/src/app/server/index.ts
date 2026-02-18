@@ -6,24 +6,42 @@
  */
 import express, { type Express } from "express";
 import path from "path";
+import fs from "fs";
 import { AppSession } from "../session/index";
 import { createAuthMiddleware } from "../webview";
+import { newSDKUpdate } from "../../constants/log-messages/updates";
+
 import {
   WebhookRequest,
-  WebhookRequestType,
   WebhookResponse,
   SessionWebhookRequest,
   StopWebhookRequest,
-  isSessionWebhookRequest,
-  isStopWebhookRequest,
   ToolCall,
+  WebhookRequestType,
 } from "../../types";
+
 import { Logger } from "pino";
 import { logger as rootLogger } from "../../logging/logger";
 import axios from "axios";
+import { PhotoData } from "../../types/photo-data";
 
-export const GIVE_APP_CONTROL_OF_TOOL_RESPONSE: string =
-  "GIVE_APP_CONTROL_OF_TOOL_RESPONSE";
+export const GIVE_APP_CONTROL_OF_TOOL_RESPONSE: string = "GIVE_APP_CONTROL_OF_TOOL_RESPONSE";
+
+/**
+ * Pending photo request stored at AppServer level
+ * This allows O(1) lookup when photo uploads arrive via HTTP,
+ * and survives session reconnections.
+ * See: cloud/issues/019-sdk-photo-request-architecture
+ */
+export interface PendingPhotoRequest {
+  userId: string;
+  sessionId: string;
+  session: AppSession;
+  resolve: (photo: PhotoData) => void;
+  reject: (error: Error) => void;
+  timestamp: number;
+  timeoutId?: NodeJS.Timeout;
+}
 
 /**
  * 🔧 Configuration options for App Server
@@ -45,6 +63,9 @@ export interface AppServerConfig {
   apiKey: string;
   /** 🌐 Port number for the server (default: 7010) */
   port?: number;
+
+  /** Cloud API URL (default: 'api.mentra.glass') */
+  cloudApiUrl?: string;
 
   /** 🛣️ [DEPRECATED] do not set: The SDK will automatically expose an endpoint at '/webhook' */
   webhookPath?: string;
@@ -106,6 +127,16 @@ export class AppServer {
   private cleanupHandlers: Array<() => void> = [];
   /** App instructions string shown to the user */
   private appInstructions: string | null = null;
+  /**
+   * Pending photo requests by requestId - owned by AppServer for HTTP endpoint access.
+   * This is the single source of truth for pending photo requests.
+   * Stored here (not on CameraModule) because:
+   * 1. Photo uploads arrive via HTTP to AppServer, not via WebSocket to session
+   * 2. Allows O(1) lookup by requestId instead of iterating all sessions
+   * 3. Survives session reconnections (session may be removed from activeSessions temporarily)
+   * See: cloud/issues/019-sdk-photo-request-architecture
+   */
+  private pendingPhotoRequests = new Map<string, PendingPhotoRequest>();
 
   public readonly logger: Logger;
 
@@ -131,10 +162,7 @@ export class AppServer {
 
     const cookieParser = require("cookie-parser");
     this.app.use(
-      cookieParser(
-        this.config.cookieSecret ||
-          `AOS_${this.config.packageName}_${this.config.apiKey.substring(0, 8)}`,
-      ),
+      cookieParser(this.config.cookieSecret || `AOS_${this.config.packageName}_${this.config.apiKey.substring(0, 8)}`),
     );
 
     // Apply authentication middleware
@@ -146,8 +174,7 @@ export class AppServer {
           return this.activeSessionsByUserId.get(userId) || null;
         },
         cookieSecret:
-          this.config.cookieSecret ||
-          `AOS_${this.config.packageName}_${this.config.apiKey.substring(0, 8)}`,
+          this.config.cookieSecret || `AOS_${this.config.packageName}_${this.config.apiKey.substring(0, 8)}`,
       }) as any,
     );
 
@@ -179,18 +206,10 @@ export class AppServer {
    * @param sessionId - Unique identifier for this session
    * @param userId - User's identifier
    */
-  protected async onSession(
-    session: AppSession,
-    sessionId: string,
-    userId: string,
-  ): Promise<void> {
-    this.logger.info(
-      `🚀 Starting new session handling for session ${sessionId} and user ${userId}`,
-    );
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+    this.logger.info(`🚀 Starting new session handling for session ${sessionId} and user ${userId}`);
     // Core session handling logic (onboarding removed)
-    this.logger.info(
-      `✅ Session handling completed for session ${sessionId} and user ${userId}`,
-    );
+    this.logger.info(`✅ Session handling completed for session ${sessionId} and user ${userId}`);
   }
 
   /**
@@ -202,14 +221,8 @@ export class AppServer {
    * @param userId - User's identifier
    * @param reason - Reason for stopping
    */
-  protected async onStop(
-    sessionId: string,
-    userId: string,
-    reason: string,
-  ): Promise<void> {
-    this.logger.debug(
-      `Session ${sessionId} stopped for user ${userId}. Reason: ${reason}`,
-    );
+  protected async onStop(sessionId: string, userId: string, reason: string): Promise<void> {
+    this.logger.debug(`Session ${sessionId} stopped for user ${userId}. Reason: ${reason}`);
 
     // Default implementation: close the session if it exists
     const session = this.activeSessions.get(sessionId);
@@ -242,15 +255,58 @@ export class AppServer {
    */
   public start(): Promise<void> {
     return new Promise((resolve) => {
-      this.app.listen(this.config.port, () => {
-        this.logger.info(
-          `🎯 App server running at http://localhost:${this.config.port}`,
-        );
+      this.app.listen(this.config.port, async () => {
+        this.logger.info(`🎯 App server running at http://localhost:${this.config.port}`);
         if (this.config.publicDir) {
-          this.logger.info(
-            `📂 Serving static files from ${this.config.publicDir}`,
-          );
+          this.logger.info(`📂 Serving static files from ${this.config.publicDir}`);
         }
+
+        // 🔑 Grab SDK version
+        try {
+          // Look for the actual installed @mentra/sdk package.json in node_modules
+          const sdkPkgPath = path.resolve(process.cwd(), "node_modules/@mentra/sdk/package.json");
+
+          let currentVersion = "unknown";
+
+          if (fs.existsSync(sdkPkgPath)) {
+            const sdkPkg = JSON.parse(fs.readFileSync(sdkPkgPath, "utf-8"));
+
+            // Get the actual installed version
+            currentVersion = sdkPkg.version || "not-found"; // located in the node module
+          } else {
+            this.logger.debug({ sdkPkgPath }, "No @mentra/sdk package.json found at path");
+          }
+
+          // this.logger.debug(`Developer is using SDK version: ${currentVersion}`);
+
+          // Fetch latest SDK version from the API endpoint
+          let latest: string | null = null;
+          try {
+            const cloudHost = "api.mentra.glass";
+            const response = await axios.get(
+              `https://${cloudHost}/api/sdk/version`,
+              { timeout: 3000 }, // 3 second timeout
+            );
+            if (response.data && response.data.success && response.data.data) {
+              latest = response.data.data.latest;
+            }
+          } catch {
+            this.logger.debug(
+              "Failed to fetch latest SDK version - skipping version check (offline or API unavailable)",
+            );
+          }
+
+          if (currentVersion === "not-found") {
+            this.logger.warn(
+              `⚠️ @mentra/sdk not found in your project dependencies. Please install it with: npm install @mentra/sdk`,
+            );
+          } else if (latest && latest !== currentVersion) {
+            this.logger.warn(newSDKUpdate(latest));
+          }
+        } catch (err) {
+          this.logger.error(err, "Version check failed");
+        }
+
         resolve();
       });
     });
@@ -260,9 +316,9 @@ export class AppServer {
    * 🛑 Stop the Server
    * Gracefully shuts down the server and cleans up all sessions.
    */
-  public stop(): void {
+  public async stop(): Promise<void> {
     this.logger.info("\n🛑 Shutting down...");
-    this.cleanup();
+    await this.cleanup();
     process.exit(0);
   }
 
@@ -275,11 +331,7 @@ export class AppServer {
    * @param secretKey - Secret key for signing the token
    * @returns JWT token string
    */
-  protected generateToken(
-    userId: string,
-    sessionId: string,
-    secretKey: string,
-  ): string {
+  protected generateToken(userId: string, sessionId: string, secretKey: string): string {
     const { createToken } = require("../token/utils");
     return createToken(
       {
@@ -316,11 +368,11 @@ export class AppServer {
         const webhookRequest = req.body as WebhookRequest;
 
         // Handle session request
-        if (isSessionWebhookRequest(webhookRequest)) {
+        if (webhookRequest.type === WebhookRequestType.SESSION_REQUEST) {
           await this.handleSessionRequest(webhookRequest, res);
         }
         // Handle stop request
-        else if (isStopWebhookRequest(webhookRequest)) {
+        else if (webhookRequest.type === WebhookRequestType.STOP_REQUEST) {
           await this.handleStopRequest(webhookRequest, res);
         }
         // Unknown webhook type
@@ -332,10 +384,7 @@ export class AppServer {
           } as WebhookResponse);
         }
       } catch (error) {
-        this.logger.error(
-          error,
-          "❌ Error handling webhook: " + (error as Error).message,
-        );
+        this.logger.error(error, "❌ Error handling webhook: " + (error as Error).message);
         res.status(500).json({
           status: "error",
           message: "Error handling webhook: " + (error as Error).message,
@@ -353,15 +402,11 @@ export class AppServer {
       try {
         const toolCall = req.body as ToolCall;
         if (this.activeSessionsByUserId.has(toolCall.userId)) {
-          toolCall.activeSession =
-            this.activeSessionsByUserId.get(toolCall.userId) || null;
+          toolCall.activeSession = this.activeSessionsByUserId.get(toolCall.userId) || null;
         } else {
           toolCall.activeSession = null;
         }
-        this.logger.info(
-          { body: req.body },
-          `🔧 Received tool call: ${toolCall.toolId}`,
-        );
+        this.logger.info({ body: req.body }, `🔧 Received tool call: ${toolCall.toolId}`);
         // Call the onToolCall handler and get the response
         const response = await this.onToolCall(toolCall);
 
@@ -375,10 +420,7 @@ export class AppServer {
         this.logger.error(error, "❌ Error handling tool call:");
         res.status(500).json({
           status: "error",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unknown error occurred calling tool",
+          message: error instanceof Error ? error.message : "Unknown error occurred calling tool",
         });
       }
     });
@@ -390,16 +432,46 @@ export class AppServer {
   /**
    * Handle a session request webhook
    */
-  private async handleSessionRequest(
-    request: SessionWebhookRequest,
-    res: express.Response,
-  ): Promise<void> {
-    const { sessionId, userId, mentraOSWebsocketUrl, augmentOSWebsocketUrl } =
-      request;
-    this.logger.info(
-      { userId },
-      `🗣️ Received session request for user ${userId}, session ${sessionId}\n\n`,
-    );
+  private async handleSessionRequest(request: SessionWebhookRequest, res: express.Response): Promise<void> {
+    const { sessionId, userId, mentraOSWebsocketUrl, augmentOSWebsocketUrl } = request;
+    this.logger.info({ userId }, `🗣️ Received session request for user ${userId}, session ${sessionId}\n\n`);
+
+    // Check for existing session (user might be switching clouds)
+    // If an existing session exists, we need to clean it up properly to avoid:
+    // 1. Orphaned sessions with open WebSockets
+    // 2. Cleanup handlers that corrupt the new session's map entries
+    // See: cloud/issues/018-app-disconnect-resurrection
+    const existingSession = this.activeSessions.get(sessionId);
+    if (existingSession) {
+      this.logger.info(
+        { sessionId, userId },
+        `🔄 Existing session found for ${sessionId} - sending OWNERSHIP_RELEASE and disconnecting before new connection`,
+      );
+
+      try {
+        // Send OWNERSHIP_RELEASE to tell the old cloud not to resurrect this app
+        // The old cloud will mark the app as DORMANT instead of trying to restart it
+        await existingSession.releaseOwnership("switching_clouds");
+      } catch (error) {
+        this.logger.warn(
+          { error, sessionId },
+          `⚠️ Failed to send OWNERSHIP_RELEASE to old session - continuing anyway`,
+        );
+      }
+
+      try {
+        // Disconnect the old session explicitly
+        existingSession.disconnect();
+      } catch (error) {
+        this.logger.warn({ error, sessionId }, `⚠️ Failed to disconnect old session - continuing anyway`);
+      }
+
+      // Remove from maps immediately (don't wait for cleanup handler)
+      this.activeSessions.delete(sessionId);
+      this.activeSessionsByUserId.delete(userId);
+
+      this.logger.info({ sessionId, userId }, `✅ Old session cleaned up, proceeding with new connection`);
+    }
 
     // Create new App session
     const session = new AppSession({
@@ -412,61 +484,101 @@ export class AppServer {
 
     // Setup session event handlers
     const cleanupDisconnect = session.events.onDisconnected((info) => {
+      // Determine if this is a permanent disconnect
+      // Permanent disconnects happen when:
+      // 1. User session ends (sessionEnded === true)
+      // 2. Reconnection attempts exhausted (permanent === true)
+      // 3. Clean WebSocket closure (1000/1001) - no reconnection will be attempted
+      // Temporary disconnects (abnormal closures like 1006 that trigger reconnection) should NOT remove session from maps
+      // See: cloud/issues/019-sdk-photo-request-architecture
+      let isPermanent = false;
+      let reason = "unknown";
+
       // Handle different disconnect info formats (string or object)
       if (typeof info === "string") {
         this.logger.info(`👋 Session ${sessionId} disconnected: ${info}`);
+        reason = info;
+        // String-only disconnects are typically temporary (e.g., "WebSocket closed")
+        isPermanent = false;
       } else {
         // It's an object with detailed disconnect information
         this.logger.info(
           `👋 Session ${sessionId} disconnected: ${info.message} (code: ${info.code}, reason: ${info.reason})`,
         );
+        reason = info.reason || info.message;
 
         // Check if this is a user session end event
         // This happens when the UserSession is disposed after 1 minute grace period
         if (info.sessionEnded === true) {
-          this.logger.info(
-            `🛑 User session ended for session ${sessionId}, calling onStop`,
-          );
+          this.logger.info(`🛑 User session ended for session ${sessionId}, calling onStop`);
+          isPermanent = true;
 
           // Call onStop with session end reason
           // This allows apps to clean up resources when the user's session ends
-          this.onStop(
-            sessionId,
-            userId,
-            "User session ended",
-          ).catch((error) => {
-            this.logger.error(
-              error,
-              `❌ Error in onStop handler for session end:`,
-            );
+          this.onStop(sessionId, userId, "User session ended").catch((error) => {
+            this.logger.error(error, `❌ Error in onStop handler for session end:`);
           });
         }
         // Check if this is a permanent disconnection after exhausted reconnection attempts
         else if (info.permanent === true) {
-          this.logger.info(
-            `🛑 Permanent disconnection detected for session ${sessionId}, calling onStop`,
-          );
-
-          // Keep track of the original session before removal
-          const session = this.activeSessions.get(sessionId);
+          this.logger.info(`🛑 Permanent disconnection detected for session ${sessionId}, calling onStop`);
+          isPermanent = true;
 
           // Call onStop with a reconnection failure reason
-          this.onStop(
-            sessionId,
-            userId,
-            `Connection permanently lost: ${info.reason}`,
-          ).catch((error) => {
-            this.logger.error(
-              error,
-              `❌ Error in onStop handler for permanent disconnection:`,
-            );
+          this.onStop(sessionId, userId, `Connection permanently lost: ${info.reason}`).catch((error) => {
+            this.logger.error(error, `❌ Error in onStop handler for permanent disconnection:`);
+          });
+        }
+        // Check if this is a clean WebSocket closure (1000/1001) that won't trigger reconnection
+        // These are intentional disconnects (app shutdown, manual stop, etc.)
+        // AppSession skips reconnection for these codes, so we must treat them as permanent
+        // to avoid zombie sessions in activeSessions map
+        else if (info.wasClean === true || info.code === 1000 || info.code === 1001) {
+          this.logger.info(
+            `🛑 Clean WebSocket closure for session ${sessionId} (code: ${info.code}), treating as permanent`,
+          );
+          isPermanent = true;
+
+          // Call onStop for clean disconnects too
+          this.onStop(sessionId, userId, `Clean disconnect: ${reason}`).catch((error) => {
+            this.logger.error(error, `❌ Error in onStop handler for clean disconnect:`);
           });
         }
       }
 
-      // Remove the session from active sessions in all cases
-      this.activeSessions.delete(sessionId);
-      this.activeSessionsByUserId.delete(userId);
+      // Only remove session and clean up photo requests on PERMANENT disconnects
+      // Temporary disconnects should leave the session in place so:
+      // 1. Photo uploads can still find the pending request
+      // 2. The session can be reused after reconnection
+      // See: cloud/issues/019-sdk-photo-request-architecture
+      if (isPermanent) {
+        // Remove the session from active sessions ONLY if this session is still the active one.
+        // This prevents a bug where an old session's cleanup handler deletes a newer session:
+        // 1. User switches from Cloud A to Cloud B
+        // 2. SDK creates sessionB, overwrites activeSessions[sessionId]
+        // 3. sessionA is orphaned but its cleanup handler still references sessionId
+        // 4. When Cloud A disposes, sessionA's cleanup fires and would delete sessionB
+        // By checking identity (===), we only delete if we're still the current session.
+        // See: cloud/issues/018-app-disconnect-resurrection
+        if (this.activeSessions.get(sessionId) === session) {
+          this.activeSessions.delete(sessionId);
+        } else {
+          this.logger.debug({ sessionId }, `🔄 Session ${sessionId} cleanup skipped - a newer session has taken over`);
+        }
+        if (this.activeSessionsByUserId.get(userId) === session) {
+          this.activeSessionsByUserId.delete(userId);
+        }
+
+        // Clean up any pending photo requests for this session
+        this.cleanupPhotoRequestsForSession(sessionId);
+      } else {
+        // Temporary disconnect - session stays in maps for reconnection
+        // Photo requests remain pending and can still be fulfilled
+        this.logger.debug(
+          { sessionId, reason },
+          `🔄 Temporary disconnect for session ${sessionId}, keeping in maps for reconnection`,
+        );
+      }
     });
 
     const cleanupError = session.events.onError((error) => {
@@ -494,14 +606,9 @@ export class AppServer {
   /**
    * Handle a stop request webhook
    */
-  private async handleStopRequest(
-    request: StopWebhookRequest,
-    res: express.Response,
-  ): Promise<void> {
+  private async handleStopRequest(request: StopWebhookRequest, res: express.Response): Promise<void> {
     const { sessionId, userId, reason } = request;
-    this.logger.info(
-      `\n\n🛑 Received stop request for user ${userId}, session ${sessionId}, reason: ${reason}\n\n`,
-    );
+    this.logger.info(`\n\n🛑 Received stop request for user ${userId}, session ${sessionId}, reason: ${reason}\n\n`);
 
     try {
       await this.onStop(sessionId, userId, reason);
@@ -547,15 +654,13 @@ export class AppServer {
           });
         }
 
-        this.logger.info(
-          `⚙️ Received settings update for user ${userIdForSettings}`,
-        );
+        this.logger.info(`⚙️ Received settings update for user ${userIdForSettings}`);
 
         // Find all active sessions for this user
         const userSessions: AppSession[] = [];
 
         // Look through all active sessions
-        this.activeSessions.forEach((session, sessionId) => {
+        this.activeSessions.forEach((session, _sessionId) => {
           // Check if the session has this userId (not directly accessible)
           // We're relying on the webhook handler to have already verified this
           if (session.userId === userIdForSettings) {
@@ -564,13 +669,9 @@ export class AppServer {
         });
 
         if (userSessions.length === 0) {
-          this.logger.warn(
-            `⚠️ No active sessions found for user ${userIdForSettings}`,
-          );
+          this.logger.warn(`⚠️ No active sessions found for user ${userIdForSettings}`);
         } else {
-          this.logger.info(
-            `🔄 Updating settings for ${userSessions.length} active sessions`,
-          );
+          this.logger.info(`🔄 Updating settings for ${userSessions.length} active sessions`);
         }
 
         // Update settings for all of the user's sessions
@@ -622,12 +723,40 @@ export class AppServer {
   /**
    * 🧹 Cleanup
    * Closes all active sessions and runs cleanup handlers.
+   * Does NOT release ownership - we want the cloud to resurrect when we come back up.
+   *
+   * OWNERSHIP_RELEASE should only be sent for:
+   * - switching_clouds: User moved to another cloud, don't compete
+   * - user_logout: User explicitly logged out
+   *
+   * NOT for clean_shutdown, because:
+   * - Server is restarting/redeploying
+   * - Cloud should resurrect the app (trigger webhook)
+   * - User expects their app to keep running
+   *
+   * See: cloud/issues/023-disposed-appsession-resurrection-bug
    */
-  private cleanup(): void {
-    // Close all active sessions
+  private async cleanup(): Promise<void> {
+    this.logger.info(`🔧 [LOCAL SDK] cleanup() called - NOT sending OWNERSHIP_RELEASE`);
+    // Close all active sessions WITHOUT releasing ownership
+    // This allows the cloud to resurrect apps when we come back up
     for (const [sessionId, session] of this.activeSessions) {
-      this.logger.info(`👋 Closing session ${sessionId}`);
-      session.disconnect();
+      this.logger.info(`👋 Closing session ${sessionId} (no ownership release - cloud will resurrect)`);
+      try {
+        // Just disconnect, don't release ownership
+        // The cloud will enter grace period and then resurrect via webhook
+        await session.disconnect({
+          releaseOwnership: false,
+        });
+      } catch (error) {
+        this.logger.error(error, `Error during cleanup of session ${sessionId}`);
+        // Still try to disconnect even if release fails
+        try {
+          await session.disconnect();
+        } catch {
+          // Ignore secondary errors
+        }
+      }
     }
     this.activeSessions.clear();
     this.activeSessionsByUserId.clear();
@@ -659,76 +788,181 @@ export class AppServer {
       },
     });
 
-    this.app.post(
-      "/photo-upload",
-      upload.single("photo"),
-      async (req: any, res: any) => {
-        try {
-          const { requestId, type } = req.body;
-          const photoFile = req.file;
+    this.app.post("/photo-upload", upload.single("photo"), async (req: any, res: any) => {
+      try {
+        const { requestId, type, success, errorCode, errorMessage } = req.body;
+        const photoFile = req.file;
 
-          this.logger.info(
-            { requestId, type },
-            `📸 Received photo upload: ${requestId}`,
-          );
+        this.logger.info(
+          { requestId, type, success, errorCode },
+          `📸 Received photo response: ${requestId} (type: ${type})`,
+        );
 
-          if (!photoFile) {
-            this.logger.error({ requestId }, "No photo file in upload");
-            return res.status(400).json({
-              success: false,
-              error: "No photo file provided",
-            });
-          }
-
-          if (!requestId) {
-            this.logger.error("No requestId in photo upload");
-            return res.status(400).json({
-              success: false,
-              error: "No requestId provided",
-            });
-          }
-
-          // Find the corresponding session that made this photo request
-          const session = this.findSessionByPhotoRequestId(requestId);
-          if (!session) {
-            this.logger.warn(
-              { requestId },
-              "No active session found for photo request",
-            );
-            return res.status(404).json({
-              success: false,
-              error: "No active session found for this photo request",
-            });
-          }
-
-          // Create photo data object
-          const photoData = {
-            buffer: photoFile.buffer,
-            mimeType: photoFile.mimetype,
-            filename: photoFile.originalname || "photo.jpg",
-            requestId,
-            size: photoFile.size,
-            timestamp: new Date(),
-          };
-
-          // Deliver photo to the session
-          session.camera.handlePhotoReceived(photoData);
-
-          // Respond to ASG client
-          res.json({
-            success: true,
-            requestId,
-            message: "Photo received successfully",
-          });
-        } catch (error) {
-          this.logger.error(error, "❌ Error handling photo upload");
-          res.status(500).json({
+        if (!requestId) {
+          this.logger.error("No requestId in photo response");
+          return res.status(400).json({
             success: false,
-            error: "Internal server error processing photo upload",
+            error: "No requestId provided",
           });
         }
-      },
+
+        // Direct O(1) lookup from AppServer's pending photo requests map
+        // This is the new architecture that survives session reconnections
+        // See: cloud/issues/019-sdk-photo-request-architecture
+        const pending = this.completePhotoRequest(requestId);
+        if (!pending) {
+          this.logger.warn(
+            { requestId, pendingCount: this.pendingPhotoRequests.size },
+            "📸 No pending request found for photo (may have timed out or session ended)",
+          );
+          return res.status(404).json({
+            success: false,
+            error: "No pending request found for this photo (may have timed out or session ended)",
+          });
+        }
+
+        // Handle error response (no photo file, but has error info)
+        if (type === "photo_error" || success === false) {
+          const errorMsg = errorMessage || "Unknown error occurred";
+          this.logger.info({ requestId, errorCode, errorMessage: errorMsg }, "📸 Photo error received");
+          pending.reject(new Error(`Photo capture failed: ${errorMsg} (code: ${errorCode || "UNKNOWN_ERROR"})`));
+
+          // Respond to ASG client
+          return res.json({
+            success: true,
+            requestId,
+            message: "Photo error received successfully",
+          });
+        }
+
+        // Handle successful photo upload
+        if (!photoFile) {
+          this.logger.error({ requestId }, "No photo file in successful upload");
+          pending.reject(new Error("No photo file provided for successful upload"));
+          return res.status(400).json({
+            success: false,
+            error: "No photo file provided for successful upload",
+          });
+        }
+
+        // Create photo data object and resolve the promise
+        const photoData: PhotoData = {
+          buffer: photoFile.buffer,
+          mimeType: photoFile.mimetype,
+          filename: photoFile.originalname || "photo.jpg",
+          requestId,
+          size: photoFile.size,
+          timestamp: new Date(),
+        };
+
+        this.logger.info(
+          { requestId, size: photoFile.size, mimeType: photoFile.mimetype },
+          "📸 Photo received successfully, resolving promise",
+        );
+        pending.resolve(photoData);
+
+        // Respond to ASG client
+        res.json({
+          success: true,
+          requestId,
+          message: "Photo received successfully",
+        });
+      } catch (error) {
+        this.logger.error(error, "❌ Error handling photo response");
+        res.status(500).json({
+          success: false,
+          error: "Internal server error processing photo response",
+        });
+      }
+    });
+  }
+
+  // =====================================
+  // 📸 Photo Request Management APIs
+  // =====================================
+
+  /**
+   * Register a pending photo request.
+   * Called by CameraModule when a photo is requested.
+   * Stores the request at AppServer level for O(1) lookup when HTTP response arrives.
+   *
+   * @param requestId - Unique identifier for this photo request
+   * @param request - Request details including session, resolve/reject callbacks
+   */
+  registerPhotoRequest(requestId: string, request: Omit<PendingPhotoRequest, "timeoutId">): void {
+    // Set timeout at AppServer level (single source of truth)
+    const timeoutMs = 30000; // 30 seconds
+    const timeoutId = setTimeout(() => {
+      const pending = this.pendingPhotoRequests.get(requestId);
+      if (pending) {
+        pending.reject(new Error("Photo request timed out"));
+        this.pendingPhotoRequests.delete(requestId);
+        this.logger.warn({ requestId }, "📸 Photo request timed out");
+      }
+    }, timeoutMs);
+
+    this.pendingPhotoRequests.set(requestId, {
+      ...request,
+      timeoutId,
+    });
+
+    this.logger.debug(
+      { requestId, userId: request.userId, sessionId: request.sessionId },
+      "📸 Photo request registered at AppServer level",
     );
+  }
+
+  /**
+   * Get a pending photo request by ID.
+   *
+   * @param requestId - The request ID to look up
+   * @returns The pending request, or undefined if not found
+   */
+  getPhotoRequest(requestId: string): PendingPhotoRequest | undefined {
+    return this.pendingPhotoRequests.get(requestId);
+  }
+
+  /**
+   * Complete a photo request (success or error).
+   * Clears the timeout and removes from the pending map.
+   *
+   * @param requestId - The request ID to complete
+   * @returns The pending request that was completed, or undefined if not found
+   */
+  completePhotoRequest(requestId: string): PendingPhotoRequest | undefined {
+    const pending = this.pendingPhotoRequests.get(requestId);
+    if (pending) {
+      if (pending.timeoutId) {
+        clearTimeout(pending.timeoutId);
+      }
+      this.pendingPhotoRequests.delete(requestId);
+      this.logger.debug({ requestId }, "📸 Photo request completed");
+    }
+    return pending;
+  }
+
+  /**
+   * Clean up all pending photo requests for a session.
+   * Called when a session permanently disconnects.
+   *
+   * @param sessionId - The session ID to clean up requests for
+   */
+  cleanupPhotoRequestsForSession(sessionId: string): void {
+    let cleanedCount = 0;
+    for (const [requestId, pending] of this.pendingPhotoRequests) {
+      if (pending.sessionId === sessionId) {
+        if (pending.timeoutId) {
+          clearTimeout(pending.timeoutId);
+        }
+        pending.reject(new Error("Session ended"));
+        this.pendingPhotoRequests.delete(requestId);
+        cleanedCount++;
+        this.logger.debug({ requestId, sessionId }, "📸 Photo request cleaned up (session ended)");
+      }
+    }
+    if (cleanedCount > 0) {
+      this.logger.info({ sessionId, cleanedCount }, "📸 Cleaned up photo requests for ended session");
+    }
   }
 
   /**
@@ -744,20 +978,6 @@ export class AppServer {
 
       res.redirect(302, authUrl);
     });
-  }
-
-  /**
-   * Find session that has a pending photo request for the given requestId
-   */
-  private findSessionByPhotoRequestId(
-    requestId: string,
-  ): AppSession | undefined {
-    for (const [sessionId, session] of this.activeSessions) {
-      if (session.camera.hasPhotoPendingRequest(requestId)) {
-        return session;
-      }
-    }
-    return undefined;
   }
 }
 

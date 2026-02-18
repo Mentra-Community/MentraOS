@@ -1,8 +1,0 @@
-{
-  "expo.jsEngine": "hermes",
-  "EX_DEV_CLIENT_NETWORK_INSPECTOR": "true",
-  "newArchEnabled": "true",
-  "apple.extraPods": "[{\"name\":\"SDWebImage\",\"modular_headers\":true},{\"name\":\"SDWebImageSVGCoder\",\"modular_headers\":true}]",
-  "apple.ccacheEnabled": "false",
-  "apple.privacyManifestAggregationEnabled": "true"
-}

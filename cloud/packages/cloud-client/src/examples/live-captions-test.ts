@@ -93,7 +93,7 @@ export async function runLiveCaptionsTestOnce(
       await client.stopApp(LIVE_CAPTIONS_PACKAGE);
       console.log("✅ App stopped successfully");
     } catch (error) {
-      console.log("ℹ️  App was not running (this is fine)");
+      console.log("ℹ️  App was not running (this is fine)", error);
     }
 
     // Step 3: Install Live Captions TPA
@@ -125,7 +125,7 @@ export async function runLiveCaptionsTestOnce(
       throw new Error("Live Captions app did not start properly");
     }
 
-    // Step 6: Stream audio file for transcription
+    // Step 6: Stream audio file for transcription (WebSocket PCM)
     console.log(`🎤 Streaming audio file: ${audioFilePath}`);
     console.log("📝 Listening for transcription results...\n");
 

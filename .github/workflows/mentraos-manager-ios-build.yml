@@ -13,26 +13,38 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64]
 
     steps:
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          # Clean iOS build outputs from previous runs
+          rm -rf mobile/ios/build mobile/ios/build-device
+          # Clean node_modules to ensure fresh install
+          rm -rf mobile/node_modules
+          # Clean Pods to avoid stale dependencies
+          rm -rf mobile/ios/Pods
+
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          xcode-version: latest-stable
+          bun-version: latest
+
+      - name: Clean pnpm setup directory
+        run: rm -rf /Users/fosse/setup-pnpm || true
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "pnpm"
           cache-dependency-path: mobile/package.json
 
@@ -46,35 +58,52 @@ jobs:
           # Create .env from example
           cp .env.example .env
 
+      - name: Run Expo prebuild
+        working-directory: ./mobile
+        run: pnpm expo prebuild --platform ios
+
       - name: Setup Sherpa Onnx
         working-directory: ./mobile
         run: |
           chmod +x scripts/setup-sherpa-onnx-optional.sh
           ./scripts/setup-sherpa-onnx-optional.sh
 
-      - name: Run Expo prebuild
-        working-directory: ./mobile
-        run: pnpm expo prebuild --platform ios
-
       - name: Install CocoaPods dependencies
         working-directory: ./mobile/ios
-        run: pod install
+        run: |
+          # Remove Podfile.lock to avoid version conflicts in CI
+          rm -f Podfile.lock
+          pod install --repo-update
+
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
+      - name: Debug - List iOS directory contents
+        working-directory: ./mobile/ios
+        run: |
+          echo "Contents of mobile/ios:"
+          ls -la
+          echo "Workspace files:"
+          ls -la *.xcworkspace || echo "No workspace files found"
 
       - name: Build iOS app for Simulator
         working-directory: ./mobile/ios
         run: |
-          xcodebuild -workspace AOS.xcworkspace \
-                     -scheme AOS \
+          xcodebuild \
+                     -workspace MentraOS.xcworkspace \
+                     -scheme MentraOS \
                      -configuration Debug \
                      -sdk iphonesimulator \
-                     -derivedDataPath build \
-                     -destination 'platform=iOS Simulator,name=iPhone 16'
+                     -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.0' \
+                     -derivedDataPath build
 
       - name: Build iOS app for Device
         working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: true
         run: |
-          xcodebuild -workspace AOS.xcworkspace \
-                     -scheme AOS \
+          xcodebuild -workspace MentraOS.xcworkspace \
+                     -scheme MentraOS \
                      -configuration Release \
                      -sdk iphoneos \
                      -derivedDataPath build-device \
@@ -86,10 +115,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-simulator-build
-          path: mobile/ios/build/Build/Products/Debug-iphonesimulator/AOS.app
+          path: mobile/ios/build/Build/Products/Debug-iphonesimulator/MentraOS.app
 
       - name: Upload Device Build
         uses: actions/upload-artifact@v4
         with:
           name: ios-device-build
-          path: mobile/ios/build-device/Build/Products/Release-iphoneos/AOS.app
+          path: mobile/ios/build-device/Build/Products/Release-iphoneos/MentraOS.app

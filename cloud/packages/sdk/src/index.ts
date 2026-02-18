@@ -1,5 +1,4 @@
 // src/index.ts
-
 export * from "./types/token";
 
 // Message type enums
@@ -57,6 +56,7 @@ export {
   // Re-export the cloud-to-app versions of these type guards since they're the ones
   // that should be used when dealing with CloudToAppMessage types
   isPhotoResponse as isPhotoResponseFromCloud,
+  isRgbLedControlResponse as isRgbLedControlResponseFromCloud,
   isRtmpStreamStatus as isRtmpStreamStatusFromCloud,
 } from "./types/messages/cloud-to-app";
 
@@ -73,22 +73,10 @@ export * from "./types/dashboard";
 export * from "./types/rtmp-stream";
 
 // Other system enums
-export {
-  AppType,
-  AppState,
-  Language,
-  LayoutType,
-  ViewType,
-  AppSettingType,
-  HardwareType,
-  HardwareRequirementLevel,
-} from "./types/enums";
+export { AppType, LayoutType, ViewType, AppSettingType, HardwareType, HardwareRequirementLevel } from "./types/enums";
 
 // Core model interfaces
 export * from "./types/models";
-
-// Session-related interfaces
-export * from "./types/user-session";
 
 // Webhook interfaces
 export * from "./types/webhooks";
@@ -110,6 +98,7 @@ export * from "./logging/logger";
 export {
   ButtonPress,
   HeadPosition,
+  TouchEvent,
   GlassesBatteryUpdate,
   PhoneBatteryUpdate,
   GlassesConnectionState,
@@ -125,6 +114,11 @@ export {
   OpenDashboard,
   GlassesToCloudMessage,
   PhotoResponse,
+  RgbLedControlResponse,
+  PhotoErrorCode,
+  PhotoStage,
+  ConnectionState,
+  PhotoErrorDetails,
   RtmpStreamStatus,
   KeepAliveAck,
 } from "./types/messages/glasses-to-cloud";
@@ -139,10 +133,12 @@ export {
   MicrophoneStateChange,
   CloudToGlassesMessage,
   PhotoRequestToGlasses,
+  RgbLedControlToGlasses,
   SettingsUpdate,
   StartRtmpStream,
   StopRtmpStream,
   KeepRtmpStreamAlive,
+  LedColor,
 } from "./types/messages/cloud-to-glasses";
 
 // From messages/app-to-cloud.ts
@@ -153,6 +149,7 @@ export {
   RtmpStreamStopRequest,
   AppToCloudMessage,
   PhotoRequest,
+  RgbLedControlRequest,
 } from "./types/messages/app-to-cloud";
 
 // From layout.ts
@@ -175,6 +172,7 @@ export {
   isStartApp,
   isStopApp,
   isPhotoResponse as isPhotoResponseFromGlasses,
+  isRgbLedControlResponse as isRgbLedControlResponseFromGlasses,
   isRtmpStreamStatus as isRtmpStreamStatusFromGlasses,
   isKeepAliveAck,
   isPhoneNotificationDismissed,
@@ -189,6 +187,7 @@ export {
   isStartRtmpStream,
   isStopRtmpStream,
   isKeepRtmpStreamAlive,
+  isRgbLedControl,
 } from "./types/messages/cloud-to-glasses";
 
 export {
@@ -198,6 +197,8 @@ export {
   isRtmpStreamRequest,
   isRtmpStreamStopRequest,
   isPhotoRequest as isPhotoRequestFromApp,
+  isRgbLedControlRequest,
+  isOwnershipRelease,
 } from "./types/messages/app-to-cloud";
 
 // Export setting-related types
@@ -210,21 +211,25 @@ export {
   ToolSchema,
   ToolParameterSchema,
   HardwareRequirement,
+  PreviewImage,
+  PhotoOrientation,
 } from "./types/models";
 
 // Export RTMP streaming types
-export {
-  VideoConfig,
-  AudioConfig,
-  StreamConfig,
-  StreamStatusHandler,
-} from "./types/rtmp-stream";
+export { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "./types/rtmp-stream";
 
 // Export app session modules
 export * from "./app/session/modules";
 
 // Export photo data types
 export { PhotoData } from "./types/photo-data";
+
+// Export device state types (WebSocket-based observables)
+export { DeviceState } from "./app/session/device-state";
+export { Observable } from "./utils/Observable";
+
+// Re-export types from @mentra/types so SDK users don't need to install it separately
+export type { GlassesInfo } from "@mentra/types";
 
 /**
  * WebSocket error information

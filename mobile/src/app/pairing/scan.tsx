@@ -1,411 +1,176 @@
-// SelectGlassesBluetoothScreen.tsx
+import CoreModule, {DeviceSearchResult} from "core"
+import {useLocalSearchParams} from "expo-router"
+import {useEffect, useState} from "react"
+import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
-import React, {useEffect, useMemo, useRef, useState, useCallback} from "react"
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Image,
-  Platform,
-  Alert,
-  ViewStyle,
-  BackHandler,
-} from "react-native"
-import {useNavigation, useRoute} from "@react-navigation/native" // <<--- import useRoute
-import {useFocusEffect} from "@react-navigation/native"
-import Icon from "react-native-vector-icons/FontAwesome"
-import {useCoreStatus} from "@/contexts/CoreStatusProvider"
-import bridge from "@/bridge/MantleBridge"
-import {MOCK_CONNECTION} from "@/consts"
-import {NavigationProps} from "@/components/misc/types"
-import {getGlassesImage} from "@/utils/getGlassesImage"
-import PairingDeviceInfo from "@/components/misc/PairingDeviceInfo"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {useSearchResults} from "@/contexts/SearchResultsContext"
-import {requestFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
-import showAlert from "@/utils/AlertUtils"
-import {router, useLocalSearchParams} from "expo-router"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {Header, Screen, Text} from "@/components/ignite"
-import {PillButton} from "@/components/ignite/PillButton"
-import GlassesTroubleshootingModal from "@/components/misc/GlassesTroubleshootingModal"
-import {ThemedStyle} from "@/theme"
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
+import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
+import Divider from "@/components/ui/Divider"
+import {Group} from "@/components/ui/Group"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import Animated, {useAnimatedStyle, useSharedValue, withDelay, withTiming} from "react-native-reanimated"
-import {saveSetting, SETTINGS_KEYS} from "@/utils/SettingsHelper"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
+import {useGlassesStore} from "@/stores/glasses"
+import showAlert from "@/utils/AlertUtils"
+import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
+import {getGlassesOpenImage} from "@/utils/getGlassesImage"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {useCoreStore} from "@/stores/core"
 
 export default function SelectGlassesBluetoothScreen() {
-  const {status} = useCoreStatus()
-  const navigation = useNavigation<NavigationProps>()
-  const {searchResults, setSearchResults} = useSearchResults()
-  const {glassesModelName}: {glassesModelName: string} = useLocalSearchParams()
-  const {theme, themed} = useAppTheme()
-  const {goBack, push, clearHistory, navigate, replace} = useNavigationHistory()
+  const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
+  const {theme} = useAppTheme()
+  const {goBack, replace, pushUnder} = useNavigationHistory()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  // Create a ref to track the current state of searchResults
-  const searchResultsRef = useRef<string[]>(searchResults)
+  const btcConnected = useGlassesStore((state) => state.btcConnected)
+  const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
+  const searchResults = useCoreStore((state) => state.searchResults)
+  const [rememberedSearchResults, setRememberedSearchResults] = useState<DeviceSearchResult[]>(searchResults)
 
-  const scrollViewOpacity = useSharedValue(0)
-  const scrollViewAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: scrollViewOpacity.value,
-  }))
-  useEffect(() => {
-    scrollViewOpacity.value = withDelay(2000, withTiming(1, {duration: 1000}))
-  }, [])
+  // useFocusEffect(
+  //   useCallback(() => {
+  //     setSearchResults([])
+  //   }, [setSearchResults]),
+  // )
 
-  // Keep the ref updated whenever searchResults changes
+  // focusEffectPreventBack()
+
   useEffect(() => {
-    searchResultsRef.current = searchResults
+    if (searchResults.some((result) => result.deviceName === "NOTREQUIREDSKIP")) {
+      triggerGlassesPairingGuide(deviceModel, "NOTREQUIREDSKIP")
+      return
+    }
   }, [searchResults])
-
-  // Clear search results when screen comes into focus to prevent stale data
-  useFocusEffect(
-    React.useCallback(() => {
-      setSearchResults([])
-    }, [setSearchResults]),
-  )
-
-  // Shared function to handle the forget glasses logic
-  const handleForgetGlasses = useCallback(async () => {
-    await bridge.sendDisconnectWearable()
-    await bridge.sendForgetSmartGlasses()
-    // Clear NavigationHistoryContext history to prevent issues with back navigation
-    clearHistory()
-    // Use dismissTo to properly go back to select-glasses-model and clear the stack
-    router.dismissTo("/pairing/select-glasses-model")
-  }, [clearHistory])
-
-  // Handle Android hardware back button
-  useEffect(() => {
-    // Only handle on Android
-    if (Platform.OS !== "android") return
-
-    const onBackPress = () => {
-      // Call our custom back handler
-      handleForgetGlasses()
-      // Return true to prevent default back behavior and stop propagation
-      return true
-    }
-
-    // Use setTimeout to ensure our handler is registered after NavigationHistoryContext
-    const timeout = setTimeout(() => {
-      // Add the event listener - this will be on top of the stack
-      const backHandler = BackHandler.addEventListener("hardwareBackPress", onBackPress)
-
-      // Store the handler for cleanup
-      backHandlerRef.current = backHandler
-    }, 100)
-
-    // Cleanup function
-    return () => {
-      clearTimeout(timeout)
-      if (backHandlerRef.current) {
-        backHandlerRef.current.remove()
-        backHandlerRef.current = null
-      }
-    }
-  }, [handleForgetGlasses])
-
-  // Ref to store the back handler for cleanup
-  const backHandlerRef = useRef<any>(null)
-
-  useEffect(() => {
-    const handleSearchResult = ({modelName, deviceName}: {modelName: string; deviceName: string}) => {
-      // console.log("GOT SOME SEARCH RESULTS:");
-      // console.log("ModelName: " + modelName);
-      // console.log("DeviceName: " + deviceName);
-
-      if (deviceName === "NOTREQUIREDSKIP") {
-        console.log("SKIPPING")
-
-        // Quick hack // bugfix => we get NOTREQUIREDSKIP twice in some cases, so just stop after the initial one
-        GlobalEventEmitter.removeListener("COMPATIBLE_GLASSES_SEARCH_RESULT", handleSearchResult)
-
-        triggerGlassesPairingGuide(glassesModelName as string, "")
-        return
-      }
-
-      setSearchResults(prevResults => {
-        if (!prevResults.includes(deviceName)) {
-          return [...prevResults, deviceName]
-        }
-        return prevResults
-      })
-    }
-
-    const stopSearch = ({modelName}: {modelName: string}) => {
-      console.log("SEARCH RESULTS:")
-      console.log(JSON.stringify(searchResults))
-      if (searchResultsRef.current.length === 0) {
-        showAlert(
-          "No " + modelName + " found",
-          "Retry search?",
-          [
-            {
-              text: "No",
-              onPress: () => goBack(), // Navigate back if user chooses "No"
-              style: "cancel",
-            },
-            {
-              text: "Yes",
-              onPress: () => bridge.sendSearchForCompatibleDeviceNames(glassesModelName), // Retry search
-            },
-          ],
-          {cancelable: false}, // Prevent closing the alert by tapping outside
-        )
-      }
-    }
-
-    if (!MOCK_CONNECTION) {
-      GlobalEventEmitter.on("COMPATIBLE_GLASSES_SEARCH_RESULT", handleSearchResult)
-      GlobalEventEmitter.on("COMPATIBLE_GLASSES_SEARCH_STOP", stopSearch)
-    }
-
-    return () => {
-      if (!MOCK_CONNECTION) {
-        GlobalEventEmitter.removeListener("COMPATIBLE_GLASSES_SEARCH_RESULT", handleSearchResult)
-        GlobalEventEmitter.removeListener("COMPATIBLE_GLASSES_SEARCH_STOP", stopSearch)
-      }
-    }
-  }, [])
 
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
-      console.log("Searching for compatible devices for: ", glassesModelName)
-      setSearchResults([])
-      bridge.sendSearchForCompatibleDeviceNames(glassesModelName)
+      CoreModule.findCompatibleDevices(deviceModel)
     }
 
-    if (Platform.OS === "ios") {
-      // on ios, we need to wait for the core communicator to be fully initialized and sending this twice is just the easiest way to do that
-      // initializeAndSearchForDevices()
-      setTimeout(() => {
-        initializeAndSearchForDevices()
-      }, 3000)
-    } else {
-      initializeAndSearchForDevices()
-    }
+    initializeAndSearchForDevices()
   }, [])
 
-  useEffect(() => {
-    // If puck gets d/c'd here, return to home
-    if (!status.core_info.puck_connected) {
-      router.dismissAll()
-      replace("/(tabs)/home")
-    }
-
-    // If pairing successful, return to home
-    if (status.core_info.puck_connected && status.glasses_info?.model_name) {
-      router.dismissAll()
-      replace("/(tabs)/home")
-    }
-  }, [status])
-
-  const triggerGlassesPairingGuide = async (glassesModelName: string, deviceName: string) => {
-    // On Android, we need to check both microphone and location permissions
+  const triggerGlassesPairingGuide = async (deviceModel: string, deviceName: string) => {
     if (Platform.OS === "android") {
-      // First check location permission, which is required for Bluetooth scanning on Android
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
       if (!hasLocationPermission) {
-        // Inform the user that location permission is required for Bluetooth scanning
         showAlert(
           "Location Permission Required",
           "Location permission is required to scan for and connect to smart glasses on Android. This is a requirement of the Android Bluetooth system.",
           [{text: "OK"}],
         )
-        return // Stop the connection process
+        return
       }
     }
 
-    // Next, check microphone permission for all platforms
     const hasMicPermission = await requestFeaturePermissions(PermissionFeatures.MICROPHONE)
 
-    // Only proceed if permission is granted
     if (!hasMicPermission) {
-      // Inform the user that microphone permission is required
       showAlert(
         "Microphone Permission Required",
         "Microphone permission is required to connect to smart glasses. Voice control and audio features are essential for the AR experience.",
         [{text: "OK"}],
       )
-      return // Stop the connection process
+      return
     }
 
-    // update the preferredmic to be the phone mic:
-    bridge.sendSetPreferredMic("phone") // TODO: config: remove
-    saveSetting(SETTINGS_KEYS.preferred_mic, "phone")
-
-    // All permissions granted, proceed with connecting to the wearable
-    setTimeout(() => {
-      // give some time to show the loader (otherwise it's a bit jarring)
-      bridge.sendConnectWearable(glassesModelName, deviceName)
-    }, 2000)
-    push("/pairing/loading", {glassesModelName: glassesModelName})
+    startPairing(deviceModel, deviceName)
   }
 
-  const glassesImage = useMemo(() => getGlassesImage(glassesModelName), [glassesModelName])
+  const startPairing = async (deviceModel: string, deviceName: string) => {
+    const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
+    if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(deviceModel as DeviceTypes)) {
+      setTimeout(() => {
+        CoreModule.connectByName(deviceName)
+      }, 2000)
+      replace("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+      return
+    }
+
+    setDeviceName(deviceName)
+    // pair bt classic first:
+    replace("/pairing/btclassic")
+    pushUnder("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+  }
+
+  const filterDeviceName = (deviceName: string) => {
+    let newName = deviceName.replace("MENTRA_LIVE_BLE_", "")
+    newName = newName.replace("MENTRA_LIVE_BT_", "")
+    newName = newName.replace("Mentra_Live_", "")
+    newName = newName.replace("MENTRA_LIVE_", "")
+    newName = newName.replace("MENTRA_DISPLAY_", "")
+    return newName
+  }
+
+  // remember the search results to ensure consistent ordering:
+  useEffect(() => {
+    setRememberedSearchResults((prev) => {
+      const combined = [...prev]
+      for (const result of searchResults) {
+        if (!combined.some((r) => r.deviceAddress === result.deviceAddress && r.deviceName === result.deviceName)) {
+          combined.push(result)
+        }
+      }
+      return combined
+    })
+  }, [searchResults])
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}} safeAreaEdges={["bottom"]}>
-      <Header
-        leftIcon="caretLeft"
-        onLeftPress={handleForgetGlasses}
-        RightActionComponent={
-          <PillButton
-            text="Help"
-            variant="icon"
-            onPress={() => setShowTroubleshootingModal(true)}
-            buttonStyle={{marginRight: theme.spacing.md}}
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+      <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
+      <View className="flex-1 pt-[35%]">
+        <View className="gap-6 rounded-3xl bg-primary-foreground p-6">
+          <Image source={getGlassesOpenImage(deviceModel)} className="h-[90px] w-full" resizeMode="contain" />
+          <Text
+            className="text-center text-xl font-semibold text-text-dim"
+            text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
           />
-        }
-      />
-      <View style={styles.contentContainer}>
-        <PairingDeviceInfo glassesModelName={glassesModelName} />
-      </View>
-      <ScrollView
-        style={{marginBottom: 20, marginTop: 10, marginRight: -theme.spacing.md, paddingRight: theme.spacing.md}}>
-        <Animated.View style={scrollViewAnimatedStyle}>
-          {/* DISPLAY LIST OF BLUETOOTH SEARCH RESULTS */}
-          {searchResults && searchResults.length > 0 && (
-            <>
-              {searchResults.map((deviceName, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={themed($settingItem)}
-                  onPress={() => {
-                    triggerGlassesPairingGuide(glassesModelName, deviceName)
-                  }}>
-                  {/* <Image source={glassesImage} style={styles.glassesImage} /> */}
-                  <View style={styles.settingTextContainer}>
-                    <Text
-                      text={`${glassesModelName}  ${deviceName}`}
-                      style={[
-                        styles.label,
-                        {
-                          color: theme.colors.text,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Icon name="angle-right" size={24} color={theme.colors.text} />
-                </TouchableOpacity>
-              ))}
-            </>
-          )}
-        </Animated.View>
-      </ScrollView>
 
+          {!rememberedSearchResults || rememberedSearchResults.length === 0 ? (
+            <View className="flex-1 justify-center py-4">
+              <ActivityIndicator size="large" color={theme.colors.foreground} />
+            </View>
+          ) : (
+            <ScrollView className="max-h-[300px] -mr-4 pr-4">
+              <Group>
+                {rememberedSearchResults.map((res: DeviceSearchResult, index: number) => (
+                  <TouchableOpacity
+                    key={index}
+                    className="h-[50px] flex-row items-center justify-between bg-background px-4 py-3"
+                    onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                    <View className="flex-1 px-2.5">
+                      <Text
+                        text={`${deviceModel} - ${filterDeviceName(res.deviceName)}`}
+                        className="flex-wrap text-sm font-semibold"
+                        numberOfLines={2}
+                      />
+                    </View>
+                    <Icon name="chevron-right" size={24} color={theme.colors.text} />
+                  </TouchableOpacity>
+                ))}
+              </Group>
+            </ScrollView>
+          )}
+          <Divider />
+          <View className="flex-row justify-end">
+            <Button preset="secondary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
+          </View>
+        </View>
+      </View>
+      <Button
+        preset="secondary"
+        tx="pairing:needMoreHelp"
+        onPress={() => setShowTroubleshootingModal(true)}
+        className="w-full"
+      />
       <GlassesTroubleshootingModal
         isVisible={showTroubleshootingModal}
         onClose={() => setShowTroubleshootingModal(false)}
-        glassesModelName={glassesModelName}
+        deviceModel={deviceModel}
       />
     </Screen>
   )
 }
-
-const $settingItem: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "space-between",
-  // Increased padding to give it a "bigger" look
-  paddingVertical: spacing.sm,
-  paddingHorizontal: 15,
-
-  // Larger margin to separate each card
-  marginVertical: 8,
-
-  // Rounded corners
-  borderRadius: 10,
-  borderWidth: spacing.xxxs,
-  borderColor: colors.border,
-
-  // More subtle shadow for iOS
-  shadowColor: "#000",
-  shadowOpacity: 0.08,
-  shadowRadius: 3,
-  shadowOffset: {width: 0, height: 1},
-
-  // More subtle elevation for Android
-  elevation: 2,
-  backgroundColor: colors.background,
-})
-
-const styles = StyleSheet.create({
-  contentContainer: {
-    // alignItems: "center",
-    // justifyContent: "center",
-    height: 320,
-    // backgroundColor: "red",
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20, // Consistent spacing at the top
-    overflow: "hidden", // Prevent content from creating visual lines
-  },
-  titleContainer: {
-    marginBottom: 10,
-    marginHorizontal: -20,
-    marginTop: -20,
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-  },
-  // Removed hardcoded theme colors - using dynamic styling
-  // titleContainerDark and titleContainerLight removed
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 5,
-    textAlign: "left",
-    // color moved to dynamic styling
-  },
-  // Removed hardcoded theme colors - using dynamic styling
-  // darkBackground, lightBackground, darkText, lightText, darkSubtext, lightSubtext, darkIcon, lightIcon removed
-  backButton: {
-    alignItems: "center",
-    flexDirection: "row",
-    marginBottom: 20,
-  },
-  backButtonText: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginLeft: 10,
-  },
-  settingTextContainer: {
-    flex: 1,
-    paddingHorizontal: 10,
-  },
-  label: {
-    fontSize: 16, // bigger text size
-    fontWeight: "600",
-    flexWrap: "wrap",
-  },
-  value: {
-    flexWrap: "wrap",
-    fontSize: 12,
-    marginTop: 5,
-  },
-  headerContainer: {
-    borderBottomWidth: 1,
-    paddingHorizontal: 15,
-    paddingVertical: 15,
-    // backgroundColor and borderBottomColor moved to dynamic styling
-  },
-  header: {
-    fontSize: 24,
-    fontWeight: "600",
-    // color moved to dynamic styling
-  },
-  /**
-   * BIGGER, SEXIER IMAGES
-   */
-  glassesImage: {
-    width: 80, // bigger width
-    height: 50, // bigger height
-    resizeMode: "contain",
-    marginRight: 10,
-  },
-})

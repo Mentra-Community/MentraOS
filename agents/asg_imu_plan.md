@@ -39,7 +39,7 @@ This plan outlines the implementation of IMU (Inertial Measurement Unit) data ac
 Location: `asg_client/app/src/main/java/com/augmentos/asg_client/sensors/`
 
 ```java
-package com.augmentos.asg_client.sensors;
+package com.mentra.asg_client.sensors;
 
 public class ImuManager implements SensorEventListener {
     private SensorManager sensorManager;

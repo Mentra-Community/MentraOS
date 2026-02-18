@@ -1,7 +1,15 @@
 const {getSentryExpoConfig} = require("@sentry/react-native/metro")
+const {withUniwindConfig} = require("uniwind/metro")
+const path = require("path")
 
 /** @type {import('expo/metro-config').MetroConfig} */
-const config = getSentryExpoConfig(__dirname)
+var config = getSentryExpoConfig(__dirname)
+
+// Configure SVG transformer
+config.transformer = {
+  ...config.transformer,
+  babelTransformerPath: require.resolve("react-native-svg-transformer"),
+}
 
 config.transformer.getTransformOptions = async () => ({
   transform: {
@@ -14,8 +22,33 @@ config.transformer.getTransformOptions = async () => ({
   },
 })
 
+// Configure resolver for SVG files
+config.resolver.assetExts = config.resolver.assetExts.filter((ext) => ext !== "svg")
+config.resolver.sourceExts = [...config.resolver.sourceExts, "svg"]
+
+// Add HTML to asset extensions
+config.resolver.assetExts = [...config.resolver.assetExts, "html"]
+
 // This helps support certain popular third-party libraries
 // such as Firebase that use the extension cjs.
 config.resolver.sourceExts.push("cjs")
+
+// Watch the core and cloud modules for changes
+config.watchFolders = [
+  path.resolve(__dirname, "./modules/core"),
+  path.resolve(__dirname, "../cloud/packages/types/src"),
+  path.resolve(__dirname, "../cloud/packages/display-utils/src"),
+]
+
+// Resolve the core module from the parent directory
+config.resolver.nodeModulesPaths = [path.resolve(__dirname, "node_modules"), path.resolve(__dirname, "..")]
+
+config = withUniwindConfig(config, {
+  // relative path to your global.css file (from previous step)
+  cssEntryFile: "./src/global.css",
+  // (optional) path where we gonna auto-generate typings
+  // defaults to project's root
+  dtsFile: "./src/uniwind-types.d.ts",
+})
 
 module.exports = config

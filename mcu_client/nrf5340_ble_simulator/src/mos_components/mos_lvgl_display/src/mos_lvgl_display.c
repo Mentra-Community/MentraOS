@@ -174,6 +174,13 @@ void display_cycle_pattern(void)
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
+void display_update_height(uint16_t height) {
+    display_cmd_t cmd = {
+        .type = LCD_CMD_UPDATE_HEIGHT, .p.height = {.height = height}
+    };
+    mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+}
+
 /* 线程安全 protobuf 文本更新：发消息到 LVGL 线程 / Thread-safe protobuf text update - sends message to LVGL thread */
 void display_update_protobuf_text(const char *text_content)
 {
@@ -898,6 +905,47 @@ void cycle_test_pattern(void)
     show_test_pattern(current_pattern);
 }
 
+static void update_display_height(uint16_t height)
+{
+    if (height > 8) height = 8;
+
+    LOG_INF("update_display_height - Thread-safe height update: %u", height);
+
+    if (!protobuf_container)
+    {
+        LOG_WRN("protobuf_container not initialized");
+        return;
+    }
+
+    lv_obj_t *screen = lv_screen_active();
+    const display_config_t *config = display_get_config();
+
+    /* Make a mutable copy of the current config */
+    display_config_t tmp = *config;
+
+    /* ABSOLUTE mapping: margin_top = 20 * height (no + / -) */
+    uint32_t mt = (config->height - config->layout.usable_height) - (20u * (uint32_t)height);
+
+    /* Clamp to uint16_t and screen bounds so it never goes off-screen */
+    if (mt > UINT16_MAX) mt = UINT16_MAX;
+    tmp.layout.margin_top = (uint16_t)mt;
+
+    /* Keep container fully visible: margin_top + usable_height <= screen height */
+    if ((uint32_t)tmp.layout.margin_top + (uint32_t)tmp.layout.usable_height > (uint32_t)tmp.height)
+    {
+        tmp.layout.margin_top =
+            (tmp.height > tmp.layout.usable_height) ? (tmp.height - tmp.layout.usable_height) : 0;
+    }
+
+    /* Apply to the existing container */
+    (void)display_apply_container_config(protobuf_container, screen, &tmp);
+
+    /* Recompute layout */
+    lv_obj_update_layout(protobuf_container);
+
+    LOG_INF("Applied margin_top=%u (height=%u)", tmp.layout.margin_top, height);
+}
+
 /* 在自动滚动容器中更新 protobuf 文本内容 / Update protobuf text content in the auto-scroll container */
 static void update_protobuf_text_content(const char *text_content)
 {
@@ -923,11 +971,11 @@ static void update_protobuf_text_content(const char *text_content)
     lv_label_set_text(protobuf_label, text_content);
 
     /* BLE 文本偏移：标签距顶 100px（欢迎文案保持居中）/ BLE text offset: position label 100px down from top (welcome message stays centered) */
-    lv_obj_align(protobuf_label, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_align(protobuf_label, LV_ALIGN_TOP_MID, 0, 0);
 
     /* 自动滚到底部显示最新内容 / AUTO-SCROLL TO BOTTOM: Show latest content */
     lv_obj_update_layout(protobuf_container);  /* 确保布局已计算 / Ensure layout is calculated */
-    lv_obj_scroll_to_y(protobuf_container, lv_obj_get_scroll_bottom(protobuf_container), LV_ANIM_OFF);
+    // lv_obj_scroll_to_y(protobuf_container, lv_obj_get_scroll_bottom(protobuf_container), LV_ANIM_OFF);
 
     LOG_INF("📱 Protobuf text updated: %.50s%s", text_content, strlen(text_content) > 50 ? "..." : "");
 }
@@ -1189,6 +1237,11 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     /* 在 LVGL 线程内安全处理图案切换 / Handle pattern cycling safely in LVGL thread */
                     LOG_INF("LCD_CMD_CYCLE_PATTERN - Thread-safe pattern cycling");
                     cycle_test_pattern();  /* 现由 LVGL 线程上下文调用 / Now called from LVGL thread context */
+                    break;
+                case LCD_CMD_UPDATE_HEIGHT:
+                    /* 在 LVGL 线程内安全处理高度更新 / Handle height updates safely in LVGL thread */
+                    LOG_INF("LCD_CMD_UPDATE_HEIGHT - Thread-safe height update: %u", cmd.p.height.height);
+                    update_display_height(cmd.p.height.height);
                     break;
                 case LCD_CMD_UPDATE_PROTOBUF_TEXT:
                     /* 在 LVGL 线程内安全处理 protobuf 文本更新 / Handle protobuf text updates safely in LVGL thread */

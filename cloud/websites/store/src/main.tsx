@@ -16,5 +16,5 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
     {/* <AppStoreDesign /> */}
-  </StrictMode>,
+  </StrictMode> as any
 )

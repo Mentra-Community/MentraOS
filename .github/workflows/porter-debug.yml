@@ -1,13 +1,16 @@
-"on":
+name: 🚀 Deploy cloud-debug
+
+on:
+  workflow_dispatch: # Manual trigger fallback
   push:
     branches:
-      - subscription-manager
+      - cloud/ws-liveness-detection
     paths:
       - "cloud/**"
-name: 🚀 [debug] Porter.run Deploy
+      - ".github/workflows/porter-debug.yml"
 jobs:
   porter-deploy:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -18,7 +21,7 @@ jobs:
         uses: porter-dev/setup-porter@v0.1.0
       - name: Deploy stack
         timeout-minutes: 30
-        run: exec porter apply -f ./cloud/porter.yaml
+        run: exec porter apply -f ./cloud/porter-livekit.yaml
         env:
           PORTER_APP_NAME: cloud-debug
           PORTER_NAMESPACE: debug

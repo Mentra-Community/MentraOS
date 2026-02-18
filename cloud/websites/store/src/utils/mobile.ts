@@ -6,10 +6,13 @@
  * Detects if the user is on a mobile device
  */
 export function isMobileDevice(): boolean {
-  const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
-  
+  const userAgent =
+    navigator.userAgent || navigator.vendor || (window as any).opera;
+
   // Check for mobile user agents
-  return /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase());
+  return /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(
+    userAgent.toLowerCase(),
+  );
 }
 
 /**
@@ -25,8 +28,10 @@ export function isAndroid(): boolean {
  */
 export function isIOS(): boolean {
   const userAgent = navigator.userAgent || navigator.vendor;
-  return /iphone|ipad|ipod/i.test(userAgent.toLowerCase()) || 
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPad detection
+  return (
+    /iphone|ipad|ipod/i.test(userAgent.toLowerCase()) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  ); // iPad detection
 }
 
 /**
@@ -44,13 +49,13 @@ export function isMacOS(): boolean {
  * @returns The deeplink URL
  */
 export function generateDeeplink(packageName?: string): string {
-  const baseUrl = 'https://apps.mentra.glass';
-  
+  const baseUrl = "https://apps.mentra.glass";
+
   if (packageName) {
     // Return the web URL that will be handled by app links/universal links
     return `${baseUrl}/package/${packageName}`;
   }
-  
+
   return baseUrl;
 }
 
@@ -61,7 +66,7 @@ export function generateDeeplink(packageName?: string): string {
  */
 export function openInApp(packageName?: string): void {
   const deeplink = generateDeeplink(packageName);
-  
+
   if (isMobileDevice()) {
     // For mobile devices, just navigate to the URL
     // The OS will handle opening the app if it's installed
@@ -73,17 +78,23 @@ export function openInApp(packageName?: string): void {
  * Opens the appropriate app store for downloading MentraOS
  * - iOS devices (iPhone, iPad) → App Store
  * - Android devices → Play Store
- * - All desktop/laptop devices → mentra.glass/install
+ * - All desktop/laptop devices → mentra.glass/os
  */
 export function openAppStore(): void {
   if (isIOS()) {
     // iOS devices (iPhone, iPad, iPod)
-    window.open('https://apps.apple.com/us/app/mentra-the-smart-glasses-app/id6747363193', '_blank');
+    window.open(
+      "https://apps.apple.com/us/app/mentra-the-smart-glasses-app/id6747363193",
+      "_blank",
+    );
   } else if (isAndroid()) {
     // Android devices
-    window.open('https://play.google.com/store/apps/details?id=com.mentra.mentra', '_blank');
+    window.open(
+      "https://play.google.com/store/apps/details?id=com.mentra.mentra",
+      "_blank",
+    );
   } else {
     // All desktop/laptop devices (macOS, Windows, Linux, etc.)
-    window.open('https://mentra.glass/install', '_blank');
+    window.open("https://mentra.glass/os", "_blank");
   }
 }

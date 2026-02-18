@@ -1,0 +1,199 @@
+# Android Smart Glasses (ASG) Client Architecture
+
+## Overview
+
+The ASG Client is an Android application that runs on smart glasses, acting as the bridge between hardware capabilities and the MentraOS ecosystem.
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Smart Glasses Hardware                │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │   Camera    │  │     MCU      │  │   Bluetooth   │  │
+│  │             │  │  (Buttons)   │  │     Chip      │  │
+│  └──────┬──────┘  └──────┬───────┘  └───────┬───────┘  │
+│         │                │                   │           │
+└─────────┼────────────────┼───────────────────┼───────────┘
+          │                │                   │
+          ▼                ▼                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                    ASG Client Service                    │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │   Camera    │  │   Command    │  │   Bluetooth   │  │
+│  │   Manager   │  │   Parser     │  │   Manager     │  │
+│  └──────┬──────┘  └──────┬───────┘  └───────┬───────┘  │
+│         │                │                   │           │
+│         └────────────────┴───────────────────┘           │
+│                          │                               │
+│                    ┌─────▼──────┐                        │
+│                    │ AsgClient  │                        │
+│                    │  Service   │                        │
+│                    └─────┬──────┘                        │
+└─────────────────────────┼───────────────────────────────┘
+                          │
+                          ▼ BLE
+                    ┌───────────┐
+                    │  Mobile   │
+                    │    App    │
+                    └─────┬─────┘
+                          │
+                          ▼ Internet
+                    ┌───────────┐
+                    │ MentraOS  │
+                    │   Cloud   │
+                    └───────────┘
+```
+
+## Core Components
+
+### AsgClientService
+
+The main Android service that coordinates all functionality:
+
+```java
+public class AsgClientService extends Service {
+    // Core managers
+    private IBluetoothManager bluetoothManager;
+    private INetworkManager networkManager;
+    private MediaCaptureService mediaCaptureService;
+
+    // Message processing
+    private void processReceivedMessage(String message);
+    private void parseK900Command(String command);
+
+    // Hardware integration
+    private void handleButtonPress(boolean isLongPress);
+    private void sendBatteryStatus();
+}
+```
+
+### Manager Pattern
+
+The client uses interface-based managers for device abstraction:
+
+```java
+// Network Manager Interface
+public interface INetworkManager {
+    void setWifiEnabled(boolean enabled);
+    void connectToWifi(String ssid, String password);
+    boolean isConnectedToWifi();
+    String getCurrentWifiSsid();
+}
+
+// Bluetooth Manager Interface
+public interface IBluetoothManager {
+    void initialize();
+    void sendData(byte[] data);
+    boolean isConnected();
+    void setConnectionListener(ConnectionListener listener);
+}
+```
+
+### Factory Pattern
+
+Managers are created via factories based on device type:
+
+```java
+public class NetworkManagerFactory {
+    public static INetworkManager create(Context context) {
+        if (isK900Device()) {
+            return new K900NetworkManager(context);
+        } else if (hasSystemPermissions()) {
+            return new SystemNetworkManager(context);
+        } else {
+            return new FallbackNetworkManager(context);
+        }
+    }
+}
+```
+
+## Message Flow
+
+### Incoming Messages (Phone → Glasses)
+
+1. **BLE Reception**: BluetoothManager receives data
+2. **Parse & Route**: AsgClientService processes JSON
+3. **Execute Command**: Appropriate manager handles action
+4. **Send Response**: Status sent back via BLE
+
+### Outgoing Messages (Glasses → Phone)
+
+1. **Event Occurs**: Button press, status change, etc.
+2. **Format Message**: Create JSON message
+3. **Send via BLE**: BluetoothManager transmits
+4. **Phone Relay**: Mobile app forwards to cloud
+
+## Command Processing
+
+### MCU Commands
+
+Commands from the microcontroller (hardware events):
+
+```java
+// Button press commands
+"cs_pho" → Short camera button press (photo)
+"cs_vdo" → Long camera button press (video)
+
+// Other hardware commands
+"hm_batv" → Battery status update
+"cs_swst" → Swipe gesture
+```
+
+### Cloud Commands
+
+Commands from MentraOS Cloud (via phone):
+
+```json
+{
+  "type": "take_photo",
+  "requestId": "uuid-1234"
+}
+
+{
+  "type": "start_rtmp_stream",
+  "rtmpUrl": "rtmp://server/live/key",
+  "streamId": "uuid-5678"
+}
+```
+
+## Service Lifecycle
+
+1. **Service Start**
+   - Initialize managers
+   - Setup BLE advertising/connection
+   - Start monitoring hardware
+
+2. **Runtime Operation**
+   - Process incoming messages
+   - Handle hardware events
+   - Manage network state
+   - Upload queued media
+
+3. **Service Stop**
+   - Clean up resources
+   - Stop active streams
+   - Save state for restart
+
+## Threading Model
+
+- **Main Thread**: UI operations, service lifecycle
+- **BLE Thread**: Bluetooth communication
+- **Network Thread**: WiFi operations, uploads
+- **Camera Thread**: Media capture operations
+
+## State Management
+
+The service maintains state for:
+
+- Connection status (BLE, WiFi)
+- Active operations (streaming, recording)
+- Hardware state (battery, temperature)
+- Configuration (button modes, settings)
+
+## Error Handling
+
+- **Graceful Degradation**: Fallback behaviors for failures
+- **Retry Logic**: Automatic retry for network operations
+- **State Recovery**: Restore after service restart
+- **User Feedback**: Status messages via BLE

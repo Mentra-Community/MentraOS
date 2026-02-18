@@ -36,14 +36,14 @@
 #include <zephyr/sys/util.h>  // For ARRAY_SIZE macro
 
 #include "interrupt_handler.h"  // Interrupt handler framework
-#include "mos_button_app.h"     // Button application logic
+#include "mos_button_app.h"  // Button application logic
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
 #include "mos_jlink_usb_switch_app.h"  // J-Link/USB switch application logic
-#include "mos_lsm6dsv16x.h"            // LSM6DSV16X 6-axis IMU sensor
-#include "mos_npm1300_ldsw.h"          // NPM1300 LDSW (load switch) control
+#include "mos_lsm6dsv16x.h"  // LSM6DSV16X 6-axis IMU sensor
+#include "mos_npm1300_ldsw.h"  // NPM1300 LDSW (load switch) control
 #include "mos_npm1300_led.h"
-#include "mos_opt3006.h"     // OPT3006 ambient light sensor
+#include "mos_opt3006.h"  // OPT3006 ambient light sensor
 #include "mos_usb_detect.h"  // USB cable detection (polling mode)
 
 #include "mos_imu.h"
@@ -51,21 +51,21 @@
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 #define STACKSIZE 2048
-#define PRIORITY  7
+#define PRIORITY 7
 
-#define DEVICE_NAME     CONFIG_BT_DEVICE_NAME
+#define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
 
 static K_SEM_DEFINE(ble_init_ok, 0, 1);
 
 static struct bt_conn* current_conn;
 static struct bt_conn* auth_conn;
-static struct k_work   adv_work;
+static struct k_work adv_work;
 
-static uint16_t payload_mtu   = 20;
-static bool     ble_connected = false;
+static uint16_t payload_mtu = 20;
+static bool ble_connected = false;
 
-static char           dynamic_device_name[30];
+static char dynamic_device_name[30];
 static struct bt_data ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
     BT_DATA(BT_DATA_NAME_COMPLETE, "MENTRA_DISPLAY_", 16),
@@ -88,7 +88,7 @@ static void imu_cb(mos_imu_event_t ev, float pitch_deg, void *user_data)
 static void setup_dynamic_advertising(void)
 {
     bt_addr_le_t addr;
-    size_t       count = 1;
+    size_t count = 1;
 
     // Get the device address
     bt_id_get(&addr, &count);
@@ -107,7 +107,7 @@ static void setup_dynamic_advertising(void)
     }
 
     // Update the advertising data with the new name
-    ad[1].data     = (const uint8_t*)dynamic_device_name;
+    ad[1].data = (const uint8_t*)dynamic_device_name;
     ad[1].data_len = strlen(dynamic_device_name);
 
     // err = bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
@@ -209,9 +209,9 @@ static void security_changed(struct bt_conn* conn, bt_security_t level, enum bt_
 #endif
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
-    .connected    = connected,
+    .connected = connected,
     .disconnected = disconnected,
-    .recycled     = recycled_cb,
+    .recycled = recycled_cb,
 #ifdef CONFIG_BT_NUS_SECURITY_ENABLED
     .security_changed = security_changed,
 #endif
@@ -277,13 +277,13 @@ static void pairing_failed(struct bt_conn* conn, enum bt_security_err reason)
 static struct bt_conn_auth_cb conn_auth_callbacks = {
     .passkey_display = auth_passkey_display,
     .passkey_confirm = auth_passkey_confirm,
-    .cancel          = auth_cancel,
+    .cancel = auth_cancel,
 };
 
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {.pairing_complete = pairing_complete,
-                                                               .pairing_failed   = pairing_failed};
+                                                               .pairing_failed = pairing_failed};
 #else
-static struct bt_conn_auth_cb      conn_auth_callbacks;
+static struct bt_conn_auth_cb conn_auth_callbacks;
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
 #endif
 
@@ -300,7 +300,7 @@ static void bt_receive_cb(struct bt_conn* conn, const uint8_t* const data, uint1
 
     // Generate and send echo response
     uint8_t echo_buffer[128];
-    int     echo_len = protobuf_generate_echo_response(data, len, echo_buffer, sizeof(echo_buffer));
+    int echo_len = protobuf_generate_echo_response(data, len, echo_buffer, sizeof(echo_buffer));
 
     if (echo_len > 0)
     {
@@ -354,12 +354,12 @@ int ble_send_data(const uint8_t* data, uint16_t len)
     // LOG_INF("Data: %s", data);
     // LOG_HEXDUMP_INF(data, len, "Hexdump:");
     uint16_t offset = 0;
-    uint16_t mtu    = get_ble_payload_mtu();
+    uint16_t mtu = get_ble_payload_mtu();
     while (offset < len)
     {
         uint16_t chunk_len = MIN(len - offset, mtu);
-        int      retry     = 0;
-        int      err;
+        int retry = 0;
+        int err;
         do
         {
             err = custom_nus_send(NULL, &data[offset], chunk_len);
@@ -412,9 +412,9 @@ static void num_comp_reply(bool accept)
  * @return 0 on success, negative value on error
  */
 #define USER_NODE DT_PATH(zephyr_user)
-static const struct gpio_dt_spec vad_power   = GPIO_DT_SPEC_GET(USER_NODE, vad_power_gpios);
-static const struct gpio_dt_spec int4        = GPIO_DT_SPEC_GET(USER_NODE, int4_gpios);
-static const struct gpio_dt_spec ear_en      = GPIO_DT_SPEC_GET(USER_NODE, ear_en_gpios);
+static const struct gpio_dt_spec vad_power = GPIO_DT_SPEC_GET(USER_NODE, vad_power_gpios);
+static const struct gpio_dt_spec int4 = GPIO_DT_SPEC_GET(USER_NODE, int4_gpios);
+static const struct gpio_dt_spec ear_en = GPIO_DT_SPEC_GET(USER_NODE, ear_en_gpios);
 /**
  * @brief Control VAD power on/off | 控制VAD电源开关
  * @param enable true to turn on VAD power (HIGH), false to turn off (LOW) |
@@ -436,6 +436,26 @@ void ear_en_control(bool enable)
     LOG_INF("ear_en %s", enable ? "HIGH" : "LOW");
 }
 
+/**
+ * @brief Configure default LOW GPIO pins | 配置默认拉低的GPIO引脚
+ * @return void
+ * @note This function drives the specified pins to output LOW state | 此函数将指定的引脚驱动为输出低电平状态
+ */
+void configure_default_low_pins(void)
+{
+    /* Force specified IOs to default LOW | 强制指定IO拉低 */
+    const uint32_t default_low_pins[] = {
+        NRF_GPIO_PIN_MAP(1, 12), NRF_GPIO_PIN_MAP(0, 27), NRF_GPIO_PIN_MAP(0, 24), NRF_GPIO_PIN_MAP(0, 26),
+        NRF_GPIO_PIN_MAP(0, 28), NRF_GPIO_PIN_MAP(0, 2),  NRF_GPIO_PIN_MAP(0, 3),  NRF_GPIO_PIN_MAP(0, 4),
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(default_low_pins); i++)
+    {
+        nrf_gpio_cfg_output(default_low_pins[i]);
+        nrf_gpio_pin_clear(default_low_pins[i]);
+    }
+}
+
 int init_user_gpio(void)
 {
     int err;
@@ -445,7 +465,6 @@ int init_user_gpio(void)
     };
     const char* gpio_names[] = {
         "vad_power (P1.00)",
-        "user1_p0_28 (P0.28)",
         "int4 (P0.22)",
     };
 
@@ -476,20 +495,6 @@ int init_user_gpio(void)
 
         // LOG_DBG("%s configured as output, set to LOW", gpio_names[i]);
     }
-
-    /* Force specified IOs to default LOW on power-up | 指定 IO 上电默认拉低 */
-    const uint32_t default_low_pins[] = {
-        NRF_GPIO_PIN_MAP(1, 12), NRF_GPIO_PIN_MAP(0, 27), 
-        NRF_GPIO_PIN_MAP(0, 24), NRF_GPIO_PIN_MAP(0, 26),
-        NRF_GPIO_PIN_MAP(0, 28), NRF_GPIO_PIN_MAP(0, 2),  
-        NRF_GPIO_PIN_MAP(0, 3),  NRF_GPIO_PIN_MAP(0, 4), 
-    };
-
-    for (int i = 0; i < ARRAY_SIZE(default_low_pins); i++)
-    {
-        nrf_gpio_cfg_output(default_low_pins[i]);
-        nrf_gpio_pin_clear(default_low_pins[i]);
-    }
     /* ear_en: configure as output and pull HIGH | ear_en：配置为输出并拉高 */
     if (gpio_is_ready_dt(&ear_en))
     {
@@ -509,8 +514,6 @@ int init_user_gpio(void)
     LOG_INF("User GPIOs configured successfully");
     return 0;
 }
-
-
 
 int main(void)
 {
@@ -622,6 +625,7 @@ int main(void)
     for (;;)
     {
         // LOG_INF("MAIN LOOP");
+
         k_sleep(K_MSEC(1000));
     }
 }

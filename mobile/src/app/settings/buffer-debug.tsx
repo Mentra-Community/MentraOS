@@ -1,12 +1,13 @@
-import React, {useState} from "react"
+import CoreModule from "core"
+import {useState} from "react"
 import {View} from "react-native"
-import {Screen, Header, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import bridge from "@/bridge/MantleBridge"
-import ActionButton from "@/components/ui/ActionButton"
-import {Spacer} from "@/components/misc/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import Toast from "react-native-toast-message"
+
+import {Screen, Header, Text} from "@/components/ignite"
+import ActionButton from "@/components/ui/ActionButton"
+import {Spacer} from "@/components/ui/Spacer"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 export default function BufferDebugPage() {
   const {theme} = useAppTheme()
@@ -17,7 +18,7 @@ export default function BufferDebugPage() {
 
   const handleStartStop = async () => {
     if (isBufferRecording) {
-      await bridge.sendStopBufferRecording()
+      await CoreModule.stopBufferRecording()
       setIsBufferRecording(false)
       Toast.show({
         type: "success",
@@ -26,7 +27,7 @@ export default function BufferDebugPage() {
         visibilityTime: 2000,
       })
     } else {
-      await bridge.sendStartBufferRecording()
+      await CoreModule.startBufferRecording()
       setIsBufferRecording(true)
       Toast.show({
         type: "success",
@@ -51,7 +52,7 @@ export default function BufferDebugPage() {
     }
 
     const requestId = `buffer_${Date.now()}`
-    await bridge.sendSaveBufferVideo(requestId, seconds)
+    await CoreModule.sendSaveBufferVideo(requestId, seconds)
     Toast.show({
       type: "success",
       text1: "Saving buffer video",
@@ -64,7 +65,7 @@ export default function BufferDebugPage() {
   const handleVideoStartStop = async () => {
     if (isVideoRecording) {
       if (videoRequestId) {
-        await bridge.sendStopVideoRecording(videoRequestId)
+        await CoreModule.sendStopVideoRecording(videoRequestId)
         setIsVideoRecording(false)
         setVideoRequestId(null)
         Toast.show({
@@ -77,7 +78,7 @@ export default function BufferDebugPage() {
     } else {
       const requestId = `video_${Date.now()}`
       setVideoRequestId(requestId)
-      await bridge.sendStartVideoRecording(requestId, true)
+      await CoreModule.sendStartVideoRecording(requestId, true)
       setIsVideoRecording(true)
       Toast.show({
         type: "success",
@@ -90,26 +91,26 @@ export default function BufferDebugPage() {
   }
 
   return (
-    <Screen preset="scroll" style={{paddingHorizontal: theme.spacing.lg}}>
-      <Header title="Camera Debug" leftIcon="caretLeft" onLeftPress={goBack} />
+    <Screen preset="scroll">
+      <Header title="Camera Debug" leftIcon="chevron-left" onLeftPress={goBack} />
 
-      <Spacer height={theme.spacing.xl} />
+      <Spacer height={theme.spacing.s8} />
 
-      <View style={{flex: 1, gap: theme.spacing.md}}>
+      <View style={{flex: 1, gap: theme.spacing.s4}}>
         <View
           style={{
-            padding: theme.spacing.lg,
+            padding: theme.spacing.s6,
             backgroundColor: theme.colors.surface,
-            borderRadius: theme.spacing.sm,
+            borderRadius: theme.spacing.s3,
             alignItems: "center",
           }}>
-          <Text style={{fontSize: 48, marginBottom: theme.spacing.sm}}>{isBufferRecording ? "🔴" : "⏸️"}</Text>
+          <Text style={{fontSize: 48, marginBottom: theme.spacing.s3}}>{isBufferRecording ? "🔴" : "⏸️"}</Text>
           <Text
             style={{
               fontSize: 18,
               fontWeight: "bold",
               color: theme.colors.text,
-              marginBottom: theme.spacing.xs,
+              marginBottom: theme.spacing.s2,
             }}>
             {isBufferRecording ? "Buffer Recording Active" : "Buffer Recording Stopped"}
           </Text>
@@ -137,13 +138,13 @@ export default function BufferDebugPage() {
               fontSize: 16,
               fontWeight: "600",
               color: theme.colors.text,
-              marginBottom: theme.spacing.sm,
-              marginTop: theme.spacing.md,
+              marginBottom: theme.spacing.s3,
+              marginTop: theme.spacing.s4,
             }}>
             Save Buffer
           </Text>
 
-          <View style={{gap: theme.spacing.sm}}>
+          <View style={{gap: theme.spacing.s3}}>
             <ActionButton
               label="Save Last 30 Seconds"
               variant="secondary"
@@ -170,18 +171,18 @@ export default function BufferDebugPage() {
         {/* Video Recording Section */}
         <View
           style={{
-            padding: theme.spacing.lg,
+            padding: theme.spacing.s6,
             backgroundColor: theme.colors.surface,
-            borderRadius: theme.spacing.sm,
+            borderRadius: theme.spacing.s3,
             alignItems: "center",
           }}>
-          <Text style={{fontSize: 48, marginBottom: theme.spacing.sm}}>{isVideoRecording ? "🔴" : "📹"}</Text>
+          <Text style={{fontSize: 48, marginBottom: theme.spacing.s3}}>{isVideoRecording ? "🔴" : "📹"}</Text>
           <Text
             style={{
               fontSize: 18,
               fontWeight: "bold",
               color: theme.colors.text,
-              marginBottom: theme.spacing.xs,
+              marginBottom: theme.spacing.s2,
             }}>
             {isVideoRecording ? "Recording Video" : "Standard Video Recording"}
           </Text>
@@ -190,7 +191,7 @@ export default function BufferDebugPage() {
               fontSize: 14,
               color: theme.colors.textDim,
               textAlign: "center",
-              marginBottom: theme.spacing.md,
+              marginBottom: theme.spacing.s4,
             }}>
             {isVideoRecording ? "Recording standard video to file..." : "Record a regular video (not buffer mode)"}
           </Text>
@@ -204,10 +205,10 @@ export default function BufferDebugPage() {
 
         <View
           style={{
-            padding: theme.spacing.md,
+            padding: theme.spacing.s4,
             backgroundColor: theme.colors.surface,
-            borderRadius: theme.spacing.sm,
-            marginTop: theme.spacing.md,
+            borderRadius: theme.spacing.s3,
+            marginTop: theme.spacing.s4,
           }}>
           <Text style={{fontSize: 12, color: theme.colors.textDim}}>
             <Text style={{fontWeight: "bold"}}>Recording Modes:</Text>

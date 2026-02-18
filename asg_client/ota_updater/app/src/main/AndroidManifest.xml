@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.augmentos.otaupdater">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -43,12 +42,12 @@
 <!--            android:name=".receiver.OtaCommandReceiver"-->
 <!--            android:exported="true">-->
 <!--            <intent-filter>-->
-<!--                <action android:name="com.augmentos.asg_client.ACTION_INSTALL_OTA" />-->
+<!--                <action android:name="com.mentra.asg_client.ACTION_INSTALL_OTA" />-->
 <!--            </intent-filter>-->
 <!--        </receiver>-->
         <!-- OtaHeartbeatAckReceiver removed as MainActivity now handles these broadcasts directly -->
     </application>
     <queries>
-        <package android:name="com.augmentos.asg_client" />
+        <package android:name="com.mentra.asg_client" />
     </queries>
 </manifest>

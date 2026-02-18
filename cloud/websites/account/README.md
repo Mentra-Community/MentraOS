@@ -75,3 +75,5 @@ The application communicates with the following API endpoints:
 - `/api/account/request-export`: Request data export
 - `/api/account/export-status`: Check export status
 - `/api/account/download-export/:id`: Download exported data
+
+Note: Update cloudflare to use bun for installing and building the application.

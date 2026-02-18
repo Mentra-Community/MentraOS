@@ -1,31 +1,54 @@
 {
   "name": "@mentra/sdk",
-  "version": "2.1.23",
+  "version": "2.1.29",
   "description": "Build apps for MentraOS smartglasses. This SDK provides everything you need to create real-time smartglasses applications.",
   "source": "src/index.ts",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    "development": {
-      "import": "./src/index.ts",
-      "require": "./src/index.ts",
-      "types": "./src/index.ts"
+    ".": {
+      "development": {
+        "import": "./src/index.ts",
+        "require": "./src/index.ts",
+        "types": "./src/index.ts"
+      },
+      "default": {
+        "import": "./dist/index.js",
+        "require": "./dist/index.js",
+        "types": "./dist/index.d.ts"
+      }
     },
-    "default": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+    "./display-utils": {
+      "development": {
+        "import": "./src/display-utils.ts",
+        "require": "./src/display-utils.ts",
+        "types": "./src/display-utils.ts"
+      },
+      "default": {
+        "import": "./dist/display-utils.js",
+        "require": "./dist/display-utils.js",
+        "types": "./dist/display-utils.d.ts"
+      }
     }
   },
   "scripts": {
-    "build": "rm -rf dist && bun x tsc -p tsconfig.json",
+    "build": "bun run clean && bun run build:js && bun run build:types",
+    "build:js-only": "bun run clean && bun run build:js",
+    "build:full": "bun run clean && bun run build:js && bun run build:types",
+    "clean": "rm -rf dist",
+    "build:js": "bun build src/index.ts src/display-utils.ts --outdir dist --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external boxen --external chalk --external cookie-parser --external dotenv --external express --external jimp --external jsonwebtoken --external jsrsasign --external multer --external pino --external pino-pretty --external strip-ansi --external ws",
+    "build:types": "bun x tsc --build --force",
     "dev": "echo 'No build needed in dev mode - using source files directly'",
     "prepare": "bun run build",
     "link-pkg": "bun link"
   },
   "dependencies": {
     "@logtail/pino": "^0.5.4",
+    "@mentra/display-utils": "^1.0.0",
+    "@mentra/types": "^1.0.0-beta.1",
     "axios": "^1.8.1",
+    "boxen": "^8.0.1",
+    "chalk": "^5.6.2",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.0",
     "express": "^4.18.2",
@@ -35,8 +58,13 @@
     "multer": "^2.0.1",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
+    "strip-ansi": "^7.1.2",
     "ws": "^8.18.2"
   },
+  "bundledDependencies": [
+    "@mentra/display-utils",
+    "@mentra/types"
+  ],
   "devDependencies": {
     "@types/babel__core": "^7.20.5",
     "@types/express": "^4.17.17",

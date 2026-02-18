@@ -1,0 +1,377 @@
+# LedModule API Reference
+
+The `LedModule` class provides comprehensive LED control functionality for MentraOS Apps, including RGB LED control and pattern methods. It automatically handles request tracking and provides fire-and-forget LED control with immediate resolution.
+
+## Import
+
+```typescript
+import { AppServer, AppSession } from '@mentra/sdk';
+
+export class MyAppServer extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+    // Check LED capabilities first
+    if (!session.capabilities?.hasLight) {
+      session.layouts.showTextWall('No LED support on this device');
+      return;
+    }
+
+    // Turn on red LED
+    await session.led.turnOn({ color: 'red', ontime: 2000 });
+
+    // Blink green LED
+    await session.led.blink('green', 500, 500, 3);
+  }
+}
+```
+
+## Class: LedModule
+
+The LedModule is automatically instantiated by the AppSession. You should not create instances directly.
+
+## Low-level LED Control Methods
+
+### turnOn
+
+Turn on an LED with specified timing parameters.
+
+```typescript
+async turnOn(options: LedControlOptions): Promise<void>
+```
+
+**Parameters:**
+- `options`: LED control configuration
+
+**Returns:** Promise that resolves immediately after sending the command (fire-and-forget)
+
+**Example:**
+```typescript
+// Solid red LED for 2 seconds
+await session.led.turnOn({ 
+  color: 'red', 
+  ontime: 2000, 
+  count: 1 
+});
+
+// Blink white LED 3 times
+await session.led.turnOn({ 
+  color: 'white', 
+  ontime: 500, 
+  offtime: 500, 
+  count: 3 
+});
+
+// Control LED with specific timing
+await session.led.turnOn({ 
+  color: 'green', 
+  ontime: 1000
+});
+```
+
+### turnOff
+
+Turn off all LEDs on the connected glasses.
+
+```typescript
+async turnOff(): Promise<void>
+```
+
+**Returns:** Promise that resolves immediately after sending the command
+
+**Example:**
+```typescript
+// Turn off all LEDs
+await session.led.turnOff();
+
+// Combine with user feedback
+await session.led.turnOff();
+session.layouts.showTextWall('LEDs turned off');
+```
+
+## Pattern Methods
+
+### blink
+
+Blink an LED with specified timing.
+
+```typescript
+async blink(color: LedColor, ontime: number, offtime: number, count: number): Promise<void>
+```
+
+**Parameters:**
+- `color`: LED color to use
+- `ontime`: How long LED stays on (ms)
+- `offtime`: How long LED stays off (ms)
+- `count`: Number of blink cycles
+
+**Returns:** Promise that resolves immediately after sending the command
+
+**Example:**
+```typescript
+// Blink red LED 5 times (500ms on, 500ms off)
+await session.led.blink('red', 500, 500, 5);
+
+// Quick notification blink
+await session.led.blink('green', 200, 200, 2);
+
+// Slow warning blink
+await session.led.blink('orange', 1000, 1000, 3);
+```
+
+### solid
+
+LED stays on continuously for specified duration.
+
+```typescript
+async solid(color: LedColor, duration: number): Promise<void>
+```
+
+**Parameters:**
+- `color`: LED color to use
+- `duration`: How long LED stays on (ms)
+
+**Returns:** Promise that resolves immediately after sending the command
+
+**Example:**
+```typescript
+// Solid red LED for 5 seconds
+await session.led.solid('red', 5000);
+
+// Recording indicator
+await session.led.solid('white', 30000);
+
+// Status indicator
+await session.led.solid('green', 2000);
+```
+
+## Capability Methods
+
+### getCapabilities
+
+Get available LED capabilities for the current device.
+
+```typescript
+getCapabilities(): Array<{
+  id: string;
+  purpose: string;
+  isFullColor: boolean;
+  color?: string;
+  position?: string;
+}>
+```
+
+**Returns:** Array of available LED configurations
+
+**Example:**
+```typescript
+const capabilities = session.led.getCapabilities();
+console.log('Available LEDs:', capabilities);
+
+// Check if device has RGB LEDs
+const hasRGB = capabilities.some(led => led.isFullColor);
+if (hasRGB) {
+  await session.led.turnOn({ color: 'blue', ontime: 1000 });
+}
+```
+
+## Interfaces
+
+### LedControlOptions
+
+Options for LED control.
+
+```typescript
+interface LedControlOptions {
+  /** LED color */
+  color?: LedColor;
+  /** LED on duration in milliseconds */
+  ontime?: number;
+  /** LED off duration in milliseconds */
+  offtime?: number;
+  /** Number of on/off cycles */
+  count?: number;
+}
+```
+
+### LedColor
+
+Available LED colors.
+
+```typescript
+type LedColor = "red" | "green" | "blue" | "orange" | "white";
+```
+
+## Device Compatibility
+
+Different smart glasses models have different LED capabilities:
+
+| Device | LED Support | LED Types | Colors Available |
+|--------|-------------|-----------|-------------------|
+| **Mentra Live** | ✅ Yes | RGB + White | All colors |
+| **Even Realities G1** | ❌ No | None | N/A |
+| **Vuzix Z100** | ❌ No | None | N/A |
+
+## Best Practices
+
+### 1. Always Check Device Capabilities
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+  // Check LED capabilities before using LED features
+  if (!session.capabilities?.hasLight) {
+    session.logger.warn("LED control requested but device has no LED support");
+    // Provide alternative feedback
+    session.layouts.showTextWall("Notification");
+    return;
+  }
+
+  // Check specific LED types
+  const lights = session.capabilities.light?.lights || [];
+  const hasFullColorLed = lights.some(light => light.isFullColor);
+  const hasWhiteLed = lights.some(light => !light.isFullColor && light.color === "white");
+  
+  if (hasFullColorLed) {
+    // Can use all colors
+    await session.led.turnOn({ color: 'blue', ontime: 1000 });
+  } else if (hasWhiteLed) {
+    // Only white LED available
+    await session.led.turnOn({ color: 'white', ontime: 1000 });
+  }
+}
+```
+
+### 2. Use Semantic Colors
+
+```typescript
+// Use colors that convey meaning
+await session.led.blink('green', 500, 500, 3);  // Success
+await session.led.blink('red', 500, 500, 3);    // Error
+await session.led.blink('orange', 500, 500, 3); // Warning
+await session.led.solid('white', 5000);         // Recording
+```
+
+### 3. Handle Errors Gracefully
+
+```typescript
+try {
+  await session.led.turnOn({ color: 'red', ontime: 1000 });
+} catch (error) {
+  session.logger.error(`LED error: ${error}`);
+  // Fallback to display notification
+  session.layouts.showTextWall("Error occurred");
+}
+```
+
+### 4. Provide Graceful Fallbacks
+
+```typescript
+async function notifyUser(session: AppSession, message: string): Promise<void> {
+  if (session.capabilities?.hasLight) {
+    // Use LED for notification
+    await session.led.blink('green', 500, 500, 2);
+  } else {
+    // Fallback to display
+    session.layouts.showTextWall(`📱 ${message}`);
+  }
+  
+  // Always provide audio feedback as well
+  await session.audio.speak(message);
+}
+```
+
+### 5. Don't Overuse LEDs
+
+```typescript
+// Good: Brief, meaningful feedback
+await session.led.blink('green', 200, 200, 2);
+
+// Avoid: Excessive blinking that might annoy users
+await session.led.blink('red', 100, 100, 20);
+```
+
+### 6. Combine with Other Feedback Methods
+
+```typescript
+async function comprehensiveNotification(session: AppSession): Promise<void> {
+  // Visual feedback
+  if (session.capabilities?.hasLight) {
+    await session.led.blink('green', 300, 300, 3);
+  }
+  
+  // Display feedback
+  session.layouts.showTextWall("✅ Notification received");
+  
+  // Audio feedback
+  await session.audio.speak("Notification received");
+}
+```
+
+## Common Use Cases
+
+### Notification System
+
+```typescript
+class NotificationLEDApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+    if (!session.capabilities?.hasLight) {
+      session.layouts.showTextWall("No LED support - notifications via display only");
+      return;
+    }
+
+    // Listen for events and provide LED feedback
+    session.events.onTranscription(async (data) => {
+      if (data.isFinal) {
+        await this.handleNotification(session, data.text);
+      }
+    });
+  }
+
+  private async handleNotification(session: AppSession, text: string): Promise<void> {
+    if (text.toLowerCase().includes('urgent')) {
+      await session.led.blink('red', 200, 200, 5);
+    } else if (text.toLowerCase().includes('success')) {
+      await session.led.blink('green', 500, 500, 2);
+    } else {
+      await session.led.blink('blue', 300, 300, 1);
+    }
+  }
+}
+```
+
+### Recording Indicator
+
+```typescript
+class RecordingLEDApp extends AppServer {
+  private isRecording = false;
+
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+    if (!session.capabilities?.hasLight) {
+      session.layouts.showTextWall("Recording indicator via display only");
+      return;
+    }
+
+    // Start recording with LED indicator
+    await this.startRecording(session);
+  }
+
+  private async startRecording(session: AppSession): Promise<void> {
+    this.isRecording = true;
+    
+    // Use solid LED for recording indication
+    await session.led.solid('white', 30000);
+    
+    session.layouts.showTextWall("🔴 Recording...");
+  }
+
+  private async stopRecording(session: AppSession): Promise<void> {
+    this.isRecording = false;
+    
+    await session.led.turnOff();
+    session.layouts.showTextWall("⏹️ Recording stopped");
+  }
+}
+```
+
+## Related Documentation
+
+* [Device Capabilities](/capabilities) - Check LED hardware support
+* [App Session](/reference/app-session) - AppSession class reference

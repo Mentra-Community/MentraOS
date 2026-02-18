@@ -1,0 +1,105 @@
+apply plugin: 'com.android.library'
+
+group = 'com.mentra.core'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+// If you want to use the managed Android SDK versions from expo-modules-core, set this to true.
+// The Android SDK versions will be bumped from time to time in SDK releases and may introduce breaking changes in your module code.
+// Most of the time, you may like to manage the Android SDK versions yourself.
+def useManagedAndroidSdkVersions = false
+if (useManagedAndroidSdkVersions) {
+  useDefaultAndroidSdkVersions()
+} else {
+  buildscript {
+    // Simple helper that allows the root project to override versions declared by this library.
+    ext.safeExtGet = { prop, fallback ->
+      rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+    }
+  }
+  project.android {
+    compileSdkVersion safeExtGet("compileSdkVersion", 36)
+    defaultConfig {
+      minSdkVersion safeExtGet("minSdkVersion", 24)
+      targetSdkVersion safeExtGet("targetSdkVersion", 36)
+    }
+  }
+}
+
+android {
+  namespace "com.mentra.core"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+  packagingOptions {
+    pickFirst '**/libjsc.so'
+    pickFirst '**/libc++_shared.so'
+    pickFirst '**/libonnxruntime.so'
+    pickFirst '**/libonnxruntime4j_jni.so'
+  }
+}
+
+dependencies {
+  // Kotlin standard library (explicitly added for IDE support)
+  // Version is managed by Expo modules, but explicit dependency helps IDE indexing
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+  
+  implementation "androidx.lifecycle:lifecycle-service:2.6.1"
+  implementation "org.greenrobot:eventbus:3.3.1"
+  implementation 'com.google.code.gson:gson:2.10.1'
+
+  // Google Play Services for location settings dialog
+  implementation 'com.google.android.gms:play-services-location:21.0.1'
+  implementation 'com.google.android.gms:play-services-base:18.2.0'
+
+  // Apache Commons Compress for tar.bz2 extraction
+  implementation 'org.apache.commons:commons-compress:1.24.0'
+
+  // OkHttp for HTTP requests
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+  // LC3 audio codec library
+  implementation project(':lc3Lib')
+
+  // Sherpa-ONNX for local transcription
+  implementation 'com.github.k2-fsa:sherpa-onnx:v1.12.8'
+
+  // Silero VAD (with onnxruntime exclusions to avoid conflicts with sherpa-onnx)
+  implementation ('com.github.gkonovalov:android-vad:2.0.9') {
+    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime'
+    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime4j'
+    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime4j-jni'
+  }
+
+  // Vuzix Z100
+  implementation 'com.vuzix:ultralite-sdk-android:1.8'
+  implementation 'com.squareup.picasso:picasso:2.8'
+
+  implementation 'com.google.protobuf:protobuf-java:4.32.0'
+  implementation 'com.google.protobuf:protobuf-java-util:4.32.0'
+}
+
+// Force override onnxruntime version to 1.17.1
+configurations.all {
+  resolutionStrategy {
+    eachDependency { DependencyResolveDetails details ->
+      if (details.requested.group == 'com.microsoft.onnxruntime') {
+        details.useVersion '1.17.1'
+        details.because('Force override vad\'s transitive version')
+      }
+      if (details.requested.name == 'onnxruntime-android') {
+        details.useVersion '1.17.1'
+        details.because('Force override vad\'s transitive version')
+      }
+    }
+  }
+}

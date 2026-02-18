@@ -18,7 +18,11 @@ AugmentOS-Cloud-Example-App/*
 RtmpStreamExampleBasic/*
 server/config.json
 K900_server_sdk/*
+K900_android_sdk/*
 K900Server_open/*
+k900_android_sdk/*
+K900ServerPlus/*
+K900_server/*
 .claude/*
 aar_extract/*
 aar-extract/*
@@ -28,6 +32,7 @@ asg_client/app/libs/temp_check/*
 ### REACT
 .idea/
 .vscode/
+.zed/
 node_modules/
 # React/Web build directories (not MCU builds)
 **/node_modules/**/build/
@@ -53,6 +58,8 @@ augmentos_npm/
 .docusaurus
 **/.docusaurus
 **/expo-env.d.ts
+*.tsbuildinfo
+.tsbuildinfo
 
 ### PYTHON
 #
@@ -112,11 +119,16 @@ dist
 docs/_build/
 eggs
 htmlcov
+<<<<<<< dev-nexfirmware-evt1
 # Python include/lib directories (not MCU includes)
 **/python/**/include/
 **/python/**/lib/
 **/venv/**/include/
 **/venv/**/lib/
+=======
+#include/
+.lib/
+>>>>>>> dev
 man/
 nosetests.xml
 parts
@@ -182,9 +194,13 @@ dist/
 downloads/
 eggs/
 .eggs/
+<<<<<<< dev-nexfirmware-evt1
 # Python lib directories (specific to Python builds)
 **/python/**/lib/
 **/python/**/lib64/
+=======
+.lib/
+>>>>>>> dev
 lib64/
 parts/
 sdist/
@@ -361,3 +377,4 @@ mobile/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework/
 
 # ONNX Model files (large ML models)
 mobile/ios/Packages/SherpaOnnx/Model/*
+nicelogs.txt

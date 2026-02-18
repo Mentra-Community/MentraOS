@@ -65,7 +65,7 @@ Create a dedicated service for buffer recording that manages its own camera:
 
 #### 1.1 Create CircularVideoBufferInternal
 
-Location: `com.augmentos.asg_client.camera.CircularVideoBufferInternal`
+Location: `com.mentra.asg_client.camera.CircularVideoBufferInternal`
 
 This will be a modified version that works directly with CameraNeo:
 

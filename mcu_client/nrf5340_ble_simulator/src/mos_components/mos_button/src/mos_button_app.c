@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-24 11:14:00
- * @LastEditTime : 2026-02-04 19:46:59
+ * @LastEditTime : 2026-02-05 14:21:41
  * @FilePath     : mos_button_app.c
  * @Description  :
  *
@@ -12,6 +12,7 @@
 #include "mos_button_app.h"
 
 #include <display/lcd/a6n.h>  // For a6n_power_off()
+#include <hal/nrf_gpio.h> /* For direct GPIO control | 直接GPIO控制 */
 #include <helpers/nrfx_reset_reason.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -20,28 +21,34 @@
 
 #include "interrupt_handler.h"
 #include "mos_button.h"
-#include "mos_lvgl_display.h"  
-#include "mos_npm1300_ldsw.h" 
-#include "mos_opt3006.h"       
+#include "mos_lsm6dsv16x.h"
+#include "mos_lvgl_display.h"
+#include "mos_npm1300_ldsw.h"
+#include "mos_opt3006.h"
+
+/* External function from main.c | 来自main.c的外部函数 */
+extern void configure_default_low_pins(void);
+extern void vad_power_control(bool enable);
+extern void ear_en_control(bool enable);
 
 LOG_MODULE_REGISTER(mos_button_app, LOG_LEVEL_INF);
 
 /* Button press detection parameters | 按键按下检测参数 */
-#define BUTTON_LONG_PRESS_MS    2500  // Long press threshold: 2.5 seconds | 长按阈值：2.5秒
-#define BUTTON_POLL_INTERVAL_MS 50    // Polling interval: 50ms | 轮询间隔：50ms
-#define BUTTON_DEBOUNCE_MS      20    // Debounce time: 20ms | 消抖时间：20ms
+#define BUTTON_LONG_PRESS_MS 2500  // Long press threshold: 2.5 seconds | 长按阈值：2.5秒
+#define BUTTON_POLL_INTERVAL_MS 50  // Polling interval: 50ms | 轮询间隔：50ms
+#define BUTTON_DEBOUNCE_MS 20  // Debounce time: 20ms | 消抖时间：20ms
 
 /* Button state tracking | 按键状态跟踪 */
-static bool                      button_app_initialized = false;
-static mos_button_app_callback_t button_app_callback    = NULL;
-static struct k_work_delayable   button_poll_work;  // 50ms定时器用于轮询按键状态 | 50ms timer for polling button state
-static bool                      button_press_detected   = false;
-static int64_t                   button_press_start_time = 0;     // 按键按下开始时间 | Button press start time
-static bool                      peripherals_turned_off = false;  // 外设是否已关闭 | Whether peripherals are turned off
+static bool button_app_initialized = false;
+static mos_button_app_callback_t button_app_callback = NULL;
+static struct k_work_delayable button_poll_work;  // 50ms定时器用于轮询按键状态 | 50ms timer for polling button state
+static bool button_press_detected = false;
+static int64_t button_press_start_time = 0;  // 按键按下开始时间 | Button press start time
+static bool peripherals_turned_off = false;  // 外设是否已关闭 | Whether peripherals are turned off
 static int64_t wakeup_button_press_time = 0;  // 唤醒时按键按下的时间（如果已按下）| Button press time on wakeup (if
                                               // already pressed)
-static bool button_released_after_wakeup = false;      // 唤醒后按键是否已释放（用于判断是否可以进入休眠逻辑）| Whether
-                                                       // button was released after wakeup (for sleep logic)
+static bool button_released_after_wakeup = false;  // 唤醒后按键是否已释放（用于判断是否可以进入休眠逻辑）| Whether
+                                                   // button was released after wakeup (for sleep logic)
 static bool button_was_released_before_press = false;  // 按键在当前按下前是否已释放（用于休眠逻辑）| Whether button was
                                                        // released before current press (for sleep logic)
 
@@ -81,9 +88,9 @@ static void button_poll_handler(struct k_work* work)
             /* Long press completed (>= 2.5s) and button released - enter sleep | 长按已完成（>=2.5s）且按键已释放 -
              * 进入休眠 */
             LOG_INF("✅ Button released after long press (2.5s+) - entering System OFF sleep");
-            button_press_detected   = false;
+            button_press_detected = false;
             button_press_start_time = 0;
-            peripherals_turned_off  = false;
+            peripherals_turned_off = false;
             /* Note: button_was_released_before_press will be set to true after device wakes up |
              * 注意：button_was_released_before_press将在设备唤醒后设置为true */
             mos_button_app_enter_sleep();
@@ -101,9 +108,9 @@ static void button_poll_handler(struct k_work* work)
             k_work_cancel_delayable(&button_poll_work);
 
             /* Reset button state | 重置按键状态 */
-            button_press_detected   = false;
+            button_press_detected = false;
             button_press_start_time = 0;
-            peripherals_turned_off  = false;
+            peripherals_turned_off = false;
 
             /* Mark button as released (for sleep logic - next press can trigger sleep) | 标记按键已释放（用于休眠逻辑 -
              * 下次按下可以触发休眠）*/
@@ -139,9 +146,10 @@ static void button_poll_handler(struct k_work* work)
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);  // Shutdown OPT3006 | 关闭 OPT3006
         mos_npm1300_ldsw1_disable();
         opt3006_prepare_for_sleep();
+        lsm6dsv16x_sleep();
         set_display_onoff(false);  // Set display state to off | 设置显示状态为关闭
-        a6n_power_off();           // Turn off A6N display power | 关闭A6N显示电源
-        a6n_io_off();              // Turn off A6N I/O power | 关闭A6N I/O电源
+        a6n_power_off();  // Turn off A6N display power | 关闭A6N显示电源
+        a6n_io_off();  // Turn off A6N I/O power | 关闭A6N I/O电源
         peripherals_turned_off = true;
         LOG_INF("Peripherals turned off, waiting for button release to enter sleep");
     }
@@ -245,9 +253,9 @@ static void button_interrupt_callback(interrupt_event_t* event)
             }
 
             /* Initialize button press tracking | 初始化按键按下跟踪 */
-            button_press_detected   = true;
+            button_press_detected = true;
             button_press_start_time = interrupt_time;  // Use interrupt time as start time | 使用中断时间作为开始时间
-            peripherals_turned_off  = false;
+            peripherals_turned_off = false;
             button_was_released_before_press = false;  // Reset flag | 重置标志
 
             k_work_schedule(&button_poll_work, K_MSEC(BUTTON_POLL_INTERVAL_MS));
@@ -283,7 +291,7 @@ int mos_button_app_init(void)
      * > 0 表示我们从休眠唤醒时按键已按下 */
     if (wakeup_button_press_time == 0)
     {
-        button_released_after_wakeup     = true;
+        button_released_after_wakeup = true;
         button_was_released_before_press = true;  // Normal power-on, button is released | 正常上电，按键已释放
         LOG_INF("Normal power-on detected - button sleep logic enabled");
     }
@@ -291,7 +299,7 @@ int mos_button_app_init(void)
     {
         /* Waking from sleep - button_released_after_wakeup will be set in mos_button_app_wait_for_power_on() |
          * 从休眠唤醒 - button_released_after_wakeup将在mos_button_app_wait_for_power_on()中设置 */
-        button_released_after_wakeup     = false;
+        button_released_after_wakeup = false;
         button_was_released_before_press = false;  // Waking from sleep, button may still be pressed |
                                                    // 从休眠唤醒，按键可能仍按下
         LOG_INF("Waking from sleep - button sleep logic will be enabled after power-on confirmation");
@@ -365,15 +373,16 @@ static int prepare_for_sleep(bool turn_off_peripherals)
         vad_power_control(false);
         ear_en_control(false);
         /* Disable LDSW1 | 禁用LDSW1 */
-        mos_npm1300_ldsw1_disable();
+        
         /* Put OPT3006 into shutdown mode | 关闭 OPT3006 */
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
         opt3006_prepare_for_sleep();
         lsm6dsv16x_sleep();
+        mos_npm1300_ldsw1_disable();
         /* Turn off display | 关闭显示 */
         set_display_onoff(false);  // Set display state to off | 设置显示状态为关闭
-        a6n_power_off();           // Turn off A6N display power | 关闭A6N显示电源
-        a6n_io_off();              // Turn off A6N I/O power | 关闭A6N I/O电源
+        a6n_power_off();  // Turn off A6N display power | 关闭A6N显示电源
+        a6n_io_off();  // Turn off A6N I/O power | 关闭A6N I/O电源
 
         LOG_INF("All peripherals turned off");
     }
@@ -381,8 +390,9 @@ static int prepare_for_sleep(bool turn_off_peripherals)
     {
         vad_power_control(false);  // Disable VAD power control | 禁用VAD电源控制
     }
-    
 
+    /* Ensure all default LOW pins are LOW before sleep | 睡眠前确保所有默认拉低的引脚为低电平 */
+    configure_default_low_pins();
     /* Configure button for System OFF wakeup | 配置按键用于System OFF唤醒 */
     ret = mos_button_configure_wakeup();
     if (ret != 0)
@@ -411,9 +421,9 @@ int mos_button_app_enter_sleep(void)
     k_work_cancel_delayable(&button_poll_work);
 
     /* Reset button state flags | 重置按键状态标志 */
-    button_press_detected   = false;
+    button_press_detected = false;
     button_press_start_time = 0;
-    peripherals_turned_off  = false;
+    peripherals_turned_off = false;
 
     /* Unregister interrupt callbacks | 注销中断回调 */
     interrupt_handler_unregister_callback(INTERRUPT_TYPE_BUTTON_PRESSED, button_interrupt_callback);
@@ -502,13 +512,13 @@ bool mos_button_app_check_wakeup_state(void)
 
 int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
 {
-    int     ret;
-    bool    long_press_detected     = false;
-    int64_t current_time            = k_uptime_get();
-    int64_t timeout_time            = current_time + timeout_ms;
+    int ret;
+    bool long_press_detected = false;
+    int64_t current_time = k_uptime_get();
+    int64_t timeout_time = current_time + timeout_ms;
     int64_t button_press_start_time = 0;
-    bool    button_was_pressed      = false;
-    bool    long_press_reached      = false;  // Flag to track if 2.5s has been reached | 标志：是否已达到2.5s
+    bool button_was_pressed = false;
+    bool long_press_reached = false;  // Flag to track if 2.5s has been reached | 标志：是否已达到2.5s
 
     LOG_INF("Waiting for button long press (2500ms) to power on...");
     LOG_INF("Press and hold button for 2.5 seconds to start device");
@@ -536,17 +546,17 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
             /* Already pressed for 2.5s+ - power on immediately | 已经按下2.5秒+ - 立即开机 */
             LOG_INF("Button already pressed for %lld ms (>= 2500ms) - power on confirmed immediately", elapsed_time);
             wakeup_button_press_time = 0;  // Clear wakeup time | 清除唤醒时间
-            return 0;                      // Success | 成功
+            return 0;  // Success | 成功
         }
         else
         {
             /* Still need to wait for remaining time | 仍需要等待剩余时间 */
             /* Use wakeup time as start time, so press_duration calculation will be correct |
              * 使用唤醒时间作为开始时间，这样按下时长计算将是正确的 */
-            button_press_start_time  = wakeup_button_press_time;
-            button_was_pressed       = true;
-            long_press_reached       = false;  // Not reached 2.5s yet | 尚未达到2.5秒
-            wakeup_button_press_time = 0;      // Clear wakeup time | 清除唤醒时间
+            button_press_start_time = wakeup_button_press_time;
+            button_was_pressed = true;
+            long_press_reached = false;  // Not reached 2.5s yet | 尚未达到2.5秒
+            wakeup_button_press_time = 0;  // Clear wakeup time | 清除唤醒时间
             LOG_INF("Need to wait for remaining time: %lld ms (already waited %lld ms)",
                     BUTTON_LONG_PRESS_MS - elapsed_time, elapsed_time);
         }
@@ -576,14 +586,14 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
         /* Button is now pressed - start timing now | 按键现在按下 - 现在开始计时 */
         LOG_INF("Button pressed after wakeup - starting long press detection");
         button_press_start_time = k_uptime_get();
-        button_was_pressed      = true;
-        long_press_reached      = false;  // Not reached 2.5s yet | 尚未达到2.5秒
+        button_was_pressed = true;
+        long_press_reached = false;  // Not reached 2.5s yet | 尚未达到2.5秒
     }
 
     while (!long_press_detected && (k_uptime_get() < timeout_time))
     {
-        bool    button_is_pressed = mos_button_is_pressed();
-        int64_t current_time      = k_uptime_get();
+        bool button_is_pressed = mos_button_is_pressed();
+        int64_t current_time = k_uptime_get();
 
         if (button_is_pressed)
         {
@@ -591,8 +601,8 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
             {
                 /* Button just pressed - record start time | 按键刚按下 - 记录开始时间 */
                 button_press_start_time = current_time;
-                button_was_pressed      = true;
-                long_press_reached      = false;
+                button_was_pressed = true;
+                long_press_reached = false;
                 LOG_INF("Button pressed, starting long press detection (need 2.5s, then release)");
             }
             else
@@ -606,9 +616,9 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
                     LOG_INF(
                         "Button long press (2500ms) reached (total duration: %lld ms) - power on confirmed immediately",
                         press_duration);
-                    long_press_reached  = true;
+                    long_press_reached = true;
                     long_press_detected = true;  // Mark as detected, will exit loop | 标记为已检测，将退出循环
-                    break;                       // Exit loop immediately | 立即退出循环
+                    break;  // Exit loop immediately | 立即退出循环
                 }
             }
         }
@@ -651,7 +661,7 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
                     /* This shouldn't happen - button was pressed but long_press_reached is false | 这不应该发生 -
                      * 按键已按下但long_press_reached为false */
                     LOG_WRN("Button released but long_press_reached is false (duration: %lld ms)", press_duration);
-                    button_was_pressed      = false;
+                    button_was_pressed = false;
                     button_press_start_time = 0;
                 }
             }

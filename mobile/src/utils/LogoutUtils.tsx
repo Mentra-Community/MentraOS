@@ -1,10 +1,11 @@
-import AsyncStorage from "@react-native-async-storage/async-storage"
-import {supabase} from "@/supabase/supabaseClient"
+import {Session} from "@supabase/supabase-js"
+import CoreModule from "core"
+
 import bridge from "@/bridge/MantleBridge"
-import {stopExternalService} from "@/bridge/CoreServiceStarter"
+import restComms from "@/services/RestComms"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {SETTINGS_KEYS} from "@/utils/SettingsHelper"
-import restComms from "@/managers/RestComms"
+import mentraAuth from "@/utils/auth/authClient"
+import {storage} from "@/utils/storage"
 
 export class LogoutUtils {
   private static readonly TAG = "LogoutUtils"
@@ -25,9 +26,6 @@ export class LogoutUtils {
 
       // Step 3: Clear backend communication tokens
       await this.clearBackendTokens()
-
-      // Step 4: Stop and cleanup core services
-      await this.stopCoreServices()
 
       // Step 5: Clear all app settings and user data
       await this.clearAppSettings()
@@ -53,7 +51,7 @@ export class LogoutUtils {
 
     try {
       // First try to disconnect any connected glasses
-      await bridge.sendDisconnectWearable()
+      await CoreModule.disconnect()
       console.log(`${this.TAG}: Disconnected glasses`)
     } catch (error) {
       console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
@@ -61,7 +59,7 @@ export class LogoutUtils {
 
     try {
       // Then forget the glasses completely
-      await bridge.sendForgetSmartGlasses()
+      await CoreModule.forget()
       console.log(`${this.TAG}: Forgot glasses pairing`)
     } catch (error) {
       console.warn(`${this.TAG}: Error forgetting glasses:`, error)
@@ -74,13 +72,9 @@ export class LogoutUtils {
   private static async clearSupabaseAuth(): Promise<void> {
     console.log(`${this.TAG}: Clearing Supabase authentication...`)
 
-    try {
-      // Try to sign out with Supabase - may fail in offline mode
-      await supabase.auth.signOut().catch(err => {
-        console.log(`${this.TAG}: Supabase sign-out failed, continuing with local cleanup:`, err)
-      })
-    } catch (error) {
-      console.warn(`${this.TAG}: Supabase signOut failed:`, error)
+    const res = await mentraAuth.signOut()
+    if (res.is_error()) {
+      console.error(`${this.TAG}: Error signing out:`, res.error)
     }
 
     // Completely clear ALL Supabase Auth storage
@@ -94,11 +88,11 @@ export class LogoutUtils {
       "supabase.auth.provider_refresh_token",
     ]
 
-    try {
-      await AsyncStorage.multiRemove(supabaseKeys)
-      console.log(`${this.TAG}: Cleared Supabase auth tokens`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error clearing Supabase tokens:`, error)
+    for (const key of supabaseKeys) {
+      const res = await storage.remove(key)
+      if (res.is_error()) {
+        console.error(`${this.TAG}: Error clearing Supabase token:`, res.error)
+      }
     }
   }
 
@@ -118,63 +112,14 @@ export class LogoutUtils {
   }
 
   /**
-   * Stop core services and cleanup connections
-   */
-  private static async stopCoreServices(): Promise<void> {
-    console.log(`${this.TAG}: Stopping core services...`)
-
-    try {
-      // Delete core authentication secret key
-      await bridge.deleteAuthenticationSecretKey()
-      console.log(`${this.TAG}: Deleted core authentication secret key`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error deleting auth secret key:`, error)
-    }
-
-    try {
-      // Stop the core communicator service
-      bridge.stopService()
-      console.log(`${this.TAG}: Stopped core communicator service`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error stopping core service:`, error)
-    }
-
-    try {
-      // Stop external services
-      stopExternalService()
-      console.log(`${this.TAG}: Stopped external services`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error stopping external services:`, error)
-    }
-
-    try {
-      // Clean up communicator resources
-      bridge.cleanup()
-      console.log(`${this.TAG}: Cleaned up core communicator resources`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error cleaning up communicator:`, error)
-    }
-  }
-
-  /**
    * Clear all app-specific settings from AsyncStorage
    */
   private static async clearAppSettings(): Promise<void> {
     console.log(`${this.TAG}: Clearing app settings...`)
 
+    // burn it all:
     try {
-      // Clear specific settings that should be reset on logout
-      const settingsToKeep = [
-        SETTINGS_KEYS.THEME_PREFERENCE, // Keep theme preference
-        SETTINGS_KEYS.CUSTOM_BACKEND_URL, // Keep custom backend URL if set
-      ]
-
-      const settingsToClear = Object.values(SETTINGS_KEYS).filter(key => !settingsToKeep.includes(key))
-
-      if (settingsToClear.length > 0) {
-        await AsyncStorage.multiRemove(settingsToClear)
-        console.log(`${this.TAG}: Cleared ${settingsToClear.length} app settings`)
-      }
+      storage.clearAll()
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)
     }
@@ -186,24 +131,24 @@ export class LogoutUtils {
   private static async clearAuthStorage(): Promise<void> {
     console.log(`${this.TAG}: Clearing remaining auth storage...`)
 
-    try {
-      // Get all AsyncStorage keys and filter for user/auth related ones
-      const allKeys = await AsyncStorage.getAllKeys()
-      const authKeys = allKeys.filter(
-        (key: string) =>
-          key.startsWith("supabase.auth.") ||
-          key.includes("user") ||
-          key.includes("token") ||
-          key.includes("session") ||
-          key.includes("auth"),
-      )
+    // Get all AsyncStorage keys and filter for user/auth related ones
+    const allKeys = storage.getAllKeys()
+    const authKeys = allKeys.filter(
+      (key: string) =>
+        key.startsWith("supabase.auth.") ||
+        key.includes("user") ||
+        key.includes("token") ||
+        key.includes("session") ||
+        key.includes("auth"),
+    )
 
-      if (authKeys.length > 0) {
-        await AsyncStorage.multiRemove(authKeys)
+    if (authKeys.length > 0) {
+      const res = await storage.removeMultiple(authKeys)
+      if (res.is_error()) {
+        console.error(`${this.TAG}: Error clearing auth storage:`, res.error)
+      } else {
         console.log(`${this.TAG}: Cleared ${authKeys.length} additional auth keys`)
       }
-    } catch (error) {
-      console.error(`${this.TAG}: Error clearing auth storage:`, error)
     }
   }
 
@@ -214,9 +159,6 @@ export class LogoutUtils {
     console.log(`${this.TAG}: Resetting status providers...`)
 
     try {
-      // Emit a logout event for any components that need to reset
-      GlobalEventEmitter.emit("USER_LOGGED_OUT")
-
       // Emit event to clear WebView data and cache
       GlobalEventEmitter.emit("CLEAR_WEBVIEW_DATA")
 
@@ -245,18 +187,17 @@ export class LogoutUtils {
    * Check if user is properly logged out by verifying key storage items
    */
   public static async verifyLogoutSuccess(): Promise<boolean> {
-    try {
-      // Check if any critical auth tokens remain
-      const supabaseSession = await AsyncStorage.getItem("supabase.auth.session")
-      const coreToken = restComms.getCoreToken()
-
-      const isLoggedOut = !supabaseSession && !coreToken
-
-      console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
-      return isLoggedOut
-    } catch (error) {
-      console.error(`${this.TAG}: Error verifying logout:`, error)
-      return false
+    // Check if any critical auth tokens remain
+    const res = storage.load<Session>("supabase.auth.session")
+    let supabaseSession = null
+    if (res.is_ok()) {
+      supabaseSession = res.value
     }
+    const coreToken = restComms.getCoreToken()
+
+    const isLoggedOut = !supabaseSession && !coreToken
+
+    console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
+    return isLoggedOut
   }
 }

@@ -1,0 +1,211 @@
+---
+title: "Hardware & Capabilities Overview"
+description: "Detect and adapt to different smart glasses hardware"
+---
+
+**Check what hardware is available using `session.capabilities`.** Different glasses have different features—displays, cameras, speakers, buttons, LEDs. Your app can detect and adapt to each device.
+
+## Accessing Capabilities
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const caps = session.capabilities;
+
+  if (!caps) {
+    session.logger.warn('Capabilities not loaded');
+    return;
+  }
+
+  session.logger.info('Device:', caps.modelName);
+  session.logger.info('Has camera:', caps.hasCamera);
+  session.logger.info('Has display:', caps.hasDisplay);
+}
+```
+
+## Available Capabilities
+
+| Capability | Description | Check With |
+|------------|-------------|------------|
+| **Display** | Screen for showing content | `caps.hasDisplay` |
+| **Camera** | Photo/video capture | `caps.hasCamera` |
+| **Microphone** | Audio input | `caps.hasMicrophone` |
+| **Speaker** | Audio output | `caps.hasSpeaker` |
+| **Button** | Physical controls | `caps.hasButton` |
+| **LED** | Light indicators | `caps.hasLight` |
+| **IMU** | Motion sensors | `caps.hasIMU` |
+| **WiFi** | Network connectivity | `caps.hasWifi` |
+
+## Basic Usage
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const caps = session.capabilities;
+  if (!caps) return;
+
+  // Adapt to available hardware
+  if (caps.hasDisplay) {
+    session.layouts.showTextWall('Welcome!');
+  } else {
+    await session.audio.speak('Welcome!');
+  }
+
+  if (caps.hasCamera) {
+    session.logger.info('Camera available');
+  }
+}
+```
+
+## Detailed Capabilities
+
+### Display Details
+
+```typescript
+if (caps.hasDisplay && caps.display) {
+  session.logger.info('Resolution:', caps.display.resolution);
+  session.logger.info('Color:', caps.display.isColor);
+  session.logger.info('Max text lines:', caps.display.maxTextLines);
+}
+```
+
+### Camera Details
+
+```typescript
+if (caps.hasCamera && caps.camera) {
+  session.logger.info('Resolution:', caps.camera.resolution);
+  session.logger.info('Can stream:', caps.camera.video.canStream);
+  session.logger.info('Can record:', caps.camera.video.canRecord);
+}
+```
+
+### LED Details
+
+```typescript
+if (caps.hasLight && caps.light) {
+  session.logger.info('LED count:', caps.light.count);
+
+  caps.light.lights?.forEach(led => {
+    session.logger.info(`${led.id}: ${led.isFullColor ? 'RGB' : led.color}`);
+  });
+}
+```
+
+## Common Device Types
+
+**Display Glasses** - Have screens, no camera:
+- Even Realities G1
+- Vuzix Z100
+
+**Camera Glasses** - Have cameras, no display:
+- Mentra Live
+
+See device-specific pages for details:
+- [Display Glasses](/app-devs/core-concepts/hardware-capabilities/display-glasses)
+- [Camera Glasses](/app-devs/core-concepts/hardware-capabilities/camera-glasses)
+
+## Adapting Your App
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const caps = session.capabilities;
+  if (!caps) return;
+
+  // Choose interaction mode
+  if (caps.hasDisplay) {
+    this.useVisualMode(session);
+  } else if (caps.hasSpeaker) {
+    this.useAudioMode(session);
+  }
+
+  // Enable features based on hardware
+  if (caps.hasCamera) {
+    this.enablePhotoFeatures(session);
+  }
+
+  if (caps.hasButton) {
+    this.enableButtonControls(session);
+  }
+}
+```
+
+## Capabilities Interface
+
+```typescript
+interface Capabilities {
+  modelName: string;
+
+  hasCamera: boolean;
+  camera: CameraCapabilities | null;
+
+  hasDisplay: boolean;
+  display: DisplayCapabilities | null;
+
+  hasMicrophone: boolean;
+  microphone: MicrophoneCapabilities | null;
+
+  hasSpeaker: boolean;
+  speaker: SpeakerCapabilities | null;
+
+  hasIMU: boolean;
+  imu: IMUCapabilities | null;
+
+  hasButton: boolean;
+  button: ButtonCapabilities | null;
+
+  hasLight: boolean;
+  light: LightCapabilities | null;
+
+  hasWifi: boolean;
+  power: PowerCapabilities;
+}
+```
+
+## Best Practices
+
+**Always check capabilities:**
+
+```typescript
+// ✅ Good
+if (session.capabilities?.hasCamera) {
+  await session.camera.requestPhoto();
+}
+
+// ❌ Avoid - may crash
+await session.camera.requestPhoto();
+```
+
+**Provide fallbacks:**
+
+```typescript
+if (caps?.hasDisplay) {
+  session.layouts.showTextWall('Message');
+} else {
+  await session.audio.speak('Message');
+}
+```
+
+**Check null values:**
+
+```typescript
+// Capabilities may be null initially
+if (!caps) {
+  session.logger.warn('Capabilities not available');
+  return;
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Display Glasses" icon="display" href="/app-devs/core-concepts/hardware-capabilities/display-glasses">
+    G1, Vuzix - display-specific features
+  </Card>
+  <Card title="Camera Glasses" icon="camera" href="/app-devs/core-concepts/hardware-capabilities/camera-glasses">
+    Mentra Live - camera-specific features
+  </Card>
+  <Card title="Capabilities Reference" icon="book" href="/app-devs/reference/interfaces/capabilities">
+    Complete capabilities types
+  </Card>
+  <Card title="Device Control" icon="microchip" href="/app-devs/core-concepts/app-session/device-control">
+    Using device features
+  </Card>
+</CardGroup>

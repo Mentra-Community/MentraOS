@@ -1,0 +1,23 @@
+{
+  "name": "livekit-speaker-2-bun",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "build": "echo 'no build step'",
+    "test": "bun test"
+  },
+  "dependencies": {
+  "@livekit/rtc-node": "^0.13.18",
+  "livekit-server-sdk": "^2.13.3",
+  "@livekit/protocol": "^1.25.0",
+  "speaker": "^0.5.5",
+    "commander": "^12.1.0",
+    "dotenv": "^16.5.0",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

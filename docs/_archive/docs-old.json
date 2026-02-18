@@ -1,0 +1,194 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "MentraOS",
+  "colors": {
+    "primary": "#00b869",
+    "light": "#00b869",
+    "dark": "#00b869"
+  },
+  "favicon": "/static/img/favicon.ico",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Welcome",
+        "groups": [
+          {
+            "group": "Welcome",
+            "pages": ["index"]
+          }
+        ]
+      },
+      {
+        "tab": "App Devs",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "terminal",
+            "pages": [
+              "overview",
+              "quickstart",
+              "example-apps",
+              {
+                "group": "Deployment",
+                "pages": ["deployment", "railway-deployment", "ubuntu-deployment"]
+              }
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "icon": "lightbulb",
+            "pages": [
+              "core-concepts",
+              "app-lifecycle",
+              "events",
+              "permissions",
+              "layouts",
+              "settings",
+              "audio",
+              "led",
+              "mira-tool-calls",
+              "capabilities",
+              {
+                "group": "Camera",
+                "pages": ["camera/README", "camera/photo-capture", "camera/rtmp-streaming"]
+              },
+              "webview-auth-overview",
+              "react-webviews",
+              "dashboard"
+            ]
+          },
+          {
+            "group": "SDK Reference",
+            "icon": "code",
+            "pages": [
+              "reference/index",
+              "reference/app-server",
+              "reference/app-session",
+              {
+                "group": "Managers",
+                "icon": "gear",
+                "pages": [
+                  "reference/managers/event-manager",
+                  "reference/managers/layout-manager",
+                  "reference/managers/settings-manager",
+                  "reference/managers/audio-manager",
+                  "reference/managers/led-manager",
+                  "reference/managers/camera",
+                  "reference/managers/location-manager"
+                ]
+              },
+              "reference/enums",
+              {
+                "group": "Interfaces",
+                "icon": "shapes",
+                "pages": [
+                  "reference/interfaces/config-types",
+                  "reference/interfaces/event-types",
+                  "reference/interfaces/layout-types",
+                  "reference/interfaces/capabilities",
+                  "reference/interfaces/webhook-types",
+                  "reference/interfaces/message-types",
+                  "reference/interfaces/tool-types",
+                  "reference/interfaces/setting-types"
+                ]
+              },
+              "reference/dashboard-api",
+              "reference/utilities"
+            ]
+          }
+        ]
+      },
+
+      {
+        "tab": "OS Devs",
+        "groups": [
+          {
+            "group": "Contributing",
+            "icon": "users",
+            "pages": [
+              "contributing",
+              "contributing/mentraos-manager-guidelines",
+              "contributing/mentraos-asg-client-guidelines",
+              "contributing/add-new-glasses-support",
+              {
+                "group": "ASG Client",
+                "icon": "microchip",
+                "pages": [
+                  "asg-client/README",
+                  "asg-client/architecture",
+                  "asg-client/mentra-live",
+                  "asg-client/button-system",
+                  "asg-client/rtmp-streaming"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Glasses OEMs",
+        "groups": [
+          {
+            "group": "Glasses OEMs",
+            "icon": "industry",
+            "pages": ["glasses-oems"]
+          }
+        ]
+      },
+      {
+        "tab": "Cook Book",
+        "groups": [
+          {
+            "group": "Recipes",
+            "pages": ["cookbook/mira-tool-calls-advanced"]
+          }
+        ]
+      }
+    ]
+  },
+  "anchors": [
+    {
+      "anchor": "GitHub",
+      "href": "https://github.com/Mentra-Community/MentraOS",
+      "icon": "github"
+    },
+    {
+      "anchor": "Discord",
+      "href": "https://discord.gg/5ukNvkEAqT",
+      "icon": "discord"
+    },
+    {
+      "anchor": "SDK Package",
+      "href": "https://www.npmjs.com/package/@mentraos/sdk",
+      "icon": "npm"
+    }
+  ],
+  "logo": {
+    "light": "/static/img/mentra-logo-small.png",
+    "dark": "/static/img/mentra-logo-small-dark.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Support",
+        "href": "https://discord.gg/5ukNvkEAqT"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Developer Portal",
+      "href": "https://console.mentra.glass"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "cursor", "vscode"]
+  },
+  "footer": {
+    "socials": {
+      "x": "https://x.com/mentralabs",
+      "github": "https://github.com/Mentra-Community",
+      "discord": "https://discord.gg/5ukNvkEAqT"
+    }
+  }
+}

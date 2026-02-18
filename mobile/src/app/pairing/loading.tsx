@@ -1,83 +1,58 @@
-import React, {useState, useEffect, useRef, useCallback} from "react"
-import {View, Text, TouchableOpacity, ScrollView, ViewStyle, TextStyle, BackHandler, Platform} from "react-native"
 import {useRoute} from "@react-navigation/native"
-import Icon from "react-native-vector-icons/FontAwesome"
-import {useCoreStatus} from "@/contexts/CoreStatusProvider"
-import PairingDeviceInfo from "@/components/misc/PairingDeviceInfo"
-import GlassesTroubleshootingModal from "@/components/misc/GlassesTroubleshootingModal"
-import GlassesPairingLoader from "@/components/misc/GlassesPairingLoader"
-import {getPairingGuide} from "@/utils/getPairingGuide"
-import {router} from "expo-router"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {Screen} from "@/components/ignite/Screen"
-import {ThemedStyle} from "@/theme"
-import {Header} from "@/components/ignite/Header"
-import {PillButton} from "@/components/ignite/PillButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import bridge from "@/bridge/MantleBridge"
+import CoreModule, {PairFailureEvent, GlassesNotReadyEvent} from "core"
+import {useEffect, useRef, useState} from "react"
+import {View} from "react-native"
 
-export default function GlassesPairingGuideScreen() {
-  const {replace, clearHistory} = useNavigationHistory()
-  const {status} = useCoreStatus()
+import {Button} from "@/components/ignite"
+import {Header} from "@/components/ignite/Header"
+import {Screen} from "@/components/ignite/Screen"
+import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
+import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useGlassesStore} from "@/stores/glasses"
+
+export default function GlassesPairingLoadingScreen() {
+  const {replace, goBack} = useNavigationHistory()
   const route = useRoute()
-  const {themed} = useAppTheme()
-  const {glassesModelName} = route.params as {glassesModelName: string}
+  const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const [pairingInProgress, setPairingInProgress] = useState(true)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const failureErrorRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hasAlertShownRef = useRef(false)
-  const backHandlerRef = useRef<any>(null)
-
-  const handleForgetGlasses = useCallback(async () => {
-    setPairingInProgress(false)
-    await bridge.sendDisconnectWearable()
-    await bridge.sendForgetSmartGlasses()
-    clearHistory()
-    router.dismissTo("/pairing/select-glasses-model")
-  }, [clearHistory])
+  const hasNavigatedRef = useRef(false)
+  const glassesFullyBooted = useGlassesStore((state) => state.fullyBooted)
+  const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
   useEffect(() => {
-    if (Platform.OS !== "android") return
-
-    const onBackPress = () => {
-      handleForgetGlasses()
-      return true
-    }
-
-    const timeout = setTimeout(() => {
-      const backHandler = BackHandler.addEventListener("hardwareBackPress", onBackPress)
-      backHandlerRef.current = backHandler
-    }, 100)
-
+    let sub = CoreModule.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
+      setShowGlassesBooting(true)
+    })
     return () => {
-      clearTimeout(timeout)
-      if (backHandlerRef.current) {
-        backHandlerRef.current.remove()
-        backHandlerRef.current = null
-      }
+      sub.remove()
     }
-  }, [handleForgetGlasses])
+  }, [])
+
+  focusEffectPreventBack()
 
   const handlePairFailure = (error: string) => {
-    bridge.sendForgetSmartGlasses()
-    replace("/pairing/failure", {error: error, glassesModelName: glassesModelName})
+    CoreModule.forget()
+    replace("/pairing/failure", {error: error, deviceModel: deviceModel})
   }
 
   useEffect(() => {
-    GlobalEventEmitter.on("PAIR_FAILURE", handlePairFailure)
+    let sub = CoreModule.addListener("pair_failure", (event: PairFailureEvent) => {
+      handlePairFailure(event.error)
+    })
     return () => {
-      GlobalEventEmitter.off("PAIR_FAILURE", handlePairFailure)
+      sub.remove()
     }
   }, [])
 
   useEffect(() => {
     hasAlertShownRef.current = false
-    setPairingInProgress(true)
 
     timerRef.current = setTimeout(() => {
-      if (!status.glasses_info?.model_name && !hasAlertShownRef.current) {
+      if (!glassesFullyBooted && !hasAlertShownRef.current) {
         hasAlertShownRef.current = true
       }
     }, 30000)
@@ -89,103 +64,40 @@ export default function GlassesPairingGuideScreen() {
   }, [])
 
   useEffect(() => {
-    if (!status.core_info.puck_connected || !status.glasses_info?.model_name) return
-
+    if (!glassesFullyBooted) return
+    if (hasNavigatedRef.current) return
+    hasNavigatedRef.current = true
     if (timerRef.current) clearTimeout(timerRef.current)
     if (failureErrorRef.current) clearTimeout(failureErrorRef.current)
-    replace("/(tabs)/home")
-  }, [status, replace])
-
-  if (pairingInProgress) {
-    return (
-      <Screen preset="fixed" style={themed($screen)}>
-        <Header
-          leftIcon="caretLeft"
-          onLeftPress={handleForgetGlasses}
-          RightActionComponent={
-            <PillButton
-              text="Help"
-              variant="icon"
-              onPress={() => setShowTroubleshootingModal(true)}
-              buttonStyle={themed($pillButton)}
-            />
-          }
-        />
-        <GlassesPairingLoader glassesModelName={glassesModelName} />
-        <GlassesTroubleshootingModal
-          isVisible={showTroubleshootingModal}
-          onClose={() => setShowTroubleshootingModal(false)}
-          glassesModelName={glassesModelName}
-        />
-      </Screen>
-    )
-  }
+    setTimeout(() => {
+      replace("/pairing/success", {deviceModel: deviceModel})
+    }, 1000)
+  }, [glassesFullyBooted, replace, deviceModel])
 
   return (
-    <Screen preset="fixed" style={themed($screen)}>
-      <Header
-        leftIcon="caretLeft"
-        onLeftPress={handleForgetGlasses}
-        RightActionComponent={
-          <PillButton
-            text="Help"
-            variant="icon"
-            onPress={() => setShowTroubleshootingModal(true)}
-            buttonStyle={themed($pillButton)}
+    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+      <Header leftIcon="chevron-left" onLeftPress={goBack} />
+      <View className="flex-1">
+        <View className="flex-1 justify-center">
+          <GlassesPairingLoader
+            deviceModel={deviceModel}
+            deviceName={deviceName}
+            isBooting={showGlassesBooting}
+            onCancel={goBack}
           />
-        }
-      />
-      <ScrollView style={themed($scrollView)}>
-        <View style={themed($contentContainer)}>
-          <PairingDeviceInfo glassesModelName={glassesModelName} />
-          {getPairingGuide(glassesModelName)}
-          <TouchableOpacity style={themed($helpButton)} onPress={() => setShowTroubleshootingModal(true)}>
-            <Icon name="question-circle" size={16} color="#FFFFFF" style={{marginRight: 8}} />
-            <Text style={themed($helpButtonText)}>Need Help Pairing?</Text>
-          </TouchableOpacity>
         </View>
-      </ScrollView>
+        <Button
+          preset="secondary"
+          tx="pairing:needMoreHelp"
+          onPress={() => setShowTroubleshootingModal(true)}
+          className="w-full"
+        />
+      </View>
       <GlassesTroubleshootingModal
         isVisible={showTroubleshootingModal}
         onClose={() => setShowTroubleshootingModal(false)}
-        glassesModelName={glassesModelName}
+        deviceModel={deviceModel}
       />
     </Screen>
   )
 }
-
-const $screen: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.md,
-})
-
-const $pillButton: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginRight: spacing.md,
-})
-
-const $scrollView: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-})
-
-const $contentContainer: ThemedStyle<ViewStyle> = () => ({
-  alignItems: "center",
-  justifyContent: "flex-start",
-})
-
-const $helpButton: ThemedStyle<ViewStyle> = ({isDark}) => ({
-  alignItems: "center",
-  borderRadius: 8,
-  flexDirection: "row",
-  justifyContent: "center",
-  marginBottom: 30,
-  marginTop: 20,
-  paddingHorizontal: 20,
-  paddingVertical: 12,
-  backgroundColor: isDark ? "#3b82f6" : "#007BFF",
-})
-
-const $helpButtonText: ThemedStyle<TextStyle> = ({typography}) => ({
-  color: "#FFFFFF",
-  fontFamily: typography.primary.normal,
-  fontSize: 16,
-  fontWeight: "600",
-})

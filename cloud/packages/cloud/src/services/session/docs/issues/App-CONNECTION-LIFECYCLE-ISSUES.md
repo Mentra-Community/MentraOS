@@ -7,14 +7,16 @@
 **Issue**: `AppManager.startApp()` marks apps as "running" before App actually connects.
 
 **Location**: `AppManager.ts:158-161`
+
 ```typescript
-this.userSession.runningApps.add(packageName);        // ❌ Too early!
-this.userSession.loadingApps.delete(packageName);     // ❌ Too early!
+this.userSession.runningApps.add(packageName); // ❌ Too early!
+this.userSession.loadingApps.delete(packageName); // ❌ Too early!
 ```
 
 **Problem**: App appears "started" even if App fails to connect, webhook fails, or authentication fails.
 
 **Impact**:
+
 - Services try to send messages to non-existent connections
 - Users see apps as "running" when they're actually broken
 - Resurrection logic can't distinguish between "never started" and "disconnected"
@@ -24,6 +26,7 @@ this.userSession.loadingApps.delete(packageName);     // ❌ Too early!
 **Issue**: Both user sessions and App apps use 60-second grace periods.
 
 **Current State**:
+
 - User session (glasses disconnect): 60s ✅ Correct
 - App apps (app disconnect): 60s ❌ Should be 5s
 
@@ -36,13 +39,15 @@ this.userSession.loadingApps.delete(packageName);     // ❌ Too early!
 **Issue**: Every service duplicates `websocket && websocket.readyState === 1` logic.
 
 **Affected Services**:
+
 - `transcription.service.ts:488-502`
 - `AudioManager.ts`
-- `VideoManager.ts`
+- `UnmanagedStreamingExtension.ts`
 - `PhotoManager.ts`
 - Many others...
 
 **Impact**:
+
 - No centralized resurrection logic
 - Services just log errors instead of triggering recovery
 - Duplicate code maintenance burden
@@ -52,11 +57,13 @@ this.userSession.loadingApps.delete(packageName);     // ❌ Too early!
 **Issue**: `startApp()` doesn't wait for App handshake completion.
 
 **Current Flow**:
+
 1. Send webhook → SUCCESS (but App not actually started)
 2. App connects separately (if it works)
 3. No way to know if step 2 succeeded
 
 **Impact**:
+
 - Can't detect resurrection success/failure
 - No error propagation from App connection failures
 - Difficult to debug connection issues
@@ -66,12 +73,14 @@ this.userSession.loadingApps.delete(packageName);     // ❌ Too early!
 **Issue**: Connection failures don't bubble up with context.
 
 **Current State**:
+
 - Webhook success != app started
 - WebSocket connection errors not linked to startApp attempts
 - No correlation between webhook calls and connection outcomes
 - Logs scattered across multiple services without correlation IDs
 
 **Impact**:
+
 - Hard to debug why apps fail to start
 - No way to programmatically handle app start failures
 - Support requests are difficult to diagnose
@@ -83,12 +92,14 @@ this.userSession.loadingApps.delete(packageName);     // ❌ Too early!
 **Concept**: Track the full lifecycle from webhook → connection → authentication → ACK.
 
 **Implementation Ideas**:
+
 - Create `ConnectionAttempt` objects with correlation IDs
 - Track state: `WEBHOOK_SENT` → `CONNECTED` → `AUTHENTICATED` → `HANDSHAKE_COMPLETE`
 - Use event-driven architecture to update states
 - `startApp()` waits for `HANDSHAKE_COMPLETE` or timeout
 
 **Benefits**:
+
 - Clear success/failure detection
 - Error propagation with context
 - Better debugging capabilities
@@ -109,6 +120,7 @@ async startApp(packageName: string): Promise<{
 ```
 
 **Implementation**:
+
 - Create pending Promise when webhook sent
 - Listen for `CONNECTION_ACK` to resolve
 - Reject on timeout or errors with stage information
@@ -119,6 +131,7 @@ async startApp(packageName: string): Promise<{
 **Concept**: All services use `appManager.sendMessageToApp()` instead of direct websocket access.
 
 **Implementation**:
+
 ```typescript
 interface AppMessageResult {
   sent: boolean;
@@ -130,6 +143,7 @@ async sendMessageToApp(packageName: string, message: any): Promise<AppMessageRes
 ```
 
 **Logic**:
+
 1. Check websocket health
 2. If healthy → send message
 3. If dead → trigger resurrection
@@ -141,12 +155,14 @@ async sendMessageToApp(packageName: string, message: any): Promise<AppMessageRes
 **Concept**: Every operation gets a correlation ID for full traceability.
 
 **Implementation**:
+
 - Generate correlation ID for each `startApp()` attempt
 - Pass correlation ID through webhook → connection → authentication
 - All logs include correlation ID and operation stage
 - Structured logging for easy searching
 
 **Log Structure**:
+
 ```typescript
 {
   correlationId: "start-app-12345",
@@ -165,11 +181,13 @@ async sendMessageToApp(packageName: string, message: any): Promise<AppMessageRes
 **Concept**: Formal state machine for App connection lifecycle.
 
 **States**:
+
 - `IDLE` → `WEBHOOK_PENDING` → `CONNECTING` → `AUTHENTICATING` → `CONNECTED`
 - `DISCONNECTED` → `RECONNECTING` → `CONNECTED`
 - `FAILED` (terminal state with error details)
 
 **Benefits**:
+
 - Clear state transitions
 - Impossible invalid states
 - Easy to add retry logic
@@ -180,6 +198,7 @@ async sendMessageToApp(packageName: string, message: any): Promise<AppMessageRes
 **Concept**: Intelligent resurrection with escalating timeouts.
 
 **Strategy**:
+
 1. App disconnect detected
 2. Wait 5s for self-reconnection
 3. If no reconnect → attempt manual resurrection
@@ -192,6 +211,7 @@ async sendMessageToApp(packageName: string, message: any): Promise<AppMessageRes
 **Concept**: Regular health checks to proactively detect issues.
 
 **Implementation**:
+
 - Periodic ping/pong with Apps (separate from heartbeat)
 - Detect zombie connections (connected but not responding)
 - Preemptive resurrection before services try to send

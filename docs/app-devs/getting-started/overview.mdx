@@ -1,0 +1,70 @@
+---
+title: "Overview"
+description: "Build production ready smart glasses apps in minutes."
+---
+
+## How MentraOS Works
+
+MentraOS is the smart glasses operating system. It allows third party apps to run on smart glasses.
+
+Users install the Mentra app on their phone, connect their glasses, and run apps.
+
+Developers build apps that users can install (from a web link or the Mentra Store).
+
+Third party apps run in the cloud and have a low-latency connection to all the smart glasses hardware. Developers can call functions in their web application to a picture, listen to microphone data, or display information on users' smart glasses.
+
+## Why Use MentraOS
+
+MentraOS provides:
+
+- **Universal** - Works with glasses from multiple manufacturers including Vuzix, Even Realities, Mentra, and a number of new glasses in 2026.
+- **Powerful** - Audio, camera, display, sensors, and AI integration.
+- **Simple** - Server-side apps using familiar web technologies.
+- **Open Source** - 100% open, MentraOS is the industry standard OS for smart glasses.
+
+## Hello World MentraOS App
+
+Here's a MentraOS app that shows "Hello World" on a smart glasses display:
+
+```typescript
+import { AppServer } from '@mentra/sdk';
+
+class MyApp extends AppServer {
+  protected async onSession(session, sessionId, userId) {
+    // Display "Hello World" on the glasses
+    session.layouts.showTextWall("Hello World from MentraOS!");
+    
+    // Log when user speaks
+    session.events.onTranscription((data) => {
+      console.log(`User said: ${data.text}`);
+    });
+  }
+}
+
+const app = new MyApp({
+  packageName: 'com.example.myapp',
+  apiKey: process.env.MENTRA_API_KEY,
+  port: 3000
+});
+
+app.start();
+```
+
+That's it! This app will:
+
+1. Connect to a user's smart glasses when they launch your app
+2. Display "Hello World from MentraOS!" on their glasses display
+3. Log everything the user says to your server console
+
+## What You Could Build
+
+With MentraOS, developers have built:
+
+- **Fitness coaches** with workout guidance
+- **Live captions** for the deaf/HoH
+- **Industrial inspection tools** with camera glasses
+- **Video streaming platforms** for content creators
+
+## Next Steps
+
+🚀 Ready to build your first app? Check out the [Quickstart](/app-devs/getting-started/quickstart).

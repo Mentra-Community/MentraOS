@@ -5,29 +5,64 @@
  * using the new Dashboard API. It maintains backward compatibility
  * with the existing system.
  */
-import express from 'express';
-import { v4 as uuidv4 } from 'uuid';
-import {
-  AppSession,
-  AppConnectionInit,
-  AppToCloudMessageType,
-  StreamType,
-  ViewType,
-  DashboardMode,
-  LayoutType
-} from '@mentra/sdk';
-import { wrapText } from '@mentra/utils';
-import { tzlookup } from 'tz-lookup';
-import { logger  } from '../../../../services/logging/pino-logger';
+import express from "express";
+import { v4 as uuidv4 } from "uuid";
+import { AppSession, StreamType, DashboardMode } from "@mentra/sdk";
+// Inline wrapText utility (previously from @mentra/utils)
+function wrapText(text: any, maxLength = 25): string {
+  if (typeof text !== "string" || text.length === 0) {
+    return "";
+  }
+
+  return text
+    .split("\n")
+    .map((line) => {
+      const words = line.split(" ");
+      let currentLine = "";
+      const wrappedLines: string[] = [];
+
+      words.forEach((word) => {
+        if (
+          currentLine.length + (currentLine ? 1 : 0) + word.length <=
+          maxLength
+        ) {
+          currentLine += (currentLine ? " " : "") + word;
+        } else {
+          if (currentLine) {
+            wrappedLines.push(currentLine);
+          }
+          currentLine = word;
+
+          // If a single word is too long, hardcut it.
+          while (currentLine.length > maxLength) {
+            wrappedLines.push(currentLine.slice(0, maxLength));
+            currentLine = currentLine.slice(maxLength);
+          }
+        }
+      });
+
+      if (currentLine) {
+        wrappedLines.push(currentLine.trim());
+      }
+
+      return wrappedLines.join("\n");
+    })
+    .join("\n");
+}
+import { tzlookup } from "tz-lookup";
+import { logger } from "../../../../services/logging/pino-logger";
 
 // Configuration
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
 const CLOUD_HOST_NAME = process.env.CLOUD_LOCAL_HOST_NAME || "cloud";
-const PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || 'system.augmentos.dashboard';
+const PACKAGE_NAME =
+  process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "system.augmentos.dashboard";
 const API_KEY = process.env.AUGMENTOS_AUTH_JWT_SECRET;
 
 if (!API_KEY) {
-  logger.error("API_KEY is not set. Please set the AUGMENTOS_AUTH_JWT_SECRET environment variable.");
+  logger.error(
+    "API_KEY is not set. Please set the AUGMENTOS_AUTH_JWT_SECRET environment variable.",
+  );
   process.exit(1);
 }
 
@@ -36,7 +71,7 @@ const app = express();
 app.use(express.json());
 
 // List of notification app names to ignore
-const notificationAppBlackList = ['youtube', 'augment', 'maps'];
+const notificationAppBlackList = ["youtube", "augment", "maps"];
 
 // Session information interface
 interface SessionInfo {
@@ -44,7 +79,12 @@ interface SessionInfo {
   session: AppSession;
   batteryLevel?: number;
   latestLocation?: { latitude: number; longitude: number; timezone?: string };
-  phoneNotificationCache?: { title: string; content: string; timestamp: number; uuid: string }[];
+  phoneNotificationCache?: {
+    title: string;
+    content: string;
+    timestamp: number;
+    uuid: string;
+  }[];
   phoneNotificationRanking?: any[];
   calendarEvent?: any;
   weatherCache?: { timestamp: number; data: string };
@@ -58,7 +98,7 @@ const activeSessions = new Map<string, SessionInfo>();
 // Main Webhook Endpoint
 // ===================================
 
-app.post('/webhook', async (req: express.Request, res: express.Response) => {
+app.post("/webhook", async (req: express.Request, res: express.Response) => {
   try {
     const { sessionId, userId } = req.body;
     logger.info(`Session start for user ${userId}, session ${sessionId}`);
@@ -67,7 +107,7 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
     const session = new AppSession({
       packageName: PACKAGE_NAME,
       apiKey: API_KEY,
-      augmentOSWebsocketUrl: `ws://${CLOUD_HOST_NAME}/app-ws`
+      augmentOSWebsocketUrl: `ws://${CLOUD_HOST_NAME}/app-ws`,
     });
 
     // Store session info
@@ -75,7 +115,7 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
       userId,
       session,
       phoneNotificationCache: [],
-      dashboardMode: DashboardMode.MAIN
+      dashboardMode: DashboardMode.MAIN,
     });
 
     // Connect to cloud
@@ -89,10 +129,10 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
     initializeDashboard(sessionId);
 
     // Respond to webhook
-    res.status(200).json({ status: 'connected' });
+    res.status(200).json({ status: "connected" });
   } catch (error) {
-    logger.error('Error handling webhook', error);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error("Error handling webhook", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -102,7 +142,7 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
 
 function setupEventHandlers(sessionId: string, session: AppSession): void {
   // Handle connection events
-  session.events.on('connected', () => {
+  session.events.on("connected", () => {
     logger.info(`Session ${sessionId} connected`);
 
     // Subscribe to necessary streams
@@ -146,7 +186,7 @@ function setupEventHandlers(sessionId: string, session: AppSession): void {
   // Handle dashboard mode changes
   session.dashboard.content.onModeChange((mode) => {
     const sessionInfo = activeSessions.get(sessionId);
-    if (sessionInfo && mode !== 'none') {
+    if (sessionInfo && mode !== "none") {
       sessionInfo.dashboardMode = mode;
       logger.info(`Dashboard mode changed to ${mode} for session ${sessionId}`);
       updateDashboardSections(sessionId);
@@ -154,7 +194,7 @@ function setupEventHandlers(sessionId: string, session: AppSession): void {
   });
 
   // Handle disconnection
-  session.events.on('disconnected', (reason) => {
+  session.events.on("disconnected", (reason) => {
     logger.info(`Session ${sessionId} disconnected: ${reason}`);
     const sessionInfo = activeSessions.get(sessionId);
 
@@ -229,7 +269,7 @@ function formatTimeSection(sessionInfo: SessionInfo): string {
       minute: "2-digit" as const,
       month: "numeric" as const,
       day: "numeric" as const,
-      hour12: true
+      hour12: true,
     };
     let formatted = new Date().toLocaleString("en-US", options);
     formatted = formatted.replace(/ [AP]M/, "");
@@ -241,15 +281,17 @@ function formatTimeSection(sessionInfo: SessionInfo): string {
 }
 
 function formatBatterySection(sessionInfo: SessionInfo): string {
-  return (typeof sessionInfo.batteryLevel === 'number')
+  return typeof sessionInfo.batteryLevel === "number"
     ? `${sessionInfo.batteryLevel}%`
     : "$GBATT$";
 }
 
 function formatNotificationSection(sessionInfo: SessionInfo): string {
   // Use ranked notifications if available, otherwise use the raw cache
-  const notifications = sessionInfo.phoneNotificationRanking ||
-                        sessionInfo.phoneNotificationCache || [];
+  const notifications =
+    sessionInfo.phoneNotificationRanking ||
+    sessionInfo.phoneNotificationCache ||
+    [];
 
   if (notifications.length === 0) return "";
 
@@ -259,12 +301,12 @@ function formatNotificationSection(sessionInfo: SessionInfo): string {
   // Format differently based on whether we're using ranked or raw notifications
   if (sessionInfo.phoneNotificationRanking) {
     return topNotifications
-      .map(notification => wrapText(notification.summary, 25))
-      .join('\n');
+      .map((notification) => wrapText(notification.summary, 25))
+      .join("\n");
   } else {
     return topNotifications
-      .map(notification => `${notification.title}: ${notification.content}`)
-      .join('\n');
+      .map((notification) => `${notification.title}: ${notification.content}`)
+      .join("\n");
   }
 }
 
@@ -286,19 +328,22 @@ function formatStatusSection(sessionInfo: SessionInfo): string {
 function formatCalendarEvent(event: any): string {
   try {
     const eventDate = new Date(event.dtStart);
-    const formattedTime = eventDate.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    }).replace(" ", "");
+    const formattedTime = eventDate
+      .toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      })
+      .replace(" ", "");
 
-    const title = event.title.length > 10
-      ? event.title.substring(0, 10).trim() + '...'
-      : event.title;
+    const title =
+      event.title.length > 10
+        ? event.title.substring(0, 10).trim() + "..."
+        : event.title;
 
     return `${title} @ ${formattedTime}`;
   } catch (error) {
-    logger.error('Error formatting calendar event', error);
+    logger.error("Error formatting calendar event", error);
     return "Calendar event";
   }
 }
@@ -317,26 +362,30 @@ function handlePhoneNotification(sessionId: string, data: any): void {
   }
 
   // Check if the app name is blacklisted
-  if (data.app && notificationAppBlackList.some(app =>
-    data.app.toLowerCase().includes(app))) {
+  if (
+    data.app &&
+    notificationAppBlackList.some((app) => data.app.toLowerCase().includes(app))
+  ) {
     logger.debug(`Notification from ${data.app} is blacklisted.`);
     return;
   }
 
   // Add notification to cache
   const newNotification = {
-    title: data.title || 'No Title',
-    content: data.content || '',
+    title: data.title || "No Title",
+    content: data.content || "",
     timestamp: Date.now(),
-    uuid: uuidv4()
+    uuid: uuidv4(),
   };
 
   // Prevent duplicate notifications
   const cache = sessionInfo.phoneNotificationCache;
   if (cache.length > 0) {
     const lastNotification = cache[cache.length - 1];
-    if (lastNotification.title === newNotification.title &&
-        lastNotification.content === newNotification.content) {
+    if (
+      lastNotification.title === newNotification.title &&
+      lastNotification.content === newNotification.content
+    ) {
       logger.debug(`Duplicate notification detected. Not adding to cache.`);
       return;
     }
@@ -363,19 +412,28 @@ function handlePhoneNotificationDismissed(sessionId: string, data: any): void {
   }
 
   // Remove the dismissed notification from cache if it exists
-  if (sessionInfo.phoneNotificationCache && sessionInfo.phoneNotificationCache.length > 0) {
+  if (
+    sessionInfo.phoneNotificationCache &&
+    sessionInfo.phoneNotificationCache.length > 0
+  ) {
     const initialCacheSize = sessionInfo.phoneNotificationCache.length;
 
     // Filter out the dismissed notification by matching notificationId
-    sessionInfo.phoneNotificationCache = sessionInfo.phoneNotificationCache.filter(
-      notification => notification.uuid !== dismissedNotificationId
-    );
+    sessionInfo.phoneNotificationCache =
+      sessionInfo.phoneNotificationCache.filter(
+        (notification) => notification.uuid !== dismissedNotificationId,
+      );
 
-    const removedCount = initialCacheSize - sessionInfo.phoneNotificationCache.length;
+    const removedCount =
+      initialCacheSize - sessionInfo.phoneNotificationCache.length;
     if (removedCount > 0) {
-      logger.info(`Removed ${removedCount} dismissed notification(s) from cache for session ${sessionId}`);
+      logger.info(
+        `Removed ${removedCount} dismissed notification(s) from cache for session ${sessionId}`,
+      );
     } else {
-      logger.debug(`No matching notification found in cache for dismissal ID: ${dismissedNotificationId}`);
+      logger.debug(
+        `No matching notification found in cache for dismissal ID: ${dismissedNotificationId}`,
+      );
     }
   }
 
@@ -394,9 +452,9 @@ function processNotifications(sessionId: string): void {
   // In a full implementation, we would use the NotificationSummaryAgent
   sessionInfo.phoneNotificationRanking = sessionInfo.phoneNotificationCache
     .sort((a, b) => b.timestamp - a.timestamp)
-    .map(notification => ({
+    .map((notification) => ({
       summary: `${notification.title}: ${notification.content}`,
-      timestamp: notification.timestamp
+      timestamp: notification.timestamp,
     }));
 
   updateDashboardSections(sessionId);
@@ -419,7 +477,8 @@ function handleLocationUpdate(sessionId: string, data: any): void {
   sessionInfo.latestLocation = {
     latitude: lat,
     longitude: lng,
-    timezone: determineTimezone(lat, lng) || sessionInfo.latestLocation?.timezone
+    timezone:
+      determineTimezone(lat, lng) || sessionInfo.latestLocation?.timezone,
   };
 
   // Update dashboard with location info
@@ -431,7 +490,7 @@ function handleHeadPosition(sessionId: string, data: any): void {
   if (!sessionInfo) return;
 
   // Update dashboard on "up" position
-  if (data.position === 'up') {
+  if (data.position === "up") {
     updateDashboardSections(sessionId);
   }
 }
@@ -441,7 +500,10 @@ function handleBatteryUpdate(sessionId: string, data: any): void {
   if (!sessionInfo) return;
 
   // Update battery level if it changed
-  if (typeof data.level === 'number' && sessionInfo.batteryLevel !== data.level) {
+  if (
+    typeof data.level === "number" &&
+    sessionInfo.batteryLevel !== data.level
+  ) {
     sessionInfo.batteryLevel = data.level;
     updateDashboardSections(sessionId);
   }
@@ -466,10 +528,10 @@ function handleCalendarEvent(sessionId: string, event: any): void {
 // Settings Handling
 // ===================================
 
-app.post('/settings', async (req: express.Request, res: express.Response) => {
+app.post("/settings", async (req: express.Request, res: express.Response) => {
   try {
     const { userIdForSettings } = req.body;
-    logger.info('Received settings update for dashboard:', req.body);
+    logger.info("Received settings update for dashboard:", req.body);
 
     // Find all sessions for this user and update settings
     for (const [sessionId, session] of activeSessions.entries()) {
@@ -479,10 +541,10 @@ app.post('/settings', async (req: express.Request, res: express.Response) => {
       }
     }
 
-    res.status(200).json({ status: 'settings updated' });
+    res.status(200).json({ status: "settings updated" });
   } catch (error) {
-    logger.error('Error updating settings:', error);
-    res.status(500).json({ error: 'Internal server error updating settings' });
+    logger.error("Error updating settings:", error);
+    res.status(500).json({ error: "Internal server error updating settings" });
   }
 });
 
@@ -495,24 +557,12 @@ function determineTimezone(lat: number, lng: number): string | undefined {
     // Call tzlookup to get timezone from coordinates
     return tzlookup(lat, lng);
   } catch (error) {
-    logger.error(`Error looking up timezone for lat=${lat}, lng=${lng}:`, error);
+    logger.error(
+      `Error looking up timezone for lat=${lat}, lng=${lng}:`,
+      error,
+    );
     return undefined;
   }
-}
-
-// ===================================
-// Dashboard Mode Management
-// ===================================
-
-function handleDashboardModeChange(sessionId: string, mode: DashboardMode): void {
-  const sessionInfo = activeSessions.get(sessionId);
-  if (!sessionInfo) return;
-
-  sessionInfo.dashboardMode = mode;
-  sessionInfo.session.dashboard.system?.setViewMode(mode);
-
-  // Update the dashboard sections for the new mode
-  updateDashboardSections(sessionId);
 }
 
 // ===================================
@@ -520,11 +570,11 @@ function handleDashboardModeChange(sessionId: string, mode: DashboardMode): void
 // ===================================
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get("/health", (req, res) => {
   res.json({
-    status: 'healthy',
+    status: "healthy",
     app: PACKAGE_NAME,
-    sessions: activeSessions.size
+    sessions: activeSessions.size,
   });
 });
 

@@ -214,6 +214,10 @@ void protobuf_parse_control_message(const uint8_t* protobuf_data, uint16_t len)
                 message_name        = "AutoBrightnessConfig";
                 message_description = "Configure automatic brightness adjustment";
                 break;
+            case 45:
+                message_name        = "DisplayHeightConfig";
+                message_description = "Configure display height";
+                break;
             case 46:  
                 message_name        = "ClearDisplay";
                 message_description = "Clear display content (temporary tag)";
@@ -302,6 +306,14 @@ void protobuf_parse_control_message(const uint8_t* protobuf_data, uint16_t len)
                 }
                 break;
 
+            case 45:  // display_height_tag
+                LOG_INF("Processing Display Height Configuration...");
+                if (phone_msg.which_payload == mentraos_ble_PhoneToGlasses_display_height_tag)
+                {
+                    protobuf_process_display_height_config(&phone_msg.payload.display_height);
+                }
+                break;
+
             case 46:  // clear_display_tag (temporary - TODO: update when protobuf definition is updated)
                 LOG_INF("Processing Clear Display Command...");
                 LOG_WRN("Using temporary tag 46 for ClearDisplay - update when protobuf definition is ready");
@@ -319,6 +331,7 @@ void protobuf_parse_control_message(const uint8_t* protobuf_data, uint16_t len)
                 LOG_WRN("  - 35: DisplayScrollingText");
                 LOG_WRN("  - 37: BrightnessConfig");
                 LOG_WRN("  - 38: AutoBrightnessConfig");
+                LOG_WRN("  - 45: DisplayHeightConfig");
                 LOG_WRN("  - 46: ClearDisplay");
                 break;
         }
@@ -1114,6 +1127,22 @@ void protobuf_parse_text_brightness(const char* text)
     {
         LOG_DBG("TEXT BRIGHTNESS: No brightness pattern found in text");
     }
+}
+
+void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig* config)
+{
+    LOG_INF("=== DISPLAY HEIGHT CONFIGURATION (Tag 45) ===");
+    
+    LOG_INF("Display Height Configuration:");
+    LOG_INF("  - Message Type: PhoneToGlasses::DisplayHeightConfig");
+    LOG_INF("  - Protocol: MentraOS BLE Protobuf v3 (EXTENDED)");
+    LOG_INF("  - Payload Tag: 45 (display_height)");
+    LOG_INF("  - Direction: Phone → Glasses");
+    
+    LOG_INF("Configuration Details:");
+    LOG_INF("  - Height: %d pixels", config->height);
+
+    display_update_height(config->height);
 }
 
 void protobuf_process_clear_display(void)

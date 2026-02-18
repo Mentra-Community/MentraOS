@@ -1,9 +1,11 @@
 import {useEffect, useRef, useCallback} from "react"
 import {Image, ImageStyle, Animated, StyleProp, View, ViewStyle} from "react-native"
-import {$styles} from "../../../theme"
-import {iconRegistry, IconTypes} from "../Icon"
+
+import {Icon, iconRegistry, IconTypes} from "@/components/ignite/Icon"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {$styles} from "@/theme"
+
 import {$inputOuterBase, BaseToggleInputProps, ToggleProps, Toggle} from "./Toggle"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export interface CheckboxToggleProps extends Omit<ToggleProps<CheckboxInputProps>, "ToggleInput"> {
   /**
@@ -38,7 +40,6 @@ function CheckboxInput(props: CheckboxInputProps) {
     on,
     status,
     disabled,
-    icon = "check",
     outerStyle: $outerStyleOverride,
     innerStyle: $innerStyleOverride,
     detailStyle: $detailStyleOverride,
@@ -58,54 +59,25 @@ function CheckboxInput(props: CheckboxInputProps) {
     }).start()
   }, [on])
 
-  const offBackgroundColor = [
-    disabled && colors.palette.neutral400,
-    status === "error" && colors.errorBackground,
-    colors.background,
-  ].filter(Boolean)[0]
-
-  const outerBorderColor = [
-    disabled && colors.palette.neutral400,
-    status === "error" && colors.error,
-    !on && colors.border,
-    colors.tint,
-  ].filter(Boolean)[0]
-
-  const onBackgroundColor = [
-    disabled && colors.transparent,
-    status === "error" && colors.errorBackground,
-    colors.tint,
-  ].filter(Boolean)[0]
-
-  const iconTintColor = [
-    disabled && colors.palette.neutral600,
-    status === "error" && colors.error,
-    colors.background,
-  ].filter(Boolean)[0]
-
   return (
     <View
-      style={[$inputOuter, {backgroundColor: offBackgroundColor, borderColor: outerBorderColor}, $outerStyleOverride]}>
-      <Animated.View
-        style={[
-          $styles.toggleInner,
-          {backgroundColor: onBackgroundColor},
-          $innerStyleOverride,
-          {opacity: opacity.current},
-        ]}>
-        <Image
-          source={icon ? iconRegistry[icon] : iconRegistry.check}
-          style={[$checkboxDetail, !!iconTintColor && {tintColor: iconTintColor}, $detailStyleOverride]}
-        />
+      className="rounded-md"
+      style={[
+        {
+          width: 24,
+          height: 24,
+          borderWidth: 2,
+          borderColor: on ? colors.primary : colors.border,
+          backgroundColor: on ? colors.primary : colors.background,
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: 6,
+        },
+        $outerStyleOverride,
+      ]}>
+      <Animated.View style={[{opacity: opacity.current}]}>
+        <Icon name="check" size={16} color={colors.background} />
       </Animated.View>
     </View>
   )
 }
-
-const $checkboxDetail: ImageStyle = {
-  width: 20,
-  height: 20,
-  resizeMode: "contain",
-}
-
-const $inputOuter: StyleProp<ViewStyle> = [$inputOuterBase, {borderRadius: 4}]

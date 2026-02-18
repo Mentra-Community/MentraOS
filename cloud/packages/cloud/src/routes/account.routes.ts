@@ -170,7 +170,7 @@ router.get("/me", validateCoreToken, async (req: Request, res: Response) => {
       .single();
 
     if (error) {
-      logger.error("Error fetching user data:", error);
+      logger.error(error as Error, "Error fetching user data:");
       return res.status(500).json({ error: "Failed to fetch user data" });
     }
 
@@ -187,7 +187,7 @@ router.get("/me", validateCoreToken, async (req: Request, res: Response) => {
       createdAt: user.created_at,
     });
   } catch (error) {
-    logger.error("Error in /account/me:", error);
+    logger.error(error as Error, "Error in /account/me:");
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -233,7 +233,7 @@ router.put(
         .single();
 
       if (error) {
-        logger.error("Error fetching user data:", error);
+        logger.error(error as Error, "Error fetching user data:");
         return res.status(500).json({ error: "Failed to fetch user data" });
       }
 
@@ -259,7 +259,7 @@ router.put(
       );
 
       if (updateError) {
-        logger.error("Error updating user:", updateError);
+        logger.error(updateError as Error, "Error updating user:");
         return res.status(500).json({ error: "Failed to update user profile" });
       }
 
@@ -275,7 +275,7 @@ router.put(
         },
       });
     } catch (error) {
-      logger.error("Error in /account/profile:", error);
+      logger.error(error as Error, "Error in /account/profile:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -309,7 +309,7 @@ router.post(
         .single();
 
       if (error) {
-        logger.error("Error fetching user data:", error);
+        logger.error(error as Error, "Error fetching user data:");
         return res.status(500).json({ error: "Failed to fetch user data" });
       }
 
@@ -323,7 +323,7 @@ router.post(
       );
 
       if (deleteError) {
-        logger.error("Error deleting user:", deleteError);
+        logger.error(deleteError as Error, "Error deleting user:");
         return res.status(500).json({ error: "Failed to delete user account" });
       }
 
@@ -337,7 +337,7 @@ router.post(
         message: "Account deleted successfully",
       });
     } catch (error) {
-      logger.error("Error in /account/request-deletion:", error);
+      logger.error(error as Error, "Error in /account/request-deletion:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -387,7 +387,7 @@ router.post(
         .single();
 
       if (error) {
-        logger.error("Error fetching user data:", error);
+        logger.error(error as Error, "Error fetching user data:");
         return res.status(500).json({ error: "Failed to fetch user data" });
       }
 
@@ -432,7 +432,7 @@ router.post(
           "Export request submitted successfully. The export is being processed.",
       });
     } catch (error) {
-      logger.error("Error in /account/request-export:", error);
+      logger.error(error as Error, "Error in /account/request-export:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -492,7 +492,7 @@ async function generateExport(exportRequest: ExportRequest): Promise<void> {
 
     exportRequests.set(exportRequest.id, exportRequest);
   } catch (error) {
-    logger.error("Error generating export:", error);
+    logger.error(error as Error, "Error generating export:");
     exportRequest.status = "failed";
     exportRequests.set(exportRequest.id, exportRequest);
     throw error;
@@ -546,7 +546,7 @@ router.get(
             : undefined,
       });
     } catch (error) {
-      logger.error("Error in /account/export-status:", error);
+      logger.error(error as Error, "Error in /account/export-status:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -608,7 +608,7 @@ router.get(
       const fileStream = fs.createReadStream(exportRequest.filePath);
       fileStream.pipe(res);
     } catch (error) {
-      logger.error("Error in /account/download-export:", error);
+      logger.error(error as Error, "Error in /account/download-export:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -654,7 +654,7 @@ router.get(
         .single();
 
       if (error) {
-        logger.error("Error fetching user data:", error);
+        logger.error(error as Error, "Error fetching user data:");
         return res.status(500).json({ error: "Failed to fetch user data" });
       }
 
@@ -671,7 +671,7 @@ router.get(
 
       res.json(privacySettings);
     } catch (error) {
-      logger.error("Error in /account/privacy:", error);
+      logger.error(error as Error, "Error in /account/privacy:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -718,7 +718,7 @@ router.put(
         .single();
 
       if (error) {
-        logger.error("Error fetching user data:", error);
+        logger.error(error as Error, "Error fetching user data:");
         return res.status(500).json({ error: "Failed to fetch user data" });
       }
 
@@ -738,7 +738,7 @@ router.put(
       );
 
       if (updateError) {
-        logger.error("Error updating privacy settings:", updateError);
+        logger.error(updateError as Error, "Error updating privacy settings:");
         return res
           .status(500)
           .json({ error: "Failed to update privacy settings" });
@@ -746,7 +746,7 @@ router.put(
 
       res.json(settings);
     } catch (error) {
-      logger.error("Error in /account/privacy:", error);
+      logger.error(error as Error, "Error in /account/privacy:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -807,10 +807,7 @@ router.get(
         },
       });
     } catch (error) {
-      logger.error("Error in /account/oauth/app:", {
-        error,
-        packageName: req.params.packageName,
-      });
+      logger.error(error as Error, "Error in /account/oauth/app:");
       res.status(500).json({ error: "Internal server error" });
     }
   },
@@ -859,10 +856,7 @@ router.post(
         expiresIn: "10m",
       });
     } catch (error) {
-      logger.error("Error in /account/oauth/token:", {
-        error,
-        packageName: req.body.packageName,
-      });
+      logger.error(error as Error, "Error in /account/oauth/token:");
       res
         .status(500)
         .json({ error: "Failed to generate authentication token" });

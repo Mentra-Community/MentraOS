@@ -1,2 +1,3 @@
-export * from './CloudflareStreamService';
-export * from './StreamStateManager';
+export * from "./CloudflareStreamService";
+export * from "./StreamRegistry";
+export * from "./StreamLifecycleController";

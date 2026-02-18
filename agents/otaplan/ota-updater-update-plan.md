@@ -5,6 +5,7 @@
 Your architectural insight is spot on - keeping these apps separate with mutual recovery capability is the right design. Having ASG client update the OTA updater maintains this separation while leveraging the more stable app for the update process.
 
 ## Architecture Benefits
+
 - **Mutual Recovery**: Each app can fix the other if it fails
 - **Separation of Concerns**: OTA updater focuses on updating ASG client, ASG client handles OTA updater updates
 - **Reliability**: ASG client is likely more stable than the "jank" OTA updater
@@ -16,7 +17,7 @@ Your architectural insight is spot on - keeping these apps separate with mutual 
 
 **Challenge**: How do we get the first OTA Updater v2 onto 400 devices running OTA Updater v1?
 
-**Option 1: Bundle in ASG Client Assets** (Recommended) 
+**Option 1: Bundle in ASG Client Assets** (Recommended)
 **BONUS: This doubles as the recovery mechanism!**
 
 ```java
@@ -27,9 +28,9 @@ private static final String OTA_UPDATER_PACKAGE = "com.augmentos.otaupdater";
 @Override
 public void onCreate() {
     super.onCreate();
-    
+
     // Existing initialization...
-    
+
     // Ensure OTA updater v2 before launching it
     new Handler(Looper.getMainLooper()).postDelayed(() -> {
         ensureOtaUpdaterV2();
@@ -39,15 +40,15 @@ public void onCreate() {
 private void ensureOtaUpdaterV2() {
     try {
         int currentVersion = getInstalledVersion(OTA_UPDATER_PACKAGE);
-        
+
         // Deploy/recover if: not installed (-1), version 1, or corrupted
         if (currentVersion == -1 || currentVersion < 2) {
             Log.i(TAG, "OTA Updater needs deployment/recovery. Version: " + currentVersion);
-            
+
             // Extract from assets
             InputStream assetStream = getAssets().open("ota_updater.apk");
             File otaV2File = new File("/storage/emulated/0/asg/ota_updater.apk");
-            
+
             // Copy to filesystem
             try (FileOutputStream fos = new FileOutputStream(otaV2File)) {
                 byte[] buffer = new byte[8192];
@@ -57,16 +58,16 @@ private void ensureOtaUpdaterV2() {
                 }
             }
             assetStream.close();
-            
+
             // Install using system broadcast
             Intent intent = new Intent("com.xy.xsetting.action");
             intent.setPackage("com.android.systemui");
             intent.putExtra("cmd", "install");
             intent.putExtra("pkpath", otaV2File.getAbsolutePath());
             sendBroadcast(intent);
-            
+
             Log.i(TAG, "Installing OTA Updater v2");
-            
+
             // Wait for installation then launch
             new Handler().postDelayed(() -> {
                 launchOtaUpdater();
@@ -107,12 +108,14 @@ private int getInstalledVersion(String packageName) {
 ```
 
 **This mechanism handles:**
+
 - **Initial deployment**: Upgrades v1 → v2 on first ASG client v6 boot
-- **Missing app recovery**: Reinstalls if OTA updater completely missing  
+- **Missing app recovery**: Reinstalls if OTA updater completely missing
 - **Corruption recovery**: Reinstalls if OTA updater fails to start
 - **Always available**: ASG client carries a known-good copy in assets
 
 **Option 2: Immediate version.json Update** (Riskier)
+
 - Post OTA Updater v2 in current version.json
 - OTA Updater v1 tries to self-update immediately
 - Risk: If v1's self-update fails, no recovery
@@ -120,6 +123,7 @@ private int getInstalledVersion(String packageName) {
 **Recommendation**: Use Option 1 with assets bundling for guaranteed deployment, then switch to version.json updates for future versions.
 
 ### Phase 1: Enhanced version.json Structure
+
 ```json
 {
   "asgClient": {
@@ -142,10 +146,11 @@ private int getInstalledVersion(String packageName) {
 **Key insight**: Since the ODM's system service handles the actual installation, the OTA updater CAN update itself. After update, ASG client will restart it.
 
 #### Enhanced version.json format:
+
 ```json
 {
   "apps": {
-    "com.augmentos.asg_client": {
+    "com.mentra.asg_client": {
       "versionCode": 6,
       "apkUrl": "https://...",
       "sha256": "..."
@@ -165,12 +170,12 @@ private int getInstalledVersion(String packageName) {
 // Modified startVersionCheck to handle multiple apps
 private void startVersionCheck(Context context) {
     // Existing WiFi/battery checks...
-    
+
     try {
         // Fetch version info
         String versionInfo = fetchVersionInfo(Constants.VERSION_URL);
         JSONObject json = new JSONObject(versionInfo);
-        
+
         // Check if new format (multiple apps) or legacy format
         if (json.has("apps")) {
             // New format - check all apps
@@ -182,7 +187,7 @@ private void startVersionCheck(Context context) {
             }
         } else {
             // Legacy format - only ASG client
-            checkAndUpdateApp("com.augmentos.asg_client", json);
+            checkAndUpdateApp("com.mentra.asg_client", json);
         }
     } catch (Exception e) {
         Log.e(TAG, "Version check failed", e);
@@ -199,29 +204,29 @@ private void checkAndUpdateApp(String packageName, JSONObject appInfo) throws Ex
         Log.d(TAG, packageName + " not installed");
         return;
     }
-    
+
     // Check server version
     long serverVersion = appInfo.getLong("versionCode");
-    
+
     if (serverVersion > currentVersion) {
         Log.d(TAG, "New version available for " + packageName);
         String apkUrl = appInfo.getString("apkUrl");
-        
+
         // Determine filename based on package
-        String filename = packageName.equals(context.getPackageName()) 
-            ? "ota_updater_update.apk" 
+        String filename = packageName.equals(context.getPackageName())
+            ? "ota_updater_update.apk"
             : "update.apk";
-        
+
         boolean downloadOk = downloadApk(apkUrl, appInfo, context, filename);
         if (downloadOk) {
             // Create backup before self-update
             if (packageName.equals(context.getPackageName())) {
                 createSelfBackup();
             }
-            
+
             // Install (same method for all apps)
             installApk(context, new File(BASE_DIR, filename).getAbsolutePath());
-            
+
             // Note: After self-update, ASG client will restart us
         }
     }
@@ -232,10 +237,10 @@ private void createSelfBackup() {
         PackageInfo info = context.getPackageManager().getPackageInfo(
             context.getPackageName(), 0);
         String sourceApk = info.applicationInfo.sourceDir;
-        
+
         File backupFile = new File(BASE_DIR, "ota_updater_backup.apk");
         File sourceFile = new File(sourceApk);
-        
+
         // Simple file copy
         FileInputStream fis = new FileInputStream(sourceFile);
         FileOutputStream fos = new FileOutputStream(backupFile);
@@ -246,7 +251,7 @@ private void createSelfBackup() {
         }
         fis.close();
         fos.close();
-        
+
         Log.i(TAG, "Created self backup at: " + backupFile.getAbsolutePath());
     } catch (Exception e) {
         Log.e(TAG, "Failed to create self backup", e);
@@ -260,7 +265,7 @@ public boolean downloadApk(String urlStr, JSONObject json, Context context, Stri
         if (!asgDir.exists()) {
             asgDir.mkdirs();
         }
-        
+
         File apkFile = new File(asgDir, filename);
         // ... rest of download logic unchanged
     }
@@ -269,12 +274,14 @@ public boolean downloadApk(String urlStr, JSONObject json, Context context, Stri
 ```
 
 **Key changes:**
+
 1. Support both legacy (single app) and new (multiple apps) version.json formats
 2. Check and update multiple apps including itself
 3. Create backup before self-update
 4. Use different filenames to avoid conflicts
 5. Rely on ASG client to restart after self-update
-```
+
+````
 
 ### Phase 3: Clean Architecture with OtaUpdaterManager
 
@@ -284,16 +291,16 @@ Create a separate `OtaUpdaterManager` class to handle all OTA-related functional
 // In AsgClientService.java - simplified
 public class AsgClientService extends Service {
     private OtaUpdaterManager otaUpdaterManager;
-    
+
     @Override
     public void onCreate() {
         super.onCreate();
-        
+
         // Initialize OTA updater manager
         otaUpdaterManager = new OtaUpdaterManager(this);
         otaUpdaterManager.initialize();
     }
-    
+
     @Override
     public void onDestroy() {
         if (otaUpdaterManager != null) {
@@ -302,9 +309,10 @@ public class AsgClientService extends Service {
         super.onDestroy();
     }
 }
-```
+````
 
 **Key Features of OtaUpdaterManager:**
+
 1. **Package Install Monitoring**: Detects when OTA updater is installed/updated and automatically launches it
 2. **Self-Contained Logic**: All OTA-related code in one place
 3. **Automatic Recovery**: Handles deployment, updates, and recovery scenarios
@@ -315,6 +323,7 @@ See `ota-updater-manager-code.md` for complete implementation.
 ### Phase 4: Safety Mechanisms
 
 1. **Version Tracking**
+
    ```java
    // Track update attempts to prevent loops
    SharedPreferences prefs = getSharedPreferences("ota_updater_updates", MODE_PRIVATE);
@@ -323,6 +332,7 @@ See `ota-updater-manager-code.md` for complete implementation.
    ```
 
 2. **Backup Preservation**
+
    ```java
    // Keep backup of current OTA updater before update
    File currentApk = getApkFile(OTA_UPDATER_PACKAGE);
@@ -341,6 +351,7 @@ See `ota-updater-manager-code.md` for complete implementation.
 ### Phase 5: OTA Updater v2 Improvements
 
 The new OTA updater should include:
+
 1. **Retry Logic**: Exponential backoff for failed downloads
 2. **Better Error Handling**: Don't crash on failures
 3. **Health Reporting**: Broadcast status to ASG client
@@ -358,6 +369,7 @@ The new OTA updater should include:
 ## Rollback Plan
 
 If issues arise:
+
 1. ASG client keeps functioning normally (update code is try-catch wrapped)
 2. Old OTA updater continues working if update fails
 3. Backup APK available for manual recovery
@@ -382,6 +394,7 @@ If issues arise:
 **IMPORTANT**: These are consumer smart glasses worn by non-technical users. There is NO way for end users to recover via ADB or any manual intervention. If our code fails, the device is effectively bricked for that user.
 
 **This means:**
+
 - Every update MUST be thoroughly tested
 - Failure modes MUST be handled gracefully
 - Backup mechanisms MUST be bulletproof

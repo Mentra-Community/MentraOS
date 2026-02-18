@@ -1,11 +1,11 @@
 "on":
   push:
     branches:
-      - dev
+      - never
 name: Deploy to live-captions-testing-monitor
 jobs:
   porter-deploy:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

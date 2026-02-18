@@ -1,173 +1,103 @@
-import React, {useRef, useCallback, PropsWithChildren, useState, useEffect} from "react"
-import {View, Animated, Platform, ViewStyle, ScrollView, TouchableOpacity} from "react-native"
 import {useFocusEffect} from "@react-navigation/native"
+import {useCallback, useEffect, useRef} from "react"
+import {ScrollView, View} from "react-native"
+
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {ActiveForegroundApp} from "@/components/home/ActiveForegroundApp"
+import {BackgroundAppsLink} from "@/components/home/BackgroundAppsLink"
+import {CompactDeviceStatus} from "@/components/home/CompactDeviceStatus"
+import {ForegroundAppsGrid} from "@/components/home/ForegroundAppsGrid"
+import {IncompatibleApps} from "@/components/home/IncompatibleApps"
+import {PairGlassesCard} from "@/components/home/PairGlassesCard"
 import {Header, Screen} from "@/components/ignite"
-import AppsActiveList from "@/components/misc/AppsActiveList"
-import AppsInactiveList from "@/components/misc/AppsInactiveList"
-import AppsIncompatibleList from "@/components/misc/AppsIncompatibleList"
-import AppsIncompatibleListOld from "@/components/misc/AppsIncompatibleListOld"
-import {useAppStatus} from "@/contexts/AppletStatusProvider"
-import CloudConnection from "@/components/misc/CloudConnection"
-import SensingDisabledWarning from "@/components/misc/SensingDisabledWarning"
-import NonProdWarning from "@/components/misc/NonProdWarning"
-import {spacing, ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
-import MicIcon from "assets/icons/component/MicIcon"
-import NotificationOn from "assets/icons/component/NotificationOn"
-import {ConnectDeviceButton, ConnectedGlasses, DeviceToolbar} from "@/components/misc/ConnectedDeviceInfo"
-import {Spacer} from "@/components/misc/Spacer"
-import Divider from "@/components/misc/Divider"
-import {OnboardingSpotlight} from "@/components/misc/OnboardingSpotlight"
-import {translate} from "@/i18n"
-import {loadSetting} from "@/utils/SettingsHelper"
-import {SETTINGS_KEYS} from "@/utils/SettingsHelper"
-import {AppsCombinedGridView} from "@/components/misc/AppsCombinedGridView"
-import PermissionsWarning from "@/components/home/PermissionsWarning"
-import {Reconnect, OtaUpdateChecker} from "@/components/utils/utils"
+import NonProdWarning from "@/components/home/NonProdWarning"
+import {Group} from "@/components/ui"
+import {useRefreshApplets} from "@/stores/applets"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {useGlassesStore} from "@/stores/glasses"
+import {useCoreStore} from "@/stores/core"
+import WebsocketStatus from "@/components/error/WebsocketStatus"
+import CoreStatusBar from "@/components/dev/CoreStatusBar"
+import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 
 export default function Homepage() {
-  const {refreshAppStatus} = useAppStatus()
-  const [onboardingTarget, setOnboardingTarget] = useState<"glasses" | "livecaptions">("glasses")
-  const liveCaptionsRef = useRef<any>(null)
-  const connectButtonRef = useRef<any>(null)
-  const {themed, theme} = useAppTheme()
-  const [hasLoaded, setHasLoaded] = useState(false)
-
-  const [showNewUi, setShowNewUi] = useState(false)
-
-  useEffect(() => {
-    const check = async () => {
-      const newUiSetting = await loadSetting(SETTINGS_KEYS.NEW_UI, false)
-      setShowNewUi(newUiSetting)
-      setHasLoaded(true)
-    }
-    check()
-  }, [])
+  const refreshApplets = useRefreshApplets()
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [offlineMode] = useSetting(SETTINGS.offline_mode.key)
+  const [debugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
+  const glassesConnected = useGlassesStore((state) => state.connected)
+  const isSearching = useCoreStore((state) => state.searching)
+  const hasAttemptedInitialConnect = useRef(false)
 
   useFocusEffect(
     useCallback(() => {
-      refreshAppStatus()
-    }, []),
+      refreshApplets()
+    }, [refreshApplets]),
   )
 
-  if (!hasLoaded) {
+  // Auto-connect on initial app startup when home screen is reached
+  // This ensures all initialization is complete before attempting connection
+  useEffect(() => {
+    const attemptInitialConnect = async () => {
+      // Only attempt once per app session
+      if (hasAttemptedInitialConnect.current) {
+        return
+      }
+      let attempted = await attemptReconnectToDefaultWearable()
+      if (attempted) {
+        hasAttemptedInitialConnect.current = true
+      }
+    }
+
+    attemptInitialConnect()
+  }, [glassesConnected, isSearching, defaultWearable])
+
+  const renderContent = () => {
+    if (!defaultWearable) {
+      return (
+        <>
+          {debugCoreStatusBarEnabled && <CoreStatusBar />}
+          <Group>
+            <PairGlassesCard />
+          </Group>
+        </>
+      )
+    }
+
     return (
-      <Screen preset="fixed" style={themed($screen)}>
-        <Header
-          leftTx="home:title"
-          RightActionComponent={
-            <View style={themed($headerRight)}>
-              <PermissionsWarning />
-              <MicIcon width={24} height={24} />
-              <NonProdWarning />
-            </View>
-          }
-        />
-      </Screen>
-    )
-  }
-
-  if (showNewUi) {
-    return (
-      <Screen preset="fixed" style={themed($screen)}>
-        <Header
-          leftTx="home:title"
-          RightActionComponent={
-            <View style={themed($headerRight)}>
-              <PermissionsWarning />
-              <MicIcon width={24} height={24} />
-              <NonProdWarning />
-            </View>
-          }
-        />
-
-        <CloudConnection />
-        <SensingDisabledWarning />
-        <View>
-          <ConnectedGlasses showTitle={false} />
-          <DeviceToolbar />
-        </View>
-        <Spacer height={theme.spacing.lg} />
-        <View ref={connectButtonRef}>
-          <ConnectDeviceButton />
-        </View>
-        <Spacer height={theme.spacing.md} />
-        <AppsCombinedGridView />
-
-        <OnboardingSpotlight
-          targetRef={onboardingTarget === "glasses" ? connectButtonRef : liveCaptionsRef}
-          setOnboardingTarget={setOnboardingTarget}
-          onboardingTarget={onboardingTarget}
-          message={
-            onboardingTarget === "glasses"
-              ? translate("home:connectGlassesToStart")
-              : translate("home:tapToStartLiveCaptions")
-          }
-        />
-      </Screen>
+      <>
+        {debugCoreStatusBarEnabled && <CoreStatusBar />}
+        <Group>
+          <CompactDeviceStatus />
+          {!offlineMode && <BackgroundAppsLink />}
+        </Group>
+        <View className="h-2" />
+        <ActiveForegroundApp />
+        <ForegroundAppsGrid />
+      </>
     )
   }
 
   return (
-    <Screen preset="fixed" style={themed($screen)}>
+    <Screen preset="fixed">
       <Header
         leftTx="home:title"
         RightActionComponent={
-          <View style={themed($headerRight)}>
-            <PermissionsWarning />
-            <MicIcon width={24} height={24} />
+          <View className="flex-row items-center flex-1 justify-end">
+            <WebsocketStatus />
             <NonProdWarning />
+            <View className="w-2" />
+            <MentraLogoStandalone />
           </View>
         }
       />
 
-      <CloudConnection />
-      <ScrollView
-        style={{marginRight: -theme.spacing.md, paddingRight: theme.spacing.md}}
-        contentInsetAdjustmentBehavior="automatic">
-        <SensingDisabledWarning />
-
-        <ConnectedGlasses showTitle={false} />
-        <DeviceToolbar />
-        <Spacer height={theme.spacing.md} />
-        <View ref={connectButtonRef}>
-          <ConnectDeviceButton />
-        </View>
-        <Spacer height={theme.spacing.lg} />
-        <Divider variant="full" />
-        <Spacer height={theme.spacing.md} />
-
-        <AppsActiveList />
-        <Spacer height={spacing.xl} />
-        <AppsInactiveList liveCaptionsRef={liveCaptionsRef} />
-        <Spacer height={spacing.md} />
-        <AppsIncompatibleListOld />
-        <Spacer height={spacing.xl} />
+      <ScrollView contentInsetAdjustmentBehavior="automatic" showsVerticalScrollIndicator={false}>
+        <View className="h-4" />
+        {renderContent()}
+        <View className="h-4" />
+        <IncompatibleApps />
       </ScrollView>
-
-      <Reconnect />
-      <OtaUpdateChecker />
-
-      <OnboardingSpotlight
-        targetRef={onboardingTarget === "glasses" ? connectButtonRef : liveCaptionsRef}
-        setOnboardingTarget={setOnboardingTarget}
-        onboardingTarget={onboardingTarget}
-        message={
-          onboardingTarget === "glasses"
-            ? translate("home:connectGlassesToStart")
-            : translate("home:tapToStartLiveCaptions")
-        }
-      />
     </Screen>
   )
 }
-
-const $screen: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.lg,
-})
-
-const $headerRight: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  gap: spacing.sm,
-})

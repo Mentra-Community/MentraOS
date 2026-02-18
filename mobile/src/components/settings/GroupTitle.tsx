@@ -1,37 +1,33 @@
-import {useAppTheme} from "@/utils/useAppTheme"
-import React from "react"
-import {View, StyleSheet} from "react-native"
+import {View, ViewStyle, TextStyle} from "react-native"
+
 import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {ThemedStyle} from "@/theme"
 
 type GroupTitleProps = {
   title: string
 }
 
-const GroupTitle: React.FC<GroupTitleProps> = ({title}) => {
-  const {theme, themed} = useAppTheme()
+const GroupTitle = ({title}: GroupTitleProps) => {
+  const {themed} = useAppTheme()
   return (
-    <View
-      style={[
-        styles.container,
-        {
-          marginTop: theme.spacing.md,
-          marginBottom: theme.spacing.xs,
-          paddingHorizontal: theme.spacing.md,
-        },
-      ]}>
-      <Text text={title} style={[styles.title, {color: theme.colors.textDim}]} />
+    <View style={themed($container)}>
+      <Text text={title} style={themed($title)} />
     </View>
   )
 }
 
-const styles = StyleSheet.create({
-  container: {
-    width: "100%",
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: "normal",
-  },
+const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  width: "100%",
+  marginTop: spacing.s4,
+  marginBottom: spacing.s2,
+  paddingHorizontal: spacing.s4,
+})
+
+const $title: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 16,
+  fontWeight: "normal",
+  color: colors.textDim,
 })
 
 export default GroupTitle

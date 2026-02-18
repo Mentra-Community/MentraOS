@@ -3,13 +3,18 @@
  * Shows a placeholder for AVIF files since React Native doesn't support them natively
  */
 
-import React, {useState, useEffect} from "react"
-import {View, Image, Text, ActivityIndicator, Platform} from "react-native"
-import {ViewStyle, ImageStyle, TextStyle} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
+import LinearGradient from "expo-linear-gradient"
+import {useState, useEffect} from "react"
+import {View, Image, ViewStyle, ImageStyle, TextStyle} from "react-native"
+import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
+
+import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {PhotoInfo} from "../../../types/asg"
-import RNFS from "react-native-fs"
+import {PhotoInfo} from "@/types/asg"
+
+// @ts-ignore
+const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)
 
 interface PhotoImageProps {
   photo: PhotoInfo
@@ -27,6 +32,7 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
   // 1. For synced videos, use thumbnailPath if available
   // 2. For server videos, use thumbnail_data if available (base64 data URL)
   // 3. Otherwise use the main URL
+  // Note: Relative URLs (starting with /) are from server during sync and won't load
   const imageUrl = (() => {
     if (photo.is_video) {
       if (photo.thumbnailPath) {
@@ -38,34 +44,39 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
           ? photo.thumbnail_data
           : `data:image/jpeg;base64,${photo.thumbnail_data}`
       }
+      // No thumbnail available - return null to show video placeholder
+      return null
     }
     return photo.url
   })()
 
+  // Check if this is a video without a thumbnail
+  const isVideoWithoutThumbnail = photo.is_video && !imageUrl
+
+  // Check if URL is a relative path (from server during sync)
+  const isRelativeUrl = imageUrl?.startsWith("/") ?? false
+
+  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   useEffect(() => {
-    // Check if this is an AVIF file and verify file exists for local files
-    const checkFileAndFormat = async () => {
-      // For local files, verify they exist
-      if (imageUrl.startsWith("file://")) {
-        const filePath = imageUrl.replace("file://", "")
-        try {
-          const exists = await RNFS.exists(filePath)
-          if (!exists) {
-            console.error("[PhotoImage] Local file does not exist:", filePath)
-            setHasError(true)
-            setIsLoading(false)
-            return
-          }
+    // If no imageUrl (e.g., video without thumbnail), skip validation
+    if (!imageUrl) {
+      setIsLoading(false)
+      return
+    }
 
-          // File exists, continue with loading
-        } catch (error) {
-          console.error("[PhotoImage] Error checking file existence:", error)
-          setHasError(true)
-          setIsLoading(false)
-          return
-        }
+    // For local files (file:// URLs), skip async validation and load immediately
+    // Trust our storage system since these are downloaded files we manage
+    if (imageUrl.startsWith("file://")) {
+      // Check if it's AVIF by mime type or filename
+      if (photo.mime_type === "image/avif" || !photo.name.includes(".") || photo.name.match(/\.(avif|avifs)$/i)) {
+        setIsAvif(true)
       }
+      setIsLoading(false)
+      return
+    }
 
+    // For remote files, do full async validation
+    const checkFileAndFormat = async () => {
       // Check by mime type
       if (photo.mime_type === "image/avif") {
         setIsAvif(true)
@@ -87,13 +98,6 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
         return
       }
 
-      // For file:// URLs, check MIME type directly
-      if (imageUrl.startsWith("file://") && photo.mime_type === "image/avif") {
-        setIsAvif(true)
-        setIsLoading(false)
-        return
-      }
-
       setIsLoading(false)
     }
 
@@ -105,11 +109,13 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
   }
 
   const handleError = (error: any) => {
+    // Extract error message safely without passing complex circular objects
+    const errorMessage = error?.nativeEvent?.error || error?.message || String(error)
     console.error("[PhotoImage] Error loading image:", {
       name: photo.name,
       url: imageUrl,
       isVideo: photo.is_video,
-      error: error?.nativeEvent?.error || error,
+      error: errorMessage,
     })
     setHasError(true)
     setIsLoading(false)
@@ -119,10 +125,43 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
     }
   }
 
+  // NOW conditional returns can happen after all hooks are called
+  // Show video placeholder for videos without thumbnails
+  if (isVideoWithoutThumbnail && showPlaceholder) {
+    return (
+      <View style={[themed($placeholderContainer), style as ViewStyle]}>
+        <View style={themed($videoBadge)}>
+          <Text style={themed($videoBadgeText)}>VIDEO</Text>
+        </View>
+        <Text style={themed($placeholderText)}>🎬</Text>
+        <Text style={themed($placeholderSubtext)}>
+          {photo.name.length > 15 ? photo.name.substring(0, 12) + "..." : photo.name}
+        </Text>
+      </View>
+    )
+  }
+
+  // If URL is a relative path (from server during sync), show shimmer placeholder
+  // These URLs won't work without the server base URL, so don't attempt to load them
+  if (isRelativeUrl && showPlaceholder) {
+    const imageStyle = style as ViewStyle
+    return (
+      <ShimmerPlaceholder
+        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+        shimmerStyle={{
+          width: imageStyle?.width || "100%",
+          height: imageStyle?.height || imageStyle?.width || 100,
+          borderRadius: 0,
+        }}
+        duration={1500}
+      />
+    )
+  }
+
   // Show AVIF placeholder
   if (isAvif && showPlaceholder) {
     return (
-      <View style={[themed($placeholderContainer), style]}>
+      <View style={[themed($placeholderContainer), style as ViewStyle]}>
         <View style={themed($avifBadge)}>
           <Text style={themed($avifBadgeText)}>AVIF</Text>
         </View>
@@ -134,27 +173,44 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
     )
   }
 
-  // Show error placeholder
+  // Show error placeholder as shimmer
   if (hasError && showPlaceholder) {
+    const imageStyle = style as ViewStyle
     return (
-      <View style={[themed($placeholderContainer), style]}>
-        <Text style={themed($placeholderText)}>❌</Text>
-        <Text style={themed($placeholderSubtext)}>Failed to load</Text>
-      </View>
+      <ShimmerPlaceholder
+        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+        shimmerStyle={{
+          width: imageStyle?.width || "100%",
+          height: imageStyle?.height || imageStyle?.width || 100,
+          borderRadius: 0,
+        }}
+        duration={1500}
+      />
     )
   }
 
   // URL determined and ready to use
+  // Safety check: if no URL available, show error placeholder
+  if (!imageUrl && showPlaceholder) {
+    const imageStyle = style as ViewStyle
+    return (
+      <ShimmerPlaceholder
+        shimmerColors={[theme.colors.border, theme.colors.background, theme.colors.border]}
+        shimmerStyle={{
+          width: imageStyle?.width || "100%",
+          height: imageStyle?.height || imageStyle?.width || 100,
+          borderRadius: 0,
+        }}
+        duration={1500}
+      />
+    )
+  }
 
   return (
-    <View style={style}>
-      {isLoading && (
-        <View style={[themed($loadingOverlay), style]}>
-          <ActivityIndicator size="small" color={theme.colors.palette.primary500} />
-        </View>
-      )}
+    <View style={style as ViewStyle}>
+      {isLoading && <View style={[themed($loadingOverlay), style as ViewStyle]} />}
       <Image
-        source={{uri: imageUrl}}
+        source={{uri: imageUrl || ""}}
         style={[style, isLoading && {opacity: 0}]}
         onLoadEnd={handleLoadEnd}
         onError={handleError}
@@ -168,21 +224,37 @@ const $placeholderContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.palette.neutral200,
   justifyContent: "center",
   alignItems: "center",
-  padding: spacing.sm,
+  padding: spacing.s3,
   position: "relative",
 })
 
 const $avifBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   position: "absolute",
-  top: spacing.xs,
-  right: spacing.xs,
-  backgroundColor: colors.palette.primary500,
-  paddingHorizontal: spacing.xs,
+  top: spacing.s2,
+  right: spacing.s2,
+  backgroundColor: colors.primary,
+  paddingHorizontal: spacing.s2,
   paddingVertical: 2,
   borderRadius: 4,
 })
 
 const $avifBadgeText: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 10,
+  fontWeight: "bold",
+  color: colors.background,
+})
+
+const $videoBadge: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  position: "absolute",
+  top: spacing.s2,
+  right: spacing.s2,
+  backgroundColor: colors.palette.secondary500 || colors.palette.primary500,
+  paddingHorizontal: spacing.s2,
+  paddingVertical: 2,
+  borderRadius: 4,
+})
+
+const $videoBadgeText: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 10,
   fontWeight: "bold",
   color: colors.background,
@@ -196,7 +268,7 @@ const $placeholderText: ThemedStyle<TextStyle> = ({colors}) => ({
 const $placeholderSubtext: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 11,
   color: colors.textDim,
-  marginTop: spacing.xs,
+  marginTop: spacing.s2,
   textAlign: "center",
 })
 
@@ -206,8 +278,6 @@ const $loadingOverlay: ThemedStyle<ViewStyle> = ({colors}) => ({
   left: 0,
   right: 0,
   bottom: 0,
-  backgroundColor: colors.palette.neutral100,
-  justifyContent: "center",
-  alignItems: "center",
+  backgroundColor: colors.border, // Match shimmer placeholder grey
   zIndex: 1,
 })

@@ -1,0 +1,328 @@
+---
+title: Mira Tool Calls
+description: Let users control your app with natural language through Mira's tool calls.
+icon: wrench
+---
+
+## What is Mira?
+
+Mira is MentraOS's AI assistant that lets users control your app using natural language. Instead of building UI buttons and menus, you expose functions that Mira automatically calls when users ask for something.
+
+<Info>
+**The magic:** User says "remind me to buy milk" → Mira calls your `add_todo` function → Your app creates the todo → Mira confirms back to the user.
+</Info>
+
+<Tip>
+Your app doesn't even need to be running! Mira can trigger your functions anytime and relay results back to users.
+</Tip>
+
+## Quick Start
+
+<Steps>
+  <Step title="Define your tool in the Developer Console">
+    Go to [console.mentra.glass/apps](https://console.mentra.glass/apps) and add your tool with an ID, description, and parameters.
+  </Step>
+
+  <Step title="Implement the onToolCall method">
+    Override `onToolCall` in your AppServer to handle the tool logic.
+  </Step>
+
+  <Step title="Test with Mira">
+    Talk naturally to Mira and watch your tool get called automatically!
+  </Step>
+</Steps>
+
+## Example Code
+
+<Warning>
+**Important:** What you return from `onToolCall()` is **context for Mira's AI**, not what the user sees. Mira uses your response to formulate a natural language reply. If you want to control the display yourself, return `GIVE_APP_CONTROL_OF_TOOL_RESPONSE` instead. [See "Understanding Tool Responses" below](#understanding-tool-responses) for details.
+</Warning>
+
+Here's how to handle a Mira tool call in your app:
+
+<CodeGroup>
+
+```typescript Simple Example
+import {AppServer, ToolCall} from "@mentra/sdk"
+
+export class TodoAppServer extends AppServer {
+  protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+    // Check which tool Mira is calling
+    if (toolCall.toolId === "add_todo") {
+      // Get parameters Mira extracted from the user's message
+      const todoItem = toolCall.toolParameters.todo_item as string;
+      const dueDate = toolCall.toolParameters.due_date as string | undefined;
+
+      // Do your app logic
+      await this.todoService.addTodo(toolCall.userId, todoItem, dueDate);
+
+      // Return a message for Mira to tell the user
+      return `Added: "${todoItem}"${dueDate ? ` due ${dueDate}` : ''}`;
+    }
+
+    return undefined; // You don't handle this tool
+  }
+}
+```
+
+```typescript Multiple Tools
+protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+  switch (toolCall.toolId) {
+    case "add_todo":
+      return this.handleAddTodo(toolCall)
+    case "list_todos":
+      return this.handleListTodos(toolCall)
+    case "complete_todo":
+      return this.handleCompleteTodo(toolCall)
+    default:
+      return undefined // Unknown tool
+  }
+}
+```
+
+</CodeGroup>
+
+<AccordionGroup>
+  <Accordion title="What's happening in this code?">
+    1. **Override** the `onToolCall` method in your AppServer class
+    2. **Check** `toolCall.toolId` to identify which function to run
+    3. **Extract** parameters from `toolCall.toolParameters`
+    4. **Execute** your app logic
+    5. **Return** a message (see "Understanding Tool Responses" below)
+  </Accordion>
+</AccordionGroup>
+
+## Understanding Tool Responses
+
+**Important:** What you return from `onToolCall()` determines how Mira responds to the user.
+
+### Default: Return Context for Mira
+
+By default, your return string is **context for Mira's AI**, not what the user sees directly:
+
+```typescript
+protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+  if (toolCall.toolId === "add_todo") {
+    const item = toolCall.toolParameters.todo_item as string;
+
+    // Save the todo
+    await db.todos.create({ userId: toolCall.userId, item });
+    
+// Return context for Mira (not displayed verbatim)
+return `Todo item "${item}" was successfully saved to database with ID 123`;
+  }
+}
+```
+
+**What happens:**
+1. Your app returns context about what happened
+2. Mira's AI uses this to formulate a natural response
+3. User hears something like: "Got it, I've added that to your list" or "Done, that's been saved"
+
+**Why this is good:**
+- ✅ Natural, conversational responses
+- ✅ Mira adapts the language to context
+- ✅ Feels like talking to an assistant
+
+### Manual Control: Display Your Own UI
+
+If you want **precise control** over what displays, return `GIVE_APP_CONTROL_OF_TOOL_RESPONSE`:
+
+```typescript
+import { AppServer, ToolCall, GIVE_APP_CONTROL_OF_TOOL_RESPONSE } from '@mentra/sdk';
+
+protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+  if (toolCall.toolId === "show_shopping_list") {
+    const session = this.getSessionByUserId(toolCall.userId);
+    const items = await db.todos.getAll(toolCall.userId);
+
+    // You control exactly what displays
+    session.layouts.showReferenceCard(
+      "Shopping List",
+      items.map(item => `• ${item.name}`).join('\n')
+    );
+
+    // Tell Mira: "I've handled the display, don't say anything"
+    return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
+  }
+}
+```
+
+**What happens:**
+1. Your app displays custom UI (layouts, dashboard, etc.)
+2. Mira stays silent - doesn't add any response
+3. User sees exactly what you designed
+
+
+### Return undefined
+
+If you don't handle a tool, return `undefined`:
+
+```typescript
+protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+  if (toolCall.toolId === "my_tool") {
+    // Handle it
+    return "Context for Mira";
+  }
+
+  // Don't handle this tool
+  return undefined;
+}
+```
+
+### Quick Reference
+
+| Return Value | Behavior | Use When |
+|--------------|----------|----------|
+| **String** (e.g., `"Task completed"`) | Mira uses as context to formulate natural response | Default - natural conversation |
+| **`GIVE_APP_CONTROL_OF_TOOL_RESPONSE`** | You display UI, Mira stays silent | Need custom formatting or precise control |
+| **`undefined`** | You don't handle this tool | Tool not recognized |
+
+<Tip>
+**Best practice:** Let Mira handle responses (return strings) unless you need specific formatting. Users expect conversational AI behavior from Mira.
+</Tip>
+
+## Examples: Context vs Control
+
+### Let Mira Respond (Recommended)
+
+```typescript
+// Simple confirmation
+return "Alarm set for 7:00 AM";
+// Mira: "Alright, I've set your alarm for 7 AM"
+
+// Data retrieval
+return "User has 3 pending tasks: Buy milk, Call mom, Send email";
+// Mira: "You have 3 pending tasks: Buy milk, Call mom, and Send email"
+
+// Status update
+return "Weather is 72 degrees F and sunny in San Francisco";
+// Mira: "It's 72 degrees and sunny in San Francisco"
+```
+
+### Take Manual Control
+
+```typescript
+// Custom formatted display
+const session = this.getSessionByUserId(toolCall.userId);
+
+session.layouts.showTextWall(
+  "Today's Weather\n" +
+  "72°F Sunny\nHumidity: 45%\nWind: 5mph"
+);
+
+return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
+```
+
+```typescript
+// Complex list that needs formatting
+const tasks = await db.tasks.getAll(userId);
+
+session.layouts.showReferenceCard(
+  "Your Tasks",
+  tasks.map((t, i) => `${i+1}. ${t.title} ${t.done ? '[DONE]' : '[TODO]'}`).join('\n')
+);
+
+return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
+```
+
+```typescript
+// Silent action (no response needed)
+await db.settings.update(userId, { theme: 'dark' });
+
+session.layouts.showTextWall("Theme updated");
+
+return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
+```
+
+## Developer Console Setup
+
+<Card title="Define Your Tools" icon="tools" href="https://console.mentra.glass/apps">
+  Configure your Mira tools in the Developer Console:
+
+  1. Select your app
+  2. Navigate to "AI Tools" section
+  3. Add tools with IDs, descriptions, and parameters
+  4. Mira will automatically start recognizing them
+</Card>
+
+<Warning>
+The Developer Console UI is being updated. Screenshots may look different, but the core functionality remains the same.
+</Warning>
+
+## How Mira Works Behind the Scenes
+
+<Steps>
+  <Step title="User speaks to Mira">
+    **Example:** "Hey Mira, remind me to buy milk tomorrow"
+  </Step>
+
+  <Step title="Mira analyzes the request">
+    Mira's AI identifies your `add_todo` tool as the best match
+  </Step>
+
+  <Step title="Mira extracts parameters">
+    - `todo_item: "buy milk"`
+    - `due_date: "2025-11-04"`
+  </Step>
+
+  <Step title="Mira calls your app">
+    Sends a POST request to your `/tool` endpoint (SDK handles this automatically)
+  </Step>
+
+  <Step title="Your code executes">
+    Your `onToolCall` method runs the business logic
+  </Step>
+
+  <Step title="You respond">
+    Return a string like "Added: buy milk"
+  </Step>
+
+  <Step title="Mira responds to user">
+    Mira formats your response into natural language and delivers it
+  </Step>
+</Steps>
+
+<Note>
+**Key insight:** Tool calls work even when your app isn't running. Mira can also chain multiple tools together to fulfill complex requests.
+</Note>
+
+## Tool Configuration
+
+<Card title="Tool Properties" icon="wrench">
+  - **`id`**: Unique identifier (e.g., `"add_todo"`)
+  - **`description`**: What it does (helps Mira know when to call it)
+  - **`activationPhrases`**: Optional trigger phrases
+  - **`parameters`**: What data you need
+</Card>
+
+<Card title="Parameter Properties" icon="sliders">
+  - **`type`**: `"string"`, `"number"`, or `"boolean"`
+  - **`description`**: What this parameter is for
+  - **`required`**: Is it mandatory?
+  - **`enum`**: Limit to specific values (optional)
+</Card>
+
+<Tip>
+See [ToolSchema](/reference/interfaces/tool-types#toolschema) for the complete type reference.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Dashboard Note Example" icon="note-sticky" href="/cookbook/dashboard-note-app">
+    Complete working example with Mira Tool Calls
+  </Card>
+
+  <Card title="Tool Types Reference" icon="book" href="/app-devs/reference/interfaces/tool-types">
+    Complete API documentation
+  </Card>
+
+  <Card title="Simple Storage" icon="database" href="/app-devs/core-concepts/simple-storage">
+    Persist data in your tools
+  </Card>
+  
+  <Card title="Display" icon="display" href="/app-devs/core-concepts/display/layouts">
+    Learn about layouts and dashboard
+  </Card>
+</CardGroup>

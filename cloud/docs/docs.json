@@ -57,7 +57,7 @@
                   "cloud-architecture/managers/translation-manager",
                   "cloud-architecture/managers/microphone-manager",
                   "cloud-architecture/managers/photo-manager",
-                  "cloud-architecture/managers/video-manager",
+                  "cloud-architecture/managers/unmanaged-streaming-extension",
                   "cloud-architecture/managers/dashboard-manager",
                   "cloud-architecture/managers/managed-streaming-extension"
                 ]
@@ -101,10 +101,7 @@
           },
           {
             "group": "WebSocket Endpoints",
-            "pages": [
-              "api-reference/websocket/glasses-connection",
-              "api-reference/websocket/app-connection"
-            ]
+            "pages": ["api-reference/websocket/glasses-connection", "api-reference/websocket/app-connection"]
           },
           {
             "group": "REST Endpoints",
@@ -163,19 +160,11 @@
     }
   },
   "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "cursor",
-      "vscode"
-    ]
+    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "cursor", "vscode"]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mentraos",
+      "x": "https://x.com/mentralabs",
       "github": "https://github.com/Mentra-Community",
       "discord": "https://discord.gg/5ukNvkEAqT"
     }

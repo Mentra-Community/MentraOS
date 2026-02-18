@@ -1,4 +1,6 @@
 import {create} from "zustand"
+// import
+// TODO: import view types from cloud
 
 interface DisplayStore {
   currentEvent: any

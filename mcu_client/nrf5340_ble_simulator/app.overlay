@@ -1,4 +1,5 @@
 #include <zephyr/dt-bindings/sensor/lsm6dsv16x.h>
+#include "npm1300_config.overlay"
 
 / {
     chosen {
@@ -53,22 +54,22 @@
         group1 {
             psels = <NRF_PSEL(TWIM_SDA, 0, 31)>,
                     <NRF_PSEL(TWIM_SCL, 0, 30)>;
-            bias-pull-up;
+            // bias-pull-up;
             nordic,drive-mode = <NRF_DRIVE_S0D1>;
         };
     };
     i2c2_sleep: i2c2_sleep {
         group1 {
             psels = <NRF_PSEL(TWIM_SDA, 0, 31)>,
-                    <NRF_PSEL(TWIM_SCL, 0, 30)>;
-            low-power-enable;
+                    <NRF_PSEL(TWIM_SCL, 0, 30)>; 
+                    low-power-enable;
         };
     };
     i2c3_default: i2c3_default {
         group1 {
             psels = <NRF_PSEL(TWIM_SDA, 1, 3)>,
                     <NRF_PSEL(TWIM_SCL, 1, 2)>;
-            bias-pull-up;
+            // bias-pull-up;
             nordic,drive-mode = <NRF_DRIVE_S0D1>;
         };
     };
@@ -177,7 +178,7 @@ zephyr_udc0: &usbd {
 
 &i2s0 {
     compatible = "nordic,nrf-i2s";
-    status = "okay";
+    status = "disabled";
     pinctrl-0 = <&i2s0_default>;
     pinctrl-names = "default";
     // clock-source = "ACLK";

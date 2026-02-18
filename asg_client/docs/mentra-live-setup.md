@@ -153,7 +153,7 @@ adb logcat | grep -E "FATAL|AndroidRuntime"
 
 ```bash
 # Clear all app data (settings, cache, etc.)
-adb shell pm clear com.augmentos.asg_client
+adb shell pm clear com.mentra.asg_client
 ```
 
 ### Take Screenshot
@@ -171,7 +171,7 @@ adb pull /sdcard/screenshot.png
 adb shell
 
 # Navigate to app data (requires root on some devices)
-cd /data/data/com.augmentos.asg_client/
+cd /data/data/com.mentra.asg_client/
 ```
 
 ## Tips for Development

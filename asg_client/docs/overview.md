@@ -46,9 +46,8 @@ Physical Hardware → MCU → ASG Client → BLE → Mobile App → MentraOS Clo
 1. User presses camera button on glasses
 2. MCU sends `cs_pho` (short press) or `cs_vdo` (long press) to ASG Client
 3. ASG Client checks button press mode configuration:
-   - **PHOTO mode**: Takes photo locally
-   - **APPS mode**: Sends button event to phone/apps
-   - **BOTH mode**: Does both actions
+   - **PHOTO mode**: Takes photo locally and forwards to apps
+   - **APPS mode**: Sends button event to phone/apps only
 4. Photo is captured and queued for upload
 5. When connected, photo uploads to MentraOS Cloud
 
@@ -76,7 +75,7 @@ Physical Hardware → MCU → ASG Client → BLE → Mobile App → MentraOS Clo
 
 The client behavior can be configured through various settings:
 
-- Button press modes (PHOTO, APPS, BOTH)
+- Button press modes (PHOTO, APPS)
 - Network preferences
 - Media quality settings
 - Debug options

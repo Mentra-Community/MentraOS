@@ -1,32 +1,34 @@
 /**
- * @fileoverview AugmentOS Cloud Server entry point.
- * Initializes core services and sets up HTTP/WebSocket servers.
+ * @fileoverview MentraOS Cloud Server entry point (Hono + Bun native).
+ * Initializes core services and sets up HTTP/WebSocket servers using Bun.serve().
+ *
+ * This is the new entry point using Hono for native Bun HTTP handling.
+ *
+ * IMPORTANT: This file explicitly calls Bun.serve() and does NOT use export default
+ * to prevent Bun from auto-starting the server a second time. Bun auto-detects
+ * `export default` with a `fetch` function and tries to call Bun.serve() on it,
+ * which would cause EADDRINUSE errors.
  */
-// Load environment variables first
+
 import dotenv from "dotenv";
-import path from "path";
 dotenv.config();
 
-import express from "express";
-import { Server } from "http";
-import cookieParser from "cookie-parser";
-import cors from "cors";
-import helmet from "helmet";
-import pinoHttp from "pino-http";
-
-// Import services
-import { DebugService } from "./services/debug/debug-service";
-// sessionService consolidated into UserSession static APIs
-import { websocketService } from "./services/websocket/websocket.service";
-import * as AppUptimeService from "./services/core/app-uptime.service";
-import UserSession from "./services/session/UserSession";
-// Register API routes from central index
-import { registerApi } from './api';
-
-// Load configuration from environment
 import * as mongoConnection from "./connections/mongodb.connection";
-import { logger as rootLogger } from "./services/logging/pino-logger";
+import honoApp from "./hono-app";
+import * as AppUptimeService from "./services/core/app-uptime.service";
 import { memoryTelemetryService } from "./services/debug/MemoryTelemetryService";
+import { logger as rootLogger } from "./services/logging/pino-logger";
+import { metricsService } from "./services/metrics";
+import { udpAudioServer } from "./services/udp/UdpAudioServer";
+import { handleUpgrade, websocketHandlers } from "./services/websocket/bun-websocket";
+// import generateCoreToken from "./utils/generateCoreToken";
+
+// Hono app with all routes
+
+// Optional: Legacy Express handler for routes not yet migrated
+// Uncomment the import below if you need Express fallback
+// import { createLegacyExpressHandler } from "./legacy-express";
+
 const logger = rootLogger.child({ service: "index" });
 
 // Initialize MongoDB connection
@@ -46,19 +48,13 @@ mongoConnection
 
     if (adminEmails) {
       const emails = adminEmails.split(",").map((e) => e.trim());
-      logger.info(
-        `Admin access configured for ${emails.length} email(s): [${emails.join(", ")}]`,
-      );
+      logger.info(`Admin access configured for ${emails.length} email(s): [${emails.join(", ")}]`);
     } else {
-      logger.warn(
-        "No ADMIN_EMAILS environment variable found. Admin panel will be inaccessible.",
-      );
+      logger.warn("No ADMIN_EMAILS environment variable found. Admin panel will be inaccessible.");
 
       // For development, log a helpful message
       if (process.env.NODE_ENV === "development") {
-        logger.info(
-          "Development mode: set ADMIN_EMAILS environment variable to enable admin access",
-        );
+        logger.info("Development mode: set ADMIN_EMAILS environment variable to enable admin access");
       }
     }
   })
@@ -66,186 +62,112 @@ mongoConnection
     logger.error("MongoDB connection failed:", error);
   });
 
-// Initialize Express and HTTP server
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80; // Default http port.
-const app = express();
-const server = new Server(app);
+// Start UDP Audio Server
+udpAudioServer
+  .start()
+  .then(() => {
+    logger.info("UDP Audio Server started successfully on port 8000");
+  })
+  .catch((error) => {
+    logger.error({ error }, "UDP Audio Server failed to start (continuing without UDP audio support)");
+  });
 
-// Initialize services in the correct order
-const debugService = new DebugService(server);
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
 
-// Export services for use in other modules
-export { debugService, websocketService };
+// Optional: Create legacy Express handler for routes not yet migrated
+// Uncomment if you need Express fallback for specific routes
+// const legacyExpressHandler = createLegacyExpressHandler();
 
-// Middleware setup
-app.use(helmet());
-app.use(
-  cors({
-    credentials: true,
-    origin: [
-      "*",
-      "http://localhost:3000",
-      "http://127.0.0.1:5173",
-      "http://localhost:5173",
-      "http://127.0.0.1:5174",
-      "http://localhost:5174",
-      "http://localhost:5175",
-      "http://localhost:5173",
-      "http://localhost:53216",
-      "http://localhost:6173",
-      "http://localhost:8052",
-      "https://cloud.augmentos.org",
-      "https://dev.augmentos.org",
-      "https://devold.augmentos.org",
-      "https://www.augmentos.org",
-      "https://augmentos.org",
-      "https://augmentos.dev",
+// Routes that should fall back to Express (if enabled)
+// These are routes that haven't been migrated to Hono yet
+const LEGACY_EXPRESS_PATHS = [
+  "/appsettings",
+  "/tpasettings",
+  "/api/dev",
+  "/api/admin",
+  "/api/orgs",
+  "/api/photos",
+  "/api/gallery",
+  "/api/tools",
+  "/api/permissions",
+  "/api/hardware",
+  "/api/account",
+  "/api/onboarding",
+  "/api/app-uptime",
+  "/api/streams",
+];
 
-      // AugmentOS App Store / Developer Portal
-      "https://augmentos.dev",
-      "https://appstore.augmentos.dev",
+/**
+ * Check if a path should fall back to Express
+ */
+function _shouldUseLegacyExpress(pathname: string): boolean {
+  return LEGACY_EXPRESS_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
+}
 
-      "https://dev.appstore.augmentos.dev",
-      "https://dev.augmentos.dev",
-      "https://staging.appstore.augmentos.dev",
-      "https://staging.augmentos.dev",
-      "https://prod.appstore.augmentos.dev",
-      "https://prod.augmentos.dev",
+// Start Bun.serve() with native WebSocket support
+const _server = Bun.serve({
+  port: PORT,
 
-      "https://augmentos-developer-portal.netlify.app",
+  // Native Bun WebSocket handlers
+  websocket: websocketHandlers,
 
-      "https://appstore.augmentos.org",
-      "https://store.augmentos.org",
-      "https://storedev.augmentos.org",
-      "https://console.augmentos.org",
-      "https://consoledev.augmentos.org",
-      "https://account.augmentos.org",
-      "https://accountdev.augmentos.org",
-      "https://docs.mentra.glass",
-      "https://docsdev.augmentos.org",
+  // HTTP request handler
+  async fetch(req, server) {
+    const url = new URL(req.url);
 
-      "https://augmentos.pages.dev",
-      "https://augmentos-appstore-2.pages.dev",
+    // WebSocket upgrade requests
+    if (url.pathname === "/glasses-ws" || url.pathname === "/app-ws") {
+      const upgradeResult = handleUpgrade(req, server);
+      if (upgradeResult === undefined) {
+        // Upgrade successful
+        return undefined as any;
+      }
+      // Return error response
+      return upgradeResult;
+    }
 
-      "https://mentra.glass",
-      "https://api.mentra.glass",
-      "https://dev.api.mentra.glass",
-      "https://uscentral.api.mentra.glass",
-      "https://france.api.mentra.glass",
-      "https://asiaeast.api.mentra.glass",
+    // Optional: Fall back to legacy Express handler for unmigrated routes
+    // Uncomment the block below if you need Express fallback
+    /*
+    if (shouldUseLegacyExpress(url.pathname)) {
+      return legacyExpressHandler(req, server);
+    }
+    */
 
-      "https://apps.mentra.glass",
-      "https://console.mentra.glass",
-      "https://dev.mentra.glass",
-      "https://account.mentra.glass",
-      "https://docs.mentra.glass",
-      "https://store.mentra.glass",
-
-      "https://appsdev.mentra.glass",
-      "https://consoledev.mentra.glass",
-      "https://accountdev.mentra.glass",
-      "https://docsdev.mentra.glass",
-      "https://storedev.mentra.glass",
-
-      "https://dev.apps.mentra.glass",
-      "https://dev.console.mentra.glass",
-      "https://dev.account.mentra.glass",
-      "https://dev.docs.mentra.glass",
-      "https://dev.store.mentra.glass",
-    ],
-  }),
-);
-
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
-app.use(cookieParser());
-
-// Add pino-http middleware for request logging
-app.use(
-  pinoHttp({
-    logger: rootLogger,
-    genReqId: (req) => {
-      // Generate correlation ID for each request
-      return `${req.method}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-    },
-    customLogLevel: (req, res, err) => {
-      if (res.statusCode >= 400 && res.statusCode < 500) return "warn";
-      if (res.statusCode >= 500 || err) return "error";
-      return "info";
-    },
-    customSuccessMessage: (req, res) => {
-      return `${req.method} ${req.url} - ${res.statusCode}`;
-    },
-    customErrorMessage: (req, res, err) => {
-      return `${req.method} ${req.url} - ${res.statusCode} - ${err.message}`;
-    },
-    // Don't log health check requests to reduce noise
-    autoLogging: {
-      ignore: (req) => req.url === "/health",
-    },
-  }),
-);
-
-// Routes
-registerApi(app);
-
-// app.use('/api/app-communication', appCommunicationRoutes);
-// app.use('/api/tpa-communication', appCommunicationRoutes); // TODO: Remove this once the old apps are fully updated in the wild (the old mobile clients will hit the old urls)
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  try {
-  const activeSessions = UserSession.getAllSessions();
-
-    res.json({
-      status: "ok",
-      timestamp: new Date().toISOString(),
-      sessions: {
-        activeCount: activeSessions.length,
-      },
-      uptime: process.uptime(),
-    });
-  } catch (error) {
-    console.error("Health check error:", error);
-    res.status(500).json({
-      status: "error",
-      error: "Health check failed",
-      timestamp: new Date().toISOString(),
-    });
-  }
+    // All HTTP requests handled by Hono
+    return honoApp.fetch(req, { ip: server.requestIP(req) });
+  },
 });
 
-
-// Serve static files from the public directory
-app.use(express.static(path.join(__dirname, "./public")));
-
-// Serve uploaded photos
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
-
-// Initialize WebSocket service
-// Initialize WebSocket servers
-websocketService.setupWebSocketServers(server);
+// Start metrics service (event loop lag sampling, throughput tracking)
+metricsService.start();
 
 // Start memory telemetry
 memoryTelemetryService.start();
 
 if (process.env.UPTIME_SERVICE_RUNNING === "true") {
-  AppUptimeService.startUptimeScheduler(); // start app uptime service scheduler
+  AppUptimeService.startUptimeScheduler();
 }
 
-// Start the server
-try {
-  server.listen(PORT, () => {
-    logger.info(`\n
-        ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
-        ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
-        ☁️☁️☁️      😎 MentraOS Cloud Server 🚀     
-        ☁️☁️☁️      🌐 Listening on port ${PORT} 🌐
-        ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
-        ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️\n`);
-  });
-} catch (error) {
-  logger.error(error, "Failed to start server:");
-}
+logger.info(`\n
+    ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
+    ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
+    ☁️☁️☁️      😎 MentraOS Cloud Server 🚀
+    ☁️☁️☁️      🌐 Listening on port ${PORT} 🌐
+    ☁️☁️☁️      ⚡ Pure Hono + Bun Native ⚡
+    ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
+    ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️\n`);
 
-export default server;
+// Generate core token for debugging with postman.
+// generateCoreToken
+// (async () => {
+//   const coreToken = await generateCoreToken("");
+//   logger.debug(`Core Token:\n${coreToken}`);
+// })();
+
+// IMPORTANT: Do NOT add `export default server` here!
+// Bun auto-detects default exports with a `fetch` function and calls Bun.serve() on them.
+// Since we already called Bun.serve() above, this would cause EADDRINUSE (port already in use).
+//
+// If you need to export the server for testing, use a named export:
+// export { server };

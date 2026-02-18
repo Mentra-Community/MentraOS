@@ -1,0 +1,587 @@
+diff --git a/node_modules/expo-image/ios/ExpoImage.podspec b/node_modules/expo-image/ios/ExpoImage.podspec
+index 818e050..21bef71 100644
+--- a/node_modules/expo-image/ios/ExpoImage.podspec
++++ b/node_modules/expo-image/ios/ExpoImage.podspec
+@@ -14,15 +14,14 @@ Pod::Spec.new do |s|
+     :ios => '15.1',
+     :tvos => '15.1'
+   }
+-  s.swift_version  = '5.9'
++  s.swift_version  = '5.4'
+   s.source         = { git: 'https://github.com/expo/expo.git' }
+   s.static_framework = true
+ 
+   s.dependency 'ExpoModulesCore'
+-  s.dependency 'SDWebImage', '~> 5.21.0'
++  s.dependency 'SDWebImage', '~> 5.19.1'
+   s.dependency 'SDWebImageAVIFCoder', '~> 0.11.0'
+   s.dependency 'SDWebImageSVGCoder', '~> 1.7.0'
+-  s.dependency 'SDWebImageWebPCoder', '~> 0.14.6'
+   s.dependency 'libavif/libdav1d'
+ 
+   # Swift/Objective-C compatibility
+diff --git a/node_modules/expo-image/ios/ImageCacheType.swift b/node_modules/expo-image/ios/ImageCacheType.swift
+index cd7f51b..566fbe5 100644
+--- a/node_modules/expo-image/ios/ImageCacheType.swift
++++ b/node_modules/expo-image/ios/ImageCacheType.swift
+@@ -16,9 +16,6 @@ enum ImageCacheType: String, Enumerable {
+       return .disk
+     case .memory:
+       return .memory
+-    @unknown default:
+-      log.error("Unhandled `SDImageCacheType` value: \(sdImageCacheType), returning `none` as fallback. Add the missing case as soon as possible.")
+-      return .none
+     }
+   }
+ }
+diff --git a/node_modules/expo-image/ios/ImageModule.swift b/node_modules/expo-image/ios/ImageModule.swift
+index b44f431..4bab386 100644
+--- a/node_modules/expo-image/ios/ImageModule.swift
++++ b/node_modules/expo-image/ios/ImageModule.swift
+@@ -107,14 +107,6 @@ public final class ImageModule: Module {
+         view.autoplay = autoplay ?? true
+       }
+ 
+-      Prop("useAppleWebpCodec", true) { (view, useAppleWebpCodec: Bool) in
+-        view.useAppleWebpCodec = useAppleWebpCodec
+-      }
+-
+-      Prop("enforceEarlyResizing", false) { (view, enforceEarlyResizing: Bool) in
+-        view.enforceEarlyResizing = enforceEarlyResizing
+-      }
+-
+       AsyncFunction("startAnimating") { (view: ImageView) in
+         view.sdImageView.startAnimating()
+       }
+@@ -123,18 +115,6 @@ public final class ImageModule: Module {
+         view.sdImageView.stopAnimating()
+       }
+ 
+-      AsyncFunction("lockResourceAsync") { (view: ImageView) in
+-        view.lockResource = true
+-      }
+-
+-      AsyncFunction("unlockResourceAsync") { (view: ImageView) in
+-        view.lockResource = false
+-      }
+-
+-      AsyncFunction("reloadAsync") { (view: ImageView) in
+-        view.reload(force: true)
+-      }
+-
+       OnViewDidUpdateProps { view in
+         view.reload()
+       }
+@@ -170,22 +150,19 @@ public final class ImageModule: Module {
+       }
+     }
+ 
+-    AsyncFunction("generateBlurhashAsync") { (source: Either<Image, URL>, numberOfComponents: CGSize, promise: Promise) in
+-      let parsedNumberOfComponents = (width: Int(numberOfComponents.width), height: Int(numberOfComponents.height))
+-      generatePlaceholder(source: source) { (image: UIImage) in
+-        if let blurhashString = blurhash(fromImage: image, numberOfComponents: parsedNumberOfComponents) {
+-          promise.resolve(blurhashString)
+-        } else {
+-          promise.reject(BlurhashGenerationException())
++    AsyncFunction("generateBlurhashAsync") { (url: URL, numberOfComponents: CGSize, promise: Promise) in
++      let downloader = SDWebImageDownloader()
++      let parsedNumberOfComponents = (Int(numberOfComponents.width), Int(numberOfComponents.height))
++      downloader.downloadImage(with: url, progress: nil, completed: { image, _, _, _ in
++        DispatchQueue.global().async {
++          if let downloadedImage = image {
++            let blurhashString = blurhash(fromImage: downloadedImage, numberOfComponents: parsedNumberOfComponents)
++            promise.resolve(blurhashString)
++          } else {
++            promise.reject(BlurhashGenerationException())
++          }
+         }
+-      }
+-    }
+-
+-    AsyncFunction("generateThumbhashAsync") { (source: Either<Image, URL>, promise: Promise) in
+-      generatePlaceholder(source: source) { (image: UIImage) in
+-        let blurhashString = thumbHash(fromImage: image)
+-        promise.resolve(blurhashString.base64EncodedString())
+-      }
++      })
+     }
+ 
+     AsyncFunction("clearMemoryCache") { () -> Bool in
+@@ -231,26 +208,9 @@ public final class ImageModule: Module {
+     }
+   }
+ 
+-  func generatePlaceholder(
+-    source: Either<Image, URL>,
+-    generator: @escaping (UIImage) -> Void
+-  ) {
+-    if let image: Image = source.get() {
+-      generator(image.ref)
+-    } else if let url: URL = source.get() {
+-      let downloader = SDWebImageDownloader()
+-      downloader.downloadImage(with: url, progress: nil, completed: { image, _, _, _ in
+-        DispatchQueue.global().async {
+-          if let downloadedImage = image {
+-            generator(downloadedImage)
+-          }
+-        }
+-      })
+-    }
+-  }
+-
+   static func registerCoders() {
+-    SDImageCodersManager.shared.addCoder(WebPCoder.shared)
++    // By default Animated WebP is not supported
++    SDImageCodersManager.shared.addCoder(SDImageAWebPCoder.shared)
+     SDImageCodersManager.shared.addCoder(SDImageAVIFCoder.shared)
+     SDImageCodersManager.shared.addCoder(SDImageSVGCoder.shared)
+     SDImageCodersManager.shared.addCoder(SDImageHEICCoder.shared)
+diff --git a/node_modules/expo-image/ios/ImageSource.swift b/node_modules/expo-image/ios/ImageSource.swift
+index e6228c2..88082fd 100644
+--- a/node_modules/expo-image/ios/ImageSource.swift
++++ b/node_modules/expo-image/ios/ImageSource.swift
+@@ -37,7 +37,8 @@ struct ImageSource: Record {
+     return isPhotoLibraryAssetUrl(uri)
+   }
+ 
+-  var cacheOriginalImage: Bool {
++  var isCachingAllowed: Bool {
++    // TODO: Don't cache other non-network requests (e.g. data URIs, local files)
+     return !isPhotoLibraryAsset
+   }
+ }
+diff --git a/node_modules/expo-image/ios/ImageUtils.swift b/node_modules/expo-image/ios/ImageUtils.swift
+index be40a77..34f2231 100644
+--- a/node_modules/expo-image/ios/ImageUtils.swift
++++ b/node_modules/expo-image/ios/ImageUtils.swift
+@@ -21,9 +21,6 @@ func cacheTypeToString(_ cacheType: SDImageCacheType) -> String {
+   case .memory, .all:
+     // `all` doesn't make much sense, so we treat it as `memory`.
+     return "memory"
+-  @unknown default:
+-    log.error("Unhandled `SDImageCacheType` value: \(cacheType), returning `none` as fallback. Add the missing case as soon as possible.")
+-    return "none"
+   }
+ }
+ 
+@@ -103,7 +100,24 @@ func shouldDownscale(image: UIImage, toSize size: CGSize, scale: Double) -> Bool
+ }
+ 
+ /**
+- Resizes a static image to fit in the given size and scale.
++ Resizes the animated image to fit in the given size and scale.
++ */
++func resize(animatedImage image: UIImage, toSize size: CGSize, scale: Double) -> UIImage {
++  if image.sd_isAnimated,
++    let animatedImage = image as? AnimatedImage,
++    let actualCoder = animatedImage.animatedCoder {
++    let animatedCoder = ResizedAnimatedCoder(actualCoder: actualCoder, size: size, scale: scale)
++    if let result = AnimatedImage(animatedCoder: animatedCoder, scale: scale) {
++      return result
++    }
++  }
++
++  // fallback to a resized static image
++  return resize(image: image, toSize: size, scale: scale)
++}
++
++/**
++ Resizes a still image to fit in the given size and scale.
+  */
+ func resize(image: UIImage, toSize size: CGSize, scale: Double) -> UIImage {
+   let format = UIGraphicsImageRendererFormat()
+@@ -158,7 +172,7 @@ func createCacheKeyFilter(_ cacheKey: String?) -> SDWebImageCacheKeyFilter? {
+ /**
+  Creates a default image context based on the source and the cache policy.
+  */
+-func createSDWebImageContext(forSource source: ImageSource, cachePolicy: ImageCachePolicy = .disk, useAppleWebpCodec: Bool = true) -> SDWebImageContext {
++func createSDWebImageContext(forSource source: ImageSource, cachePolicy: ImageCachePolicy = .disk) -> SDWebImageContext {
+   var context = SDWebImageContext()
+ 
+   // Modify URL request to add headers.
+@@ -173,21 +187,18 @@ func createSDWebImageContext(forSource source: ImageSource, cachePolicy: ImageCa
+   // which has better compatibility with the UIImage and fixes issues with the image duration.
+   context[.animatedImageClass] = AnimatedImage.self
+ 
+-  // Passing useAppleWebpCodec into WebPCoder
+-  context[.imageDecodeOptions] = [
+-    imageCoderOptionUseAppleWebpCodec: useAppleWebpCodec
+-  ]
+-
+   // Assets from the bundler have `scale` prop which needs to be passed to the context,
+   // otherwise they would be saved in cache with scale = 1.0 which may result in
+   // incorrectly rendered images for resize modes that don't scale (`center` and `repeat`).
+   context[.imageScaleFactor] = source.scale
+ 
+-  let sdCacheType = cachePolicy.toSdCacheType().rawValue
+-  context[.queryCacheType] = sdCacheType
+-  context[.storeCacheType] = sdCacheType
++  // Set which cache can be used to query and store the downloaded image.
++  // We want to store only original images (without transformations).
++  context[.queryCacheType] = SDImageCacheType.none.rawValue
++  context[.storeCacheType] = SDImageCacheType.none.rawValue
+ 
+-  if source.cacheOriginalImage {
++  if source.isCachingAllowed {
++    let sdCacheType = cachePolicy.toSdCacheType().rawValue
+     context[.originalQueryCacheType] = sdCacheType
+     context[.originalStoreCacheType] = sdCacheType
+   } else {
+diff --git a/node_modules/expo-image/ios/ImageView.swift b/node_modules/expo-image/ios/ImageView.swift
+index c33ec33..2ab4cba 100644
+--- a/node_modules/expo-image/ios/ImageView.swift
++++ b/node_modules/expo-image/ios/ImageView.swift
+@@ -12,8 +12,6 @@ typealias SDWebImageContext = [SDWebImageContextOption: Any]
+ public final class ImageView: ExpoView {
+   static let contextSourceKey = SDWebImageContextOption(rawValue: "source")
+   static let screenScaleKey = SDWebImageContextOption(rawValue: "screenScale")
+-  static let contentFitKey = SDWebImageContextOption(rawValue: "contentFit")
+-  static let frameSizeKey = SDWebImageContextOption(rawValue: "frameSize")
+ 
+   let sdImageView = SDAnimatedImageView(frame: .zero)
+ 
+@@ -58,10 +56,6 @@ public final class ImageView: ExpoView {
+ 
+   var allowDownscaling: Bool = true
+ 
+-  var lockResource: Bool = false
+-
+-  var enforceEarlyResizing: Bool = false
+-
+   var recyclingKey: String? {
+     didSet {
+       if oldValue != nil && recyclingKey != oldValue {
+@@ -72,13 +66,6 @@ public final class ImageView: ExpoView {
+ 
+   var autoplay: Bool = true
+ 
+-  var useAppleWebpCodec: Bool = true
+-
+-  /**
+-   The ideal image size that fills in the container size while maintaining the source aspect ratio.
+-   */
+-  var imageIdealSize: CGSize = .zero
+-
+   // MARK: - Events
+ 
+   let onLoadStart = EventDispatcher()
+@@ -117,26 +104,21 @@ public final class ImageView: ExpoView {
+     addSubview(sdImageView)
+   }
+ 
+-  deinit {
+-    // Cancel pending requests when the view is deallocated.
+-    cancelPendingOperation()
+-  }
+-
+-  public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+-    super.traitCollectionDidChange(previousTraitCollection)
+-    if self.traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+-      // The mask layer we adjusted would be invaliated from `RCTViewComponentView.traitCollectionDidChange`.
+-      // After that we have to recalculate the mask layer in `applyContentPosition`.
+-      applyContentPosition(contentSize: imageIdealSize, containerSize: frame.size)
++  public override func didMoveToWindow() {
++    if window == nil {
++      // Cancel pending requests when the view is unmounted.
++      cancelPendingOperation()
++    } else if !bounds.isEmpty {
++      // Reload the image after mounting the view with non-empty bounds.
++      reload()
++    } else {
++      loadPlaceholderIfNecessary()
+     }
+   }
+ 
+   // MARK: - Implementation
+ 
+-  func reload(force: Bool = false) {
+-    if lockResource && !force {
+-      return
+-    }
++  func reload() {
+     if isViewEmpty {
+       displayPlaceholderIfNecessary()
+     }
+@@ -147,30 +129,27 @@ public final class ImageView: ExpoView {
+     if sdImageView.image == nil {
+       sdImageView.contentMode = contentFit.toContentMode()
+     }
+-    var context = createSDWebImageContext(forSource: source, cachePolicy: cachePolicy, useAppleWebpCodec: useAppleWebpCodec)
++    var context = createSDWebImageContext(forSource: source, cachePolicy: cachePolicy)
+ 
+     // Cancel currently running load requests.
+     cancelPendingOperation()
+ 
+-    if blurRadius > 0 {
+-      context[.imageTransformer] = createTransformPipeline()
+-    }
++    context[.imageTransformer] = createTransformPipeline()
+ 
+     // It seems that `UIImageView` can't tint some vector graphics. If the `tintColor` prop is specified,
+     // we tell the SVG coder to decode to a bitmap instead. This will become useless when we switch to SVGNative coder.
+-    let shouldEarlyResize = imageTintColor != nil || enforceEarlyResizing || source.isPhotoLibraryAsset
+-    if shouldEarlyResize {
+-      context[.imagePreserveAspectRatio] = true
+-      context[.imageThumbnailPixelSize] = CGSize(
+-        width: sdImageView.bounds.size.width * screenScale,
+-        height: sdImageView.bounds.size.height * screenScale
+-      )
++    if imageTintColor != nil {
++      context[.imageDecodeOptions] = [
++        SDImageCoderOption.webImageContext: [
++          "svgPrefersBitmap": true,
++          "svgImageSize": sdImageView.bounds.size,
++          "svgImagePreserveAspectRatio": true
++        ]
++      ]
+     }
+ 
+     // Some loaders (e.g. PhotoLibraryAssetLoader) may need to know the screen scale.
+     context[ImageView.screenScaleKey] = screenScale
+-    context[ImageView.frameSizeKey] = frame.size
+-    context[ImageView.contentFitKey] = contentFit
+ 
+     // Do it here so we don't waste resources trying to fetch from a remote URL
+     if maybeRenderLocalAsset(from: source) {
+@@ -244,15 +223,15 @@ public final class ImageView: ExpoView {
+       ])
+ 
+       let scale = window?.screen.scale ?? UIScreen.main.scale
+-      imageIdealSize = idealSize(
++      let idealSize = idealSize(
+         contentPixelSize: image.size * image.scale,
+         containerSize: frame.size,
+         scale: scale,
+         contentFit: contentFit
+       ).rounded(.up)
+ 
+-      let image = processImage(image, idealSize: imageIdealSize, scale: scale)
+-      applyContentPosition(contentSize: imageIdealSize, containerSize: frame.size)
++      let image = processImage(image, idealSize: idealSize, scale: scale)
++      applyContentPosition(contentSize: idealSize, containerSize: frame.size)
+       renderSourceImage(image)
+     } else {
+       displayPlaceholderIfNecessary()
+@@ -270,7 +249,7 @@ public final class ImageView: ExpoView {
+       return nil
+     }()
+ 
+-    if let path, !path.isEmpty, let local = UIImage(named: path) {
++    if let path, let local = UIImage(named: path) {
+       renderSourceImage(local)
+       return true
+     }
+@@ -332,7 +311,7 @@ public final class ImageView: ExpoView {
+     // to cache them or apply the same policy as with the proper image?
+     // Basically they are also cached in memory as the `placeholderImage` property,
+     // so just `disk` policy sounds like a good idea.
+-    var context = createSDWebImageContext(forSource: placeholder, cachePolicy: .disk, useAppleWebpCodec: useAppleWebpCodec)
++    var context = createSDWebImageContext(forSource: placeholder, cachePolicy: .disk)
+ 
+     let isPlaceholderHash = placeholder.isBlurhash || placeholder.isThumbhash
+ 
+@@ -358,7 +337,7 @@ public final class ImageView: ExpoView {
+ 
+   // MARK: - Processing
+ 
+-  private func createTransformPipeline() -> SDImagePipelineTransformer? {
++  private func createTransformPipeline() -> SDImagePipelineTransformer {
+     let transformers: [SDImageTransformer] = [
+       SDImageBlurTransformer(radius: blurRadius)
+     ]
+@@ -369,15 +348,9 @@ public final class ImageView: ExpoView {
+     guard let image = image, !bounds.isEmpty else {
+       return nil
+     }
+-    sdImageView.animationTransformer = nil
+     // Downscale the image only when necessary
+     if allowDownscaling && shouldDownscale(image: image, toSize: idealSize, scale: scale) {
+-      if image.sd_isAnimated {
+-        let size = idealSize * scale
+-        sdImageView.animationTransformer = SDImageResizingTransformer(size: size, scaleMode: .fill)
+-        return image
+-      }
+-      return resize(image: image, toSize: idealSize, scale: scale)
++      return resize(animatedImage: image, toSize: idealSize, scale: scale)
+     }
+     return image
+   }
+diff --git a/node_modules/expo-image/ios/Loaders/PhotoLibraryAssetLoader.swift b/node_modules/expo-image/ios/Loaders/PhotoLibraryAssetLoader.swift
+index 2596fa5..963c49c 100644
+--- a/node_modules/expo-image/ios/Loaders/PhotoLibraryAssetLoader.swift
++++ b/node_modules/expo-image/ios/Loaders/PhotoLibraryAssetLoader.swift
+@@ -107,19 +107,8 @@ private func requestAsset(
+     }
+   }
+ 
+-  var targetSize = PHImageManagerMaximumSize
+-
+-  // We compute the minimal size required to display the image to avoid having to downsample it later
+-  if let scale = context?[ImageView.screenScaleKey] as? Double,
+-    let containerSize = context?[ImageView.frameSizeKey] as? CGSize,
+-    let contentFit = context?[ImageView.contentFitKey] as? ContentFit {
+-    targetSize = idealSize(
+-      contentPixelSize: CGSize(width: asset.pixelWidth, height: asset.pixelHeight),
+-      containerSize: containerSize,
+-      scale: scale,
+-      contentFit: contentFit
+-    ).rounded(.up) * scale
+-  }
++  let screenScale = context?[ImageView.screenScaleKey] as? Double ?? UIScreen.main.scale
++  let targetSize = CGSize(width: Double(asset.pixelWidth) / screenScale, height: Double(asset.pixelHeight) / screenScale)
+ 
+   return PHImageManager.default().requestImage(
+     for: asset,
+diff --git a/node_modules/expo-image/ios/ResizedAnimatedCoder.swift b/node_modules/expo-image/ios/ResizedAnimatedCoder.swift
+new file mode 100644
+index 0000000..a45d860
+--- /dev/null
++++ b/node_modules/expo-image/ios/ResizedAnimatedCoder.swift
+@@ -0,0 +1,68 @@
++// Copyright 2024-present 650 Industries. All rights reserved.
++
++import SDWebImage
++
++/**
++ An animated image resizer that adjusts an already loaded `SDAnimatedImage`.
++ This is not a formal SDWebImage coder; it's used solely to leverage the SDWebImage loading pipeline.
++ */
++internal final class ResizedAnimatedCoder: NSObject, SDAnimatedImageCoder {
++  private let actualCoder: SDAnimatedImageCoder
++  private let size: CGSize
++  private let scale: Double
++
++  // swiftlint:disable:next unavailable_function
++  init(animatedImageData data: Data?, options: [SDImageCoderOption: Any]? = nil) {
++    fatalError("Unsupported initializer")
++  }
++
++  init(actualCoder: SDAnimatedImageCoder, size: CGSize, scale: Double) {
++    self.actualCoder = actualCoder
++    self.size = size
++    self.scale = scale
++    super.init()
++  }
++
++  // MARK: - SDImageCoder implementations
++
++  func canDecode(from data: Data?) -> Bool {
++    return actualCoder.canDecode(from: data)
++  }
++
++  func decodedImage(with data: Data?, options: [SDImageCoderOption: Any]? = nil) -> UIImage? {
++    return actualCoder.decodedImage(with: data, options: options)
++  }
++
++  func canEncode(to format: SDImageFormat) -> Bool {
++    return actualCoder.canEncode(to: format)
++  }
++
++  func encodedData(with image: UIImage?, format: SDImageFormat, options: [SDImageCoderOption: Any]? = nil) -> Data? {
++    return actualCoder.encodedData(with: image, format: format, options: options)
++  }
++
++  // MARK: - SDAnimatedImageProvider implementations
++
++  var animatedImageData: Data? {
++    return actualCoder.animatedImageData
++  }
++
++  var animatedImageFrameCount: UInt {
++    return actualCoder.animatedImageFrameCount
++  }
++
++  var animatedImageLoopCount: UInt {
++    return actualCoder.animatedImageLoopCount
++  }
++
++  func animatedImageFrame(at index: UInt) -> UIImage? {
++    guard let frame = actualCoder.animatedImageFrame(at: index) else {
++      return nil
++    }
++    return resize(image: frame, toSize: self.size, scale: self.scale)
++  }
++
++  func animatedImageDuration(at index: UInt) -> TimeInterval {
++    return actualCoder.animatedImageDuration(at: index)
++  }
++}
+diff --git a/node_modules/expo-image/ios/WebPCoder.swift b/node_modules/expo-image/ios/WebPCoder.swift
+deleted file mode 100644
+index e29e93c..0000000
+--- a/node_modules/expo-image/ios/WebPCoder.swift
++++ /dev/null
+@@ -1,73 +0,0 @@
+-// Copyright 2015-present 650 Industries. All rights reserved.
+-
+-import SDWebImage
+-import SDWebImageWebPCoder
+-
+-internal let imageCoderOptionUseAppleWebpCodec = SDImageCoderOption(rawValue: "useAppleWebpCodec")
+-
+-/**
+- A composite WebP coder that uses either `SDImageAWebPCoder` or `SDImageWebPCoder`
+- based on the passed `imageCoderOptionUseAppleWebpCodec` option.
+- */
+-internal final class WebPCoder: NSObject, SDAnimatedImageCoder {
+-  static let shared = WebPCoder()
+-
+-  private var useAppleWebpCodec: Bool = true
+-  private var instantiatedCoder: SDAnimatedImageCoder?
+-  private var coder: SDAnimatedImageCoder {
+-    if let instantiatedCoder {
+-      return instantiatedCoder
+-    }
+-    return self.useAppleWebpCodec ? SDImageAWebPCoder.shared : SDImageWebPCoder.shared
+-  }
+-
+-  override init() {
+-    super.init()
+-  }
+-
+-  // MARK: - SDAnimatedImageCoder implementations
+-
+-  convenience init(animatedImageData data: Data?, options: [SDImageCoderOption: Any]? = nil) {
+-    self.init()
+-    self.useAppleWebpCodec = options?[imageCoderOptionUseAppleWebpCodec] as? Bool ?? true
+-    self.instantiatedCoder = self.useAppleWebpCodec
+-      ? SDImageAWebPCoder.init(animatedImageData: data, options: options)
+-      : SDImageWebPCoder.init(animatedImageData: data, options: options)
+-  }
+-
+-  func canDecode(from data: Data?) -> Bool {
+-    return self.coder.canDecode(from: data)
+-  }
+-
+-  func decodedImage(with data: Data?, options: [SDImageCoderOption: Any]? = nil) -> UIImage? {
+-    return self.coder.decodedImage(with: data, options: options)
+-  }
+-
+-  func canEncode(to format: SDImageFormat) -> Bool {
+-    return self.coder.canEncode(to: format)
+-  }
+-
+-  func encodedData(with image: UIImage?, format: SDImageFormat, options: [SDImageCoderOption: Any]? = nil) -> Data? {
+-    return self.coder.encodedData(with: image, format: format, options: options)
+-  }
+-
+-  var animatedImageData: Data? {
+-    return self.coder.animatedImageData
+-  }
+-
+-  var animatedImageFrameCount: UInt {
+-    return self.coder.animatedImageFrameCount
+-  }
+-
+-  var animatedImageLoopCount: UInt {
+-    return self.coder.animatedImageLoopCount
+-  }
+-
+-  func animatedImageFrame(at index: UInt) -> UIImage? {
+-    return self.coder.animatedImageFrame(at: index)
+-  }
+-
+-  func animatedImageDuration(at index: UInt) -> TimeInterval {
+-    return self.coder.animatedImageDuration(at: index)
+-  }
+-}

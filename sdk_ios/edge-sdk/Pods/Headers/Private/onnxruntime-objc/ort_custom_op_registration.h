@@ -1,1 +1,0 @@
-../../../onnxruntime-objc/objectivec/include/ort_custom_op_registration.h

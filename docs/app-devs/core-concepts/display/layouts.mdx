@@ -1,0 +1,254 @@
+---
+title: "Layouts"
+description: "Display text and cards on smart glasses screens"
+icon: "table-cells"
+---
+
+Layouts control the main content displayed on glasses screens. Use `session.layouts` to show text, cards, and structured information.
+
+## Available Layout Types
+
+### TextWall
+
+Single block of text - most common layout:
+
+```typescript
+session.layouts.showTextWall('Hello from MentraOS!');
+```
+
+Multi-line content:
+
+```typescript
+session.layouts.showTextWall(
+  'Line 1\n' +
+  'Line 2\n' +
+  'Line 3'
+);
+```
+
+### DoubleTextWall
+
+Two text blocks - top and bottom:
+
+```typescript
+session.layouts.showDoubleTextWall({
+  topText: 'Title or Header',
+  bottomText: 'Details or body text here'
+});
+```
+
+Common pattern for questions/answers:
+
+```typescript
+session.events.onTranscription((data) => {
+  if (data.isFinal) {
+    session.layouts.showDoubleTextWall({
+      topText: `You asked: ${data.text}`,
+      bottomText: 'Processing your request...'
+    });
+  }
+});
+```
+
+### ReferenceCard
+
+Card with title and content:
+
+```typescript
+session.layouts.showReferenceCard(
+  'Weather Update',
+  'Sunny, 72°F\nLow: 58°F\nHumidity: 45%'
+);
+```
+
+Great for structured information:
+
+```typescript
+session.layouts.showReferenceCard(
+  'Meeting Info',
+  'Time: 2:00 PM\nRoom: Conf A\nAttendees: 5'
+);
+```
+
+## Updating Layouts
+
+Layouts replace previous content:
+
+```typescript
+// Show initial message
+session.layouts.showTextWall('Loading...');
+
+// After processing (replaces "Loading...")
+session.layouts.showTextWall('Data loaded!');
+```
+
+Progressive updates:
+
+```typescript
+session.events.onTranscription((data) => {
+  if (data.isFinal) {
+    // Show final transcription
+    session.layouts.showTextWall(data.text);
+  } else {
+    // Show interim results
+    session.layouts.showTextWall(`${data.text}...`);
+  }
+});
+```
+
+## Clearing Layouts
+
+```typescript
+// Clear the display
+session.layouts.clear();
+```
+
+## Best Practices
+
+**Keep text concise:**
+
+```typescript
+// ✅ Good
+session.layouts.showTextWall('Message sent!');
+
+// ❌ Avoid - too verbose
+session.layouts.showTextWall(
+  'Your message has been successfully sent to the recipient.'
+);
+```
+
+**Adapt to display capabilities:**
+
+```typescript
+const caps = session.capabilities;
+
+if (caps?.display?.maxTextLines && caps.display.maxTextLines < 5) {
+  // Small display - use short message
+  session.layouts.showTextWall('Updated!');
+} else {
+  // Larger display - show details
+  session.layouts.showTextWall(
+    'Update complete\nTime: 10:30\nStatus: Success'
+  );
+}
+```
+
+**Use appropriate layout type:**
+
+```typescript
+// Question/answer - use DoubleTextWall
+session.layouts.showDoubleTextWall({
+  topText: 'What is 2 + 2?',
+  bottomText: 'Answer: 4'
+});
+
+// Structured data - use ReferenceCard
+session.layouts.showReferenceCard('Contact', 'Name: John\nPhone: 555-0100');
+
+// Simple message - use TextWall
+session.layouts.showTextWall('Processing...');
+```
+
+## Common Patterns
+
+### Loading States
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  session.layouts.showTextWall('Loading your data...');
+  
+  const data = await this.fetchUserData(userId);
+  
+  session.layouts.showReferenceCard(
+    'Welcome Back',
+    `Last login: ${data.lastLogin}`
+  );
+}
+```
+
+### Multi-Step Flows
+
+```typescript
+class OnboardingApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    await this.showStep1(session);
+  }
+
+  private async showStep1(session: AppSession) {
+    session.layouts.showDoubleTextWall({
+      topText: 'Step 1: Welcome',
+      bottomText: 'Say "next" to continue'
+    });
+    
+    session.events.onTranscription((data) => {
+      if (data.isFinal && data.text.toLowerCase().includes('next')) {
+        this.showStep2(session);
+      }
+    });
+  }
+
+  private async showStep2(session: AppSession) {
+    session.layouts.showDoubleTextWall({
+      topText: 'Step 2: Setup',
+      bottomText: 'Configuring your preferences...'
+    });
+  }
+}
+```
+
+### Adaptive Display
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const caps = session.capabilities;
+  
+  if (!caps?.hasDisplay) {
+    // Audio-only device
+    await session.audio.speak('Welcome to the app!');
+    return;
+  }
+  
+  const maxLines = caps.display?.maxTextLines || 3;
+  
+  if (maxLines < 5) {
+    // Small display - minimal content
+    session.layouts.showTextWall('Welcome!');
+  } else {
+    // Larger display - more detail
+    session.layouts.showReferenceCard(
+      'Welcome',
+      'Your app is ready\nSay "help" for commands'
+    );
+  }
+}
+```
+
+## Layout Manager API
+
+| Method | Description |
+|--------|-------------|
+| `showTextWall(text)` | Show single text block |
+| `showDoubleTextWall({ topText, bottomText })` | Show two text blocks |
+| `showReferenceCard(title, content)` | Show titled card |
+| `clear()` | Clear display |
+
+<Info>
+Display updates are automatically throttled to 1 per 300ms by MentraOS Cloud to prevent display desync.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Dashboard" icon="gauge" href="/app-devs/core-concepts/display/dashboard">
+    Persistent status display
+  </Card>
+  <Card title="Hardware & Capabilities" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
+    Check display capabilities
+  </Card>
+  <Card title="Layout Manager" icon="book" href="/app-devs/reference/managers/layout-manager">
+    Complete API reference
+  </Card>
+  <Card title="Layout Types" icon="book" href="/app-devs/reference/interfaces/layout-types">
+    Layout type definitions
+  </Card>
+</CardGroup>

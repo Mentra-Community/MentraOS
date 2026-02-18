@@ -1,154 +1,139 @@
-import React from "react"
-import {View, Text, StyleSheet} from "react-native"
-import {Screen} from "@/components/ignite"
-import {saveSetting} from "@/utils/SettingsHelper"
-import {SETTINGS_KEYS} from "@/utils/SettingsHelper"
-import {useAppStatus} from "@/contexts/AppletStatusProvider"
-import RestComms from "@/managers/RestComms"
-import {router} from "expo-router"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import DontHaveGlassesSvg from "@assets/glasses/dont-have.svg"
+import HaveGlassesSvg from "@assets/glasses/have.svg"
+import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {SvgProps} from "react-native-svg"
+
+import {Screen, Text} from "@/components/ignite"
+import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {Button} from "@/components/ignite/Button"
-import {FontAwesome} from "@expo/vector-icons"
-import {Spacer} from "@/components/misc/Spacer"
-import restComms from "@/managers/RestComms"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {TxKeyPath} from "@/i18n"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {ThemedStyle} from "@/theme"
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+
+// Import SVG components
+
+const CardButton = ({
+  onPress,
+  tx,
+  SvgComponent,
+}: {
+  onPress: () => void
+  tx: string
+  SvgComponent: React.FC<SvgProps>
+}) => {
+  const {themed} = useAppTheme()
+  return (
+    <TouchableOpacity activeOpacity={0.6} onPress={onPress} style={themed($cardButton)}>
+      <View style={themed($cardButtonImageContainer)}>
+        <SvgComponent width={120} height={60} />
+      </View>
+      <Text tx={tx as TxKeyPath} style={themed($cardButtonText)} />
+    </TouchableOpacity>
+  )
+}
+
+const $cardButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.background,
+  height: 190,
+  borderRadius: spacing.s6,
+  padding: 16,
+  shadowColor: "#000",
+  shadowOffset: {
+    width: 0,
+    height: 2,
+  },
+  shadowOpacity: 0.03,
+  shadowRadius: 3.84,
+  alignItems: "center",
+  justifyContent: "center",
+  gap: spacing.s4,
+})
+
+const $cardButtonImageContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  width: 120,
+  height: 60,
+  marginRight: spacing.s2,
+  alignItems: "center",
+  justifyContent: "center",
+})
+
+const $cardButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.secondary_foreground,
+  fontSize: 20,
+})
 
 export default function OnboardingWelcome() {
-  const {appStatus, optimisticallyStopApp, clearPendingOperation, refreshAppStatus} = useAppStatus()
   const {theme, themed} = useAppTheme()
-  const {goBack, push, replace} = useNavigationHistory()
+  const {push} = useNavigationHistory()
+  const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
 
-  const stopAllApps = async () => {
-    const runningApps = appStatus.filter(app => app.is_running)
-    for (const runningApp of runningApps) {
-      optimisticallyStopApp(runningApp.packageName)
-      try {
-        await restComms.stopApp(runningApp.packageName)
-        clearPendingOperation(runningApp.packageName)
-      } catch (error) {
-        console.error("stop app error:", error)
-        refreshAppStatus()
-      }
-    }
+  // User has smart glasses - go to glasses selection screen
+  const handleHasGlasses = async () => {
+    // TODO: Track analytics event - user has glasses
+    // analytics.track('onboarding_has_glasses_selected')
+    setOnboardingCompleted(true)
+    push("/pairing/select-glasses-model", {onboarding: true})
   }
 
-  // Skip onboarding and go directly to home
-  const handleSkip = () => {
-    // Mark onboarding as completed when skipped
-    saveSetting(SETTINGS_KEYS.ONBOARDING_COMPLETED, true)
-    replace("/(tabs)/home")
-  }
-
-  // Continue to glasses selection screen
-  const handleContinue = async () => {
-    // Mark that onboarding should be shown on Home screen
-    saveSetting(SETTINGS_KEYS.ONBOARDING_COMPLETED, false)
-
-    // deactivate all running apps:
-    await stopAllApps()
-
-    push("/pairing/select-glasses-model")
+  // User doesn't have glasses yet - go directly to simulated glasses
+  const handleNoGlasses = () => {
+    // TODO: Track analytics event - user doesn't have glasses
+    // analytics.track('onboarding_no_glasses_selected')
+    setOnboardingCompleted(true)
+    // Go directly to simulated glasses pairing screen
+    push("/pairing/prep", {deviceModel: DeviceTypes.SIMULATED})
   }
 
   return (
-    <Screen preset="fixed" style={{backgroundColor: theme.colors.background}}>
-      <View style={styles.mainContainer}>
-        {/* <View style={styles.logoContainer}>
-          <Icon
-            name="augmented-reality"
-            size={100}
-            color={isDarkTheme ? '#FFFFFF' : '#2196F3'}
-          />
-        </View> */}
-
-        <View style={styles.infoContainer}>
-          <Text style={[styles.title, {color: theme.colors.text}]}>Welcome to MentraOS</Text>
-
-          <Text style={[styles.description, {color: theme.colors.text}]}>
-            Let's go through a quick tutorial to get you started with MentraOS.
-          </Text>
-        </View>
-
-        <Button
-          onPress={handleContinue}
-          tx="common:continue"
-          textAlignment="center"
-          LeftAccessory={() => <FontAwesome name="chevron-right" size={16} color={theme.colors.textAlt} />}
-        />
-
-        <Spacer height={10} />
-        <Button
-          onPress={handleSkip}
-          tx="welcomeScreen:skipOnboarding"
-          LeftAccessory={() => <FontAwesome name="step-forward" size={16} color={theme.colors.textAlt} />}
-        />
+    <Screen
+      preset="fixed"
+      backgroundColor={theme.colors.primary_foreground}
+      style={[{paddingHorizontal: theme.spacing.s2}]}
+      safeAreaEdges={["top"]}>
+      <View style={themed($logoContainer)}>
+        <MentraLogoStandalone width={100} height={48} />
       </View>
+
+      <View style={themed($infoContainer)}>
+        <Text style={themed($title)} tx="onboarding:welcome" weight="semibold" />
+        <Spacer height={theme.spacing.s4} />
+        <Text style={themed($subtitle)} tx="onboarding:doYouHaveGlasses" />
+      </View>
+      <Spacer height={theme.spacing.s12} />
+      <CardButton onPress={handleHasGlasses} tx="onboarding:haveGlasses" SvgComponent={HaveGlassesSvg} />
+      <Spacer height={theme.spacing.s8} />
+      <CardButton onPress={handleNoGlasses} tx="onboarding:dontHaveGlasses" SvgComponent={DontHaveGlassesSvg} />
     </Screen>
   )
 }
 
-const styles = StyleSheet.create({
-  buttonContainer: {
-    alignItems: "center",
-    flex: 0,
-    justifyContent: "flex-end",
-    paddingBottom: 40,
-    width: "100%",
-  },
-  darkBackground: {
-    backgroundColor: "#1c1c1c",
-  },
-  darkSubtext: {
-    color: "#4a4a4a",
-  },
-  darkText: {
-    color: "#1a1a1a",
-  },
-  description: {
-    fontSize: 18,
-    lineHeight: 26,
-    marginBottom: 32,
-    paddingHorizontal: 24,
-    textAlign: "center",
-  },
-  infoContainer: {
-    alignItems: "center",
-    flex: 0,
-    justifyContent: "center",
-    marginBottom: 40,
-    width: "100%",
-  },
-  lightBackground: {
-    backgroundColor: "#f8f9fa",
-  },
-  lightSubtext: {
-    color: "#e0e0e0",
-  },
-  lightText: {
-    color: "#FFFFFF",
-  },
-  logoContainer: {
-    alignItems: "center",
-    flex: 0,
-    justifyContent: "flex-end",
-    paddingBottom: 40,
-  },
-  mainContainer: {
-    flex: 1,
-    flexDirection: "column",
-    justifyContent: "center",
-    padding: 24,
-  },
-  skipButtonContainer: {
-    alignItems: "center",
-    marginTop: 16,
-    width: "100%",
-  },
-  title: {
-    fontFamily: "Montserrat-Bold",
-    fontSize: 32,
-    fontWeight: "bold",
-    marginBottom: 20,
-    textAlign: "center",
-  },
+const $logoContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  alignSelf: "center",
+  alignItems: "center",
+  justifyContent: "center",
+  marginTop: spacing.s6,
+  marginBottom: spacing.s8,
+})
+
+const $infoContainer: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  flex: 0,
+  justifyContent: "center",
+  width: "100%",
+})
+
+const $title: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 30,
+  lineHeight: 30,
+  textAlign: "center",
+  color: colors.secondary_foreground,
+})
+
+const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
+  fontSize: 20,
+  textAlign: "center",
+  color: colors.secondary_foreground,
 })

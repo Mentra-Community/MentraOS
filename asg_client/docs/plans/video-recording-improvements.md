@@ -18,7 +18,7 @@ This document outlines the plan to improve video recording functionality in the 
 - **AsgClientService**: Receives MCU commands (`cs_vdo`)
 - **MediaCaptureService**: Orchestrates capture, but uses outdated cloud communication
 - **CameraNeo**: Handles actual Camera2 API recording via MediaRecorder
-- **Storage**: Videos saved to `/storage/emulated/0/Android/data/com.augmentos.asg_client/files/`
+- **Storage**: Videos saved to `/storage/emulated/0/Android/data/com.mentra.asg_client/files/`
 
 ## Phase 1: Fix Video Recording Command Flow
 
@@ -165,7 +165,7 @@ Continuously record last 30 seconds of POV, allowing users to save recent moment
 
 #### CircularVideoBuffer Class
 
-Location: `com.augmentos.asg_client.camera.CircularVideoBuffer`
+Location: `com.mentra.asg_client.camera.CircularVideoBuffer`
 
 **Responsibilities**:
 
@@ -184,7 +184,7 @@ Location: `com.augmentos.asg_client.camera.CircularVideoBuffer`
 
 #### BufferRecordingService
 
-Location: `com.augmentos.asg_client.camera.BufferRecordingService`
+Location: `com.mentra.asg_client.camera.BufferRecordingService`
 
 **Responsibilities**:
 

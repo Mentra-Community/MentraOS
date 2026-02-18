@@ -1,6 +1,6 @@
 // src/types/rtmp-stream.ts
 
-import { RtmpStreamStatus } from "./messages/glasses-to-cloud";
+import type { RtmpStreamStatus } from "./messages/glasses-to-cloud";
 
 /**
  * RTMP Streaming Types

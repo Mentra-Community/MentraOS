@@ -25,7 +25,7 @@ export interface ClientConfig {
  */
 export interface AudioConfig {
   format: "pcm16" | "wav";
-  sampleRate: 16000 | 48000;
+  sampleRate: number;
   chunkSize: number;
 }
 
@@ -42,19 +42,20 @@ export interface DeviceConfig {
  * Client behavior settings
  */
 export interface BehaviorConfig {
-  statusUpdateInterval: number;
-  locationUpdateInterval: number;
-  reconnectOnDisconnect: boolean;
+  statusUpdateInterval?: number;
+  locationUpdateInterval?: number;
+  reconnectOnDisconnect?: boolean;
   disableStatusUpdates?: boolean;
+  useLiveKitAudio?: boolean; // Enable LiveKit for audio transport instead of WebSocket
 }
 
 /**
  * Debugging and logging options
  */
 export interface DebugConfig {
-  logLevel: "debug" | "info" | "warn" | "error";
-  saveMetrics: boolean;
-  logWebSocketMessages: boolean;
+  logLevel?: "debug" | "info" | "warn" | "error";
+  saveMetrics?: boolean;
+  logWebSocketMessages?: boolean;
 }
 
 /**
@@ -88,6 +89,11 @@ export interface ConnectionAck {
   sessionId: string;
   userSession: any;
   timestamp: Date;
+  livekit?: {
+    url: string;
+    roomName: string;
+    token: string;
+  };
 }
 
 export interface SettingsUpdate {

@@ -75,7 +75,7 @@ The ASG (AugmentOS Smart Glasses) photo gallery system enables photo/video captu
     ],
     "total_count": 9,
     "total_size": 1165598,
-    "package_name": "com.augmentos.asg_client.camera"
+    "package_name": "com.mentra.asg_client.camera"
   }
 }
 ```

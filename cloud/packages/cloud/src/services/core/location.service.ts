@@ -1,8 +1,3 @@
-import { User, UserI } from "../../models/user.model";
-import UserSession from "../session/UserSession";
-// import subscriptionService from '../session/subscription.service';
-import { logger as rootLogger } from "../logging/pino-logger";
-import WebSocket from "ws";
 import {
   CloudToGlassesMessageType,
   LocationUpdate,
@@ -12,6 +7,12 @@ import {
   CloudToAppMessageType,
   StreamType,
 } from "@mentra/sdk";
+
+import { User, UserI } from "../../models/user.model";
+import { logger as rootLogger } from "../logging/pino-logger";
+import UserSession from "../session/UserSession";
+// import subscriptionService from '../session/subscription.service';
+import { IWebSocket, WebSocketReadyState } from "../websocket/types";
 
 const logger = rootLogger.child({ service: "location.service" });
 
@@ -46,10 +47,7 @@ class LocationService {
    * Main entry point for the streaming arbitration logic.
    * Called when a TPA's subscriptions change.
    */
-  public async handleSubscriptionChange(
-    user: UserI,
-    userSession: UserSession,
-  ): Promise<void> {
+  public async handleSubscriptionChange(user: UserI, userSession: UserSession): Promise<void> {
     const { userId } = userSession;
 
     const previousEffectiveTier = user.effectiveLocationTier || "reduced";
@@ -67,26 +65,15 @@ class LocationService {
       try {
         await user.save();
         // Send the command to the physical device only after successful save
-        if (
-          userSession?.websocket &&
-          userSession.websocket.readyState === WebSocket.OPEN
-        ) {
-          this._sendCommandToDevice(
-            userSession.websocket,
-            CloudToGlassesMessageType.SET_LOCATION_TIER,
-            { tier: newEffectiveTier },
-          );
+        if (userSession?.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
+          this._sendCommandToDevice(userSession.websocket, CloudToGlassesMessageType.SET_LOCATION_TIER, {
+            tier: newEffectiveTier,
+          });
         } else {
-          logger.warn(
-            { userId },
-            "User session or WebSocket not available to send location tier command.",
-          );
+          logger.warn({ userId }, "User session or WebSocket not available to send location tier command.");
         }
       } catch (error) {
-        logger.error(
-          { userId, error },
-          "Failed to save new effective location tier.",
-        );
+        logger.error({ userId, error }, "Failed to save new effective location tier.");
       }
     } else {
       logger.debug(
@@ -119,23 +106,13 @@ class LocationService {
 
     // Step 1: Check for an active high-accuracy stream
     const currentEffectiveTier = user.effectiveLocationTier || "reduced";
-    const highAccuracyStreamRunning =
-      TIER_HIERARCHY.indexOf(currentEffectiveTier) >=
-      TIER_HIERARCHY.indexOf("high");
+    const highAccuracyStreamRunning = TIER_HIERARCHY.indexOf(currentEffectiveTier) >= TIER_HIERARCHY.indexOf("high");
 
     if (highAccuracyStreamRunning && user.location?.timestamp) {
       // If the stream is running, we can use the very latest location data.
       // We assume the handleDeviceLocationUpdate method is keeping the user.location fresh.
-      logger.info(
-        { userId, accuracy },
-        "Fulfilling poll request from active high-accuracy stream.",
-      );
-      this._sendPollResponseToTpa(
-        userSession,
-        user.location,
-        correlationId,
-        packageName,
-      );
+      logger.info({ userId, accuracy }, "Fulfilling poll request from active high-accuracy stream.");
+      this._sendPollResponseToTpa(userSession, user.location, correlationId, packageName);
       return;
     }
 
@@ -144,39 +121,21 @@ class LocationService {
     if (maxCacheAge !== undefined && user.location?.timestamp) {
       const cacheAge = Date.now() - new Date(user.location.timestamp).getTime();
       if (cacheAge <= maxCacheAge) {
-        logger.info(
-          { userId, accuracy, cacheAge, maxCacheAge },
-          "Fulfilling poll request from cache.",
-        );
-        this._sendPollResponseToTpa(
-          userSession,
-          user.location,
-          correlationId,
-          packageName,
-        );
+        logger.info({ userId, accuracy, cacheAge, maxCacheAge }, "Fulfilling poll request from cache.");
+        this._sendPollResponseToTpa(userSession, user.location, correlationId, packageName);
         return;
       }
     }
 
     // Step 3: Trigger hardware poll if cache is stale or non-existent
-    if (
-      userSession.websocket &&
-      userSession.websocket.readyState === WebSocket.OPEN
-    ) {
-      logger.info(
-        { userId, accuracy },
-        "No active stream or fresh cache, requesting hardware poll.",
-      );
-      this._sendCommandToDevice(
-        userSession.websocket,
-        CloudToGlassesMessageType.REQUEST_SINGLE_LOCATION,
-        { accuracy, correlationId },
-      );
+    if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
+      logger.info({ userId, accuracy }, "No active stream or fresh cache, requesting hardware poll.");
+      this._sendCommandToDevice(userSession.websocket, CloudToGlassesMessageType.REQUEST_SINGLE_LOCATION, {
+        accuracy,
+        correlationId,
+      });
     } else {
-      logger.warn(
-        { userId },
-        "User session or WebSocket not available to send hardware poll command.",
-      );
+      logger.warn({ userId }, "User session or WebSocket not available to send hardware poll command.");
     }
   }
 
@@ -184,16 +143,11 @@ class LocationService {
    * Handles an incoming location update from the native device.
    * Updates the user's cached location and forwards poll responses.
    */
-  public async handleDeviceLocationUpdate(
-    userSession: UserSession,
-    locationUpdate: LocationUpdate,
-  ): Promise<void> {
+  public async handleDeviceLocationUpdate(userSession: UserSession, locationUpdate: LocationUpdate): Promise<void> {
     const { userId } = userSession;
 
     // If the update has a correlationId, it's a response to a poll request.
-    const targetApp = locationUpdate.correlationId
-      ? this.pendingPolls.get(locationUpdate.correlationId)
-      : undefined;
+    const targetApp = locationUpdate.correlationId ? this.pendingPolls.get(locationUpdate.correlationId) : undefined;
 
     if (targetApp && locationUpdate.correlationId) {
       // This is a targeted response to a poll.
@@ -201,12 +155,7 @@ class LocationService {
         ...locationUpdate,
         timestamp: new Date(),
       };
-      this._sendPollResponseToTpa(
-        userSession,
-        locationWithTimestamp,
-        locationUpdate.correlationId,
-        targetApp,
-      );
+      this._sendPollResponseToTpa(userSession, locationWithTimestamp, locationUpdate.correlationId, targetApp);
       this.pendingPolls.delete(locationUpdate.correlationId);
     } else {
       // This is a broadcast update for a continuous stream.
@@ -227,10 +176,7 @@ class LocationService {
           await user.save();
         }
       } catch (error) {
-        logger.error(
-          { userId, error },
-          "Failed to save user location cache after device update.",
-        );
+        logger.error({ userId, error }, "Failed to save user location cache after device update.");
       }
     })();
   }
@@ -261,9 +207,7 @@ class LocationService {
       }
     }
 
-    return highestTierIndex > -1
-      ? TIER_HIERARCHY[highestTierIndex]
-      : defaultRate;
+    return highestTierIndex > -1 ? TIER_HIERARCHY[highestTierIndex] : defaultRate;
   }
 
   /**
@@ -285,7 +229,7 @@ class LocationService {
     };
 
     const appWs = userSession.appWebsockets.get(targetApp);
-    if (appWs && appWs.readyState === WebSocket.OPEN) {
+    if (appWs && appWs.readyState === WebSocketReadyState.OPEN) {
       const dataStream: DataStream = {
         type: CloudToAppMessageType.DATA_STREAM,
         sessionId: `${userSession.sessionId}-${targetApp}`,
@@ -309,11 +253,7 @@ class LocationService {
   /**
    * Sends a command to the device's native WebSocket connection.
    */
-  private _sendCommandToDevice(
-    ws: WebSocket,
-    type: CloudToGlassesMessageType,
-    payload: any,
-  ): void {
+  private _sendCommandToDevice(ws: IWebSocket, type: CloudToGlassesMessageType, payload: any): void {
     try {
       let message: SetLocationTier | RequestSingleLocation;
 
@@ -334,10 +274,7 @@ class LocationService {
           };
           break;
         default:
-          logger.error(
-            { type },
-            "Attempted to send unknown command type to device.",
-          );
+          logger.error({ type }, "Attempted to send unknown command type to device.");
           return;
       }
 

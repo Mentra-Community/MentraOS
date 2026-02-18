@@ -8,13 +8,17 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "emitDeclarationOnly": true,
     "declaration": true,
     "declarationMap": true,
-    "baseUrl": ".",
-    "paths": {},
+    "composite": true,
     "lib": ["ES2020"],
-    "types": ["node", "ws"]
+    "baseUrl": ".",
+    "paths": {
+      "@mentra/display-utils": ["../display-utils/src"]
+    }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/test/**"],
+  "references": [{"path": "../types"}, {"path": "../display-utils"}]
 }

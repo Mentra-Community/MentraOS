@@ -4,8 +4,7 @@ import { Permission, App } from "@/types/app";
 import { AppI } from "@mentra/sdk";
 
 // Set default config
-axios.defaults.baseURL =
-  import.meta.env.VITE_API_URL || "http://localhost:8002";
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || "http://localhost:8002";
 axios.defaults.withCredentials = true;
 console.log("API URL", axios.defaults.baseURL);
 
@@ -13,12 +12,7 @@ console.log("API URL", axios.defaults.baseURL);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Helper function to retry a function with exponential backoff
-async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
-  retries = 3,
-  initialDelay = 300,
-  maxDelay = 2000,
-): Promise<T> {
+async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, initialDelay = 300, maxDelay = 2000): Promise<T> {
   let currentDelay = initialDelay;
 
   for (let i = 0; i < retries; i++) {
@@ -28,13 +22,8 @@ async function retryWithBackoff<T>(
       if (i === retries - 1) throw error;
 
       // Check if this is an auth error, and if auth token might not be ready
-      if (
-        axios.isAxiosError(error) &&
-        (error.response?.status === 401 || error.response?.status === 403)
-      ) {
-        console.log(
-          `Auth error on attempt ${i + 1}, retrying after ${currentDelay}ms...`,
-        );
+      if (axios.isAxiosError(error) && (error.response?.status === 401 || error.response?.status === 403)) {
+        console.log(`Auth error on attempt ${i + 1}, retrying after ${currentDelay}ms...`);
         await delay(currentDelay);
         currentDelay = Math.min(currentDelay * 2, maxDelay);
       } else {
@@ -141,7 +130,344 @@ export interface Organization {
   updatedAt: string;
 }
 
+export interface ConsoleAccount {
+  id: string;
+  email: string;
+  orgs: Organization[];
+  defaultOrgId: string;
+}
+
+export interface CLIKey {
+  keyId: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  expiresAt?: string;
+  isActive: boolean;
+}
+
+export interface GenerateCLIKeyRequest {
+  name: string;
+  expiresInDays?: number;
+}
+
+export interface GenerateCLIKeyResponse {
+  keyId: string;
+  name: string;
+  token: string;
+  createdAt: string;
+  expiresAt?: string;
+}
+
 const api = {
+  // New Endpoints...
+  console: {
+    account: {
+      get: async (): Promise<ConsoleAccount> => {
+        const response = await axios.get("/api/console/account");
+        return response.data?.data ?? response.data;
+      },
+    },
+
+    orgs: {
+      list: async (): Promise<Organization[]> => {
+        try {
+          const res = await axios.get("/api/console/orgs");
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.get("/api/orgs");
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      create: async (name: string): Promise<Organization> => {
+        try {
+          const res = await axios.post("/api/console/orgs", { name });
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.post("/api/orgs", { name });
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      get: async (orgId: string): Promise<Organization> => {
+        try {
+          const res = await axios.get(`/api/console/orgs/${orgId}`);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.get(`/api/orgs/${orgId}`);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      update: async (orgId: string, data: Partial<Organization>): Promise<Organization> => {
+        try {
+          const res = await axios.put(`/api/console/orgs/${orgId}`, data);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.put(`/api/orgs/${orgId}`, data);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      delete: async (orgId: string): Promise<{ success: boolean }> => {
+        try {
+          const res = await axios.delete(`/api/console/orgs/${orgId}`);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.delete(`/api/orgs/${orgId}`);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      members: {
+        invite: async (
+          orgId: string,
+          email: string,
+          role: OrgRole = "member",
+        ): Promise<{ token: string } | { inviteToken: string }> => {
+          const res = await axios.post(`/api/console/orgs/${orgId}/members`, {
+            email,
+            role,
+          });
+          return res.data?.data ?? res.data;
+        },
+
+        changeRole: async (orgId: string, memberId: string, role: OrgRole): Promise<Organization> => {
+          const res = await axios.patch(`/api/console/orgs/${orgId}/members/${memberId}`, { role });
+          return res.data?.data ?? res.data;
+        },
+
+        remove: async (orgId: string, memberId: string): Promise<{ success: boolean }> => {
+          const res = await axios.delete(`/api/console/orgs/${orgId}/members/${memberId}`);
+          return res.data?.data ?? res.data;
+        },
+      },
+
+      invites: {
+        accept: async (token: string): Promise<Organization> => {
+          const res = await axios.post(`/api/console/orgs/accept/${token}`);
+          return res.data?.data ?? res.data;
+        },
+
+        resend: async (orgId: string, email: string): Promise<{ success: boolean }> => {
+          const res = await axios.post(`/api/console/orgs/${orgId}/invites/resend`, { email });
+          return res.data?.data ?? res.data;
+        },
+
+        rescind: async (orgId: string, email: string): Promise<{ success: boolean }> => {
+          const res = await axios.post(`/api/console/orgs/${orgId}/invites/rescind`, { email });
+          return res.data?.data ?? res.data;
+        },
+      },
+    },
+
+    apps: {
+      getAll: async (orgId?: string): Promise<AppResponse[]> => {
+        try {
+          const config = orgId ? { params: { orgId } } : undefined;
+          const res = await axios.get("/api/console/apps", config as any);
+          const data = res.data?.data ?? res.data;
+          return Array.isArray(data) ? data : [];
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const headers = orgId ? { headers: { "x-org-id": orgId } } : undefined;
+            const res = await axios.get("/api/dev/apps", headers as any);
+            const data = res.data?.data ?? res.data;
+            return Array.isArray(data) ? data : [];
+          }
+          throw err;
+        }
+      },
+
+      getByPackageName: async (packageName: string): Promise<AppResponse> => {
+        try {
+          const res = await axios.get(`/api/console/apps/${encodeURIComponent(packageName)}`);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.get(`/api/dev/apps/${encodeURIComponent(packageName)}`);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      register: async (
+        data: Partial<AppResponse> & { packageName: string; orgId?: string },
+      ): Promise<{ app: AppResponse; apiKey?: string }> => {
+        try {
+          const res = await axios.post("/api/console/apps", data);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const { orgId, ...rest } = data;
+            const config = orgId ? { headers: { "x-org-id": orgId } } : undefined;
+            const res = await axios.post("/api/dev/apps/register", rest, config as any);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      update: async (packageName: string, data: Partial<AppResponse>): Promise<AppResponse> => {
+        try {
+          const res = await axios.put(`/api/console/apps/${encodeURIComponent(packageName)}`, data);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.put(`/api/dev/apps/${encodeURIComponent(packageName)}`, data);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      delete: async (packageName: string): Promise<{ success: boolean; message?: string }> => {
+        try {
+          const res = await axios.delete(`/api/console/apps/${encodeURIComponent(packageName)}`);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.delete(`/api/dev/apps/${encodeURIComponent(packageName)}`);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      publish: async (packageName: string): Promise<AppResponse> => {
+        try {
+          const res = await axios.post(`/api/console/apps/${encodeURIComponent(packageName)}/publish`);
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.post(`/api/dev/apps/${encodeURIComponent(packageName)}/publish`);
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      apiKey: {
+        regenerate: async (packageName: string): Promise<ApiKeyResponse> => {
+          try {
+            const res = await axios.post(`/api/console/apps/${encodeURIComponent(packageName)}/api-key`);
+            return res.data?.data ?? res.data;
+          } catch (err: unknown) {
+            if (axios.isAxiosError(err) && err.response?.status === 404) {
+              const res = await axios.post(`/api/dev/apps/${encodeURIComponent(packageName)}/api-key`);
+              return res.data?.data ?? res.data;
+            }
+            throw err;
+          }
+        },
+      },
+
+      moveToOrg: async (packageName: string, targetOrgId: string): Promise<AppResponse> => {
+        try {
+          const res = await axios.post(`/api/console/apps/${encodeURIComponent(packageName)}/move`, { targetOrgId });
+          return res.data?.data ?? res.data;
+        } catch (err: unknown) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            const res = await axios.post(`/api/dev/apps/${encodeURIComponent(packageName)}/move-org`, { targetOrgId });
+            return res.data?.data ?? res.data;
+          }
+          throw err;
+        }
+      },
+
+      // Permissions are just in the AppResponse, and can be updated via update app...
+      // permissions: {
+      //   get: async (
+      //     packageName: string,
+      //   ): Promise<{ permissions: Permission[] }> => {
+      //     const res = await axios.get(
+      //       `/api/console/apps/${encodeURIComponent(packageName)}/permissions`,
+      //     );
+      //     return res.data?.data ?? res.data;
+      //   },
+
+      //   update: async (
+      //     packageName: string,
+      //     permissions: Permission[],
+      //   ): Promise<{ permissions: Permission[] }> => {
+      //     const res = await axios.patch(
+      //       `/api/console/apps/${encodeURIComponent(packageName)}/permissions`,
+      //       { permissions },
+      //     );
+      //     return res.data?.data ?? res.data;
+      //   },
+      // },
+
+      // sharing: {
+      // // link is just always apps.mentra.glass/package/<packageName>
+      //   getInstallLink: async (
+      //     packageName: string,
+      //   ): Promise<{ installUrl: string }> => {
+      //     const res = await axios.get(
+      //       `/api/console/apps/${encodeURIComponent(packageName)}/share`,
+      //     );
+      //     return res.data?.data ?? res.data;
+      //   },
+
+      //   trackSharing: async (
+      //     packageName: string,
+      //     emails: string[],
+      //   ): Promise<{ success: boolean; sharedWith: number }> => {
+      //     const res = await axios.post(
+      //       `/api/console/apps/${encodeURIComponent(packageName)}/share/track`,
+      //       { emails },
+      //     );
+      //     return res.data?.data ?? res.data;
+      //   },
+      // },
+    },
+
+    cliKeys: {
+      generate: async (request: GenerateCLIKeyRequest): Promise<GenerateCLIKeyResponse> => {
+        const res = await axios.post("/api/console/cli-keys", request);
+        return res.data?.data ?? res.data;
+      },
+
+      list: async (): Promise<CLIKey[]> => {
+        const res = await axios.get("/api/console/cli-keys");
+        return res.data?.data ?? res.data;
+      },
+
+      get: async (keyId: string): Promise<CLIKey> => {
+        const res = await axios.get(`/api/console/cli-keys/${keyId}`);
+        return res.data?.data ?? res.data;
+      },
+
+      update: async (keyId: string, data: { name: string }): Promise<CLIKey> => {
+        const res = await axios.patch(`/api/console/cli-keys/${keyId}`, data);
+        return res.data?.data ?? res.data;
+      },
+
+      revoke: async (keyId: string): Promise<{ success: boolean }> => {
+        const res = await axios.delete(`/api/console/cli-keys/${keyId}`);
+        return res.data?.data ?? res.data;
+      },
+    },
+  },
+
+  // Depricated Endpoints below...
   // Authentication endpoints
   auth: {
     me: async (): Promise<DeveloperUser> => {
@@ -189,10 +515,7 @@ const api = {
      * @param orgId - The organization ID
      * @param data - The updated organization data
      */
-    update: async (
-      orgId: string,
-      data: Partial<Organization>,
-    ): Promise<Organization> => {
+    update: async (orgId: string, data: Partial<Organization>): Promise<Organization> => {
       const response = await axios.put(`/api/orgs/${orgId}`, data);
       return response.data.data;
     },
@@ -203,11 +526,7 @@ const api = {
      * @param email - The invitee's email address
      * @param role - The role to assign to the invitee (default: 'member')
      */
-    invite: async (
-      orgId: string,
-      email: string,
-      role: OrgRole = "member",
-    ): Promise<{ inviteToken: string }> => {
+    invite: async (orgId: string, email: string, role: OrgRole = "member"): Promise<{ inviteToken: string }> => {
       const response = await axios.post(`/api/orgs/${orgId}/members`, {
         email,
         role,
@@ -230,15 +549,8 @@ const api = {
      * @param memberId - The member's user ID
      * @param role - The new role
      */
-    changeRole: async (
-      orgId: string,
-      memberId: string,
-      role: OrgRole,
-    ): Promise<Organization> => {
-      const response = await axios.patch(
-        `/api/orgs/${orgId}/members/${memberId}`,
-        { role },
-      );
+    changeRole: async (orgId: string, memberId: string, role: OrgRole): Promise<Organization> => {
+      const response = await axios.patch(`/api/orgs/${orgId}/members/${memberId}`, { role });
       return response.data.data;
     },
 
@@ -247,13 +559,8 @@ const api = {
      * @param orgId - The organization ID
      * @param memberId - The member's user ID
      */
-    removeMember: async (
-      orgId: string,
-      memberId: string,
-    ): Promise<{ success: boolean }> => {
-      const response = await axios.delete(
-        `/api/orgs/${orgId}/members/${memberId}`,
-      );
+    removeMember: async (orgId: string, memberId: string): Promise<{ success: boolean }> => {
+      const response = await axios.delete(`/api/orgs/${orgId}/members/${memberId}`);
       return response.data;
     },
 
@@ -271,10 +578,7 @@ const api = {
      * @param orgId - The organization ID
      * @param email - The email address of the pending invite
      */
-    resendInvite: async (
-      orgId: string,
-      email: string,
-    ): Promise<{ success: boolean; message: string }> => {
+    resendInvite: async (orgId: string, email: string): Promise<{ success: boolean; message: string }> => {
       const response = await axios.post(`/api/orgs/${orgId}/invites/resend`, {
         email,
       });
@@ -286,10 +590,7 @@ const api = {
      * @param orgId - The organization ID
      * @param email - The email address of the pending invite
      */
-    rescindInvite: async (
-      orgId: string,
-      email: string,
-    ): Promise<{ success: boolean; message: string }> => {
+    rescindInvite: async (orgId: string, email: string): Promise<{ success: boolean; message: string }> => {
       const response = await axios.post(`/api/orgs/${orgId}/invites/rescind`, {
         email,
       });
@@ -300,9 +601,7 @@ const api = {
      * Delete an organization
      * @param orgId - The organization ID
      */
-    delete: async (
-      orgId: string,
-    ): Promise<{ success: boolean; message: string }> => {
+    delete: async (orgId: string): Promise<{ success: boolean; message: string }> => {
       const response = await axios.delete(`/api/orgs/${orgId}`);
       return response.data;
     },
@@ -320,20 +619,14 @@ const api = {
     },
 
     // Get a specific App by package name
-    getByPackageName: async (
-      packageName: string,
-      orgId?: string,
-    ): Promise<AppResponse> => {
+    getByPackageName: async (packageName: string, orgId?: string): Promise<AppResponse> => {
       const config = orgId ? { headers: { "x-org-id": orgId } } : undefined;
       const response = await axios.get(`/api/dev/apps/${packageName}`, config);
       return response.data;
     },
 
     // Create a new App
-    create: async (
-      orgId: string,
-      appData: AppI,
-    ): Promise<{ app: AppResponse; apiKey: string }> => {
+    create: async (orgId: string, appData: AppI): Promise<{ app: AppResponse; apiKey: string }> => {
       const response = await axios.post("/api/dev/apps/register", appData, {
         headers: { "x-org-id": orgId },
       });
@@ -341,17 +634,9 @@ const api = {
     },
 
     // Update an existing App
-    update: async (
-      packageName: string,
-      appData: Partial<App>,
-      orgId?: string,
-    ): Promise<AppResponse> => {
+    update: async (packageName: string, appData: Partial<App>, orgId?: string): Promise<AppResponse> => {
       const config = orgId ? { headers: { "x-org-id": orgId } } : undefined;
-      const response = await axios.put(
-        `/api/dev/apps/${packageName}`,
-        appData,
-        config,
-      );
+      const response = await axios.put(`/api/dev/apps/${packageName}`, appData, config);
       return response.data;
     },
 
@@ -362,25 +647,14 @@ const api = {
     },
 
     // Publish an app to the app store
-    publish: async (
-      packageName: string,
-      orgId?: string,
-    ): Promise<AppResponse> => {
+    publish: async (packageName: string, orgId?: string): Promise<AppResponse> => {
       const config = orgId ? { headers: { "x-org-id": orgId } } : undefined;
-      const response = await axios.post(
-        `/api/dev/apps/${packageName}/publish`,
-        {},
-        config,
-      );
+      const response = await axios.post(`/api/dev/apps/${packageName}/publish`, {}, config);
       return response.data;
     },
 
     // Move a App to a different organization
-    moveToOrg: async (
-      packageName: string,
-      targetOrgId: string,
-      sourceOrgId: string,
-    ): Promise<AppResponse> => {
+    moveToOrg: async (packageName: string, targetOrgId: string, sourceOrgId: string): Promise<AppResponse> => {
       const response = await axios.post(
         `/api/dev/apps/${packageName}/move-org`,
         { targetOrgId },
@@ -392,16 +666,9 @@ const api = {
     // API key management
     apiKey: {
       // Generate a new API key for a App
-      regenerate: async (
-        packageName: string,
-        orgId?: string,
-      ): Promise<ApiKeyResponse> => {
+      regenerate: async (packageName: string, orgId?: string): Promise<ApiKeyResponse> => {
         const config = orgId ? { headers: { "x-org-id": orgId } } : undefined;
-        const response = await axios.post(
-          `/api/dev/apps/${packageName}/api-key`,
-          {},
-          config,
-        );
+        const response = await axios.post(`/api/dev/apps/${packageName}/api-key`, {}, config);
         return response.data;
       },
     },
@@ -409,18 +676,13 @@ const api = {
     // Permissions management
     permissions: {
       // Get permissions for a App
-      get: async (
-        packageName: string,
-      ): Promise<{ permissions: Permission[] }> => {
+      get: async (packageName: string): Promise<{ permissions: Permission[] }> => {
         const response = await axios.get(`/api/permissions/${packageName}`);
         return response.data;
       },
 
       // Update permissions for a App
-      update: async (
-        packageName: string,
-        permissions: Permission[],
-      ): Promise<{ permissions: Permission[] }> => {
+      update: async (packageName: string, permissions: Permission[]): Promise<{ permissions: Permission[] }> => {
         const response = await axios.patch(`/api/permissions/${packageName}`, {
           permissions,
         });
@@ -429,50 +691,32 @@ const api = {
     },
 
     // These are deprecated but kept for backwards compatibility during transition
-    updateVisibility: async (
-      packageName: string,
-      sharedWithOrganization: boolean,
-    ): Promise<AppResponse> => {
-      const response = await axios.patch(
-        `/api/dev/apps/${packageName}/visibility`,
-        { sharedWithOrganization },
-      );
+    updateVisibility: async (packageName: string, sharedWithOrganization: boolean): Promise<AppResponse> => {
+      const response = await axios.patch(`/api/dev/apps/${packageName}/visibility`, { sharedWithOrganization });
       return response.data;
     },
 
     // Update sharedWithEmails
-    updateSharedEmails: async (
-      packageName: string,
-      emails: string[],
-    ): Promise<AppResponse> => {
-      const response = await axios.patch(
-        `/api/dev/apps/${packageName}/share-emails`,
-        { emails },
-      );
+    updateSharedEmails: async (packageName: string, emails: string[]): Promise<AppResponse> => {
+      const response = await axios.patch(`/api/dev/apps/${packageName}/share-emails`, { emails });
       return response.data;
     },
   },
 
-  // Image upload endpoints for Cloudflare Images
+  // Image upload endpoints for cloud storage
   images: {
     /**
-     * Upload an image to Cloudflare Images
+     * Upload an image to cloud storage
      * @param file - The image file to upload
      * @param metadata - Optional metadata for the image
-     * @returns The Cloudflare image URL
+     * @returns The cloud storage image URL and ID
      */
-    upload: async (
-      file: File,
-      metadata?: { appPackageName?: string },
-    ): Promise<{ url: string; imageId: string }> => {
+    upload: async (file: File, metadata?: { appPackageName?: string }): Promise<{ url: string; imageId: string }> => {
       const formData = new FormData();
       formData.append("file", file);
 
       if (metadata?.appPackageName) {
-        formData.append(
-          "metadata",
-          JSON.stringify({ appPackageName: metadata.appPackageName }),
-        );
+        formData.append("metadata", JSON.stringify({ appPackageName: metadata.appPackageName }));
       }
 
       const response = await axios.post("/api/dev/images/upload", formData, {
@@ -485,15 +729,12 @@ const api = {
     },
 
     /**
-     * Replace an existing image
+     * Replace an existing image in cloud storage
      * @param imageId - The ID of the image to replace
      * @param file - The new image file
-     * @returns The new Cloudflare image URL
+     * @returns The new cloud storage image URL and ID
      */
-    replace: async (
-      imageId: string,
-      file: File,
-    ): Promise<{ url: string; imageId: string }> => {
+    replace: async (imageId: string, file: File): Promise<{ url: string; imageId: string }> => {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("replaceImageId", imageId);
@@ -508,41 +749,29 @@ const api = {
     },
 
     /**
-     * Delete an image from Cloudflare Images
-     * @param imageId - The ID of the image to delete
+     * Delete an image from cloud storage
+     * @param imageId - The ID of the image to delete (will be URL-encoded)
      */
     delete: async (imageId: string): Promise<void> => {
-      await axios.delete(`/api/dev/images/${imageId}`);
+      // URL-encode the imageId since it may contain slashes (e.g., R2 object keys)
+      const encodedImageId = encodeURIComponent(imageId);
+      await axios.delete(`/api/dev/images/${encodedImageId}`);
     },
   },
 
   // Installation sharing endpoints
   sharing: {
     // Get a shareable installation link for a App
-    getInstallLink: async (
-      packageName: string,
-      orgId?: string,
-    ): Promise<string> => {
+    getInstallLink: async (packageName: string, orgId?: string): Promise<string> => {
       const config = orgId ? { headers: { "x-org-id": orgId } } : undefined;
-      const response = await axios.get(
-        `/api/dev/apps/${packageName}/share`,
-        config,
-      );
+      const response = await axios.get(`/api/dev/apps/${packageName}/share`, config);
       return response.data.installUrl;
     },
 
     // Track that a App has been shared with a specific email
-    trackSharing: async (
-      packageName: string,
-      emails: string[],
-      orgId?: string,
-    ): Promise<void> => {
+    trackSharing: async (packageName: string, emails: string[], orgId?: string): Promise<void> => {
       const config = orgId ? { headers: { "x-org-id": orgId } } : undefined;
-      await axios.post(
-        `/api/dev/apps/${packageName}/share`,
-        { emails },
-        config,
-      );
+      await axios.post(`/api/dev/apps/${packageName}/share`, { emails }, config);
     },
   },
 
@@ -610,19 +839,13 @@ const api = {
 
     // Approve an app
     approveApp: async (packageName: string, notes: string) => {
-      const response = await axios.post(
-        `/api/admin/apps/${packageName}/approve`,
-        { notes },
-      );
+      const response = await axios.post(`/api/admin/apps/${packageName}/approve`, { notes });
       return response.data;
     },
 
     // Reject an app
     rejectApp: async (packageName: string, notes: string) => {
-      const response = await axios.post(
-        `/api/admin/apps/${packageName}/reject`,
-        { notes },
-      );
+      const response = await axios.post(`/api/admin/apps/${packageName}/reject`, { notes });
       return response.data;
     },
 

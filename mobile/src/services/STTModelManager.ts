@@ -1,10 +1,6 @@
-import RNFS from "react-native-fs"
+import CoreModule from "core"
 import {Platform} from "react-native"
-import {NativeModules} from "react-native"
-import {TarBz2Extractor} from "./TarBz2Extractor"
-import coreCommunicator from "@/bridge/MantleBridge"
-
-const {BridgeModule, FileProviderModule} = NativeModules
+import * as RNFS from "@dr.pogodin/react-native-fs"
 
 export interface ModelInfo {
   name: string
@@ -48,22 +44,22 @@ class STTModelManager {
   private models: Record<string, ModelConfig> = {
     "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile": {
       id: "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile",
-      displayName: "English (Accurate)",
+      displayName: "English",
       fileName: "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile",
       size: 349 * 1024 * 1024, // 349MB
       type: "transducer",
       requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
       languageCode: "en-US",
     },
-    "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8": {
-      id: "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
-      displayName: "English (Faster)",
-      fileName: "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
-      size: 95 * 1024 * 1024, // 95MB
-      type: "ctc",
-      requiredFiles: ["model.int8.onnx", "tokens.txt"],
-      languageCode: "en-US",
-    },
+    // "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8": {
+    //   id: "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
+    //   displayName: "English (Faster)",
+    //   fileName: "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
+    //   size: 95 * 1024 * 1024, // 95MB
+    //   type: "ctc",
+    //   requiredFiles: ["model.int8.onnx", "tokens.txt"],
+    //   languageCode: "en-US",
+    // },
     "sherpa-onnx-streaming-zipformer-zh-2025-06-30": {
       id: "sherpa-onnx-streaming-zipformer-zh-2025-06-30",
       displayName: "Chinese",
@@ -112,17 +108,8 @@ class STTModelManager {
 
   async getCurrentModelIdFromPreferences(): Promise<string> {
     try {
-      let path = null;
-      if (Platform.OS === "android") {
-        const module = FileProviderModule
-        if (module.getSTTModelPath) {
-          path = await module.getSTTModelPath()
-        }
-      }
-      if (Platform.OS === "ios") {
-        path = await coreCommunicator.getSttModelPath()
-      }
-      let modelId = path && path.length > 0 ? this.getModelIdFromPath(path) : ""
+      let path = await CoreModule.getSttModelPath()
+      const modelId = path && path.length > 0 ? this.getModelIdFromPath(path) : ""
 
       this.setCurrentModelId(modelId)
       return modelId
@@ -179,7 +166,7 @@ class STTModelManager {
           const files = await RNFS.readDir(modelPath)
           console.log(
             `Files in directory:`,
-            files.map(f => f.name),
+            files.map((f) => f.name),
           )
         }
       }
@@ -194,21 +181,8 @@ class STTModelManager {
       }
 
       // Validate model with native module
-      if (Platform.OS === "ios") {
-        const isValid = await coreCommunicator.validateSTTModel(modelPath)
-        return isValid
-      } else {
-        const nativeModule = FileProviderModule
-        if (nativeModule.validateSTTModel) {
-          const isValid = await nativeModule.validateSTTModel(modelPath)
-          if (!isValid && id.includes("be-de-en-es-fr")) {
-            console.log(`Native validation failed for multilingual model`)
-          }
-          return isValid
-        }
-      }
-
-      return true
+      const isValid = await CoreModule.validateSttModel(modelPath)
+      return isValid
     } catch (error) {
       console.error("Error checking model availability:", error)
       return false
@@ -303,36 +277,18 @@ class STTModelManager {
       // Extract the tar.bz2 file
       onExtractionProgress?.({percentage: 0})
 
-      if (Platform.OS === "ios") {
-        console.log(`Calling native extractTarBz2 for ${Platform.OS}...`)
-        try {
-          onExtractionProgress?.({percentage: 25})
-          await coreCommunicator.extractTarBz2(tempPath, finalPath)
-          onExtractionProgress?.({percentage: 90})
-          console.log("Native extraction completed")
-        } catch (extractError) {
-          console.error("Native extraction failed:", extractError)
-          throw extractError
+      console.log(`Calling native extractTarBz2 for ${Platform.OS}...`)
+      try {
+        onExtractionProgress?.({percentage: 25})
+        const extractionResult = await CoreModule.extractTarBz2(tempPath, finalPath)
+        if (!extractionResult) {
+          throw new Error("Native extraction returned failure status")
         }
-      }
-
-      if (Platform.OS === "android") {
-        const nativeModule = FileProviderModule
-
-        if (nativeModule.extractTarBz2) {
-          console.log(`Calling native extractTarBz2 for ${Platform.OS}...`)
-          try {
-            onExtractionProgress?.({percentage: 25})
-            await nativeModule.extractTarBz2(tempPath, finalPath)
-            onExtractionProgress?.({percentage: 90})
-            console.log("Native extraction completed")
-          } catch (extractError) {
-            console.error("Native extraction failed:", extractError)
-            throw extractError
-          }
-        } else {
-          throw new Error("Model extraction not available on this platform.")
-        }
+        onExtractionProgress?.({percentage: 90})
+        console.log("Native extraction completed")
+      } catch (extractError) {
+        console.error("Native extraction failed:", extractError)
+        throw extractError
       }
 
       // Use native extraction on both platforms
@@ -393,17 +349,8 @@ class STTModelManager {
   }
 
   private async setNativeModelPath(path: string, languageCode: string): Promise<void> {
-    if (Platform.OS === "ios") {
-      coreCommunicator.setSttModelDetails(path, languageCode)
-      return
-    }
-
-    const nativeModule = FileProviderModule
-    if (nativeModule.setSttModelDetails) {
-      console.log("Setting STT model path to: " + path)
-      console.log("Setting STT model language to: " + languageCode)
-      await nativeModule.setSttModelDetails(path, languageCode)
-    }
+    CoreModule.setSttModelDetails(path, languageCode)
+    return
   }
 
   async getStorageInfo(): Promise<{free: number; total: number}> {

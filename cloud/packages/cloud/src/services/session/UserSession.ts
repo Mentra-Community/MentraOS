@@ -4,34 +4,44 @@
  */
 
 import { Logger } from "pino";
-import WebSocket from "ws";
+
 import {
   AppI,
+  AppToCloudMessage,
+  Capabilities,
   CloudToAppMessageType,
   CloudToGlassesMessageType,
   ConnectionError,
-  TranscriptSegment,
+  GlassesToCloudMessage,
 } from "@mentra/sdk";
+
+import { ResourceTracker } from "../../utils/resource-tracker";
+import appService from "../core/app.service";
+import { memoryLeakDetector } from "../debug/MemoryLeakDetector";
+import DisplayManager from "../layout/DisplayManager6.1";
 import { logger as rootLogger } from "../logging/pino-logger";
-import { Capabilities } from "@mentra/sdk";
+import { PosthogService } from "../logging/posthog.service";
+import { ManagedStreamingExtension } from "../streaming/ManagedStreamingExtension";
+import { StreamRegistry } from "../streaming/StreamRegistry";
+import { IWebSocket, WebSocketReadyState, hasEventEmitter } from "../websocket/types";
+
 import AppManager from "./AppManager";
 import AudioManager from "./AudioManager";
-import MicrophoneManager from "./MicrophoneManager";
-import DisplayManager from "../layout/DisplayManager6.1";
+import CalendarManager from "./CalendarManager";
 import { DashboardManager } from "./dashboard";
-import VideoManager from "./VideoManager";
+import DeviceManager from "./DeviceManager";
+import { handleAppMessage as appMessageHandler, handleGlassesMessage as glassesMessageHandler } from "./handlers";
+import LiveKitManager from "./livekit/LiveKitManager";
+import SpeakerManager from "./livekit/SpeakerManager";
+import LocationManager from "./LocationManager";
+import MicrophoneManager from "./MicrophoneManager";
 import PhotoManager from "./PhotoManager";
-import { GlassesErrorCode } from "../websocket/websocket-glasses.service";
-// Session map will be maintained statically on UserSession to avoid an external SessionStorage singleton
-import { memoryLeakDetector } from "../debug/MemoryLeakDetector";
-import { PosthogService } from "../logging/posthog.service";
+import SubscriptionManager from "./SubscriptionManager";
 import { TranscriptionManager } from "./transcription/TranscriptionManager";
 import { TranslationManager } from "./translation/TranslationManager";
-import { ManagedStreamingExtension } from "../streaming/ManagedStreamingExtension";
-import { getCapabilitiesForModel } from "../../config/hardware-capabilities";
-import { HardwareCompatibilityService } from "./HardwareCompatibilityService";
-import appService from "../core/app.service";
-import SubscriptionManager from "./SubscriptionManager";
+import UdpAudioManager from "./UdpAudioManager";
+import UnmanagedStreamingExtension from "./UnmanagedStreamingExtension";
+import UserSettingsManager from "./UserSettingsManager";
 
 export const LOG_PING_PONG = false; // Set to true to enable detailed ping/pong logging
 /**
@@ -50,23 +60,45 @@ export class UserSession {
   // Logging
   public readonly logger: Logger;
 
-  // WebSocket connection
-  public websocket: WebSocket;
+  // WebSocket connection (supports both ws package and Bun's ServerWebSocket)
+  public websocket: IWebSocket;
 
-  // App state // TODO: move these state variables to AppManager, don't let other managers access them directly
-  // They should only be accessed through AppManager methods!!!.
+  // App state
+  // NOTE: runningApps, loadingApps, and appWebsockets are now derived from AppManager/AppSession (Phase 4d)
+  // They are exposed as getters for backward compatibility with existing code
   public installedApps: Map<string, AppI> = new Map();
-  public runningApps: Set<string> = new Set();
-  public loadingApps: Set<string> = new Set();
-  public appWebsockets: Map<string, WebSocket> = new Map();
+
+  /**
+   * Get running apps (derived from AppManager/AppSession)
+   * @returns Set of package names for running apps
+   */
+  get runningApps(): Set<string> {
+    return this.appManager.getRunningAppNames();
+  }
+
+  /**
+   * Get loading/connecting apps (derived from AppManager/AppSession)
+   * @returns Set of package names for apps currently connecting
+   */
+  get loadingApps(): Set<string> {
+    return this.appManager.getLoadingAppNames();
+  }
+
+  /**
+   * Get app WebSockets (derived from AppManager/AppSession)
+   * @returns Map of packageName -> IWebSocket for connected apps
+   */
+  get appWebsockets(): Map<string, IWebSocket> {
+    return this.appManager.getAllAppWebSockets();
+  }
 
   // Transcription
-  public isTranscribing = false;
+  public isTranscribing = false; // TODO(isaiah): Sync with frontend to see if we can remove this property.
   public lastAudioTimestamp?: number;
 
   // Audio
-  public bufferedAudio: ArrayBufferLike[] = [];
-  public recentAudioBuffer: { data: ArrayBufferLike; timestamp: number }[] = [];
+  public bufferedAudio: Buffer[] = [];
+  public recentAudioBuffer: Buffer[] = [];
 
   // Cleanup state
   // When disconnected, this will be set to a timer that will clean up the session after the grace period, if user does not reconnect.
@@ -81,33 +113,62 @@ export class UserSession {
   public transcriptionManager: TranscriptionManager;
   public translationManager: TranslationManager;
   public subscriptionManager: SubscriptionManager;
+  public liveKitManager: LiveKitManager;
+  public speakerManager: SpeakerManager;
+  public calendarManager: CalendarManager;
+  public locationManager: LocationManager;
+  public userSettingsManager: UserSettingsManager;
+  public deviceManager: DeviceManager;
+  public udpAudioManager: UdpAudioManager;
 
-  public videoManager: VideoManager;
+  public streamRegistry: StreamRegistry;
+  public unmanagedStreamingExtension: UnmanagedStreamingExtension;
   public photoManager: PhotoManager;
   public managedStreamingExtension: ManagedStreamingExtension;
 
-  // Reconnection
-  public _reconnectionTimers: Map<string, NodeJS.Timeout>;
+  // Resource tracking for automatic cleanup (prevents memory leaks)
+  private resources = new ResourceTracker();
+  private disposed = false;
 
   // Heartbeat for glasses connection
   private glassesHeartbeatInterval?: NodeJS.Timeout;
+  private appLevelPingInterval?: NodeJS.Timeout;
+  private pongHandler?: () => void; // Stored for cleanup
+  private lastPongTime?: number;
+  private pongTimeoutTimer?: NodeJS.Timeout;
+  private readonly PONG_TIMEOUT_MS = 30000; // 30 seconds - 3x heartbeat interval
+
+  // DISABLED: Cloudflare absorbs protocol-level ping/pong at the edge, so pongs from
+  // the mobile client never reach Bun — they terminate at Cloudflare's edge. This causes
+  // the timeout to fire on every idle connection after 30s, killing healthy connections.
+  // Clients then take 3-7 minutes to detect the dead connection and reconnect, making
+  // the cure worse than the disease. The server still sends pings and tracks lastPongTime
+  // for observability — it just doesn't kill connections based on missing pongs.
+  // See: cloud/issues/035-nginx-ws-timeout/spike.md
+  private static readonly PONG_TIMEOUT_ENABLED = false;
 
   // Audio play request tracking - maps requestId to packageName
   public audioPlayRequestMapping: Map<string, string> = new Map();
 
-  // Other state
-  public userDatetime?: string;
+  // App health status cache (for client apps API)
+  public appHealthCache: Map<string, boolean> = new Map();
+
+  // User's timezone (IANA name like "America/New_York")
+  public userTimezone?: string;
+
+  // LiveKit transport preference
+  public livekitRequested?: boolean;
 
   // Capability Discovery
-  public capabilities: Capabilities | null = null;
 
   // Current connected glasses model
-  public currentGlassesModel: string | null = null;
+  // public currentGlassesModel: string | null = null;
 
-  constructor(userId: string, websocket: WebSocket) {
+  constructor(userId: string, websocket: IWebSocket) {
     this.userId = userId;
     this.websocket = websocket;
     this.logger = rootLogger.child({ userId, service: "UserSession" });
+    this.startTime = new Date();
 
     // Initialize managers
     this.appManager = new AppManager(this);
@@ -119,12 +180,17 @@ export class UserSession {
     this.microphoneManager = new MicrophoneManager(this);
     this.transcriptionManager = new TranscriptionManager(this);
     this.translationManager = new TranslationManager(this);
+    this.calendarManager = new CalendarManager(this);
+    this.locationManager = new LocationManager(this);
     this.photoManager = new PhotoManager(this);
-    this.videoManager = new VideoManager(this);
-    this.managedStreamingExtension = new ManagedStreamingExtension(this.logger);
-
-    this._reconnectionTimers = new Map();
-    this.startTime = new Date();
+    this.streamRegistry = new StreamRegistry(this.logger);
+    this.unmanagedStreamingExtension = new UnmanagedStreamingExtension(this);
+    this.managedStreamingExtension = new ManagedStreamingExtension(this.logger, this.streamRegistry);
+    this.liveKitManager = new LiveKitManager(this);
+    this.userSettingsManager = new UserSettingsManager(this);
+    this.speakerManager = new SpeakerManager(this);
+    this.deviceManager = new DeviceManager(this);
+    this.udpAudioManager = new UdpAudioManager(this);
 
     // Set up heartbeat for glasses connection
     this.setupGlassesHeartbeat();
@@ -142,14 +208,16 @@ export class UserSession {
    */
   private setupGlassesHeartbeat(): void {
     const HEARTBEAT_INTERVAL = 10000; // 10 seconds
+    const APP_LEVEL_PING_INTERVAL = 2000; // 2 seconds
 
     // Clear any existing heartbeat
     this.clearGlassesHeartbeat();
 
-    // Set up new heartbeat
+    // Set up new heartbeat interval (protocol-level pings for server-side detection)
     this.glassesHeartbeatInterval = setInterval(() => {
-      if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-        this.websocket.ping();
+      if (this.disposed) return; // Guard against stale callback
+      if (this.websocket && this.websocket.readyState === WebSocketReadyState.OPEN) {
+        this.websocket.ping?.();
         if (LOG_PING_PONG) {
           this.logger.debug(
             { ping: true },
@@ -162,19 +230,67 @@ export class UserSession {
       }
     }, HEARTBEAT_INTERVAL);
 
-    // Set up pong handler
-    this.websocket.on("pong", () => {
+    // Application-level pings — visible to the client's onmessage handler.
+    // Protocol-level pings are invisible to React Native's WebSocket API,
+    // so the client can't use them for liveness detection. These app-level
+    // pings give the client guaranteed periodic messages to track against.
+    this.appLevelPingInterval = setInterval(() => {
+      if (this.disposed) return;
+      if (this.websocket && this.websocket.readyState === WebSocketReadyState.OPEN) {
+        try {
+          this.websocket.send(JSON.stringify({ type: "ping" }));
+        } catch (_e) {
+          // Send failure will be caught by the connection close handler
+        }
+      }
+    }, APP_LEVEL_PING_INTERVAL);
+
+    this.resources.trackInterval(this.appLevelPingInterval);
+
+    // Track interval for automatic cleanup
+    this.resources.trackInterval(this.glassesHeartbeatInterval);
+
+    // Set up pong handler with timeout detection
+    // Store reference for proper cleanup (prevents memory leak)
+    this.pongHandler = () => {
+      if (this.disposed) return; // Guard against stale callback
+      this.lastPongTime = Date.now();
+
       if (LOG_PING_PONG) {
         this.logger.debug(
           { pong: true },
           `[UserSession:heartbeat:pong] Received pong from glasses for user ${this.userId}`,
         );
       }
-    });
 
-    this.logger.debug(
-      `[UserSession:setupGlassesHeartbeat] Heartbeat established for glasses connection`,
-    );
+      // Reset the timeout timer only if enabled
+      if (UserSession.PONG_TIMEOUT_ENABLED) {
+        this.resetPongTimeout();
+      }
+    };
+
+    // Only set up event-based pong handler for ws package (not Bun's ServerWebSocket)
+    // Bun's pong handling is done in websocketHandlers.pong() which calls handleGlassesPong()
+    if (hasEventEmitter(this.websocket)) {
+      this.websocket.on("pong", this.pongHandler);
+
+      // Track pong handler for cleanup (prevents memory leak)
+      this.resources.track(() => {
+        if (this.websocket && hasEventEmitter(this.websocket) && this.pongHandler) {
+          this.websocket.off("pong", this.pongHandler);
+        }
+      });
+    }
+
+    // Initialize pong tracking
+    this.lastPongTime = Date.now();
+
+    // Only start timeout tracking if enabled
+    if (UserSession.PONG_TIMEOUT_ENABLED) {
+      this.resetPongTimeout();
+    }
+
+    this.logger.debug(`[UserSession:setupGlassesHeartbeat] Heartbeat established for glasses connection`);
   }
 
   /**
@@ -184,20 +300,81 @@ export class UserSession {
     if (this.glassesHeartbeatInterval) {
       clearInterval(this.glassesHeartbeatInterval);
       this.glassesHeartbeatInterval = undefined;
+      this.logger.debug(`[UserSession:clearGlassesHeartbeat] Heartbeat cleared for glasses connection`);
+    }
+
+    // Clear app-level ping interval
+    if (this.appLevelPingInterval) {
+      clearInterval(this.appLevelPingInterval);
+      this.appLevelPingInterval = undefined;
+    }
+
+    // Clear pong timeout as well
+    if (this.pongTimeoutTimer) {
+      clearTimeout(this.pongTimeoutTimer);
+      this.pongTimeoutTimer = undefined;
+    }
+  }
+
+  /**
+   * Handle pong response from glasses connection
+   * Called by Bun WebSocket handler (websocketHandlers.pong)
+   * For ws package, this is handled by the pongHandler event listener
+   */
+  public handlePong(): void {
+    if (this.disposed) return;
+    this.lastPongTime = Date.now();
+
+    if (LOG_PING_PONG) {
       this.logger.debug(
-        `[UserSession:clearGlassesHeartbeat] Heartbeat cleared for glasses connection`,
+        { pong: true },
+        `[UserSession:heartbeat:pong] Received pong from glasses for user ${this.userId}`,
       );
     }
+
+    // Reset the timeout timer only if enabled
+    if (UserSession.PONG_TIMEOUT_ENABLED) {
+      this.resetPongTimeout();
+    }
+  }
+
+  /**
+   * Reset the pong timeout timer
+   */
+  private resetPongTimeout(): void {
+    // Skip if pong timeout is disabled
+    if (!UserSession.PONG_TIMEOUT_ENABLED) {
+      this.logger.debug("[UserSession:resetPongTimeout] Pong timeout disabled by PONG_TIMEOUT_ENABLED=false");
+      return;
+    }
+
+    // Clear existing timer
+    if (this.pongTimeoutTimer) {
+      clearTimeout(this.pongTimeoutTimer);
+    }
+
+    // Set new timeout
+    this.pongTimeoutTimer = setTimeout(() => {
+      const timeSinceLastPong = this.lastPongTime ? Date.now() - this.lastPongTime : this.PONG_TIMEOUT_MS;
+
+      this.logger.error(
+        `[UserSession:pongTimeout] Phone connection timeout - no pong for ${timeSinceLastPong}ms from user ${this.userId}`,
+      );
+
+      // Close the zombie WebSocket connection
+      if (this.websocket && this.websocket.readyState === WebSocketReadyState.OPEN) {
+        this.logger.info(`[UserSession:pongTimeout] Closing zombie WebSocket connection for user ${this.userId}`);
+        this.websocket.close(1001, "Ping timeout - no pong received");
+      }
+    }, this.PONG_TIMEOUT_MS);
   }
 
   /**
    * Update WebSocket connection and restart heartbeat
    * Called when glasses reconnect with a new WebSocket
    */
-  updateWebSocket(newWebSocket: WebSocket): void {
-    this.logger.info(
-      `[UserSession:updateWebSocket] Updating WebSocket connection for user ${this.userId}`,
-    );
+  updateWebSocket(newWebSocket: IWebSocket): void {
+    this.logger.info(`[UserSession:updateWebSocket] Updating WebSocket connection for user ${this.userId}`);
 
     // Clear old heartbeat
     this.clearGlassesHeartbeat();
@@ -208,212 +385,28 @@ export class UserSession {
     // Set up new heartbeat with the new WebSocket
     this.setupGlassesHeartbeat();
 
-    this.logger.debug(
-      `[UserSession:updateWebSocket] WebSocket and heartbeat updated for user ${this.userId}`,
-    );
-  }
+    this.logger.debug(`[UserSession:updateWebSocket] WebSocket and heartbeat updated for user ${this.userId}`);
 
-  /**
-   * Update the current glasses model and refresh capabilities
-   * Called when model information is received from the manager
-   */
-  async updateGlassesModel(modelName: string): Promise<void> {
-    if (this.currentGlassesModel === modelName) {
-      this.logger.debug(
-        `[UserSession:updateGlassesModel] Model unchanged: ${modelName}`,
-      );
-      return;
-    }
-
-    this.logger.info(
-      `[UserSession:updateGlassesModel] Updating glasses model from "${this.currentGlassesModel}" to "${modelName}"`,
-    );
-
-    this.currentGlassesModel = modelName;
-
-    // Update capabilities based on the new model
-    const capabilities = getCapabilitiesForModel(modelName);
-    if (capabilities) {
-      this.capabilities = capabilities;
-      this.logger.info(
-        `[UserSession:updateGlassesModel] Updated capabilities for ${modelName}`,
-      );
-    } else {
-      this.logger.warn(
-        `[UserSession:updateGlassesModel] No capabilities found for model: ${modelName}`,
-      );
-
-      // Fallback to Even Realities G1 capabilities if no capabilities found and we don't have any yet
-      if (!this.capabilities) {
-        const fallbackCapabilities =
-          getCapabilitiesForModel("Even Realities G1");
-        if (fallbackCapabilities) {
-          this.capabilities = fallbackCapabilities;
-          this.logger.info(
-            `[UserSession:updateGlassesModel] Applied fallback capabilities (Even Realities G1) for unknown model: ${modelName}`,
+    // CRITICAL: Force mic state resync after WebSocket reconnects
+    // Without this, the phone may think mic is off while cloud has active subscriptions.
+    // This fixes the bug where mic turns off after WebSocket reconnection because
+    // MicrophoneManager tried to send state while WebSocket was closed, and never
+    // retried after the WebSocket came back up.
+    //
+    // We add a small delay to ensure the WebSocket is fully established and ready
+    // to receive messages before we send the mic state.
+    if (this.microphoneManager) {
+      this.logger.info(`[UserSession:updateWebSocket] Scheduling mic state resync after WebSocket reconnect`);
+      setTimeout(() => {
+        if (this.microphoneManager && this.websocket?.readyState === WebSocketReadyState.OPEN) {
+          this.logger.info(`[UserSession:updateWebSocket] Forcing mic state resync after WebSocket reconnect`);
+          this.microphoneManager.forceResync();
+        } else {
+          this.logger.warn(
+            `[UserSession:updateWebSocket] Skipping mic resync - WebSocket not ready or manager disposed`,
           );
         }
-      }
-    }
-
-    // Send capabilities update to all connected apps
-    this.sendCapabilitiesUpdateToApps();
-
-    // Stop any running apps that are now incompatible with the new capabilities
-    await this.stopIncompatibleApps();
-  }
-
-  /**
-   * Send capabilities update message to all connected apps
-   * @private
-   */
-  private sendCapabilitiesUpdateToApps(): void {
-    try {
-      const capabilitiesUpdateMessage = {
-        type: CloudToAppMessageType.CAPABILITIES_UPDATE,
-        capabilities: this.capabilities,
-        modelName: this.currentGlassesModel,
-        timestamp: new Date(),
-        sessionId: this.userId,
-      };
-
-      // Send to all connected apps
-      this.appWebsockets.forEach((ws, packageName) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          try {
-            ws.send(JSON.stringify(capabilitiesUpdateMessage));
-            this.logger.debug(
-              `[UserSession:sendCapabilitiesUpdateToApps] Sent capabilities update to app ${packageName}`,
-            );
-          } catch (error) {
-            this.logger.error(
-              { error, packageName },
-              `[UserSession:sendCapabilitiesUpdateToApps] Failed to send capabilities update to app ${packageName}`,
-            );
-          }
-        }
-      });
-
-      this.logger.info(
-        `[UserSession:sendCapabilitiesUpdateToApps] Sent capabilities update to ${this.appWebsockets.size} connected apps`,
-      );
-    } catch (error) {
-      this.logger.error(
-        { error },
-        `[UserSession:sendCapabilitiesUpdateToApps] Error sending capabilities update to apps`,
-      );
-    }
-  }
-
-  /**
-   * Stop any running apps that are incompatible with the current capabilities
-   * Called after capabilities are updated due to device model changes
-   * @private
-   */
-  private async stopIncompatibleApps(): Promise<void> {
-    try {
-      if (!this.capabilities) {
-        this.logger.debug(
-          "[UserSession:stopIncompatibleApps] No capabilities available, skipping compatibility check",
-        );
-        return;
-      }
-
-      const runningAppPackages = Array.from(this.runningApps);
-
-      if (runningAppPackages.length === 0) {
-        this.logger.debug(
-          "[UserSession:stopIncompatibleApps] No running apps to check for compatibility",
-        );
-        return;
-      }
-
-      this.logger.info(
-        `[UserSession:stopIncompatibleApps] Checking compatibility for ${runningAppPackages.length} running apps with new capabilities`,
-      );
-
-      const incompatibleApps: string[] = [];
-
-      // Check each running app for compatibility
-      for (const packageName of runningAppPackages) {
-        try {
-          // Get app details to check hardware requirements
-          const app = await appService.getApp(packageName);
-          if (!app) {
-            this.logger.warn(
-              `[UserSession:stopIncompatibleApps] Could not find app details for ${packageName}, keeping it running`,
-            );
-            continue;
-          }
-
-          // Check compatibility with new capabilities
-          const compatibilityResult =
-            HardwareCompatibilityService.checkCompatibility(
-              app,
-              this.capabilities,
-            );
-
-          if (!compatibilityResult.isCompatible) {
-            incompatibleApps.push(packageName);
-
-            this.logger.warn(
-              {
-                packageName,
-                missingHardware: compatibilityResult.missingRequired,
-                capabilities: this.capabilities,
-                modelName: this.currentGlassesModel,
-              },
-              `[UserSession:stopIncompatibleApps] App ${packageName} is now incompatible with ${this.currentGlassesModel} - missing required hardware: ${compatibilityResult.missingRequired.map((req) => req.type).join(", ")}`,
-            );
-          }
-        } catch (error) {
-          this.logger.error(
-            { error, packageName },
-            `[UserSession:stopIncompatibleApps] Error checking compatibility for app ${packageName}`,
-          );
-        }
-      }
-
-      // Stop all incompatible apps
-      if (incompatibleApps.length > 0) {
-        this.logger.info(
-          {
-            incompatibleApps,
-            modelName: this.currentGlassesModel,
-          },
-          `[UserSession:stopIncompatibleApps] Stopping ${incompatibleApps.length} incompatible apps due to device change to ${this.currentGlassesModel}`,
-        );
-
-        const stopPromises = incompatibleApps.map(async (packageName) => {
-          try {
-            await this.appManager.stopApp(packageName);
-            this.logger.info(
-              `[UserSession:stopIncompatibleApps] Successfully stopped incompatible app ${packageName}`,
-            );
-          } catch (error) {
-            this.logger.error(
-              { error, packageName },
-              `[UserSession:stopIncompatibleApps] Failed to stop incompatible app ${packageName}`,
-            );
-          }
-        });
-
-        // Wait for all apps to be stopped
-        await Promise.allSettled(stopPromises);
-
-        this.logger.info(
-          `[UserSession:stopIncompatibleApps] Completed stopping incompatible apps. Device change to ${this.currentGlassesModel} processed.`,
-        );
-      } else {
-        this.logger.info(
-          `[UserSession:stopIncompatibleApps] All running apps are compatible with ${this.currentGlassesModel}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error(
-        { error },
-        "[UserSession:stopIncompatibleApps] Error during incompatible app cleanup",
-      );
+      }, 100); // Small delay to ensure WebSocket is fully ready
     }
   }
 
@@ -421,31 +414,7 @@ export class UserSession {
    * Get capabilities with fallback to default model if none available
    */
   getCapabilities(): Capabilities | null {
-    if (this.capabilities) {
-      return this.capabilities;
-    }
-
-    // If no capabilities set yet, try to use Even Realities G1 as fallback
-    const fallbackCapabilities = getCapabilitiesForModel("Even Realities G1");
-    if (fallbackCapabilities) {
-      this.logger.debug(
-        `[UserSession:getCapabilities] Using fallback capabilities (Even Realities G1)`,
-      );
-      return fallbackCapabilities;
-    }
-
-    this.logger.warn(
-      `[UserSession:getCapabilities] No capabilities available, including fallback`,
-    );
-    return null;
-  }
-
-  /**
-   * Check if a specific capability is available
-   */
-  hasCapability(capability: keyof Capabilities): boolean {
-    const caps = this.getCapabilities();
-    return caps ? Boolean(caps[capability]) : false;
+    return this.deviceManager.getCapabilities();
   }
 
   /**
@@ -466,7 +435,7 @@ export class UserSession {
    * Create a new session or reconnect an existing one, updating websocket & timers.
    */
   static async createOrReconnect(
-    ws: WebSocket,
+    ws: IWebSocket,
     userId: string,
   ): Promise<{ userSession: UserSession; reconnection: boolean }> {
     const existingSession = UserSession.getById(userId);
@@ -491,20 +460,23 @@ export class UserSession {
     // Create a fresh session
     const userSession = new UserSession(userId, ws);
 
+    // Wait for user settings to load before proceeding
+    // This ensures CONNECTION_ACK sent to apps has correct settings, not defaults
+    try {
+      await userSession.userSettingsManager.waitForLoad();
+    } catch (error) {
+      userSession.logger.error({ error }, "Error waiting for user settings to load");
+    }
+
     // Bootstrap installed apps
     try {
       const installedApps = await appService.getAllApps(userId);
       for (const app of installedApps) {
         userSession.installedApps.set(app.packageName, app);
       }
-      userSession.logger.info(
-        `Fetched ${installedApps.length} installed apps for user ${userId}`,
-      );
+      userSession.logger.info(`Fetched ${installedApps.length} installed apps for user ${userId}`);
     } catch (error) {
-      userSession.logger.error(
-        { error },
-        `Error fetching apps for user ${userId}`,
-      );
+      userSession.logger.error({ error }, `Error fetching apps for user ${userId}`);
     }
 
     return { userSession, reconnection: false };
@@ -518,12 +490,10 @@ export class UserSession {
     try {
       const appSubscriptions: Record<string, string[]> = {};
       for (const packageName of this.runningApps) {
-        appSubscriptions[packageName] =
-          this.subscriptionManager.getAppSubscriptions(packageName);
+        appSubscriptions[packageName] = this.subscriptionManager.getAppSubscriptions(packageName);
       }
 
-      const hasPCMTranscriptionSubscriptions =
-        this.subscriptionManager.hasPCMTranscriptionSubscriptions();
+      const hasPCMTranscriptionSubscriptions = this.subscriptionManager.hasPCMTranscriptionSubscriptions();
       const requiresAudio = hasPCMTranscriptionSubscriptions.hasMedia;
       const requiredData = this.microphoneManager.calculateRequiredData(
         hasPCMTranscriptionSubscriptions.hasPCM,
@@ -532,8 +502,7 @@ export class UserSession {
       // Side-effect: update mic state to reflect current needs
       this.microphoneManager.updateState(requiresAudio, requiredData);
 
-      const minimumTranscriptionLanguages =
-        this.subscriptionManager.getMinimalLanguageSubscriptions();
+      const minimumTranscriptionLanguages = this.subscriptionManager.getMinimalLanguageSubscriptions();
 
       return {
         userId: this.userId,
@@ -562,9 +531,7 @@ export class UserSession {
    */
   relayMessageToApps(data: any): void {
     try {
-      const subscribedPackageNames = this.subscriptionManager.getSubscribedApps(
-        data.type as any,
-      );
+      const subscribedPackageNames = this.subscriptionManager.getSubscribedApps(data.type as any);
       if (subscribedPackageNames.length === 0) return;
 
       this.logger.debug(
@@ -573,7 +540,7 @@ export class UserSession {
       );
       for (const packageName of subscribedPackageNames) {
         const connection = this.appWebsockets.get(packageName);
-        if (connection && connection.readyState === WebSocket.OPEN) {
+        if (connection && connection.readyState === WebSocketReadyState.OPEN) {
           const appSessionId = `${this.sessionId}-${packageName}`;
           const dataStream = {
             type: CloudToAppMessageType.DATA_STREAM,
@@ -602,7 +569,7 @@ export class UserSession {
    */
   relayAudioToApps(audioData: ArrayBuffer): void {
     try {
-      this.audioManager.processAudioData(audioData, false);
+      this.audioManager.processAudioData(audioData);
     } catch (error) {
       this.logger.error({ error }, `Error relaying audio for user: ${this.userId}`);
     }
@@ -621,12 +588,14 @@ export class UserSession {
       const packageName = this.audioPlayRequestMapping.get(requestId);
       if (!packageName) {
         this.logger.warn(
-          `🔊 [UserSession] No app mapping found for audio request ${requestId}. Available: ${Array.from(this.audioPlayRequestMapping.keys()).join(", ")}`,
+          `🔊 [UserSession] No app mapping found for audio request ${requestId}. Available: ${Array.from(
+            this.audioPlayRequestMapping.keys(),
+          ).join(", ")}`,
         );
         return;
       }
       const appWebSocket = this.appWebsockets.get(packageName);
-      if (!appWebSocket || appWebSocket.readyState !== WebSocket.OPEN) {
+      if (!appWebSocket || appWebSocket.readyState !== WebSocketReadyState.OPEN) {
         this.logger.warn(
           `🔊 [UserSession] App ${packageName} not connected or WebSocket not ready for audio response ${requestId}`,
         );
@@ -644,13 +613,11 @@ export class UserSession {
       } as any;
       try {
         appWebSocket.send(JSON.stringify(appAudioResponse));
-        this.logger.info(
-          `🔊 [UserSession] Successfully sent audio play response ${requestId} to app ${packageName}`,
-        );
+        this.logger.info(`🔊 [UserSession] Successfully sent audio play response ${requestId} to app ${packageName}`);
       } catch (sendError) {
         this.logger.error(
-          `🔊 [UserSession] Error sending audio response ${requestId} to app ${packageName}:`,
           sendError,
+          `🔊 [UserSession] Error sending audio response ${requestId} to app ${packageName}:`,
         );
       }
       this.audioPlayRequestMapping.delete(requestId);
@@ -663,18 +630,30 @@ export class UserSession {
   }
 
   /**
-   * Transform session data for client consumption
+   * Handle incoming glasses message by routing to appropriate managers
+   *
+   * This method centralizes message routing that was previously in websocket-glasses.service.ts.
+   * It delegates to the appropriate manager based on message type, making the logic
+   * testable without requiring a WebSocket connection.
+   *
+   * @param message The glasses message to handle
    */
-  async toClientFormat(): Promise<any> {
-    // Return only what the client needs
-    return {
-      userId: this.userId,
-      startTime: this.startTime,
-      activeAppSessions: Array.from(this.runningApps),
-      loadingApps: Array.from(this.loadingApps),
-      isTranscribing: this.isTranscribing,
-      // Other client-relevant data
-    };
+  async handleGlassesMessage(message: GlassesToCloudMessage): Promise<void> {
+    await glassesMessageHandler(this, message);
+  }
+
+  /**
+   * Handle incoming app message by routing to appropriate managers
+   *
+   * This method centralizes message routing that was previously in websocket-app.service.ts.
+   * It delegates to the appropriate manager based on message type, making the logic
+   * testable without requiring a WebSocket connection.
+   *
+   * @param appWebsocket The app's WebSocket connection
+   * @param message The app message to handle
+   */
+  async handleAppMessage(appWebsocket: WebSocket, message: AppToCloudMessage): Promise<void> {
+    await appMessageHandler(appWebsocket, this, message);
   }
 
   /**
@@ -683,7 +662,7 @@ export class UserSession {
    * @param message Error message
    * @param code Error code
    */
-  public sendError(message: string, code: GlassesErrorCode): void {
+  public sendError(message: string, code: string): void {
     try {
       const errorMessage: ConnectionError = {
         type: CloudToGlassesMessageType.CONNECTION_ERROR,
@@ -709,17 +688,25 @@ export class UserSession {
    * Dispose of all resources and remove from sessions map
    */
   async dispose(): Promise<void> {
-    this.logger.warn(
-      `[UserSession:dispose]: Disposing UserSession: ${this.userId}`,
-    );
+    // Idempotent - can be called multiple times safely
+    if (this.disposed) {
+      this.logger.debug(`[UserSession:dispose]: Already disposed, skipping: ${this.userId}`);
+      return;
+    }
+
+    // Set disposed flag FIRST to prevent any new operations
+    this.disposed = true;
+
+    this.logger.warn(`[UserSession:dispose]: Disposing UserSession: ${this.userId}`);
+
+    // Clean up all tracked resources (removes event listeners, clears timers)
+    // This must happen BEFORE disposing managers to prevent stale callbacks
+    this.resources.dispose();
 
     // Log to posthog disconnected duration.
     const now = new Date();
     const duration = now.getTime() - this.startTime.getTime();
-    this.logger.info(
-      { duration },
-      `User session ${this.userId} disconnected. Connected for ${duration}ms`,
-    );
+    this.logger.info({ duration }, `User session ${this.userId} disconnected. Connected for ${duration}ms`);
     try {
       await PosthogService.trackEvent("disconnected", this.userId, {
         duration: duration,
@@ -735,6 +722,7 @@ export class UserSession {
     // Clean up all resources
     if (this.appManager) this.appManager.dispose();
     if (this.audioManager) this.audioManager.dispose();
+    if (this.liveKitManager) this.liveKitManager.dispose();
     if (this.microphoneManager) this.microphoneManager.dispose();
     if (this.displayManager) this.displayManager.dispose();
     if (this.dashboardManager) this.dashboardManager.dispose();
@@ -742,12 +730,14 @@ export class UserSession {
     if (this.translationManager) this.translationManager.dispose();
     if (this.subscriptionManager) this.subscriptionManager.dispose();
     // if (this.heartbeatManager) this.heartbeatManager.dispose();
-    if (this.videoManager) this.videoManager.dispose();
+    if (this.unmanagedStreamingExtension) this.unmanagedStreamingExtension.dispose();
     if (this.photoManager) this.photoManager.dispose();
-    if (this.managedStreamingExtension)
-      this.managedStreamingExtension.dispose();
+    if (this.managedStreamingExtension) this.managedStreamingExtension.dispose();
 
-    // Clear glasses heartbeat
+    // Persist location to DB cold cache and clean up
+    if (this.locationManager) await this.locationManager.dispose();
+
+    // Clear glasses heartbeat (timers already cleared by resources.dispose(), but clear references)
     this.clearGlassesHeartbeat();
 
     // Clear any timers
@@ -756,31 +746,24 @@ export class UserSession {
       this.cleanupTimerId = undefined;
     }
 
-    if (this._reconnectionTimers) {
-      for (const timer of this._reconnectionTimers.values()) {
-        clearTimeout(timer);
-      }
-      this._reconnectionTimers.clear();
-    }
-
     // Clear collections
-    this.appWebsockets.clear();
-    this.runningApps.clear();
-    this.loadingApps.clear();
+    // Note: runningApps, loadingApps, appWebsockets are now derived from AppManager/AppSession (Phase 4d)
+    // They are cleared when appManager.dispose() is called above
     this.bufferedAudio = [];
     this.recentAudioBuffer = [];
 
     // Clear audio play request mappings
     this.audioPlayRequestMapping.clear();
 
+    // Dispose UDP audio manager
+    if (this.udpAudioManager) this.udpAudioManager.dispose();
+
     // Remove from static session map
     UserSession.sessions.delete(this.userId);
 
     this.logger.info(
       {
-        disposalReason: this.disconnectedAt
-          ? "grace_period_timeout"
-          : "explicit_disposal",
+        disposalReason: this.disconnectedAt ? "grace_period_timeout" : "explicit_disposal",
       },
       `🗑️ Session disposed and removed from storage for ${this.userId}`,
     );

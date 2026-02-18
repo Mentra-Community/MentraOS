@@ -3,6 +3,7 @@ import { Logger } from "pino";
 // SessionStorage replaced by static registry in UserSession
 import { logger as rootLogger } from "../logging/pino-logger";
 import UserSession from "../session/UserSession";
+const ENABLED = process.env.MEMORY_TELEMETRY_ENABLED === "true" || false;
 
 export interface SessionMemoryStats {
   userId: string;
@@ -68,6 +69,10 @@ export class MemoryTelemetryService {
   }
 
   start(): void {
+    if (!ENABLED) {
+      this.logger.info("Memory telemetry is disabled");
+      return;
+    }
     if (this.interval) return;
     this.interval = setInterval(() => {
       try {
@@ -90,7 +95,7 @@ export class MemoryTelemetryService {
   }
 
   getCurrentStats(): MemoryTelemetrySnapshot {
-  const sessions = UserSession.getAllSessions();
+    const sessions = UserSession.getAllSessions();
     const sessionStats = sessions.map((s) => this.getSessionStats(s));
     const mem = process.memoryUsage();
     return {

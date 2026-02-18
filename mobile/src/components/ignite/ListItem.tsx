@@ -1,10 +1,12 @@
 import {forwardRef, ReactElement, ComponentType} from "react"
 import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewStyle} from "react-native"
+
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {$styles} from "@/theme"
+import type {ThemedStyle} from "@/theme"
+
 import {Icon, IconTypes} from "./Icon"
 import {Text, TextProps} from "./Text"
-import type {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export interface ListItemProps extends TouchableOpacityProps {
   /**
@@ -197,7 +199,7 @@ const $separatorBottom: ThemedStyle<ViewStyle> = ({colors}) => ({
 })
 
 const $textStyle: ThemedStyle<TextStyle> = ({spacing}) => ({
-  paddingVertical: spacing.xs,
+  paddingVertical: spacing.s2,
   alignSelf: "center",
   flexGrow: 1,
   flexShrink: 1,
@@ -213,9 +215,9 @@ const $iconContainer: ViewStyle = {
   flexGrow: 0,
 }
 const $iconContainerLeft: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginEnd: spacing.md,
+  marginEnd: spacing.s4,
 })
 
 const $iconContainerRight: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginStart: spacing.md,
+  marginStart: spacing.s4,
 })

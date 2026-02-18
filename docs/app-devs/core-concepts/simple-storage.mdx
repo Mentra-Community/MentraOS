@@ -1,0 +1,352 @@
+---
+title: "Simple Storage"
+description: "Persistent key-value storage for user data"
+icon: "database"
+---
+
+## Quick Start
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Store data
+  await session.simpleStorage.set('theme', 'dark');
+  
+  // Retrieve data
+  const theme = await session.simpleStorage.get('theme');
+  
+  // Check if exists
+  const hasTheme = await session.simpleStorage.hasKey('theme');
+}
+```
+
+## Key Features
+
+- **Automatic sync** - Data syncs between your server and MentraOS Cloud
+- **User-isolated** - Each user has separate storage
+- **App-scoped** - Other apps can't access your data
+- **Local caching** - Fast reads after first fetch
+- **Simple API** - Works like localStorage
+
+## Basic Operations
+
+### Store Data
+
+```typescript
+await session.simpleStorage.set('username', 'john_doe');
+await session.simpleStorage.set('score', '1000');
+await session.simpleStorage.set('lastVisit', Date.now().toString());
+```
+
+### Retrieve Data
+
+```typescript
+const username = await session.simpleStorage.get('username');
+if (username) {
+  session.layouts.showTextWall(`Welcome back, ${username}!`);
+}
+```
+
+### Check Existence
+
+```typescript
+if (await session.simpleStorage.hasKey('onboardingComplete')) {
+  // User has completed onboarding
+} else {
+  // Show onboarding
+}
+```
+
+### Delete Data
+
+```typescript
+await session.simpleStorage.delete('temporaryData');
+```
+
+### Clear All
+
+```typescript
+await session.simpleStorage.clear();
+```
+
+## Storing Complex Data
+
+Storage is key-value pairs with string values. Use JSON for objects:
+
+```typescript
+// Store object
+const userData = { name: 'John', age: 30, premium: true };
+await session.simpleStorage.set('user', JSON.stringify(userData));
+
+// Retrieve object
+const userJson = await session.simpleStorage.get('user');
+const user = userJson ? JSON.parse(userJson) : null;
+
+// Store array
+const favorites = ['app1', 'app2', 'app3'];
+await session.simpleStorage.set('favorites', JSON.stringify(favorites));
+```
+
+## Batch Operations
+
+### Get All Keys
+
+```typescript
+const keys = await session.simpleStorage.keys();
+// ['theme', 'username', 'score']
+```
+
+### Get All Data
+
+```typescript
+const allData = await session.simpleStorage.getAllData();
+// { theme: 'dark', username: 'john_doe', score: '1000' }
+```
+
+### Set Multiple Items
+
+```typescript
+await session.simpleStorage.setMultiple({
+  'setting1': 'value1',
+  'setting2': 'value2',
+  'setting3': 'value3'
+});
+```
+
+### Count Items
+
+```typescript
+const count = await session.simpleStorage.size();
+session.logger.info(`Stored ${count} items`);
+```
+
+## Common Patterns
+
+### User Preferences
+
+```typescript
+class PreferencesManager {
+  constructor(private storage: SimpleStorage) {}
+  
+  async getTheme(): Promise<'light' | 'dark'> {
+    return (await this.storage.get('theme') as 'light' | 'dark') || 'light';
+  }
+  
+  async setTheme(theme: 'light' | 'dark') {
+    await this.storage.set('theme', theme);
+  }
+  
+  async getLanguage(): Promise<string> {
+    return await this.storage.get('language') || 'en';
+  }
+}
+```
+
+### First-Time User Detection
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const isFirstTime = !(await session.simpleStorage.hasKey('hasUsedApp'));
+  
+  if (isFirstTime) {
+    // Show tutorial
+    session.layouts.showTextWall('Welcome! Let me show you around...');
+    await session.simpleStorage.set('hasUsedApp', 'true');
+  } else {
+    // Returning user
+    session.layouts.showTextWall('Welcome back!');
+  }
+}
+```
+
+### Saving Session State
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Restore previous state
+  const lastPage = await session.simpleStorage.get('currentPage') || 'home';
+  const scrollPos = await session.simpleStorage.get('scrollPosition') || '0';
+  
+  this.navigateToPage(session, lastPage, parseInt(scrollPos));
+  
+  // Save state when user navigates
+  session.events.onButtonPress(async (data) => {
+    if (data.button === 'forward') {
+      await session.simpleStorage.set('currentPage', 'next');
+    }
+  });
+}
+
+protected async onStop(sessionId: string, userId: string, reason: string) {
+  // State is already saved from event handlers
+}
+```
+
+### Usage Counter
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Increment usage count
+  const countStr = await session.simpleStorage.get('usageCount') || '0';
+  const count = parseInt(countStr) + 1;
+  await session.simpleStorage.set('usageCount', count.toString());
+  
+  session.logger.info(`User has opened app ${count} times`);
+  
+  // Show milestone
+  if (count === 10) {
+    session.layouts.showTextWall('🎉 You've used this app 10 times!');
+  }
+}
+```
+
+### Feature Flags
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Track which features user has tried
+  const featuresJson = await session.simpleStorage.get('featuresUsed');
+  const features = featuresJson ? JSON.parse(featuresJson) : [];
+  
+  if (!features.includes('voice_commands')) {
+    // First time using voice - show hint
+    session.layouts.showTextWall('Try saying "help" for voice commands');
+    features.push('voice_commands');
+    await session.simpleStorage.set('featuresUsed', JSON.stringify(features));
+  }
+}
+```
+
+## Performance & Caching
+
+Simple Storage caches data locally for fast access:
+
+```typescript
+// First call fetches from cloud
+const theme = await storage.get('theme'); // Network request
+
+// Subsequent calls use cache
+const theme2 = await storage.get('theme'); // Instant
+
+// Set operations update cache immediately
+await storage.set('theme', 'light'); // Cache updated + cloud sync
+```
+
+<Warning>
+Cache is per-session. New sessions fetch fresh data from cloud.
+</Warning>
+
+## Best Practices
+
+### ✅ Do This
+
+```typescript
+// Use descriptive keys
+await storage.set('user.theme', 'dark');
+await storage.set('app.lastSyncTime', Date.now().toString());
+
+// Provide defaults
+const theme = await storage.get('theme') || 'light';
+
+// Handle JSON errors
+try {
+  const data = JSON.parse(await storage.get('config') || '{}');
+} catch (e) {
+  session.logger.error('Invalid JSON in storage');
+}
+
+// Store environment variables for API keys elsewhere
+const apiKey = process.env.EXTERNAL_API_KEY; // ✅
+```
+
+### ❌ Avoid This
+
+```typescript
+// Vague key names
+await storage.set('data', 'value');
+
+// No default values
+const theme = await storage.get('theme'); // Could be undefined
+
+// Storing large data (>1MB per value)
+await storage.set('bigFile', hugeString); // Use external storage
+
+// Storing secrets in user storage
+await storage.set('apiKey', 'secret'); // Security risk
+```
+
+## Limitations
+
+| Aspect | Limit | Recommendation |
+|--------|-------|----------------|
+| **Value size** | ~1MB | Store large files externally |
+| **Total storage** | ~10MB per user | Keep data minimal |
+| **Keys** | Unlimited | Use namespaced keys |
+| **API calls** | No hard limit | Batch when possible |
+
+## Error Handling
+
+```typescript
+try {
+  await session.simpleStorage.set('key', 'value');
+} catch (error) {
+  session.logger.error('Storage error:', error);
+  // Fallback: use in-memory storage
+}
+
+// Get returns undefined on error
+const value = await session.simpleStorage.get('key');
+if (value === undefined) {
+  // Either doesn't exist or error occurred
+  session.logger.warn('No value found for key');
+}
+```
+
+## Complete Example
+
+```typescript
+class NotesApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    // Load saved notes
+    const notesJson = await session.simpleStorage.get('notes');
+    const notes = notesJson ? JSON.parse(notesJson) : [];
+    
+    session.layouts.showTextWall(`You have ${notes.length} notes`);
+    
+    // Listen for voice input to create notes
+    session.events.onTranscription(async (data) => {
+      if (data.isFinal && data.text.startsWith('note:')) {
+        const noteText = data.text.replace('note:', '').trim();
+        
+        // Add note
+        notes.push({
+          text: noteText,
+          timestamp: Date.now()
+        });
+        
+        // Save
+        await session.simpleStorage.set('notes', JSON.stringify(notes));
+        
+        session.layouts.showTextWall('Note saved!');
+      }
+    });
+  }
+}
+```
+
+## API Reference
+
+| Method | Description |
+|--------|-------------|
+| `get(key)` | Get value by key |
+| `set(key, value)` | Store key-value pair |
+| `hasKey(key)` | Check if key exists |
+| `delete(key)` | Remove key |
+| `clear()` | Delete all data |
+| `keys()` | Get all keys |
+| `size()` | Count items |
+| `getAllData()` | Get all key-value pairs |
+| `setMultiple(data)` | Store multiple pairs at once |
+
+<Info>
+Simple Storage is ideal for preferences and app state. For user authentication data or external API keys, use environment variables or secure credential storage.
+</Info>

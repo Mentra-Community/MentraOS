@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-11-19 20:05:11
- * @LastEditTime : 2026-02-04 19:15:10
+ * @LastEditTime : 2026-02-05 10:19:31
  * @FilePath     : mos_lsm6dsv16x.c
  * @Description  : LSM6DSV16X 6-axis IMU sensor driver wrapper
  *
@@ -613,19 +613,17 @@ int lsm6dsv16x_sleep(void)
         return ret;
     }
 
-    /* Pull up INT1 pin to prevent leakage current | 拉高 INT1 引脚防止漏电 */
-    ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_UP);
+    ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
     if (ret != 0)
     {
-        LOG_WRN("Failed to pull up IMU INT1 during sleep: %d", ret);
+        LOG_WRN("Failed to pull down IMU INT1 during sleep: %d", ret);
     }
 
-    /* Pull up I2C2 pins to prevent leakage current | 拉高 I2C2 引脚防止漏电 */
     nrf_gpio_cfg_input(I2C2_SCL_PIN, NRF_GPIO_PIN_PULLDOWN);
     nrf_gpio_cfg_input(I2C2_SDA_PIN, NRF_GPIO_PIN_PULLDOWN);
 
     lsm6dsv16x_suspended = true;
-    LOG_INF("LSM6DSV16X suspended, INT1 and I2C2 pins pulled up");
+    LOG_INF("LSM6DSV16X suspended, INT1 and I2C2 pins pulled down");
     return 0;
 }
 

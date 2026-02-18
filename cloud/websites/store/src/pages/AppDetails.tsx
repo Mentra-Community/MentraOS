@@ -1,19 +1,11 @@
-import React, { useState, useEffect } from "react";
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft,
-  Download,
   X,
-  ExternalLink,
   Calendar,
-  Clock,
   Info,
-  Star,
-  Package,
-  Building,
-  Globe,
-  Mail,
-  FileText,
   Mic,
   Camera,
   MapPin,
@@ -25,13 +17,13 @@ import {
   CircleDot,
   Lightbulb,
 } from "lucide-react";
-import { useAuth } from "../hooks/useAuth";
+import { useAuth } from "@mentra/shared";
 import { useTheme } from "../hooks/useTheme";
 import { useIsDesktop } from "../hooks/useMediaQuery";
 import { usePlatform } from "../hooks/usePlatform";
 import api from "../api";
 import { AppI, HardwareType, HardwareRequirementLevel } from "../types";
-import { toast } from "sonner";
+import { useToast } from "../components/ui/MuiToast";
 import { formatCompatibilityError } from "../utils/errorHandling";
 import { Button } from "@/components/ui/button";
 import Header from "../components/Header";
@@ -67,6 +59,7 @@ const AppDetails: React.FC = () => {
   const { theme } = useTheme();
   const isDesktop = useIsDesktop();
   const { isWebView } = usePlatform();
+  const { showToast } = useToast();
 
   // Smart navigation function
   const handleBackNavigation = () => {
@@ -117,10 +110,7 @@ const AppDetails: React.FC = () => {
   // Get icon for permission type
   const getPermissionIcon = (type: string) => {
     const normalizedType = type.toLowerCase();
-    if (
-      normalizedType.includes("microphone") ||
-      normalizedType.includes("audio")
-    ) {
+    if (normalizedType.includes("microphone") || normalizedType.includes("audio")) {
       return <Mic className="h-5 w-4" />;
     }
     if (normalizedType.includes("camera") || normalizedType.includes("photo")) {
@@ -138,10 +128,7 @@ const AppDetails: React.FC = () => {
   // Get default description for permission type
   const getPermissionDescription = (type: string) => {
     const normalizedType = type.toLowerCase();
-    if (
-      normalizedType.includes("microphone") ||
-      normalizedType.includes("audio")
-    ) {
+    if (normalizedType.includes("microphone") || normalizedType.includes("audio")) {
       return "For voice import and audio processing.";
     }
     if (normalizedType.includes("camera") || normalizedType.includes("photo")) {
@@ -178,18 +165,14 @@ const AppDetails: React.FC = () => {
           const installedApps = await api.app.getInstalledApps();
 
           // Check if this app is installed
-          const isInstalled = installedApps.some(
-            (app) => app.packageName === pkgName,
-          );
+          const isInstalled = installedApps.some((app) => app.packageName === pkgName);
 
           // Update app with installed status
           appDetails.isInstalled = isInstalled;
 
           if (isInstalled) {
             // Find installed date from the installed apps
-            const installedApp = installedApps.find(
-              (app) => app.packageName === pkgName,
-            );
+            const installedApp = installedApps.find((app) => app.packageName === pkgName);
             if (installedApp && installedApp.installedDate) {
               appDetails.installedDate = installedApp.installedDate;
             }
@@ -225,7 +208,7 @@ const AppDetails: React.FC = () => {
       const success = await api.app.installApp(app.packageName);
 
       if (success) {
-        toast.success("App installed successfully");
+        showToast("App installed successfully", "success");
         setApp((prev) =>
           prev
             ? {
@@ -236,7 +219,7 @@ const AppDetails: React.FC = () => {
             : null,
         );
       } else {
-        toast.error("Failed to install app");
+        showToast("Failed to install app", "error");
       }
     } catch (err) {
       console.error("Error installing app:", err);
@@ -244,35 +227,33 @@ const AppDetails: React.FC = () => {
       // Try to get a more informative error message for compatibility issues
       const compatibilityError = formatCompatibilityError(err);
       if (compatibilityError) {
-        toast.error(compatibilityError, {
-          duration: 6000, // Show longer for detailed messages
-        });
+        showToast(compatibilityError, "error");
       } else {
         // Fallback to generic error message
         const errorMessage =
-          (err as any)?.response?.data?.message || "Failed to install app";
-        toast.error(errorMessage);
+          (err as { response?: { data?: { message?: string } } })?.response?.data?.message || "Failed to install app";
+        showToast(errorMessage, "error");
       }
     } finally {
       setInstallingApp(false);
     }
   };
 
-  // Handle opening app settings
-  const handleOpen = (packageName: string) => {
-    // If we're in webview, send message to React Native to open TPA settings
-    if (isWebView && window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(
-        JSON.stringify({
-          type: "OPEN_APP_SETTINGS",
-          packageName: packageName,
-        }),
-      );
-    } else {
-      // Fallback: refresh the page
-      window.location.reload();
-    }
-  };
+  // Deprecated: No longer used after removing Open button
+  // const handleOpen = (packageName: string) => {
+  //   // If we're in webview, send message to React Native to open TPA settings
+  //   if (isWebView && window.ReactNativeWebView) {
+  //     window.ReactNativeWebView.postMessage(
+  //       JSON.stringify({
+  //         type: "OPEN_APP_SETTINGS",
+  //         packageName: packageName,
+  //       }),
+  //     );
+  //   } else {
+  //     // Fallback: refresh the page
+  //     window.location.reload();
+  //   }
+  // };
 
   // Handle app uninstallation
   const handleUninstall = async () => {
@@ -294,18 +275,14 @@ const AppDetails: React.FC = () => {
       const uninstallSuccess = await api.app.uninstallApp(app.packageName);
 
       if (uninstallSuccess) {
-        toast.success("App uninstalled successfully");
-        setApp((prev) =>
-          prev
-            ? { ...prev, isInstalled: false, installedDate: undefined }
-            : null,
-        );
+        showToast("App uninstalled successfully", "success");
+        setApp((prev) => (prev ? { ...prev, isInstalled: false, installedDate: undefined } : null));
       } else {
-        toast.error("Failed to uninstall app");
+        showToast("Failed to uninstall app", "error");
       }
     } catch (err) {
       console.error("Error uninstalling app:", err);
-      toast.error("Failed to uninstall app. Please try again.");
+      showToast("Failed to uninstall app. Please try again.", "error");
     } finally {
       setInstallingApp(false);
     }
@@ -333,8 +310,7 @@ const AppDetails: React.FC = () => {
         style={{
           backgroundColor: "var(--bg-primary)",
           color: "var(--text-primary)",
-        }}
-      >
+        }}>
         {/* Error state */}
         {!isLoading && error && <div className="text-red-500 p-4">{error}</div>}
 
@@ -355,17 +331,12 @@ const AppDetails: React.FC = () => {
               // Desktop styles applied based on media query hook
               ...(isDesktop
                 ? {
-                    backgroundColor:
-                      theme === "light" ? "#ffffff" : "var(--bg-secondary)",
-                    boxShadow:
-                      theme === "light"
-                        ? "0 0 0 1px #e5e5e5"
-                        : "inset 0 0 0 1px rgba(255, 255, 255, 0.1)",
+                    backgroundColor: theme === "light" ? "#ffffff" : "var(--bg-secondary)",
+                    boxShadow: theme === "light" ? "0 0 0 1px #e5e5e5" : "inset 0 0 0 1px rgba(255, 255, 255, 0.1)",
                     border: theme === "light" ? "1px solid #e5e5e5" : "none",
                   }
                 : {}),
-            }}
-          >
+            }}>
             {/* Desktop Close Button */}
             <button
               onClick={handleBackNavigation}
@@ -373,29 +344,18 @@ const AppDetails: React.FC = () => {
               style={{
                 color: theme === "light" ? "#000000" : "#9CA3AF",
               }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.color =
-                  theme === "light" ? "#333333" : "#ffffff")
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.color =
-                  theme === "light" ? "#000000" : "#9CA3AF")
-              }
-              aria-label="Close"
-            >
+              onMouseEnter={(e) => (e.currentTarget.style.color = theme === "light" ? "#333333" : "#ffffff")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = theme === "light" ? "#000000" : "#9CA3AF")}
+              aria-label="Close">
               <X className="h-6 w-6" />
             </button>
 
             {/* Mobile Back Button */}
-            <div
-              className="sm:hidden px-6 py-4 border-b"
-              style={{ borderColor: "var(--border-color)" }}
-            >
+            <div className="sm:hidden px-6 py-4 border-b" style={{ borderColor: "var(--border-color)" }}>
               <button
                 onClick={handleBackNavigation}
                 className="flex items-center gap-2 transition-colors"
-                style={{ color: "var(--text-primary)" }}
-              >
+                style={{ color: "var(--text-primary)" }}>
                 <ArrowLeft className="h-5 w-5" />
                 <span className="text-[16px]">Back</span>
               </button>
@@ -412,8 +372,7 @@ const AppDetails: React.FC = () => {
                       alt={`${app.name} logo`}
                       className="w-16 h-16 object-cover rounded-full flex-shrink-0"
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src =
-                          "https://placehold.co/64x64/gray/white?text=App";
+                        (e.target as HTMLImageElement).src = "https://placehold.co/64x64/gray/white?text=App";
                       }}
                     />
                     <div className="min-w-0 flex-1">
@@ -421,11 +380,10 @@ const AppDetails: React.FC = () => {
                         id="app-modal-title"
                         className="text-[24px] font-medium leading-[1.2] break-words"
                         style={{
-                          fontFamily: '"SF Pro Rounded", sans-serif',
+                          fontFamily: '"Red Hat Display", sans-serif',
                           letterSpacing: "0.02em",
                           color: "var(--text-primary)",
-                        }}
-                      >
+                        }}>
                         {app.name}
                       </h2>
                     </div>
@@ -434,49 +392,48 @@ const AppDetails: React.FC = () => {
                   <div className="flex items-center gap-4 flex-shrink-0 ml-4">
                     {isAuthenticated ? (
                       app.isInstalled ? (
-                        isWebView ? (
-                          <Button
-                            onClick={() => handleOpen(app.packageName)}
-                            disabled={installingApp}
-                            className="w-[140px] h-[40px] text-[#E2E4FF] text-[16px] font-normal rounded-full"
-                            style={{
-                              fontFamily: '"SF Pro Rounded", sans-serif',
-                              backgroundColor: "var(--button-bg)",
-                              color: "var(--button-text)",
-                            }}
-                            onMouseEnter={(e) =>
-                              (e.currentTarget.style.backgroundColor =
-                                "var(--button-hover)")
-                            }
-                            onMouseLeave={(e) =>
-                              (e.currentTarget.style.backgroundColor =
-                                "var(--button-bg)")
-                            }
-                          >
-                            Open
-                          </Button>
-                        ) : (
-                          // Show greyed out Installed button for installed apps on desktop/mobile
-                          <Button
-                            disabled={true}
-                            className="w-[140px] h-[40px] text-[#E2E4FF] text-[16px] font-normal rounded-full opacity-30 cursor-not-allowed"
-                            style={{
-                              fontFamily: '"SF Pro Rounded", sans-serif',
-                              backgroundColor: "var(--button-bg)",
-                              color: "var(--button-text)",
-                              filter: "grayscale(100%)",
-                            }}
-                          >
-                            Installed
-                          </Button>
-                        )
+                        // Deprecated: Open button functionality
+                        // isWebView ? (
+                        //   <Button
+                        //     onClick={() => handleOpen(app.packageName)}
+                        //     disabled={installingApp}
+                        //     className="w-[140px] h-[40px] text-[#E2E4FF] text-[16px] font-normal rounded-full"
+                        //     style={{
+                        //       fontFamily: '"Red Hat Display", sans-serif',
+                        //       backgroundColor: "var(--button-bg)",
+                        //       color: "var(--button-text)",
+                        //     }}
+                        //     onMouseEnter={(e) =>
+                        //       (e.currentTarget.style.backgroundColor =
+                        //         "var(--button-hover)")
+                        //     }
+                        //     onMouseLeave={(e) =>
+                        //       (e.currentTarget.style.backgroundColor =
+                        //         "var(--button-bg)")
+                        //     }
+                        //   >
+                        //     Open
+                        //   </Button>
+                        // ) : (
+                        // Show greyed out Installed button for installed apps on desktop/mobile
+                        <Button
+                          disabled={true}
+                          className="w-[140px] h-[40px] text-[#E2E4FF] text-[16px] font-normal rounded-full opacity-30 cursor-not-allowed"
+                          style={{
+                            fontFamily: '"Red Hat Display", sans-serif',
+                            backgroundColor: "var(--button-bg)",
+                            color: "var(--button-text)",
+                            filter: "grayscale(100%)",
+                          }}>
+                          Installed
+                        </Button>
                       ) : (
+                        // )
                         <Button
                           onClick={handleInstall}
                           disabled={installingApp}
                           className="w-[140px] h-[40px] bg-[#242454] hover:bg-[#2d2f5a] text-[#E2E4FF] text-[16px] font-normal rounded-full"
-                          style={{ fontFamily: '"SF Pro Rounded", sans-serif' }}
-                        >
+                          style={{ fontFamily: '"Red Hat Display", sans-serif' }}>
                           {installingApp ? "Installing…" : "Get App"}
                         </Button>
                       )
@@ -488,8 +445,7 @@ const AppDetails: React.FC = () => {
                           })
                         }
                         className="w-[140px] h-[40px] bg-[#242454] text-[#E2E4FF] text-[16px] font-normal rounded-full"
-                        style={{ fontFamily: '"SF Pro Rounded", sans-serif' }}
-                      >
+                        style={{ fontFamily: '"Red Hat Display", sans-serif' }}>
                         Sign in
                       </Button>
                     )}
@@ -501,17 +457,9 @@ const AppDetails: React.FC = () => {
                     <div
                       className="flex items-center gap-3 p-3 rounded-lg"
                       style={{
-                        backgroundColor:
-                          theme === "light"
-                            ? "#FDECEA"
-                            : "rgba(255, 255, 255, 0.05)",
-                        border: `1px solid ${
-                          theme === "light"
-                            ? "#F5C6CB"
-                            : "rgba(255, 255, 255, 0.1)"
-                        }`,
-                      }}
-                    >
+                        backgroundColor: theme === "light" ? "#FDECEA" : "rgba(255, 255, 255, 0.05)",
+                        border: `1px solid ${theme === "light" ? "#F5C6CB" : "rgba(255, 255, 255, 0.1)"}`,
+                      }}>
                       <Info
                         className="h-5 w-5"
                         style={{
@@ -522,10 +470,8 @@ const AppDetails: React.FC = () => {
                         className="text-[14px]"
                         style={{
                           color: theme === "light" ? "#B91C1C" : "#FCA5A5",
-                        }}
-                      >
-                        This app appears to be offline. Some actions may not
-                        work.
+                        }}>
+                        This app appears to be offline. Some actions may not work.
                       </span>
                     </div>
                   </div>
@@ -536,10 +482,9 @@ const AppDetails: React.FC = () => {
                   <p
                     className="text-[16px] font-normal leading-[1.6] sm:max-w-[480px]"
                     style={{
-                      fontFamily: '"SF Pro Rounded", sans-serif',
+                      fontFamily: '"Red Hat Display", sans-serif',
                       color: theme === "light" ? "#000000" : "#E4E4E7",
-                    }}
-                  >
+                    }}>
                     {app.description || "No description available."}
                   </p>
                 </div>
@@ -549,11 +494,10 @@ const AppDetails: React.FC = () => {
                   <h3
                     className="text-[12px] font-semibold uppercase mb-6"
                     style={{
-                      fontFamily: '"SF Pro Rounded", sans-serif',
+                      fontFamily: '"Red Hat Display", sans-serif',
                       letterSpacing: "0.05em",
                       color: theme === "light" ? "#000000" : "#9CA3AF",
-                    }}
-                  >
+                    }}>
                     Information
                   </h3>
 
@@ -563,19 +507,15 @@ const AppDetails: React.FC = () => {
                         className="text-[14px] font-medium"
                         style={{
                           color: theme === "light" ? "#000000" : "#9CA3AF",
-                        }}
-                      >
+                        }}>
                         Company
                       </span>
                       <span
                         className="text-[14px] font-normal text-right"
                         style={{
                           color: theme === "light" ? "#000000" : "#E4E4E7",
-                        }}
-                      >
-                        {app.orgName ||
-                          app.developerProfile?.company ||
-                          "Mentra"}
+                        }}>
+                        {app.orgName || app.developerProfile?.company || "Mentra"}
                       </span>
                     </div>
 
@@ -585,8 +525,7 @@ const AppDetails: React.FC = () => {
                           className="text-[14px] font-medium"
                           style={{
                             color: theme === "light" ? "#000000" : "#9CA3AF",
-                          }}
-                        >
+                          }}>
                           Website
                         </span>
                         <a
@@ -596,8 +535,7 @@ const AppDetails: React.FC = () => {
                           className="text-[14px] font-normal hover:underline text-right"
                           style={{
                             color: theme === "light" ? "#000000" : "#E4E4E7",
-                          }}
-                        >
+                          }}>
                           {app.developerProfile.website}
                         </a>
                       </div>
@@ -609,8 +547,7 @@ const AppDetails: React.FC = () => {
                           className="text-[14px] font-medium"
                           style={{
                             color: theme === "light" ? "#000000" : "#9CA3AF",
-                          }}
-                        >
+                          }}>
                           Contact
                         </span>
                         <a
@@ -618,8 +555,7 @@ const AppDetails: React.FC = () => {
                           className="text-[14px] font-normal hover:underline text-right"
                           style={{
                             color: theme === "light" ? "#000000" : "#E4E4E7",
-                          }}
-                        >
+                          }}>
                           {app.developerProfile.contactEmail}
                         </a>
                       </div>
@@ -630,22 +566,17 @@ const AppDetails: React.FC = () => {
                         className="text-[14px] font-medium"
                         style={{
                           color: theme === "light" ? "#000000" : "#9CA3AF",
-                        }}
-                      >
+                        }}>
                         App Type
                       </span>
                       <span
                         className="text-[14px] font-normal text-right capitalize"
                         style={{
                           color: theme === "light" ? "#000000" : "#E4E4E7",
-                        }}
-                      >
+                        }}>
                         {(() => {
-                          const appType =
-                            app.appType ?? app.tpaType ?? "Foreground";
-                          return appType === "standard"
-                            ? "Foreground"
-                            : appType;
+                          const appType = app.appType ?? app.tpaType ?? "Foreground";
+                          return appType === "standard" ? "Foreground" : appType;
                         })()}
                       </span>
                     </div>
@@ -655,16 +586,14 @@ const AppDetails: React.FC = () => {
                         className="text-[14px] font-medium"
                         style={{
                           color: theme === "light" ? "#000000" : "#9CA3AF",
-                        }}
-                      >
+                        }}>
                         Package
                       </span>
                       <span
                         className="text-[14px] font-normal text-right"
                         style={{
                           color: theme === "light" ? "#000000" : "#E4E4E7",
-                        }}
-                      >
+                        }}>
                         {app.packageName.replace(".augmentos.", ".mentra.")}{" "}
                         {/* TODO: remove this once we have migrated over */}
                       </span>
@@ -677,11 +606,10 @@ const AppDetails: React.FC = () => {
                   <h3
                     className="text-[12px] font-semibold uppercase mb-6"
                     style={{
-                      fontFamily: '"SF Pro Rounded", sans-serif',
+                      fontFamily: '"Red Hat Display", sans-serif',
                       letterSpacing: "0.05em",
                       color: theme === "light" ? "#000000" : "#9CA3AF",
-                    }}
-                  >
+                    }}>
                     Required Permissions
                   </h3>
                   <div className="space-y-4">
@@ -691,42 +619,31 @@ const AppDetails: React.FC = () => {
                           key={index}
                           className="flex items-start gap-3 p-3 rounded-lg"
                           style={{
-                            backgroundColor:
-                              theme === "light"
-                                ? "#f8f9fa"
-                                : "rgba(255, 255, 255, 0.05)",
+                            backgroundColor: theme === "light" ? "#f8f9fa" : "rgba(255, 255, 255, 0.05)",
                             border: `1px solid ${theme === "light" ? "#e9ecef" : "rgba(255, 255, 255, 0.1)"}`,
-                          }}
-                        >
+                          }}>
                           <div
                             className="flex-shrink-0 mt-0.5"
                             style={{
                               color: theme === "light" ? "#6c757d" : "#9CA3AF",
-                            }}
-                          >
+                            }}>
                             {getPermissionIcon(permission.type || "Microphone")}
                           </div>
                           <div className="flex-1">
                             <div
                               className="text-[14px] font-semibold mb-1"
                               style={{
-                                color:
-                                  theme === "light" ? "#000000" : "#E4E4E7",
-                              }}
-                            >
-                              {permission.type || "Microphone"}
+                                color: theme === "light" ? "#000000" : "#E4E4E7",
+                              }}>
+                              {(permission.type || "Microphone").charAt(0).toUpperCase() +
+                                (permission.type || "Microphone").slice(1).toLowerCase()}
                             </div>
                             <div
                               className="text-[13px] leading-[1.4]"
                               style={{
-                                color:
-                                  theme === "light" ? "#6c757d" : "#9CA3AF",
-                              }}
-                            >
-                              {permission.description ||
-                                getPermissionDescription(
-                                  permission.type || "Microphone",
-                                )}
+                                color: theme === "light" ? "#6c757d" : "#9CA3AF",
+                              }}>
+                              {permission.description || getPermissionDescription(permission.type || "Microphone")}
                             </div>
                           </div>
                         </div>
@@ -735,27 +652,21 @@ const AppDetails: React.FC = () => {
                       <div
                         className="text-center py-6 rounded-lg"
                         style={{
-                          backgroundColor:
-                            theme === "light"
-                              ? "#f8f9fa"
-                              : "rgba(255, 255, 255, 0.05)",
+                          backgroundColor: theme === "light" ? "#f8f9fa" : "rgba(255, 255, 255, 0.05)",
                           border: `1px solid ${theme === "light" ? "#e9ecef" : "rgba(255, 255, 255, 0.1)"}`,
-                        }}
-                      >
+                        }}>
                         <div
                           className="text-[14px] font-medium"
                           style={{
                             color: theme === "light" ? "#000000" : "#9CA3AF",
-                          }}
-                        >
+                          }}>
                           No special permissions required
                         </div>
                         <div
                           className="text-[12px] mt-1"
                           style={{
                             color: theme === "light" ? "#6c757d" : "#9CA3AF",
-                          }}
-                        >
+                          }}>
                           This app runs with standard system permissions only.
                         </div>
                       </div>
@@ -768,84 +679,57 @@ const AppDetails: React.FC = () => {
                   <h3
                     className="text-[12px] font-semibold uppercase mb-6"
                     style={{
-                      fontFamily: '"SF Pro Rounded", sans-serif',
+                      fontFamily: '"Red Hat Display", sans-serif',
                       letterSpacing: "0.05em",
                       color: theme === "light" ? "#000000" : "#9CA3AF",
-                    }}
-                  >
+                    }}>
                     Hardware Requirements
                   </h3>
                   <div className="space-y-4">
-                    {app.hardwareRequirements &&
-                    app.hardwareRequirements.length > 0 ? (
+                    {app.hardwareRequirements && app.hardwareRequirements.length > 0 ? (
                       <div className="space-y-3">
                         {/* Required Hardware */}
-                        {app.hardwareRequirements.filter(
-                          (req) =>
-                            req.level === HardwareRequirementLevel.REQUIRED,
-                        ).length > 0 && (
+                        {app.hardwareRequirements.filter((req) => req.level === HardwareRequirementLevel.REQUIRED)
+                          .length > 0 && (
                           <div>
                             <div
                               className="text-[13px] font-medium mb-2"
                               style={{
-                                color:
-                                  theme === "light" ? "#000000" : "#E4E4E7",
-                              }}
-                            >
+                                color: theme === "light" ? "#000000" : "#E4E4E7",
+                              }}>
                               Required Hardware
                             </div>
                             {app.hardwareRequirements
-                              .filter(
-                                (req) =>
-                                  req.level ===
-                                  HardwareRequirementLevel.REQUIRED,
-                              )
+                              .filter((req) => req.level === HardwareRequirementLevel.REQUIRED)
                               .map((req, index) => (
                                 <div
                                   key={`required-${index}`}
                                   className="flex items-start gap-3 p-3 rounded-lg mb-2"
                                   style={{
-                                    backgroundColor:
-                                      theme === "light"
-                                        ? "#f8f9fa"
-                                        : "rgba(255, 255, 255, 0.05)",
+                                    backgroundColor: theme === "light" ? "#f8f9fa" : "rgba(255, 255, 255, 0.05)",
                                     border: `1px solid ${theme === "light" ? "#e9ecef" : "rgba(255, 255, 255, 0.1)"}`,
-                                  }}
-                                >
+                                  }}>
                                   <div
                                     className="flex-shrink-0 mt-0.5"
                                     style={{
-                                      color:
-                                        theme === "light"
-                                          ? "#6c757d"
-                                          : "#9CA3AF",
-                                    }}
-                                  >
-                                    {hardwareIcons[req.type]}
+                                      color: theme === "light" ? "#6c757d" : "#9CA3AF",
+                                    }}>
+                                    {hardwareIcons[req.type as HardwareType]}
                                   </div>
                                   <div className="flex-1">
                                     <div
                                       className="text-[14px] font-semibold mb-1"
                                       style={{
-                                        color:
-                                          theme === "light"
-                                            ? "#000000"
-                                            : "#E4E4E7",
-                                      }}
-                                    >
-                                      {req.type.charAt(0) +
-                                        req.type.slice(1).toLowerCase()}
+                                        color: theme === "light" ? "#000000" : "#E4E4E7",
+                                      }}>
+                                      {req.type.charAt(0).toUpperCase() + req.type.slice(1).toLowerCase()}
                                     </div>
                                     {req.description && (
                                       <div
                                         className="text-[13px] leading-[1.4]"
                                         style={{
-                                          color:
-                                            theme === "light"
-                                              ? "#6c757d"
-                                              : "#9CA3AF",
-                                        }}
-                                      >
+                                          color: theme === "light" ? "#6c757d" : "#9CA3AF",
+                                        }}>
                                         {req.description}
                                       </div>
                                     )}
@@ -856,72 +740,47 @@ const AppDetails: React.FC = () => {
                         )}
 
                         {/* Optional Hardware */}
-                        {app.hardwareRequirements.filter(
-                          (req) =>
-                            req.level === HardwareRequirementLevel.OPTIONAL,
-                        ).length > 0 && (
+                        {app.hardwareRequirements.filter((req) => req.level === HardwareRequirementLevel.OPTIONAL)
+                          .length > 0 && (
                           <div>
                             <div
                               className="text-[13px] font-medium mb-2"
                               style={{
-                                color:
-                                  theme === "light" ? "#000000" : "#E4E4E7",
-                              }}
-                            >
+                                color: theme === "light" ? "#000000" : "#E4E4E7",
+                              }}>
                               Optional Hardware
                             </div>
                             {app.hardwareRequirements
-                              .filter(
-                                (req) =>
-                                  req.level ===
-                                  HardwareRequirementLevel.OPTIONAL,
-                              )
+                              .filter((req) => req.level === HardwareRequirementLevel.OPTIONAL)
                               .map((req, index) => (
                                 <div
                                   key={`optional-${index}`}
                                   className="flex items-start gap-3 p-3 rounded-lg mb-2"
                                   style={{
-                                    backgroundColor:
-                                      theme === "light"
-                                        ? "#f8f9fa"
-                                        : "rgba(255, 255, 255, 0.05)",
+                                    backgroundColor: theme === "light" ? "#f8f9fa" : "rgba(255, 255, 255, 0.05)",
                                     border: `1px solid ${theme === "light" ? "#e9ecef" : "rgba(255, 255, 255, 0.1)"}`,
-                                  }}
-                                >
+                                  }}>
                                   <div
                                     className="flex-shrink-0 mt-0.5"
                                     style={{
-                                      color:
-                                        theme === "light"
-                                          ? "#6c757d"
-                                          : "#9CA3AF",
-                                    }}
-                                  >
-                                    {hardwareIcons[req.type]}
+                                      color: theme === "light" ? "#6c757d" : "#9CA3AF",
+                                    }}>
+                                    {hardwareIcons[req.type as HardwareType]}
                                   </div>
                                   <div className="flex-1">
                                     <div
                                       className="text-[14px] font-semibold mb-1"
                                       style={{
-                                        color:
-                                          theme === "light"
-                                            ? "#000000"
-                                            : "#E4E4E7",
-                                      }}
-                                    >
-                                      {req.type.charAt(0) +
-                                        req.type.slice(1).toLowerCase()}
+                                        color: theme === "light" ? "#000000" : "#E4E4E7",
+                                      }}>
+                                      {req.type.charAt(0).toUpperCase() + req.type.slice(1).toLowerCase()}
                                     </div>
                                     {req.description && (
                                       <div
                                         className="text-[13px] leading-[1.4]"
                                         style={{
-                                          color:
-                                            theme === "light"
-                                              ? "#6c757d"
-                                              : "#9CA3AF",
-                                        }}
-                                      >
+                                          color: theme === "light" ? "#6c757d" : "#9CA3AF",
+                                        }}>
                                         {req.description}
                                       </div>
                                     )}
@@ -935,27 +794,21 @@ const AppDetails: React.FC = () => {
                       <div
                         className="text-center py-6 rounded-lg"
                         style={{
-                          backgroundColor:
-                            theme === "light"
-                              ? "#f8f9fa"
-                              : "rgba(255, 255, 255, 0.05)",
+                          backgroundColor: theme === "light" ? "#f8f9fa" : "rgba(255, 255, 255, 0.05)",
                           border: `1px solid ${theme === "light" ? "#e9ecef" : "rgba(255, 255, 255, 0.1)"}`,
-                        }}
-                      >
+                        }}>
                         <div
                           className="text-[14px] font-medium"
                           style={{
                             color: theme === "light" ? "#000000" : "#9CA3AF",
-                          }}
-                        >
+                          }}>
                           No specific hardware requirements
                         </div>
                         <div
                           className="text-[12px] mt-1"
                           style={{
                             color: theme === "light" ? "#6c757d" : "#9CA3AF",
-                          }}
-                        >
+                          }}>
                           This app works with any glasses configuration.
                         </div>
                       </div>
@@ -966,9 +819,9 @@ const AppDetails: React.FC = () => {
                 {/* Get MentraOS - Hide in React Native WebView */}
                 {!isWebView && (
                   <div className="text-center mb-8">
-                    <div className="flex justify-center">
+                    {/* <div className="flex justify-center">
                       <GetMentraOSButton size="small" />
-                    </div>
+                    </div> */}
                   </div>
                 )}
               </div>

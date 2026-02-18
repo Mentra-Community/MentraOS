@@ -44,7 +44,7 @@ The `PhotoCommandHandler` and `AsgCameraServer` now use the same `FileManager` f
 
 ### Package-Based File Organization
 
-Both components use the FileManager's default package name: `com.augmentos.asg_client.camera`
+Both components use the FileManager's default package name: `com.mentra.asg_client.camera`
 
 - **FileManager**: Defines and provides the default package name via `getDefaultPackageName()`
 - **BaseMediaCommandHandler**: Provides common package directory management
@@ -56,7 +56,7 @@ Both components use the FileManager's default package name: `com.augmentos.asg_c
 
 ```
 FileManager Base Directory/
-├── com.augmentos.asg_client.camera/
+├── com.mentra.asg_client.camera/
 │   ├── IMG_20231201_143022.jpg
 │   ├── IMG_20231201_143045.jpg
 │   ├── VID_20231201_143100.mp4

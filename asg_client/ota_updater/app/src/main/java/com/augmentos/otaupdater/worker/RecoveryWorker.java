@@ -1,4 +1,4 @@
-package com.augmentos.otaupdater.worker;
+package com.mentra.otaupdater.worker;
 
 import android.content.ComponentName;
 import android.content.Context;
@@ -14,8 +14,8 @@ import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 import androidx.work.Data;
-import com.augmentos.otaupdater.helper.OtaHelper;
-import com.augmentos.otaupdater.helper.Constants;
+import com.mentra.otaupdater.helper.OtaHelper;
+import com.mentra.otaupdater.helper.Constants;
 
 public class RecoveryWorker extends Worker {
     private static final String TAG = "RecoveryWorker";
@@ -23,10 +23,10 @@ public class RecoveryWorker extends Worker {
     private static final String PREFS_NAME = "RecoveryWorkerPrefs";
     private static final String KEY_LAST_RESTART = "last_restart_timestamp";
     private static final long MIN_RESTART_INTERVAL_MS = 5000; // 5 seconds minimum between restarts
-    private static final String ASG_CLIENT_PACKAGE = "com.augmentos.asg_client";
-    private static final String ASG_CLIENT_SERVICE = "com.augmentos.asg_client.AsgClientService";
-    private static final String ACTION_RESTART_SERVICE = "com.augmentos.asg_client.ACTION_RESTART_SERVICE";
-    private static final String ACTION_RESTART_COMPLETE = "com.augmentos.asg_client.ACTION_RESTART_COMPLETE";
+    private static final String ASG_CLIENT_PACKAGE = "com.mentra.asg_client";
+    private static final String ASG_CLIENT_SERVICE = "com.mentra.asg_client.AsgClientService";
+    private static final String ACTION_RESTART_SERVICE = "com.mentra.asg_client.ACTION_RESTART_SERVICE";
+    private static final String ACTION_RESTART_COMPLETE = "com.mentra.asg_client.ACTION_RESTART_COMPLETE";
 
     public RecoveryWorker(Context context, WorkerParameters params) {
         super(context, params);

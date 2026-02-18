@@ -1,0 +1,233 @@
+---
+title: "Display Glasses"
+description: "Build apps for glasses with screens - G1, Vuzix"
+---
+
+**Display glasses have screens for showing content but no cameras.** Examples: Even Realities G1, Vuzix Z100. These devices are ideal for information display and heads-up interfaces.
+
+## Common Display Glasses
+
+### Even Realities G1
+
+- **Display**: Green monochrome, 640×200 resolution
+- **Microphone**: Yes
+- **Speaker**: No (audio through phone)
+- **Camera**: No
+- **Buttons**: No
+- **LEDs**: No
+
+```typescript
+// G1 capabilities
+{
+  modelName: "Even Realities G1",
+  hasDisplay: true,
+  hasCamera: false,
+  hasMicrophone: true,
+  hasSpeaker: false
+}
+```
+
+### Vuzix Z100
+
+- **Display**: Green monochrome
+- **Microphone**: No
+- **Speaker**: No
+- **Camera**: No
+- **Buttons**: No
+- **LEDs**: No
+
+```typescript
+// Z100 capabilities
+{
+  modelName: "Vuzix Z100",
+  hasDisplay: true,
+  hasCamera: false,
+  hasMicrophone: false,
+  hasSpeaker: false
+}
+```
+
+## Building for Display Glasses
+
+### Check Display Capabilities
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const caps = session.capabilities;
+  if (!caps?.hasDisplay) {
+    session.logger.warn('No display available');
+    return;
+  }
+
+  const display = caps.display;
+  if (display) {
+    session.logger.info('Resolution:', display.resolution);
+    session.logger.info('Is color:', display.isColor);
+    session.logger.info('Max lines:', display.maxTextLines);
+  }
+}
+```
+
+### Adapt to Display Size
+
+```typescript
+const maxLines = caps.display?.maxTextLines || 3;
+
+if (maxLines < 5) {
+  // Small display - brief message
+  session.layouts.showTextWall('Done!');
+} else {
+  // Larger display - more detail
+  session.layouts.showReferenceCard('Complete', 'Task finished successfully');
+}
+```
+
+### Monochrome Displays
+
+```typescript
+const isColor = caps.display?.isColor;
+
+if (!isColor) {
+  // Monochrome - use high contrast
+  session.layouts.showTextWall('Status: Active');
+  // Avoid complex graphics
+} else {
+  // Color display available
+  session.layouts.showTextWall('✓ Status: Active');
+}
+```
+
+## Audio Routing
+
+**Display glasses without speakers route audio to the phone:**
+
+```typescript
+if (!caps.hasSpeaker) {
+  // Audio plays through phone
+  await session.audio.speak('Hello!');
+
+  // User hears through phone speaker or Bluetooth headphones
+}
+```
+
+## Input Methods
+
+**G1 has microphone for voice input:**
+
+```typescript
+if (caps.hasMicrophone) {
+  session.events.onTranscription((data) => {
+    if (data.isFinal) {
+      session.layouts.showTextWall(data.text);
+    }
+  });
+}
+```
+
+**Vuzix has no microphone - use phone for input:**
+
+```typescript
+// Voice input happens through phone's microphone
+session.events.onTranscription((data) => {
+  // Still works - uses phone mic
+});
+```
+
+## Display Best Practices
+
+**Keep text concise:**
+
+```typescript
+// ✅ Good - readable
+session.layouts.showTextWall('Message sent');
+
+// ❌ Avoid - too much text
+session.layouts.showTextWall(
+  'Your message has been successfully sent to the recipient and they will receive it shortly'
+);
+```
+
+**Use appropriate layouts:**
+
+```typescript
+// Simple status
+session.layouts.showTextWall('Ready');
+
+// Structured info
+session.layouts.showReferenceCard(
+  'Weather',
+  'Sunny\n72°F\nHumidity: 45%'
+);
+
+// Two-part content
+session.layouts.showDoubleTextWall({
+  topText: 'Question:',
+  bottomText: 'What is 2 + 2?'
+});
+```
+
+**Test on actual hardware:**
+- Display sizes vary
+- Text may be smaller/larger than expected
+- Green monochrome has limited contrast
+
+## Example App
+
+```typescript
+class DisplayGlassesApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    const caps = session.capabilities;
+
+    if (!caps?.hasDisplay) {
+      session.logger.warn('No display - audio only');
+      await session.audio.speak('Welcome');
+      return;
+    }
+
+    // Show welcome on display
+    session.layouts.showTextWall('Voice Assistant Ready');
+
+    // Use microphone if available
+    if (caps.hasMicrophone) {
+      session.events.onTranscription((data) => {
+        if (data.isFinal) {
+          this.handleCommand(session, data.text);
+        }
+      });
+    } else {
+      // Phone microphone still works
+      session.events.onTranscription((data) => {
+        if (data.isFinal) {
+          this.handleCommand(session, data.text);
+        }
+      });
+    }
+  }
+
+  private handleCommand(session: AppSession, text: string) {
+    session.layouts.showTextWall(`You said: ${text}`);
+
+    // Speak response if no speaker on glasses
+    if (!session.capabilities?.hasSpeaker) {
+      session.audio.speak('Processing');
+    }
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Camera Glasses" icon="camera" href="/app-devs/core-concepts/hardware-capabilities/camera-glasses">
+    Mentra Live - camera features
+  </Card>
+  <Card title="Display & UI" icon="display" href="/app-devs/core-concepts/display/layouts">
+    Using layouts and dashboard
+  </Card>
+  <Card title="Audio" icon="volume" href="/app-devs/core-concepts/speakers/text-to-speech">
+    Audio features
+  </Card>
+  <Card title="Overview" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
+    Back to overview
+  </Card>
+</CardGroup>

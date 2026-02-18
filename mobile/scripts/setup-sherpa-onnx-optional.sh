@@ -31,17 +31,16 @@ err() { echo -e "${RED}$1${NC}"; }
 SCRIPT_DIR="$( pwd )"
 cd "$SCRIPT_DIR"
 
-if [[ ! -d "ios" || ! -d "../android_core" ]]; then
+if [[ ! -d "ios" ]]; then
   err "❌ Run this script from the AugmentOS/mobile directory"
   exit 1
 fi
 
 IOS_PKG_DIR="ios/Packages/SherpaOnnx"
 IOS_MODEL_DIR="$IOS_PKG_DIR/Model"
-ANDROID_ASSETS_DIR="../android_core/app/src/main/assets/sherpa_onnx"
 TMP_DIR=".sherpa_tmp"
 
-mkdir -p "$IOS_MODEL_DIR" "$ANDROID_ASSETS_DIR" "$TMP_DIR"
+mkdir -p "$IOS_MODEL_DIR" "$TMP_DIR"
 
 #################################
 # 1. Download XCFramework (iOS) #

@@ -24,9 +24,9 @@
   "scripts": {
     "build": "bun run build:types && bun run build:esm && bun run build:cjs",
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap",
-    "build:esm": "bun build src/index.ts --outdir dist --format esm --external ws --external node:* --target node",
-    "build:cjs": "bun build src/index.ts --outdir dist --format cjs --external ws --external node:* --target node",
-    "dev": "bun run src/examples/connection-test.ts",
+    "build:esm": "bun build src/index.ts --outdir dist --format esm --external ws --external node:* --external livekit-client --external @livekit/rtc-node --external wrtc --target node",
+    "build:cjs": "bun build src/index.ts --outdir dist --format cjs --external ws --external node:* --external livekit-client --external @livekit/rtc-node --external wrtc --target node",
+    "dev": "bun run src/examples/basic-test.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "test:accounts": "bun run src/examples/account-test.ts",
@@ -36,6 +36,11 @@
     "test:live-captions": "bun run src/examples/live-captions-test.ts",
     "test:mira": "bun run src/examples/mira-test.ts",
     "test:translation": "bun run src/examples/translation-test.ts",
+    "test:livekit": "bun run src/examples/livekit-handshake-test.ts",
+    "test:livekit-sub": "bun run src/examples/livekit-subscriber-test.ts",
+    "test:livekit-node-pub": "bun run src/examples/livekit-node-publisher-test.ts",
+    "test:rtc-node-pub": "bun run src/examples/rtc-node-publisher.ts",
+    "test:livekit-diagnose": "bun run src/examples/livekit-pubsub-diagnose.ts",
     "monitor:live-captions": "bun run src/examples/live-captions-monitor.ts",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
@@ -61,7 +66,10 @@
     "ws": "^8.18.0",
     "events": "^3.3.0",
     "jsonwebtoken": "^9.0.2",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "livekit-client": "^2.5.7",
+    "@livekit/rtc-node": "^0.13.18",
+    "wrtc": "npm:@roamhq/wrtc@^0.8.0"
   },
   "devDependencies": {
     "@types/ws": "^8.5.12",

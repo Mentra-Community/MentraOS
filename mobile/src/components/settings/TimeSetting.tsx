@@ -1,8 +1,9 @@
-import React, {useState, useEffect, useRef} from "react"
-import {View, Text, StyleSheet, Platform, Pressable, Modal, ScrollView} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useState, useEffect, useRef} from "react"
+import {View, Pressable, Modal, ScrollView, Platform, ViewStyle, TextStyle} from "react-native"
+
+import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {ViewStyle, TextStyle} from "react-native"
 
 type TimeSettingProps = {
   label: string
@@ -10,10 +11,31 @@ type TimeSettingProps = {
   onValueChange: (value: number) => void
   containerStyle?: ViewStyle
   showSeconds?: boolean
+  isFirst?: boolean
+  isLast?: boolean
 }
 
-const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, containerStyle, showSeconds = true}) => {
+const TimeSetting: React.FC<TimeSettingProps> = ({
+  label,
+  value,
+  onValueChange,
+  containerStyle,
+  showSeconds = true,
+  isFirst,
+  isLast,
+}) => {
   const {theme, themed} = useAppTheme()
+
+  const groupedStyle: ViewStyle | undefined =
+    isFirst !== undefined || isLast !== undefined
+      ? {
+          borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          marginBottom: isLast ? 0 : theme.spacing.s2,
+        }
+      : undefined
   const [modalVisible, setModalVisible] = useState(false)
   const [localHours, setLocalHours] = useState(0)
   const [localMinutes, setLocalMinutes] = useState(0)
@@ -41,7 +63,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
 
   const REPEATS = 5 // Must be odd for perfect centering
   const ITEM_HEIGHT = 44
-  const VISIBLE_ITEMS = 3
+  const _VISIBLE_ITEMS = 3
   const CENTER_SLOT = Math.floor(REPEATS / 2)
 
   // Function to scroll to center the selected value
@@ -102,7 +124,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
     setModalVisible(false)
   }
 
-  const generateTimeArray = (max: number) => {
+  const _generateTimeArray = (max: number) => {
     return Array.from({length: max}, (_, i) => i)
   }
 
@@ -127,8 +149,8 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
   }
 
   return (
-    <View style={[themed($container), containerStyle]}>
-      <Text style={themed($label)}>{label}</Text>
+    <View style={[themed($container), groupedStyle, containerStyle]}>
+      <Text style={themed($label)} weight="semibold" text={label} />
 
       <Pressable
         style={themed($timeButton)}
@@ -142,7 +164,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
         <View style={themed($modalOverlay)}>
           <View style={themed($modalContent)}>
             <View style={themed($modalHeader)}>
-              <Text style={themed($modalTitle)}>{label}</Text>
+              <Text style={themed($modalTitle)} weight="semibold" text={label} />
             </View>
 
             <View style={themed($pickerContainer)}>
@@ -159,7 +181,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
                   scrollEventThrottle={16}
                   contentContainerStyle={{paddingTop: ITEM_HEIGHT, paddingBottom: ITEM_HEIGHT}}
                   onLayout={handleScrollViewLayout(hoursScrollRef, localHours, 100)}
-                  onMomentumScrollEnd={event => {
+                  onMomentumScrollEnd={(event) => {
                     const offsetY = event.nativeEvent.contentOffset.y
                     const index = Math.round(offsetY / ITEM_HEIGHT)
                     const actualHour = index % 100
@@ -198,7 +220,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
                   scrollEventThrottle={16}
                   contentContainerStyle={{paddingTop: ITEM_HEIGHT, paddingBottom: ITEM_HEIGHT}}
                   onLayout={handleScrollViewLayout(minutesScrollRef, localMinutes, 60)}
-                  onMomentumScrollEnd={event => {
+                  onMomentumScrollEnd={(event) => {
                     const offsetY = event.nativeEvent.contentOffset.y
                     const index = Math.round(offsetY / ITEM_HEIGHT)
                     const actualMinute = index % 60
@@ -238,7 +260,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
                     scrollEventThrottle={16}
                     contentContainerStyle={{paddingTop: ITEM_HEIGHT, paddingBottom: ITEM_HEIGHT}}
                     onLayout={handleScrollViewLayout(secondsScrollRef, localSeconds, 60)}
-                    onMomentumScrollEnd={event => {
+                    onMomentumScrollEnd={(event) => {
                       const offsetY = event.nativeEvent.contentOffset.y
                       const index = Math.round(offsetY / ITEM_HEIGHT)
                       const actualSecond = index % 60
@@ -282,31 +304,29 @@ const TimeSetting: React.FC<TimeSettingProps> = ({label, value, onValueChange, c
 }
 
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: 8,
-  paddingVertical: spacing.md,
-  paddingHorizontal: spacing.lg,
+  backgroundColor: colors.primary_foreground,
+  borderRadius: spacing.s4,
+  paddingVertical: spacing.s4,
+  paddingHorizontal: spacing.s4,
   width: "100%",
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 16,
+  fontSize: 14,
   color: colors.text,
-  marginBottom: spacing.sm,
+  marginBottom: spacing.s2,
 })
 
 const $timeButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
   alignItems: "center",
-  backgroundColor: colors.background,
+  backgroundColor: colors.backgroundAlt,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
-  paddingHorizontal: spacing.sm,
-  paddingVertical: spacing.xs,
+  paddingHorizontal: spacing.s3,
+  paddingVertical: spacing.s2,
   minHeight: Platform.OS === "ios" ? 44 : 48,
 })
 
@@ -330,28 +350,27 @@ const $modalOverlay: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $modalContent: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
+  backgroundColor: colors.backgroundAlt,
   borderRadius: 12,
-  padding: spacing.lg,
+  padding: spacing.s6,
   width: "90%",
   maxWidth: 400,
 })
 
 const $modalHeader: ThemedStyle<ViewStyle> = ({spacing}) => ({
   alignItems: "center",
-  marginBottom: spacing.lg,
+  marginBottom: spacing.s6,
 })
 
 const $modalTitle: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 18,
-  fontWeight: "600",
   color: colors.text,
 })
 
 const $pickerContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-around",
-  marginBottom: spacing.lg,
+  marginBottom: spacing.s6,
 })
 
 const $pickerColumn: ThemedStyle<ViewStyle> = () => ({
@@ -362,7 +381,7 @@ const $pickerColumn: ThemedStyle<ViewStyle> = () => ({
 const $pickerLabel: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 14,
   color: colors.textDim,
-  marginBottom: spacing.xs,
+  marginBottom: spacing.s2,
   fontWeight: "500",
 })
 
@@ -374,7 +393,7 @@ const $pickerItem: ThemedStyle<ViewStyle> = ({spacing}) => ({
   height: 44,
   justifyContent: "center",
   alignItems: "center",
-  paddingHorizontal: spacing.sm,
+  paddingHorizontal: spacing.s3,
 })
 
 const $pickerItemSelected: ThemedStyle<ViewStyle> = ({colors}) => ({
@@ -396,16 +415,16 @@ const $pickerItemTextSelected: ThemedStyle<TextStyle> = () => ({
 const $modalFooter: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
-  gap: spacing.md,
+  gap: spacing.s4,
 })
 
 const $cancelButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flex: 1,
-  backgroundColor: colors.background,
+  backgroundColor: colors.backgroundAlt,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
-  paddingVertical: spacing.sm,
+  paddingVertical: spacing.s3,
   alignItems: "center",
 })
 
@@ -413,7 +432,7 @@ const $confirmButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flex: 1,
   backgroundColor: colors.palette?.primary300 || "#007AFF",
   borderRadius: 6,
-  paddingVertical: spacing.sm,
+  paddingVertical: spacing.s3,
   alignItems: "center",
 })
 

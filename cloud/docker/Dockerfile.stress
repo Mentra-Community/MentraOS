@@ -1,0 +1,54 @@
+# Lean stress-test image: Bun runtime + Doppler CLI (no Go LiveKit bridge)
+FROM oven/bun:latest
+
+# Install runtime deps + tools needed to bootstrap Doppler
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Doppler CLI (secrets injected at runtime via `doppler run --`)
+RUN curl -sLf --retry 3 --tlsv1.2 --proto "=https" \
+    'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | \
+    gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | \
+    tee /etc/apt/sources.list.d/doppler-cli.list && \
+    apt-get update && apt-get install -y doppler && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy source code
+COPY . .
+
+# Install dependencies and ensure correct bun-types version
+RUN bun install && \
+    rm -rf node_modules/@types/bun && \
+    bun add -d bun-types@1.0.17
+
+# Build packages in sequence
+RUN echo "🚀 Starting build process..." && \
+    echo "⚙️ Building packages/types..." && \
+    cd packages/types && bun run build && \
+    echo "✅ Built packages/types..." && \
+    echo "⚙️ Building packages/sdk..." && \
+    cd ../sdk && bun run build && \
+    echo "✅ Built packages/sdk..." && \
+    echo "⚙️ Building packages/cloud..." && \
+    cd ../cloud && bun run build && \
+    echo "✅ Built packages/cloud..." && \
+    echo "🎉 All packages built successfully! 🎉"
+
+# Set working directory to cloud package so `bun run start` works directly
+WORKDIR /app/packages/cloud
+
+# Expose HTTP port and UDP audio port
+EXPOSE 80 8000/udp
+
+# Production defaults
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV SERVICE_NAME=cloud
+
+CMD ["echo", "Image ready. Use: doppler run -- bun run start"]

@@ -60,8 +60,8 @@ const getAdminStats = async (req: Request, res: Response) => {
           return app;
         } catch (error) {
           logger.error(
+            error as Error,
             `Error enhancing app ${app.packageName} with org info:`,
-            error,
           );
           return app;
         }
@@ -81,7 +81,7 @@ const getAdminStats = async (req: Request, res: Response) => {
 
     res.json(finalStats);
   } catch (error) {
-    logger.error("Error fetching admin stats:", error);
+    logger.error(error as Error, "Error fetching admin stats:");
     res.status(500).json({ error: "Failed to fetch admin stats" });
   }
 };
@@ -116,8 +116,8 @@ const getSubmittedApps = async (req: Request, res: Response) => {
           return app;
         } catch (error) {
           logger.error(
+            error as Error,
             `Error enhancing app ${app.packageName} with org info:`,
-            error,
           );
           return app;
         }
@@ -127,7 +127,7 @@ const getSubmittedApps = async (req: Request, res: Response) => {
     logger.info(`Found ${enhancedApps.length} submitted apps`);
     res.json(enhancedApps);
   } catch (error) {
-    logger.error("Error fetching submitted apps:", error);
+    logger.error(error as Error, "Error fetching submitted apps:");
     res.status(500).json({ error: "Failed to fetch submitted apps" });
   }
 };
@@ -160,14 +160,14 @@ const getAppDetail = async (req: Request, res: Response) => {
       }
     } catch (error) {
       logger.error(
+        error as Error,
         `Error enhancing app ${app.packageName} with org info:`,
-        error,
       );
     }
 
     res.json(enhancedApp);
   } catch (error) {
-    logger.error("Error fetching app detail:", error);
+    logger.error(error as Error, "Error fetching app detail:");
     res.status(500).json({ error: "Failed to fetch app detail" });
   }
 };
@@ -212,7 +212,7 @@ router.get("/debug", async (req, res) => {
       counts,
     });
   } catch (error) {
-    logger.error("Error in debug route:", error);
+    logger.error(error as Error, "Error in debug route:");
     res.status(500).json({
       error: "Error connecting to database",
       message: (error as Error).message,
@@ -249,7 +249,7 @@ router.post("/create-test-submission", async (req, res) => {
       app: testApp,
     });
   } catch (error) {
-    logger.error("Error creating test submission:", error);
+    logger.error(error as Error, "Error creating test submission:");
     res.status(500).json({
       error: "Error creating test submission",
       message: (error as Error).message,
@@ -322,7 +322,7 @@ const approveApp = async (req: Request, res: Response) => {
       app,
     });
   } catch (error) {
-    logger.error("Error approving app:", error);
+    logger.error(error, "Error approving app:");
     res.status(500).json({ error: "Failed to approve app" });
   }
 };
@@ -397,7 +397,7 @@ const rejectApp = async (req: Request, res: Response) => {
       app,
     });
   } catch (error) {
-    logger.error("Error rejecting app:", error);
+    logger.error(error as Error, "Error rejecting app:");
     res.status(500).json({ error: "Failed to reject app" });
   }
 };
@@ -417,7 +417,7 @@ router.get("/memory/now", validateAdminEmail, (req: Request, res: Response) => {
     const snapshot = memoryTelemetryService.getCurrentStats();
     res.json(snapshot);
   } catch (error) {
-    logger.error("Error generating memory telemetry snapshot:", error);
+    logger.error(error as Error, "Error generating memory telemetry snapshot:");
     res
       .status(500)
       .json({ error: "Failed to generate memory telemetry snapshot" });
@@ -441,7 +441,7 @@ router.post(
         filePath,
       });
     } catch (error) {
-      logger.error("Error taking heap snapshot:", error);
+      logger.error(error as Error, "Error taking heap snapshot:");
       res.status(500).json({ error: "Failed to take heap snapshot" });
     }
   },
@@ -474,7 +474,9 @@ async function takeHeapSnapshot(filePath: string): Promise<void> {
     } catch (error) {
       try {
         session.disconnect();
-      } catch {}
+      } catch {
+        /* ignore disconnect errors */
+      }
       reject(error);
     }
   });

@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../hooks/useAuth";
+import { useAuth } from "@mentra/shared";
 
 const DeleteAccountPage: React.FC = () => {
   const navigate = useNavigate();

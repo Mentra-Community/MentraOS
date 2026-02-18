@@ -1,0 +1,200 @@
+---
+title: "Dashboard"
+description: "Persistent status display for glanceable information"
+icon: "gauge"
+---
+
+The dashboard provides persistent UI that appears when users look up. Use it for status updates and notifications that don't require full attention.
+
+## Basic Usage
+
+```typescript
+session.dashboard.content.writeToMain('New message received');
+```
+
+With title and content:
+
+```typescript
+session.dashboard.content.writeToMain('App Status\nConnected and running');
+```
+
+## Dashboard Modes
+
+### Main Mode (Default)
+
+```typescript
+session.dashboard.content.writeToMain('Status: Active');
+```
+
+### Expanded Mode
+
+More detailed information:
+
+```typescript
+session.dashboard.content.writeToExpanded('Detailed status information here');
+```
+
+## Clearing Dashboard
+
+```typescript
+session.dashboard.content.writeToMain('');
+```
+
+## Best Practices
+
+**Use for background info:**
+
+```typescript
+// ✅ Good - status updates
+session.dashboard.content.writeToMain('3 unread messages');
+
+// ❌ Avoid - main app content
+session.dashboard.content.writeToMain('Welcome! Here is a long message...');
+// ^ Use layouts for this instead
+```
+
+**Keep updates brief:**
+
+```typescript
+// ✅ Good
+session.dashboard.content.writeToMain('Recording: 1:23');
+
+// ❌ Avoid
+session.dashboard.content.writeToMain(
+  'You have been recording for 1 minute and 23 seconds'
+);
+```
+
+**Updates are auto-throttled:**
+
+MentraOS automatically throttles display updates to 1 every 300ms to prevent display desync:
+
+```typescript
+// You can update frequently - cloud handles throttling
+session.events.onTranscription((data) => {
+  if (data.isFinal) {
+    session.dashboard.content.writeToMain(`Message: ${data.text}`);
+  }
+});
+```
+
+## Common Patterns
+
+### Status Updates
+
+```typescript
+session.events.onTranscription(async (data) => {
+  if (data.isFinal) {
+    // Show user input
+    session.layouts.showTextWall(data.text);
+    
+    // Update dashboard with status
+    session.dashboard.content.writeToMain('Processing...');
+    
+    // Process and show result
+    const response = await processInput(data.text);
+    session.layouts.showTextWall(response);
+    
+    // Clear dashboard
+    session.dashboard.content.writeToMain('');
+  }
+});
+```
+
+### Real-Time Counters
+
+```typescript
+let messageCount = 0;
+
+session.events.onTranscription((data) => {
+  if (data.isFinal) {
+    messageCount++;
+    
+    // Update main display
+    session.layouts.showTextWall(data.text);
+    
+    // Show count in dashboard
+    session.dashboard.content.writeToMain(`Messages: ${messageCount}`);
+  }
+});
+```
+
+### Recording Status
+
+```typescript
+let recordingStartTime: number;
+let recordingInterval: NodeJS.Timeout;
+
+function startRecording(session: AppSession) {
+  recordingStartTime = Date.now();
+  
+  recordingInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    
+    session.dashboard.content.writeToMain(
+      `Recording: ${minutes}:${seconds.toString().padStart(2, '0')}`
+    );
+  }, 1000);
+}
+
+function stopRecording(session: AppSession) {
+  clearInterval(recordingInterval);
+  session.dashboard.content.writeToMain('');
+}
+```
+
+### Notification Counts
+
+```typescript
+let notificationCount = 0;
+
+session.events.onPhoneNotification((data) => {
+  if (['Messages', 'Email'].includes(data.app)) {
+    notificationCount++;
+    session.dashboard.content.writeToMain(`${notificationCount} notifications`);
+  }
+});
+```
+
+## Dashboard API
+
+| Method | Description |
+|--------|-------------|
+| `content.writeToMain(text)` | Update main dashboard |
+| `content.writeToExpanded(text)` | Update expanded dashboard |
+| `content.write(text, modes)` | Update specific modes |
+| `content.onModeChange(callback)` | Listen for mode changes |
+
+<Info>
+Dashboard updates are automatically throttled to 1 per 300ms by MentraOS Cloud to prevent display desync.
+</Info>
+
+## When to Use Dashboard vs Layouts
+
+| Use Case | Use Dashboard | Use Layouts |
+|----------|---------------|-------------|
+| Main app content | ❌ | ✅ |
+| Status updates | ✅ | ❌ |
+| Notifications | ✅ | ❌ |
+| User input/output | ❌ | ✅ |
+| Persistent info | ✅ | ❌ |
+| Detailed content | ❌ | ✅ |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Layouts" icon="table-cells" href="/app-devs/core-concepts/display/layouts">
+    Main content display
+  </Card>
+  <Card title="Hardware & Capabilities" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
+    Check display capabilities
+  </Card>
+  <Card title="Dashboard API" icon="book" href="/app-devs/reference/dashboard-api">
+    Complete API reference
+  </Card>
+  <Card title="AppSession" icon="plug" href="/app-devs/core-concepts/app-session">
+    Learn about AppSession
+  </Card>
+</CardGroup>

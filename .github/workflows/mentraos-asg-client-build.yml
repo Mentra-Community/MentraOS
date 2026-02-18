@@ -11,11 +11,64 @@ on:
       - dev
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build:
     runs-on: self-hosted
 
     steps:
+      - name: Update PR comment - Build started
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- pr-review-helper -->';
+            const comment = comments.data.find(c => c.body.includes(marker));
+            if (!comment) return;
+
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+
+            // Check for existing working build link to preserve
+            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const existingShaMatch = comment.body.match(/🕶️ ASG Client[\s\S]*?✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/);
+
+            let buildStatus = `### 🕶️ ASG Client Build\n⏳ **Building...** (commit \`${sha}\`)`;
+
+            // If there's a previous working build, show it
+            if (existingDownloadMatch && existingShaMatch && existingShaMatch[1] !== sha) {
+              buildStatus += `\n\n📦 **Previous build:** (commit \`${existingShaMatch[1]}\`) - [📥 **Download ASG APK**](${existingDownloadMatch[1]})`;
+            }
+
+            const newBody = comment.body.replace(
+              /<!-- asg-build-status -->[\s\S]*?<!-- \/asg-build-status -->/,
+              `<!-- asg-build-status -->\n${buildStatus}\n<!-- /asg-build-status -->`
+            );
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: comment.id,
+              body: newBody
+            });
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          # Only clean build outputs, NOT dependency caches
+          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -45,21 +98,197 @@ jobs:
           git checkout working
 
       - name: Cache Gradle dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            ${{ runner.os }}-gradle-
+            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.os }}-
 
-      - name: Build Debug APK
+      - name: Build Release APK
+        id: gradle-build
         working-directory: ./asg_client
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleRelease --build-cache --parallel
+        continue-on-error: true
 
-      - name: Upload Debug APK
+      - name: Retry build with clean cache (if first attempt failed)
+        if: steps.gradle-build.outcome == 'failure'
+        working-directory: ./asg_client
+        run: |
+          echo "First build failed, cleaning Gradle cache and retrying..."
+          # Stop Gradle daemons first to release file locks
+          ./gradlew --stop || true
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
+          ./gradlew assembleRelease --build-cache --parallel
+
+      - name: Fail if both builds failed
+        if: steps.gradle-build.outcome == 'failure'
+        run: |
+          # Check if retry succeeded by looking for the APK
+          if [ ! -f "asg_client/app/build/outputs/apk/release/app-release.apk" ]; then
+            echo "Both build attempts failed"
+            exit 1
+          fi
+
+      - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: asg-client-debug
-          path: asg_client/app/build/outputs/apk/debug/app-debug.apk
+          name: asg-client-release
+          path: asg_client/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload APK to pr-builds release
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const prNumber = context.payload.pull_request.number;
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const apkName = `asg-pr-${prNumber}-${sha}.apk`;
+            const apkPath = 'asg_client/app/build/outputs/apk/release/app-release.apk';
+
+            // Get the pr-builds release
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: 'pr-builds'
+            });
+
+            // Delete existing asset with same name if it exists
+            for (const asset of release.data.assets) {
+              if (asset.name === apkName) {
+                console.log(`Deleting existing asset: ${asset.name}`);
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: asset.id
+                });
+                break;
+              }
+            }
+
+            // Read the APK file
+            const apkData = fs.readFileSync(apkPath);
+
+            // Upload the APK
+            console.log(`Uploading ${apkName} (${apkData.length} bytes)...`);
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.data.id,
+              name: apkName,
+              data: apkData
+            });
+
+            console.log(`Successfully uploaded ${apkName}`);
+
+      - name: Cleanup old release assets
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'pr-builds'
+              });
+
+              for (const asset of release.data.assets) {
+                const createdAt = new Date(asset.created_at);
+                if (createdAt < sevenDaysAgo) {
+                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                }
+              }
+            } catch (error) {
+              console.log('Cleanup skipped:', error.message);
+            }
+
+      - name: Update PR comment - Build succeeded
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- pr-review-helper -->';
+            const comment = comments.data.find(c => c.body.includes(marker));
+            if (!comment) return;
+
+            const prNumber = context.payload.pull_request.number;
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const apkName = `asg-pr-${prNumber}-${sha}.apk`;
+            const downloadUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds/${apkName}`;
+
+            const buildStatus = `### 🕶️ ASG Client Build\n✅ **Ready to test!** (commit \`${sha}\`)\n\n[📥 **Download ASG APK**](${downloadUrl})`;
+
+            const newBody = comment.body.replace(
+              /<!-- asg-build-status -->[\s\S]*?<!-- \/asg-build-status -->/,
+              `<!-- asg-build-status -->\n${buildStatus}\n<!-- /asg-build-status -->`
+            );
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: comment.id,
+              body: newBody
+            });
+
+      - name: Update PR comment - Build failed
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- pr-review-helper -->';
+            const comment = comments.data.find(c => c.body.includes(marker));
+            if (!comment) return;
+
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            // Check if there was a previous working build
+            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const previousShaMatch = comment.body.match(/🕶️ ASG Client[\s\S]*?✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/)
+                                  || comment.body.match(/📦 \*\*Previous build:\*\* \(commit `([a-f0-9]+)`\)/);
+
+            let buildStatus = `### 🕶️ ASG Client Build\n❌ **Build failed** (commit \`${sha}\`) - [View logs](${runUrl})`;
+
+            if (previousDownloadMatch && previousShaMatch && previousShaMatch[1] !== sha) {
+              buildStatus += `\n\n📦 **Previous build:** (commit \`${previousShaMatch[1]}\`) - [📥 **Download ASG APK**](${previousDownloadMatch[1]})`;
+            }
+
+            const newBody = comment.body.replace(
+              /<!-- asg-build-status -->[\s\S]*?<!-- \/asg-build-status -->/,
+              `<!-- asg-build-status -->\n${buildStatus}\n<!-- /asg-build-status -->`
+            );
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: comment.id,
+              body: newBody
+            });

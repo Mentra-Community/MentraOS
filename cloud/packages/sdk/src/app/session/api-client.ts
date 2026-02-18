@@ -19,12 +19,12 @@ export function wsUrlToHttpUrl(wsUrl?: string): string | undefined {
     const url = new URL(wsUrl);
 
     // Change protocol from ws/wss to http/https
-    const protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+    const protocol = url.protocol === "wss:" ? "https:" : "http:";
 
     // Recreate the URL with the new protocol
     return `${protocol}//${url.host}`;
   } catch (error) {
-    console.error('Error converting WebSocket URL to HTTP URL:', error);
+    console.error("Error converting WebSocket URL to HTTP URL:", error);
     return undefined;
   }
 }
@@ -79,32 +79,34 @@ export class ApiClient {
    */
   async fetchSettings(): Promise<any[]> {
     if (!this.baseUrl) {
-      throw new Error('API client is not configured with a base URL');
+      throw new Error("API client is not configured with a base URL");
     }
 
     if (!this.userId) {
-      throw new Error('User ID is required for fetching settings');
+      throw new Error("User ID is required for fetching settings");
     }
 
     const url = `${this.baseUrl}/appsettings/user/${this.packageName}`;
 
     try {
       const response = await fetch(url, {
-        method: 'GET',
+        method: "GET",
         headers: {
-          'Authorization': `Bearer ${this.userId}`,
-          'Content-Type': 'application/json'
-        }
+          Authorization: `Bearer ${this.userId}`,
+          "Content-Type": "application/json",
+        },
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch settings: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Failed to fetch settings: ${response.status} ${response.statusText}`,
+        );
       }
 
-      const data = await response.json() as { settings: any[] };
+      const data = (await response.json()) as { settings: any[] };
       return data.settings || [];
     } catch (error) {
-      console.error('Error fetching settings:', error);
+      console.error("Error fetching settings:", error);
       throw error;
     }
   }

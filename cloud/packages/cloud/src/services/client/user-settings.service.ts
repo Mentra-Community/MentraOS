@@ -1,44 +1,45 @@
 // services/core/user-settings.service.ts
 // Business logic for managing user settings
 
-import { Types } from "mongoose";
 import { UserSettings } from "../../models/user-settings.model";
 import { User } from "../../models/user.model";
 import { logger } from "../logging/pino-logger";
 
 /**
- * Find settings document by userId
+ * Find settings document by email
  */
-export async function findByUserId(userId: Types.ObjectId) {
-  return UserSettings.findOne({ userId });
+export async function findByEmail(email: string) {
+  const normalizedEmail = email.toLowerCase().trim();
+  return UserSettings.findOne({ email: normalizedEmail });
 }
 
 /**
  * Find or create settings document for a user
  */
-export async function findOrCreateForUser(userId: Types.ObjectId) {
-  let userSettings = await UserSettings.findOne({ userId });
-  
+export async function findOrCreateForUser(email: string) {
+  const normalizedEmail = email.toLowerCase().trim();
+  let userSettings = await UserSettings.findOne({ email: normalizedEmail });
+
   if (!userSettings) {
     userSettings = await UserSettings.create({
-      userId,
+      email: normalizedEmail,
       settings: new Map(),
       lastUpdated: new Date(),
     });
-    
-    logger.info(`Created settings document for user ${userId}`);
+
+    logger.info(`Created settings document for user ${normalizedEmail}`);
   }
-  
+
   return userSettings;
 }
 
 /**
  * Get all settings for a user
  */
-export async function getUserSettings(userId: string | Types.ObjectId): Promise<Record<string, any>> {
-  const objectId = typeof userId === "string" ? new Types.ObjectId(userId) : userId;
-  
-  const userSettings = await findByUserId(objectId);
+export async function getUserSettings(
+  email: string,
+): Promise<Record<string, any>> {
+  const userSettings = await findByEmail(email);
   return userSettings?.getSettings() || {};
 }
 
@@ -46,38 +47,36 @@ export async function getUserSettings(userId: string | Types.ObjectId): Promise<
  * Update settings for a user
  */
 export async function updateUserSettings(
-  userId: string | Types.ObjectId,
-  settings: Record<string, any>
+  email: string,
+  settings: Record<string, any>,
 ): Promise<Record<string, any>> {
-  const objectId = typeof userId === "string" ? new Types.ObjectId(userId) : userId;
-  
+  const normalizedEmail = email.toLowerCase().trim();
+
   // Verify user exists
-  const user = await User.findById(objectId);
+  const user = await User.findOne({ email: normalizedEmail });
   if (!user) {
     throw new Error("User not found");
   }
 
-  const userSettings = await findOrCreateForUser(objectId);
+  const userSettings = await findOrCreateForUser(normalizedEmail);
   await userSettings.updateSettings(settings);
-  
-  logger.info(`User settings updated`, {
-    userId: objectId.toString(),
-    updatedKeys: Object.keys(settings),
-  });
-  
+
+  logger.info(
+    {
+      email: normalizedEmail,
+      updatedKeys: Object.keys(settings),
+    },
+    `User settings updated`,
+  );
+
   return userSettings.getSettings();
 }
 
 /**
  * Get a specific setting by key
  */
-export async function getUserSetting(
-  userId: string | Types.ObjectId,
-  key: string
-): Promise<any> {
-  const objectId = typeof userId === "string" ? new Types.ObjectId(userId) : userId;
-  
-  const userSettings = await findByUserId(objectId);
+export async function getUserSetting(email: string, key: string): Promise<any> {
+  const userSettings = await findByEmail(email);
   return userSettings?.getSetting(key);
 }
 
@@ -85,53 +84,56 @@ export async function getUserSetting(
  * Set a specific setting
  */
 export async function setUserSetting(
-  userId: string | Types.ObjectId,
+  email: string,
   key: string,
-  value: any
+  value: any,
 ): Promise<void> {
-  const objectId = typeof userId === "string" ? new Types.ObjectId(userId) : userId;
-  
-  const userSettings = await findOrCreateForUser(objectId);
+  const userSettings = await findOrCreateForUser(email);
   await userSettings.setSetting(key, value);
-  
-  logger.info(`User setting updated`, {
-    userId: objectId.toString(),
-    key,
-  });
+
+  logger.info(
+    {
+      email: email.toLowerCase().trim(),
+      key,
+    },
+    `User setting updated`,
+  );
 }
 
 /**
  * Delete a specific setting
  */
 export async function deleteUserSetting(
-  userId: string | Types.ObjectId,
-  key: string
+  email: string,
+  key: string,
 ): Promise<void> {
-  const objectId = typeof userId === "string" ? new Types.ObjectId(userId) : userId;
-  
-  const userSettings = await findByUserId(objectId);
+  const userSettings = await findByEmail(email);
   if (userSettings) {
     await userSettings.deleteSetting(key);
-    
-    logger.info(`User setting deleted`, {
-      userId: objectId.toString(),
-      key,
-    });
+
+    logger.info(
+      {
+        email: email.toLowerCase().trim(),
+        key,
+      },
+      `User setting deleted`,
+    );
   }
 }
 
 /**
  * Delete all settings for a user (for cleanup)
  */
-export async function deleteAllUserSettings(userId: string | Types.ObjectId): Promise<boolean> {
-  const objectId = typeof userId === "string" ? new Types.ObjectId(userId) : userId;
-  
-  const result = await UserSettings.findOneAndDelete({ userId: objectId });
-  
+export async function deleteAllUserSettings(email: string): Promise<boolean> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const result = await UserSettings.findOneAndDelete({
+    email: normalizedEmail,
+  });
+
   if (result) {
-    logger.info(`All settings deleted for user ${objectId}`);
+    logger.info(`All settings deleted for user ${normalizedEmail}`);
   }
-  
+
   return !!result;
 }
 
@@ -139,35 +141,38 @@ export async function deleteAllUserSettings(userId: string | Types.ObjectId): Pr
  * Get user with settings in single optimized query
  * Use this when you always need both user + settings
  */
-export async function getUserWithSettings(userId: string | Types.ObjectId): Promise<(typeof User & { settings: Record<string, any>, settingsLastUpdated?: Date }) | null> {
-  const objectId = typeof userId === "string" ? new Types.ObjectId(userId) : userId;
-  
+export async function getUserWithSettings(email: string): Promise<
+  | (typeof User & {
+      settings: Record<string, any>;
+      settingsLastUpdated?: Date;
+    })
+  | null
+> {
+  const normalizedEmail = email.toLowerCase().trim();
+
   const result = await User.aggregate([
-    { $match: { _id: objectId } },
+    { $match: { email: normalizedEmail } },
     {
       $lookup: {
         from: "usersettings",
-        localField: "_id", 
-        foreignField: "userId",
-        as: "userSettings"
-      }
+        localField: "email",
+        foreignField: "email",
+        as: "userSettings",
+      },
     },
     {
       $addFields: {
         settings: {
-          $ifNull: [
-            { $arrayElemAt: ["$userSettings.settings", 0] },
-            {}
-          ]
+          $ifNull: [{ $arrayElemAt: ["$userSettings.settings", 0] }, {}],
         },
         settingsLastUpdated: {
-          $arrayElemAt: ["$userSettings.lastUpdated", 0] 
-        }
-      }
+          $arrayElemAt: ["$userSettings.lastUpdated", 0],
+        },
+      },
     },
     {
-      $unset: "userSettings" // Remove the lookup array from response
-    }
+      $unset: "userSettings", // Remove the lookup array from response
+    },
   ]);
 
   return result[0] || null;
@@ -176,31 +181,26 @@ export async function getUserWithSettings(userId: string | Types.ObjectId): Prom
 /**
  * Batch get multiple users with their settings
  */
-export async function getBatchUsersWithSettings(userIds: (string | Types.ObjectId)[]) {
-  const objectIds = userIds.map(id => 
-    typeof id === "string" ? new Types.ObjectId(id) : id
-  );
-  
+export async function getBatchUsersWithSettings(emails: string[]) {
+  const normalizedEmails = emails.map((email) => email.toLowerCase().trim());
+
   return User.aggregate([
-    { $match: { _id: { $in: objectIds } } },
+    { $match: { email: { $in: normalizedEmails } } },
     {
       $lookup: {
         from: "usersettings",
-        localField: "_id",
-        foreignField: "userId", 
-        as: "userSettings"
-      }
+        localField: "email",
+        foreignField: "email",
+        as: "userSettings",
+      },
     },
     {
       $addFields: {
         settings: {
-          $ifNull: [
-            { $arrayElemAt: ["$userSettings.settings", 0] },
-            {}
-          ]
-        }
-      }
+          $ifNull: [{ $arrayElemAt: ["$userSettings.settings", 0] }, {}],
+        },
+      },
     },
-    { $unset: "userSettings" }
+    { $unset: "userSettings" },
   ]);
 }

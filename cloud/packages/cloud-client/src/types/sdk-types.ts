@@ -5,40 +5,41 @@
  */
 
 // Message types from glasses to cloud
-export type GlassesToCloudMessageType = 
-  | 'connection_init'
-  | 'start_app'
-  | 'stop_app'
-  | 'vad'
-  | 'head_position'
-  | 'location_update'
-  | 'button_press'
-  | 'core_status_update'
-  | 'glasses_connection_state'
-  | 'request_settings';
+export type GlassesToCloudMessageType =
+  | "connection_init"
+  | "start_app"
+  | "stop_app"
+  | "vad"
+  | "head_position"
+  | "location_update"
+  | "button_press"
+  | "core_status_update"
+  | "glasses_connection_state"
+  | "request_settings";
 
-// Message types from cloud to glasses  
-export type CloudToGlassesMessageType = 
-  | 'connection_ack'
-  | 'connection_error'
-  | 'display_event'
-  | 'app_state_change'
-  | 'microphone_state_change'
-  | 'settings_update';
+// Message types from cloud to glasses
+export type CloudToGlassesMessageType =
+  | "connection_ack"
+  | "connection_error"
+  | "display_event"
+  | "app_state_change"
+  | "microphone_state_change"
+  | "settings_update"
+  | "livekit_info";
 
 // Layout types
 export enum LayoutType {
-  TEXT_WALL = 'text_wall',
-  DOUBLE_TEXT_WALL = 'double_text_wall',
-  DASHBOARD_CARD = 'dashboard_card',
-  REFERENCE_CARD = 'reference_card',
-  BITMAP_VIEW = 'bitmap_view',
-  CLEAR_VIEW = 'clear_view'
+  TEXT_WALL = "text_wall",
+  DOUBLE_TEXT_WALL = "double_text_wall",
+  DASHBOARD_CARD = "dashboard_card",
+  REFERENCE_CARD = "reference_card",
+  BITMAP_VIEW = "bitmap_view",
+  CLEAR_VIEW = "clear_view",
 }
 
 export enum ViewType {
-  MAIN = 'main',
-  DASHBOARD = 'dashboard'
+  MAIN = "main",
+  DASHBOARD = "dashboard",
 }
 
 // Layout interfaces
@@ -74,7 +75,13 @@ export interface ClearView {
   layoutType: LayoutType.CLEAR_VIEW;
 }
 
-export type Layout = TextWall | DoubleTextWall | DashboardCard | ReferenceCard | BitmapView | ClearView;
+export type Layout =
+  | TextWall
+  | DoubleTextWall
+  | DashboardCard
+  | ReferenceCard
+  | BitmapView
+  | ClearView;
 
 // Base message interface
 export interface BaseMessage {
@@ -91,7 +98,7 @@ export interface CloudToGlassesMessage extends BaseMessage {
 }
 
 export interface DisplayRequest {
-  type: 'display_event';
+  type: "display_event";
   packageName: string;
   view: ViewType;
   layout: Layout;

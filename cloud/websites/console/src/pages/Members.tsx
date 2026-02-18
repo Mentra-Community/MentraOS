@@ -25,7 +25,7 @@ import api, { OrgMember, OrgRole, PendingInvite } from '@/services/api.service';
 import { useOrganization } from '@/context/OrganizationContext';
 import { toast } from 'sonner';
 import { useOrgPermissions } from '@/hooks/useOrgPermissions';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@mentra/shared';
 
 /**
  * Members page for managing organization members

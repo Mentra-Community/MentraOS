@@ -113,6 +113,38 @@ export class HardwareCompatibilityService {
   }
 
   /**
+   * Check if specific LED purpose is available in capabilities
+   * @param purpose The LED purpose to check (e.g., "privacy", "user_feedback")
+   * @param capabilities The device capabilities
+   * @returns true if LED with this purpose is available
+   */
+  static checkLedPurposeAvailable(
+    purpose: "privacy" | "user_feedback" | "general",
+    capabilities: Capabilities,
+  ): boolean {
+    if (!capabilities.hasLight || !capabilities.light?.lights) {
+      return false;
+    }
+
+    return capabilities.light.lights.some(
+      (light) => (light as any).purpose === purpose,
+    );
+  }
+
+  /**
+   * Get available LED purposes for a device
+   * @param capabilities The device capabilities
+   * @returns Array of available LED purposes
+   */
+  static getAvailableLedPurposes(capabilities: Capabilities): string[] {
+    if (!capabilities.hasLight || !capabilities.light?.lights) {
+      return [];
+    }
+
+    return capabilities.light.lights.map((light) => (light as any).purpose);
+  }
+
+  /**
    * Get human-readable compatibility message
    * @param result The compatibility check result
    * @returns User-friendly message about compatibility

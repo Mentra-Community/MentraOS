@@ -1,5 +1,5 @@
 // components/dialogs/DeleteDialog.tsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -43,6 +43,7 @@ const DeleteDialog: React.FC<DeleteDialogProps> = ({
       }
 
       // Close dialog after deletion
+      setIsDeleting(false)
       onOpenChange(false);
     } catch (err) {
       console.error("Error deleting App:", err);
@@ -75,7 +76,7 @@ const DeleteDialog: React.FC<DeleteDialogProps> = ({
 
           <div className="mt-4">
             <p className="text-sm text-gray-600">
-              To confirm, you're deleting:
+              To confirm, you&apos;re deleting:
             </p>
             <p className="mt-2 font-medium">
               {app?.name} <span className="font-mono text-xs text-gray-500">({app?.packageName})</span>

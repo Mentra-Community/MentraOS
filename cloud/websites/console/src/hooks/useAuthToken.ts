@@ -1,6 +1,6 @@
 // src/hooks/useAuthToken.ts
 import { useEffect, useState } from 'react'
-import { supabase } from '../utils/supabase'
+import { supabase } from '@mentra/shared'
 
 export function useAuthToken() {
   const [token, setToken] = useState<string | null>(null)

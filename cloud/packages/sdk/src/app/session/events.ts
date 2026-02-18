@@ -31,12 +31,12 @@ import {
   ManagedStreamStatus,
   PhoneNotificationDismissed,
   Capabilities,
+  TouchEvent,
+  createTouchEventStream,
 } from "../../types";
 import { DashboardMode } from "../../types/dashboard";
-import {
-  PermissionError,
-  PermissionErrorDetail,
-} from "../../types/messages/cloud-to-app";
+import { PermissionErrorDetail } from "../../types/messages/cloud-to-app";
+import { calendarWarnLog, microPhoneWarnLog } from "../../utils/permissions-utils";
 
 /** 🎯 Type-safe event handler function */
 type Handler<T> = (data: T) => void;
@@ -128,6 +128,8 @@ export class EventManager {
   constructor(
     private subscribe: (type: ExtendedStreamType) => void,
     private unsubscribe: (type: ExtendedStreamType) => void,
+    private packageName: string,
+    private baseUrl: string,
   ) {
     this.emitter = new EventEmitter();
     this.handlers = new Map();
@@ -138,35 +140,43 @@ export class EventManager {
   // Convenience handlers for common event types
 
   onTranscription(handler: Handler<TranscriptionData>) {
-    // Default to en-US when using the generic transcription handler
+    // Only make the API call if we have a base URL (server-side environment)
+    microPhoneWarnLog(this.baseUrl, this.packageName, this.onTranscription.name);
+
     return this.addHandler(createTranscriptionStream("en-US"), handler);
   }
 
   /**
    * 🎤 Listen for transcription events in a specific language
-   * @param language - Language code (e.g., "en-US")
+   * @param language - Language code (e.g., "en-US") or "auto" for automatic detection
    * @param handler - Function to handle transcription data
-   * @param disableLanguageIdentification - Optional flag to disable language identification (defaults to false/enabled)
+   * @param optionsOrBoolean - Optional configuration object or boolean (backward compatible)
+   * @param optionsOrBoolean.disableLanguageIdentification - Disable language identification (defaults to false/enabled)
+   * @param optionsOrBoolean.hints - Array of language code hints to improve detection (e.g., ["es", "fr"])
    * @returns Cleanup function to remove the handler
    * @throws Error if language code is invalid
    */
   onTranscriptionForLanguage(
     language: string,
     handler: Handler<TranscriptionData>,
-    disableLanguageIdentification = false,
+    optionsOrBoolean?:
+      | boolean
+      | {
+          disableLanguageIdentification?: boolean;
+          hints?: string[];
+        },
   ): () => void {
-    if (!isValidLanguageCode(language)) {
+    if (language !== "auto" && !isValidLanguageCode(language)) {
       throw new Error(`Invalid language code: ${language}`);
     }
     this.lastLanguageTranscriptioCleanupHandler();
 
-    const streamType = createTranscriptionStream(language, {
-      disableLanguageIdentification,
-    });
-    this.lastLanguageTranscriptioCleanupHandler = this.addHandler(
-      streamType,
-      handler,
-    );
+    // Handle backward compatibility: boolean or options object
+    const options =
+      typeof optionsOrBoolean === "boolean" ? { disableLanguageIdentification: optionsOrBoolean } : optionsOrBoolean;
+
+    const streamType = createTranscriptionStream(language, options);
+    this.lastLanguageTranscriptioCleanupHandler = this.addHandler(streamType, handler);
     return this.lastLanguageTranscriptioCleanupHandler;
   }
 
@@ -183,6 +193,7 @@ export class EventManager {
     targetLanguage: string,
     handler: Handler<TranslationData>,
   ): () => void {
+    microPhoneWarnLog(this.baseUrl || "", this.packageName, this.ontranslationForLanguage.name);
     if (!isValidLanguageCode(sourceLanguage)) {
       throw new Error(`Invalid source language code: ${sourceLanguage}`);
     }
@@ -192,10 +203,7 @@ export class EventManager {
 
     this.lastLanguageTranslationCleanupHandler();
     const streamType = createTranslationStream(sourceLanguage, targetLanguage);
-    this.lastLanguageTranslationCleanupHandler = this.addHandler(
-      streamType,
-      handler,
-    );
+    this.lastLanguageTranslationCleanupHandler = this.addHandler(streamType, handler);
 
     return this.lastLanguageTranslationCleanupHandler;
   }
@@ -206,6 +214,18 @@ export class EventManager {
 
   onButtonPress(handler: Handler<ButtonPress>) {
     return this.addHandler(StreamType.BUTTON_PRESS, handler);
+  }
+
+  onTouchEvent(gestureOrHandler: string | Handler<TouchEvent>, handler?: Handler<TouchEvent>): () => void {
+    // Handle both: onTouchEvent(handler) and onTouchEvent("forward_swipe", handler)
+    if (typeof gestureOrHandler === "function") {
+      // Subscribe to all touch events
+      return this.addHandler(StreamType.TOUCH_EVENT, gestureOrHandler);
+    } else {
+      // Subscribe to specific gesture
+      const gestureStream = createTouchEventStream(gestureOrHandler);
+      return this.addHandler(gestureStream, handler!);
+    }
   }
 
   onPhoneNotifications(handler: Handler<PhoneNotification>) {
@@ -225,6 +245,7 @@ export class EventManager {
   }
 
   onVoiceActivity(handler: Handler<Vad>) {
+    microPhoneWarnLog(this.baseUrl || "", this.packageName, this.onVoiceActivity.name);
     return this.addHandler(StreamType.VAD, handler);
   }
 
@@ -282,9 +303,7 @@ export class EventManager {
    * @param handler - Function to handle dashboard mode changes
    * @returns Cleanup function to remove the handler
    */
-  onDashboardModeChange(
-    handler: Handler<SystemEvents["dashboard_mode_change"]>,
-  ) {
+  onDashboardModeChange(handler: Handler<SystemEvents["dashboard_mode_change"]>) {
     this.emitter.on("dashboard_mode_change", handler);
     return () => this.emitter.off("dashboard_mode_change", handler);
   }
@@ -294,9 +313,7 @@ export class EventManager {
    * @param handler - Function to handle dashboard always-on mode changes
    * @returns Cleanup function to remove the handler
    */
-  onDashboardAlwaysOnChange(
-    handler: Handler<SystemEvents["dashboard_always_on_change"]>,
-  ) {
+  onDashboardAlwaysOnChange(handler: Handler<SystemEvents["dashboard_always_on_change"]>) {
     this.emitter.on("dashboard_always_on_change", handler);
     return () => this.emitter.off("dashboard_always_on_change", handler);
   }
@@ -327,10 +344,7 @@ export class EventManager {
    * @param handler - Function to handle setting value changes
    * @returns Cleanup function to remove the handler
    */
-  onSettingChange<T>(
-    key: string,
-    handler: (value: T, previousValue: T | undefined) => void,
-  ): () => void {
+  onSettingChange<T>(key: string, handler: (value: T, previousValue: T | undefined) => void): () => void {
     let previousValue: T | undefined = undefined;
 
     const settingsHandler = (settings: AppSettings) => {
@@ -345,10 +359,7 @@ export class EventManager {
           }
         }
       } catch (error: unknown) {
-        console.error(
-          `Error in onSettingChange handler for key "${key}":`,
-          error,
-        );
+        console.error(`Error in onSettingChange handler for key "${key}":`, error);
       }
     };
 
@@ -366,20 +377,18 @@ export class EventManager {
    *
    * Use this for stream types without specific handler methods
    */
-  on<T extends ExtendedStreamType>(
-    type: T,
-    handler: Handler<EventData<T>>,
-  ): () => void {
+  on<T extends ExtendedStreamType>(type: T, handler: Handler<EventData<T>>): () => void {
+    // Check permissions for specific stream types
+    if (type === StreamType.CALENDAR_EVENT) {
+      calendarWarnLog(this.baseUrl, this.packageName, "on");
+    }
     return this.addHandler(type, handler);
   }
 
   /**
    * ➕ Add an event handler and subscribe if needed
    */
-  private addHandler<T extends ExtendedStreamType>(
-    type: T,
-    handler: Handler<EventData<T>>,
-  ): () => void {
+  private addHandler<T extends ExtendedStreamType>(type: T, handler: Handler<EventData<T>>): () => void {
     const handlers = this.handlers.get(type) ?? new Set();
 
     if (handlers.size === 0) {
@@ -393,10 +402,7 @@ export class EventManager {
   /**
    * ➖ Remove an event handler
    */
-  private removeHandler<T extends ExtendedStreamType>(
-    type: T,
-    handler: Handler<EventData<T>>,
-  ): void {
+  private removeHandler<T extends ExtendedStreamType>(type: T, handler: Handler<EventData<T>>): void {
     const handlers = this.handlers.get(type);
     if (!handlers) return;
 
@@ -405,6 +411,18 @@ export class EventManager {
       this.handlers.delete(type);
       this.unsubscribe(type);
     }
+  }
+
+  /**
+   * 🔍 Get all currently registered stream types
+   * Returns the streams that have at least one handler registered.
+   * Used to derive subscriptions from handlers (single source of truth).
+   *
+   * This is the fix for Bug 007: subscriptions are now derived from handlers
+   * instead of being stored separately, preventing drift between the two.
+   */
+  getRegisteredStreams(): ExtendedStreamType[] {
+    return Array.from(this.handlers.keys()) as ExtendedStreamType[];
   }
 
   /**
@@ -432,48 +450,28 @@ export class EventManager {
             (handler as Handler<EventData<T>>)(data);
           } catch (handlerError: unknown) {
             // Log the error but don't let it propagate
-            console.error(
-              `Error in handler for event '${String(event)}':`,
-              handlerError,
-            );
+            console.error(`Error in handler for event '${String(event)}':`, handlerError);
 
             // Emit an error event for tracking purposes
             if (event !== "error") {
               // Prevent infinite recursion
-              const errorMessage =
-                handlerError instanceof Error
-                  ? handlerError.message
-                  : String(handlerError);
+              const errorMessage = handlerError instanceof Error ? handlerError.message : String(handlerError);
 
-              this.emitter.emit(
-                "error",
-                new Error(
-                  `Handler error for event '${String(event)}': ${errorMessage}`,
-                ),
-              );
+              this.emitter.emit("error", new Error(`Handler error for event '${String(event)}': ${errorMessage}`));
             }
           }
         });
       }
     } catch (emitError: unknown) {
       // Catch any errors in the emission process itself
-      console.error(
-        `Fatal error emitting event '${String(event)}':`,
-        emitError,
-      );
+      console.error(`Fatal error emitting event '${String(event)}':`, emitError);
 
       // Try to emit an error event if we're not already handling an error
       if (event !== "error") {
         try {
-          const errorMessage =
-            emitError instanceof Error ? emitError.message : String(emitError);
+          const errorMessage = emitError instanceof Error ? emitError.message : String(emitError);
 
-          this.emitter.emit(
-            "error",
-            new Error(
-              `Event emission error for '${String(event)}': ${errorMessage}`,
-            ),
-          );
+          this.emitter.emit("error", new Error(`Event emission error for '${String(event)}': ${errorMessage}`));
         } catch (nestedError) {
           // If even this fails, just log it - nothing more we can do
           console.error("Failed to emit error event:", nestedError);
@@ -487,6 +485,9 @@ export class EventManager {
    * @param action - The action identifier to filter by
    * @param handler - Function to handle the message
    * @returns Cleanup function to remove the handler
+   * @deprecated Use settings.onMentraosChange() instead for system settings.
+   * This method was used for datetime updates but is no longer needed.
+   * Will be removed in a future version.
    */
   onCustomMessage(action: string, handler: (payload: any) => void): () => void {
     const messageHandler = (message: CustomMessage) => {

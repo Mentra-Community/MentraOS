@@ -1,0 +1,110 @@
+name: Reusable Bun build
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: "Directory to run install/build in (relative to repo root)"
+        required: true
+        type: string
+      lockfile:
+        description: "Path or glob to lockfile(s) used for cache key (e.g., cloud/websites/console/bun.lock, **/bun.lock*)"
+        required: false
+        type: string
+        default: "**/bun.lock*"
+      bun_version:
+        description: "Bun version to install"
+        required: false
+        type: string
+        default: "latest"
+      install_args:
+        description: "Arguments passed to 'bun install'"
+        required: false
+        type: string
+        default: "--frozen-lockfile"
+      build_script:
+        description: "Script name to run via 'bun run <build_script>'"
+        required: false
+        type: string
+        default: "build"
+      checkout_fetch_depth:
+        description: "Depth for actions/checkout"
+        required: false
+        type: number
+        default: 1
+    outputs:
+      build_status:
+        description: "Exit code of the build step"
+        value: ${{ jobs.bun-build.outputs.build_status }}
+      build_failed:
+        description: "Whether the build failed"
+        value: ${{ jobs.bun-build.outputs.build_failed }}
+      build_snippet:
+        description: "Tail snippet of the build log"
+        value: ${{ jobs.bun-build.outputs.build_snippet }}
+
+permissions:
+  contents: read
+
+jobs:
+  bun-build:
+    name: Bun build (${{ inputs.working_directory }})
+    runs-on: ubuntu-latest
+    outputs:
+      build_status: ${{ steps.build.outputs.status }}
+      build_failed: ${{ steps.build.outputs.failed }}
+      build_snippet: ${{ steps.build.outputs.snippet }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.checkout_fetch_depth }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun_version }}
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-${{ inputs.working_directory }}-${{ hashFiles(inputs.lockfile) }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-${{ inputs.working_directory }}-
+
+      - name: Install dependencies
+        run: bun install ${{ inputs.install_args }}
+
+      - name: Run build (capture log)
+        id: build
+        continue-on-error: true
+        env:
+          LOG_FILE: ${{ runner.temp }}/bun-build.log
+        run: |
+          # Disable errexit to ensure we always capture and emit outputs even on failure
+          set +e
+          set -o pipefail
+          bun run ${{ inputs.build_script }} 2>&1 | tee "$LOG_FILE"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "snippet<<'EOF'" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$LOG_FILE" >> "$GITHUB_OUTPUT" || true
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Fail job if build failed
+        if: steps.build.outputs.failed == 'true'
+        run: |
+          echo "Build failed with status ${{ steps.build.outputs.status }}"
+          exit 1

@@ -27,7 +27,7 @@ export class ResendEmailService {
    */
   async sendFeedback(
     userEmail: string,
-    feedback: string,
+    feedbackHtml: string,
     to: string[],
   ): Promise<{ id?: string; error?: any }> {
     try {
@@ -36,7 +36,7 @@ export class ResendEmailService {
         to: to,
         cc: [userEmail],
         subject: `New feedback from: ${userEmail}`,
-        html: `<p>${feedback}</p>`,
+        html: feedbackHtml,
       });
 
       if (error) {

@@ -9,6 +9,7 @@ public class DevApi {
     private static final int CMD_SET_LED_ON = 101;
     private static final int CMD_SET_SCREEN_ON = 102;
     private static final int CMD_SET_MIC_ON = 103;
+    private static final int CMD_SET_LED_CONTROL = 104;
     
     /**
      * Control the recording LED on the K900 glasses
@@ -32,5 +33,15 @@ public class DevApi {
      */
     public static void setMtkMicOn(boolean bOn) {
         XyDev.setInt(CMD_SET_MIC_ON, bOn ? 1 : 0);
+    }
+    
+    /**
+     * Set LED custom brightness with duration
+     * @param percent Brightness percentage (0-100)
+     * @param showTime Duration in milliseconds (0-65535)
+     */
+    public static void setLedCustomBright(int percent, int showTime) {
+        long v = ((showTime & 0xFFFF) << 8) | (percent & 0xFF);
+        XyDev.setLong(CMD_SET_LED_CONTROL, v);
     }
 }

@@ -1,0 +1,207 @@
+---
+title: "AI IDE Integration"
+description: "Connect your AI coding assistant to MentraOS docs for smarter development"
+icon: "robot"
+---
+
+<Info>
+**TL;DR** - Get your AI coding assistant to understand MentraOS instantly. Works with Zed, Cursor, VS Code, Windsurf, Claude Code, and more.
+</Info>
+
+## Why Connect Your AI IDE?
+
+When you connect your AI coding assistant to MentraOS docs, it can:
+
+- Answer questions about the MentraOS SDK
+- Help you write smart glasses apps faster
+- Look up API references automatically
+- Debug your code with context about how MentraOS works
+
+## MCP Server URL
+
+All setups below use this URL:
+
+```
+https://docs.mentraglass.com/mcp
+```
+
+---
+
+## Setup by IDE
+
+### Zed
+
+Add this to your `settings.json` (open with `Cmd+,` or `zed: open settings`):
+
+```json
+{
+  "context_servers": {
+    "mentraos-docs": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Restart Zed and you're done.
+
+<Accordion title="How to verify it's working">
+Open the Agent Panel and check the MCP servers indicator in settings. A green dot means the server is active. You can also type `/` in a chat to see available prompts from the server.
+</Accordion>
+
+---
+
+### Cursor
+
+Add this to your Cursor MCP config file at `~/.cursor/mcp.json` (create it if it doesn't exist):
+
+```json
+{
+  "mcpServers": {
+    "mentraos-docs": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"]
+    }
+  }
+}
+```
+
+Then **restart Cursor**.
+
+<Accordion title="Alternative: Project-level config">
+You can also create `.cursor/mcp.json` in your project root to enable MentraOS docs only for that project.
+</Accordion>
+
+---
+
+### VS Code (with GitHub Copilot)
+
+VS Code 1.99+ has built-in MCP support with GitHub Copilot.
+
+1. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+2. Run **"MCP: Add Server"**
+3. Select **"HTTP"** as the transport type
+4. Enter URL: `https://docs.mentraglass.com/mcp`
+5. Name it `mentraos-docs`
+
+<Accordion title="Manual configuration">
+Add to your VS Code `settings.json`:
+
+```json
+{
+  "mcp.servers": {
+    "mentraos-docs": {
+      "type": "http",
+      "url": "https://docs.mentraglass.com/mcp"
+    }
+  }
+}
+```
+</Accordion>
+
+---
+
+### Windsurf
+
+1. Open Windsurf Settings (`Cmd+,` / `Ctrl+,`)
+2. Search for "MCP" and click to open the Manage Plugins panel
+3. Click **"View raw config"** to open `mcp_config.json`
+4. Add the following configuration:
+
+```json
+{
+  "mcpServers": {
+    "mentraos-docs": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"]
+    }
+  }
+}
+```
+
+5. Click **Refresh** in the Manage Plugins panel
+
+<Accordion title="Config file location">
+- **macOS**: `~/.codeium/windsurf/mcp_config.json`
+- **Windows**: `%USERPROFILE%\.codeium\windsurf\mcp_config.json`
+</Accordion>
+
+---
+
+### Claude Code (CLI)
+
+Run this in your terminal:
+
+```bash
+claude mcp add mentraos-docs --transport http https://docs.mentraglass.com/mcp
+```
+
+<Accordion title="Verify it worked">
+Run `claude mcp list` to see your connected servers. You should see `mentraos-docs` in the list.
+</Accordion>
+
+---
+
+### Other MCP-Compatible Tools
+
+For any tool that supports MCP, use `mcp-remote` to connect to our HTTP endpoint:
+
+```bash
+npx -y mcp-remote https://docs.mentraglass.com/mcp
+```
+
+Or if your tool supports HTTP MCP servers directly, use the URL:
+
+```
+https://docs.mentraglass.com/mcp
+```
+
+---
+
+## Test It Out
+
+After setup, try asking your AI assistant:
+
+- *"How do I display text on smart glasses with MentraOS?"*
+- *"Show me how to use the camera API"*
+- *"What events can I listen to in an AppSession?"*
+- *"How do I listen for metric system setting changes?"*
+
+Your AI should now give you accurate, up-to-date answers using our docs.
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Server not connecting">
+    Make sure you have Node.js 18+ installed. The `mcp-remote` package requires it.
+    
+    ```bash
+    node --version  # Should be v18.0.0 or higher
+    ```
+  </Accordion>
+  
+  <Accordion title="npx command not found">
+    Install Node.js from [nodejs.org](https://nodejs.org/) which includes npm and npx.
+  </Accordion>
+  
+  <Accordion title="Permission errors">
+    Try running the npx command with `sudo` on macOS/Linux, or run your terminal as Administrator on Windows.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/app-devs/getting-started/quickstart">
+    Build your first smart glasses app in 15 minutes
+  </Card>
+  <Card title="Example Apps" icon="code" href="/app-devs/getting-started/example-apps">
+    Clone a working example and start hacking
+  </Card>
+</CardGroup>

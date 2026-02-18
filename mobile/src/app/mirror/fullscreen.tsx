@@ -1,20 +1,30 @@
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {CameraType, CameraView, useCameraPermissions} from "expo-camera"
+import {useFocusEffect} from "expo-router"
+import {useCallback, useEffect, useRef, useState} from "react"
+import {
+  BackHandler,
+  Platform,
+  StatusBar,
+  TextStyle,
+  ToastAndroid,
+  TouchableOpacity,
+  View,
+  ViewStyle,
+} from "react-native"
+import * as RNFS from "@dr.pogodin/react-native-fs"
+import {useSafeAreaInsets} from "react-native-safe-area-context"
 import Icon from "react-native-vector-icons/MaterialIcons"
 
-import {useCoreStatus} from "@/contexts/CoreStatusProvider"
-import showAlert from "@/utils/AlertUtils"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {useCameraPermissions, CameraType, CameraView} from "expo-camera"
-import {router, useFocusEffect} from "expo-router"
-import {useState, useRef, useEffect, useCallback} from "react"
-import {View, Text, BackHandler, Platform, StatusBar, ToastAndroid, StyleSheet, TouchableOpacity} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
-
-import {requestFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
-import RNFS from "react-native-fs"
+import {Text} from "@/components/ignite"
+import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
+import {SimulatedGlassesControls} from "@/components/mirror/SimulatedGlassesControls"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {SimulatedGlassesControls} from "@/components/misc/SimulatedGlassesControls"
-import GlassesDisplayMirror from "@/components/misc/GlassesDisplayMirror"
-import {useDisplayStore} from "@/stores/display"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {ThemedStyle} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 
 // Request microphone permission for recording
 const requestMicrophonePermission = async () => {
@@ -22,25 +32,21 @@ const requestMicrophonePermission = async () => {
 }
 
 export default function GlassesMirrorFullscreen() {
-  const {status} = useCoreStatus()
-  const {currentEvent} = useDisplayStore()
-  const {theme} = useAppTheme()
+  const {theme, themed} = useAppTheme()
   const insets = useSafeAreaInsets()
   const [permission, requestPermission] = useCameraPermissions()
   const [hasMicrophonePermission, setHasMicrophonePermission] = useState(false)
   const [cameraType, setCameraType] = useState<CameraType>("front")
   const [isRecording, setIsRecording] = useState(false)
-  const [recordingTime, setRecordingTime] = useState(0)
-  const [recordingPath, setRecordingPath] = useState<string | null>(null)
+  const [_recordingTime, setRecordingTime] = useState(0)
+  const [_recordingPath, setRecordingPath] = useState<string | null>(null)
   const [recordingCount, setRecordingCount] = useState(0)
   const [isCameraOn, setIsCameraOn] = useState(true)
-  const {goBack, replace} = useNavigationHistory()
+  const {goBack} = useNavigationHistory()
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   const cameraRef = useRef<CameraView | null>(null)
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Helper to check if we have a glasses model name
-  const isGlassesConnected = !!status.glasses_info?.model_name
+  const recordingTimerRef = useRef<number | null>(null)
 
   // Check permissions and setup on component mount
   useEffect(() => {
@@ -97,7 +103,7 @@ export default function GlassesMirrorFullscreen() {
 
       // Read directory contents and count videos
       const files = await RNFS.readDir(videoDir)
-      const videoFiles = files.filter(file => file.name.endsWith(".mp4"))
+      const videoFiles = files.filter((file) => file.name.endsWith(".mp4"))
       setRecordingCount(videoFiles.length)
     } catch (error) {
       console.error("Error checking recordings:", error)
@@ -110,7 +116,7 @@ export default function GlassesMirrorFullscreen() {
     if (isRecording) {
       // Start a timer that updates every second
       recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1)
+        setRecordingTime((prev) => prev + 1)
       }, 1000)
     } else {
       // Clear the timer when recording stops
@@ -181,16 +187,9 @@ export default function GlassesMirrorFullscreen() {
   }
 
   // Format seconds into MM:SS format
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60)
-      .toString()
-      .padStart(2, "0")
-    const secs = (seconds % 60).toString().padStart(2, "0")
-    return `${mins}:${secs}`
-  }
 
   // Start recording video
-  const startRecording = async () => {
+  const _startRecording = async () => {
     if (!isCameraOn) {
       showAlert("Camera Off", "Turn on the camera to start recording", undefined, {
         iconName: "videocam-off",
@@ -305,283 +304,191 @@ export default function GlassesMirrorFullscreen() {
   }
 
   // Toggle recording state
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording()
-    } else {
-      startRecording()
-    }
-  }
 
   return (
-    <View style={[styles.fullscreenContainer, {backgroundColor: theme.colors.fullscreenBackground}]}>
-      {isGlassesConnected && currentEvent.layout ? (
-        <View style={{flex: 1}}>
-          {/* Camera feed - only render if camera is on */}
-          {isCameraOn && (
-            <CameraView
-              ref={cameraRef}
-              style={styles.cameraBackground}
-              facing={cameraType}
-              mode="video"
-              enableTorch={false}
-            />
-          )}
+    <View style={themed($fullscreenContainer)}>
+      <View style={$contentWrapper}>
+        {/* Camera feed - only render if camera is on */}
+        {isCameraOn && (
+          <CameraView ref={cameraRef} style={$cameraBackground} facing={cameraType} mode="video" enableTorch={false} />
+        )}
 
-          {/* Dark background when camera is off */}
-          {!isCameraOn && (
-            <View style={[styles.cameraBackground, {backgroundColor: theme.colors.fullscreenBackground}]} />
-          )}
+        {/* Dark background when camera is off */}
+        {!isCameraOn && <View style={themed($cameraOff)} />}
 
-          {/* Overlay the glasses display content */}
-          <View style={styles.fullscreenOverlay}>
-            <GlassesDisplayMirror fullscreen={true} fallbackMessage="Unknown layout data" />
+        {/* Overlay the glasses display content */}
+        <View style={$fullscreenOverlay}>
+          <GlassesDisplayMirror fullscreen={true} />
+        </View>
+
+        {/* Fullscreen exit button */}
+        <TouchableOpacity
+          style={[themed($exitFullscreenButton), {top: insets.top + 20}]}
+          onPress={handleExitFullscreen}>
+          <Text style={themed($exitFullscreenText)}>Exit</Text>
+        </TouchableOpacity>
+
+        {/* Camera toggle on/off button */}
+        <TouchableOpacity style={[themed($cameraToggleButton), {top: insets.top + 20}]} onPress={toggleCameraOnOff}>
+          <Icon name={isCameraOn ? "videocam" : "videocam-off"} size={28} color={theme.colors.icon} />
+        </TouchableOpacity>
+
+        {/* Camera flip button - only show when camera is on */}
+        {isCameraOn && (
+          <TouchableOpacity style={[themed($flipCameraButton), {top: insets.top + 20}]} onPress={toggleCamera}>
+            <Icon name="flip-camera-ios" size={28} color={theme.colors.icon} />
+          </TouchableOpacity>
+        )}
+
+        {/* Recording button */}
+        {/* TEMPORARILY: COMMENT OUT THE RECORD BUTTON UNTIL THIS FEATURE IS COMPLETE */}
+        {/* {permission?.granted && (
+          <View style={$recordingContainer}>
+            <TouchableOpacity
+              style={[
+                $recordButton,
+                isRecording ? $recordingActive : {}
+              ]}
+              onPress={toggleRecording}
+            >
+              {isRecording ? (
+                <Icon name="stop" size={36} color="white" />
+              ) : (
+                <View style={$recordButtonInner} />
+              )}
+            </TouchableOpacity>
+
+            {isRecording && (
+              <Text style={$recordingTimer}>
+                {formatTime(recordingTime)}
+              </Text>
+            )}
           </View>
+        )} */}
 
-          {/* Fullscreen exit button */}
-          <TouchableOpacity
-            style={[
-              styles.exitFullscreenButton,
-              {backgroundColor: theme.colors.palette.secondary200, top: insets.top + 20},
-            ]}
-            onPress={handleExitFullscreen}>
-            <Text style={[styles.exitFullscreenText, {color: theme.colors.icon}]}>Exit</Text>
+        {/* Gallery button - goes back to main screen to view gallery */}
+        {!isRecording && (
+          <TouchableOpacity style={[themed($videosButton), {bottom: insets.bottom + 40}]} onPress={() => goBack()}>
+            <Icon name="photo-library" size={24} color={theme.colors.icon} />
+            {recordingCount > 0 && (
+              <View style={themed($badgeContainer)}>
+                <Text style={themed($badgeText)}>{recordingCount}</Text>
+              </View>
+            )}
           </TouchableOpacity>
+        )}
 
-          {/* Camera toggle on/off button */}
-          <TouchableOpacity
-            style={[
-              styles.cameraToggleButton,
-              {backgroundColor: theme.colors.palette.secondary200, top: insets.top + 20},
-            ]}
-            onPress={toggleCameraOnOff}>
-            <Icon name={isCameraOn ? "videocam" : "videocam-off"} size={28} color={theme.colors.icon} />
-          </TouchableOpacity>
-
-          {/* Camera flip button - only show when camera is on */}
-          {isCameraOn && (
-            <TouchableOpacity
-              style={[
-                styles.flipCameraButton,
-                {backgroundColor: theme.colors.palette.secondary200, top: insets.top + 20},
-              ]}
-              onPress={toggleCamera}>
-              <Icon name="flip-camera-ios" size={28} color={theme.colors.icon} />
-            </TouchableOpacity>
-          )}
-
-          {/* Recording button */}
-          {/* TEMPORARILY: COMMENT OUT THE RECORD BUTTON UNTIL THIS FEATURE IS COMPLETE */}
-          {/* {permission?.granted && (
-            <View style={styles.recordingContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.recordButton,
-                  isRecording ? styles.recordingActive : {}
-                ]}
-                onPress={toggleRecording}
-              >
-                {isRecording ? (
-                  <Icon name="stop" size={36} color="white" />
-                ) : (
-                  <View style={styles.recordButtonInner} />
-                )}
-              </TouchableOpacity>
-
-              {isRecording && (
-                <Text style={styles.recordingTimer}>
-                  {formatTime(recordingTime)}
-                </Text>
-              )}
-            </View>
-          )} */}
-
-          {/* Gallery button - goes back to main screen to view gallery */}
-          {!isRecording && (
-            <TouchableOpacity
-              style={[
-                styles.videosButton,
-                {backgroundColor: theme.colors.palette.secondary200, bottom: insets.bottom + 40},
-              ]}
-              onPress={() => goBack()}>
-              <Icon name="photo-library" size={24} color={theme.colors.icon} />
-              {recordingCount > 0 && (
-                <View
-                  style={[
-                    styles.badgeContainer,
-                    {backgroundColor: theme.colors.palette.angry600, borderColor: theme.colors.fullscreenOverlay},
-                  ]}>
-                  <Text style={[styles.badgeText, {color: theme.colors.icon}]}>{recordingCount}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          )}
-
-          {/* Simulated glasses controls - only show for simulated glasses */}
-          {status.glasses_info?.model_name?.includes("Simulated") && <SimulatedGlassesControls />}
-        </View>
-      ) : (
-        <View style={[styles.fallbackContainer, {backgroundColor: theme.colors.galleryBackground}]}>
-          <Text style={[styles.fallbackText, {color: theme.colors.icon}]}>
-            {!isGlassesConnected ? "Connect glasses to use the Glasses Mirror" : "No display events available"}
-          </Text>
-          <TouchableOpacity
-            style={[
-              styles.exitFullscreenButton,
-              {backgroundColor: theme.colors.palette.secondary200, top: insets.top + 20},
-            ]}
-            onPress={handleExitFullscreen}>
-            <Text style={[styles.exitFullscreenText, {color: theme.colors.icon}]}>Back</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        {/* Simulated glasses controls - only show for simulated glasses */}
+        {defaultWearable?.includes(DeviceTypes.SIMULATED) && <SimulatedGlassesControls />}
+      </View>
     </View>
   )
 }
 
-const styles = StyleSheet.create({
-  badgeContainer: {
-    position: "absolute",
-    top: -5,
-    right: -5,
-    // backgroundColor moved to dynamic styling
-    borderRadius: 12,
-    minWidth: 24,
-    height: 24,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 2,
-    // borderColor moved to dynamic styling
-  },
-  badgeText: {
-    // color moved to dynamic styling
-    fontSize: 12,
-    fontFamily: "Montserrat-Bold",
-    fontWeight: "bold",
-  },
-  cameraBackground: {
-    alignSelf: "center",
-    aspectRatio: 1,
-    height: "100%",
-    position: "absolute",
-    width: "100%",
-  },
-  exitFullscreenButton: {
-    position: "absolute",
-    top: 40,
-    right: 20,
-    // backgroundColor moved to dynamic styling
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 30,
-    zIndex: 20,
-  },
-  exitFullscreenText: {
-    // color moved to dynamic styling
-    fontSize: 16,
-    fontFamily: "Montserrat-Bold",
-  },
-  fallbackContainer: {
-    alignItems: "center",
-    flex: 1,
-    justifyContent: "center",
-    // backgroundColor moved to dynamic styling
-  },
-  fallbackText: {
-    // color moved to dynamic styling
-    fontSize: 18,
-    fontFamily: "Montserrat-Regular",
-    textAlign: "center",
-    marginHorizontal: 20,
-    marginBottom: 20,
-  },
-  cameraToggleButton: {
-    position: "absolute",
-    top: 40,
-    left: 20,
-    // backgroundColor moved to dynamic styling
-    padding: 12,
-    borderRadius: 50,
-    zIndex: 20,
-  },
-  flipCameraButton: {
-    position: "absolute",
-    top: 40,
-    left: 80,
-    // backgroundColor moved to dynamic styling
-    padding: 12,
-    borderRadius: 50,
-    zIndex: 20,
-  },
-  fullscreenContainer: {
-    flex: 1,
-    padding: 0,
-    // backgroundColor moved to dynamic styling
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 1000,
-  },
-  fullscreenDisplayContainer: {
-    backgroundColor: "transparent",
-    padding: 0,
-  },
-  fullscreenOverlay: {
-    alignItems: "center",
-    backgroundColor: "transparent",
-    height: "100%",
-    justifyContent: "center",
-    padding: 40,
-    position: "absolute",
-    width: "100%",
-    zIndex: 10,
-  },
-  recordButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(255, 0, 0, 0.8)",
-    borderColor: "white",
-    borderRadius: 35,
-    borderWidth: 4,
-    height: 70,
-    justifyContent: "center",
-    width: 70,
-  },
-  recordButtonInner: {
-    backgroundColor: "white",
-    borderRadius: 15,
-    height: 30,
-    width: 30,
-  },
-  recordingActive: {
-    backgroundColor: "rgba(255, 0, 0, 0.9)",
-    borderColor: "white",
-  },
-  recordingContainer: {
-    alignItems: "center",
-    alignSelf: "center",
-    bottom: 40,
-    position: "absolute",
-    zIndex: 20,
-  },
-  recordingTimer: {
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
-    borderRadius: 20,
-    color: "white",
-    fontFamily: "Montserrat-Bold",
-    fontSize: 16,
-    marginTop: 10,
-    paddingHorizontal: 15,
-    paddingVertical: 5,
-  },
-  videosButton: {
-    position: "absolute",
-    bottom: 40,
-    right: 20,
-    // backgroundColor moved to dynamic styling
-    padding: 12,
-    borderRadius: 50,
-    zIndex: 20,
-  },
+const $fullscreenContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
+  flex: 1,
+  padding: 0,
+  backgroundColor: colors.palette.black,
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  zIndex: 1000,
+})
+
+const $contentWrapper: ViewStyle = {
+  flex: 1,
+}
+
+const $cameraBackground: ViewStyle = {
+  alignSelf: "center",
+  aspectRatio: 1,
+  height: "100%",
+  position: "absolute",
+  width: "100%",
+}
+
+const $cameraOff: ThemedStyle<ViewStyle> = ({colors}) => ({
+  alignSelf: "center",
+  aspectRatio: 1,
+  height: "100%",
+  position: "absolute",
+  width: "100%",
+  backgroundColor: colors.palette.black,
+})
+
+const $fullscreenOverlay: ViewStyle = {
+  alignItems: "center",
+  backgroundColor: "transparent",
+  height: "100%",
+  justifyContent: "center",
+  padding: 40,
+  position: "absolute",
+  width: "100%",
+  zIndex: 10,
+}
+
+const $exitFullscreenButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  position: "absolute",
+  right: 20,
+  backgroundColor: colors.palette.secondary200,
+  paddingVertical: 10,
+  paddingHorizontal: 20,
+  borderRadius: 30,
+  zIndex: 20,
+})
+
+const $exitFullscreenText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.icon,
+  fontSize: 16,
+  fontFamily: "Montserrat-Bold",
+})
+
+const $cameraToggleButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  position: "absolute",
+  left: 20,
+  backgroundColor: colors.palette.secondary200,
+  padding: 12,
+  borderRadius: 50,
+  zIndex: 20,
+})
+
+const $flipCameraButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  position: "absolute",
+  left: 80,
+  backgroundColor: colors.palette.secondary200,
+  padding: 12,
+  borderRadius: 50,
+  zIndex: 20,
+})
+
+const $videosButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  position: "absolute",
+  right: 20,
+  backgroundColor: colors.palette.secondary200,
+  padding: 12,
+  borderRadius: 50,
+  zIndex: 20,
+})
+
+const $badgeContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
+  position: "absolute",
+  top: -5,
+  right: -5,
+  backgroundColor: colors.palette.angry600,
+  borderRadius: 12,
+  minWidth: 24,
+  height: 24,
+  justifyContent: "center",
+  alignItems: "center",
+  borderWidth: 2,
+  borderColor: colors.border,
+})
+
+const $badgeText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.icon,
+  fontSize: 12,
+  fontFamily: "Montserrat-Bold",
+  fontWeight: "bold",
 })

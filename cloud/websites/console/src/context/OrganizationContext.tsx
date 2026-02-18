@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import api, { Organization } from '../services/api.service';
-import { useAuth } from '../hooks/useAuth';
+import { useAuth } from '@mentra/shared'
 import { toast } from 'sonner';
 
 /**

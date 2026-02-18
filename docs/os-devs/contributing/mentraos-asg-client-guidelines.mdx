@@ -1,0 +1,255 @@
+---
+title: MentraOS ASG Client Guidelines
+description: Overview and development guidelines for the MentraOS ASG (Android Smart Glasses) Client, which runs on Android-based smart glasses like Mentra Live.
+---
+
+# MentraOS Android Smart Glasses (ASG) Client Development Guidelines
+
+This guide provides an overview and development guidelines for the MentraOS ASG (Android Smart Glasses) Client, which runs on Android-based smart glasses like Mentra Live.
+
+## Overview
+
+The MentraOS ASG Client is an Android application that runs directly on Android-based smart glasses hardware. It serves as the bridge between the glasses' hardware capabilities and the MentraOS ecosystem, enabling features like camera capture, display rendering, Bluetooth communication, and network management.
+
+## Architecture
+
+### Core Components
+
+1. **AsgClientService** - The main service that coordinates all functionality:
+   - Parses Bluetooth messages from the MentraOS mobile app
+   - Handles command processing from those messages
+   - Parses messages from Mentra Live's microcontroller (button presses, swipes)
+   - Triggers actions like taking pictures, videos, and starting RTMP streams
+   - Manages network state and battery status reporting
+
+2. **Manager Systems** - Interface-based factory pattern for device abstraction:
+   - **NetworkManager** - WiFi and hotspot control
+   - **BluetoothManager** - BLE communication with phone app
+   - **MediaCaptureService** - Photo/video capture and upload
+   - **RtmpStreamingService** - Live video streaming
+
+### Network Manager System
+
+The NetworkManager uses a factory pattern to support different device types:
+
+```java
+// Interface defining network operations
+public interface INetworkManager {
+    void setWifiEnabled(boolean enabled);
+    void connectToWifi(String ssid, String password);
+    void startHotspot(String ssid, String password);
+    // ... other network operations
+}
+```
+
+**Implementations:**
+
+- **K900NetworkManager** - For Mentra Live (K900) devices using proprietary broadcasts
+- **SystemNetworkManager** - For devices with system permissions using reflection
+- **FallbackNetworkManager** - For regular devices, prompts user for manual configuration
+
+### Bluetooth Manager System
+
+Similarly structured for Bluetooth/BLE operations:
+
+```java
+// Interface for Bluetooth operations
+public interface IBluetoothManager {
+    void initialize();
+    void startAdvertising();
+    void sendData(byte[] data);
+    boolean isConnected();
+    // ... other BLE operations
+}
+```
+
+**Implementations:**
+
+- **K900BluetoothManager** - Uses serial port communication with BES2700 chip
+- **StandardBluetoothManager** - Full BLE GATT server implementation for standard Android devices
+
+### Media System
+
+The media system handles camera button presses and media capture:
+
+**Button Press Flow**:
+
+- Physical button press detected by microcontroller
+- MCU sends command to ASG Client (`cs_pho` for short press, `cs_vdo` for long press)
+- ASG Client checks button press mode configuration:
+  - **PHOTO mode**: Takes photo/video locally
+  - **APPS mode**: Sends button event to phone/apps
+  - **BOTH mode**: Does both actions
+- Photos are captured and queued for upload when connected
+
+### RTMP Streaming
+
+Supports live video streaming with four main commands:
+
+1. **start_rtmp_stream** - Initiates streaming to specified RTMP URL
+2. **stop_rtmp_stream** - Terminates active stream
+3. **keep_rtmp_stream_alive** - Must be sent every 15 seconds to prevent 60-second timeout
+4. **get_rtmp_status** - Queries current streaming status
+
+The stream automatically stops if no keep-alive is received for 60 seconds. The system uses ACK-based reliability where each keep-alive must be acknowledged by the glasses.
+
+## Development Guidelines
+
+### Code Style
+
+- **Java**:
+  - Use Java SDK 17
+  - Classes: PascalCase
+  - Methods: camelCase
+  - Constants: UPPER_SNAKE_CASE
+  - Member variables: mCamelCase (with m prefix)
+  - 2-space indentation
+  - EventBus for component communication
+
+### Adding Support for New Glasses
+
+To add support for new Android-based smart glasses:
+
+1. **Fix Device Detection** (REQUIRED):
+
+   ```java
+   // In NetworkManagerFactory.java and BluetoothManagerFactory.java
+   // Change this:
+   if (true || isK900Device()) {  // Currently forced to K900
+
+   // To this:
+   if (isK900Device()) {  // Proper device detection
+   ```
+
+2. **Create a SmartGlassesCommunicator** in augmentos_core:
+   - Extend `SmartGlassesCommunicator` base class
+   - Implement BLE client to connect to StandardBluetoothManager
+   - Handle display, audio, and sensor capabilities
+   - See `ANDROID_FIRMWARE_GUIDE.md` for detailed instructions
+
+3. **Update Device Detection**:
+
+   ```java
+   private boolean isYourGlassesDevice() {
+       String model = Build.MODEL.toLowerCase();
+       return model.contains("your-device-identifier");
+   }
+   ```
+
+4. **Configure Manager Selection**:
+   - StandardBluetoothManager will work for most devices
+   - Choose appropriate NetworkManager based on permissions
+   - Test with both System and Fallback network managers
+
+### Important Notes on Current State
+
+**StandardBluetoothManager**: A fully implemented BLE GATT server exists with:
+
+- Complete BLE GATT server functionality
+- Auto-pairing capabilities
+- MTU negotiation
+- Serial-like data exchange over characteristics
+
+However, it's not currently used because:
+
+- The K900 (Mentra Live) uses proprietary serial communication via K900BluetoothManager
+- The MentraLiveSGC.java in augmentos_core is designed specifically for K900's serial protocol
+- To use StandardBluetoothManager, you'd need a new SmartGlassesCommunicator that acts as a BLE client
+
+### Building and Testing
+
+1. **Environment Setup**:
+
+   ```bash
+   # Copy environment file
+   cp .env.example .env
+
+   # For local development, modify .env:
+   MENTRAOS_HOST=localhost  # or your computer's IP
+   MENTRAOS_PORT=8002
+   MENTRAOS_SECURE=false
+   ```
+
+2. **Build Requirements**:
+   - Android Studio with Java SDK 17
+   - Set Gradle JDK to version 17 in Android Studio settings
+
+3. **Testing on Mentra Live Glasses**:
+
+   Mentra Live only supports ADB over WiFi (no USB ADB). To connect:
+
+   a. **Setup WiFi ADB Connection**:
+
+   ```bash
+   # 1. Pair Mentra Live with the MentraOS mobile app
+   # 2. In the app, connect glasses to your WiFi network
+   # 3. Note the IP address shown on the "Glasses" screen
+   # 4. Connect via ADB (computer must be on same WiFi network):
+   adb connect [IP_ADDRESS]:5555
+
+   # Example:
+   adb connect 192.168.1.123:5555
+
+   # Verify connection:
+   adb devices
+   # Should show: 192.168.1.123:5555    device
+   ```
+
+   b. **Build and Install**:
+
+   ```bash
+   # Build the APK
+   ./gradlew assembleDebug
+
+   # Install on glasses
+   adb install app/build/outputs/apk/debug/app-debug.apk
+
+   # For local development server, forward ports:
+   adb reverse tcp:8002 tcp:8002
+   ```
+
+### Message Processing
+
+The client processes JSON commands from the cloud:
+
+```java
+// Example command processing in AsgClientService
+switch (type) {
+    case "take_photo":
+        String requestId = dataToProcess.optString("requestId", "");
+        mMediaCaptureService.takePhotoAndUpload(photoFilePath, requestId);
+        break;
+
+    case "start_rtmp_stream":
+        String streamId = dataToProcess.optString("streamId", "");
+        String rtmpUrl = dataToProcess.optString("rtmpUrl", "");
+        RtmpStreamingService.startStreaming(this, rtmpUrl);
+        RtmpStreamingService.startStreamTimeout(streamId);
+        break;
+
+    case "display_text":
+        // For glasses with displays
+        showTextOnDisplay(text);
+        break;
+}
+```
+
+## Compatible Devices
+
+Currently supported:
+
+- **Mentra Live** (K900)
+
+The ASG Client could potentially be adapted to work on other Android-based smart glasses with sufficient modifications, such as TCL Rayneo X2/X3, INMO Air 2/3, and others.
+
+## Next Steps for Contributors
+
+1. **Fix the K900 detection** in both factory classes
+2. **Create device-specific SmartGlassesCommunicators** in augmentos_core
+3. **Add device detection** for your specific glasses model
+4. **Test the StandardBluetoothManager** with your device
+5. **Submit PRs** with your device support additions
+
+## Resources
+
+- [MentraOS Mobile App Guidelines](/contributing/mentraos-manager-guidelines) - Mobile app development guide

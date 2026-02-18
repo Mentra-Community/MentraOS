@@ -1,153 +1,94 @@
 // components/dialogs/SharingDialog.tsx
-import React, { useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Copy, Share2, LinkIcon, CheckCircle, X, InfoIcon } from "lucide-react";
-import api from "@/services/api.service";
-import { AppI } from '@mentra/sdk';
-import { App } from '@/types/app';
+import {useEffect, useState, FC} from "react"
+import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle} from "@/components/ui/dialog"
+import {Button} from "@/components/ui/button"
+import {Input} from "@/components/ui/input"
+
+import {Copy, LinkIcon, CheckCircle, ExternalLink} from "lucide-react"
+import api from "@/services/api.service"
+import {AppI} from "@mentra/sdk"
+import {App} from "@/types/app"
 
 interface SharingDialogProps {
-  app: AppI | App | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  orgId?: string;
+  app: AppI | App | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  orgId?: string
 }
 
-const SharingDialog: React.FC<SharingDialogProps> = ({ app, open, onOpenChange, orgId }) => {
+const SharingDialog: FC<SharingDialogProps> = ({app, open, onOpenChange, orgId}) => {
   // Local states for dialog
-  const [email, setEmail] = useState('');
-  const [sharedEmails, setSharedEmails] = useState<string[]>([]);
-  const [isLinkCopied, setIsLinkCopied] = useState(false);
-  const [isEmailValid, setIsEmailValid] = useState(true);
-  const [shareLink, setShareLink] = useState('');
-  const [loadingShareLink, setLoadingShareLink] = useState(true);
+  const [isLinkCopied, setIsLinkCopied] = useState(false)
+  const [isPackageNameCopied, setIsPackageNameCopied] = useState(false)
+  const [shareLink, setShareLink] = useState("")
+  const [loadingShareLink, setLoadingShareLink] = useState(true)
 
   // Get shareable installation link.
   useEffect(() => {
     async function getShareLink() {
       if (open && app) {
-        setLoadingShareLink(true);
+        setLoadingShareLink(true)
         try {
-          const link = await api.sharing.getInstallLink(app.packageName, orgId);
-          setShareLink(link);
+          const link = await api.sharing.getInstallLink(app.packageName, orgId)
+          setShareLink(link)
         } catch (error) {
-          console.error('Failed to get share link:', error);
-          setShareLink(`https://apps.mentra.glass/package/${app.packageName}`); // Fallback
+          console.error("Failed to get share link:", error)
+          setShareLink(`https://apps.mentra.glass/package/${app.packageName}`) // Fallback
         } finally {
-          setLoadingShareLink(false);
+          setLoadingShareLink(false)
         }
       }
     }
-    getShareLink();
-  }, [open, app, orgId]);
-
-  // Check if email is valid
-  const validateEmail = (email: string): boolean => {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  };
-
-  // Handle email input change
-  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setEmail(value);
-    if (value) {
-      setIsEmailValid(validateEmail(value));
-    } else {
-      setIsEmailValid(true);
-    }
-  };
-
-  // Add email to the list
-  const handleAddEmail = () => {
-    if (!email || !isEmailValid) return;
-
-    // Don't add duplicate emails
-    if (!sharedEmails.includes(email)) {
-      setSharedEmails([...sharedEmails, email]);
-    }
-
-    setEmail('');
-  };
-
-  // Remove email from the list
-  const handleRemoveEmail = (emailToRemove: string) => {
-    setSharedEmails(sharedEmails.filter(e => e !== emailToRemove));
-  };
+    getShareLink()
+  }, [open, app, orgId])
 
   // Copy installation link to clipboard
   const handleCopyLink = async () => {
     navigator.clipboard.writeText(shareLink).then(() => {
-      setIsLinkCopied(true);
-      setTimeout(() => setIsLinkCopied(false), 2000);
-    });
-  };
+      setIsLinkCopied(true)
+      setTimeout(() => setIsLinkCopied(false), 2000)
+    })
+  }
 
-  // Track sharing with emails
-  const handleTrackSharing = async () => {
-    if (!app || sharedEmails.length === 0) return;
-
-    try {
-      await api.sharing.trackSharing(app.packageName, sharedEmails, orgId);
-      // You could show a success message here if desired
-    } catch (error) {
-      console.error('Error tracking sharing:', error);
-      // You could show an error message here if desired
+  // Copy package name to clipboard
+  const handleCopyPackageName = async () => {
+    if (app?.packageName) {
+      navigator.clipboard.writeText(app.packageName).then(() => {
+        setIsPackageNameCopied(true)
+        setTimeout(() => setIsPackageNameCopied(false), 2000)
+      })
     }
-  };
+  }
 
   // When dialog closes, track sharing and reset states
   const handleOpenChange = (newOpen: boolean) => {
-    if (!newOpen && sharedEmails.length > 0 && app) {
-      handleTrackSharing();
-      // No need to reset shared emails so users don't lose their list
-      setEmail('');
-      setIsLinkCopied(false);
-      setIsEmailValid(true);
+    if (!newOpen && app) {
+      setIsLinkCopied(false)
+      setIsPackageNameCopied(false)
     }
-    onOpenChange(newOpen);
-  };
-
-  // Handle key press in input
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && email && isEmailValid) {
-      e.preventDefault();
-      handleAddEmail();
-    }
-  };
+    onOpenChange(newOpen)
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Share2 className="h-5 w-5" />
-            Share with Testers
+            <LinkIcon className="h-5 w-5" />
+            Installation Link
           </DialogTitle>
-          <DialogDescription>
-            {app && `Share ${app.name} with testers`}
-          </DialogDescription>
+          <DialogDescription>{app && `Share ${app.name} with testers`}</DialogDescription>
         </DialogHeader>
 
         <div className="py-4 space-y-6">
           {/* Installation Link Section */}
           <div className="space-y-3">
-            <h3 className="text-sm font-medium flex items-center gap-2">
-              <LinkIcon className="h-4 w-4" />
-              Installation Link
-            </h3>
-            <p className="text-sm text-gray-500">
-              Share this link with anyone to let them install your app:
-            </p>
+            <p className="text-sm text-gray-500">Share this link with anyone to let them install your app:</p>
             <div className="flex items-center gap-2">
               <div className="flex-1 relative">
                 <Input
                   readOnly
-                  value={
-                    loadingShareLink ? 'Loading...' : shareLink
-                  }
+                  value={loadingShareLink ? "Loading..." : shareLink}
                   className="pr-10 font-mono text-sm"
                 />
               </div>
@@ -156,90 +97,57 @@ const SharingDialog: React.FC<SharingDialogProps> = ({ app, open, onOpenChange, 
                 size="sm"
                 onClick={handleCopyLink}
                 className="shrink-0 ml-2"
-                disabled={loadingShareLink}
-              >
-                {isLinkCopied ?
-                  <CheckCircle className="h-4 w-4 text-green-600" /> :
-                  <Copy className="h-4 w-4" />
-                }
+                disabled={loadingShareLink}>
+                {isLinkCopied ? <CheckCircle className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
           </div>
 
-          {/* Tester Email List Section */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium">Testers</h3>
-            <p className="text-sm text-gray-500">
-              Keep track of who you've shared this app with:
+          {/* App Store Information */}
+          <div className="bg-blue-50 border border-blue-200 p-3 rounded-md">
+            <p className="text-sm text-blue-900 font-medium mb-2">View in MentraOS App Store</p>
+            <p className="text-xs text-blue-700 mb-3">
+              You can also visit the app store and search for the exact package name to see how your app appears to
+              others.
             </p>
-
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
-                <Input
-                  placeholder="Add tester email address"
-                  value={email}
-                  onChange={handleEmailChange}
-                  onKeyPress={handleKeyPress}
-                  className={!isEmailValid ? "border-red-500" : ""}
-                />
-                {!isEmailValid && (
-                  <p className="text-xs text-red-500 mt-1">Please enter a valid email address</p>
-                )}
-              </div>
-              <Button
-                onClick={handleAddEmail}
-                disabled={!email || !isEmailValid}
-                className="shrink-0"
-                size="sm"
-              >
-                Add
-              </Button>
-            </div>
-
-            {/* Email List */}
-            {sharedEmails.length > 0 ? (
-              <div className="border rounded-md p-3">
-                <div className="space-y-2">
-                  {sharedEmails.map((email) => (
-                    <div key={email} className="flex items-center justify-between">
-                      <span className="text-sm">{email}</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRemoveEmail(email)}
-                        className="h-6 w-6 p-0"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
+            <a
+              href={`https://apps.mentra.glass/`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 hover:underline">
+              <ExternalLink className="h-4 w-4" />
+              Open in App Store
+            </a>
+            <div className="mt-2 pt-2 border-t border-blue-200">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-blue-600">Search for:</p>
+                  <code className="bg-blue-100 px-1.5 py-0.5 rounded font-mono text-xs">{app?.packageName}</code>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCopyPackageName}
+                  className="h-7 px-2 hover:bg-blue-100">
+                  {isPackageNameCopied ? (
+                    <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5 text-blue-600" />
+                  )}
+                </Button>
               </div>
-            ) : (
-              <div className="border rounded-md p-4 text-center">
-                <p className="text-sm text-gray-500">No testers added yet</p>
-              </div>
-            )}
+            </div>
           </div>
-
-          {/* Instruction Note */}
-          <Alert className="bg-blue-50 text-blue-800 border-blue-200">
-            <InfoIcon className="h-4 w-4 text-blue-600" />
-            <AlertDescription className="text-blue-700">
-              Note: The system won't send emails automatically. Share the installation link with
-              your testers manually.
-            </AlertDescription>
-          </Alert>
         </div>
 
         <DialogFooter className="mt-4">
-          <Button onClick={() => onOpenChange(false)}>
+          <Button className="w-100" onClick={() => onOpenChange(false)}>
             Done
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-};
+  )
+}
 
-export default SharingDialog;
+export default SharingDialog

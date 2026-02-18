@@ -41,6 +41,7 @@ typedef enum
     LCD_CMD_CHESS_PATTERN,         // **NEW: Direct A6N chess pattern**
     LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
     LCD_CMD_CLEAR_DISPLAY,         // **NEW: Clear display**
+    LCD_CMD_UPDATE_HEIGHT
 } display_cmd_type_t;
 
 /* Display on/off control functions | 显示开关控制函数 */
@@ -89,6 +90,11 @@ typedef struct
     char text[MAX_TEXT_LEN + 1];  // **NEW: XY positioned text content**
 } lcd_xy_text_param_t;
 
+typedef struct 
+{
+    uint16_t height;
+} lcd_height_param_t;
+
 typedef union
 {
     lcd_text_param_t text;
@@ -97,6 +103,7 @@ typedef union
     lcd_protobuf_text_param_t protobuf_text;  // **NEW: Protobuf text parameter**
     lcd_xy_text_param_t xy_text;              // **NEW: XY positioned text parameter**
     lcd_dfu_progress_param_t dfu_progress;    // **NEW: DFU progress bar (show + percent)**
+    lcd_height_param_t height;
     // 其它命令参数结构体可继续扩展
 } display_param_u;
 
@@ -120,6 +127,10 @@ void display_open(void);
 
 // **NEW: Thread-safe pattern cycling function**
 void display_cycle_pattern(void);
+
+static void update_display_height(uint16_t height);
+
+void display_update_height(uint16_t height);
 
 // **NEW: Thread-safe protobuf text update function**
 void display_update_protobuf_text(const char *text_content);
