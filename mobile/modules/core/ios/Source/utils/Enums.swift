@@ -40,6 +40,9 @@ enum DeviceOrders: UInt8 {
     case TRIGGER_FOR_AI = 0x17
     case TRIGGER_FOR_STOP_RECORDING = 0x18
     case G1_IS_READY = 0x09
+    case UNKNOWN_0x0A = 0x0A
+    case UNKNOWN_0x11 = 0x11
+    case UNKNOWN_0x12 = 0x12
     case HEAD_UP = 0x1E
     case HEAD_DOWN = 0x1F
     case SILENCED = 0x04

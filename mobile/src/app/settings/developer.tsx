@@ -3,7 +3,7 @@ import {ScrollView, View, ViewStyle, TextStyle} from "react-native"
 
 import BackendUrl from "@/components/dev/BackendUrl"
 import StoreUrl from "@/components/dev/StoreUrl"
-import {Header, Icon, Screen, Text} from "@/components/ignite"
+import {Header, Icon, Screen, Text, Button} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
@@ -28,7 +28,9 @@ const LC3_FRAME_SIZE_OPTIONS = [
 export default function DeveloperSettingsScreen() {
   const {theme, themed} = useAppTheme()
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationHistory()
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [defaultWearable, setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
+  const [_onboardingCompleted, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
@@ -93,6 +95,17 @@ export default function DeveloperSettingsScreen() {
           </Group>
 
           <Group title="Quick Links">
+            <RouteButton 
+              label="Skip to Home (Force)" 
+              subtitle="Clear onboarding and go to home"
+              onPress={() => {
+                setDefaultWearable("evenrealities_g1")
+                setDeviceName("30")
+                setOnboardingCompleted(true)
+                setTimeout(() => replaceAll("/"), 100)
+              }}
+            />
+            
             <RouteButton label="Sitemap" subtitle="View the app's route map" onPress={() => push("/_sitemap")} />
 
             <RouteButton
@@ -142,7 +155,19 @@ export default function DeveloperSettingsScreen() {
           </Group>
 
           <Group title="Misc">
+            <View style={{padding: theme.spacing.s4}}>
+              <Button 
+                text={defaultWearable ? `Paired: ${defaultWearable}` : "Set G1 as Default"} 
+                preset={defaultWearable ? "default" : "filled"}
+                onPress={() => setDefaultWearable("evenrealities_g1")} 
+              />
+            </View>
+            
+            <RouteButton label="Offline Apps" subtitle="Manage offline apps" onPress={() => push("/offline-apps")} />
+            <RouteButton label="Dashboard Controls" subtitle="Navigate MP Dashboard widgets" onPress={() => push("/dashboard-control")} />
+            <RouteButton label="MP-CLI Dashboard" subtitle="View MP-CLI dashboard" onPress={() => push("/mp-cli/dashboard")} />
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
+            <RouteButton label="MP-CLI Bridge Test" subtitle="Test MP-CLI HTTP bridge" onPress={() => push("/test/mp-cli-bridge")} />
 
             <RouteButton
               label="Buffer Recording Debug"

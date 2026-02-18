@@ -714,14 +714,15 @@ struct ViewState {
         }
 
         if sgc != nil {
-            Bridge.log("MAN: SGC already initialized")
             return
         }
 
-        if wearable.contains(DeviceTypes.SIMULATED) {
-            sgc = Simulated()
-        } else if wearable.contains(DeviceTypes.G1) {
+        let wearableLower = wearable.lowercased().replacingOccurrences(of: " ", with: "")
+        
+        if wearableLower.contains("evenrealitiesg1") || wearableLower.contains("g1") {
             sgc = G1()
+        } else if wearable.contains(DeviceTypes.SIMULATED) {
+            sgc = Simulated()
         } else if wearable.contains(DeviceTypes.LIVE) {
             sgc = MentraLive()
         } else if wearable.contains(DeviceTypes.MACH1) {

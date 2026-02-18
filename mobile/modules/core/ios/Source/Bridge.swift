@@ -47,6 +47,7 @@ class Bridge {
     }
 
     static func sendHeadUp(_ isUp: Bool) {
+        Bridge.log("Bridge: Sending head_up event, up=\(isUp)")
         let data = ["up": isUp]
         Bridge.sendTypedMessage("head_up", body: data)
     }

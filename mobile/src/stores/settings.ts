@@ -112,7 +112,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   default_wearable: {
     key: "default_wearable",
-    defaultValue: () => "",
+    defaultValue: () => "evenrealities_g1",
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -158,7 +158,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   onboarding_completed: {
     key: "onboarding_completed",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -373,6 +373,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  mp_cli_running: {
+    key: "mp_cli_running",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   // button action settings
   default_button_action_enabled: {
     key: "default_button_action_enabled",
@@ -413,7 +420,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
 } as const
 
-export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra.camera"]
+export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra.camera", "com.mentra.mpcli"]
 
 // these settings are automatically synced to the core:
 const CORE_SETTINGS_KEYS: string[] = [

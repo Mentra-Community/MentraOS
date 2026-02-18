@@ -12,7 +12,7 @@ export default function MiniApp() {
 
   useEffect(() => {
     const loadHtml = async () => {
-      const asset = Asset.fromModule(require("../../../lma_example/index.html"))
+      const asset = Asset.fromModule(require("../../../lma_example/g1-test.html"))
       await asset.downloadAsync()
       const response = await fetch(asset.localUri!)
       const html = await response.text()

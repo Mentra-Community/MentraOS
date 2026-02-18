@@ -78,7 +78,16 @@ export default function InitScreen() {
     }
 
     // Check onboarding status
-    if (!onboardingCompleted && !defaultWearable) {
+    if (!onboardingCompleted) {
+      // If glasses are already paired at iOS level, skip to home
+      if (defaultWearable) {
+        setTimeout(() => {
+          clearHistoryAndGoHome()
+        }, NAVIGATION_DELAY)
+        return
+      }
+      
+      // Otherwise start onboarding
       replaceAll("/onboarding/welcome")
       return
     }

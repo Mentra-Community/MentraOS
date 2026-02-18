@@ -31,6 +31,11 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
     // Listen for messages from SuperComms
     const handleMessage = (message: SuperWebViewMessage) => {
       console.log(`SUPERAPP: Native received: ${message.type}`)
+      
+      // Handle send_to_glasses message
+      if (message.type === 'send_to_glasses' && message.payload?.text) {
+        miniComms.sendToGlasses(message.payload.text)
+      }
     }
 
     keepAliveIntervalRef.current = setInterval(() => {

@@ -71,6 +71,11 @@ export const ForegroundAppsGrid: React.FC = () => {
     }
 
     startApplet(app.packageName)
+    
+    // Navigate to offline route if it's an offline app
+    if (app.offline && app.offlineRoute) {
+      push(app.offlineRoute)
+    }
   }
 
   const renderItem = useCallback(

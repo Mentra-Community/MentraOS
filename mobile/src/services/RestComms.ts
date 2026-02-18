@@ -87,16 +87,36 @@ class RestComms {
     }
 
     return Res.try_async(async () => {
-      const res = await this.axiosInstance.request<T>(axiosConfig)
-      return res.data
+      console.log(`[RestComms] Making ${method} request to: ${url}`)
+      try {
+        const res = await this.axiosInstance.request<T>(axiosConfig)
+        console.log(`[RestComms] Response received:`, {
+          status: res.status,
+          statusText: res.statusText,
+          data: res.data,
+        })
+        return res.data
+      } catch (error: any) {
+        console.error(`[RestComms] HTTP request failed:`, {
+          method,
+          url,
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          message: error.message,
+        })
+        throw error
+      }
     })
   }
 
   private authenticatedRequest<T>(config: RequestConfig): AsyncResult<T, Error> {
     let res = this.validateToken()
     if (res.is_error()) {
+      console.error(`[RestComms] Token validation failed:`, res.error)
       return Res.error_async(res.error)
     }
+    console.log(`[RestComms] Token validated, making request to: ${config.endpoint}`)
     return this.makeRequest<T>({...config})
   }
 
@@ -166,7 +186,8 @@ class RestComms {
     return data
   }
 
-  public startApp(packageName: string): AsyncResult<void, Error> {
+  public async startApp(packageName: string): AsyncResult<void, Error> {
+    console.log(`[RestComms] startApp called for: ${packageName}`)
     const config: RequestConfig = {
       method: "POST",
       endpoint: `/apps/${packageName}/start`,
@@ -175,8 +196,21 @@ class RestComms {
       success: boolean
       data: any
     }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(() => undefined)
+    const res = await this.authenticatedRequest<Response>(config)
+    console.log(`[RestComms] startApp response for ${packageName}:`, JSON.stringify(res))
+    
+    if (res.is_error()) {
+      console.error(`[RestComms] startApp request failed for ${packageName}:`, res.error)
+      return res
+    }
+    
+    if (!res.value.success) {
+      console.error(`[RestComms] Backend returned success=false for ${packageName}`)
+      return Res.error(new Error(`Backend returned success=false`))
+    }
+    
+    console.log(`[RestComms] startApp SUCCESS for ${packageName}`)
+    return Res.ok(undefined)
   }
 
   public stopApp(packageName: string): AsyncResult<void, Error> {

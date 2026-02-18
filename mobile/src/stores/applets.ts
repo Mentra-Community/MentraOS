@@ -62,6 +62,7 @@ export const DUMMY_APPLET: ClientAppletInterface = {
 
 export const cameraPackageName = "com.mentra.camera"
 export const captionsPackageName = "com.mentra.captions"
+export const dashboardPackageName = "com.mentra.dashboard"
 
 // get offline applets:
 const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
@@ -69,6 +70,31 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
   // const offlineCaptionsRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
 
   let miniApps: ClientAppletInterface[] = [
+    {
+      packageName: dashboardPackageName,
+      name: "Dashboard",
+      type: "standard", // Foreground app
+      offline: true, // Works without internet
+      logoUrl: require("@assets/applet-icons/store.png"), // TODO: Add dashboard icon
+      webviewUrl: "",
+      permissions: [],
+      offlineRoute: "/dashboard-app",
+      local: false,
+      running: false,
+      loading: false,
+      healthy: true,
+      hardwareRequirements: [{type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED}],
+      onStart: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          return undefined
+        })
+      },
+      onStop: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          return undefined
+        })
+      },
+    },
     {
       packageName: cameraPackageName,
       name: "Camera",
@@ -142,6 +168,33 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
         })
       },
     },
+    {
+      packageName: "com.mentra.mpcli",
+      name: "MP Dashboard",
+      type: "background", // Background app (can run alongside others)
+      offline: true,
+      logoUrl: require("@assets/applet-icons/store.png"), // TODO: Add custom dashboard icon
+      webviewUrl: "",
+      healthy: true,
+      permissions: [],
+      offlineRoute: "",
+      running: false,
+      loading: false,
+      local: false,
+      hardwareRequirements: [{type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED}],
+      onStart: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          await storage.save("com.mentra.mpcli", true)
+          return undefined
+        })
+      },
+      onStop: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          await storage.save("com.mentra.mpcli", false)
+          return undefined
+        })
+      },
+    },
   ]
 
   // check the storage for the running state of the applets and update them:
@@ -187,12 +240,26 @@ const startStopOfflineApplet = (packageName: string, status: boolean): AsyncResu
       await useSettingsStore.getState().setSetting(SETTINGS.offline_camera_running.key, status)
       // Note: GalleryModeSync will detect this change and update gallery_mode accordingly
     }
+
+    // MP-CLI app special handling
+    if (packageName === "com.mentra.mpcli") {
+      console.log(`APPLET: MP-CLI app ${status ? "started" : "stopped"}`)
+      await useSettingsStore.getState().setSetting(SETTINGS.mp_cli_running.key, status)
+    }
+
+    // Dashboard app special handling
+    if (packageName === "com.mentra.dashboard") {
+      console.log(`APPLET: Dashboard app ${status ? "started" : "stopped"}`)
+      await useSettingsStore.getState().setSetting(SETTINGS.mp_cli_running.key, status)
+    }
   })
 }
 
 let refreshTimeout: ReturnType<typeof setTimeout> | null = null
 // actually turn on or off an applet:
 const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> => {
+  console.log(`[startStopApplet] Called for ${applet.packageName}, status: ${status}, offline: ${applet.offline}`)
+  
   // TODO: not the best way to handle this, but it works reliably:
   if (refreshTimeout) {
     BackgroundTimer.clearTimeout(refreshTimeout)
@@ -203,12 +270,15 @@ const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncR
   }, 2000)
 
   if (applet.offline) {
+    console.log(`[startStopApplet] Starting offline applet: ${applet.packageName}`)
     return startStopOfflineApplet(applet.packageName, status)
   }
 
   if (status) {
+    console.log(`[startStopApplet] Calling restComms.startApp for: ${applet.packageName}`)
     return restComms.startApp(applet.packageName)
   } else {
+    console.log(`[startStopApplet] Calling restComms.stopApp for: ${applet.packageName}`)
     return restComms.stopApp(applet.packageName)
   }
 }

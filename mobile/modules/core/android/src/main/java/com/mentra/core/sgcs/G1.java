@@ -543,15 +543,16 @@ public class G1 extends SGCManager {
                             }
                         }
                         // DOUBLE TAP
-                        // appears to be completely broken - clears the screen - we should not tell
-                        // people to use the touchpads yet til this is fixed
-                        // else if (data.length > 1 && (data[0] & 0xFF) == 0xF5 && ((data[1] & 0xFF) ==
-                        // 0x20) || ((data[1] & 0xFF) == 0x00)) {
-                        // boolean isRight = deviceName.contains("R_");
-                        // Bridge.log("G1: GOT DOUBLE TAP from isRight?: " + isRight);
-                        // EventBus.getDefault().post(new GlassesTapOutputEvent(2, isRight,
-                        // System.currentTimeMillis()));
-                        // }
+                        else if (data.length > 1 && (data[0] & 0xFF) == 0xF5) {
+                            Bridge.log("G1: Received tap data - byte0: 0x" + Integer.toHexString(data[0] & 0xFF) + ", byte1: 0x" + Integer.toHexString(data[1] & 0xFF));
+                            
+                            if ((data[1] & 0xFF) == 0x20 || (data[1] & 0xFF) == 0x00) {
+                                boolean isRight = deviceName.contains("R_");
+                                String buttonId = isRight ? "right" : "left";
+                                Bridge.log("G1: Touchpad tap detected - side: " + buttonId);
+                                Bridge.sendButtonPressEvent(buttonId, "short");
+                            }
+                        }
                         // BATTERY RESPONSE
                         else if (data.length > 2 && data[0] == 0x2C && data[1] == 0x66) {
                             if (deviceName.contains("L_")) {

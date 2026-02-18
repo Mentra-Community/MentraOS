@@ -88,10 +88,12 @@ struct BufferedCommand {
     let ignoreAck: Bool
     let chunkTimeMs: Int
     let lastFrameMs: Int
+    let bypassReadyCheck: Bool  // Allow sending before fully ready (for init commands)
 
     init(
         chunks: [[UInt8]], sendLeft: Bool = true, sendRight: Bool = true, waitTime: Int = -1,
-        ignoreAck: Bool = false, chunkTimeMs: Int = 10, lastFrameMs: Int = 0
+        ignoreAck: Bool = false, chunkTimeMs: Int = 10, lastFrameMs: Int = 0,
+        bypassReadyCheck: Bool = false
     ) {
         self.chunks = chunks
         self.sendLeft = sendLeft
@@ -100,6 +102,7 @@ struct BufferedCommand {
         self.ignoreAck = ignoreAck
         self.chunkTimeMs = chunkTimeMs
         self.lastFrameMs = lastFrameMs
+        self.bypassReadyCheck = bypassReadyCheck
     }
 }
 
@@ -111,6 +114,25 @@ struct AppInfo {
 
 enum GlassesError: Error {
     case missingGlasses(String)
+}
+
+// Connection state for BLE peripheral
+enum ConnectionState {
+    case disconnected
+    case connecting
+    case discovering
+    case stabilizing
+    case ready
+}
+
+// Track connection state for both peripherals
+class PeripheralState {
+    var left: ConnectionState = .disconnected
+    var right: ConnectionState = .disconnected
+    
+    var isFullyReady: Bool {
+        return left == .ready && right == .ready
+    }
 }
 
 // Dedicated actor for timer management
@@ -168,6 +190,16 @@ actor CommandQueue {
             self.continuation = continuation
         }
     }
+    
+    func clear() {
+        commands.removeAll()
+        // Cancel any waiting continuation
+        if let continuation {
+            self.continuation = nil
+            // Note: We can't resume with a value here as there's no command to return
+            // The dequeue caller will need to handle reconnection
+        }
+    }
 }
 
 // Actor for managing pending ACKs
@@ -218,6 +250,8 @@ actor ReconnectionManager {
     private let intervalSeconds: TimeInterval
     private var attempts = 0
     private let maxAttempts: Int // -1 for unlimited
+    private var lastAttemptTime: Date?
+    private let backoffDelays: [TimeInterval] = [1.0, 2.0, 5.0, 10.0] // Exponential backoff schedule
 
     init(intervalSeconds: TimeInterval = 30, maxAttempts: Int = -1) {
         self.intervalSeconds = intervalSeconds
@@ -231,10 +265,41 @@ actor ReconnectionManager {
     var attemptCount: Int {
         attempts
     }
+    
+    // Calculate backoff delay based on attempt count
+    private func getBackoffDelay() -> TimeInterval {
+        let index = min(attempts, backoffDelays.count - 1)
+        return backoffDelays[index]
+    }
+    
+    // Check if enough time has passed for next attempt
+    func shouldAttemptReconnection() -> (should: Bool, delay: TimeInterval) {
+        guard let lastAttempt = lastAttemptTime else {
+            return (true, 0)
+        }
+        
+        let backoffDelay = getBackoffDelay()
+        let timeSinceLastAttempt = Date().timeIntervalSince(lastAttempt)
+        
+        if timeSinceLastAttempt >= backoffDelay {
+            return (true, 0)
+        } else {
+            let remainingDelay = backoffDelay - timeSinceLastAttempt
+            return (false, remainingDelay)
+        }
+    }
+    
+    // Reset backoff after successful stable connection
+    func reset() {
+        attempts = 0
+        lastAttemptTime = nil
+        Bridge.log("G1: Reconnection backoff reset after stable connection")
+    }
 
     func start(onAttempt: @escaping @Sendable () async -> Bool) {
         stop()
         attempts = 0
+        lastAttemptTime = nil
 
         task = Task {
             while !Task.isCancelled {
@@ -243,8 +308,18 @@ actor ReconnectionManager {
                     break
                 }
 
+                // Check backoff before attempting
+                let (shouldAttempt, delay) = await shouldAttemptReconnection()
+                if !shouldAttempt {
+                    Bridge.log("G1: Waiting \(String(format: "%.1f", delay))s before next reconnection attempt")
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+
                 attempts += 1
-                Bridge.log("G1: Reconnection attempt \(attempts)")
+                lastAttemptTime = Date()
+                let backoffDelay = await getBackoffDelay()
+                Bridge.log("G1: Reconnection attempt \(attempts) (next retry in \(String(format: "%.0f", backoffDelay))s if failed)")
 
                 let shouldStop = await onAttempt()
 
@@ -253,8 +328,10 @@ actor ReconnectionManager {
                     break
                 }
 
+                // Wait for backoff delay before next attempt
+                let nextDelay = await getBackoffDelay()
                 do {
-                    try await Task.sleep(nanoseconds: UInt64(intervalSeconds * 1_000_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(nextDelay * 1_000_000_000))
                 } catch {
                     break
                 }
@@ -266,6 +343,7 @@ actor ReconnectionManager {
         task?.cancel()
         task = nil
         attempts = 0
+        lastAttemptTime = nil
     }
 }
 
@@ -414,6 +492,9 @@ class G1: NSObject, SGCManager {
 
     var leftReady: Bool = false
     var rightReady: Bool = false
+    
+    // Connection state tracking for BLE stability
+    private let peripheralState = PeripheralState()
 
     @Published var compressedVoiceData: Data = .init()
     @Published var aiListening: Bool = false
@@ -433,6 +514,7 @@ class G1: NSObject, SGCManager {
     private let ackManager = AckManager()
     private var globalCounter: UInt8 = 0
     private var heartbeatCounter: UInt8 = 0
+    private var stableConnectionTask: Task<Void, Never>?
 
     enum AiMode: String {
         case AI_REQUESTED
@@ -687,6 +769,28 @@ class G1: NSObject, SGCManager {
         // send our already connected devices to RN:
         let devices = getConnectedDevices()
         Bridge.log("G1: connnectedDevices.count: (\(devices.count))")
+        
+        // If devices are already connected, disconnect them first for a clean reconnect
+        if !devices.isEmpty {
+            Bridge.log("G1: Found \(devices.count) already-connected devices, disconnecting for clean reconnect")
+            for device in devices {
+                if let name = device.name, name.contains(DEVICE_SEARCH_ID) {
+                    Bridge.log("G1: Disconnecting \(name) for clean reconnect")
+                    centralManager!.cancelPeripheralConnection(device)
+                }
+            }
+            // Wait a moment for disconnection to complete, then scan
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self else { return }
+                Bridge.log("G1: Starting fresh scan after disconnect")
+                let scanOptions: [String: Any] = [
+                    CBCentralManagerScanOptionAllowDuplicatesKey: false,
+                ]
+                self.centralManager!.scanForPeripherals(withServices: nil, options: scanOptions)
+            }
+            return true
+        }
+        
         for device in devices {
             if let name = device.name {
                 Bridge.log("G1: Connected to device: \(name)")
@@ -967,10 +1071,54 @@ class G1: NSObject, SGCManager {
         }
 
         //         CoreCommsService.log("g1Ready set to \(leftReady) \(rightReady) \(leftReady && rightReady) left: \(left), right: \(right)")
+        let wasReady = ready
         ready = leftReady && rightReady
+        
         if ready {
             stopReconnectionTimer()
+            
+            // Start stable connection timer if transitioning to ready
+            if !wasReady {
+                startStableConnectionTimer()
+            }
+        } else {
+            // Cancel stable connection timer if disconnected
+            stableConnectionTask?.cancel()
+            stableConnectionTask = nil
         }
+    }
+    
+    // Start timer to reset reconnection backoff after 30s of stable connection
+    private func startStableConnectionTimer() {
+        stableConnectionTask?.cancel()
+        
+        stableConnectionTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
+                
+                guard let self = self, !Task.isCancelled else { return }
+                
+                // Reset reconnection backoff after stable connection
+                await self.reconnectionManager.reset()
+            } catch {
+                // Task was cancelled, ignore
+            }
+        }
+    }
+    
+    // Helper method to update connection state with logging
+    private func updateConnectionState(for peripheral: CBPeripheral, to newState: ConnectionState) {
+        let peripheralName = peripheral == leftPeripheral ? "L" : "R"
+        let oldState = peripheral == leftPeripheral ? peripheralState.left : peripheralState.right
+        
+        if peripheral == leftPeripheral {
+            peripheralState.left = newState
+        } else if peripheral == rightPeripheral {
+            peripheralState.right = newState
+        }
+        
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        Bridge.log("🔄 [\(timestamp)] \(peripheralName) state: \(oldState) → \(newState)")
     }
 
     func stopScan() {
@@ -1107,6 +1255,12 @@ class G1: NSObject, SGCManager {
             Bridge.log("G1: @@@ chunks was empty! @@@")
             return
         }
+        
+        // Check if peripherals are fully ready before sending (unless bypassed for init)
+        if !command.bypassReadyCheck && !peripheralState.isFullyReady {
+            Bridge.log("⚠️ Skipping command - peripherals not ready (L: \(peripheralState.left), R: \(peripheralState.right))")
+            return
+        }
 
         // Send to both sides in parallel
         await withTaskGroup(of: Void.self) { group in
@@ -1177,12 +1331,14 @@ class G1: NSObject, SGCManager {
 
         let side = peripheral == leftPeripheral ? "L" : "R"
         let s = peripheral == leftPeripheral ? "L" : "R"
-        // Bridge.log("G1: RECV (\(s)) \(data.hexEncodedString())")
+        // Verbose BLE logging disabled for release
+        // Bridge.log("G1: 📥 RECV (\(s)) \(data.hexEncodedString())")
 
         switch Commands(rawValue: command) {
         case .BLE_REQ_INIT:
-            handleAck(from: peripheral, success: data[1] == CommandResponse.ACK.rawValue)
-            handleInitResponse(from: peripheral, success: data[1] == CommandResponse.ACK.rawValue)
+            let ack = data[1] == CommandResponse.ACK.rawValue
+            handleAck(from: peripheral, success: ack)
+            handleInitResponse(from: peripheral, success: ack)
         case .QUICK_NOTE_ADD:
             handleAck(from: peripheral, success: data[1] == 0x10 || data[1] == 0x43)
         case .BLE_REQ_MIC_ON:
@@ -1270,7 +1426,20 @@ class G1: NSObject, SGCManager {
             )
         case .BLE_REQ_DEVICE_ORDER:
             let order = data[1]
+            // Bridge.log("G1: DEVICE_ORDER received - raw value: 0x\(String(format: "%02X", order))")
+            
             switch DeviceOrders(rawValue: order) {
+            case .DISPLAY_READY:
+                Bridge.log("G1: DISPLAY_READY")
+                // Note: G1 glasses do not send button press events over BLE
+                // DISPLAY_READY is sent after display updates, not button presses
+            case .DOUBLE_TAP:
+                // Handle double-tap if glasses firmware sends it
+                let peripheralName = peripheral.name ?? "unknown"
+                let isRight = peripheralName.contains("R_")
+                let buttonId = isRight ? "right" : "left"
+                Bridge.log("G1: Touchpad double-tap detected on \(buttonId) side (peripheral: \(peripheralName))")
+                Bridge.sendButtonPress(buttonId: buttonId, pressType: "short")
             case .HEAD_UP:
                 Bridge.log("G1: HEAD_UP")
                 isHeadUp = true
@@ -1291,9 +1460,15 @@ class G1: NSObject, SGCManager {
                 Bridge.log("G1: ACTIVATED")
             case .SILENCED:
                 Bridge.log("G1: SILENCED")
-            case .DISPLAY_READY:
-                Bridge.log("G1: DISPLAY_READY")
-            //        sendInitCommand(to: peripheral)// experimental
+            case .G1_IS_READY:
+                Bridge.log("G1: G1_IS_READY")
+            case .UNKNOWN_0x0A:
+                Bridge.log("G1: UNKNOWN_0x0A (possibly button related)")
+            case .UNKNOWN_0x11:
+                Bridge.log("G1: UNKNOWN_0x11 (possibly button related)")
+            case .UNKNOWN_0x12:
+                Bridge.log("G1: UNKNOWN_0x12 (possibly button related)")
+            // DISPLAY_READY is handled above as button press
             case .TRIGGER_FOR_AI:
                 Bridge.log("G1: TRIGGER AI")
             case .TRIGGER_FOR_STOP_RECORDING:
@@ -1338,17 +1513,13 @@ class G1: NSObject, SGCManager {
                     Bridge.log("G1: Case battery level was -1")
                 }
             case .DOUBLE_TAP:
-                Bridge.log("G1: DOUBLE TAP / display turned off")
-            //        Task {
-            ////          RN_sendText("DOUBLE TAP DETECTED")
-            ////          queueChunks([[UInt8(0x00), UInt8(0x01)]])
-            //          try? await Task.sleep(nanoseconds: 1500 * 1_000_000) // 2s delay after sending
-            //          sendInit()
-            //          clearState()
-            //        }
-            default:
-                //                 Core.log("G1: Received device order: \(data.subdata(in: 1..<data.count).hexEncodedString())")
-                break
+                let isRight = peripheral.name?.contains("R_") ?? false
+                let buttonId = isRight ? "right" : "left"
+                Bridge.log("G1: DOUBLE TAP detected on \(buttonId) side")
+                Bridge.sendButtonPress(buttonId: buttonId, pressType: "short")
+            @unknown default:
+                // Unknown DEVICE_ORDER code - log for debugging
+                Bridge.log("G1: ⚠️ Unknown DEVICE_ORDER: 0x\(String(format: "%02X", order)) from \(peripheral.name ?? "unknown")")
             }
         default:
             Bridge.log("G1: received from G1(not handled): \(data.hexEncodedString())")
@@ -1460,9 +1631,27 @@ extension G1 {
         let initDataArray = initData.map { UInt8($0) }
 
         if leftPeripheral == peripheral {
-            queueChunks([initDataArray], sendLeft: true, sendRight: false)
+            queueChunks([initDataArray], sendLeft: true, sendRight: false, bypassReadyCheck: true)
+            
+            // Set timeout to detect stuck stabilizing state
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                guard let self = self else { return }
+                if self.peripheralState.left == .stabilizing {
+                    Bridge.log("G1: ⚠️ Left arm stuck in stabilizing, forcing disconnect and retry")
+                    self.centralManager?.cancelPeripheralConnection(peripheral)
+                }
+            }
         } else if rightPeripheral == peripheral {
-            queueChunks([initDataArray], sendLeft: false, sendRight: true)
+            queueChunks([initDataArray], sendLeft: false, sendRight: true, bypassReadyCheck: true)
+            
+            // Set timeout to detect stuck stabilizing state
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                guard let self = self else { return }
+                if self.peripheralState.right == .stabilizing {
+                    Bridge.log("G1: ⚠️ Right arm stuck in stabilizing, forcing disconnect and retry")
+                    self.centralManager?.cancelPeripheralConnection(peripheral)
+                }
+            }
         }
     }
 
@@ -1493,10 +1682,16 @@ extension G1 {
         if peripheral == leftPeripheral {
             leftInitialized = success
             // CoreCommsService.log("G1: Left arm initialized: \(success)")
+            if success {
+                updateConnectionState(for: peripheral, to: .ready)
+            }
             setReadiness(left: true, right: nil)
         } else if peripheral == rightPeripheral {
             rightInitialized = success
             // CoreCommsService.log("G1: Right arm initialized: \(success)")
+            if success {
+                updateConnectionState(for: peripheral, to: .ready)
+            }
             setReadiness(left: nil, right: true)
         }
 
@@ -1638,11 +1833,13 @@ extension G1 {
 
     func queueChunks(
         _ chunks: [[UInt8]], sendLeft: Bool = true, sendRight: Bool = true, sleepAfterMs: Int = 0,
-        ignoreAck: Bool = false, chunkTimeMs: Int = 8, lastFrameMs: Int = 100
+        ignoreAck: Bool = false, chunkTimeMs: Int = 8, lastFrameMs: Int = 100,
+        bypassReadyCheck: Bool = false
     ) {
         let bufferedCommand = BufferedCommand(
             chunks: chunks, sendLeft: sendLeft, sendRight: sendRight, waitTime: sleepAfterMs,
-            ignoreAck: ignoreAck, chunkTimeMs: chunkTimeMs, lastFrameMs: lastFrameMs
+            ignoreAck: ignoreAck, chunkTimeMs: chunkTimeMs, lastFrameMs: lastFrameMs,
+            bypassReadyCheck: bypassReadyCheck
         )
         Task {
             await commandQueue.enqueue(bufferedCommand)
@@ -2208,6 +2405,10 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         // BLE operations stay on _bluetoothQueue (where this callback runs)
         peripheral.delegate = self
+        
+        // Update state to connecting
+        updateConnectionState(for: peripheral, to: .connecting)
+        
         peripheral.discoverServices([UART_SERVICE_UUID])
 
         DispatchQueue.main.async { [weak self] in
@@ -2237,6 +2438,15 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             peripheral == leftPeripheral
                 ? "LEFT" : peripheral == rightPeripheral ? "RIGHT" : "unknown"
         Bridge.log("G1: @@@@@ \(side) PERIPHERAL DISCONNECTED @@@@@")
+        
+        // Update state to disconnected
+        updateConnectionState(for: peripheral, to: .disconnected)
+        
+        // Clear command queue on disconnect
+        Task {
+            await commandQueue.clear()
+            Bridge.log("G1: Command queue cleared due to disconnect")
+        }
 
         // only reconnect if we're not intentionally disconnecting:
         if isDisconnecting {
@@ -2257,21 +2467,48 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             await reconnectionManager.start { [weak self] in
                 guard let self else { return false }
 
-                // Check if already connected
-                if await MainActor.run(body: { self.ready }) {
-                    Bridge.log("G1: Already connected, stopping reconnection")
-                    return true // Returning true stops the reconnection loop
+                // Check connection state on main actor
+                let shouldReconnect = await MainActor.run { () -> Bool in
+                    let leftState = self.peripheralState.left
+                    let rightState = self.peripheralState.right
+                    
+                    // Stop reconnection if both are ready
+                    if self.ready {
+                        Bridge.log("G1: Already connected, stopping reconnection")
+                        return true // Stop reconnection loop
+                    }
+                    
+                    // Don't reconnect if either peripheral is actively connecting/discovering/stabilizing
+                    let leftConnecting = leftState == .connecting || leftState == .discovering || leftState == .stabilizing
+                    let rightConnecting = rightState == .connecting || rightState == .discovering || rightState == .stabilizing
+                    
+                    if leftConnecting || rightConnecting {
+                        Bridge.log("G1: Connection in progress (L:\(leftState) R:\(rightState)), skipping reconnection attempt")
+                        return false // Keep loop running but skip this attempt
+                    }
+                    
+                    return false // Proceed with reconnection
+                }
+                
+                // If we should stop or skip, return early
+                if shouldReconnect {
+                    return true
+                }
+                
+                // Reconnect any disconnected peripherals
+                let needsReconnect = await MainActor.run {
+                    self.peripheralState.left == .disconnected || 
+                    self.peripheralState.right == .disconnected
+                }
+                
+                if needsReconnect {
+                    Bridge.log("G1: Attempting reconnection...")
+                    await MainActor.run {
+                        self.startScan()
+                    }
                 }
 
-                Bridge.log("G1: Attempting reconnection...")
-
-                // Attempt to reconnect
-                await MainActor.run {
-                    self.startScan()
-                }
-
-                // Return false to keep trying, true if connected
-                return false
+                return false // Keep trying
             }
         }
     }
@@ -2354,35 +2591,23 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let characteristics = service.characteristics else { return }
 
         if service.uuid.isEqual(UART_SERVICE_UUID) {
+            // Update state to discovering
+            updateConnectionState(for: peripheral, to: .discovering)
+            
             for characteristic in characteristics {
                 if characteristic.uuid == UART_TX_CHAR_UUID {
-                    sendInitCommand(to: peripheral)
+                    // Transition to stabilizing state with delay before sending init
+                    updateConnectionState(for: peripheral, to: .stabilizing)
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                        guard let self = self else { return }
+                        self.sendInitCommand(to: peripheral)
+                    }
                 } else if characteristic.uuid == UART_RX_CHAR_UUID {
                     peripheral.setNotifyValue(true, for: characteristic)
-
-                    // enable notification (needed for pairing from scracth!)
-                    Thread.sleep(forTimeInterval: 0.5) // 500ms delay
-                    let CLIENT_CHARACTERISTIC_CONFIG_UUID = CBUUID(
-                        string: "00002902-0000-1000-8000-00805f9b34fb")
-                    if let descriptor = characteristic.descriptors?.first(where: {
-                        $0.uuid == CLIENT_CHARACTERISTIC_CONFIG_UUID
-                    }) {
-                        let value = Data([0x01, 0x00]) // ENABLE_NOTIFICATION_VALUE in iOS
-                        peripheral.writeValue(value, for: descriptor)
-                    } else {
-                        Bridge.log("PROC_QUEUE - descriptor not found")
-                    }
+                    Bridge.log("G1: ✅ Enabled notifications for RX characteristic on \(peripheral.name ?? "unknown")")
                 }
             }
-
-            // // Mark the services as ready
-            // if peripheral == leftPeripheral {
-            //     Bridge.log("G1: Left glass services discovered and ready")
-            //     setReadiness(left: true, right: nil)
-            // } else if peripheral == rightPeripheral {
-            //     Bridge.log("G1: Right glass services discovered and ready")
-            //     setReadiness(left: nil, right: true)
-            // }
         }
     }
 

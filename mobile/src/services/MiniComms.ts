@@ -155,6 +155,21 @@ class MiniComms {
       timestamp: Date.now(),
     })
   }
+
+  // Expose EventEmitter methods
+  public on(event: string, listener: (...args: any[]) => void) {
+    this.eventEmitter.on(event, listener)
+  }
+
+  public off(event: string, listener: (...args: any[]) => void) {
+    this.eventEmitter.off(event, listener)
+  }
+
+  // Send text to G1 display
+  public sendToGlasses(text: string) {
+    // console.log(`MINICOMMS: Sending to glasses: ${text}`)
+    mantle.displayTextMain(text)
+  }
 }
 
 const miniComms = MiniComms.getInstance()

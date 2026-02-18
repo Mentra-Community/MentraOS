@@ -276,6 +276,7 @@ class MantleManager {
   public async handle_head_up(isUp: boolean) {
     socketComms.sendHeadPosition(isUp)
     useDisplayStore.getState().setView(isUp ? "dashboard" : "main")
+    GlobalEventEmitter.emit("head_up", { up: isUp })
   }
 
   public async resetDisplayTimeout() {

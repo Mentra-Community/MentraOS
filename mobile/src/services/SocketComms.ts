@@ -821,6 +821,10 @@ class SocketComms {
         this.handle_udp_ping_ack(msg)
         break
 
+      case "ping":
+        // Silently ignore ping messages
+        break
+
       default:
         console.log(`SOCKET: Unknown message type: ${type} / full: ${JSON.stringify(msg)}`)
     }

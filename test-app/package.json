@@ -1,0 +1,14 @@
+{
+  "name": "test-hello-app",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@mentra/sdk": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
+  }
+}

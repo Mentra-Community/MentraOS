@@ -58,8 +58,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: "./assets/app-icons/ic_launcher.png",
       supportsTablet: false,
       requireFullScreen: true,
-      bundleIdentifier: "com.mentra.mentra",
-      associatedDomains: ["applinks:apps.mentra.glass"],
+      bundleIdentifier: "com.john.mentra",
+      // Associated domains removed - not supported by personal Apple Developer teams
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
@@ -106,13 +106,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         usesNonExemptEncryption: false,
       },
       entitlements: {
-        "com.apple.developer.networking.wifi-info": true,
-        "com.apple.developer.networking.HotspotConfiguration": true,
+        // WiFi and Hotspot capabilities removed - not supported by personal Apple Developer teams
       },
     },
     plugins: [
       // our custom plugins:
       "./plugins/remove-ipad-orientations.js",
+      "./plugins/remove-push-notifications.js",
       "./plugins/android.ts",
       [
         "./modules/core/app.plugin.js",
@@ -156,7 +156,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             "LocationAccuracy",
             "LocationWhenInUse",
             "LocationAlways",
-            "Notifications",
+            // "Notifications", // Removed - requires paid Apple Developer account
             "PhotoLibrary",
             "PhotoLibraryAddOnly", // For save-only operations (no "select photos" prompt)
           ],

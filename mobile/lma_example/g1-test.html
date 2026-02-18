@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        padding: 20px;
+        background: #f9f9f9;
+        color: #333333;
+      }
+
+      h1 {
+        font-size: 24px;
+        margin-bottom: 20px;
+        text-align: center;
+        color: #000000;
+      }
+
+      .button-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 15px;
+        margin-bottom: 30px;
+      }
+
+      button {
+        padding: 20px;
+        font-size: 18px;
+        font-weight: 600;
+        border: none;
+        border-radius: 12px;
+        background: #000000;
+        color: white;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      }
+
+      button:active {
+        transform: scale(0.95);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+      }
+
+      .input-group {
+        margin-bottom: 20px;
+      }
+
+      textarea {
+        width: 100%;
+        padding: 15px;
+        font-size: 16px;
+        border: 2px solid #ddd;
+        border-radius: 12px;
+        font-family: inherit;
+        resize: vertical;
+        min-height: 100px;
+      }
+
+      .status {
+        padding: 15px;
+        background: #ffffff;
+        border-radius: 12px;
+        margin-top: 20px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+
+      .status-title {
+        font-weight: 600;
+        margin-bottom: 10px;
+        color: #000000;
+      }
+
+      .status-text {
+        color: #666666;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>G1 Display Test</h1>
+
+    <div class="input-group">
+      <textarea id="textInput" placeholder="Enter text to display on G1...">Hello from MentraOS!
+
+This is a test of the G1 display.
+
+→ NEXT ACTIONS (3)
+• Follow up with Alice
+• Review proposal
+• Schedule meeting</textarea>
+    </div>
+
+    <div class="button-grid">
+      <button onclick="sendToGlasses()">Send to G1</button>
+      <button onclick="sendShortText()">Test Short Text</button>
+      <button onclick="sendLongText()">Test Long Text</button>
+      <button onclick="sendFormatted()">Test Formatted</button>
+    </div>
+
+    <div class="status">
+      <div class="status-title">Status</div>
+      <div id="status" class="status-text">Ready to send</div>
+    </div>
+
+    <script>
+      // Initialize the bridge
+      class Bridge {
+        constructor() {
+          window.receiveNativeMessage = (messageStr) => {
+            try {
+              const message = JSON.parse(messageStr)
+              console.log("Received from Native:", message)
+            } catch (error) {
+              console.error("Error parsing native message:", error)
+            }
+          }
+        }
+
+        send(message) {
+          if (!window.ReactNativeWebView) {
+            console.error("ReactNativeWebView not available")
+            updateStatus("Error: Not running in MentraOS app")
+            return
+          }
+          window.ReactNativeWebView.postMessage(JSON.stringify(message))
+        }
+      }
+
+      window.bridge = new Bridge()
+
+      // Notify native that page is ready
+      window.addEventListener("load", function () {
+        window.bridge.send({
+          type: "page_ready",
+          timestamp: Date.now(),
+        })
+        updateStatus("Connected to MentraOS")
+      })
+
+      // Send text to G1
+      function sendToGlasses() {
+        const text = document.getElementById("textInput").value
+        if (!text) {
+          updateStatus("Error: No text entered")
+          return
+        }
+
+        window.bridge.send({
+          type: "send_to_glasses",
+          payload: {text: text},
+          timestamp: Date.now(),
+        })
+        
+        updateStatus(`Sent ${text.length} characters to G1`)
+      }
+
+      function sendShortText() {
+        const text = "Hello G1!"
+        document.getElementById("textInput").value = text
+        sendToGlasses()
+      }
+
+      function sendLongText() {
+        const text = `This is a longer text to test how the G1 handles multiple lines and wrapping. Let's see how it displays this content across the screen.
+
+Line 1
+Line 2
+Line 3
+Line 4
+Line 5`
+        document.getElementById("textInput").value = text
+        sendToGlasses()
+      }
+
+      function sendFormatted() {
+        const text = `→ NEXT ACTIONS (3)
+• Follow up: Alice (98%)
+• Review: Proposal (95%)
+• Schedule: Meeting (90%)
+
+Ball in Court
+Me: 5  |  Them: 12
+
+📧 3 unread messages`
+        document.getElementById("textInput").value = text
+        sendToGlasses()
+      }
+
+      function updateStatus(message) {
+        document.getElementById("status").textContent = message
+      }
+    </script>
+  </body>
+</html>
