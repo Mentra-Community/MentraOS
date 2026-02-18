@@ -97,10 +97,14 @@ export default function DashboardApp() {
   };
 
   const handleLoadFile = async () => {
-    const TeleprompterWidget = (await import('../services/widgets/TeleprompterWidget')).default;
-    const content = await TeleprompterWidget.loadFromFile();
-    if (content) {
-      await updateWidgetInfo();
+    try {
+      const { default: TeleprompterWidget } = await import('../services/widgets/TeleprompterWidget');
+      const content = await TeleprompterWidget.loadFromFile();
+      if (content) {
+        await updateWidgetInfo();
+      }
+    } catch (error) {
+      console.error('[Dashboard] Load file error:', error);
     }
   };
 

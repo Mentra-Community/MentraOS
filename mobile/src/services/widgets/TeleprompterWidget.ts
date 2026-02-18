@@ -1,7 +1,5 @@
 import { BaseWidget, WidgetData } from './Widget';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 
 interface TeleprompterData extends WidgetData {
   text?: string;
@@ -121,6 +119,9 @@ export class TeleprompterWidget extends BaseWidget {
   // Load script from file
   static async loadFromFile(): Promise<string | null> {
     try {
+      const DocumentPicker = await import('expo-document-picker');
+      const FileSystem = await import('expo-file-system');
+      
       const result = await DocumentPicker.getDocumentAsync({
         type: 'text/plain',
         copyToCacheDirectory: true,
