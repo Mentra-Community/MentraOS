@@ -16,7 +16,7 @@ export class TeleprompterWidget extends BaseWidget {
   id = 'teleprompter';
   name = 'Teleprompter';
   refreshInterval = 0; // Manual only
-  version = '1.1.0'; // Track widget version - bump to force script update
+  version = '1.2.0'; // Track widget version - bump to force script update
   
   private currentLine = 0;
   private lines: string[] = [];
@@ -39,7 +39,7 @@ export class TeleprompterWidget extends BaseWidget {
       
       if (!savedText) {
         // Default script for Nodes Bio meeting + Latin vocabulary
-        savedText = 'Hi Doug, great to connect with you today. I\'m excited to discuss the EMR integration for Nodes Bio. I have the MentraOS dashboard running on my Even Realities G1 glasses right now. As you can see, we\'ve built a fully offline system that displays real-time data contextually based on head position. For your EMR integration, we can pull patient data, vitals, and notes directly onto the glasses, allowing clinicians to stay hands-free while accessing critical information. The system works completely offline and untethered, which is perfect for clinical environments. I\'d love to show you how we can customize this for Nodes Bio\'s specific workflows. What aspects of the EMR integration are most important to you? --- LATIN VOCABULARY --- Carpe diem: Seize the day. Memento mori: Remember you must die. Veni vidi vici: I came, I saw, I conquered. Cogito ergo sum: I think, therefore I am. Per aspera ad astra: Through hardships to the stars. Amor vincit omnia: Love conquers all. Tempus fugit: Time flies. Ars longa vita brevis: Art is long, life is short. Audentes fortuna iuvat: Fortune favors the bold. Festina lente: Make haste slowly.';
+        savedText = 'Hi Doug, great to connect with you today. I\'m excited to discuss the EMR integration for Nodes Bio. I have the MentraOS dashboard running on my Even Realities G1 glasses right now. As you can see, we\'ve built a fully offline system that displays real-time data contextually based on head position. For your EMR integration, we can pull patient data, vitals, and notes directly onto the glasses, allowing clinicians to stay hands-free while accessing critical information. The system works completely offline and untethered, which is perfect for clinical environments. I\'d love to show you how we can customize this for Nodes Bio\'s specific workflows. What aspects of the EMR integration are most important to you? --- LATIN VOCABULARY --- Carpe diem (KAR-pay DEE-em): Seize the day. Memento mori (meh-MEN-toh MOR-ee): Remember you must die. Veni vidi vici (WEH-nee WEE-dee WEE-kee): I came, I saw, I conquered. Cogito ergo sum (KOH-gee-toh ER-goh SOOM): I think, therefore I am. Per aspera ad astra (per AS-per-ah ad AS-trah): Through hardships to the stars. Amor vincit omnia (AH-mor WIN-kit OM-nee-ah): Love conquers all. Tempus fugit (TEM-poos FOO-git): Time flies. Ars longa vita brevis (ARS LON-gah WEE-tah BREH-wis): Art is long, life is short. Audentes fortuna iuvat (ow-DEN-tays for-TOO-nah YOO-waht): Fortune favors the bold. Festina lente (fes-TEE-nah LEN-tay): Make haste slowly.';
         // Save default script
         await AsyncStorage.setItem(STORAGE_KEY, savedText);
       }
