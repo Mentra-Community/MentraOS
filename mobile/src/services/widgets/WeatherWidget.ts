@@ -17,7 +17,7 @@ interface WeatherData extends WidgetData {
 export class WeatherWidget extends BaseWidget {
   id = 'weather';
   name = 'Weather';
-  refreshInterval = 1800; // 30 minutes
+  refreshInterval = 3600; // 1 hour
 
   async fetchData(): Promise<WeatherData> {
     try {

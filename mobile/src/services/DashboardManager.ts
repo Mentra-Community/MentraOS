@@ -88,6 +88,12 @@ class DashboardManager {
         this.displayContextualWidget();
       }
     });
+
+    // Stop dashboard on BLE disconnect
+    GlobalEventEmitter.addListener('glasses_disconnected', () => {
+      console.log('[DashboardManager] Glasses disconnected, stopping dashboard');
+      this.stop();
+    });
   }
 
   /**
