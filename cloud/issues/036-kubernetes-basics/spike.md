@@ -491,13 +491,13 @@ porter kubectl -- exec -it cloud-debug-cloud-6fd6cdb7f8-p98w2 -- sh
 
 ```bash
 # Create or update a resource from a YAML file
-porter kubectl -- apply -f k8s/ws-ingress-debug.yaml
+porter kubectl -- apply -f my-resource.yaml
 # "apply" is declarative: make this exist and look like this.
 # First run: creates it. Second run: no-op (already matches).
 # Changed the YAML: updates only what changed.
 
 # Delete a resource
-porter kubectl -- delete ingress cloud-debug-cloud-ws
+porter kubectl -- delete ingress my-custom-ingress
 # Immediately removes it. nginx regenerates config without those routes.
 
 # Edit an annotation on an existing resource
@@ -524,28 +524,21 @@ porter kubectl -- exec <nginx-pod-name> -n ingress-nginx -- \
 
 **No.** Porter only touches resources with its Helm labels. Manually-created resources are invisible to Porter. Every deploy is safe.
 
+**However:** Porter validates domain uniqueness across all Ingress resources in the cluster. If you manually create an Ingress that claims the same hostnames as a Porter-managed Ingress (even on different paths), Porter will block deploys with "domains already exist on services" errors. This is why the original separate WS ingress approach from 035 was abandoned — see [035 spec](../035-nginx-ws-timeout/spec.md) for details. The fix was to use Porter's `ingressAnnotations` in `porter.yaml` instead.
+
 ### "Will my manual resource survive a deploy?"
 
-**Yes.** Deploys only replace the pod (new Docker image) and update Porter-managed resources. Standalone Ingress, ConfigMaps, Secrets, etc. are untouched.
+**Yes.** Deploys only replace the pod (new Docker image) and update Porter-managed resources. Standalone ConfigMaps, Secrets, etc. are untouched.
 
 ### "What if the cluster is rebuilt from scratch?"
 
-**Everything is gone** — including manual resources. This is rare (cluster migrations, major infrastructure changes) but possible. This is why we check manifests into the repo (`cloud/k8s/`). They're not auto-applied, but you can re-apply them:
-
-```bash
-porter kubectl -- apply -f cloud/k8s/ws-ingress-staging.yaml
-porter kubectl -- apply -f cloud/k8s/ws-ingress-prod.yaml
-```
+**Everything is gone** — including manual resources. This is rare (cluster migrations, major infrastructure changes) but possible. If you have manually-created resources, check their manifests into the repo so they can be re-applied.
 
 A fresh cluster needs:
 
 1. Porter redeploy (recreates Deployments, Services, main Ingress)
-2. Manual `kubectl apply` of WS ingress manifests
+2. Manual `kubectl apply` of any standalone resource manifests
 3. cert-manager reprovisioning TLS certs (automatic)
-
-### "What if Porter changes the service name?"
-
-The WS ingress hardcodes `cloud-debug-cloud` as the backend service name. If Porter ever changes this (unlikely, would require major refactor), the WS ingress would route to a nonexistent service → 503 on WebSocket paths. You'd update the WS ingress YAML to match.
 
 ### "What happens when the nginx ingress controller pod restarts?"
 
@@ -553,7 +546,7 @@ The WS ingress hardcodes `cloud-debug-cloud` as the backend service name. If Por
 
 ### "Can two Ingress resources conflict?"
 
-If two Ingress resources define the exact same host + path, behavior is undefined (depends on creation order). Our setup avoids this: WS ingress uses `/glasses-ws` and `/app-ws` (Prefix match), main ingress uses `/` (catch-all). No overlap — nginx picks the most specific match.
+If two Ingress resources define the exact same host + path, behavior is undefined (depends on creation order). Even if paths don't overlap, Porter will block deploys if two Ingress resources claim the same hostname. This is why we use `ingressAnnotations` in `porter.yaml` to configure nginx behavior (like extended WS timeouts) rather than creating separate Ingress resources.
 
 ### "What if a node dies?"
 
@@ -563,42 +556,40 @@ Kubernetes detects the dead node and reschedules its pods onto other nodes with 
 
 ## Putting It All Together: The 035 Fix Explained
 
-Now the WS ingress fix should make sense:
+Now the WS timeout fix should make sense:
 
-**Problem:** Porter creates one Ingress for all paths with 60s timeouts. We can't change timeout annotations through porter.yaml. Glasses WebSocket goes idle (no client → server data after audio moved to UDP). nginx's `proxy_send_timeout: 60s` fires → kills the connection → 1006.
+**Problem:** Porter creates one Ingress for all paths with 60s timeouts. Glasses WebSocket goes idle (no client → server data after audio moved to UDP). nginx's `proxy_send_timeout: 60s` fires → kills the connection → 1006.
 
-**Fix:** Create a **second** Ingress resource manually — same hosts, but only `/glasses-ws` and `/app-ws` paths, with 3600s timeouts. nginx merges both Ingress resources into its config. `/glasses-ws` matches the specific WS ingress (3600s), everything else matches the Porter ingress (60s).
+**Original approach (abandoned):** Create a second Ingress manually for WS paths with 3600s timeouts. This worked at the nginx level, but Porter's domain validation blocked all deploys because two Ingress resources claimed the same hostnames.
 
-**Why it persists:** The WS ingress has no Helm labels. Porter doesn't know it exists. Deploys don't touch it. It survives indefinitely unless someone deletes it or the cluster is rebuilt.
-
-**Why we check it into the repo:** If the cluster IS rebuilt, having the YAML in `cloud/k8s/` means we can re-apply it in one command instead of recreating it from memory.
+**Current fix:** Use Porter's `ingressAnnotations` in `porter.yaml` / `porter-livekit.yaml` to set 3600s timeouts directly on the Porter-managed Ingress. This applies to all paths (REST + WS), which is fine — REST responses complete in <1s regardless. No separate resources needed, no Porter conflicts.
 
 ---
 
 ## Glossary
 
-| Term             | What it is                             | Our example                                               |
-| ---------------- | -------------------------------------- | --------------------------------------------------------- |
-| **Cluster**      | A group of machines running Kubernetes | us-central (4689), east-asia (4754), france (4696)        |
-| **Node**         | One machine (VM) in a cluster          | `aks-u4689eanqib-...-vmss000072` (8 CPU, 16GB)            |
-| **Pod**          | A running container (your server)      | `cloud-debug-cloud-6fd6cdb7f8-p98w2`                      |
-| **Deployment**   | "Keep N copies of this pod running"    | Managed by Porter, N=1 per environment                    |
-| **Service**      | Stable name → pod routing              | `cloud-debug-cloud` → pod on port 80                      |
-| **Ingress**      | Host/path → Service routing rules      | `cloud-debug-cloud-ws` → 3600s timeouts for WS paths      |
-| **Annotation**   | Key-value config on a resource         | `proxy-send-timeout: "3600"`                              |
-| **Label**        | Key-value tag for grouping/selecting   | `app.kubernetes.io/managed-by: Helm`                      |
-| **Namespace**    | Organizational folder                  | `default` (our stuff), `ingress-nginx` (nginx controller) |
-| **Secret**       | Encrypted data (TLS certs, API keys)   | `cloud-debug-cloud-debug-augmentos-cloud`                 |
-| **ConfigMap**    | Non-secret config data                 | nginx global settings                                     |
-| **kubectl**      | CLI to talk to Kubernetes              | `porter kubectl -- get pods`                              |
-| **Porter**       | PaaS that manages K8s for us           | Creates Deployments, Services, Ingress from porter.yaml   |
-| **Helm**         | Package manager Porter uses internally | You don't use it directly                                 |
-| **cert-manager** | Auto-provisions TLS certs              | Creates Let's Encrypt certs as Secrets                    |
-| **Azure**        | Cloud provider (owns the hardware)     | Runs our VMs in Central US, East Asia, France             |
+| Term             | What it is                             | Our example                                                     |
+| ---------------- | -------------------------------------- | --------------------------------------------------------------- |
+| **Cluster**      | A group of machines running Kubernetes | us-central (4689), east-asia (4754), france (4696)              |
+| **Node**         | One machine (VM) in a cluster          | `aks-u4689eanqib-...-vmss000072` (8 CPU, 16GB)                  |
+| **Pod**          | A running container (your server)      | `cloud-debug-cloud-6fd6cdb7f8-p98w2`                            |
+| **Deployment**   | "Keep N copies of this pod running"    | Managed by Porter, N=1 per environment                          |
+| **Service**      | Stable name → pod routing              | `cloud-debug-cloud` → pod on port 80                            |
+| **Ingress**      | Host/path → Service routing rules      | `cloud-debug-cloud` → routes `debug.augmentos.cloud` to Service |
+| **Annotation**   | Key-value config on a resource         | `proxy-send-timeout: "3600"`                                    |
+| **Label**        | Key-value tag for grouping/selecting   | `app.kubernetes.io/managed-by: Helm`                            |
+| **Namespace**    | Organizational folder                  | `default` (our stuff), `ingress-nginx` (nginx controller)       |
+| **Secret**       | Encrypted data (TLS certs, API keys)   | `cloud-debug-cloud-debug-augmentos-cloud`                       |
+| **ConfigMap**    | Non-secret config data                 | nginx global settings                                           |
+| **kubectl**      | CLI to talk to Kubernetes              | `porter kubectl -- get pods`                                    |
+| **Porter**       | PaaS that manages K8s for us           | Creates Deployments, Services, Ingress from porter.yaml         |
+| **Helm**         | Package manager Porter uses internally | You don't use it directly                                       |
+| **cert-manager** | Auto-provisions TLS certs              | Creates Let's Encrypt certs as Secrets                          |
+| **Azure**        | Cloud provider (owns the hardware)     | Runs our VMs in Central US, East Asia, France                   |
 
 ---
 
 ## Next Steps
 
-- See [035-nginx-ws-timeout/spec.md](../035-nginx-ws-timeout/spec.md) for the WS ingress manifests to apply to staging and prod
-- WS ingress manifests should be checked into `cloud/k8s/` so they survive knowledge loss
+- See [035-nginx-ws-timeout/spec.md](../035-nginx-ws-timeout/spec.md) for the WS timeout fix via Porter `ingressAnnotations`
+- Any manually-created K8s resources should be checked into the repo so they survive knowledge loss

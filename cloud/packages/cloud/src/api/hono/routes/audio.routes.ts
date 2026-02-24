@@ -18,6 +18,8 @@ import type { AppEnv, AppContext } from "../../../types/hono";
 
 const ELEVENLABS_DEFAULTS = {
   voiceId: process.env.ELEVENLABS_DEFAULT_VOICE_ID || "8IRrZoKuYTPnpLc6lM6a",
+  modelId: process.env.ELEVENLABS_DEFAULT_MODEL_ID || "eleven_turbo_v2_5",
+  textNormalization: process.env.ELEVENLABS_TEXT_NORMALIZATION || "auto",
   speed: parseFloat(process.env.ELEVENLABS_DEFAULT_SPEED || "1.13"),
   stability: parseFloat(process.env.ELEVENLABS_DEFAULT_STABILITY || "0.68"),
   similarityBoost: parseFloat(process.env.ELEVENLABS_DEFAULT_SIMILARITY || "0.75"),
@@ -199,8 +201,9 @@ async function textToSpeech(c: AppContext) {
     // Build request body for ElevenLabs API
     const requestBody: any = {
       text: text,
-      model_id: modelId || "eleven_flash_v2_5",
+      model_id: modelId || ELEVENLABS_DEFAULTS.modelId,
       voice_settings: voiceSettings,
+      apply_text_normalization: ELEVENLABS_DEFAULTS.textNormalization,
     };
 
     // Call ElevenLabs API

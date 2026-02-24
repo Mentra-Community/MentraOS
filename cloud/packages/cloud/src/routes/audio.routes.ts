@@ -13,6 +13,8 @@ const router = express.Router();
 // These are the hardcoded fallback defaults if environment variables aren't set
 const ELEVENLABS_DEFAULTS = {
   VOICE_ID: "8IRrZoKuYTPnpLc6lM6a",
+  MODEL_ID: "eleven_turbo_v2_5",
+  TEXT_NORMALIZATION: "auto",
   SPEED: 1.13,
   STABILITY: 0.68,
   SIMILARITY_BOOST: 0.75,
@@ -37,6 +39,20 @@ function getDefaultVoiceSettings() {
  */
 function getDefaultVoiceId() {
   return process.env.ELEVENLABS_DEFAULT_VOICE_ID || ELEVENLABS_DEFAULTS.VOICE_ID;
+}
+
+/**
+ * Get default model ID from environment variable with hardcoded fallback
+ */
+function getDefaultModelId() {
+  return process.env.ELEVENLABS_DEFAULT_MODEL_ID || ELEVENLABS_DEFAULTS.MODEL_ID;
+}
+
+/**
+ * Get text normalization setting from environment variable with hardcoded fallback
+ */
+function getDefaultTextNormalization() {
+  return process.env.ELEVENLABS_TEXT_NORMALIZATION || ELEVENLABS_DEFAULTS.TEXT_NORMALIZATION;
 }
 
 // Only allow com.augmentos.shazam
@@ -165,12 +181,13 @@ router.get("/api/tts", async (req, res) => {
     // Build request body for ElevenLabs API
     const requestBody: any = {
       text: text,
+      apply_text_normalization: getDefaultTextNormalization(),
     };
 
     if (model_id && typeof model_id === "string") {
       requestBody.model_id = model_id;
     } else {
-      requestBody.model_id = "eleven_flash_v2_5";
+      requestBody.model_id = getDefaultModelId();
     }
 
     // Use provided voice_settings or apply defaults (env vars with hardcoded fallbacks)

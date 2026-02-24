@@ -51,13 +51,13 @@ Checked the deployed code in `UserSession.ts`. Both ping mechanisms are active:
 ```typescript
 // Protocol-level pings every 10s
 this.glassesHeartbeatInterval = setInterval(() => {
-  this.websocket.ping?.();
-}, 10000);
+  this.websocket.ping?.()
+}, 10000)
 
 // App-level pings every 2s
 this.appLevelPingInterval = setInterval(() => {
-  this.websocket.send(JSON.stringify({ type: "ping" }));
-}, 2000);
+  this.websocket.send(JSON.stringify({type: "ping"}))
+}, 2000)
 ```
 
 BetterStack logs confirmed heartbeats being established and cleared on each reconnect cycle. The server code is running correctly.
@@ -233,6 +233,5 @@ These are the disconnections that the [034 client-side liveness detection](../03
 
 ## Next steps
 
-- See [spec.md](./spec.md) for the permanent WS ingress fix — dedicated Kubernetes Ingress resources for WebSocket paths with long timeouts, separate from the REST ingress
-- WS ingress manifests are checked into `cloud/k8s/` for all environments and clusters
+- See [spec.md](./spec.md) for the permanent fix — extended timeouts applied via Porter `ingressAnnotations` in `porter.yaml` / `porter-livekit.yaml` (the original separate WS ingress approach was abandoned because Porter's domain validation blocked deploys)
 - Client-side pings (mobile app change from [034](../034-ws-liveness/spec.md)) will independently solve all three kill mechanisms by creating constant client → server traffic
