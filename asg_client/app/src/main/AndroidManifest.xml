@@ -137,6 +137,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Debug receiver for injecting commands via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugTestReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_TEST" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="com.mentra.asg_client.service.core.AsgClientService"
             android:enabled="true"
