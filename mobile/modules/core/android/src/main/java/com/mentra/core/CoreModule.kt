@@ -49,6 +49,7 @@ class CoreModule : Module() {
             "mtk_update_complete",
             "ota_update_available",
             "ota_progress",
+            "stress_test_complete",
         )
 
         OnCreate {
@@ -524,6 +525,28 @@ class CoreModule : Module() {
                 android.util.Log.e("CoreModule", "Error saving to gallery: ${e.message}", e)
                 mapOf("success" to false, "error" to e.message)
             }
+        }
+
+        // MARK: - Stress Testing
+
+        AsyncFunction("runAllStressTests") {
+            com.mentra.core.testing.StressTestRunner.getInstance().runAllTests { results ->
+                sendEvent("stress_test_complete", mapOf(
+                    "results" to results.map { it.toMap() }
+                ))
+            }
+        }
+
+        AsyncFunction("runStressTest") { testName: String ->
+            com.mentra.core.testing.StressTestRunner.getInstance().runTest(testName) { result ->
+                sendEvent("stress_test_complete", mapOf(
+                    "results" to listOf(result.toMap())
+                ))
+            }
+        }
+
+        AsyncFunction("getStressTestResults") {
+            com.mentra.core.testing.StressTestRunner.getInstance().getResults().map { it.toMap() }
         }
     }
 }

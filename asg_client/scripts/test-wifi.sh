@@ -33,10 +33,11 @@ info "SSID: $SSID"
 echo ""
 
 # --- Test 1: Connect to WiFi ---
+# WifiCommandHandler expects type "set_wifi_credentials" (not "connect_wifi")
 echo "--- Test: Connect to WiFi ---"
 adb logcat -c 2>/dev/null
 
-send_command "{\"type\":\"connect_wifi\",\"ssid\":\"$SSID\",\"password\":\"$PASSWORD\"}"
+send_command "{\"type\":\"set_wifi_credentials\",\"ssid\":\"$SSID\",\"password\":\"$PASSWORD\"}"
 info "WiFi connect command sent, waiting..."
 sleep 10
 

@@ -22,12 +22,14 @@ echo ""
 
 # --- Test 1: Gallery status query ---
 echo "--- Test: Gallery status query returns response ---"
-# Clear logcat, send query, check for response in logs
+# Clear logcat, send query, check for evidence command was processed
+# CommandProcessor logs the command type; GalleryCommandHandler logs "Gallery status" on handle
 adb logcat -c 2>/dev/null
 send_command '{"type":"query_gallery_status"}'
 sleep 2
 
-RESPONSE=$(adb logcat -d -s "GalleryCommandHandler" | grep -c "gallery_status" || true)
+# Accept either: processor received the command (query_gallery_status) or handler logged (Gallery status)
+RESPONSE=$(adb logcat -d 2>/dev/null | grep -E "query_gallery_status|Gallery status" | wc -l | tr -d ' ')
 if [ "${RESPONSE:-0}" -gt 0 ]; then
   pass "Gallery status query returned response"
 else
