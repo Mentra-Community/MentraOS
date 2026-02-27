@@ -52,7 +52,7 @@
 #include "../../custom_driver_module/drivers/display/lcd/a6n.h"
 #include "mos_ble_service.h"
 #include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
-#include "pdm_audio_stream.h"                                          // **NEW: For microphone audio streaming**
+#include "pdm_audio_stream.h"  // **NEW: For microphone audio streaming**
 #include "proto/mentraos_ble.pb.h"
 
 LOG_MODULE_REGISTER(protobuf_handler, LOG_LEVEL_DBG);
@@ -76,25 +76,179 @@ static uint32_t streaming_errors = 0;
 // (Glasses send periodic pings to phone, phone responds with pongs)
 static struct k_timer ping_timer;
 static struct k_timer ping_timeout_timer;
-static uint32_t       ping_sequence_number  = 0;
-static uint32_t       ping_retry_count      = 0;
-static bool           ping_waiting_for_pong = false;
-static bool           phone_connected       = true;
-bool                  ping_logging_enabled  = true;  // Global flag to control ping logging
+static uint32_t ping_sequence_number = 0;
+static uint32_t ping_retry_count = 0;
+static bool ping_waiting_for_pong = false;
+static bool phone_connected = true;
+bool ping_logging_enabled = true;  // Global flag to control ping logging
 
 #define PING_INTERVAL_MS 10000  // Send ping every 10 seconds
-#define PING_TIMEOUT_MS  3000   // Wait 3 seconds for pong response
-#define PING_MAX_RETRIES 3      // Retry 3 times before declaring disconnect
+#define PING_TIMEOUT_MS 3000  // Wait 3 seconds for pong response
+#define PING_MAX_RETRIES 3  // Retry 3 times before declaring disconnect
 
 // Forward declarations for ping/pong functions
-static void ping_timer_handler(struct k_timer* timer);
-static void ping_timeout_handler(struct k_timer* timer);
+static void ping_timer_handler(struct k_timer *timer);
+static void ping_timeout_handler(struct k_timer *timer);
 static void protobuf_send_ping_request(void);
-static void protobuf_process_pong_response(const mentraos_ble_PingRequest* pong);
+static void protobuf_process_pong_response(const mentraos_ble_PingRequest *pong);
 static void protobuf_handle_ping_failure(void);
 static void protobuf_handle_ping_success(void);
 
-void protobuf_analyze_message(const uint8_t* data, uint16_t len)
+static const char *protobuf_wire_type_name(uint8_t wire_type)
+{
+    switch (wire_type)
+    {
+        case 0:
+            return "VARINT";
+        case 1:
+            return "FIXED64";
+        case 2:
+            return "LENGTH_DELIMITED";
+        case 3:
+            return "START_GROUP";
+        case 4:
+            return "END_GROUP";
+        case 5:
+            return "FIXED32";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static bool protobuf_read_varint32(const uint8_t *data, uint16_t len, uint16_t *offset, uint32_t *value_out)
+{
+    uint32_t result = 0;
+    uint8_t shift = 0;
+    uint16_t pos = *offset;
+
+    while (pos < len && shift <= 28)
+    {
+        uint8_t byte = data[pos++];
+        result |= ((uint32_t)(byte & 0x7F)) << shift;
+
+        if ((byte & 0x80) == 0)
+        {
+            *offset = pos;
+            *value_out = result;
+            return true;
+        }
+
+        shift += 7;
+    }
+
+    return false;
+}
+
+static void protobuf_dump_wire_fields(const uint8_t *data, uint16_t len)
+{
+    uint16_t offset = 0;
+    uint16_t parsed_fields = 0;
+    uint16_t length_delimited_count = 0;
+
+    LOG_INF("Wire-aware protobuf field walk:");
+
+    while (offset < len && parsed_fields < 32)
+    {
+        uint16_t key_offset = offset;
+        uint32_t key = 0;
+
+        if (!protobuf_read_varint32(data, len, &offset, &key))
+        {
+            LOG_WRN("  Truncated/invalid field key at offset %u", key_offset);
+            break;
+        }
+
+        uint32_t tag = key >> 3;
+        uint8_t wire_type = (uint8_t)(key & 0x07);
+
+        if (tag == 0)
+        {
+            LOG_WRN("  Invalid field key at offset %u: tag=0, wire=%u (%s)", key_offset, wire_type,
+                    protobuf_wire_type_name(wire_type));
+            break;
+        }
+
+        LOG_INF("  field[%02u] key@%u -> tag=%u wire=%u (%s)", parsed_fields, key_offset, tag, wire_type,
+                protobuf_wire_type_name(wire_type));
+
+        switch (wire_type)
+        {
+            case 0:
+            {
+                uint32_t value = 0;
+                if (!protobuf_read_varint32(data, len, &offset, &value))
+                {
+                    LOG_WRN("    Invalid VARINT payload for tag=%u", tag);
+                    return;
+                }
+                break;
+            }
+
+            case 1:
+                if ((uint16_t)(len - offset) < 8U)
+                {
+                    LOG_WRN("    Truncated FIXED64 payload for tag=%u", tag);
+                    return;
+                }
+                offset += 8;
+                break;
+
+            case 2:
+            {
+                uint32_t payload_len = 0;
+                if (!protobuf_read_varint32(data, len, &offset, &payload_len))
+                {
+                    LOG_WRN("    Invalid LENGTH_DELIMITED size varint for tag=%u", tag);
+                    return;
+                }
+
+                if (payload_len > (uint32_t)(len - offset))
+                {
+                    LOG_WRN("    Truncated LENGTH_DELIMITED payload for tag=%u (need %u, have %u)", tag, payload_len,
+                            (uint32_t)(len - offset));
+                    return;
+                }
+
+                LOG_INF("    LENGTH_DELIMITED payload: len=%u data_offset=%u", payload_len, offset);
+                length_delimited_count++;
+                offset += (uint16_t)payload_len;
+                break;
+            }
+
+            case 5:
+                if ((uint16_t)(len - offset) < 4U)
+                {
+                    LOG_WRN("    Truncated FIXED32 payload for tag=%u", tag);
+                    return;
+                }
+                offset += 4;
+                break;
+
+            case 3:
+            case 4:
+                LOG_WRN("    GROUP wire type encountered (tag=%u). Not expected for proto3 payloads.", tag);
+                return;
+
+            default:
+                LOG_WRN("    Unsupported wire type=%u for tag=%u", wire_type, tag);
+                return;
+        }
+
+        parsed_fields++;
+    }
+
+    if (parsed_fields == 0)
+    {
+        LOG_WRN("  No valid protobuf fields parsed");
+    }
+    else
+    {
+        LOG_INF("Wire walk summary: parsed_fields=%u, length_delimited_fields=%u, bytes_consumed=%u/%u", parsed_fields,
+                length_delimited_count, offset, len);
+    }
+}
+
+void protobuf_analyze_message(const uint8_t *data, uint16_t len)
 {
     if (len == 0)
     {
@@ -126,7 +280,25 @@ void protobuf_analyze_message(const uint8_t* data, uint16_t len)
             break;
         default:
             LOG_WRN("[UNKNOWN] Unknown control header: 0x%02X", firstByte);
-            // Still try to parse as protobuf in case the header is part of the message
+            // Detect common non-protobuf payloads (e.g. JSON text)
+            // Example observed payload: 04 01 00 7B ... where 0x7B is '{'
+            bool looks_like_json = false;
+            if (len > 0 && data[0] == '{')
+            {
+                looks_like_json = true;
+            }
+            else if (len > 3 && data[3] == '{')
+            {
+                looks_like_json = true;
+            }
+
+            if (looks_like_json)
+            {
+                LOG_INF("[NON_PROTOBUF] JSON-like payload detected; skipping protobuf decode fallback");
+                break;
+            }
+
+            // Fallback parse only when payload does not look like known text/JSON framing
             if (len > 1)
             {
                 LOG_INF("[FALLBACK] Attempting protobuf parse without header...");
@@ -137,27 +309,14 @@ void protobuf_analyze_message(const uint8_t* data, uint16_t len)
     LOG_INF("=== END BLE DATA ===");
 }
 
-void protobuf_parse_control_message(const uint8_t* protobuf_data, uint16_t len)
+void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
 {
-    LOG_INF("Parsing protobuf control message (%u bytes) using nanopb", len);
-
-    // *** DETAILED HEX DUMP FOR DEBUGGING ***
-    LOG_INF("\n=== PROTOBUF RAW DATA HEX DUMP (Length: %u bytes) ===\n", len);
-    /* Use Zephyr logging hexdump helper so output is handled by the
-     * logging subsystem (and respects runtime filtering/backends).
-     */
-    LOG_HEXDUMP_INF(protobuf_data, len, "PROTOBUF");
-    LOG_INF("=== END HEX DUMP ===\n");
-
+    LOG_INF("[PROTOBUF] Decoding protobuf message (%u bytes)\n", len);
     if (len == 0)
     {
         LOG_WRN("Empty protobuf message");
         return;
     }
-
-    // Print first few bytes for debugging (as hexdump, up to 10 bytes)
-    LOG_INF("First %u bytes of protobuf data:", (len < 10) ? (uint32_t)len : 10U);
-    LOG_HEXDUMP_INF(protobuf_data, (len < 10) ? len : 10, "PROTO_FIRST10");
 
     // Try to decode as PhoneToGlasses message
     mentraos_ble_PhoneToGlasses phone_msg = mentraos_ble_PhoneToGlasses_init_default;
@@ -173,53 +332,53 @@ void protobuf_parse_control_message(const uint8_t* protobuf_data, uint16_t len)
         LOG_INF("[Phone->Glasses] Successfully decoded message type: %u\n", phone_msg.which_payload);
 
         // Enhanced message type logging with protocol details
-        const char* message_name;
-        const char* message_description;
+        const char *message_name;
+        const char *message_description;
 
         switch (phone_msg.which_payload)
         {
             case 10:
-                message_name        = "DisconnectRequest";
+                message_name = "DisconnectRequest";
                 message_description = "Connection termination request";
                 break;
             case 11:
-                message_name        = "BatteryStateRequest";
+                message_name = "BatteryStateRequest";
                 message_description = "Request current battery level";
                 break;
             case 12:
-                message_name        = "GlassesInfoRequest";
+                message_name = "GlassesInfoRequest";
                 message_description = "Request device information";
                 break;
             case 16:
-                message_name        = "PingRequest";
+                message_name = "PingRequest";
                 message_description = "Connectivity test request";
                 break;
             case 20:
-                message_name        = "MicStateConfig";
+                message_name = "MicStateConfig";
                 message_description = "Configure microphone streaming state";
                 break;
             case 30:
-                message_name        = "DisplayText";
+                message_name = "DisplayText";
                 message_description = "Display static text message";
                 break;
             case 35:
-                message_name        = "DisplayScrollingText";
+                message_name = "DisplayScrollingText";
                 message_description = "Display animated scrolling text";
                 break;
             case 37:
-                message_name        = "BrightnessConfig";
+                message_name = "BrightnessConfig";
                 message_description = "Set display brightness level";
                 break;
             case 38:
-                message_name        = "AutoBrightnessConfig";
+                message_name = "AutoBrightnessConfig";
                 message_description = "Configure automatic brightness adjustment";
                 break;
-            case 46:  
-                message_name        = "ClearDisplay";
+            case 46:
+                message_name = "ClearDisplay";
                 message_description = "Clear display content (temporary tag)";
                 break;
             default:
-                message_name        = "Unknown";
+                message_name = "Unknown";
                 message_description = "Unrecognized message type";
                 break;
         }
@@ -332,70 +491,13 @@ void protobuf_parse_control_message(const uint8_t* protobuf_data, uint16_t len)
         LOG_INF("=== PROTOBUF DECODE FAILURE ANALYSIS ===");
         LOG_INF("Message length: %u bytes", len);
 
-        // Analyze first 20 bytes for protobuf structure
-        LOG_INF("Wire format analysis (first 20 bytes):");
-        for (int i = 0; i < len && i < 20; i++)
-        {
-            uint8_t field_tag = protobuf_data[i] >> 3;
-            uint8_t wire_type = protobuf_data[i] & 0x07;
-
-            const char* wire_type_name;
-            switch (wire_type)
-            {
-                case 0:
-                    wire_type_name = "VARINT";
-                    break;
-                case 1:
-                    wire_type_name = "FIXED64";
-                    break;
-                case 2:
-                    wire_type_name = "LENGTH_DELIMITED";
-                    break;
-                case 3:
-                    wire_type_name = "START_GROUP";
-                    break;
-                case 4:
-                    wire_type_name = "END_GROUP";
-                    break;
-                case 5:
-                    wire_type_name = "FIXED32";
-                    break;
-                default:
-                    wire_type_name = "UNKNOWN";
-                    break;
-            }
-
-            LOG_INF("  [%02d] 0x%02X -> tag=%u, wire=%u (%s)", i, protobuf_data[i], field_tag, wire_type,
-                    wire_type_name);
-        }
-
-        // Check if this might be a different message type
-        if (len > 10)
-        {
-            // Look for common protobuf patterns
-            bool has_text_field = false;
-            for (int i = 0; i < len - 4; i++)
-            {
-                // Look for text field patterns (length-delimited strings)
-                if ((protobuf_data[i] & 0x07) == 2)
-                {  // LENGTH_DELIMITED
-                    uint8_t tag = protobuf_data[i] >> 3;
-                    LOG_INF("  Found LENGTH_DELIMITED field at offset %d, tag=%u", i, tag);
-                    has_text_field = true;
-                }
-            }
-
-            if (!has_text_field)
-            {
-                LOG_WRN("No LENGTH_DELIMITED fields found - might not be protobuf");
-            }
-        }
+        protobuf_dump_wire_fields(protobuf_data, len);
 
         LOG_INF("=== END ANALYSIS ===");
     }
 }
 
-bool decode_phone_to_glasses_message(const uint8_t* data, uint16_t len, mentraos_ble_PhoneToGlasses* msg)
+bool decode_phone_to_glasses_message(const uint8_t *data, uint16_t len, mentraos_ble_PhoneToGlasses *msg)
 {
     if (!data || !msg || len == 0)
     {
@@ -434,8 +536,8 @@ bool decode_phone_to_glasses_message(const uint8_t* data, uint16_t len, mentraos
     return status;
 }
 
-bool encode_glasses_to_phone_message(const mentraos_ble_GlassesToPhone* msg, uint8_t* buffer, size_t buffer_size,
-                                     size_t* bytes_written)
+bool encode_glasses_to_phone_message(const mentraos_ble_GlassesToPhone *msg, uint8_t *buffer, size_t buffer_size,
+                                     size_t *bytes_written)
 {
     if (!msg || !buffer || !bytes_written)
     {
@@ -462,7 +564,7 @@ bool encode_glasses_to_phone_message(const mentraos_ble_GlassesToPhone* msg, uin
     return status;
 }
 
-void protobuf_parse_audio_chunk(const uint8_t* data, uint16_t len)
+void protobuf_parse_audio_chunk(const uint8_t *data, uint16_t len)
 {
     if (len < 2)
     {
@@ -470,13 +572,13 @@ void protobuf_parse_audio_chunk(const uint8_t* data, uint16_t len)
         return;
     }
 
-    uint8_t  stream_id      = data[1];
+    uint8_t stream_id = data[1];
     uint16_t audio_data_len = len - 2;
 
     LOG_INF("Audio chunk: stream_id=0x%02X, data_len=%u", stream_id, audio_data_len);
 }
 
-void protobuf_parse_image_chunk(const uint8_t* data, uint16_t len)
+void protobuf_parse_image_chunk(const uint8_t *data, uint16_t len)
 {
     if (len < 4)
     {
@@ -484,8 +586,8 @@ void protobuf_parse_image_chunk(const uint8_t* data, uint16_t len)
         return;
     }
 
-    uint16_t stream_id      = (data[1] << 8) | data[2];
-    uint8_t  chunk_index    = data[3];
+    uint16_t stream_id = (data[1] << 8) | data[2];
+    uint8_t chunk_index = data[3];
     uint16_t image_data_len = len - 4;
 
     LOG_INF("Image chunk: stream_id=0x%04X, chunk_index=%u, data_len=%u", stream_id, chunk_index, image_data_len);
@@ -503,7 +605,7 @@ bool protobuf_get_charging_state(void)
 
 void protobuf_set_charging_state(bool charging)
 {
-    bool old_state         = current_charging_state;
+    bool old_state = current_charging_state;
     current_charging_state = charging;
     LOG_INF("Charging state set to %s", current_charging_state ? "CHARGING" : "NOT_CHARGING");
 
@@ -527,7 +629,7 @@ void protobuf_set_battery_level(uint32_t level)
         level = 100;
     }
 
-    uint32_t old_level    = current_battery_level;
+    uint32_t old_level = current_battery_level;
     current_battery_level = level;
     LOG_INF("Battery level set to %u%%", current_battery_level);
 
@@ -599,7 +701,7 @@ void protobuf_send_battery_notification(void)
     notification.which_payload = 10;
 
     // Fill battery status with current level
-    notification.payload.battery_status.level    = current_battery_level;
+    notification.payload.battery_status.level = current_battery_level;
     notification.payload.battery_status.charging = current_charging_state;
 
     LOG_INF("Pre-Encoding Message Analysis:");
@@ -621,7 +723,7 @@ void protobuf_send_battery_notification(void)
 
     // Encode the notification
     uint8_t buffer[64];  // Small buffer for battery notification
-    size_t  bytes_written;
+    size_t bytes_written;
 
     LOG_INF("Encoding Process:");
     LOG_INF("  - Encoder: nanopb library");
@@ -676,7 +778,7 @@ void protobuf_send_battery_notification(void)
     }
 }
 
-int protobuf_generate_echo_response(const uint8_t* input_data, uint16_t input_len, uint8_t* output_data,
+int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_len, uint8_t *output_data,
                                     uint16_t max_output_len)
 {
     // NOTE: This is a fallback echo response using BatteryStatus message
@@ -694,7 +796,7 @@ int protobuf_generate_echo_response(const uint8_t* input_data, uint16_t input_le
     response.which_payload = 10;
 
     // Create a battery status response using current battery level
-    response.payload.battery_status.level    = current_battery_level;
+    response.payload.battery_status.level = current_battery_level;
     response.payload.battery_status.charging = current_charging_state;
 
     LOG_INF("� Pre-Encoding Message Analysis:");
@@ -806,7 +908,7 @@ void protobuf_set_brightness_level(uint32_t level)
     }
 }
 
-void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig* brightness_config)
+void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig *brightness_config)
 {
     if (!brightness_config)
     {
@@ -846,8 +948,8 @@ void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig* bri
     LOG_INF("  - Implementation: Projector brightness (A6N) + Auto brightness disable");
 
     // Print to UART
-    LOG_INF("\n[Phone->Glasses BRIGHTNESS] %u%% -> Projector: %u/9, Auto: %s->OFF\n",
-            current_brightness_level, (clamped_level * 9) / 100, auto_brightness_enabled ? "ON" : "OFF");
+    LOG_INF("\n[Phone->Glasses BRIGHTNESS] %u%% -> Projector: %u/9, Auto: %s->OFF\n", current_brightness_level,
+            (clamped_level * 9) / 100, auto_brightness_enabled ? "ON" : "OFF");
 
     // Clamp and set the new brightness level (this will disable auto brightness)
     protobuf_set_brightness_level(new_level);
@@ -864,7 +966,7 @@ void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig* bri
     LOG_INF("=== END BRIGHTNESS CONFIG MESSAGE ===");
 }
 
-void protobuf_process_display_text(const mentraos_ble_DisplayText* display_text)
+void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
 {
     if (!display_text)
     {
@@ -876,24 +978,23 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText* display_text)
 
     // Text content analysis
     size_t text_length = strlen(display_text->text);
-    LOG_INF("Text Content:");
-    LOG_INF("  - Text: \"%s\"", display_text->text);
-    LOG_INF("  - Length: %zu characters", text_length);
-    LOG_INF("  - Field 1 (string text): \"%s\"", display_text->text);
+    // LOG_INF("Text Content:");
+    // LOG_INF("  - Length: %zu characters", text_length);
+    // LOG_INF("  - Field 1 (string text): \"%s\"", display_text->text);
 
     // Color analysis (RGB565 format)
     uint32_t color_rgb888 = display_text->color;
     uint16_t color_rgb565 = (uint16_t)color_rgb888;
 
     // Convert RGB565 back to RGB888 components for analysis
-    uint8_t red   = (color_rgb565 >> 11) & 0x1F;  // 5 bits
-    uint8_t green = (color_rgb565 >> 5) & 0x3F;   // 6 bits
-    uint8_t blue  = color_rgb565 & 0x1F;          // 5 bits
+    uint8_t red = (color_rgb565 >> 11) & 0x1F;  // 5 bits
+    uint8_t green = (color_rgb565 >> 5) & 0x3F;  // 6 bits
+    uint8_t blue = color_rgb565 & 0x1F;  // 5 bits
 
     // Scale to 8-bit values
-    uint8_t red_8bit   = (red * 255) / 31;
+    uint8_t red_8bit = (red * 255) / 31;
     uint8_t green_8bit = (green * 255) / 63;
-    uint8_t blue_8bit  = (blue * 255) / 31;
+    uint8_t blue_8bit = (blue * 255) / 31;
 
     LOG_INF("Color Configuration:");
     LOG_INF("  - Field 2 (uint32 color): 0x%06X", color_rgb888);
@@ -928,8 +1029,9 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText* display_text)
     LOG_INF("  - Position bounds: X=%u, Y=%u (bounds depend on display)", display_text->x, display_text->y);
 
     // Print to UART with comprehensive details
-    LOG_INF("\n[Phone->Glasses TEXT] Display Text: \"%s\" (len:%zu, pos:(%u,%u), color:0x%04X, font:%u, size:%u)\n",
-            display_text->text, text_length, display_text->x, display_text->y, color_rgb565, display_text->font_code,
+    LOG_INF("[Phone->Glasses TEXT] Display Text: \"%s\"", display_text->text);
+    LOG_INF("len:%zu, pos:(%u,%u), color:0x%04X, font:%u, size:%u",
+            text_length, display_text->x, display_text->y, color_rgb565, display_text->font_code,
             display_text->size);
 
     // *** LVGL INTEGRATION: Display text based on current pattern ***
@@ -944,8 +1046,8 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText* display_text)
         uint16_t y_clamped = (y_offset > 65535U) ? 65535 : (uint16_t)y_offset;
         uint16_t font_size = (display_text->size > 0) ? display_text->size : 12;  // Default to 12pt
         display_update_xy_text(display_text->x, y_clamped, display_text->text, font_size, color_rgb565);
-        LOG_INF("✅ LVGL: XY positioned text at (%u,%u) with font %upt in Pattern 5\n", display_text->x,
-                y_clamped, font_size);
+        LOG_INF("✅ LVGL: XY positioned text at (%u,%u) with font %upt in Pattern 5\n", display_text->x, y_clamped,
+                font_size);
     }
     else
     {
@@ -957,7 +1059,7 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText* display_text)
     LOG_INF("=== END DISPLAY TEXT MESSAGE ===");
 }
 
-void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrollingText* scrolling_text)
+void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrollingText *scrolling_text)
 {
     if (!scrolling_text)
     {
@@ -977,13 +1079,13 @@ void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrolling
     uint32_t color_rgb888 = scrolling_text->color;
     uint16_t color_rgb565 = (uint16_t)color_rgb888;
 
-    uint8_t red   = (color_rgb565 >> 11) & 0x1F;
+    uint8_t red = (color_rgb565 >> 11) & 0x1F;
     uint8_t green = (color_rgb565 >> 5) & 0x3F;
-    uint8_t blue  = color_rgb565 & 0x1F;
+    uint8_t blue = color_rgb565 & 0x1F;
 
-    uint8_t red_8bit   = (red * 255) / 31;
+    uint8_t red_8bit = (red * 255) / 31;
     uint8_t green_8bit = (green * 255) / 63;
-    uint8_t blue_8bit  = (blue * 255) / 31;
+    uint8_t blue_8bit = (blue * 255) / 31;
 
     LOG_INF("Color Configuration:");
     LOG_INF("  - Field 2 (uint32 color): 0x%06X", color_rgb888);
@@ -1005,7 +1107,7 @@ void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrolling
             scrolling_text->y);
 
     // Alignment configuration
-    const char* alignment_name;
+    const char *alignment_name;
     switch (scrolling_text->align)
     {
         case 0:
@@ -1060,7 +1162,7 @@ void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrolling
     LOG_INF("=== END SCROLLING TEXT MESSAGE ===");
 }
 
-void protobuf_parse_text_brightness(const char* text)
+void protobuf_parse_text_brightness(const char *text)
 {
     if (!text)
     {
@@ -1071,18 +1173,18 @@ void protobuf_parse_text_brightness(const char* text)
     LOG_INF("Parsing text: \"%s\"", text);
 
     // Look for patterns like "brightness to 61%" or "61%"
-    const char* brightness_keyword = "brightness to ";
-    const char* percent_sign       = "%";
+    const char *brightness_keyword = "brightness to ";
+    const char *percent_sign = "%";
 
-    char* brightness_pos = strstr(text, brightness_keyword);
+    char *brightness_pos = strstr(text, brightness_keyword);
     if (brightness_pos)
     {
         // Found "brightness to" pattern
         brightness_pos += strlen(brightness_keyword);
 
         // Extract the number before the % sign
-        int   brightness_value = 0;
-        char* percent_pos      = strstr(brightness_pos, percent_sign);
+        int brightness_value = 0;
+        char *percent_pos = strstr(brightness_pos, percent_sign);
 
         if (percent_pos)
         {
@@ -1159,7 +1261,7 @@ void protobuf_process_clear_display(void)
     display_clear_screen();
 }
 
-void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessConfig* auto_brightness_config)
+void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessConfig *auto_brightness_config)
 {
     if (!auto_brightness_config)
     {
@@ -1169,7 +1271,7 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
 
     LOG_INF("=== AUTO BRIGHTNESS CONFIG MESSAGE (Tag 38) ===");
 
-    bool enabled        = auto_brightness_config->enabled;
+    bool enabled = auto_brightness_config->enabled;
     bool previous_state = auto_brightness_enabled;
 
     // Update the global auto brightness state
@@ -1263,7 +1365,7 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
     LOG_INF("=== END AUTO BRIGHTNESS CONFIG MESSAGE ===");
 }
 
-void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig* mic_state)
+void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_state)
 {
     if (!mic_state)
     {
@@ -1286,7 +1388,7 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig* mic_st
     bool enabled = mic_state->enabled;
 
     pdm_audio_state_t current_state = pdm_audio_stream_get_state();
-    bool              was_streaming = (current_state == PDM_AUDIO_STATE_STREAMING);
+    bool was_streaming = (current_state == PDM_AUDIO_STATE_STREAMING);
 
     LOG_INF("Microphone Configuration:");
     LOG_INF("  - Field 1 (bool enabled): %s", enabled ? "true" : "false");
@@ -1364,7 +1466,7 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig* mic_st
 // After 3 failed ping attempts, glasses go to sleep/disconnect mode
 
 // Timer handler: Send ping every 10 seconds
-static void ping_timer_handler(struct k_timer* timer)
+static void ping_timer_handler(struct k_timer *timer)
 {
     if (!ping_waiting_for_pong)
     {
@@ -1380,7 +1482,7 @@ static void ping_timer_handler(struct k_timer* timer)
 }
 
 // Timeout handler: Handle ping timeout (no pong received)
-static void ping_timeout_handler(struct k_timer* timer)
+static void ping_timeout_handler(struct k_timer *timer)
 {
     if (ping_logging_enabled)
     {
@@ -1414,14 +1516,14 @@ static void protobuf_send_ping_request(void)
     ping_waiting_for_pong = true;
 
     mentraos_ble_GlassesToPhone message = mentraos_ble_GlassesToPhone_init_zero;
-    message.which_payload               = mentraos_ble_GlassesToPhone_pong_tag;
+    message.which_payload = mentraos_ble_GlassesToPhone_pong_tag;
 
     // Note: Current protobuf only has dummy_field, no timestamp/sequence
     // For now we'll track sequence numbers in our local variables
     message.payload.pong.dummy_field = 1;  // Just to set something
 
     // Encode the message
-    uint8_t      buffer[256];
+    uint8_t buffer[256];
     pb_ostream_t stream = pb_ostream_from_buffer(buffer, sizeof(buffer));
 
     if (pb_encode(&stream, mentraos_ble_GlassesToPhone_fields, &message))
@@ -1455,7 +1557,7 @@ static void protobuf_send_ping_request(void)
 }
 
 // Process pong response from phone (tag 16: PhoneToGlasses.ping - reusing ping for pong)
-static void protobuf_process_pong_response(const mentraos_ble_PingRequest* pong)
+static void protobuf_process_pong_response(const mentraos_ble_PingRequest *pong)
 {
     if (!ping_waiting_for_pong)
     {
@@ -1495,8 +1597,8 @@ static void protobuf_handle_ping_success(void)
 // Handle ping failure (no pong response after max retries)
 static void protobuf_handle_ping_failure(void)
 {
-    phone_connected       = false;
-    ping_retry_count      = 0;
+    phone_connected = false;
+    ping_retry_count = 0;
     ping_waiting_for_pong = false;
 
     if (ping_logging_enabled)
@@ -1538,7 +1640,7 @@ void protobuf_init_ping_monitoring(void)
 // This was the old implementation where glasses responded to phone pings
 // Now glasses send pings and phone responds with pongs
 
-void protobuf_send_pong_response(mentraos_ble_PingRequest* ping_request)
+void protobuf_send_pong_response(mentraos_ble_PingRequest *ping_request)
 {
     LOG_INF("[DEPRECATED] protobuf_send_pong_response called - glasses now send pings instead\n");
     // This function is no longer used in the new ping/pong direction

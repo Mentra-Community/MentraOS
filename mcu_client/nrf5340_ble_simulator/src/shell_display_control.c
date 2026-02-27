@@ -34,8 +34,8 @@
 // Include MOS LVGL display functions
 #include <pm_config.h>
 
-#include "mos_lvgl_display.h"
 #include "mos_binfont_lvgl.h"
+#include "mos_lvgl_display.h"
 
 // Include protobuf handler for battery functions
 #include "protobuf_handler.h"
@@ -53,7 +53,7 @@ LOG_MODULE_REGISTER(shell_display, LOG_LEVEL_INF);
 #define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE_ADDRESS)
 
 // Helper function to map font sizes to available fonts - Updated with all sizes
-static const lv_font_t* get_font_by_size(int size)
+static const lv_font_t *get_font_by_size(int size)
 {
     switch (size)
     {
@@ -63,7 +63,7 @@ static const lv_font_t* get_font_by_size(int size)
             return &lv_font_montserrat_14;
         // case 30: return &lv_font_montserrat_30;  // 30pt font commented out
         case 48:
-            return &lv_font_montserrat_48;
+            return &lv_font_montserrat_18;
         default:
             return &lv_font_montserrat_14;  // Default to 14pt (safe fallback)
     }
@@ -99,7 +99,7 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display text \"Hello\"              - Text overlay (center position, for patterns)");
     shell_print(shell, "  display text \"Hello\" <x> <y> <size> - Write text at specific position");
     shell_print(shell, "  display b_t                      - Show binfont test text");
-    shell_print(shell, "  display cjk_hex <hex> [x] [y]     - Show CJK from UTF-8 hex (no Chinese input needed)");
+    shell_print(shell, "  display cjk_hex <hex> [x] [y]     - Show UTF-8 text from hex bytes");
     shell_print(shell, "");
     shell_print(shell, "📐 Layout Control:");
     shell_print(shell, "  display layout margin <pixels>     - Set container margin (current: margin from edges)");
@@ -126,7 +126,7 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display text \"Pattern 3\"          - Overlay text on current pattern");
     shell_print(shell, "  display text \"MentraOS\" 10 20 14  - Write 'MentraOS' at (10,20) with size 14");
     shell_print(shell, "  display b_t                      - Show binfont test text");
-    shell_print(shell, "  display cjk_hex E6B58BE8AF95E4B8ADE69687  - Show CJK (test) at (10,10)");
+    shell_print(shell, "  display cjk_hex E6B58BE8AF95E4B8ADE69687  - UTF-8 hex text test at (10,10)");
     shell_print(shell, "  display clear                    - Clear the screen");
     shell_print(shell, "  display fill                     - Fill screen with white");
     shell_print(shell, "");
@@ -299,17 +299,17 @@ static int cmd_display_text(const struct shell *shell, size_t argc, char **argv)
     if (argc == 2)
     {
         text = argv[1];
-        x    = 320;  // Center X for 640px width
-        y    = 240;  // Center Y for 480px height
-        size = 14;   // Default font size
+        x = 320;  // Center X for 640px width
+        y = 240;  // Center Y for 480px height
+        size = 14;  // Default font size
         shell_print(shell, "📝 Text overlay mode - using center position (320,240) with 14px font");
     }
     else if (argc == 5)
     {
         // Full parameter mode
         text = argv[1];
-        x    = atoi(argv[2]);
-        y    = atoi(argv[3]);
+        x = atoi(argv[2]);
+        y = atoi(argv[3]);
         size = atoi(argv[4]);
     }
     else
@@ -360,7 +360,7 @@ static int cmd_display_text(const struct shell *shell, size_t argc, char **argv)
 /**
  * Display binfont test command - renders a fixed Unicode string
  */
-static int cmd_display_binfont_test(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_binfont_test(const struct shell *shell, size_t argc, char **argv)
 {
     ARG_UNUSED(argv);
 
@@ -372,9 +372,9 @@ static int cmd_display_binfont_test(const struct shell* shell, size_t argc, char
     }
 
     /* 强制使用 UTF-8 字节序列，避免源文件编码导致乱码 */
-    const char* text = "\xE4\xBD\xA0\xE5\xA5\xBD, MentraOS";
-    int         x    = 10;
-    int         y    = 10;
+    const char *text = "\xE4\xBD\xA0\xE5\xA5\xBD, MentraOS";
+    int x = 10;
+    int y = 10;
 
     /* 字体大小由 binfont 自身决定，这里传 0 表示不指定尺寸 */
     /* Binfont size is determined by the font itself, passing 0 means no specific size */
@@ -387,37 +387,49 @@ static int cmd_display_binfont_test(const struct shell* shell, size_t argc, char
 }
 
 /* 将十六进制字符串解析为 UTF-8 字节写入 buf，返回写入字节数，-1 表示错误 */
-static int hex_string_to_utf8(const char* hex, uint8_t* buf, size_t buf_size)
+static int hex_string_to_utf8(const char *hex, uint8_t *buf, size_t buf_size)
 {
     size_t out = 0;
-    for (; *hex && out < buf_size; )
+    for (; *hex && out < buf_size;)
     {
-        while (*hex == ' ' || *hex == '\t') hex++;
-        if (!*hex) break;
+        while (*hex == ' ' || *hex == '\t')
+            hex++;
+        if (!*hex)
+            break;
         int hi = -1, lo = -1;
         char c = *hex++;
-        if (c >= '0' && c <= '9') hi = c - '0';
-        else if (c >= 'A' && c <= 'F') hi = c - 'A' + 10;
-        else if (c >= 'a' && c <= 'f') hi = c - 'a' + 10;
-        else return -1;
-        if (!*hex) return -1;
+        if (c >= '0' && c <= '9')
+            hi = c - '0';
+        else if (c >= 'A' && c <= 'F')
+            hi = c - 'A' + 10;
+        else if (c >= 'a' && c <= 'f')
+            hi = c - 'a' + 10;
+        else
+            return -1;
+        if (!*hex)
+            return -1;
         c = *hex++;
-        if (c >= '0' && c <= '9') lo = c - '0';
-        else if (c >= 'A' && c <= 'F') lo = c - 'A' + 10;
-        else if (c >= 'a' && c <= 'f') lo = c - 'a' + 10;
-        else return -1;
+        if (c >= '0' && c <= '9')
+            lo = c - '0';
+        else if (c >= 'A' && c <= 'F')
+            lo = c - 'A' + 10;
+        else if (c >= 'a' && c <= 'f')
+            lo = c - 'a' + 10;
+        else
+            return -1;
         buf[out++] = (uint8_t)((hi << 4) | lo);
     }
     return (int)out;
 }
 
 /**
- * Display CJK text from UTF-8 hex string (for terminals that cannot type Chinese).
+ * 从十六进制串渲染 UTF-8 文本，使用 GBK 字库显示。
+ * 命令名 cjk_hex 保留兼容；实际字体为 display_get_font("gbk")。
  * Example: display cjk_hex E6B58BE8AF95E4B8ADE69687
  *          display cjk_hex E4BDA0E5A5BD 10 20
  */
-#define CJK_HEX_UTF8_BUF_SIZE 128
-static int cmd_display_cjk_hex(const struct shell* shell, size_t argc, char** argv)
+#define GBK_HEX_UTF8_BUF_SIZE 128
+static int cmd_display_cjk_hex(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc < 2)
     {
@@ -428,8 +440,8 @@ static int cmd_display_cjk_hex(const struct shell* shell, size_t argc, char** ar
         return -EINVAL;
     }
 
-    static uint8_t utf8_buf[CJK_HEX_UTF8_BUF_SIZE];
-    int len = hex_string_to_utf8(argv[1], utf8_buf, CJK_HEX_UTF8_BUF_SIZE - 1);
+    static uint8_t utf8_buf[GBK_HEX_UTF8_BUF_SIZE];
+    int len = hex_string_to_utf8(argv[1], utf8_buf, GBK_HEX_UTF8_BUF_SIZE - 1);
     if (len < 0)
     {
         shell_error(shell, "Invalid hex (use 0-9 A-F, spaces allowed)");
@@ -449,7 +461,7 @@ static int cmd_display_cjk_hex(const struct shell* shell, size_t argc, char** ar
     }
 
     mos_binfont_lvgl_deinit();
-    display_update_xy_text((uint16_t)x, (uint16_t)y, (const char*)utf8_buf, 0, 0xFFFF);
+    display_update_xy_text((uint16_t)x, (uint16_t)y, (const char *)utf8_buf, 0, 0xFFFF);
     shell_print(shell, "OK text at (%d,%d) (%d bytes)", x, y, len);
     return 0;
 }
@@ -457,7 +469,7 @@ static int cmd_display_cjk_hex(const struct shell* shell, size_t argc, char** ar
 /**
  * Display pattern selection command
  */
-static int cmd_display_pattern(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_pattern(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc != 2)
     {
@@ -499,7 +511,7 @@ static int cmd_display_pattern(const struct shell* shell, size_t argc, char** ar
 /**
  * Display battery level and charging state command
  */
-static int cmd_display_battery(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_battery(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc < 2 || argc > 3)
     {
@@ -548,8 +560,8 @@ static int cmd_display_battery(const struct shell* shell, size_t argc, char** ar
 
     // Create battery level display text with charging indicator
     static char battery_text[80];
-    const char* battery_icon;
-    const char* charging_indicator;
+    const char *battery_icon;
+    const char *charging_indicator;
 
     // Select battery icon based on level
     if (battery_level >= 75)
@@ -589,7 +601,7 @@ static int cmd_display_battery(const struct shell* shell, size_t argc, char** ar
 /**
  * Display fill command (opposite of clear - fill with white)
  */
-static int cmd_display_fill(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_fill(const struct shell *shell, size_t argc, char **argv)
 {
     // Use A6N driver's clear screen function with white fill
     // color_on = true means fill with white (foreground color)
@@ -612,7 +624,7 @@ static int cmd_display_fill(const struct shell* shell, size_t argc, char** argv)
 /**
  * 显示测试命令 | Display test command
  */
-static int cmd_display_selftest_patterns(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_selftest_patterns(const struct shell *shell, size_t argc, char **argv)
 {
     shell_print(shell, "🧪 运行 A6N 硬件自测试图案 | Running A6N hardware self-test patterns...");
 
@@ -682,7 +694,7 @@ static int cmd_display_selftest_patterns(const struct shell* shell, size_t argc,
 /**
  * Display read command - Read A6N register (Bank0 default, supports bank1: prefix)
  */
-static int cmd_display_read(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_read(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc < 2 || argc > 3)  // 如果参数数量不正确；if the number of arguments is incorrect
     {
@@ -702,8 +714,8 @@ static int cmd_display_read(const struct shell* shell, size_t argc, char** argv)
     }
 
     // Parse bank selector
-    uint8_t     bank_id = 0;  // default Bank0
-    const char* arg     = argv[1];
+    uint8_t bank_id = 0;  // default Bank0
+    const char *arg = argv[1];
     if (strncmp(arg, "bank1:", 6) == 0)
     {
         bank_id = 1;
@@ -720,7 +732,7 @@ static int cmd_display_read(const struct shell* shell, size_t argc, char** argv)
         return -EINVAL;
     }
 
-    char*         endptr;
+    char *endptr;
     unsigned long reg_val = strtoul(arg, &endptr, 16);
 
     // Check for parsing errors
@@ -759,7 +771,7 @@ static int cmd_display_read(const struct shell* shell, size_t argc, char** argv)
         return val;
     }
 
-    const char* engine = (mode == 0) ? "left" : "right";
+    const char *engine = (mode == 0) ? "left" : "right";
     shell_print(shell, "✅ A6N[bank%d] reg 0x%02X = 0x%02X (%s engine)", bank_id, reg, (uint8_t)val, engine);
     return 0;
 }
@@ -767,7 +779,7 @@ static int cmd_display_read(const struct shell* shell, size_t argc, char** argv)
 /**
  * Display write command - Write A6N register (Bank0 default, supports bank1: prefix)
  */
-static int cmd_display_write(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_write(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc != 3)
     {
@@ -779,8 +791,8 @@ static int cmd_display_write(const struct shell* shell, size_t argc, char** argv
     }
 
     // Parse bank selector and register
-    uint8_t     bank_id = 0;
-    const char* arg     = argv[1];
+    uint8_t bank_id = 0;
+    const char *arg = argv[1];
     if (strncmp(arg, "bank1:", 6) == 0)
     {
         bank_id = 1;
@@ -796,7 +808,7 @@ static int cmd_display_write(const struct shell* shell, size_t argc, char** argv
         return -EINVAL;
     }
 
-    char*         endptr;
+    char *endptr;
     unsigned long reg_val = strtoul(arg, &endptr, 16);
 
     // Check for parsing errors
@@ -826,7 +838,7 @@ static int cmd_display_write(const struct shell* shell, size_t argc, char** argv
         return -EINVAL;
     }
 
-    char*         val_endptr;
+    char *val_endptr;
     unsigned long val_val = strtoul(argv[2], &val_endptr, 16);
 
     // Check for parsing errors
@@ -864,7 +876,7 @@ static int cmd_display_write(const struct shell* shell, size_t argc, char** argv
  * @param temp_out Pointer to store temperature value (in Celsius)
  * @return 0 on success, negative error code on failure
  */
-static int a6n_read_temperature(int16_t* temp_out)
+static int a6n_read_temperature(int16_t *temp_out)
 {
     if (temp_out == NULL)
     {
@@ -940,12 +952,12 @@ static int a6n_read_temperature(int16_t* temp_out)
 /**
  * Display get temperature command
  */
-static int cmd_display_get_temp(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_get_temp(const struct shell *shell, size_t argc, char **argv)
 {
     shell_print(shell, "🌡️  Reading A6N panel temperature...");
 
     int16_t temp;
-    int     ret = a6n_read_temperature(&temp);
+    int ret = a6n_read_temperature(&temp);
     if (ret != 0)
     {
         shell_error(shell, "❌ Temperature reading failed: error %d", ret);
@@ -956,13 +968,13 @@ static int cmd_display_get_temp(const struct shell* shell, size_t argc, char** a
 
     // Read temperature protection thresholds from hardware registers
     int high_protect_raw = a6n_read_reg(0, 1, A6N_LCD_TEMP_HIGH_REG);
-    int low_recover_raw  = a6n_read_reg(0, 1, A6N_LCD_TEMP_LOW_REG);
+    int low_recover_raw = a6n_read_reg(0, 1, A6N_LCD_TEMP_LOW_REG);
 
     if (high_protect_raw >= 0 && low_recover_raw >= 0)
     {
         // Convert raw values to Celsius: T = (val*5/7) - 50
         int16_t high_protect = (high_protect_raw * 5 / 7) - 50;
-        int16_t low_recover  = (low_recover_raw * 5 / 7) - 50;
+        int16_t low_recover = (low_recover_raw * 5 / 7) - 50;
 
         shell_print(shell, "📊 Protection thresholds:");
         shell_print(shell, "   High temperature: %d°C (reg 0x%02X = 0x%02X)", high_protect, A6N_LCD_TEMP_HIGH_REG,
@@ -997,7 +1009,7 @@ static int cmd_display_get_temp(const struct shell* shell, size_t argc, char** a
  * Display set low temperature recovery threshold command
  * Writes to A6N register 0xF8
  */
-static int cmd_display_min_temp_limit_set(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_min_temp_limit_set(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc != 2)
     {
@@ -1040,7 +1052,7 @@ static int cmd_display_min_temp_limit_set(const struct shell* shell, size_t argc
  * Display get low temperature recovery threshold command
  * Reads from A6N register 0xF8
  */
-static int cmd_display_min_temp_limit_get(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_min_temp_limit_get(const struct shell *shell, size_t argc, char **argv)
 {
     int reg_value = a6n_read_reg(0, 1, A6N_LCD_TEMP_LOW_REG);
     if (reg_value < 0)
@@ -1061,7 +1073,7 @@ static int cmd_display_min_temp_limit_get(const struct shell* shell, size_t argc
  * Display set high temperature protection threshold command
  * Writes to A6N register 0xF7
  */
-static int cmd_display_max_temp_limit_set(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_max_temp_limit_set(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc != 2)
     {
@@ -1104,7 +1116,7 @@ static int cmd_display_max_temp_limit_set(const struct shell* shell, size_t argc
  * Display get high temperature protection threshold command
  * Reads from A6N register 0xF7
  */
-static int cmd_display_max_temp_limit_get(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_max_temp_limit_get(const struct shell *shell, size_t argc, char **argv)
 {
     int reg_value = a6n_read_reg(0, 1, A6N_LCD_TEMP_HIGH_REG);
     if (reg_value < 0)
@@ -1124,7 +1136,7 @@ static int cmd_display_max_temp_limit_get(const struct shell* shell, size_t argc
 /**
  * Font list command - Show all available font sizes
  */
-static int cmd_display_fonts_list(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_fonts_list(const struct shell *shell, size_t argc, char **argv)
 {
     shell_print(shell, "");
     shell_print(shell, "📝 Available English Font Sizes (Montserrat):");
@@ -1143,11 +1155,11 @@ static int cmd_display_fonts_list(const struct shell* shell, size_t argc, char**
 /**
  * Font test command - Test all font sizes
  */
-static int cmd_display_fonts_test(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_fonts_test(const struct shell *shell, size_t argc, char **argv)
 {
-    const int   font_sizes[] = {12, 14, 16, 18, 24, 48}; /* 30pt commented out */
-    const char* test_text    = "Font Test";
-    int         y_pos        = 20;
+    const int font_sizes[] = {12, 14, 16, 18, 24, 48}; /* 30pt commented out */
+    const char *test_text = "Font Test";
+    int y_pos = 20;
 
     shell_print(shell, "Testing all font sizes with text: \"%s\"", test_text);
 
@@ -1166,7 +1178,7 @@ static int cmd_display_fonts_test(const struct shell* shell, size_t argc, char**
 
     for (int i = 0; i < ARRAY_SIZE(font_sizes); i++)
     {
-        int  size = font_sizes[i];
+        int size = font_sizes[i];
         char size_label[32];
         snprintf(size_label, sizeof(size_label), "%dpt: %s", size, test_text);
 
@@ -1192,7 +1204,7 @@ static int cmd_display_fonts_test(const struct shell* shell, size_t argc, char**
 /**
  * Layout info command - Show current layout settings
  */
-static int cmd_display_layout_info(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_layout_info(const struct shell *shell, size_t argc, char **argv)
 {
     shell_print(shell, "");
     shell_print(shell, "📐 Current Layout Configuration:");
@@ -1219,7 +1231,7 @@ static int cmd_display_layout_info(const struct shell* shell, size_t argc, char*
 /**
  * Layout margin command - Set container margin
  */
-static int cmd_display_layout_margin(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_layout_margin(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc != 2)
     {
@@ -1248,7 +1260,7 @@ static int cmd_display_layout_margin(const struct shell* shell, size_t argc, cha
 /**
  * Layout padding command - Set container padding
  */
-static int cmd_display_layout_padding(const struct shell* shell, size_t argc, char** argv)
+static int cmd_display_layout_padding(const struct shell *shell, size_t argc, char **argv)
 {
     if (argc != 2)
     {
@@ -1281,8 +1293,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_fonts,
                                SHELL_SUBCMD_SET_END);
 
 /* Shell command definitions for binfont test */
-SHELL_STATIC_SUBCMD_SET_CREATE(sub_binfont,
-                               SHELL_CMD(test, NULL, "Show binfont test text", cmd_display_binfont_test),
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_binfont, SHELL_CMD(test, NULL, "Show binfont test text", cmd_display_binfont_test),
                                SHELL_SUBCMD_SET_END);
 
 /* Shell subcommand definitions for layout */
@@ -1320,7 +1331,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD(bin_test, NULL, "Show binfont test text", cmd_display_binfont_test),
     SHELL_CMD(bt, NULL, "Show binfont test text", cmd_display_binfont_test),
     SHELL_CMD(b_t, NULL, "Show binfont test text", cmd_display_binfont_test),
-    SHELL_CMD_ARG(cjk_hex, NULL, "Show CJK from UTF-8 hex: cjk_hex <hex> [x] [y]", cmd_display_cjk_hex, 2, 2),
+    SHELL_CMD_ARG(cjk_hex, NULL, "Show UTF-8 text from hex: cjk_hex <hex> [x] [y]", cmd_display_cjk_hex, 2, 2),
     SHELL_CMD_ARG(pattern, NULL, "Select pattern (0-5): 0=chess, 1=h-zebra, 2=v-zebra, 3=scroll, 4=container, 5=xy",
                   cmd_display_pattern, 2, 0),
     SHELL_CMD_ARG(battery, NULL, "Set battery level & charging: <level> [true/false]", cmd_display_battery, 2, 1),

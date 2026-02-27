@@ -33,7 +33,7 @@ typedef enum
     LCD_CMD_UPDATE_PROTOBUF_TEXT,    // **NEW: Update container with protobuf text**
     LCD_CMD_UPDATE_XY_TEXT,          // **NEW: Pattern 5 XY positioned text**
     LCD_CMD_GBK_TEST,                // **NEW: Simple GBK test text**
-    LCD_CMD_CJK_CHARS_TEST,          // **NEW: GBK per-character test**
+    LCD_CMD_GBK_CHARS_TEST,          // 中文字库/GBK per-character test
     LCD_CMD_UPDATE_WELCOME_BATTERY,  // **NEW: Refresh welcome label with current battery (60s period)**
     LCD_CMD_SHOW_WELCOME_SCREEN,      // **NEW: Return to welcome screen (e.g. after BLE disconnect)**
     LCD_CMD_UPDATE_DFU_PROGRESS,      // **NEW: Show/update DFU progress bar below battery on welcome screen**

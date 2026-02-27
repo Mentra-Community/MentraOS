@@ -568,10 +568,7 @@ int main(void)
     advertising_start();
     bt_gatt_cb_register(&gatt_callbacks);
 
-    /* Initialize interrupt handler framework early | 早期初始化中断处理框架 */
     interrupt_handler_init();
-
-    /* Initialize J-Link/USB switch application | 初始化J-Link/USB切换应用 */
     mos_jlink_usb_switch_app_init();
     mos_npm1300_ldsw1_init();
     mos_npm1300_ldsw1_enable();

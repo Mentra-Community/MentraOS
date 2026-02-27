@@ -55,11 +55,11 @@ config USER_STEREO_2RX_LR
 	default n
 
 config FONT_STORAGE_LOAD_AT_RUNTIME
-	bool "Load CJK font from external flash (font_storage) at runtime"
+	bool "Load Chinese font (中文字库) from external flash (font_storage) at runtime"
 	default n
 	depends on LVGL && FLASH_MAP
 	help
-	  When enabled, display_get_font(\"cjk\") loads a LVGL binfont from the
+	  When enabled, display_get_font(\"gbk\") loads a LVGL binfont from the
 	  font_storage partition on first use.
 
 config FONT_STORAGE_FILE_SIZE

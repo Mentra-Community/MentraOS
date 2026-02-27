@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-02-07 16:39:37
+ * @LastEditTime : 2026-02-26 18:05:26
  * @FilePath     : mos_lvgl_display.c
  * @Description  :
  *
@@ -49,7 +49,7 @@ static volatile bool display_onoff = false;
 /* 全局 protobuf 文本容器引用 / Global references for protobuf text container */
 static lv_obj_t* protobuf_container = NULL;
 static lv_obj_t* protobuf_label = NULL;
-static lv_obj_t* protobuf_cjk_container = NULL;
+static lv_obj_t* protobuf_gbk_container = NULL;
 /* DFU 状态文字（电量下面一行）/ DFU status text (one line below battery) */
 static lv_obj_t* dfu_status_label = NULL;
 /* DFU 进度条：容器(背景条) + 前景条(按 % 设宽度)，避免 lv_bar 显示满格问题 | DFU progress: container + fill rect by %
@@ -273,7 +273,7 @@ void display_show_gbk_test(void)
 
 void display_show_gbk_chars_test(void)
 {
-    display_cmd_t cmd = {.type = LCD_CMD_CJK_CHARS_TEST};
+    display_cmd_t cmd = {.type = LCD_CMD_GBK_CHARS_TEST};
     int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, 0);
     if (ret != 0)
     {
@@ -752,13 +752,12 @@ static void create_scrolling_text_container(lv_obj_t* screen)
     const char* device_name = get_ble_device_name(); /* 获取动态 BLE 设备名 / Get dynamic BLE device name */
     uint32_t battery_pct = protobuf_get_battery_level();
     bool charging = protobuf_get_charging_state();
-    static char large_display_text[160];
-    static char small_display_text[96];
+    char display_text[160];
 
     if (config->width >= 500)
     {
         /* Large display: icon + number, BLE icon before device name. 大屏：图标+数字，设备名前显示蓝牙图标 */
-        snprintf(large_display_text, sizeof(large_display_text),
+        snprintf(display_text, sizeof(display_text),
                  "Welcome to MentraOS\n"
                  "Build V1.2.3 %s %s\n"
                  "Waiting for connection\n"
@@ -766,12 +765,12 @@ static void create_scrolling_text_container(lv_obj_t* screen)
                  "Battery: %s %u%%",
                  __DATE__, __TIME__, get_ble_icon(), device_name, get_battery_icon(battery_pct, charging),
                  (unsigned int)battery_pct);
-        initial_text = large_display_text;
+        initial_text = display_text;
     }
     else
     {
         /* Small display: icon + number, BLE icon before device name. 小屏：图标+数字，设备名前显示蓝牙图标 */
-        snprintf(small_display_text, sizeof(small_display_text),
+        snprintf(display_text, sizeof(display_text),
                  "Welcome to MentraOS\n"
                  "Build V1.2.3 %s %s\n"
                  "Waiting for connection\n"
@@ -779,7 +778,7 @@ static void create_scrolling_text_container(lv_obj_t* screen)
                  "Battery: %s %u%%",
                  __DATE__, __TIME__, get_ble_icon(), device_name, get_battery_icon(battery_pct, charging),
                  (unsigned int)battery_pct);
-        initial_text = small_display_text;
+        initial_text = display_text;
     }
 
     lv_label_set_text(label, initial_text);
@@ -811,17 +810,17 @@ static void create_scrolling_text_container(lv_obj_t* screen)
     lv_obj_align_to(dfu_status_label, label, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
     lv_obj_add_flag(dfu_status_label, LV_OBJ_FLAG_HIDDEN);
 
-    /* GBK per-char 渲染容器：用于 BLE 文本逐字显示，默认隐藏；允许多行时垂直滚动避免英文/长文被裁 */
-    protobuf_cjk_container = lv_obj_create(container);
-    lv_obj_set_size(protobuf_cjk_container, config->layout.usable_width - (config->layout.padding * 2),
+    /* 中文字库逐字渲染容器：BLE 文本逐字显示，默认隐藏；多行时垂直滚动 */
+    protobuf_gbk_container = lv_obj_create(container);
+    lv_obj_set_size(protobuf_gbk_container, config->layout.usable_width - (config->layout.padding * 2),
                     config->layout.usable_height - (config->layout.padding * 2));
-    lv_obj_set_style_bg_opa(protobuf_cjk_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(protobuf_cjk_container, 0, 0);
-    lv_obj_set_style_border_opa(protobuf_cjk_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_scroll_dir(protobuf_cjk_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(protobuf_cjk_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_align(protobuf_cjk_container, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_add_flag(protobuf_cjk_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(protobuf_gbk_container, 0, 0);
+    lv_obj_set_style_border_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_dir(protobuf_gbk_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(protobuf_gbk_container, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
 
     /* DFU 进度条：单色显示（亮/暗），轨道=背景色、填充=文字色 | Progress bar: monochrome (bright/dark), track=bg,
      * fill=text color */
@@ -952,17 +951,17 @@ void cycle_test_pattern(void)
     show_test_pattern(current_pattern);
 }
 
-static void render_cjk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coord_t y, const char* render_text,
-                                const lv_font_t* cjk_font, const lv_font_t* font_primary,
-                                lv_coord_t* out_end_x, lv_coord_t* out_end_y, size_t* out_byte_len)
+/* 中文字库逐字渲染（汉字/标点/ASCII）；max_width>0 时按宽度自动换行，否则仅按 \\n/\\r 换行 */
+static void render_gbk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coord_t y, lv_coord_t max_width,
+                                    const char* render_text, const lv_font_t* gbk_font,
+                                const lv_font_t* font_primary, lv_coord_t* out_end_x, lv_coord_t* out_end_y,
+                                size_t* out_byte_len)
 {
     const uint8_t* p = (const uint8_t*)render_text;
     const uint8_t* p_start = p;
     lv_coord_t cur_x = x;
     lv_coord_t cur_y = y;
-    lv_coord_t max_w = lv_obj_get_width(target_container);
-    lv_coord_t line_h = (cjk_font ? cjk_font->line_height : 16);
-    lv_coord_t right_limit = (max_w > 8) ? (max_w - 8) : max_w;
+    lv_coord_t line_h = (gbk_font ? gbk_font->line_height : 16);
 
     while (*p != '\0')
     {
@@ -1000,7 +999,7 @@ static void render_cjk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coo
         if (code == '\n' || code == '\r')
         {
             cur_x = x;
-            cur_y += (cjk_font ? cjk_font->line_height : 16);
+            cur_y += (gbk_font ? gbk_font->line_height : 16);
             p += len;
             continue;
         }
@@ -1022,7 +1021,7 @@ static void render_cjk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coo
         lv_font_glyph_dsc_t dsc;
         bool has_glyph = false;
 
-        if (cjk_font && lv_font_get_glyph_dsc(cjk_font, &dsc, code, 0))
+        if (gbk_font && lv_font_get_glyph_dsc(gbk_font, &dsc, code, 0))
         {
             has_glyph = true;
         }
@@ -1030,7 +1029,7 @@ static void render_cjk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coo
         {
             buf[0] = '?';
             buf[1] = '\0';
-            if (cjk_font && lv_font_get_glyph_dsc(cjk_font, &dsc, (uint32_t)0x3F, 0)) /* 用字库的 ? 做占位 */
+            if (gbk_font && lv_font_get_glyph_dsc(gbk_font, &dsc, (uint32_t)0x3F, 0)) /* 用字库的 ? 做占位 */
             {
                 has_glyph = true;
             }
@@ -1041,11 +1040,6 @@ static void render_cjk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coo
         {
             lv_coord_t skip_adv = (code < 0x80u) ? (line_h / 2) : line_h;
             cur_x += skip_adv;
-            if (right_limit > 0 && cur_x > right_limit)
-            {
-                cur_x = x;
-                cur_y += line_h;
-            }
             p += len;
             continue;
         }
@@ -1056,9 +1050,23 @@ static void render_cjk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coo
             glyph_w = (lv_coord_t)((dsc.adv_w + 15) / 16);
         }
 
-        lv_coord_t glyph_left = cur_x + dsc.ofs_x;
-        lv_coord_t glyph_right = glyph_left + glyph_w;
-        if (right_limit > 0 && glyph_right > right_limit)
+        /* 本字 advance */
+        lv_coord_t adv = (lv_coord_t)((dsc.adv_w + 15) / 16);
+        if (code >= 0x80u && glyph_w > 0 && (lv_coord_t)glyph_w < adv)
+        {
+            bool is_fullwidth_punct = (code >= 0x3000u && code <= 0x303Fu) || (code >= 0xFF00u && code <= 0xFFEFu);
+            if (is_fullwidth_punct)
+            {
+                adv = (glyph_w + adv) / 2;
+            }
+            else
+            {
+                adv = glyph_w + 2;
+            }
+        }
+
+        /* 按宽度自动换行：max_width>0 且本字超出右边界时换行 */
+        if (max_width > 0 && (cur_x + adv) > max_width)
         {
             cur_x = x;
             cur_y += line_h;
@@ -1066,29 +1074,13 @@ static void render_cjk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coo
 
         lv_obj_t* lbl = lv_label_create(target_container);
         lv_label_set_text(lbl, buf);
-        lv_obj_set_style_text_font(lbl, cjk_font, 0);
+        lv_obj_set_style_text_font(lbl, gbk_font, 0);
         lv_obj_set_style_text_color(lbl, display_get_text_color(), 0);
         lv_obj_set_style_bg_opa(lbl, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_pad_all(lbl, 0, 0); /* 去掉 label 默认内边距，避免字间多出空隙 */
+        lv_obj_set_style_pad_all(lbl, 0, 0);
         lv_obj_set_pos(lbl, cur_x, cur_y);
         lv_obj_invalidate(lbl);
 
-        /* 仅用字体 advance。汉字用实际字宽收紧；全角标点后步进取折中，避免标点与下一字之间空隙过大 */
-        lv_coord_t adv = (lv_coord_t)((dsc.adv_w + 15) / 16);
-        if (code >= 0x80u && glyph_w > 0 && (lv_coord_t)glyph_w < adv)
-        {
-            bool is_fullwidth_punct = (code >= 0x3000u && code <= 0x303Fu) || (code >= 0xFF00u && code <= 0xFFEFu);
-            if (is_fullwidth_punct)
-            {
-                /* 标点后与汉字的间隔：用 (字宽+一字宽)/2，既不过紧也不多出一格 */
-                adv = (glyph_w + adv) / 2;
-            }
-            else
-            {
-                /* 汉字：字宽 + 2 像素，略微放宽，避免过紧 */
-                adv = glyph_w + 2;
-            }
-        }
         cur_x += adv;
 
         p += len;
@@ -1145,6 +1137,7 @@ static void update_protobuf_text_content(const char* text_content)
     welcome_screen_active = false;
 
     const char* render_text = text_content;
+    /* 协议前缀 [cjk]/[cjkchars] 保持不变（与手机端约定），实际使用 GBK 字库 */
     if (strncmp(render_text, "[cjkchars]", 10) == 0)
     {
         render_text += 10;
@@ -1183,40 +1176,45 @@ static void update_protobuf_text_content(const char* text_content)
         lv_obj_add_flag(dfu_status_label, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (protobuf_cjk_container)
+    if (protobuf_gbk_container)
     {
-        lv_obj_clear_flag(protobuf_cjk_container, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
         /* 清空前先设不透明背景，避免 clean 后重绘时透出上一帧残影导致闪一下 */
-        lv_obj_set_style_bg_color(protobuf_cjk_container, display_get_background_color(), 0);
-        lv_obj_set_style_bg_opa(protobuf_cjk_container, LV_OPA_COVER, 0);
-        lv_obj_clean(protobuf_cjk_container);
+        lv_obj_set_style_bg_color(protobuf_gbk_container, display_get_background_color(), 0);
+        lv_obj_set_style_bg_opa(protobuf_gbk_container, LV_OPA_COVER, 0);
+        lv_obj_clean(protobuf_gbk_container);
     }
 
-    const lv_font_t* cjk_font = display_get_font("cjk");
+    const lv_font_t* gbk_font = display_get_font("gbk");
     const lv_font_t* font_primary = display_get_font("primary");
     if (!font_primary)
     {
         font_primary = display_get_font("secondary");
     }
-    if (!cjk_font && font_primary)
+    if (!gbk_font && font_primary)
     {
-        cjk_font = font_primary;
+        gbk_font = font_primary;
     }
 
-    if (protobuf_cjk_container && cjk_font)
+    if (protobuf_gbk_container && gbk_font)
     {
-        render_cjk_per_char(protobuf_cjk_container, 0, 0, render_text, cjk_font, font_primary, NULL, NULL, NULL);
-        lv_obj_update_layout(protobuf_cjk_container);
-        lv_obj_scroll_to_y(protobuf_cjk_container, 0, LV_ANIM_OFF);
-        lv_obj_invalidate(protobuf_cjk_container);
+        const display_config_t* config = display_get_config();
+        lv_coord_t container_w = (config && config->layout.usable_width > 0)
+                                    ? (lv_coord_t)(config->layout.usable_width - (config->layout.padding * 2))
+                                    : 0;
+        render_gbk_per_char(protobuf_gbk_container, 0, 0, container_w, render_text, gbk_font, font_primary,
+                           NULL, NULL, NULL);
+        lv_obj_update_layout(protobuf_gbk_container);
+        lv_obj_scroll_to_y(protobuf_gbk_container, 0, LV_ANIM_OFF);
+        lv_obj_invalidate(protobuf_gbk_container);
         lv_obj_invalidate(protobuf_container);
         LOG_INF("📱 Protobuf GBK per-char updated: %.50s%s", render_text, strlen(render_text) > 50 ? "..." : "");
     }
     else
     {
-        if (protobuf_cjk_container)
+        if (protobuf_gbk_container)
         {
-            lv_obj_add_flag(protobuf_cjk_container, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
         }
         if (protobuf_label)
         {
@@ -1296,7 +1294,6 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
                                       uint32_t color)
 {
     /* 必须仅在 LVGL 线程上下文中调用 / SAFETY: This function must only be called from LVGL thread context */
-
     if (!text_content)
     {
         LOG_ERR("Invalid XY text content pointer");
@@ -1360,10 +1357,10 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
         LOG_WRN("📍 Clamped to: (%u,%u)", x, y);
     }
 
-    bool use_cjk = true;
-    bool use_cjk_chars = true;
+    bool use_gbk = true;
+    bool use_gbk_chars = true;
     const char* render_text = text_content;
-
+    /* 协议前缀 [cjk]/[cjkchars] 与手机端约定，此处走 GBK 字库 */
     if (strncmp(text_content, "[cjkchars]", 10) == 0)
     {
         render_text = text_content + 10;
@@ -1383,7 +1380,7 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
         LOG_INF("GBK mode detected, text='%.30s'", render_text);
     }
 
-    /* If the text is pure ASCII, use normal font path (no per-char CJK) */
+    /* 纯 ASCII 时走普通字体路径，不走中文字库逐字渲染 */
     bool ascii_only = true;
     for (const uint8_t* t = (const uint8_t*)render_text; *t != '\0'; ++t)
     {
@@ -1395,20 +1392,20 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
     }
     if (ascii_only)
     {
-        use_cjk = false;
-        use_cjk_chars = false;
+        use_gbk = false;
+        use_gbk_chars = false;
     }
 
-    const lv_font_t* font = use_cjk ? display_get_font("cjk") : display_get_font("secondary");
+    const lv_font_t* font = use_gbk ? display_get_font("gbk") : display_get_font("secondary");
     if (!font)
     {
-        LOG_WRN("%s font not available, falling back to primary font", use_cjk ? "cjk" : "secondary");
+        LOG_WRN("%s font not available, falling back to primary font", use_gbk ? "gbk" : "secondary");
         font = display_get_font("primary"); /* 回退到主显示字体 / Fallback to primary display font */
     }
     const lv_font_t* font_primary = display_get_font("primary");
 
     /* GBK字库已加载，移除探针代码以避免性能开销 */
-    if (use_cjk && font)
+    if (use_gbk && font)
     {
         LOG_INF("Using GBK font @%p for rendering: '%.20s'", font, render_text);
     }
@@ -1422,15 +1419,14 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
                 (avg > (3u * 128u)) ? "black" : "white");
     }
 
-    if (use_cjk_chars && font)
+    if (use_gbk_chars && font)
     {
         /* Per-character horizontal layout for testing */
         const uint8_t* p = (const uint8_t*)render_text;
         lv_coord_t cur_x = x;
         lv_coord_t cur_y = y;
         lv_coord_t line_h = (font ? font->line_height : 16);
-        lv_coord_t max_w = (lv_coord_t)max_x;
-        lv_coord_t right_limit = (max_w > 8) ? (max_w - 8) : max_w;
+        /* 不按宽度自动换行，仅按 \\n/\\r 换行，与手机 app 一致 */
 
         while (*p != '\0')
         {
@@ -1515,11 +1511,6 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
             {
                 lv_coord_t skip_adv = (code < 0x80u) ? (line_h / 2) : line_h;
                 cur_x += skip_adv;
-                if (right_limit > 0 && cur_x > right_limit)
-                {
-                    cur_x = x;
-                    cur_y += line_h;
-                }
                 p += advance_len;
                 continue;
             }
@@ -1530,12 +1521,19 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
                 glyph_w = (lv_coord_t)((dsc.adv_w + 15) / 16);
             }
 
-            lv_coord_t glyph_left = cur_x + dsc.ofs_x;
-            lv_coord_t glyph_right = glyph_left + glyph_w;
-            if (right_limit > 0 && glyph_right > right_limit)
+            /* 本字 advance（不按宽度自动换行） */
+            lv_coord_t adv = (lv_coord_t)((dsc.adv_w + 15) / 16);
+            if (code >= 0x80u && glyph_w > 0 && (lv_coord_t)glyph_w < adv)
             {
-                cur_x = x;
-                cur_y += line_h;
+                bool is_fullwidth_punct = (code >= 0x3000u && code <= 0x303Fu) || (code >= 0xFF00u && code <= 0xFFEFu);
+                if (is_fullwidth_punct)
+                {
+                    adv = (glyph_w + adv) / 2;
+                }
+                else
+                {
+                    adv = glyph_w + 2;
+                }
             }
 
             lv_obj_t* lbl = lv_label_create(target_container);
@@ -1543,26 +1541,10 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
             lv_obj_set_style_text_font(lbl, font, 0);
             lv_obj_set_style_text_color(lbl, text_color, 0);
             lv_obj_set_style_bg_opa(lbl, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_pad_all(lbl, 0, 0); /* 去掉 label 默认内边距，避免字间多出空隙 */
+            lv_obj_set_style_pad_all(lbl, 0, 0);
             lv_obj_set_pos(lbl, cur_x, cur_y);
             lv_obj_invalidate(lbl);
 
-            /* 仅用字体 advance。汉字用实际字宽收紧；全角标点后步进取折中，避免标点与下一字之间空隙过大 */
-            lv_coord_t adv = (lv_coord_t)((dsc.adv_w + 15) / 16);
-            if (code >= 0x80u && glyph_w > 0 && (lv_coord_t)glyph_w < adv)
-            {
-                bool is_fullwidth_punct = (code >= 0x3000u && code <= 0x303Fu) || (code >= 0xFF00u && code <= 0xFFEFu);
-                if (is_fullwidth_punct)
-                {
-                    /* 标点后与汉字的间隔：用 (字宽+一字宽)/2，既不过紧也不多出一格 */
-                    adv = (glyph_w + adv) / 2;
-                }
-                else
-                {
-                    /* 汉字：字宽 + 2 像素，略微放宽，避免过紧 */
-                    adv = glyph_w + 2;
-                }
-            }
             cur_x += adv;
 
             p += advance_len;
@@ -1591,7 +1573,7 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
     }
 
     const char* pattern_name = (target_container == xy_text_container) ? "Pattern 5" : "Pattern 4";
-    const char* font_name = use_cjk ? "cjk" : "secondary";
+    const char* font_name = use_gbk ? "gbk" : "secondary";
     LOG_INF("📝 [%s] Cleared all text, positioned new at (%u,%u), %s_font, color:0x%06X: %.30s%s", pattern_name, x, y,
             font_name, color, render_text, strlen(render_text) > 30 ? "..." : "");
 
@@ -1673,7 +1655,7 @@ static void show_gbk_chars_test(void)
     lv_screen_load(gbk_chars_screen);
     printk("GBK_TEST: set text\r\n");
 
-    const lv_font_t* font = display_get_font("cjk");
+    const lv_font_t* font = display_get_font("gbk");
     if (!font)
     {
         font = display_get_font("primary");
@@ -1778,7 +1760,7 @@ static void show_gbk_test_text(void)
         lv_obj_set_style_text_color(gbk_test_label, display_get_text_color(), 0);
 
         printk("GBK_TEST: get font\r\n");
-        const lv_font_t* font = display_get_font("cjk");
+        const lv_font_t* font = display_get_font("gbk");
         if (!font)
         {
             font = display_get_font("primary");
@@ -1973,10 +1955,10 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
                     show_gbk_test_text();
                     LOG_INF("LCD_CMD_GBK_TEST - Done");
                     break;
-                case LCD_CMD_CJK_CHARS_TEST:
-                    LOG_INF("LCD_CMD_CJK_CHARS_TEST - Show per-character GBK test");
+                case LCD_CMD_GBK_CHARS_TEST:
+                    LOG_INF("LCD_CMD_GBK_CHARS_TEST - Show per-character GBK test");
                     show_gbk_chars_test();
-                    LOG_INF("LCD_CMD_CJK_CHARS_TEST - Done");
+                    LOG_INF("LCD_CMD_GBK_CHARS_TEST - Done");
                     break;
                 case LCD_CMD_UPDATE_WELCOME_BATTERY:
                     /* 用当前电量刷新欢迎标签（60s 周期）/ Refresh welcome label with current battery (60s period) */
@@ -1985,9 +1967,9 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
                 case LCD_CMD_SHOW_WELCOME_SCREEN:
                     /* 蓝牙断开后重新进入欢迎界面：隐藏 BLE 文案区，显示欢迎标签并刷新电量 */
                     welcome_screen_active = true;
-                    if (protobuf_cjk_container)
+                    if (protobuf_gbk_container)
                     {
-                        lv_obj_add_flag(protobuf_cjk_container, LV_OBJ_FLAG_HIDDEN);
+                        lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
                     }
                     if (protobuf_label)
                     {

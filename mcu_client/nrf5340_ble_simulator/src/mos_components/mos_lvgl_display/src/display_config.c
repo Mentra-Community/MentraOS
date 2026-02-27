@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-02-10 15:47:42
+ * @LastEditTime : 2026-02-26 15:58:34
  * @FilePath     : display_config.c
  * @Description  :
  *
@@ -17,8 +17,8 @@
 #include <zephyr/drivers/display.h>
 #include <zephyr/logging/log.h>
 
-#include "mos_font_storage.h"
 #include "mos_binfont_lvgl.h"
+#include "mos_font_storage.h"
 
 LOG_MODULE_REGISTER(display_config, LOG_LEVEL_DBG);
 
@@ -31,120 +31,106 @@ static bool config_initialized = false;
  */
 static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
     // DISPLAY_TYPE_UNKNOWN - Default fallback
-    [DISPLAY_TYPE_UNKNOWN] = {
-        .type = DISPLAY_TYPE_UNKNOWN,
+    [DISPLAY_TYPE_UNKNOWN] = 
+        {.type = DISPLAY_TYPE_UNKNOWN,
         .name = "Unknown Display",
-        .width = 128, .height = 64,
-        .layout = {
-            .margin_left = 2, .margin_top = 2, .padding = 2, .border_width = 1,
-            .usable_width = 124, .usable_height = 60
-        },
-        .fonts = {
-            .primary = &lv_font_montserrat_12,
-            .secondary = &lv_font_montserrat_12,  // Use 12 instead of 10 (not available)
-            .large = &lv_font_montserrat_14,
-            .cjk = &lv_font_montserrat_48,
-            .line_spacing = 1
-        },
-        .patterns = {
-            .chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2
-        },
-        .performance = {
-            .refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 128
-        },
-        .color_config = {
-            .invert_colors = 0,        // Unknown display uses normal colors
-            .hardware_mirroring = 0    // Unknown display has no mirroring
-        }
-    },
+        .width = 128,
+        .height = 64,
+        .layout = {.margin_left = 2,
+                    .margin_top = 2,
+                    .padding = 2,
+                    .border_width = 1,
+                    .usable_width = 124,
+                    .usable_height = 60},
+        .fonts = {.primary = &lv_font_montserrat_12,
+                .secondary = &lv_font_montserrat_12,  // Use 12 instead of 10 (not available)
+                .large = &lv_font_montserrat_14,
+                .cjk = &lv_font_montserrat_18,
+                .line_spacing = 1},
+        .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
+        .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 128},
+        .color_config =
+            {
+                .invert_colors = 0,  // Unknown display uses normal colors
+                .hardware_mirroring = 0  // Unknown display has no mirroring
+            }},
 
     // DISPLAY_TYPE_DUMMY_640x480 - Large projector/dummy display (limited fonts due to memory)
-    [DISPLAY_TYPE_DUMMY_640x480] = {
-        .type = DISPLAY_TYPE_DUMMY_640x480,
-        .name = "Dummy Display 640x480",
-        .width = 640, .height = 480,
-        .layout = {
-            .margin_left = 100, .margin_top = 100, .padding = 10, .border_width = 2,
-            .usable_width = 440, .usable_height = 200
-        },
-        .fonts = {
-            .primary = &lv_font_montserrat_14,    // Use 14 instead of 24 (not available)
-            .secondary = &lv_font_montserrat_12,  // Use 12 instead of 18 (not available)
-            .large = &lv_font_montserrat_14,      // Use 14 instead of 48 (not available)
-            .cjk = &lv_font_montserrat_48,       
-            .line_spacing = 3
-        },
-        .patterns = {
-            .chess_square_size = 40, .bar_thickness = 20, .scroll_speed = 5
-        },
-        .performance = {
-            .refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 512
-        },
-        .color_config = {
-            .invert_colors = 0,        // Dummy display uses normal colors
-            .hardware_mirroring = 0    // Dummy display has no mirroring
-        }
-    },
+    [DISPLAY_TYPE_DUMMY_640x480] =
+        {.type = DISPLAY_TYPE_DUMMY_640x480,
+         .name = "Dummy Display 640x480",
+         .width = 640,
+         .height = 480,
+         .layout = {.margin_left = 100,
+                    .margin_top = 100,
+                    .padding = 10,
+                    .border_width = 2,
+                    .usable_width = 440,
+                    .usable_height = 200},
+         .fonts = {.primary = &lv_font_montserrat_14,  // Use 14 instead of 24 (not available)
+                   .secondary = &lv_font_montserrat_12,  // Use 12 instead of 18 (not available)
+                   .large = &lv_font_montserrat_14,  // Use 14 instead of 48 (not available)
+                   .cjk = &lv_font_montserrat_18,
+                   .line_spacing = 3},
+         .patterns = {.chess_square_size = 40, .bar_thickness = 20, .scroll_speed = 5},
+         .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 512},
+         .color_config =
+             {
+                 .invert_colors = 0,  // Dummy display uses normal colors
+                 .hardware_mirroring = 0  // Dummy display has no mirroring
+             }},
 
     // DISPLAY_TYPE_SSD1306_128x64 - Small OLED display
-    [DISPLAY_TYPE_SSD1306_128x64] = {
-        .type = DISPLAY_TYPE_SSD1306_128x64,
-        .name = "SSD1306 OLED 128x64",
-        .width = 128, .height = 64,
-        .layout = {
-            .margin_left = 2, .margin_top = 2, .padding = 2, .border_width = 1,
-            .usable_width = 124, .usable_height = 60
-        },
-        .fonts = {
-            .primary = &lv_font_montserrat_12,
-            .secondary = &lv_font_montserrat_12,  // Use 12 instead of 10 (not available)
-            .large = &lv_font_montserrat_14,
-            .cjk = &lv_font_montserrat_48,
-            .line_spacing = 1
-        },
-        .patterns = {
-            .chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2
-        },
-        .performance = {
-            .refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 128
-        },
-        .color_config = {
-            .invert_colors = 0,        // SSD1306 works correctly, no inversion needed
-            .hardware_mirroring = 0    // SSD1306 displays correctly, no mirroring
-        }
-    },
+    [DISPLAY_TYPE_SSD1306_128x64] =
+        {.type = DISPLAY_TYPE_SSD1306_128x64,
+         .name = "SSD1306 OLED 128x64",
+         .width = 128,
+         .height = 64,
+         .layout = {.margin_left = 2,
+                    .margin_top = 2,
+                    .padding = 2,
+                    .border_width = 1,
+                    .usable_width = 124,
+                    .usable_height = 60},
+         .fonts = {.primary = &lv_font_montserrat_12,
+                   .secondary = &lv_font_montserrat_12,  // Use 12 instead of 10 (not available)
+                   .large = &lv_font_montserrat_14,
+                   .cjk = &lv_font_montserrat_18,
+                   .line_spacing = 1},
+         .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
+         .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 128},
+         .color_config =
+             {
+                 .invert_colors = 0,  // SSD1306 works correctly, no inversion needed
+                 .hardware_mirroring = 0  // SSD1306 displays correctly, no mirroring
+             }},
 
     // DISPLAY_TYPE_A6N_640x480 - Future A6N projector (limited fonts due to memory)
     [DISPLAY_TYPE_A6N_640x480] = {
         .type = DISPLAY_TYPE_A6N_640x480,
-        .name = "A6N Projector 640x480", 
-        .width = 640, .height = 480,
-        .layout = {
-            .margin_left = 80, .margin_top = 200, .padding = 8, .border_width = 2,
-            .usable_width = 480, .usable_height = 480
-        },
-        .fonts = {
-            .primary = &lv_font_montserrat_14,    // Use 14 instead of 30 (not available)
-            .secondary = &lv_font_montserrat_18,  // Use 18 for secondary text
-            // .secondary = &lv_font_simsun_16_cjk,  // Use 18 for secondary text
-            .large = &lv_font_montserrat_48,      // Use 14 instead of 48 (not available)
-            .cjk = &lv_font_montserrat_48,        // Only GBK font available
-            .line_spacing = 4
-        },
-        .patterns = {
-            .chess_square_size = 32, .bar_thickness = 16, .scroll_speed = 4
-        },
-        .performance = {
-            .refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 512
-        },
+        .name = "A6N Projector 640x480",
+        .width = 640,
+        .height = 480,
+        .layout = {.margin_left = 80,
+                   .margin_top = 200,
+                   .padding = 8,
+                   .border_width = 2,
+                   .usable_width = 480,
+                   .usable_height = 480},
+        .fonts = {.primary = &lv_font_montserrat_14,  // Use 14 instead of 30 (not available)
+                  .secondary = &lv_font_montserrat_18,  // Use 18 for secondary text
+                  // .secondary = &lv_font_simsun_16_cjk,  // Use 18 for secondary text
+                  .large = &lv_font_montserrat_18,
+                  .cjk = &lv_font_montserrat_18,
+                  .line_spacing = 4},
+        .patterns = {.chess_square_size = 32, .bar_thickness = 16, .scroll_speed = 4},
+        .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 512},
         .color_config = {
-            .invert_colors = 1,        // A6N needs color inversion (text LEDs off -> on)
-            .hardware_mirroring = 1    // A6N has mirrored output that needs correction
-        }
-    }
-};
+            .invert_colors = 1,  // A6N needs color inversion (text LEDs off -> on)
+            .hardware_mirroring = 1  // A6N has mirrored output that needs correction
+        }}};
 
-display_type_t display_detect_type(const char* device_name)
+display_type_t display_detect_type(const char *device_name)
 {
     if (!device_name)
     {
@@ -182,7 +168,7 @@ int display_config_init(void)
     }
 
     // Get the chosen display device from device tree
-    const struct device* display_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+    const struct device *display_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
 
     if (!device_is_ready(display_dev))
     {
@@ -191,7 +177,7 @@ int display_config_init(void)
     }
 
     // Get device name for type detection
-    const char* device_name = display_dev->name;
+    const char *device_name = display_dev->name;
     LOG_INF("Initializing display config for device: %s", device_name);
 
     // Detect display type
@@ -199,7 +185,7 @@ int display_config_init(void)
 
 // Also check device tree compatible for additional detection
 #if DT_NODE_EXISTS(DT_CHOSEN(zephyr_display))
-    const char* compatible = DT_PROP_OR(DT_CHOSEN(zephyr_display), compatible, "unknown");
+    const char *compatible = DT_PROP_OR(DT_CHOSEN(zephyr_display), compatible, "unknown");
     if (detected_type == DISPLAY_TYPE_UNKNOWN)
     {
         detected_type = display_detect_type(compatible);
@@ -224,7 +210,7 @@ int display_config_init(void)
     return 0;
 }
 
-const display_config_t* display_get_config(void)
+const display_config_t *display_get_config(void)
 {
     if (!config_initialized)
     {
@@ -235,7 +221,7 @@ const display_config_t* display_get_config(void)
     return &current_config;
 }
 
-int display_apply_container_config(lv_obj_t* container, lv_obj_t* parent, const display_config_t* config)
+int display_apply_container_config(lv_obj_t *container, lv_obj_t *parent, const display_config_t *config)
 {
     if (!container || !config)
     {
@@ -258,9 +244,9 @@ int display_apply_container_config(lv_obj_t* container, lv_obj_t* parent, const 
     return 0;
 }
 
-const lv_font_t* display_get_font(const char* text_type)
+const lv_font_t *display_get_font(const char *text_type)
 {
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     if (!text_type)
     {
@@ -279,24 +265,24 @@ const lv_font_t* display_get_font(const char* text_type)
     {
         return config->fonts.large;
     }
-    else if (strcmp(text_type, "cjk") == 0)
+    else if (strcmp(text_type, "gbk") == 0)
     {
-        /* CJK: use custom binfont adapter (official loader + XIP causes SECURE FAULT / NULL deref). */
-        const lv_font_t* ext_font = mos_binfont_get_lvgl_font();
+        /* GBK/中文字库：外置 binfont，与 config->fonts.cjk 无关 */
+        const lv_font_t *ext_font = mos_binfont_get_lvgl_font();
         if (ext_font)
         {
-            LOG_INF("display_get_font(cjk): using binfont adapter @%p", ext_font);
+            LOG_INF("display_get_font(gbk): using binfont adapter @%p", ext_font);
             return ext_font;
         }
-        LOG_ERR("display_get_font(cjk): binfont required but init failed - program font hex to font_storage");
-        return config->fonts.cjk ? config->fonts.cjk : config->fonts.secondary;
+        LOG_ERR("display_get_font(gbk): binfont init failed - program font hex to font_storage");
+        return config->fonts.secondary;
     }
 
     // Default fallback
     return config->fonts.primary;
 }
 
-void display_calculate_container_dimensions(uint16_t* width, uint16_t* height, uint16_t* x, uint16_t* y)
+void display_calculate_container_dimensions(uint16_t *width, uint16_t *height, uint16_t *x, uint16_t *y)
 {
     const display_config_t *config = display_get_config();
 
@@ -312,7 +298,7 @@ void display_calculate_container_dimensions(uint16_t* width, uint16_t* height, u
 
 lv_color_t display_get_text_color(void)
 {
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     if (config->color_config.invert_colors)
     {
@@ -328,7 +314,7 @@ lv_color_t display_get_text_color(void)
 
 lv_color_t display_get_background_color(void)
 {
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     if (config->color_config.invert_colors)
     {
@@ -344,7 +330,7 @@ lv_color_t display_get_background_color(void)
 
 lv_color_t display_get_adjusted_color(lv_color_t color)
 {
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     if (config && config->color_config.invert_colors)
     {
