@@ -101,6 +101,14 @@ export class SonioxSdkStream implements StreamInstance {
   // Track last emitted interim text to avoid duplicate callbacks.
   private lastEmittedInterimText = "";
 
+  // ── Post-endpoint suppression ─────────────────────────────────────
+  // After an endpoint/finalized event, the Soniox SDK may still deliver
+  // residual `result` events from its rolling window. These contain
+  // text that is a substring of the already-finalized utterance, causing
+  // the captions to "pop" (show old text as a new interim, then vanish).
+  // We suppress interims that are substrings of the last finalized text.
+  private lastFinalizedText = "";
+
   // ── Stable-prefix accumulation ──────────────────────────────────────
   // The SDK's rolling window compacts (prunes) finalized tokens mid-
   // utterance, causing result.tokens to lose earlier text. To prevent
@@ -302,6 +310,7 @@ export class SonioxSdkStream implements StreamInstance {
     this.utteranceBuffer.reset();
     this.currentUtteranceId = null;
     this.lastEmittedInterimText = "";
+    this.lastFinalizedText = "";
 
     this.state = StreamState.CLOSED;
     this.metrics.totalDuration = Date.now() - this.startTime;
@@ -408,6 +417,23 @@ export class SonioxSdkStream implements StreamInstance {
     const fullText = (this.stablePrefixText + tailText).trim();
 
     if (!fullText || fullText === this.lastEmittedInterimText) return;
+
+    // ── Suppress residual interims after endpoint/finalize ──────────
+    // After an endpoint fires, the SDK may deliver lingering result
+    // events whose text is a subset of the already-finalized utterance.
+    // Emitting these as new interims causes "text popping" on glasses.
+    if (this.lastFinalizedText && this.lastFinalizedText.includes(fullText)) {
+      this.logger.debug(
+        { streamId: this.id, text: fullText.substring(0, 60) },
+        "🎙️ SONIOX SDK: suppressing residual interim (substring of last final)",
+      );
+      return;
+    }
+
+    // Once we see genuinely new content, clear the suppression guard
+    if (this.lastFinalizedText) {
+      this.lastFinalizedText = "";
+    }
 
     // Use the last token for speaker/language — it's the most recent
     const lastToken = result.tokens[result.tokens.length - 1];
@@ -595,6 +621,9 @@ export class SonioxSdkStream implements StreamInstance {
    */
   private emitFinal(text: string, speaker?: string, language?: string, tokens?: ReadonlyArray<RealtimeToken>): void {
     this.ensureUtterance(speaker, language);
+
+    // Save finalized text to suppress residual interims from the rolling window
+    this.lastFinalizedText = text.trim();
 
     const finalData: TranscriptionData = {
       type: StreamType.TRANSCRIPTION,
