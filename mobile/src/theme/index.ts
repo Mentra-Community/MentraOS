@@ -1,8 +1,8 @@
 import type {StyleProp} from "react-native"
+
 import {colors as colorsLight} from "./colors"
 import {colors as colorsDark} from "./colorsDark"
-import {spacing as spacingLight, borderRadius as borderRadiusLight} from "./spacing"
-import {spacing as spacingDark, borderRadius as borderRadiusDark} from "./spacingDark"
+import {spacing} from "./spacing"
 import {timing} from "./timing"
 import {typography} from "./typography"
 
@@ -13,8 +13,7 @@ export type ThemeContexts = "light" | "dark" | undefined
 // colorsLight and colorsDark should have the same keys, but different values.
 export type Colors = typeof colorsLight | typeof colorsDark
 // The spacing type needs to take into account the different spacing values for light and dark themes.
-export type Spacing = typeof spacingLight | typeof spacingDark
-export type BorderRadius = typeof borderRadiusLight | typeof borderRadiusDark
+export type Spacing = typeof spacing
 
 // These two are consistent across themes.
 export type Timing = typeof timing
@@ -24,7 +23,6 @@ export type Typography = typeof typography
 export interface Theme {
   colors: Colors
   spacing: Spacing
-  borderRadius: BorderRadius
   typography: Typography
   timing: Timing
   isDark: boolean
@@ -33,16 +31,14 @@ export interface Theme {
 // Here we define our themes.
 export const lightTheme: Theme = {
   colors: colorsLight,
-  spacing: spacingLight,
-  borderRadius: borderRadiusLight,
+  spacing,
   typography,
   timing,
   isDark: false,
 }
 export const darkTheme: Theme = {
   colors: colorsDark,
-  spacing: spacingDark,
-  borderRadius: borderRadiusDark,
+  spacing,
   typography,
   timing,
   isDark: true,
@@ -73,7 +69,7 @@ export type ThemedStyleArray<T> = (ThemedStyle<T> | StyleProp<T> | (StyleProp<T>
 // Export the theme objects with backwards compatibility for the old theme structure.
 export {colorsLight as colors}
 export {colorsDark}
-export {spacingLight as spacing}
+export {spacing}
 
 export * from "./styles"
 export * from "./typography"

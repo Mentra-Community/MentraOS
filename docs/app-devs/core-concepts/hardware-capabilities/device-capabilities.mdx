@@ -1,0 +1,251 @@
+---
+title: Device capabilities
+description: Detect and use the hardware and software features of connected smart glasses in MentraOS apps to build adaptive experiences across different devices.
+---
+
+Device capabilities allow your MentraOS app to discover what hardware and software features are available on the connected smart glasses. This enables you to create adaptive experiences that work across different device models with varying capabilities.
+
+## Overview
+
+Different smart glasses models have different hardware configurations. Some have cameras, others don't. Some have displays, others don't. Some have speakers, others only have a microphone, or no audio support at all. The capabilities system lets you detect these differences and adapt your app accordingly.
+
+```typescript
+// Example: Check if the connected glasses have a camera
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+  if (session.capabilities?.hasCamera) {
+    // Glasses have a camera - enable photo/video features
+    session.logger.info("Camera available!");
+  } else {
+    // No camera - show alternative features
+    session.logger.info("This device supports text and voice interactions.");
+  }
+}
+```
+
+## Accessing Capabilities
+
+Device capabilities are available on the [`AppSession`](/reference/app-session) through the `capabilities` property:
+
+```typescript
+import { AppSession, Capabilities } from '@mentraos/sdk';
+
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+  // Capabilities may be null if not yet loaded
+  const caps: Capabilities | null = session.capabilities;
+
+  session.logger.info(`Connected to: ${caps?.modelName}`);
+
+  // Now you can check specific capabilities
+  if (caps.hasDisplay) {
+    session.logger.info(`Display resolution: ${caps?.display?.resolution?.width}x${caps?.display?.resolution?.height}`);
+  }
+}
+```
+
+## Common Use Cases
+
+### Checking for Display Capabilities
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+  const caps = session.capabilities;
+  if (!caps) return;
+
+  if (caps.hasDisplay) {
+    const display = caps.display!;
+
+    // Adapt content based on display properties
+    if (display.isColor) {
+      // Use color-rich layouts and graphics
+      session.layouts.showReferenceCard("🌈 Color Display", "Enjoying rich visuals!");
+    } else {
+      // Use high-contrast, monochrome-friendly content
+      session.layouts.showTextWall("Monochrome display detected");
+    }
+
+    // Adapt text length based on display size
+    const maxLines = display.maxTextLines || 3;
+    if (maxLines < 5) {
+      // Use shorter messages for smaller displays
+      session.layouts.showTextWall("Short message");
+    } else {
+      // Can display longer content
+      session.layouts.showTextWall("This is a longer message that takes advantage of larger displays with more text lines available.");
+    }
+  } else {
+    // No display - use audio-only interactions
+    session.logger.info("No display available - using audio-only mode");
+  }
+}
+```
+
+### Checking for Camera Capabilities
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+  const caps = session.capabilities;
+  if (!caps) return;
+
+  if (caps.hasCamera) {
+    const camera = caps.camera!;
+
+    // Check video capabilities
+    if (camera.video.canRecord) {
+      session.logger.info("📹 Video recording available");
+    }
+
+    if (camera.video.canStream) {
+      const streamTypes = camera.video.supportedStreamTypes || [];
+      if (streamTypes.includes('rtmp')) {
+        session.logger.info("📡 Live streaming available");
+      }
+    }
+
+    // Check photo capabilities
+    if (camera.resolution) {
+      const megapixels = (camera.resolution.width * camera.resolution.height) / 1000000;
+      session.logger.info(`📷 ${megapixels.toFixed(1)}MP camera available`);
+    }
+  } else {
+    // No camera - disable photo/video features
+    session.logger.info("Camera not available on this device");
+  }
+}
+```
+
+### Checking for LED Capabilities
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+  const caps = session.capabilities;
+  if (!caps) return;
+
+  if (caps.hasLight) {
+    const light = caps.light!;
+
+    session.logger.info(`Device has ${light.count || 0} LEDs`);
+
+    // Check specific LED types
+    if (light.lights) {
+      light.lights.forEach((led, index) => {
+        const ledType = led.isFullColor ? 'RGB' : led.color || 'unknown';
+        const purpose = led.purpose || 'general';
+        session.logger.info(`LED ${index}: ${purpose} (${ledType})`);
+      });
+    }
+
+    // Adapt LED usage based on available types
+    const hasRGB = light.lights?.some(led => led.isFullColor);
+    const hasWhite = light.lights?.some(led => !led.isFullColor && led.color === 'white');
+
+    if (hasRGB) {
+      // Can use all colors
+      await session.led.turnOn({ color: 'blue', ontime: 1000 });
+    } else if (hasWhite) {
+      // Only white LED available
+      await session.led.turnOn({ color: 'white', ontime: 1000 });
+    }
+  } else {
+    // No LEDs - use alternative feedback methods
+    session.logger.info("No LED support - using display/audio feedback");
+    session.layouts.showTextWall("💡 Notification");
+  }
+}
+```
+
+### Adaptive Feature Selection
+
+```typescript
+class AdaptiveApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+    const caps = session.capabilities
+    if (!caps) {
+      session.layouts.showTextWall("Loading device information...")
+      return
+    }
+
+    // Create a feature matrix based on available capabilities
+    const features = this.getAvailableFeatures(caps)
+
+    // Show welcome message with available features
+    const featureList = features.join("\n• ")
+    session.layouts.showReferenceCard(`Welcome to ${caps.modelName}`, `Available features:\n• ${featureList}`)
+
+    // Set up event subscriptions based on capabilities
+    this.setupEventSubscriptions(session, caps)
+  }
+
+  private getAvailableFeatures(caps: Capabilities): string[] {
+    const features: string[] = []
+
+    if (caps.hasCamera) {
+      features.push("📷 Photo capture")
+      if (caps.camera?.video.canStream) {
+        features.push("📡 Live streaming")
+      }
+    }
+
+    if (caps.hasMicrophone) {
+      features.push("🎤 Voice commands")
+      features.push("📝 Speech transcription")
+    }
+
+    if (caps.hasDisplay) {
+      features.push("📱 Visual interface")
+      if (caps.display?.canDisplayBitmap) {
+        features.push("🖼️ Image display")
+      }
+    }
+
+    if (caps.hasButton) {
+      features.push("🔘 Hardware controls")
+    }
+
+    if (caps.hasWifi) {
+      features.push("🌐 Internet connectivity")
+    }
+
+    if (caps.hasLight) {
+      features.push("💡 LED notifications")
+      const lights = caps.light?.lights || []
+      const hasRGB = lights.some(light => light.isFullColor)
+      if (hasRGB) {
+        features.push("🌈 RGB LED control")
+      }
+    }
+
+    return features
+  }
+
+  private setupEventSubscriptions(session: AppSession, caps: Capabilities): void {
+    // Only subscribe to events for available hardware
+    if (caps.hasMicrophone) {
+      session.events.onTranscription(data => {
+        // Handle voice input
+      })
+    }
+
+    if (caps.hasButton) {
+      session.events.onButtonPress(data => {
+        // Handle button input
+      })
+    }
+
+    if (caps.hasIMU) {
+      session.events.onHeadPosition(data => {
+        // Handle head movement
+      })
+    }
+  }
+}
+```
+
+## Device Examples
+
+For reference, here are the capabilities of some common devices:
+
+| Device | Display | Camera | Microphone | Speaker | LEDs | Other Features |
+|--------|---------|--------|------------|---------|------|----------------|
+| **Even Realities G1** | Green monochrome | ❌ No | ✅ Yes | ❌ No | ❌ No | Button controls |
+| **Vuzix Z100** | Green monochrome | ❌ No | ❌ No | ❌ No | ❌ No | Basic display only |
+| **Mentra Live** | ❌ No | ✅ 1080p streaming | ✅ Yes | ✅ Yes | ✅ RGB + White | IMU, WiFi, Button |

@@ -1,0 +1,168 @@
+---
+title: "App Lifecycle Overview"
+description: "How MentraOS apps start, run, and stop"
+icon: "arrows-rotate"
+---
+
+## How It Works
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Glasses
+    participant Cloud
+    participant AppServer
+
+    User->>Glasses: Starts your app
+    Glasses->>Cloud: Request app session
+    Cloud->>AppServer: Webhook POST /webhook
+    AppServer->>Cloud: WebSocket connection
+    Cloud->>AppServer: Session confirmed
+
+    loop Active Session
+        Glasses->>Cloud: Events (voice, buttons, etc)
+        Cloud->>AppServer: Forward events
+        AppServer->>Cloud: Display updates
+        Cloud->>Glasses: Show content
+    end
+
+    User->>Glasses: Stops app
+    Cloud->>AppServer: Stop webhook
+    AppServer->>Cloud: Disconnect
+```
+
+## Lifecycle Stages
+
+### 1. Registration (One-Time Setup)
+
+Register your app in the [Developer Console](https://console.mentra.glass/apps):
+
+- **Package Name**: Unique identifier (e.g., `com.example.myapp`)
+- **Webhook URL**: Where MentraOS sends session requests
+- **API Key**: Secret for authentication
+- **Permissions**: What device data your app needs
+
+### 2. Session Start
+
+**When a user starts your app:**
+
+1. MentraOS Cloud sends HTTP POST to your webhook URL
+2. Webhook includes `sessionId` and `userId`
+3. Your server establishes WebSocket connection
+4. Your server sends connection init message
+5. Cloud confirms connection
+
+```typescript
+// The SDK handles this automatically
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Your app logic starts here
+  session.logger.info('Session started!');
+}
+```
+
+### 3. Active Session
+
+**While the session is active:**
+
+- Subscribe to events (transcription, button presses, etc.)
+- Handle incoming events with callbacks
+- Update the display using layouts
+- Access device capabilities
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Subscribe to voice transcription
+  session.events.onTranscription((data) => {
+    session.logger.info('User said:', data.text);
+  });
+
+  // Update display
+  session.layouts.showTextWall('App is running!');
+}
+```
+
+### 4. Session End
+
+**Session ends when:**
+
+- User stops the app
+- Glasses disconnect
+- Network error occurs
+- Your server disconnects
+
+```typescript
+protected async onStop(sessionId: string, userId: string, reason: string) {
+  // Clean up resources
+  session.logger.info('Session ended:', reason);
+}
+```
+
+## Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| **AppServer** | Your server class that handles webhooks and connections |
+| **AppSession** | Represents one user's active connection to your app |
+| **WebSocket** | Real-time bidirectional communication channel |
+| **Events** | Data streams from glasses (voice, sensors, buttons) |
+| **Layouts** | What displays on the glasses screen |
+
+## Important Notes
+
+<Info>
+Sessions are isolated per user. Each user who starts your app gets their own `AppSession` instance with a unique `userId`.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Learn About AppServer" icon="server" href="/app-devs/core-concepts/app-server">
+    Understand the server class that powers your app
+  </Card>
+  <Card title="Learn About AppSession" icon="plug" href="/app-devs/core-concepts/app-session/app-session">
+    Work with individual user sessions
+  </Card>
+  <Card title="Handle Events" icon="bolt" href="/app-devs/core-concepts/app-session/events-and-data">
+    Subscribe to real-time data from glasses
+  </Card>
+  <Card title="Set Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
+    Control what data your app can access
+  </Card>
+</CardGroup>
+
+## Quick Example
+
+Here's a minimal MentraOS app:
+
+```typescript
+import { AppServer, AppSession } from '@mentraos/sdk';
+
+class HelloGlasses extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    // Show greeting
+    session.layouts.showTextWall('Hello from MentraOS!');
+
+    // Listen for voice input
+    session.events.onTranscription((data) => {
+      if (data.isFinal) {
+        session.layouts.showTextWall(`You said: ${data.text}`);
+      }
+    });
+  }
+
+  protected async onStop(sessionId: string, userId: string, reason: string) {
+    console.log(`Session ${sessionId} ended: ${reason}`);
+  }
+}
+
+// Start server
+const server = new HelloGlasses({
+  packageName: 'com.example.helloglasses',
+  apiKey: process.env.MENTRAOS_API_KEY!,
+  port: 3000
+});
+
+server.start();
+```
+
+This app greets the user and echoes back their voice input. Simple, but it demonstrates the complete lifecycle.

@@ -7,49 +7,67 @@
  * to maintain core functionality regardless of database state.
  */
 
-import { StopWebhookRequest, AppType, WebhookResponse, AppState, SessionWebhookRequest, ToolCall, PermissionType, WebhookRequestType, AppSetting, AppSettingType } from '@mentra/sdk';
+import {
+  StopWebhookRequest,
+  WebhookResponse,
+  ToolCall,
+  WebhookRequestType,
+  AppSetting,
+  AppSettingType,
+} from "@mentra/sdk";
 // TODO(isaiah): Consider splitting this into multiple services (appstore.service, developer.service, tools.service)
-import axios, { AxiosError } from 'axios';
+import axios, { AxiosError } from "axios";
 // import { systemApps } from './system-apps';
-import App, { AppI } from '../../models/app.model';
-import { ToolSchema, ToolParameterSchema } from '@mentra/sdk';
-import { User } from '../../models/user.model';
-import crypto from 'crypto';
-import { logger as rootLogger } from '../logging/pino-logger';
-import { Types } from 'mongoose';
-const logger = rootLogger.child({ service: 'app.service' });
+import App, { AppI } from "../../models/app.model";
+import { ToolSchema, ToolParameterSchema } from "@mentra/sdk";
+import { User } from "../../models/user.model";
+import crypto from "crypto";
+import { logger as rootLogger } from "../logging/pino-logger";
+import { Types } from "mongoose";
+const logger = rootLogger.child({ service: "app.service" });
 
 const APPSTORE_ENABLED = true;
-export const SYSTEM_DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || 'dev.augmentos.dashboard';
-export const PRE_INSTALLED = ["com.augmentos.livecaptions", "cloud.augmentos.notify", "cloud.augmentos.mira"];
+export const SYSTEM_DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "dev.augmentos.dashboard";
+export const PRE_INSTALLED = [
+  "cloud.augmentos.notify",
+  // "cloud.augmentos.mira",
+];
 export const PRE_INSTALLED_DEBUG = [
   // "com.mentra.link",
   // "com.mentra.notes",
   // "com.mentra.soundy",
   // "com.mentra.cactusai",
   // "com.mentra.hive",
-
   // "com.augmentos.calendarreminder",
   // "com.augmentos.xstats",
   // "com.augmentos.tictactoe",
   // "com.augmentos.displaytext",
   // "com.augmentos.shazam",
-
   // "cloud.augmentos.aughog",
   // "cloud.augmentos.recorder",
 ];
 
 // export const PRE_INSTALLED = ["cloud.augmentos.live-captions-global", "cloud.augmentos.notify", "cloud.augmentos.mira"];
 
-if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_APPS === 'true') {
-  // If we're in debug mode, add the debug apps to the preinstalled list.
+// Add debug apps in non-production environments
+if (process.env.NODE_ENV !== "production" || process.env.DEBUG_APPS === "true") {
   PRE_INSTALLED.push(...PRE_INSTALLED_DEBUG);
-  logger.info('Debug mode enabled - adding debug apps to preinstalled list:', PRE_INSTALLED_DEBUG);
+  logger.info({ PRE_INSTALLED_DEBUG }, "Debug mode enabled - adding debug apps to preinstalled list:");
+}
+
+// Add additional pre-installed apps from environment variable
+if (process.env.ADDITIONAL_PRE_INSTALLED_APPS) {
+  const additionalApps = process.env.ADDITIONAL_PRE_INSTALLED_APPS.split(",")
+    .map((app) => app.trim())
+    .filter((app) => app.length > 0);
+
+  PRE_INSTALLED.push(...additionalApps);
+  logger.info({ additionalApps }, "Adding additional pre-installed apps from ADDITIONAL_PRE_INSTALLED_APPS:");
 }
 
 // If we're in test mode, we don't want to pre-install any apps. (used with the headless client for testing)
-if (process.env.NODE_ENV === 'test') {
-  logger.info('Test mode - no pre-installed apps');
+if (process.env.NODE_ENV === "test") {
+  logger.info("Test mode - no pre-installed apps");
   while (PRE_INSTALLED.length > 0) {
     PRE_INSTALLED.pop(); // Clear the pre-installed apps for testing
   }
@@ -75,18 +93,18 @@ export const LOCAL_APPS: AppI[] = [];
 // Fetch from appstore and populate LOCAL_APPS.
 (async function loadPreinstalledApps() {
   // Fetch all apps from the app store that are preinstalled.
-  const preinstalledApps = await App.find({ packageName: { $in: PRE_INSTALLED } }) as AppI[];
+  const preinstalledApps = (await App.find({
+    packageName: { $in: PRE_INSTALLED },
+  })) as AppI[];
 
   // Add them to the LOCAL_APPS array.
-  preinstalledApps.forEach(app => {
+  preinstalledApps.forEach((app) => {
     app.uninstallable = true;
     LOCAL_APPS.push(app);
   });
 
   // Fetch dashboard app..
-
 })();
-
 
 export function isUninstallable(packageName: string) {
   return !PRE_INSTALLED.includes(packageName);
@@ -103,7 +121,6 @@ export function isUninstallable(packageName: string) {
 export class AppService {
   // In-memory cache for app states
   // Map of userId to Map of packageName to AppState
-  private appStates = new Map<string, Map<string, AppState>>();
 
   /**
    * Gets all available Apps, both system and user-created.
@@ -115,23 +132,26 @@ export class AppService {
     if (APPSTORE_ENABLED && userId) {
       // Find apps the user installed.
       const user = await User.findOne({ email: userId });
-      const _installedApps = user?.installedApps?.map((installedApp: { packageName: string; installedDate: Date; }) => {
-        return installedApp.packageName;
-      }) || [];
+      const _installedApps =
+        user?.installedApps?.map((installedApp: { packageName: string; installedDate: Date }) => {
+          return installedApp.packageName;
+        }) || [];
 
       // Fetch the apps from the appstore.
-      const _appstoreApps = await App.find({ packageName: { $in: _installedApps } }) as AppI[];
+      const _appstoreApps = (await App.find({
+        packageName: { $in: _installedApps },
+      })) as AppI[];
 
       // remove duplicates.
       const _allApps = _appstoreApps;
       const _appMap = new Map<string, AppI>();
-      _allApps.forEach(app => {
+      _allApps.forEach((app) => {
         _appMap.set(app.packageName, app);
       });
 
       usersApps.push(..._appMap.values());
       // Filter out any that are already in the LOCAL_APPS map since those would have already been fetched.
-      usersApps = usersApps.filter(app => !LOCAL_APPS.some(localApp => localApp.packageName === app.packageName));
+      usersApps = usersApps.filter((app) => !LOCAL_APPS.some((localApp) => localApp.packageName === app.packageName));
     }
     const allApps = [...LOCAL_APPS, ...usersApps];
     return allApps;
@@ -144,17 +164,22 @@ export class AppService {
    */
   async getApp(packageName: string): Promise<AppI | undefined> {
     // Use lean() to get a plain JavaScript object instead of a Mongoose document
-    const app = await App.findOne({ packageName: packageName }).lean() as AppI;
+    const app = (await App.findOne({
+      packageName: packageName,
+    }).lean()) as AppI;
     return app;
   }
 
   /**
- * Triggers the stop webhook for a App app session.
- * @param url - Stop Webhook URL
- * @param payload - Data to send
- * @throws If stop webhook fails
- */
-  async triggerStopWebhook(publicUrl: string, payload: StopWebhookRequest): Promise<{
+   * Triggers the stop webhook for a App app session.
+   * @param url - Stop Webhook URL
+   * @param payload - Data to send
+   * @throws If stop webhook fails
+   */
+  async triggerStopWebhook(
+    publicUrl: string,
+    payload: StopWebhookRequest,
+  ): Promise<{
     status: number;
     data: WebhookResponse;
   }> {
@@ -163,7 +188,7 @@ export class AppService {
     const response = await axios.post(webhookUrl, payload);
     return {
       status: response.status,
-      data: response.data
+      data: response.data,
     };
   }
 
@@ -177,9 +202,9 @@ export class AppService {
       type: WebhookRequestType.STOP_REQUEST,
       sessionId: appSessionId,
       userId: userId,
-      reason: 'user_disabled',
-      timestamp: new Date().toISOString()
-    }
+      reason: "user_disabled",
+      timestamp: new Date().toISOString(),
+    };
 
     if (!app) {
       throw new Error(`App ${packageName} not found`);
@@ -232,32 +257,31 @@ export class AppService {
     return hashedKey === appDoc.hashedApiKey;
   }
 
-
   /**
    * Validates tool definitions against the schema requirements
    * @param tools Array of tool definitions to validate
    * @returns Validated and sanitized tools array or throws error if invalid
    */
   private validateToolDefinitions(tools: any[]): ToolSchema[] {
-    logger.debug('Validating tool definitions:', tools);
+    logger.debug({ tools }, "Validating tool definitions:");
     if (!Array.isArray(tools)) {
-      throw new Error('Tools must be an array');
+      throw new Error("Tools must be an array");
     }
 
-    return tools.map(tool => {
+    return tools.map((tool) => {
       // Validate required fields
-      if (!tool.id || typeof tool.id !== 'string') {
-        throw new Error('Tool id is required and must be a string');
+      if (!tool.id || typeof tool.id !== "string") {
+        throw new Error("Tool id is required and must be a string");
       }
 
-      if (!tool.description || typeof tool.description !== 'string') {
-        throw new Error('Tool description is required and must be a string');
+      if (!tool.description || typeof tool.description !== "string") {
+        throw new Error("Tool description is required and must be a string");
       }
 
       // Activation phrases can be null or empty, no validation needed
       // We'll just ensure it's an array if provided
       if (tool.activationPhrases && !Array.isArray(tool.activationPhrases)) {
-        throw new Error('Tool activationPhrases must be an array if provided');
+        throw new Error("Tool activationPhrases must be an array if provided");
       }
 
       // Validate parameters if they exist
@@ -265,18 +289,18 @@ export class AppService {
 
       if (tool.parameters) {
         Object.entries(tool.parameters).forEach(([key, param]: [string, any]) => {
-          if (!param.type || !['string', 'number', 'boolean'].includes(param.type)) {
+          if (!param.type || !["string", "number", "boolean"].includes(param.type)) {
             throw new Error(`Parameter ${key} has invalid type. Must be string, number, or boolean`);
           }
 
-          if (!param.description || typeof param.description !== 'string') {
+          if (!param.description || typeof param.description !== "string") {
             throw new Error(`Parameter ${key} requires a description`);
           }
 
           validatedParameters[key] = {
-            type: param.type as 'string' | 'number' | 'boolean',
+            type: param.type as "string" | "number" | "boolean",
             description: param.description,
-            required: !!param.required
+            required: !!param.required,
           };
 
           // Add enum values if present
@@ -290,7 +314,7 @@ export class AppService {
         id: tool.id,
         description: tool.description,
         activationPhrases: tool.activationPhrases.map((p: string) => p.trim()),
-        parameters: Object.keys(validatedParameters).length > 0 ? validatedParameters : undefined
+        parameters: Object.keys(validatedParameters).length > 0 ? validatedParameters : undefined,
       };
     });
   }
@@ -301,91 +325,90 @@ export class AppService {
    * @returns Validated and sanitized settings array or throws error if invalid
    */
   private validateSettingDefinitions(settings: any[]): AppSetting[] {
-    logger.debug('Validating setting definitions:', settings);
+    logger.debug({ settings }, "Validating setting definitions:");
     if (!Array.isArray(settings)) {
-      throw new Error('Settings must be an array');
+      throw new Error("Settings must be an array");
     }
 
-    return settings.map(setting => {
+    return settings.map((setting) => {
       // Validate required type field
-      if (!setting.type || typeof setting.type !== 'string') {
-        throw new Error('Setting type is required and must be a string');
+      if (!setting.type || typeof setting.type !== "string") {
+        throw new Error("Setting type is required and must be a string");
       }
 
       // Group settings validation
-      if (setting.type === 'group') {
-        if (!setting.title || typeof setting.title !== 'string') {
-          throw new Error('Group setting requires a title');
+      if (setting.type === "group") {
+        if (!setting.title || typeof setting.title !== "string") {
+          throw new Error("Group setting requires a title");
         }
         return {
           type: AppSettingType.GROUP,
           title: setting.title,
-          key: '', // Groups don't need keys but BaseAppSetting requires it
-          label: '' // Groups don't need labels but BaseAppSetting requires it
+          key: "", // Groups don't need keys but BaseAppSetting requires it
+          label: "", // Groups don't need labels but BaseAppSetting requires it
         } as AppSetting;
       }
 
       // Title/Value settings validation (display-only, no key required)
-      if (setting.type === 'titleValue') {
-        if (!setting.label || typeof setting.label !== 'string') {
-          throw new Error('Title/Value setting requires a label');
+      if (setting.type === "titleValue") {
+        if (!setting.label || typeof setting.label !== "string") {
+          throw new Error("Title/Value setting requires a label");
         }
         return {
-          type: 'titleValue' as any,
+          type: "titleValue" as any,
           label: setting.label,
-          value: setting.value || ''
+          value: setting.value || "",
         } as AppSetting;
       }
 
       // Regular settings validation (require key and label)
-      if (!setting.key || typeof setting.key !== 'string') {
-        throw new Error('Setting key is required and must be a string');
+      if (!setting.key || typeof setting.key !== "string") {
+        throw new Error("Setting key is required and must be a string");
       }
 
-      if (!setting.label || typeof setting.label !== 'string') {
-        throw new Error('Setting label is required and must be a string');
+      if (!setting.label || typeof setting.label !== "string") {
+        throw new Error("Setting label is required and must be a string");
       }
 
       // Type-specific validation
       switch (setting.type) {
-        case 'toggle':
-          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== 'boolean') {
-            throw new Error('Toggle setting requires a boolean defaultValue');
+        case "toggle":
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "boolean") {
+            throw new Error("Toggle setting requires a boolean defaultValue");
           }
           return {
             type: AppSettingType.TOGGLE,
             key: setting.key,
             label: setting.label,
             defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : false,
-            value: setting.value
+            value: setting.value,
           } as AppSetting;
 
-        case 'text':
+        case "text":
           return {
             type: AppSettingType.TEXT,
             key: setting.key,
             label: setting.label,
-            defaultValue: setting.defaultValue || '',
-            value: setting.value
+            defaultValue: setting.defaultValue || "",
+            value: setting.value,
           } as AppSetting;
 
-        case 'text_no_save_button':
+        case "text_no_save_button":
           return {
-            type: 'text_no_save_button' as any,
+            type: "text_no_save_button" as any,
             key: setting.key,
             label: setting.label,
-            defaultValue: setting.defaultValue || '',
+            defaultValue: setting.defaultValue || "",
             value: setting.value,
-            maxLines: setting.maxLines
+            maxLines: setting.maxLines,
           } as AppSetting;
 
-        case 'select':
+        case "select":
           if (!Array.isArray(setting.options)) {
-            throw new Error('Select setting requires an options array');
+            throw new Error("Select setting requires an options array");
           }
-          if (!setting.options.every((opt: any) =>
-            typeof opt.label === 'string' && 'value' in opt)) {
-            throw new Error('Select options must have label and value properties');
+          if (!setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt)) {
+            throw new Error("Select options must have label and value properties");
           }
           return {
             type: AppSettingType.SELECT,
@@ -393,55 +416,53 @@ export class AppService {
             label: setting.label,
             options: setting.options,
             defaultValue: setting.defaultValue,
-            value: setting.value
+            value: setting.value,
           } as AppSetting;
 
-        case 'select_with_search':
+        case "select_with_search":
           if (!Array.isArray(setting.options)) {
-            throw new Error('Select with search setting requires an options array');
+            throw new Error("Select with search setting requires an options array");
           }
-          if (!setting.options.every((opt: any) =>
-            typeof opt.label === 'string' && 'value' in opt)) {
-            throw new Error('Select with search options must have label and value properties');
+          if (!setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt)) {
+            throw new Error("Select with search options must have label and value properties");
           }
           return {
-            type: 'select_with_search' as any,
+            type: "select_with_search" as any,
             key: setting.key,
             label: setting.label,
             options: setting.options,
             defaultValue: setting.defaultValue,
-            value: setting.value
+            value: setting.value,
           } as AppSetting;
 
-        case 'multiselect':
+        case "multiselect":
           if (!Array.isArray(setting.options)) {
-            throw new Error('Multiselect setting requires an options array');
+            throw new Error("Multiselect setting requires an options array");
           }
-          if (!setting.options.every((opt: any) =>
-            typeof opt.label === 'string' && 'value' in opt)) {
-            throw new Error('Multiselect options must have label and value properties');
+          if (!setting.options.every((opt: any) => typeof opt.label === "string" && "value" in opt)) {
+            throw new Error("Multiselect options must have label and value properties");
           }
           // Ensure defaultValue is an array for multiselect
           const defaultValue = Array.isArray(setting.defaultValue) ? setting.defaultValue : [];
           const value = Array.isArray(setting.value) ? setting.value : undefined;
           return {
-            type: 'multiselect' as any,
+            type: "multiselect" as any,
             key: setting.key,
             label: setting.label,
             options: setting.options,
             defaultValue: defaultValue,
-            value: value
+            value: value,
           } as AppSetting;
 
-        case 'slider':
-          if (typeof setting.min !== 'number' || typeof setting.max !== 'number') {
-            throw new Error('Slider setting requires numeric min and max values');
+        case "slider":
+          if (typeof setting.min !== "number" || typeof setting.max !== "number") {
+            throw new Error("Slider setting requires numeric min and max values");
           }
-          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== 'number') {
-            throw new Error('Slider setting requires a numeric defaultValue');
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "number") {
+            throw new Error("Slider setting requires a numeric defaultValue");
           }
           if (setting.min > setting.max) {
-            throw new Error('Slider min value cannot be greater than max value');
+            throw new Error("Slider min value cannot be greater than max value");
           }
           return {
             type: AppSettingType.SLIDER,
@@ -450,28 +471,28 @@ export class AppService {
             min: setting.min,
             max: setting.max,
             defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : setting.min,
-            value: setting.value
+            value: setting.value,
           } as AppSetting;
 
-        case 'numeric_input':
+        case "numeric_input":
           // Validate optional numeric fields
-          if (setting.min !== undefined && typeof setting.min !== 'number') {
-            throw new Error('Numeric input min value must be a number');
+          if (setting.min !== undefined && typeof setting.min !== "number") {
+            throw new Error("Numeric input min value must be a number");
           }
-          if (setting.max !== undefined && typeof setting.max !== 'number') {
-            throw new Error('Numeric input max value must be a number');
+          if (setting.max !== undefined && typeof setting.max !== "number") {
+            throw new Error("Numeric input max value must be a number");
           }
-          if (setting.step !== undefined && typeof setting.step !== 'number') {
-            throw new Error('Numeric input step value must be a number');
+          if (setting.step !== undefined && typeof setting.step !== "number") {
+            throw new Error("Numeric input step value must be a number");
           }
-          if (setting.placeholder !== undefined && typeof setting.placeholder !== 'string') {
-            throw new Error('Numeric input placeholder must be a string');
+          if (setting.placeholder !== undefined && typeof setting.placeholder !== "string") {
+            throw new Error("Numeric input placeholder must be a string");
           }
-          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== 'number') {
-            throw new Error('Numeric input defaultValue must be a number');
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "number") {
+            throw new Error("Numeric input defaultValue must be a number");
           }
           return {
-            type: 'numeric_input' as any,
+            type: "numeric_input" as any,
             key: setting.key,
             label: setting.label,
             min: setting.min,
@@ -479,23 +500,23 @@ export class AppService {
             step: setting.step,
             placeholder: setting.placeholder,
             defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : 0,
-            value: setting.value
+            value: setting.value,
           } as AppSetting;
 
-        case 'time_picker':
-          if (setting.showSeconds !== undefined && typeof setting.showSeconds !== 'boolean') {
-            throw new Error('Time picker showSeconds must be a boolean');
+        case "time_picker":
+          if (setting.showSeconds !== undefined && typeof setting.showSeconds !== "boolean") {
+            throw new Error("Time picker showSeconds must be a boolean");
           }
-          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== 'number') {
-            throw new Error('Time picker defaultValue must be a number (total seconds)');
+          if (setting.defaultValue !== undefined && typeof setting.defaultValue !== "number") {
+            throw new Error("Time picker defaultValue must be a number (total seconds)");
           }
           return {
-            type: 'time_picker' as any,
+            type: "time_picker" as any,
             key: setting.key,
             label: setting.label,
             showSeconds: setting.showSeconds !== undefined ? setting.showSeconds : true,
             defaultValue: setting.defaultValue !== undefined ? setting.defaultValue : 0,
-            value: setting.value
+            value: setting.value,
           } as AppSetting;
 
         default:
@@ -507,9 +528,9 @@ export class AppService {
   /**
    * Create a new app
    */
-  async createApp(appData: any, developerId: string): Promise<{ app: AppI, apiKey: string }> {
+  async createApp(appData: any, developerId: string): Promise<{ app: AppI; apiKey: string }> {
     // Generate API key
-    const apiKey = crypto.randomBytes(32).toString('hex');
+    const apiKey = crypto.randomBytes(32).toString("hex");
     const hashedApiKey = this.hashApiKey(apiKey);
 
     // Parse and validate tools if present
@@ -534,25 +555,29 @@ export class AppService {
     const app = await App.create({
       ...appData,
       developerId, // Keep for backward compatibility during migration
-      hashedApiKey
+      hashedApiKey,
     });
 
     return { app, apiKey };
   }
 
-
   // TODO(isaiah): Move this to the new developer service to declutter the app service.
   /**
    * Update an app
    */
-  async updateApp(packageName: string, appData: any, developerId: string, organizationId?: Types.ObjectId): Promise<AppI> {
+  async updateApp(
+    packageName: string,
+    appData: any,
+    developerId: string,
+    organizationId?: Types.ObjectId,
+  ): Promise<AppI> {
     // Ensure organization owns the app
     const app = await App.findOne({ packageName });
     if (!app) {
       throw new Error(`App with package name ${packageName} not found`);
     }
     if (!developerId) {
-      throw new Error('Developer ID is required');
+      throw new Error("Developer ID is required");
     }
 
     // Check if user has permission to update the app
@@ -568,7 +593,7 @@ export class AppService {
     }
 
     if (!hasPermission) {
-      throw new Error('You do not have permission to update this app');
+      throw new Error("You do not have permission to update this app");
     }
 
     // Parse and validate tools if present
@@ -589,10 +614,35 @@ export class AppService {
       }
     }
 
+    // Validate preview images if present
+    if (appData.previewImages) {
+      if (!Array.isArray(appData.previewImages)) {
+        throw new Error("previewImages must be an array");
+      }
+      if (appData.previewImages.length > 8) {
+        throw new Error("Maximum 8 preview images allowed");
+      }
+      // Validate each preview image
+      appData.previewImages.forEach((img: any, index: number) => {
+        if (!img.url || typeof img.url !== "string") {
+          throw new Error(`Preview image ${index}: url is required and must be a string`);
+        }
+        if (!img.imageId || typeof img.imageId !== "string") {
+          throw new Error(`Preview image ${index}: imageId is required and must be a string`);
+        }
+        if (!img.orientation || !["landscape", "portrait"].includes(img.orientation)) {
+          throw new Error(`Preview image ${index}: orientation must be 'landscape' or 'portrait'`);
+        }
+        if (typeof img.order !== "number" || img.order < 0 || img.order > 7) {
+          throw new Error(`Preview image ${index}: order must be a number between 0 and 7`);
+        }
+      });
+    }
+
     // If developerInfo is provided, ensure it's properly structured
     if (appData.developerInfo) {
       // Make sure only valid fields are included
-      const validFields = ['company', 'website', 'contactEmail', 'description'];
+      const validFields = ["company", "website", "contactEmail", "description"];
       const sanitizedDeveloperInfo: any = {};
 
       for (const field of validFields) {
@@ -606,11 +656,7 @@ export class AppService {
     }
 
     // Update app
-    const updatedApp = await App.findOneAndUpdate(
-      { packageName },
-      { $set: appData },
-      { new: true }
-    );
+    const updatedApp = await App.findOneAndUpdate({ packageName }, { $set: appData }, { new: true });
 
     return updatedApp!;
   }
@@ -626,7 +672,7 @@ export class AppService {
       throw new Error(`App with package name ${packageName} not found`);
     }
     if (!developerId) {
-      throw new Error('Developer ID is required');
+      throw new Error("Developer ID is required");
     }
 
     // Check if user has permission to publish the app
@@ -642,21 +688,23 @@ export class AppService {
     }
 
     if (!hasPermission) {
-      throw new Error('You do not have permission to publish this app');
+      throw new Error("You do not have permission to publish this app");
     }
 
     // If the app belongs to an organization, verify organization profile completeness
     if (organizationId) {
-      const Organization = require('../../models/organization.model').Organization;
+      const Organization = require("../../models/organization.model").Organization;
       const org = await Organization.findById(organizationId);
 
       if (!org) {
-        throw new Error('Organization not found');
+        throw new Error("Organization not found");
       }
 
       // Check if organization profile has the required fields
       if (!org.profile?.contactEmail) {
-        throw new Error('PROFILE_INCOMPLETE: Organization profile is incomplete. Please add a contact email before publishing an app.');
+        throw new Error(
+          "PROFILE_INCOMPLETE: Organization profile is incomplete. Please add a contact email before publishing an app.",
+        );
       }
     }
     // For backward compatibility - check developer profile
@@ -664,20 +712,22 @@ export class AppService {
       // Verify that the developer has filled out the required profile information
       const developer = await User.findOne({ email: developerId });
       if (!developer) {
-        throw new Error('Developer not found');
+        throw new Error("Developer not found");
       }
 
       // Check if developer profile has the required fields
       if (!developer.profile?.company || !developer.profile?.contactEmail) {
-        throw new Error('PROFILE_INCOMPLETE: Developer profile is incomplete. Please fill out your company name and contact email before publishing an app.');
+        throw new Error(
+          "PROFILE_INCOMPLETE: Developer profile is incomplete. Please fill out your company name and contact email before publishing an app.",
+        );
       }
     }
 
     // Update app status to SUBMITTED
     const updatedApp = await App.findOneAndUpdate(
       { packageName },
-      { $set: { appStoreStatus: 'SUBMITTED' } },
-      { new: true }
+      { $set: { appStoreStatus: "SUBMITTED" } },
+      { new: true },
     );
 
     return updatedApp!;
@@ -694,7 +744,7 @@ export class AppService {
       throw new Error(`App with package name ${packageName} not found`);
     }
     if (!developerId) {
-      throw new Error('Developer ID is required');
+      throw new Error("Developer ID is required");
     }
 
     // Check if user has permission to delete the app
@@ -710,7 +760,7 @@ export class AppService {
     }
 
     if (!hasPermission) {
-      throw new Error('You do not have permission to delete this app');
+      throw new Error("You do not have permission to delete this app");
     }
     await App.findOneAndDelete({ packageName });
   }
@@ -726,7 +776,7 @@ export class AppService {
       throw new Error(`App with package name ${packageName} not found`);
     }
     if (!developerId) {
-      throw new Error('Developer ID is required');
+      throw new Error("Developer ID is required");
     }
 
     // Check if user has permission to update the app
@@ -742,18 +792,15 @@ export class AppService {
     }
 
     if (!hasPermission) {
-      throw new Error('You do not have permission to update this app');
+      throw new Error("You do not have permission to update this app");
     }
 
     // Generate new API key
-    const apiKey = crypto.randomBytes(32).toString('hex');
+    const apiKey = crypto.randomBytes(32).toString("hex");
     const hashedApiKey = this.hashApiKey(apiKey);
 
     // Update app with new hashed API key
-    await App.findOneAndUpdate(
-      { packageName },
-      { $set: { hashedApiKey } }
-    );
+    await App.findOneAndUpdate({ packageName }, { $set: { hashedApiKey } });
 
     return apiKey;
   }
@@ -763,7 +810,7 @@ export class AppService {
    * Hash API key
    */
   hashApiKey(apiKey: string): string {
-    return crypto.createHash('sha256').update(apiKey).digest('hex');
+    return crypto.createHash("sha256").update(apiKey).digest("hex");
   }
 
   /**
@@ -780,16 +827,17 @@ export class AppService {
     }
 
     // Create a hash using the provided string and the app's hashed API key
-    return crypto.createHash('sha256')
-      .update(stringToHash)
-      .update(app.hashedApiKey)
-      .digest('hex');
+    return crypto.createHash("sha256").update(stringToHash).update(app.hashedApiKey).digest("hex");
   }
 
   /**
    * Get app by package name
    */
-  async getAppByPackageName(packageName: string, developerId?: string, organizationId?: Types.ObjectId): Promise<AppI | null> {
+  async getAppByPackageName(
+    packageName: string,
+    developerId?: string,
+    organizationId?: Types.ObjectId,
+  ): Promise<AppI | null> {
     const query: any = { packageName };
 
     // If organizationId is provided, ensure the app belongs to this organization
@@ -810,7 +858,7 @@ export class AppService {
    * Only returns apps with PUBLISHED status
    */
   async getAvailableApps(): Promise<AppI[]> {
-    return App.find({ appStoreStatus: 'PUBLISHED' });
+    return App.find({ appStoreStatus: "PUBLISHED" });
   }
 
   /**
@@ -819,14 +867,17 @@ export class AppService {
    * @param payload - The tool webhook payload containing tool details
    * @returns Promise resolving to the webhook response or error
    */
-  async triggerAppToolWebhook(packageName: string, payload: ToolCall): Promise<{
+  async triggerAppToolWebhook(
+    packageName: string,
+    payload: ToolCall,
+  ): Promise<{
     status: number;
     data: any;
   }> {
     // Look up the App by packageName
     const app = await this.getApp(packageName);
 
-    logger.debug('🔨 Triggering tool webhook for:', packageName);
+    logger.debug({ packageName }, "🔨 Triggering tool webhook for:");
 
     if (!app) {
       throw new Error(`App ${packageName} not found`);
@@ -853,39 +904,31 @@ export class AppService {
     const maxRetries = 2;
     const baseDelay = 1000; // 1 second
 
-    logger.debug('🔨 Sending tool webhook to:', webhookUrl);
-    logger.debug('🔨 Payload:', payload);
+    logger.debug({ webhookUrl }, "🔨 Sending tool webhook to:");
+    logger.debug({ payload }, "🔨 Payload:");
 
     // Attempt to send the webhook with retries
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         const response = await axios.post(webhookUrl, payload, {
           headers: {
-            'Content-Type': 'application/json',
-            'X-App-API-Key': appDoc.hashedApiKey, // Use the hashed API key for authentication
+            "Content-Type": "application/json",
+            "X-App-API-Key": appDoc.hashedApiKey, // Use the hashed API key for authentication
           },
-          timeout: 20000 // 10 second timeout
+          timeout: 20000, // 10 second timeout
         });
 
         // Return successful response
         return {
           status: response.status,
-          data: response.data
+          data: response.data,
         };
       } catch (error: unknown) {
         // If this is the last retry attempt, throw an error
         if (attempt === maxRetries - 1) {
           if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError;
-            logger.error(`Tool webhook failed for ${packageName}: ${axiosError.message}`,
-              {
-                packageName,
-                webhookUrl,
-                attempt,
-                status: axiosError.response?.status,
-                data: axiosError.response?.data
-              }
-            );
+            logger.error(axiosError as Error, `Tool webhook failed for ${packageName}: ${axiosError.message}`);
 
             // Return a standardized error response
             return {
@@ -893,8 +936,8 @@ export class AppService {
               data: {
                 error: true,
                 message: `Webhook failed: ${axiosError.message}`,
-                details: axiosError.response?.data || {}
-              }
+                details: axiosError.response?.data || {},
+              },
             };
           } else {
             // Handle non-Axios errors
@@ -903,14 +946,14 @@ export class AppService {
               status: 500,
               data: {
                 error: true,
-                message: `Webhook failed: ${genericError.message || 'Unknown error'}`
-              }
+                message: `Webhook failed: ${genericError.message || "Unknown error"}`,
+              },
             };
           }
         }
 
         // Exponential backoff before retry
-        await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(2, attempt)));
+        await new Promise((resolve) => setTimeout(resolve, baseDelay * Math.pow(2, attempt)));
       }
     }
 
@@ -920,8 +963,8 @@ export class AppService {
       status: 500,
       data: {
         error: true,
-        message: 'Unknown error occurred'
-      }
+        message: "Unknown error occurred",
+      },
     };
   }
 
@@ -939,7 +982,7 @@ export class AppService {
       throw new Error(`App ${packageName} not found`);
     }
 
-    logger.debug('Getting App tools for:', packageName);
+    logger.debug({ packageName }, "Getting App tools for:");
 
     // Get tools from the database instead of fetching app_config.json
     if (app.tools && Array.isArray(app.tools)) {
@@ -960,15 +1003,15 @@ export class AppService {
       throw new Error(`App with package name ${packageName} not found`);
     }
     if (!developerId || !app.developerId || app.developerId.toString() !== developerId) {
-      throw new Error('You do not have permission to update this app');
+      throw new Error("You do not have permission to update this app");
     }
     let organizationDomain = null;
-    let visibility: 'private' | 'organization' = 'private';
+    let visibility: "private" | "organization" = "private";
     if (sharedWithOrganization) {
-      const emailParts = developerId.split('@');
+      const emailParts = developerId.split("@");
       if (emailParts.length === 2) {
         organizationDomain = emailParts[1].toLowerCase();
-        visibility = 'organization';
+        visibility = "organization";
       }
     }
     app.sharedWithOrganization = sharedWithOrganization;
@@ -986,19 +1029,19 @@ export class AppService {
       throw new Error(`App with package name ${packageName} not found`);
     }
     if (!developerId) {
-      throw new Error('Developer ID is required');
+      throw new Error("Developer ID is required");
     }
     const isOwner = app.developerId && app.developerId.toString() === developerId;
     let isOrgMember = false;
     if (app.sharedWithOrganization && app.organizationDomain) {
-      const emailDomain = developerId.split('@')[1]?.toLowerCase();
+      const emailDomain = developerId.split("@")[1]?.toLowerCase();
       isOrgMember = emailDomain === app.organizationDomain;
     }
     if (!isOwner && !isOrgMember) {
-      throw new Error('Not authorized to update sharing list');
+      throw new Error("Not authorized to update sharing list");
     }
     // Validate emails (basic)
-    const validEmails = emails.filter(email => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email));
+    const validEmails = emails.filter((email) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email));
     app.sharedWithEmails = validEmails;
     await app.save();
     return app.toObject();
@@ -1008,7 +1051,7 @@ export class AppService {
   /**
    * Get apps by organization ID
    */
-  async getAppsByOrgId(orgId: Types.ObjectId, developerId?: string): Promise<AppI[]> {
+  async getAppsByOrgId(orgId: Types.ObjectId): Promise<AppI[]> {
     return App.find({ organizationId: orgId }).lean();
   }
 
@@ -1016,12 +1059,6 @@ export class AppService {
   // Replace getAppsByDeveloperId with getAppsByOrgId, but keep for backward compatibility
   async getAppsByDeveloperId(developerId: string): Promise<AppI[]> {
     return App.find({ developerId }).lean();
-  }
-
-  // TODO(isaiah): delete this or Move this logic to a new developer service to declutter the app service.
-  // These are no longer needed with the organization model, but keep for backward compatibility
-  async getAppsSharedWithEmail(email: string): Promise<AppI[]> {
-    return [];
   }
 
   // TODO(isaiah): Move this logic to a new developer service to declutter the app service.
@@ -1047,12 +1084,12 @@ export class AppService {
     packageName: string,
     sourceOrgId: Types.ObjectId,
     targetOrgId: Types.ObjectId,
-    userEmail: string
+    userEmail: string,
   ): Promise<AppI> {
     // Find the app in the source organization
     const app = await App.findOne({
       packageName,
-      organizationId: sourceOrgId
+      organizationId: sourceOrgId,
     });
 
     if (!app) {
@@ -1064,20 +1101,22 @@ export class AppService {
     await app.save();
 
     // Log the move operation
-    logger.info({
-      packageName,
-      sourceOrgId: sourceOrgId.toString(),
-      targetOrgId: targetOrgId.toString(),
-      userEmail
-    }, 'App moved to new organization');
+    logger.info(
+      {
+        packageName,
+        sourceOrgId: sourceOrgId.toString(),
+        targetOrgId: targetOrgId.toString(),
+        userEmail,
+      },
+      "App moved to new organization",
+    );
 
     return app;
   }
-
 }
 
 // Create singleton instance
 export const appService = new AppService();
-logger.info('✅ App Service initialized');
+logger.info("✅ App Service initialized");
 
 export default appService;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "./useAuth";
+import { useAuth } from "@mentra/shared";
 import { useOrganization } from "../context/OrganizationContext";
 import { OrgRole } from "@/services/api.service";
 import api from "@/services/api.service";

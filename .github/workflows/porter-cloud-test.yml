@@ -1,14 +1,19 @@
-name: Cloud Test ☁️⚡️🚀⛈️
+name: 🧪🚀 Test Cloud Build & Deploy
 
 on:
-  push:
-    branches:
-      - transcription-manager
+  workflow_dispatch: # Manual trigger fallback
+  pull_request:
     paths:
       - "cloud/**"
+      - ".github/workflows/porter-cloud-test.yml"
+    branches:
+      - main
+      - dev
+      - staging
+
 jobs:
   porter-deploy:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

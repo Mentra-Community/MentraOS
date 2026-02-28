@@ -5,7 +5,7 @@
 Create this new class in the ASG client project:
 
 ```java
-package com.augmentos.asg_client;
+package com.mentra.asg_client;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -27,16 +27,16 @@ public class OtaUpdaterManager {
     private static final String OTA_UPDATER_MAIN_ACTIVITY = "com.augmentos.otaupdater.MainActivity";
     private static final String OTA_APK_ASSET_NAME = "ota_updater.apk";
     private static final String OTA_APK_FILE_PATH = "/storage/emulated/0/asg/ota_updater.apk";
-    
+
     private final Context context;
     private final Handler handler;
     private PackageInstallReceiver packageInstallReceiver;
-    
+
     public OtaUpdaterManager(Context context) {
         this.context = context;
         this.handler = new Handler(Looper.getMainLooper());
     }
-    
+
     /**
      * Initialize the OTA updater manager
      * Call this from AsgClientService.onCreate()
@@ -44,11 +44,11 @@ public class OtaUpdaterManager {
     public void initialize() {
         // Register package install listener
         registerPackageInstallReceiver();
-        
+
         // Check and ensure OTA updater after delay
         handler.postDelayed(this::ensureOtaUpdaterV2, 5000);
     }
-    
+
     /**
      * Clean up resources
      * Call this from AsgClientService.onDestroy()
@@ -57,14 +57,14 @@ public class OtaUpdaterManager {
         unregisterPackageInstallReceiver();
         handler.removeCallbacksAndMessages(null);
     }
-    
+
     /**
      * Ensure OTA Updater v2 is installed and launch it
      */
     private void ensureOtaUpdaterV2() {
         try {
             int currentVersion = getInstalledVersion(OTA_UPDATER_PACKAGE);
-            
+
             // Deploy/recover if: not installed (-1), version 1, or corrupted
             if (currentVersion == -1 || currentVersion < 2) {
                 Log.i(TAG, "OTA Updater needs deployment/recovery. Version: " + currentVersion);
@@ -78,7 +78,7 @@ public class OtaUpdaterManager {
             launchOtaUpdater(); // Try to launch whatever exists
         }
     }
-    
+
     /**
      * Deploy OTA updater from bundled assets
      */
@@ -87,13 +87,13 @@ public class OtaUpdaterManager {
             // Extract from assets
             InputStream assetStream = context.getAssets().open(OTA_APK_ASSET_NAME);
             File otaV2File = new File(OTA_APK_FILE_PATH);
-            
+
             // Ensure directory exists
             File parentDir = otaV2File.getParentFile();
             if (parentDir != null && !parentDir.exists()) {
                 parentDir.mkdirs();
             }
-            
+
             // Copy to filesystem
             try (FileOutputStream fos = new FileOutputStream(otaV2File)) {
                 byte[] buffer = new byte[8192];
@@ -103,25 +103,25 @@ public class OtaUpdaterManager {
                 }
             }
             assetStream.close();
-            
+
             // Install using system broadcast
             Intent intent = new Intent("com.xy.xsetting.action");
             intent.setPackage("com.android.systemui");
             intent.putExtra("cmd", "install");
             intent.putExtra("pkpath", otaV2File.getAbsolutePath());
             context.sendBroadcast(intent);
-            
+
             Log.i(TAG, "Installing OTA Updater v2");
-            
+
             // Note: PackageInstallReceiver will launch it when installation completes
-            
+
         } catch (Exception e) {
             Log.e(TAG, "Failed to deploy OTA updater from assets", e);
             // Still try to launch in case old version exists
             handler.postDelayed(this::launchOtaUpdater, 15000);
         }
     }
-    
+
     /**
      * Launch the OTA updater activity
      */
@@ -136,7 +136,7 @@ public class OtaUpdaterManager {
             Log.e(TAG, "Failed to launch OTA updater", e);
         }
     }
-    
+
     /**
      * Get installed version of a package
      * @return version code or -1 if not installed
@@ -152,7 +152,7 @@ public class OtaUpdaterManager {
             return -1;
         }
     }
-    
+
     /**
      * Register receiver to monitor package installations
      */
@@ -165,7 +165,7 @@ public class OtaUpdaterManager {
         context.registerReceiver(packageInstallReceiver, filter);
         Log.d(TAG, "Registered package install receiver");
     }
-    
+
     /**
      * Unregister package install receiver
      */
@@ -180,7 +180,7 @@ public class OtaUpdaterManager {
             packageInstallReceiver = null;
         }
     }
-    
+
     /**
      * Receiver to detect when packages are installed
      */
@@ -188,16 +188,16 @@ public class OtaUpdaterManager {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            if (Intent.ACTION_PACKAGE_ADDED.equals(action) || 
+            if (Intent.ACTION_PACKAGE_ADDED.equals(action) ||
                 Intent.ACTION_PACKAGE_REPLACED.equals(action)) {
-                
+
                 // Get the package name that was installed
-                String packageName = intent.getData() != null ? 
+                String packageName = intent.getData() != null ?
                     intent.getData().getSchemeSpecificPart() : null;
-                
+
                 if (OTA_UPDATER_PACKAGE.equals(packageName)) {
                     Log.i(TAG, "OTA updater was installed/updated, launching it");
-                    
+
                     // Wait a bit for the installation to fully complete
                     handler.postDelayed(() -> launchOtaUpdater(), 2000);
                 }
@@ -214,20 +214,20 @@ Update AsgClientService to use the new OtaUpdaterManager:
 ```java
 public class AsgClientService extends Service {
     private static final String TAG = "AsgClientService";
-    
+
     private OtaUpdaterManager otaUpdaterManager;
-    
+
     @Override
     public void onCreate() {
         super.onCreate();
-        
+
         // Existing initialization...
-        
+
         // Initialize OTA updater manager
         otaUpdaterManager = new OtaUpdaterManager(this);
         otaUpdaterManager.initialize();
     }
-    
+
     @Override
     public void onDestroy() {
         // Clean up OTA updater manager
@@ -235,11 +235,11 @@ public class AsgClientService extends Service {
             otaUpdaterManager.cleanup();
             otaUpdaterManager = null;
         }
-        
+
         // Rest of cleanup...
         super.onDestroy();
     }
-    
+
     // Remove all OTA-related methods from here - they're now in OtaUpdaterManager
 }
 ```
@@ -265,7 +265,7 @@ Add this permission if not already present:
 2. **If Missing/Old**: Deploys from assets and installs
 3. **Package Install Receiver**: Detects when OTA updater is installed/updated
 4. **Automatic Launch**: Launches OTA updater after any installation
-5. **Self-Update Flow**: 
+5. **Self-Update Flow**:
    - OTA updater updates itself
    - System replaces the APK
    - PackageInstallReceiver detects the update

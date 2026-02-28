@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { useAuth } from "../hooks/useAuth";
+import { useAuth } from "@mentra/shared";
 import api, { AppDetails } from "../services/api.service";
 import { toast } from "sonner";
 
@@ -17,7 +17,7 @@ import { toast } from "sonner";
 const AuthFlowPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { isAuthenticated, loading: authLoading, tokenReady, user } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, tokenReady, user } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

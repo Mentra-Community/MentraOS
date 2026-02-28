@@ -9,29 +9,6 @@ export enum AppType {
   STANDARD = "standard", // Regular App (default) only one standard app can run at a time. starting a standard App will close any other standard App that is running.
 }
 
-// TODO(isaiah): doesn't seem like this is actually used anywhere, remove?
-/**
- * Application states in the system
- */
-export enum AppState {
-  NOT_INSTALLED = "not_installed", // Initial state
-  INSTALLED = "installed", // Installed but never run
-  BOOTING = "booting", // Starting up
-  RUNNING = "running", // Active and running
-  STOPPED = "stopped", // Manually stopped
-  ERROR = "error", // Error state
-}
-
-/**
- * Supported languages
- */
-export enum Language {
-  EN = "en",
-  ES = "es",
-  FR = "fr",
-  // TODO: Add more languages
-}
-
 /**
  * Types of layouts for displaying content
  */
@@ -50,7 +27,7 @@ export enum LayoutType {
  */
 export enum ViewType {
   DASHBOARD = "dashboard", // Regular dashboard (main/expanded)
-  ALWAYS_ON = "always_on", // Persistent overlay dashboard
+  // ALWAYS_ON = "always_on", // Persistent overlay dashboard
   MAIN = "main", // Regular app content
 }
 

@@ -11,15 +11,16 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "baseUrl": ".",
+    "types": ["bun-types", "node"],
 
     "paths": {
       "@mentra/sdk": ["../sdk/dist"],
-      "bun-types": ["./node_modules/bun-types"]
+      "@mentra/types": ["./node_modules/@mentra/types/src/index.ts"],
+      "@mentra/types/*": ["./node_modules/@mentra/types/src/*"]
     },
 
     "sourceMap": true,
     "inlineSources": true,
-
 
     // Set `sourceRoot` to  "/" to strip the build path prefix
     // from generated source code references.

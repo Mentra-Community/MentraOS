@@ -8,7 +8,7 @@
     android:id="@+id/main_container"
     android:theme="@style/AppTheme"
     android:background="#000000"
-    tools:context="com.augmentos.asg_client.MainActivity">
+    tools:context="com.mentra.asg_client.MainActivity">
 
   <TextView
       android:id="@+id/main_title"

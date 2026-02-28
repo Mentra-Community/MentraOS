@@ -1,38 +1,19 @@
-import React, {useEffect, useState} from "react"
-import {
-  View,
-  Text,
-  StyleSheet,
-  Switch,
-  Platform,
-  ScrollView,
-  AppState,
-  NativeModules,
-  Linking,
-  ViewStyle,
-  TextStyle,
-} from "react-native"
-import {useCoreStatus} from "@/contexts/CoreStatusProvider"
-import bridge from "@/bridge/MantleBridge"
-import {requestFeaturePermissions, PermissionFeatures, checkFeaturePermissions} from "@/utils/PermissionsUtils"
-import {
-  checkNotificationAccessSpecialPermission,
-  checkAndRequestNotificationAccessSpecialPermission,
-} from "@/utils/NotificationServiceUtils"
-// import {NotificationService} from '@/utils/NotificationServiceUtils';
-import showAlert from "@/utils/AlertUtils"
+import CoreModule from "core"
+import {useEffect, useState} from "react"
+import {AppState, Platform, ScrollView} from "react-native"
+
 import {Header, Screen} from "@/components/ignite"
-import {spacing, ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
-import ToggleSetting from "@/components/settings/ToggleSetting"
-import {translate} from "@/i18n"
-import {Spacer} from "@/components/misc/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import PermissionButton from "@/components/settings/PermButton"
-import {loadSetting, saveSetting, SETTINGS_KEYS} from "@/utils/SettingsHelper"
+import ToggleSetting from "@/components/settings/ToggleSetting"
+import {Spacer} from "@/components/ui/Spacer"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
+import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 
 export default function PrivacySettingsScreen() {
-  const [isSensingEnabled, setIsSensingEnabled] = useState(false)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
   const [calendarEnabled, setCalendarEnabled] = useState(true)
   const [calendarPermissionPending, setCalendarPermissionPending] = useState(false)
@@ -40,12 +21,8 @@ export default function PrivacySettingsScreen() {
   const [locationPermissionPending, setLocationPermissionPending] = useState(false)
   const [appState, setAppState] = useState(AppState.currentState)
   const {theme} = useAppTheme()
-  const {goBack, push} = useNavigationHistory()
-
-  // load settings:
-  useEffect(() => {
-    loadSetting(SETTINGS_KEYS.sensing_enabled).then(setIsSensingEnabled)
-  }, [])
+  const {goBack} = useNavigationHistory()
+  const [sensingEnabled, setSensingEnabled] = useSetting(SETTINGS.sensing_enabled.key)
 
   // Check permissions when screen loads
   useEffect(() => {
@@ -53,7 +30,7 @@ export default function PrivacySettingsScreen() {
       console.log("Checking permissions in PrivacySettingsScreen")
       // Check notification permissions
       if (Platform.OS === "android") {
-        const hasNotificationAccess = await checkNotificationAccessSpecialPermission()
+        const hasNotificationAccess = await CoreModule.hasNotificationListenerPermission()
         setNotificationsEnabled(hasNotificationAccess)
       }
 
@@ -71,7 +48,7 @@ export default function PrivacySettingsScreen() {
 
   const checkPermissions = async () => {
     if (Platform.OS === "android") {
-      const hasNotificationAccess = await checkNotificationAccessSpecialPermission()
+      const hasNotificationAccess = await CoreModule.hasNotificationListenerPermission()
 
       // If permission was granted while away, enable notifications and start service
       if (hasNotificationAccess && !notificationsEnabled) {
@@ -94,7 +71,7 @@ export default function PrivacySettingsScreen() {
 
     if (Platform.OS === "ios") {
       console.log("Adding delay before checking iOS calendar permissions")
-      await new Promise(resolve => setTimeout(resolve, 1500)) // 1.5 second delay
+      await new Promise((resolve) => setTimeout(resolve, 1500)) // 1.5 second delay
     }
 
     // Also recheck calendar permissions
@@ -130,7 +107,7 @@ export default function PrivacySettingsScreen() {
 
   // Monitor app state to detect when user returns from settings
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", nextAppState => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
       if (appState.match(/inactive|background/) && nextAppState === "active") {
         // App has come to the foreground - recheck permissions
         console.log("App returned to foreground, rechecking notification permissions")
@@ -145,10 +122,8 @@ export default function PrivacySettingsScreen() {
   }, []) // subscribe only once
 
   const toggleSensing = async () => {
-    const newSensing = !isSensingEnabled
-    await bridge.sendToggleSensing(newSensing) // TODO: config: remove
-    await saveSetting(SETTINGS_KEYS.sensing_enabled, newSensing)
-    setIsSensingEnabled(newSensing)
+    const newSensing = !sensingEnabled
+    await setSensingEnabled(newSensing)
   }
 
   const handleToggleNotifications = async () => {
@@ -162,10 +137,8 @@ export default function PrivacySettingsScreen() {
       await checkAndRequestNotificationAccessSpecialPermission()
 
       // Re-check permissions after the request
-      const hasAccess = await checkNotificationAccessSpecialPermission()
+      const hasAccess = await CoreModule.hasNotificationListenerPermission()
       if (hasAccess) {
-        // Start notification listener service if permission granted
-        //   await NotificationService.startNotificationListenerService();
         setNotificationsEnabled(true)
       }
     }
@@ -226,9 +199,9 @@ export default function PrivacySettingsScreen() {
   }
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}}>
-      <Header titleTx="privacySettings:title" leftIcon="caretLeft" onLeftPress={goBack} />
-      <ScrollView>
+    <Screen preset="fixed">
+      <Header titleTx="privacySettings:title" leftIcon="chevron-left" onLeftPress={goBack} />
+      <ScrollView className="pt-6">
         {/* Notification Permission - Android Only */}
         {Platform.OS === "android" && !notificationsEnabled && (
           <>
@@ -238,7 +211,7 @@ export default function PrivacySettingsScreen() {
               value={notificationsEnabled}
               onPress={handleToggleNotifications}
             />
-            <Spacer height={theme.spacing.md} />
+            <Spacer height={theme.spacing.s4} />
           </>
         )}
 
@@ -251,7 +224,7 @@ export default function PrivacySettingsScreen() {
               value={calendarEnabled}
               onPress={handleToggleCalendar}
             />
-            <Spacer height={theme.spacing.md} />
+            <Spacer height={theme.spacing.s4} />
           </>
         )}
 
@@ -264,14 +237,14 @@ export default function PrivacySettingsScreen() {
               value={locationEnabled}
               onPress={handleToggleLocation}
             />
-            <Spacer height={theme.spacing.md} />
+            <Spacer height={theme.spacing.s4} />
           </>
         )}
 
         <ToggleSetting
           label={translate("settings:sensingLabel")}
           subtitle={translate("settings:sensingSubtitle")}
-          value={isSensingEnabled}
+          value={sensingEnabled}
           onValueChange={toggleSensing}
         />
       </ScrollView>

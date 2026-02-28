@@ -44,7 +44,6 @@ fi
 # Copy Swift file to iOS project
 echo "🍎 Copying Swift file to iOS project..."
 if [ -f "$TEMP_DIR/mentraos_ble.pb.swift" ]; then
-    cp "$TEMP_DIR/mentraos_ble.pb.swift" "../mobile/ios/Source/subs/Protobuf/mcu_client/"
     cp "$TEMP_DIR/mentraos_ble.pb.swift" "../mobile/ios/Source/subs/"
     echo "✅ Swift file copied to iOS project"
 else
@@ -58,14 +57,6 @@ if [ -f "$TEMP_DIR/mentraos_ble.pb.h" ]; then
 fi
 if [ -f "$TEMP_DIR/mentraos_ble.pb.cc" ]; then
     echo "  - Source: $TEMP_DIR/mentraos_ble.pb.cc"
-fi
-
-# Copy Python file if generated
-if [ -f "$TEMP_DIR/mentraos_ble_pb2.py" ]; then
-    echo "🐍 Python file generated: $TEMP_DIR/mentraos_ble_pb2.py"
-    # Copy to mcu_client directory for potential use
-    cp "$TEMP_DIR/mentraos_ble_pb2.py" ./
-    echo "✅ Python file copied to mcu_client directory"
 fi
 
 # Clean up temporary directory

@@ -1,7 +1,19 @@
 // TODO: write documentation about fonts and typography along with guides on how to add custom fonts in own
 // markdown file and add links from here
 
-import {Platform} from "react-native"
+import {
+  RedHatDisplay_300Light as redHatDisplayLight,
+  RedHatDisplay_400Regular as redHatDisplayRegular,
+  RedHatDisplay_500Medium as redHatDisplayMedium,
+  RedHatDisplay_600SemiBold as redHatDisplaySemiBold,
+  RedHatDisplay_700Bold as redHatDisplayBold,
+  RedHatDisplay_800ExtraBold as redHatDisplayExtraBold,
+  RedHatDisplay_900Black as redHatDisplayBlack,
+  RedHatDisplay_300Light_Italic as redHatDisplayLightItalic,
+  RedHatDisplay_400Regular_Italic as redHatDisplayRegularItalic,
+  // RedHatDisplay_500Medium_Italic as redHatDisplayMediumItalic,
+  // RedHatDisplay_600SemiBold_Italic as redHatDisplaySemiBoldItalic,
+} from "@expo-google-fonts/red-hat-display"
 import {
   SpaceGrotesk_300Light as spaceGroteskLight,
   SpaceGrotesk_400Regular as spaceGroteskRegular,
@@ -9,6 +21,7 @@ import {
   SpaceGrotesk_600SemiBold as spaceGroteskSemiBold,
   SpaceGrotesk_700Bold as spaceGroteskBold,
 } from "@expo-google-fonts/space-grotesk"
+import {Platform} from "react-native"
 
 export const customFontsToLoad = {
   spaceGroteskLight,
@@ -16,6 +29,17 @@ export const customFontsToLoad = {
   spaceGroteskMedium,
   spaceGroteskSemiBold,
   spaceGroteskBold,
+  glassesMirror: require("@assets/fonts/glassesmirror.ttf"),
+  tablerIcons: require("@assets/icons/tabler/tabler-icons.ttf"),
+  redHatDisplayLight,
+  redHatDisplayRegular,
+  redHatDisplayMedium,
+  redHatDisplaySemiBold,
+  redHatDisplayBold,
+  redHatDisplayExtraBold,
+  redHatDisplayBlack,
+  redHatDisplayLightItalic,
+  redHatDisplayRegularItalic,
 }
 
 const fonts = {
@@ -24,7 +48,7 @@ const fonts = {
     light: "spaceGroteskLight",
     normal: "spaceGroteskRegular",
     medium: "spaceGroteskMedium",
-    semiBold: "spaceGroteskSemiBold",
+    semibold: "spaceGroteskSemiBold",
     bold: "spaceGroteskBold",
   },
   sfProRounded: {
@@ -32,7 +56,7 @@ const fonts = {
     light: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-light"}),
     normal: Platform.select({ios: "SF Pro Rounded", android: "sans-serif"}),
     medium: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-medium"}),
-    semiBold: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-medium"}),
+    semibold: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-medium"}),
     bold: Platform.select({ios: "SF Pro Rounded", android: "sans-serif"}),
   },
   helveticaNeue: {
@@ -57,6 +81,17 @@ const fonts = {
     // Android only font.
     normal: "monospace",
   },
+  glassesMirror: {
+    // Custom font for glasses display mirror
+    normal: "glassesMirror",
+  },
+  redHatDisplay: {
+    light: "redHatDisplayLight",
+    normal: "redHatDisplayRegular",
+    medium: "redHatDisplayMedium",
+    semibold: "redHatDisplaySemiBold",
+    bold: "redHatDisplayBold",
+  },
 }
 
 export const typography = {
@@ -67,7 +102,7 @@ export const typography = {
   /**
    * The primary font. Used in most places.
    */
-  primary: fonts.sfProRounded,
+  primary: fonts.redHatDisplay,
   /**
    * An alternate font used for perhaps titles and stuff.
    */

@@ -1,19 +1,21 @@
+import {requireNativeModule} from "expo-modules-core"
 import {Linking, Platform} from "react-native"
-import {NativeModules} from "react-native"
 
-const {SettingsNavigationModule} = NativeModules
-
-interface SettingsNavigationModule {
-  openBluetoothSettings(): Promise<boolean>
-  openLocationSettings(): Promise<boolean>
-  showLocationServicesDialog(): Promise<boolean>
-  openAppSettings(): Promise<boolean>
-}
+const Core = requireNativeModule("Core")
 
 /**
  * Utility functions for navigating to system settings pages
  */
 export class SettingsNavigationUtils {
+  static async openIosSettings(): Promise<void> {
+    const canOpen = await Linking.canOpenURL("App-prefs:")
+    if (canOpen) {
+      await Linking.openURL("App-prefs:")
+    } else {
+      await Linking.openURL("app-settings:")
+    }
+  }
+
   /**
    * Opens Bluetooth settings page
    * On Android: Uses native module to open Bluetooth settings directly
@@ -23,19 +25,13 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for direct Bluetooth settings access
-        await SettingsNavigationModule.openBluetoothSettings()
-        return true
+        await Core.openBluetoothSettings()
       } else if (Platform.OS === "ios") {
         // iOS doesn't have direct Bluetooth settings access, open general settings
-        const canOpen = await Linking.canOpenURL("App-Prefs:Bluetooth")
-        if (canOpen) {
-          await Linking.openURL("App-Prefs:Bluetooth")
-        } else {
-          await Linking.openURL("App-Prefs:General")
-        }
-        return true
+        await this.openIosSettings()
+        // await Linking.openURL("App-prefs:")
       }
-      return false
+      return true
     } catch (error) {
       console.error("Error opening Bluetooth settings:", error)
       return false
@@ -51,19 +47,12 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for location services dialog (better UX)
-        await SettingsNavigationModule.showLocationServicesDialog()
-        return true
+        // TODO: this does not need to be in the core module:
+        await Core.showLocationServicesDialog()
       } else if (Platform.OS === "ios") {
-        // iOS doesn't have a similar dialog, open location settings
-        const canOpen = await Linking.canOpenURL("App-Prefs:Privacy&path=LOCATION")
-        if (canOpen) {
-          await Linking.openURL("App-Prefs:Privacy&path=LOCATION")
-        } else {
-          await Linking.openURL("App-Prefs:General")
-        }
-        return true
+        await this.openIosSettings()
       }
-      return false
+      return true
     } catch (error) {
       console.error("Error showing location services dialog:", error)
       return false
@@ -78,21 +67,35 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for direct location settings access
-        await SettingsNavigationModule.openLocationSettings()
-        return true
+        await Core.openLocationSettings()
       } else if (Platform.OS === "ios") {
-        // iOS doesn't have direct location settings access, open general settings
-        const canOpen = await Linking.canOpenURL("App-Prefs:Privacy&path=LOCATION")
-        if (canOpen) {
-          await Linking.openURL("App-Prefs:Privacy&path=LOCATION")
-        } else {
-          await Linking.openURL("App-Prefs:General")
-        }
-        return true
+        await this.openIosSettings()
       }
-      return false
+      return true
     } catch (error) {
       console.error("Error opening location settings:", error)
+      return false
+    }
+  }
+
+  /**
+   * Opens WiFi settings page
+   * On Android: Opens WiFi settings directly using Linking.sendIntent
+   * On iOS: Opens general settings (iOS manages WiFi via Control Center)
+   */
+  static async openWifiSettings(): Promise<boolean> {
+    try {
+      if (Platform.OS === "android") {
+        // Use Linking.sendIntent to open WiFi settings (no native code needed)
+        await Linking.sendIntent("android.settings.WIFI_SETTINGS")
+      } else if (Platform.OS === "ios") {
+        // iOS doesn't have direct WiFi settings deep link
+        // Users can enable WiFi from Control Center
+        await this.openIosSettings()
+      }
+      return true
+    } catch (error) {
+      console.error("Error opening WiFi settings:", error)
       return false
     }
   }
@@ -106,14 +109,11 @@ export class SettingsNavigationUtils {
     try {
       if (Platform.OS === "android") {
         // Use native module for app settings
-        await SettingsNavigationModule.openAppSettings()
-        return true
+        await Core.openAppSettings()
       } else if (Platform.OS === "ios") {
-        // iOS app settings
-        await Linking.openURL("App-Prefs:General")
-        return true
+        await this.openIosSettings()
       }
-      return false
+      return true
     } catch (error) {
       console.error("Error opening app settings:", error)
       return false

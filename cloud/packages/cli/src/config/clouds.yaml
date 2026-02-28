@@ -1,0 +1,19 @@
+# Built-in Mentra clouds
+# Users can add custom clouds via ~/.mentra/config.json
+
+production:
+  name: Production
+  url: https://api.mentra.glass
+  default: true
+
+staging:
+  name: Staging
+  url: https://staging-api.mentra.glass
+
+development:
+  name: Development
+  url: https://dev-api.mentra.glass
+
+local:
+  name: Local Development
+  url: http://localhost:8002

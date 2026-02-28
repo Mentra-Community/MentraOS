@@ -1,4 +1,4 @@
-package com.augmentos.otaupdater;
+package com.mentra.otaupdater;
 
 import android.content.Context;
 

@@ -180,6 +180,13 @@ void display_cycle_pattern(void)
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
+void display_update_height(uint16_t height) {
+    display_cmd_t cmd = {
+        .type = LCD_CMD_UPDATE_HEIGHT, .p.height = {.height = height}
+    };
+    mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+}
+
 /* 线程安全 protobuf 文本更新：发消息到 LVGL 线程 / Thread-safe protobuf text update - sends message to LVGL thread */
 void display_update_protobuf_text(const char* text_content)
 {
@@ -951,6 +958,47 @@ void cycle_test_pattern(void)
     show_test_pattern(current_pattern);
 }
 
+static void update_display_height(uint16_t height)
+{
+    if (height > 8) height = 8;
+
+    LOG_INF("update_display_height - Thread-safe height update: %u", height);
+
+    if (!protobuf_container)
+    {
+        LOG_WRN("protobuf_container not initialized");
+        return;
+    }
+
+    lv_obj_t *screen = lv_screen_active();
+    const display_config_t *config = display_get_config();
+
+    /* Make a mutable copy of the current config */
+    display_config_t tmp = *config;
+
+    /* ABSOLUTE mapping: margin_top = 20 * height (no + / -) */
+    uint32_t mt = (config->height - config->layout.usable_height) - (20u * (uint32_t)height);
+
+    /* Clamp to uint16_t and screen bounds so it never goes off-screen */
+    if (mt > UINT16_MAX) mt = UINT16_MAX;
+    tmp.layout.margin_top = (uint16_t)mt;
+
+    /* Keep container fully visible: margin_top + usable_height <= screen height */
+    if ((uint32_t)tmp.layout.margin_top + (uint32_t)tmp.layout.usable_height > (uint32_t)tmp.height)
+    {
+        tmp.layout.margin_top =
+            (tmp.height > tmp.layout.usable_height) ? (tmp.height - tmp.layout.usable_height) : 0;
+    }
+
+    /* Apply to the existing container */
+    (void)display_apply_container_config(protobuf_container, screen, &tmp);
+
+    /* Recompute layout */
+    lv_obj_update_layout(protobuf_container);
+
+    LOG_INF("Applied margin_top=%u (height=%u)", tmp.layout.margin_top, height);
+}
+
 /* 中文字库逐字渲染（汉字/标点/ASCII）；max_width>0 时按宽度自动换行，否则仅按 \\n/\\r 换行 */
 static void render_gbk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coord_t y, lv_coord_t max_width,
                                     const char* render_text, const lv_font_t* gbk_font,
@@ -1136,97 +1184,15 @@ static void update_protobuf_text_content(const char* text_content)
 
     welcome_screen_active = false;
 
-    const char* render_text = text_content;
-    /* 协议前缀 [cjk]/[cjkchars] 保持不变（与手机端约定），实际使用 GBK 字库 */
-    if (strncmp(render_text, "[cjkchars]", 10) == 0)
-    {
-        render_text += 10;
-        while (*render_text == ' ')
-        {
-            render_text++;
-        }
-    }
-    else if (strncmp(render_text, "[cjk]", 5) == 0)
-    {
-        render_text += 5;
-        while (*render_text == ' ')
-        {
-            render_text++;
-        }
-    }
+    /* 清空并更新：用新 protobuf 内容替换现有文本 / CLEAR AND UPDATE: Replace existing text with new protobuf content */
+    lv_label_set_text(protobuf_label, text_content);
 
-    /* 有效内容为空（或仅空白）时：不清屏、不更新，保留当前显示，避免“先显示→被空包擦掉→再显示” */
-    const char* p = render_text;
-    while (*p != '\0' && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
-    {
-        p++;
-    }
-    if (*p == '\0')
-    {
-        LOG_DBG("Protobuf: empty effective content, keep current display");
-        return;
-    }
+    /* BLE 文本偏移：标签距顶 100px（欢迎文案保持居中）/ BLE text offset: position label 100px down from top (welcome message stays centered) */
+    lv_obj_align(protobuf_label, LV_ALIGN_TOP_MID, 0, 80);
 
-    if (protobuf_label)
-    {
-        lv_obj_add_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (dfu_status_label)
-    {
-        lv_obj_add_flag(dfu_status_label, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    if (protobuf_gbk_container)
-    {
-        lv_obj_clear_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
-        /* 清空前先设不透明背景，避免 clean 后重绘时透出上一帧残影导致闪一下 */
-        lv_obj_set_style_bg_color(protobuf_gbk_container, display_get_background_color(), 0);
-        lv_obj_set_style_bg_opa(protobuf_gbk_container, LV_OPA_COVER, 0);
-        lv_obj_clean(protobuf_gbk_container);
-    }
-
-    const lv_font_t* gbk_font = display_get_font("gbk");
-    const lv_font_t* font_primary = display_get_font("primary");
-    if (!font_primary)
-    {
-        font_primary = display_get_font("secondary");
-    }
-    if (!gbk_font && font_primary)
-    {
-        gbk_font = font_primary;
-    }
-
-    if (protobuf_gbk_container && gbk_font)
-    {
-        const display_config_t* config = display_get_config();
-        lv_coord_t container_w = (config && config->layout.usable_width > 0)
-                                    ? (lv_coord_t)(config->layout.usable_width - (config->layout.padding * 2))
-                                    : 0;
-        render_gbk_per_char(protobuf_gbk_container, 0, 0, container_w, render_text, gbk_font, font_primary,
-                           NULL, NULL, NULL);
-        lv_obj_update_layout(protobuf_gbk_container);
-        lv_obj_scroll_to_y(protobuf_gbk_container, 0, LV_ANIM_OFF);
-        lv_obj_invalidate(protobuf_gbk_container);
-        lv_obj_invalidate(protobuf_container);
-        LOG_INF("📱 Protobuf GBK per-char updated: %.50s%s", render_text, strlen(render_text) > 50 ? "..." : "");
-    }
-    else
-    {
-        if (protobuf_gbk_container)
-        {
-            lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (protobuf_label)
-        {
-            lv_obj_clear_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
-            lv_label_set_text(protobuf_label, render_text);
-            lv_obj_align(protobuf_label, LV_ALIGN_TOP_MID, 0, 80);
-            lv_obj_update_layout(protobuf_container);
-            lv_obj_scroll_to_y(protobuf_container, lv_obj_get_scroll_bottom(protobuf_container), LV_ANIM_OFF);
-        }
-        LOG_WRN("Protobuf per-char unavailable; fallback to label: %.50s%s", render_text,
-                strlen(render_text) > 50 ? "..." : "");
-    }
+    /* 自动滚到底部显示最新内容 / AUTO-SCROLL TO BOTTOM: Show latest content */
+    lv_obj_update_layout(protobuf_container);  /* 确保布局已计算 / Ensure layout is calculated */
+    lv_obj_scroll_to_y(protobuf_container, lv_obj_get_scroll_bottom(protobuf_container), LV_ANIM_OFF);
 
     strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
     last_protobuf_text[MAX_TEXT_LEN] = '\0';
@@ -1923,6 +1889,11 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
                     /* 在 LVGL 线程内安全处理图案切换 / Handle pattern cycling safely in LVGL thread */
                     LOG_INF("LCD_CMD_CYCLE_PATTERN - Thread-safe pattern cycling");
                     cycle_test_pattern(); /* 现由 LVGL 线程上下文调用 / Now called from LVGL thread context */
+                    break;
+                case LCD_CMD_UPDATE_HEIGHT:
+                    /* 在 LVGL 线程内安全处理高度更新 / Handle height updates safely in LVGL thread */
+                    LOG_INF("LCD_CMD_UPDATE_HEIGHT - Thread-safe height update: %u", cmd.p.height.height);
+                    update_display_height(cmd.p.height.height);
                     break;
                 case LCD_CMD_UPDATE_PROTOBUF_TEXT:
                 {

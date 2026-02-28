@@ -1,0 +1,395 @@
+---
+title: "Audio Chunks"
+description: "Process raw audio data for custom speech recognition and analysis"
+---
+
+## Basic Usage
+
+```typescript
+session.events.onAudioChunk((audioChunk: AudioChunk) => {
+  // audioChunk.arrayBuffer contains the raw audio data
+  const buffer = audioChunk.arrayBuffer;
+  const sampleRate = audioChunk.sampleRate || 16000;
+  
+  session.logger.info('Received audio chunk:', buffer.byteLength, 'bytes at', sampleRate, 'Hz');
+});
+```
+
+## Audio Chunk Interface
+
+```typescript
+interface AudioChunk {
+  type: StreamType.AUDIO_CHUNK;
+  arrayBuffer: ArrayBufferLike;  // Raw audio data buffer
+  sampleRate?: number;            // Sample rate (e.g., 16000 Hz)
+  timestamp: Date;                // When chunk was received
+}
+```
+
+## When to Use Audio Chunks
+
+<AccordionGroup>
+  <Accordion title="Custom Speech Recognition" icon="microphone">
+    Use your own speech-to-text model:
+
+    ```typescript
+    session.events.onAudioChunk(async (audioChunk: AudioChunk) => {
+      const result = await customSTT.process(audioChunk.arrayBuffer);
+      session.logger.info('Transcription:', result);
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Voice Analysis" icon="waveform">
+    Analyze voice characteristics:
+
+    - Voice activity detection (VAD)
+    - Pitch detection
+    - Emotion recognition
+    - Speaker identification
+  </Accordion>
+
+  <Accordion title="Audio Effects" icon="sliders">
+    Apply real-time audio processing:
+
+    - Noise reduction
+    - Echo cancellation
+    - Voice enhancement
+    - Audio filtering
+  </Accordion>
+
+  <Accordion title="Recording" icon="record-vinyl">
+    Save audio for later processing:
+
+    ```typescript
+    const audioChunks: AudioChunk[] = [];
+
+    session.events.onAudioChunk((audioChunk: AudioChunk) => {
+      audioChunks.push(audioChunk);
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+Audio chunks are **advanced functionality**. For most apps, use `session.events.onTranscription()` instead.
+</Warning>
+
+## Working with Audio Data
+
+### Convert to Float32Array
+
+```typescript
+session.events.onAudioChunk((audioChunk: AudioChunk) => {
+  // Convert to typed array for processing
+  const samples = new Float32Array(audioChunk.arrayBuffer);
+  
+  // Process samples (values typically between -1.0 and 1.0)
+  for (let i = 0; i < samples.length; i++) {
+    const sample = samples[i];
+    // Process each sample...
+  }
+});
+```
+
+### Calculate Audio Level
+
+```typescript
+function calculateRMS(audioChunk: AudioChunk): number {
+  const samples = new Float32Array(audioChunk.arrayBuffer);
+  let sum = 0;
+  
+  for (let i = 0; i < samples.length; i++) {
+    sum += samples[i] * samples[i];
+  }
+  
+  return Math.sqrt(sum / samples.length);
+}
+
+session.events.onAudioChunk((audioChunk: AudioChunk) => {
+  const level = calculateRMS(audioChunk);
+  
+  if (level > 0.1) {
+    session.logger.info('Voice detected, RMS level:', level.toFixed(3));
+  }
+});
+```
+
+
+
+## Common Patterns
+
+### Recording Audio
+
+```typescript
+class AudioRecorder {
+  private chunks: ArrayBuffer[] = [];
+  private isRecording = false;
+
+  start(session: AppSession) {
+    this.chunks = [];
+    this.isRecording = true;
+    
+    session.events.onAudioChunk((chunk) => {
+      if (this.isRecording) {
+        // Store the arrayBuffer
+        this.chunks.push(chunk.arrayBuffer);
+      }
+    });
+  }
+
+  stop(): ArrayBuffer[] {
+    this.isRecording = false;
+    return this.chunks;
+  }
+
+  getRecording(): ArrayBuffer[] {
+    return this.chunks;
+  }
+}
+
+// Usage
+const recorder = new AudioRecorder();
+
+session.events.onButtonPress((data) => {
+  if (data.button === 'select') {
+    recorder.start(session);
+    session.layouts.showTextWall('Recording...');
+  }
+});
+
+// Stop after 5 seconds
+setTimeout(() => {
+  const recording = recorder.stop();
+  session.layouts.showTextWall(`Recorded ${recording.length} chunks`);
+}, 5000);
+```
+
+### Audio Level Monitoring
+
+```typescript
+let lastUpdate = 0;
+
+session.events.onAudioChunk((chunk) => {
+  const now = Date.now();
+  
+  // Update display every 200ms
+  if (now - lastUpdate > 200) {
+    const sampleRate = chunk.sampleRate || 16000;
+    session.dashboard.content.writeToMain(`🎤 Recording at ${sampleRate}Hz`);
+    lastUpdate = now;
+  }
+});
+```
+
+
+
+
+
+## Performance Considerations
+
+<AccordionGroup>
+  <Accordion title="Audio Chunks Are Frequent" icon="gauge">
+    Audio chunks arrive **many times per second**:
+
+    ```typescript
+    // ❌ Avoid - expensive operation every chunk
+    session.events.onAudioChunk(async (audioChunk: AudioChunk) => {
+      await expensiveProcessing(audioChunk); // Too slow
+    });
+
+    // ✅ Good - queue for batch processing
+    const queue: AudioChunk[] = [];
+    session.events.onAudioChunk((audioChunk: AudioChunk) => {
+      queue.push(audioChunk);
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Memory Management" icon="memory">
+    Audio data accumulates quickly:
+
+    ```typescript
+    // ✅ Good - limit stored chunks
+    const maxChunks = 100;
+    const chunks: AudioChunk[] = [];
+
+    session.events.onAudioChunk((audioChunk: AudioChunk) => {
+      chunks.push(audioChunk);
+
+      if (chunks.length > maxChunks) {
+        chunks.shift();
+      }
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Processing Time" icon="clock">
+    Keep processing fast:
+
+    ```typescript
+    session.events.onAudioChunk((audioChunk: AudioChunk) => {
+      // Keep processing fast - audio chunks arrive frequently
+      const buffer = audioChunk.arrayBuffer;
+      // Process synchronously
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Transcription API When Possible" icon="comment">
+    Built-in transcription is optimized and easier:
+
+    ```typescript
+    // ✅ Better for most cases
+    session.events.onTranscription((data) => {
+      if (data.isFinal) {
+        processCommand(data.text);
+      }
+    });
+
+    // Only use audio chunks if you need:
+    // - Custom speech recognition
+    // - Voice analysis
+    // - Audio effects
+    // - Recording
+    ```
+  </Accordion>
+
+  <Accordion title="Clone Buffers" icon="clone">
+    ArrayBuffers may be reused:
+
+    ```typescript
+    // ✅ Good - store the arrayBuffer
+    session.events.onAudioChunk((chunk) => {
+      storedChunks.push(chunk.arrayBuffer);
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Handle Errors" icon="triangle-exclamation">
+    Audio processing can fail:
+
+    ```typescript
+    session.events.onAudioChunk((audioChunk: AudioChunk) => {
+      try {
+        processAudio(audioChunk.arrayBuffer);
+      } catch (error) {
+        session.logger.error('Audio processing error:', error);
+      }
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Clean Up Resources" icon="broom">
+    Stop processing when done:
+
+    ```typescript
+    const unsubscribe = session.events.onAudioChunk((audioChunk: AudioChunk) => {
+      // Process audio
+    });
+
+    // Later, stop receiving chunks
+    unsubscribe();
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Permissions Required
+
+<Warning>
+Audio chunks require the **MICROPHONE** permission. Set this in the [Developer Console](https://console.mentra.glass/apps).
+</Warning>
+
+## AudioChunk Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `arrayBuffer` | `ArrayBufferLike` | Raw audio data buffer |
+| `sampleRate` | `number` (optional) | Sample rate in Hz (typically 16000) |
+| `timestamp` | `Date` | When chunk was received |
+| `type` | `StreamType.AUDIO_CHUNK` | Stream type identifier |
+
+**Audio Format:**
+- Raw PCM audio data
+- Mono (1 channel)
+- Convert to `Float32Array` for processing
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="No Audio Chunks" icon="microphone-slash">
+    **Check permission:**
+
+    - Ensure MICROPHONE permission is set
+    - User must approve permission
+    - Check for permission errors in logs
+  </Accordion>
+
+  <Accordion title="Delayed Processing" icon="clock">
+    **Processing too slow:**
+
+    - Keep processing under 20ms per chunk
+    - Use async processing with queues
+    - Optimize audio algorithms
+  </Accordion>
+
+  <Accordion title="Memory Issues" icon="memory">
+    **Too much buffering:**
+
+    - Limit stored chunks
+    - Process and discard quickly
+    - Don't store entire recording in memory
+  </Accordion>
+</AccordionGroup>
+
+## Example: Simple Recording
+
+```typescript
+const recordedChunks: AudioChunk[] = [];
+let isRecording = false;
+
+session.events.onButtonPress((data) => {
+  if (data.button === 'select') {
+    isRecording = !isRecording;
+    if (isRecording) {
+      recordedChunks.length = 0;
+      session.logger.info('Recording started');
+    } else {
+      session.logger.info('Recorded', recordedChunks.length, 'chunks');
+      
+      // Process recorded audio
+      recordedChunks.forEach((chunk) => {
+        const samples = new Float32Array(chunk.arrayBuffer);
+        session.logger.info('Chunk:', samples.length, 'samples at', chunk.sampleRate, 'Hz');
+      });
+    }
+  }
+});
+
+session.events.onAudioChunk((audioChunk: AudioChunk) => {
+  if (isRecording) {
+    recordedChunks.push(audioChunk);
+  }
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Speech-to-Text" icon="microphone" href="/app-devs/core-concepts/microphone/speech-to-text">
+    Use built-in transcription
+  </Card>
+  <Card title="Text-to-Speech" icon="comment" href="/app-devs/core-concepts/speakers/text-to-speech">
+    Generate voice output
+  </Card>
+  <Card title="Event Manager" icon="book" href="/app-devs/reference/managers/event-manager">
+    Complete event API reference
+  </Card>
+  <Card title="Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
+    Learn about permissions
+  </Card>
+</CardGroup>

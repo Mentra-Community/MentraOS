@@ -1,5 +1,6 @@
 import {create} from "zustand"
-import {WebSocketStatus} from "@/managers/WebSocketManager"
+
+import {WebSocketStatus} from "@/services/WebSocketManager"
 
 interface ConnectionState {
   status: WebSocketStatus
@@ -12,14 +13,12 @@ interface ConnectionState {
   setStatus: (status: WebSocketStatus) => void
   setUrl: (url: string | null) => void
   setError: (error: string | null) => void
-  setConnected: () => void
-  setDisconnected: () => void
   incrementReconnectAttempts: () => void
   resetReconnectAttempts: () => void
   reset: () => void
 }
 
-export const useConnectionStore = create<ConnectionState>(set => ({
+export const useConnectionStore = create<ConnectionState>((set) => ({
   status: WebSocketStatus.DISCONNECTED,
   url: null,
   error: null,
@@ -27,28 +26,14 @@ export const useConnectionStore = create<ConnectionState>(set => ({
   lastDisconnectedAt: null,
   reconnectAttempts: 0,
 
-  setStatus: status => set({status, error: status === WebSocketStatus.ERROR ? undefined : null}),
+  setStatus: (status) => set({status, error: status === WebSocketStatus.ERROR ? undefined : null}),
 
-  setUrl: url => set({url}),
+  setUrl: (url) => set({url}),
 
-  setError: error => set({error, status: WebSocketStatus.ERROR}),
-
-  setConnected: () =>
-    set({
-      status: WebSocketStatus.CONNECTED,
-      lastConnectedAt: new Date(),
-      error: null,
-      reconnectAttempts: 0,
-    }),
-
-  setDisconnected: () =>
-    set({
-      status: WebSocketStatus.DISCONNECTED,
-      lastDisconnectedAt: new Date(),
-    }),
+  setError: (error) => set({error, status: WebSocketStatus.ERROR}),
 
   incrementReconnectAttempts: () =>
-    set(state => ({
+    set((state) => ({
       reconnectAttempts: state.reconnectAttempts + 1,
     })),
 

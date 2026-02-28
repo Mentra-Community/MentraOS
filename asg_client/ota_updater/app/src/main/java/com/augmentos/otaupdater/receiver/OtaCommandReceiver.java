@@ -1,12 +1,12 @@
-package com.augmentos.otaupdater.receiver;
+package com.mentra.otaupdater.receiver;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
-import com.augmentos.otaupdater.helper.Constants;
-import com.augmentos.otaupdater.helper.OtaHelper;
+import com.mentra.otaupdater.helper.Constants;
+import com.mentra.otaupdater.helper.OtaHelper;
 
 /**
  * Created by markiyurtdas on 22.05.2025.
@@ -26,7 +26,7 @@ public class OtaCommandReceiver extends BroadcastReceiver {
 }
 
 /* send command to OTAUpdater
-Intent intent = new Intent("com.augmentos.asg_client.ACTION_INSTALL_OTA");
+Intent intent = new Intent("com.mentra.asg_client.ACTION_INSTALL_OTA");
 intent.setPackage("com.augmentos.otaupdater"); // target OTA package name
 context.sendBroadcast(intent);
 

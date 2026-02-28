@@ -5,6 +5,7 @@
 You're right - duplicating the update check logic would be inefficient and error-prone. Instead, let's extend the existing OTA updater to handle both apps.
 
 ## Current OTA Updater Logic
+
 - Initial check: 15 seconds after start
 - Periodic checks: Every 30 minutes
 - WiFi triggers: Checks when WiFi becomes available
@@ -13,10 +14,11 @@ You're right - duplicating the update check logic would be inefficient and error
 ## Proposed Changes
 
 ### 1. Enhanced version.json
+
 ```json
 {
   "apps": {
-    "com.augmentos.asg_client": {
+    "com.mentra.asg_client": {
       "versionCode": 6,
       "apkUrl": "...",
       "sha256": "..."
@@ -38,12 +40,12 @@ private void checkForUpdates() {
     try {
         JSONObject versionInfo = fetchVersionInfo();
         JSONObject apps = versionInfo.getJSONObject("apps");
-        
+
         // Check each app
         for (Iterator<String> it = apps.keys(); it.hasNext(); ) {
             String packageName = it.next();
             JSONObject appInfo = apps.getJSONObject(packageName);
-            
+
             checkAndUpdateApp(packageName, appInfo);
         }
     } catch (Exception e) {
@@ -55,7 +57,7 @@ private void checkAndUpdateApp(String packageName, JSONObject appInfo) {
     try {
         int currentVersion = getInstalledVersion(packageName);
         int serverVersion = appInfo.getInt("versionCode");
-        
+
         if (serverVersion > currentVersion) {
             // Special handling for self-update
             if (packageName.equals(context.getPackageName())) {
@@ -72,13 +74,13 @@ private void checkAndUpdateApp(String packageName, JSONObject appInfo) {
 
 private void handleSelfUpdate(JSONObject appInfo) {
     // For self-update, we need ASG client's help
-    Intent updateRequest = new Intent("com.augmentos.asg_client.UPDATE_OTA_UPDATER");
-    updateRequest.setPackage("com.augmentos.asg_client");
+    Intent updateRequest = new Intent("com.mentra.asg_client.UPDATE_OTA_UPDATER");
+    updateRequest.setPackage("com.mentra.asg_client");
     updateRequest.putExtra("apkUrl", appInfo.getString("apkUrl"));
     updateRequest.putExtra("sha256", appInfo.getString("sha256"));
     updateRequest.putExtra("versionCode", appInfo.getInt("versionCode"));
     context.sendBroadcast(updateRequest);
-    
+
     Log.i(TAG, "Requested ASG client to update OTA updater");
 }
 ```
@@ -90,11 +92,11 @@ private void handleSelfUpdate(JSONObject appInfo) {
 public class OtaUpdaterUpdateReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
-        if ("com.augmentos.asg_client.UPDATE_OTA_UPDATER".equals(intent.getAction())) {
+        if ("com.mentra.asg_client.UPDATE_OTA_UPDATER".equals(intent.getAction())) {
             // Download and install OTA updater update
             String apkUrl = intent.getStringExtra("apkUrl");
             String sha256 = intent.getStringExtra("sha256");
-            
+
             // Use same installation mechanism
             downloadAndInstallOtaUpdater(apkUrl, sha256);
         }
@@ -119,11 +121,12 @@ public class OtaUpdaterUpdateReceiver extends BroadcastReceiver {
 ## Fallback for Legacy Devices
 
 For devices that don't update ASG client first:
+
 ```json
 {
   // New format for updated devices
   "apps": { ... },
-  
+
   // Legacy format for old OTA updaters
   "versionCode": 6,
   "apkUrl": "...",  // Points to ASG client

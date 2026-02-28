@@ -1,4 +1,4 @@
-package com.augmentos.otaupdater.events;
+package com.mentra.otaupdater.events;
 
 /**
  * EventBus event for battery status updates from glasses

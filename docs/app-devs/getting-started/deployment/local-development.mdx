@@ -1,0 +1,278 @@
+---
+title: "Local Development"
+description: "Test your MentraOS app locally using ngrok tunneling"
+---
+
+When developing your MentraOS app, you'll want to test it locally before deploying to production. This guide explains how local development works and how to set it up.
+
+## How MentraOS Apps Work
+
+Understanding the architecture helps explain why we need tunneling for local development:
+
+```
+User's Glasses ←→ MentraOS Relay Server←→ Your App Server
+```
+
+**The flow:**
+1. User interacts with glasses (voice, buttons, camera)
+2. MentraOS Relay Server processes the interaction
+3. Relay Server sends events to **your app server** via webhook
+4. Your app responds (display text, play audio, etc.)
+5. Response flows back through the Relay Server to the user's phone, and then to the user's glasses
+
+**The key requirement:** MentraOS Relay Server must be able to reach your app server over the internet.
+
+## The Local Development Problem
+
+When you run your app locally, it's only accessible on your machine:
+
+```
+Your App: http://localhost:3000 ✅ (you can access it)
+         http://localhost:3000 ❌ (MentraOS Relay Server cannot access it)
+```
+
+**Why this doesn't work:**
+- `localhost` is not a public address
+- MentraOS Relay Server runs on the internet
+- Relay Server can't reach your local machine directly
+- Firewalls and routers block incoming connections
+
+## The Solution: Tunneling with ngrok
+
+**ngrok** creates a secure tunnel from a public URL to your local server:
+
+```
+MentraOS Relay Server → https://abc123.ngrok.io → localhost:3000 → Your App
+                        (public internet)         (your machine)
+```
+
+Now MentraOS Relay Server can send events to `https://abc123.ngrok.io`, and they'll be forwarded to your local app.
+
+---
+
+## Quick Start
+
+### 1. Install ngrok
+
+**macOS:**
+```bash
+brew install ngrok
+```
+
+**Linux:**
+```bash
+curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
+  sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && \
+  echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | \
+  sudo tee /etc/apt/sources.list.d/ngrok.list && \
+  sudo apt update && sudo apt install ngrok
+```
+
+**Windows / Other:**
+Download from [ngrok.com/download](https://ngrok.com/download)
+
+### 2. Start Your App
+
+```bash
+# In your app directory
+bun install
+bun run dev
+
+# Your app is now running on http://localhost:3000
+```
+
+### 3. Start ngrok Tunnel
+
+**In a new terminal:**
+
+```bash
+ngrok http 3000
+```
+
+You'll see output like:
+
+```
+ngrok
+
+Session Status                online
+Account                       your-email@example.com (Plan: Free)
+Version                       3.x.x
+Region                        United States (us)
+Latency                       -
+Web Interface                 http://127.0.0.1:4040
+Forwarding                    https://abc123.ngrok.io -> http://localhost:3000
+
+Connections                   ttl     opn     rt1     rt5     p50     p90
+                              0       0       0.00    0.00    0.00    0.00
+```
+
+**Copy the Forwarding URL:** `https://abc123.ngrok.io`
+
+### 4. Update Developer Console
+
+1. Go to [console.mentra.glass/apps](https://console.mentra.glass/apps)
+2. Select your app
+3. Set **App Server URL** to: `https://abc123.ngrok.io`
+4. Save changes
+
+### 5. Test on Glasses
+
+1. Open your app on MentraOS glasses
+2. Interact with it (speak, press buttons, etc.)
+3. Watch your terminal - you should see events coming in
+4. Check ngrok's web interface at `http://localhost:4040` to see requests
+
+---
+
+## Development Workflow
+
+**Typical workflow:**
+
+```bash
+# Terminal 1: Start your app
+cd my-mentra-app
+bun run dev
+
+# Terminal 2: Start ngrok
+ngrok http 3000
+
+# Copy ngrok URL and update Developer Console
+# → Test on glasses
+# → Make code changes
+# → App auto-restarts (if using nodemon)
+# → Test again
+```
+
+**When you restart ngrok:**
+- Free ngrok URLs change each time
+- You must update the Developer Console with the new URL
+- Paid ngrok plans provide persistent URLs
+
+---
+
+## ngrok Web Interface
+
+ngrok provides a web interface at **http://localhost:4040** showing:
+
+- **Request Inspector** - See all incoming requests
+- **Request/Response Details** - Headers, body, timing
+- **Replay Requests** - Resend requests for debugging
+
+This is incredibly useful for debugging webhook issues.
+
+---
+
+## Common Issues
+
+### Issue: "Connection Refused"
+
+**Problem:** ngrok can't connect to your local server
+
+**Solution:**
+```bash
+# Make sure your app is running first
+bun run dev
+
+# Then start ngrok in another terminal
+ngrok http 3000
+```
+
+### Issue: "No Events Coming Through"
+
+**Problem:** You don't see any requests in your terminal
+
+**Solution:**
+1. **Check packageName** - Must match exactly in both your code and Developer Console
+2. **Check API key** - Must be correct and match your app in Developer Console
+3. **Check ngrok URL** - Must be correct in Developer Console (no trailing slash)
+4. Check ngrok is still running (free URLs expire after 2 hours)
+5. Check your app is still running
+6. Look at ngrok web interface (localhost:4040) to see if requests are arriving
+7. Check your app logs for errors
+
+**Common mistakes:**
+```typescript
+// ❌ Wrong - packageName doesn't match Developer Console
+packageName: 'com.example.myapp'  // Console has: 'com.mycompany.myapp'
+
+// ❌ Wrong - incorrect API key
+apiKey: 'old-api-key-here'
+
+// ✅ Correct - matches Developer Console exactly
+packageName: 'com.mycompany.myapp',
+apiKey: process.env.MENTRA_API_KEY,
+```
+
+### Issue: "ngrok URL Changed"
+
+**Problem:** You restarted ngrok and URL changed
+
+**Solution:**
+- **Free plan:** Update Developer Console with new URL each time
+- **Paid plan:** Use reserved domains for persistent URLs
+- **Alternative:** Deploy to Railway/Ubuntu for persistent URLs
+
+---
+
+## ngrok Free vs Paid
+
+### Free Plan
+- ✅ Unlimited tunnels
+- ✅ Web interface
+- ❌ URL changes each restart
+- ❌ 40 connections/minute limit
+- ❌ Random subdomain
+
+### Paid Plans (starting $8/month)
+- ✅ Everything in Free
+- ✅ **Reserved domains** - URL never changes
+- ✅ Custom domains
+- ✅ Higher limits
+- ✅ More regions
+
+For serious development, paid ngrok or deployment to Railway/Ubuntu is recommended.
+
+---
+
+## Alternatives to ngrok
+
+### CloudFlare Tunnel
+```bash
+cloudflared tunnel --url http://localhost:3000
+```
+- Free persistent URLs
+- More complex setup
+- Good for long-term development
+
+### localtunnel
+```bash
+npx localtunnel --port 3000
+```
+- Simpler than ngrok
+- Less reliable
+- Good for quick tests
+
+### VS Code Port Forwarding
+If using GitHub Codespaces or VS Code Remote:
+- Built-in port forwarding
+- No extra tools needed
+- Limited to VS Code environment
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Railway Deployment" icon="train" href="/app-devs/getting-started/deployment/railway-deployment">
+    Deploy to production
+  </Card>
+  <Card title="Ubuntu Deployment" icon="server" href="/app-devs/getting-started/deployment/ubuntu-deployment">
+    Self-hosted deployment
+  </Card>
+  <Card title="Quickstart Guide" icon="rocket" href="/app-devs/getting-started/quickstart">
+    Build your first app
+  </Card>
+  <Card title="Example Apps" icon="code" href="/app-devs/getting-started/example-apps">
+    See working examples
+  </Card>
+</CardGroup>

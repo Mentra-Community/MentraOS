@@ -1,93 +1,61 @@
-import React, {useState, useEffect} from "react"
-import {View, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
-import {Screen, Header, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {MaterialCommunityIcons} from "@expo/vector-icons"
-import {translate} from "@/i18n"
-import {saveSetting, loadSetting} from "@/utils/SettingsHelper"
-import {SETTINGS_KEYS} from "@/utils/SettingsHelper"
-import {router} from "expo-router"
-import {type ThemeType} from "@/utils/useAppTheme"
-import {StyleSheet} from "react-native"
+import {View, TouchableOpacity, ViewStyle, TextStyle, ScrollView} from "react-native"
+
+import {Screen, Header, Text, Icon} from "@/components/ignite"
+import {Group} from "@/components/ui/Group"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {type ThemeType} from "@/contexts/ThemeContext"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {ThemedStyle} from "@/theme"
 
 export default function ThemeSettingsPage() {
-  const {theme, themed, setThemeContextOverride} = useAppTheme()
-  const [selectedTheme, setSelectedTheme] = useState<ThemeType>("system")
-  const {replace} = useNavigationHistory()
+  const {theme, themed} = useAppTheme()
+  const {goBack} = useNavigationHistory()
 
-  useEffect(() => {
-    // Load saved theme preference
-    loadSetting(SETTINGS_KEYS.THEME_PREFERENCE, "system").then(savedTheme => {
-      setSelectedTheme(savedTheme as ThemeType)
-    })
-  }, [])
+  const [themePreference, setThemePreference] = useSetting(SETTINGS.theme_preference.key)
 
   const handleThemeChange = async (newTheme: ThemeType) => {
-    setSelectedTheme(newTheme)
-    await saveSetting(SETTINGS_KEYS.THEME_PREFERENCE, newTheme)
-
-    // Apply theme immediately
-    if (newTheme === "system") {
-      setThemeContextOverride(undefined)
-    } else {
-      setThemeContextOverride(newTheme)
-    }
+    await setThemePreference(newTheme)
   }
 
-  const renderThemeOption = (themeKey: ThemeType, label: string, subtitle?: string, isLast: boolean = false) => (
-    <>
-      <TouchableOpacity
-        style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 8}}
-        onPress={() => handleThemeChange(themeKey)}>
-        <View style={{flexDirection: "column", gap: 4}}>
-          <Text text={label} style={{color: theme.colors.text}} />
-          {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
-        </View>
-        <MaterialCommunityIcons
-          name="check"
-          size={24}
-          color={selectedTheme === themeKey ? theme.colors.checkmark || theme.colors.palette.primary300 : "transparent"}
-        />
-      </TouchableOpacity>
-      {/* @ts-ignore */}
-      {!isLast && (
-        <View
-          style={{
-            height: StyleSheet.hairlineWidth,
-            backgroundColor: theme.colors.palette.neutral300,
-            marginVertical: 4,
-          }}
-        />
+  const renderThemeOption = (themeKey: ThemeType, label: string, subtitle?: string, style?: ViewStyle) => (
+    <TouchableOpacity style={[themed($settingsItem), style]} onPress={() => handleThemeChange(themeKey)}>
+      <View style={{flexDirection: "column", gap: 4}}>
+        <Text text={label} style={{color: theme.colors.text}} />
+        {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
+      </View>
+      {themePreference === themeKey ? (
+        <Icon name="check" size={24} color={theme.colors.primary} />
+      ) : (
+        <Icon name="check" size={24} color={theme.colors.primary_foreground} />
       )}
-    </>
+    </TouchableOpacity>
   )
 
   return (
-    <Screen preset="scroll" style={{paddingHorizontal: 20}}>
-      <Header title="Theme Settings" leftIcon="caretLeft" onLeftPress={() => replace("/(tabs)/settings")} />
-
-      <View style={themed($settingsGroup)}>
-        {renderThemeOption("light", "Light Theme", undefined, false)}
-        {renderThemeOption("dark", "Dark Theme", undefined, false)}
-        {renderThemeOption("system", "System Default", undefined, true)}
-      </View>
+    <Screen preset="fixed">
+      <Header title="Theme Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <ScrollView className="pt-6">
+        <Group>
+          {renderThemeOption("light", "Light Theme", undefined)}
+          {renderThemeOption("dark", "Dark Theme", undefined)}
+          {renderThemeOption("system", "System Default", undefined)}
+        </Group>
+      </ScrollView>
     </Screen>
   )
 }
 
-const $settingsGroup: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  paddingVertical: 12,
-  paddingHorizontal: 16,
-  borderRadius: 12,
-  marginTop: 16,
-  borderWidth: spacing.xxxs,
-  borderColor: colors.border,
+const $settingsItem: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "space-between",
+  paddingVertical: spacing.s5,
+  paddingHorizontal: spacing.s6,
+  backgroundColor: colors.primary_foreground,
+  alignItems: "center",
 })
 
 const $subtitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   color: colors.textDim,
-  fontSize: spacing.sm,
+  fontSize: spacing.s3,
 })

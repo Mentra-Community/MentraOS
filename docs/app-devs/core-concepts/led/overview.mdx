@@ -1,0 +1,126 @@
+---
+title: LED Control
+description: Overview of RGB LED control on smart glasses for notifications, status indicators, and user feedback in MentraOS apps.
+icon: lightbulb
+---
+
+Learn how to use **RGB LEDs** on smart glasses to provide visual feedback, notifications, and status indicators in your MentraOS apps.
+
+LEDs provide immediate visual feedback to users and can indicate app status, notifications, or recording states. Different smart glasses models have different LED configurations - some have RGB LEDs, others only white LEDs, and some have no LEDs at all.
+
+---
+
+## 📖 Detailed Documentation
+
+For complete method documentation, examples, and advanced usage patterns, see the **[LED Manager API Reference](/reference/managers/led-manager)**.
+
+---
+
+## Quick Start
+
+```typescript
+import { AppServer, AppSession } from "@mentra/sdk";
+
+class LEDApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
+    // Always check LED capabilities first
+    if (!session.capabilities?.hasLight) {
+      session.layouts.showTextWall("No LED support on this device");
+      return;
+    }
+
+    // Basic LED control
+    await session.led.turnOn({ color: 'red', ontime: 2000 });
+
+    // LED patterns
+    await session.led.blink('green', 500, 500, 3);
+    await session.led.solid('white', 5000);
+
+    // Turn off LEDs
+    await session.led.turnOff();
+  }
+}
+```
+
+---
+
+## Key Features
+
+### ✅ Device Capability Checking
+Always check `session.capabilities?.hasLight` before using LED features to ensure compatibility across different devices.
+
+### ✅ Multiple Control Methods
+- **Low-level**: `turnOn()`, `turnOff()` for precise control
+- **Patterns**: `blink()`, `solid()` for common behaviors
+- **Capabilities**: `getCapabilities()` to query available LEDs
+
+### ✅ Available Colors
+- `red`, `green`, `blue`, `orange`, `white`
+
+### ✅ Fire-and-Forget Operation
+LED commands resolve immediately after sending - no waiting for responses.
+
+---
+
+## Device Compatibility
+
+| Device | LED Support | LED Types | Colors Available |
+|--------|-------------|-----------|-------------------|
+| **Mentra Live** | ✅ Yes | RGB + White | All colors |
+| **Even Realities G1** | ❌ No | None | N/A |
+| **Vuzix Z100** | ❌ No | None | N/A |
+
+---
+
+## Common Use Cases
+
+### Notifications
+```typescript
+// Success notification
+await session.led.blink('green', 500, 500, 2);
+
+// Error notification
+await session.led.blink('red', 500, 500, 3);
+
+// Info notification
+await session.led.blink('blue', 300, 300, 1);
+```
+
+### Status Indicators
+```typescript
+// Recording indicator
+await session.led.solid('white', 30000);
+
+// Processing status
+await session.led.blink('orange', 200, 200, 10);
+
+// Turn off LEDs
+await session.led.turnOff();
+```
+
+### Graceful Fallbacks
+```typescript
+if (!session.capabilities?.hasLight) {
+  // Use display instead
+  session.layouts.showTextWall("📱 Notification");
+  // Or audio feedback
+  await session.audio.speak("Notification received");
+}
+```
+
+---
+
+## Best Practices
+
+1. **Always check capabilities** before using LED features
+2. **Use semantic colors** (green=success, red=error, blue=info)
+3. **Provide fallbacks** for devices without LEDs
+4. **Don't overuse** - brief, meaningful feedback is best
+5. **Combine with other feedback** methods when appropriate
+
+---
+
+## Next Steps
+
+- 📖 **[LED Manager API Reference](/reference/managers/led-manager)** - Complete method documentation and examples
+- 🔧 **Device Capabilities**: [Capabilities](/capabilities) - Check LED hardware support

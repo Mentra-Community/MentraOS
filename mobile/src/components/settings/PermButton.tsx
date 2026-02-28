@@ -1,8 +1,8 @@
+import {TouchableOpacity, View, ViewStyle, TextStyle} from "react-native"
+
+import {Icon, Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {useAppTheme} from "@/utils/useAppTheme"
-import React from "react"
-import {View, StyleSheet, Platform, ViewStyle, TextStyle} from "react-native"
-import {Button, Switch, Text} from "@/components/ignite"
 
 type ToggleSettingProps = {
   label: string
@@ -12,47 +12,49 @@ type ToggleSettingProps = {
   containerStyle?: ViewStyle
 }
 
-const PermissionButton: React.FC<ToggleSettingProps> = ({label, subtitle, value, onPress, containerStyle}) => {
+const PermissionButton: React.FC<ToggleSettingProps> = ({label, subtitle, value: _value, onPress, containerStyle}) => {
   const {theme, themed} = useAppTheme()
 
   return (
-    <View style={[themed($container), containerStyle]}>
+    <TouchableOpacity style={[themed($container), containerStyle]} onPress={onPress} activeOpacity={0.7}>
       <View style={themed($textContainer)}>
         <Text text={label} style={themed($label)} />
         {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
-      <Button style={themed($button)} tx="common:request" onPress={onPress} />
-    </View>
+      <View style={themed($iconContainer)}>
+        <Icon name="arrow-right" size={24} color={theme.colors.foreground} />
+      </View>
+    </TouchableOpacity>
   )
 }
 
-const $button: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  fontSize: spacing.xs,
-  width: 90,
-  padding: spacing.xs,
-  margin: 0,
-})
-
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing, borderRadius}) => ({
+const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
   alignItems: "center",
   width: "100%",
-  backgroundColor: colors.background,
-  paddingVertical: spacing.md,
-  paddingHorizontal: spacing.md,
-  borderRadius: borderRadius.md,
-  borderWidth: spacing.xxxs,
-  borderColor: colors.border,
+  backgroundColor: colors.backgroundAlt,
+  paddingVertical: spacing.s4,
+  paddingHorizontal: spacing.s4,
+  borderRadius: spacing.s4,
 })
 
-const $textContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
+const $textContainer: ThemedStyle<ViewStyle> = () => ({
   flexDirection: "column",
   alignItems: "flex-start",
   justifyContent: "flex-start",
   gap: 4,
   flex: 1,
-  marginRight: 16, // Add spacing between text and toggle
+  marginRight: 16,
+})
+
+const $iconContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+  backgroundColor: colors.background,
+  padding: spacing.s3,
+  width: spacing.s12,
+  height: spacing.s12,
+  borderRadius: spacing.s12,
+  alignItems: "center",
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors}) => ({

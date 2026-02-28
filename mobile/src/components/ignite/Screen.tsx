@@ -12,11 +12,11 @@ import {
   View,
   ViewStyle,
 } from "react-native"
+import {KeyboardAwareScrollView} from "react-native-keyboard-controller"
+
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {$styles} from "@/theme"
 import {ExtendedEdge, useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
-import {KeyboardAwareScrollView} from "react-native-keyboard-controller"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {LinearGradient} from "expo-linear-gradient"
 
 export const DEFAULT_BOTTOM_OFFSET = 50
 
@@ -179,7 +179,7 @@ function useAutoPreset(props: AutoScreenProps): {
  * @returns {JSX.Element} - The rendered `ScreenWithoutScrolling` component.
  */
 function ScreenWithoutScrolling(props: ScreenProps) {
-  const {style, contentContainerStyle, children, preset} = props
+  const {style, contentContainerStyle, children} = props
   return (
     <View style={[$outerStyle, style]}>
       <View style={[$innerStyle, /*preset === "fixed" && $justifyFlexEnd,*/ contentContainerStyle]}>{children}</View>
@@ -214,7 +214,7 @@ function ScreenWithScrolling(props: ScreenProps) {
       bottomOffset={keyboardBottomOffset}
       {...{keyboardShouldPersistTaps, scrollEnabled, ref}}
       {...ScrollViewProps}
-      onLayout={e => {
+      onLayout={(e) => {
         onLayout(e)
         ScrollViewProps?.onLayout?.(e)
       }}
@@ -251,53 +251,52 @@ export function Screen(props: ScreenProps) {
     statusBarStyle,
   } = props
 
-  const $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
+  let $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
   const {theme} = useAppTheme()
+  // const [debugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
 
-  const gradientColors = props.gradientColors ?? [colors.tabBarBackground1, colors.tabBarBackground2]
+  if (Platform.OS === "android") {
+    if (safeAreaEdges?.includes("top")) {
+      if ($containerInsets.paddingTop) {
+        $containerInsets.paddingTop += theme.spacing.s4
+      } else {
+        $containerInsets.paddingTop = theme.spacing.s4
+      }
+    }
+    if (safeAreaEdges?.includes("bottom")) {
+      if ($containerInsets.paddingBottom) {
+        $containerInsets.paddingBottom += theme.spacing.s6
+      } else {
+        $containerInsets.paddingBottom = theme.spacing.s6
+      }
+    }
+  }
 
   return (
-    <View style={[$containerStyle, {backgroundColor: backgroundColor || colors.background} /*, $containerInsets*/]}>
-      <LinearGradient
-        colors={gradientColors as [string, string]}
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          top: 0,
-          bottom: 0,
-        }}
-        start={{x: 0, y: 1}}
-        end={{x: 0, y: 0}}>
-        <View style={[$containerInsets, {flex: 1}]}>
-          <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />
-          <KeyboardAvoidingView
-            behavior={isIos ? "padding" : "height"}
-            keyboardVerticalOffset={keyboardOffset}
-            {...KeyboardAvoidingViewProps}
-            style={[$styles.flex1, KeyboardAvoidingViewProps?.style]}>
-            {isNonScrolling(props.preset) ? <ScreenWithoutScrolling {...props} /> : <ScreenWithScrolling {...props} />}
-          </KeyboardAvoidingView>
-        </View>
-      </LinearGradient>
+    <View
+      style={[
+        {paddingHorizontal: theme.spacing.s6},
+        {backgroundColor: backgroundColor || colors.background},
+        {...$containerInsets},
+        {flex: 1},
+      ]}>
+      <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />
+      <KeyboardAvoidingView
+        behavior={isIos ? "padding" : "height"}
+        keyboardVerticalOffset={keyboardOffset}
+        {...KeyboardAvoidingViewProps}
+        style={[$styles.flex1, KeyboardAvoidingViewProps?.style]}>
+        {isNonScrolling(props.preset) ? <ScreenWithoutScrolling {...props} /> : <ScreenWithScrolling {...props} />}
+      </KeyboardAvoidingView>
+      {/* {debugCoreStatusBarEnabled && <CoreStatusBar />} */}
     </View>
   )
-}
-
-const $containerStyle: ViewStyle = {
-  flex: 1,
-  height: "100%",
-  width: "100%",
 }
 
 const $outerStyle: ViewStyle = {
   flex: 1,
   height: "100%",
   width: "100%",
-}
-
-const $justifyFlexEnd: ViewStyle = {
-  justifyContent: "flex-end",
 }
 
 const $innerStyle: ViewStyle = {

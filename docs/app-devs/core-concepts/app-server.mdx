@@ -1,0 +1,236 @@
+---
+title: "AppServer"
+description: "The core server class that powers your MentraOS app"
+icon: "server"
+---
+
+Every MentraOS app extends the `AppServer` class. It handles webhooks, manages WebSocket connections, and routes sessions to your code.
+
+## Basic Setup
+
+```typescript
+import { AppServer, AppSession } from '@mentraos/sdk';
+
+class MyApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    // Your app logic goes here
+  }
+}
+```
+
+## What AppServer Does
+
+| Responsibility | Details |
+|----------------|---------|
+| **HTTP Server** | Listens for webhooks from MentraOS Cloud |
+| **WebSocket Client** | Maintains connection to MentraOS Cloud |
+| **Session Manager** | Creates `AppSession` for each user connection |
+| **Lifecycle Handler** | Calls `onSession()` and `onStop()` at appropriate times |
+
+## Configuration
+
+```typescript
+const server = new MyApp({
+  packageName: 'com.example.myapp',    // From developer console
+  apiKey: process.env.API_KEY,          // From developer console
+  port: 3000,                            // Your server port
+  webhookPath: '/webhook',               // Optional, defaults to '/webhook'
+  mentraOSWebsocketUrl: 'wss://...'     // Optional, defaults to production
+});
+```
+
+### Required Settings
+
+<AccordionGroup>
+  <Accordion title="packageName" icon="tag">
+    **Unique identifier for your app.** 
+    
+    - Format: Reverse domain notation (e.g., `com.company.appname`)
+    - Set in [Developer Console](https://console.mentra.glass/apps)
+    - Used to route sessions to your app
+  </Accordion>
+
+  <Accordion title="apiKey" icon="key">
+    **Secret key for authentication.**
+    
+    - Generated in Developer Console
+    - Authenticates your server with MentraOS Cloud
+    - Store in environment variables, never hardcode
+    
+    ```typescript
+    apiKey: process.env.MENTRAOS_API_KEY  // ✅ Good
+    apiKey: 'sk_live_abc123...'           // ❌ Never do this
+    ```
+  </Accordion>
+
+  <Accordion title="port" icon="network-wired">
+    **HTTP port for webhook server.**
+    
+    - Your server listens on this port
+    - MentraOS Cloud sends webhooks here
+    - Must be accessible from the internet (production)
+  </Accordion>
+</AccordionGroup>
+
+## Getting Credentials
+
+1. Go to [Developer Console](https://console.mentra.glass/apps)
+2. Create or select your app
+3. **Package Name**: Set during app creation (e.g., `com.example.myapp`)
+4. **API Key**: Click "Generate API Key" or copy existing key
+
+<Warning>
+**Keep your API key secret!** Anyone with your API key can impersonate your app.
+</Warning>
+
+## Starting Your Server
+
+```typescript
+// Create server instance
+const server = new MyApp({
+  packageName: 'com.example.myapp',
+  apiKey: process.env.API_KEY,
+  port: 3000
+});
+
+// Start listening
+server.start();
+console.log('Server running on port 3000');
+```
+
+The server now:
+- Listens for webhooks on `http://localhost:3000/webhook`
+- Connects to MentraOS Cloud via WebSocket
+- Waits for users to start your app
+
+## Multiple Users
+
+AppServer handles many users simultaneously. Each user gets their own `AppSession`:
+
+```typescript
+class MyApp extends AppServer {
+  private activeSessions = new Map<string, AppSession>();
+
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    // Each user gets their own session
+    this.activeSessions.set(sessionId, session);
+    
+    session.layouts.showTextWall(`Active users: ${this.activeSessions.size}`);
+  }
+
+  protected async onStop(sessionId: string, userId: string, reason: string) {
+    this.activeSessions.delete(sessionId);
+  }
+}
+```
+
+Each user has:
+- Unique `sessionId`
+- Separate `AppSession` instance
+- Isolated event subscriptions
+- Independent state
+
+## Key Methods
+
+### `onSession()` (Required)
+
+Called when a user starts your app:
+
+```typescript
+protected async onSession(
+  session: AppSession,  // Interface to this user's session
+  sessionId: string,    // Unique session ID
+  userId: string        // User's ID
+): Promise<void> {
+  // Set up subscriptions, show initial UI
+}
+```
+
+### `onStop()` (Optional)
+
+Called when a session ends:
+
+```typescript
+protected async onStop(
+  sessionId: string,  // Session that ended
+  userId: string,     // User who disconnected
+  reason: string      // Why it ended
+): Promise<void> {
+  // Clean up resources, save state
+}
+```
+
+### `onToolCall()` (Optional)
+
+Called when AI assistant invokes your app's tools:
+
+```typescript
+protected async onToolCall(
+  toolName: string,
+  args: any,
+  userId: string
+): Promise<any> {
+  // Execute AI-requested action
+  // Return result to AI
+}
+```
+
+<Info>
+Tool calls happen outside of active sessions. Learn more in [AI Tools](/tools).
+</Info>
+
+## Complete Example
+
+```typescript
+import { AppServer, AppSession } from '@mentraos/sdk';
+
+class WeatherApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    session.logger.info(`User ${userId} connected`);
+    
+    // Show welcome message
+    session.layouts.showTextWall('Weather App Ready');
+    
+    // Listen for voice commands
+    session.events.onTranscription((data) => {
+      if (data.isFinal && data.text.includes('weather')) {
+        this.showWeather(session);
+      }
+    });
+  }
+
+  protected async onStop(sessionId: string, userId: string, reason: string) {
+    console.log(`Session ended: ${reason}`);
+  }
+
+  private async showWeather(session: AppSession) {
+    session.layouts.showReferenceCard('Weather', 'Sunny, 72°F');
+  }
+}
+
+// Start server
+const server = new WeatherApp({
+  packageName: 'com.example.weather',
+  apiKey: process.env.MENTRAOS_API_KEY!,
+  port: 3000
+});
+
+server.start();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="AppSession" icon="plug" href="/app-devs/core-concepts/app-session/app-session">
+    Work with user sessions
+  </Card>
+  <Card title="App Lifecycle" icon="arrows-rotate" href="/app-devs/core-concepts/app-lifecycle-overview">
+    Understand the full lifecycle
+  </Card>
+  <Card title="API Reference" icon="book" href="/app-devs/reference/app-server">
+    Complete AppServer documentation
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/app-devs/getting-started/quickstart">
+    Build your first app
+  </Card>
+</CardGroup>

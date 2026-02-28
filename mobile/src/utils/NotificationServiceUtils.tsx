@@ -1,64 +1,64 @@
-import {Alert, NativeModules, Platform} from "react-native"
-import showAlert from "./AlertUtils"
+import {Linking, Platform} from "react-native"
 
-const {NotificationAccess} = NativeModules
+import showAlert from "@/utils/AlertUtils"
 
-export async function checkNotificationAccessSpecialPermission() {
+import CoreModule from "core"
+
+export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<boolean> {
   if (Platform.OS !== "android") {
     return false
   }
 
-  return await NotificationAccess.hasNotificationAccess()
-}
-
-export async function checkAndRequestNotificationAccessSpecialPermission() {
-  if (Platform.OS !== "android") {
-    return
+  let hasAccess = await CoreModule.hasNotificationListenerPermission()
+  if (hasAccess) {
+    console.log("Notification access already granted")
+    return true
   }
 
-  try {
-    const hasAccess = await NotificationAccess.hasNotificationAccess()
-    if (!hasAccess) {
-      await showAlert(
-        "Enable Notification Access",
-        "MentraOS needs permission to read your phone notifications to display them on your smart glasses.\n\n" +
-          "On the next screen:\n" +
-          '1. Find "MentraOS" in the list\n' +
-          '2. Toggle the switch to "on"\n' +
-          '3. Tap "Allow" when prompted',
-        [
-          {
-            text: "Later",
-            style: "cancel",
+  return await new Promise<boolean>((resolve) => {
+    // useFocusEffect(
+    //   useCallback(() => {
+    //     // let hasAccess = await CoreModule.hasNotificationListenerPermission()
+    //     // if (hasAccess) {
+    //     //   console.log("Notification access already granted")
+    //     //   return true
+    //     // }
+
+    //     resolve(CoreModule.hasNotificationListenerPermission())
+    //     return async () => {}
+    //   }, []),
+    // )
+    showAlert(
+      "Enable Notification Access",
+      "MentraOS needs permission to read your phone notifications to display them on your smart glasses.\n\n" +
+        "On the next screen:\n" +
+        '1. Find "MentraOS" in the list\n' +
+        '2. Toggle the switch to "on"\n' +
+        '3. Tap "Allow" when prompted',
+      [
+        {
+          text: "Later",
+          style: "cancel",
+          onPress: () => {
+            resolve(false)
           },
-          {
-            text: "Go to Settings",
-            onPress: () => {
-              NotificationAccess.requestNotificationAccess()
-                .then(() => {
-                  console.log("Notification access settings opened successfully")
-                })
-                .catch((err: any) => {
-                  console.error("Error opening notification settings:", err)
-                  showAlert(
-                    "Error",
-                    "Could not open notification settings. Please enable notification access manually in your device settings.",
-                    [{text: "OK"}],
-                  )
-                })
-            },
+        },
+        {
+          text: "Go to Settings",
+          onPress: async () => {
+            Linking.sendIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").catch((err: any) => {
+              console.error("Error opening notification settings:", err)
+              showAlert(
+                "Error",
+                "Could not open notification settings. Please enable notification access manually in your device settings.",
+                [{text: "OK"}],
+              )
+            })
+            // resolve(false)
           },
-        ],
-        {cancelable: true},
-      )
-    } else {
-      console.log("Notification access already granted")
-      return true
-    }
-    return false
-  } catch (error) {
-    console.error("Failed to check notification listener permission:", error)
-    showAlert("Error", "There was a problem checking notification permissions. Please try again later.", [{text: "OK"}])
-    return false
-  }
+        },
+      ],
+      {cancelable: true},
+    )
+  })
 }

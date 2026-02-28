@@ -1,30 +1,33 @@
-import React, {useState, useEffect} from "react"
-import {
-  View,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-  ActivityIndicator,
-  ScrollView,
-  ImageStyle,
-  TextStyle,
-  ViewStyle,
-} from "react-native"
-import {supabase} from "@/supabase/supabaseClient"
-import Icon from "react-native-vector-icons/FontAwesome"
-import RestComms from "@/managers/RestComms"
+import {useState, useEffect} from "react"
+import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal} from "react-native"
+import Svg, {Path} from "react-native-svg"
+
+import {Header, Screen, Text} from "@/components/ignite"
+import {Group} from "@/components/ui/Group"
+import {RouteButton} from "@/components/ui/RouteButton"
+import {Spacer} from "@/components/ui/Spacer"
 import {useAuth} from "@/contexts/AuthContext"
-import {Button, Header, Screen, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle} from "@/theme"
-import {router} from "expo-router"
-import {translate} from "@/i18n"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import ActionButton from "@/components/ui/ActionButton"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
+import restComms from "@/services/RestComms"
+import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {LogoutUtils} from "@/utils/LogoutUtils"
-import restComms from "@/managers/RestComms"
+import mentraAuth from "@/utils/auth/authClient"
+
+// Default user icon component for profile pictures
+const DefaultUserIcon = ({size = 100, color = "#999"}: {size?: number; color?: string}) => {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M12 12C14.7614 12 17 9.76142 17 7C17 4.23858 14.7614 2 12 2C9.23858 2 7 4.23858 7 7C7 9.76142 9.23858 12 12 12Z"
+        fill={color}
+      />
+      <Path d="M12 14C6.47715 14 2 17.5817 2 22H22C22 17.5817 17.5228 14 12 14Z" fill={color} />
+    </Svg>
+  )
+}
 
 export default function ProfileSettingsPage() {
   const [userData, setUserData] = useState<{
@@ -35,41 +38,41 @@ export default function ProfileSettingsPage() {
     provider: string | null
   } | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
+  const [isSigningOut, setIsSigningOut] = useState(false)
 
-  const {goBack, push} = useNavigationHistory()
+  const {goBack, push, replace} = useNavigationHistory()
+  const {logout} = useAuth()
 
   useEffect(() => {
     const fetchUserData = async () => {
       setLoading(true)
-      try {
-        const {
-          data: {user},
-          error,
-        } = await supabase.auth.getUser()
-        if (error) {
-          console.error(error)
-          setUserData(null)
-        } else if (user) {
-          const fullName = user.user_metadata?.full_name || user.user_metadata?.name || null
-          const avatarUrl = user.user_metadata?.avatar_url || user.user_metadata?.picture || null
-          const email = user.email || null
-          const createdAt = user.created_at || null
-          const provider = user.app_metadata?.provider || null
-
-          setUserData({
-            fullName,
-            avatarUrl,
-            email,
-            createdAt,
-            provider,
-          })
-        }
-      } catch (error) {
-        console.error(error)
+      const res = await mentraAuth.getUser()
+      if (res.is_error()) {
+        console.error(res.error)
         setUserData(null)
-      } finally {
-        setLoading(false)
+        return
       }
+      const user = res.value
+      if (!user) {
+        setUserData(null)
+        setLoading(false)
+        return
+      }
+
+      const fullName = user.name || null
+      const avatarUrl = user.avatarUrl || null
+      const email = user.email || null
+      const createdAt = user.createdAt || null
+      const provider = user.provider || null
+
+      setUserData({
+        fullName,
+        avatarUrl,
+        email,
+        createdAt,
+        provider,
+      })
+      setLoading(false)
     }
 
     fetchUserData()
@@ -83,6 +86,11 @@ export default function ProfileSettingsPage() {
   const handleChangePassword = () => {
     console.log("Profile: Navigating to change password screen")
     push("/settings/change-password")
+  }
+
+  const handleChangeEmail = () => {
+    console.log("Profile: Navigating to change email screen")
+    push("/settings/change-email")
   }
 
   const handleDeleteAccount = () => {
@@ -145,19 +153,17 @@ export default function ProfileSettingsPage() {
     console.log("Profile: User confirmed account deletion - proceeding")
 
     let deleteRequestSuccessful = false
-    let errorMessage = ""
 
-    try {
-      console.log("Profile: Requesting account deletion from server")
-      const response = await restComms.requestAccountDeletion()
+    console.log("Profile: Requesting account deletion from server")
+    const result = await restComms.requestAccountDeletion()
 
-      // Check if the response indicates success
-      deleteRequestSuccessful = response && (response.success === true || response.status === "success")
-      console.log("Profile: Account deletion request successful:", deleteRequestSuccessful)
-    } catch (error) {
-      console.error("Profile: Error requesting account deletion:", error)
+    // Check if the result indicates success
+    if (result.is_ok()) {
+      deleteRequestSuccessful = true
+      console.log("Profile: Account deletion request successful")
+    } else {
+      console.error("Profile: Error requesting account deletion:", result.error)
       deleteRequestSuccessful = false
-      errorMessage = error instanceof Error ? error.message : String(error)
     }
 
     // Always perform logout regardless of deletion request success
@@ -178,7 +184,7 @@ export default function ProfileSettingsPage() {
         [
           {
             text: translate("common:ok"),
-            onPress: () => router.replace("/"),
+            onPress: () => replace("/"),
           },
         ],
         {cancelable: false},
@@ -190,7 +196,7 @@ export default function ProfileSettingsPage() {
         [
           {
             text: translate("common:ok"),
-            onPress: () => router.replace("/"),
+            onPress: () => replace("/"),
           },
         ],
         {cancelable: false},
@@ -198,118 +204,144 @@ export default function ProfileSettingsPage() {
     }
   }
 
+  const handleSignOut = async () => {
+    try {
+      console.log("Profile: Starting sign-out process")
+      setIsSigningOut(true)
+
+      await logout()
+
+      console.log("Profile: Logout completed, navigating to login")
+
+      // Reset the loading state before navigation
+      setIsSigningOut(false)
+
+      // Navigate to Login screen directly instead of SplashScreen
+      // This ensures we skip the SplashScreen logic that might detect stale user data
+      replace("/")
+    } catch (err) {
+      console.error("Profile: Error during sign-out:", err)
+      setIsSigningOut(false)
+
+      // Show user-friendly error but still navigate to login to prevent stuck state
+      showAlert(translate("common:error"), translate("settings:signOutError"), [
+        {
+          text: translate("common:ok"),
+          onPress: () => replace("/"),
+        },
+      ])
+    }
+  }
+
+  const confirmSignOut = () => {
+    showAlert(
+      translate("common:logOut"),
+      translate("settings:signOutConfirm"),
+      [
+        {text: translate("common:cancel"), style: "cancel"},
+        {text: translate("common:yes"), onPress: handleSignOut},
+      ],
+      {cancelable: false},
+    )
+  }
+
   const {theme, themed} = useAppTheme()
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}}>
-      <Header title={translate("profileSettings:title")} leftIcon="caretLeft" onLeftPress={goBack} />
+    <Screen preset="fixed">
+      <Header title={translate("profileSettings:title")} leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView>
         {loading ? (
-          <ActivityIndicator size="large" color={theme.colors.palette.primary500} />
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
         ) : userData ? (
           <>
-            {userData.avatarUrl ? (
-              <Image source={{uri: userData.avatarUrl}} style={themed($profileImage)} />
-            ) : (
-              <View style={themed($profilePlaceholder)}>
-                <Text tx="profileSettings:noProfilePicture" style={themed($profilePlaceholderText)} />
-              </View>
-            )}
-
-            <View style={themed($infoContainer)}>
-              <Text tx="profileSettings:name" style={themed($label)} />
-              <Text text={userData.fullName || "N/A"} style={themed($infoText)} />
-            </View>
-
-            <View style={themed($infoContainer)}>
-              <Text tx="profileSettings:email" style={themed($label)} />
-              <Text text={userData.email || "N/A"} style={themed($infoText)} />
-            </View>
-
-            <View style={themed($infoContainer)}>
-              <Text tx="profileSettings:createdAt" style={themed($label)} />
-              <Text
-                text={userData.createdAt ? new Date(userData.createdAt).toLocaleString() : "N/A"}
-                style={themed($infoText)}
-              />
-            </View>
-
-            <View style={{gap: theme.spacing.md, marginTop: theme.spacing.lg}}>
-              {userData.provider == "email" && (
-                <ActionButton
-                  label={translate("profileSettings:changePassword")}
-                  variant="default"
-                  onPress={handleChangePassword}
-                />
+            <View style={themed($profileSection)}>
+              {userData.avatarUrl ? (
+                <Image source={{uri: userData.avatarUrl}} style={themed($profileImage)} />
+              ) : (
+                <View style={themed($profilePlaceholder)}>
+                  <DefaultUserIcon size={60} color={theme.colors.textDim} />
+                </View>
               )}
-
-              <ActionButton
-                label={translate("profileSettings:requestDataExport")}
-                variant="default"
-                onPress={handleRequestDataExport}
-              />
-
-              <ActionButton
-                label={translate("profileSettings:deleteAccount")}
-                variant="destructive"
-                onPress={handleDeleteAccount}
-              />
             </View>
+
+            <Group>
+              <RouteButton label={translate("profileSettings:name")} text={userData.fullName || "N/A"} />
+              <RouteButton label={translate("profileSettings:email")} text={userData.email || "N/A"} />
+              <RouteButton
+                label={translate("profileSettings:createdAt")}
+                text={userData.createdAt ? new Date(userData.createdAt).toLocaleString() : "N/A"}
+              />
+            </Group>
+
+            <Spacer height={theme.spacing.s6} />
+
+            <Group title={translate("account:appSettings")}>
+              {/* Show password/email options only for email/password users (not OAuth) */}
+              {userData.provider !== "google" && userData.provider !== "apple" && (
+                <RouteButton label={translate("profileSettings:changePassword")} onPress={handleChangePassword} />
+              )}
+              {userData.provider !== "google" && userData.provider !== "apple" && (
+                <RouteButton label={translate("profileSettings:changeEmail")} onPress={handleChangeEmail} />
+              )}
+              <RouteButton label={translate("profileSettings:requestDataExport")} onPress={handleRequestDataExport} />
+              <RouteButton
+                label={translate("profileSettings:deleteAccount")}
+                onPress={handleDeleteAccount}
+                preset="destructive"
+              />
+              <RouteButton label={translate("common:logOut")} onPress={confirmSignOut} preset="destructive" />
+            </Group>
           </>
         ) : (
-          <Text tx="profileSettings:errorGettingUserInfo" />
+          <>
+            {/* Sign out button - always available, even if user data fails to load */}
+            <RouteButton label={translate("common:logOut")} onPress={confirmSignOut} />
+            <Text tx="profileSettings:errorGettingUserInfo" />
+          </>
         )}
       </ScrollView>
+
+      {/* Loading overlay for sign out */}
+      <Modal visible={isSigningOut} transparent={true} animationType="fade">
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0, 0, 0, 0.7)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}>
+          <View
+            style={{
+              backgroundColor: theme.colors.background,
+              padding: theme.spacing.s8,
+              borderRadius: theme.spacing.s4,
+              alignItems: "center",
+              minWidth: 200,
+            }}>
+            <ActivityIndicator size="large" color={theme.colors.foreground} style={{marginBottom: theme.spacing.s4}} />
+            <Text preset="bold" style={{color: theme.colors.text}}>
+              {translate("settings:loggingOutMessage")}
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   )
 }
 
-const $label: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontWeight: "bold",
-  fontSize: 16,
-  color: colors.text,
+const $profileSection: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  flexDirection: "row",
+  justifyContent: "center",
+  paddingHorizontal: spacing.s4,
+  paddingTop: spacing.s4,
+  paddingBottom: spacing.s6,
 })
 
-const $container: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.background,
-  flex: 1,
-})
-
-const $contentContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.background,
-  flex: 1,
-})
-
-const $header: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.background,
-  flex: 1,
-})
-
-const darkHeader: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.background,
-  flex: 1,
-})
-
-const $deleteAccountButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.palette.angry500,
-})
-
-const $requestDataExportButton: ThemedStyle<ViewStyle> = ({colors}) => ({})
-
-const $requestDataExportButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.palette.primary500,
-})
-
-const $deleteAccountButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.palette.primary500,
-})
-
-const $profileImage: ThemedStyle<ImageStyle> = ({colors}) => ({
+const $profileImage: ThemedStyle<ImageStyle> = () => ({
   width: 100,
   height: 100,
   borderRadius: 50,
-  alignSelf: "center",
-  marginBottom: 20,
 })
 
 const $profilePlaceholder: ThemedStyle<ViewStyle> = ({colors}) => ({
@@ -318,64 +350,5 @@ const $profilePlaceholder: ThemedStyle<ViewStyle> = ({colors}) => ({
   borderRadius: 50,
   justifyContent: "center",
   alignItems: "center",
-  alignSelf: "center",
-  marginBottom: 20,
-})
-
-const $profilePlaceholderText: ThemedStyle<TextStyle> = ({colors}) => ({
-  textAlign: "center",
-  color: colors.text,
-})
-
-const $infoContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
-  marginBottom: 15,
-})
-
-const $infoText: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 16,
-  marginTop: 4,
-  color: colors.text,
-})
-
-const $headerContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "space-between",
-  marginBottom: 20,
-})
-
-const $backButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  flexDirection: "row",
-  alignItems: "center",
-  width: 60,
-})
-
-const $backButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  marginLeft: 5,
-  fontSize: 16,
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 24,
-  fontWeight: "bold",
-  textAlign: "center",
-})
-
-const $lightProfilePlaceholder: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.palette.lightGray,
-})
-
-const $darkProfilePlaceholder: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.palette.gray800,
-})
-
-const $navigationBarContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
-  position: "absolute",
-  bottom: 0,
-  left: 0,
-  right: 0,
-})
-
-const $inputIcon: ThemedStyle<ViewStyle> = ({colors}) => ({
-  marginRight: 12,
+  backgroundColor: colors.border,
 })

@@ -3,6 +3,7 @@
 ## 1. Download Retry Strategy
 
 ### Current Issue
+
 No retry logic - if download fails, it just stops.
 
 ### Proposed Implementation
@@ -16,7 +17,7 @@ private static final long[] RETRY_DELAYS = {30000, 60000, 120000}; // 30s, 1m, 2
 public boolean downloadApk(String urlStr, JSONObject json, Context context, String filename) {
     int retryCount = 0;
     Exception lastException = null;
-    
+
     while (retryCount < MAX_DOWNLOAD_RETRIES) {
         try {
             // Existing download logic...
@@ -26,18 +27,18 @@ public boolean downloadApk(String urlStr, JSONObject json, Context context, Stri
         } catch (Exception e) {
             lastException = e;
             Log.e(TAG, "Download attempt " + (retryCount + 1) + " failed", e);
-            
+
             // Clean up partial download
             File partialFile = new File(BASE_DIR, filename);
             if (partialFile.exists()) {
                 partialFile.delete();
             }
-            
+
             retryCount++;
             if (retryCount < MAX_DOWNLOAD_RETRIES) {
                 long delay = RETRY_DELAYS[Math.min(retryCount - 1, RETRY_DELAYS.length - 1)];
                 Log.i(TAG, "Retrying download in " + (delay / 1000) + " seconds...");
-                
+
                 try {
                     Thread.sleep(delay);
                 } catch (InterruptedException ie) {
@@ -47,10 +48,10 @@ public boolean downloadApk(String urlStr, JSONObject json, Context context, Stri
             }
         }
     }
-    
+
     Log.e(TAG, "Download failed after " + MAX_DOWNLOAD_RETRIES + " attempts", lastException);
     EventBus.getDefault().post(new DownloadProgressEvent(
-        DownloadProgressEvent.DownloadStatus.FAILED, 
+        DownloadProgressEvent.DownloadStatus.FAILED,
         "Failed after " + MAX_DOWNLOAD_RETRIES + " attempts"
     ));
     return false;
@@ -64,10 +65,10 @@ private void downloadWithDownloadManager(String url, String filename) {
     request.setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI);
     request.setTitle("OTA Update");
     request.setDescription("Downloading " + filename);
-    
+
     DownloadManager downloadManager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
     long downloadId = downloadManager.enqueue(request);
-    
+
     // Monitor download progress...
 }
 ```
@@ -75,6 +76,7 @@ private void downloadWithDownloadManager(String url, String filename) {
 ## 2. Storage Management Strategy
 
 ### Current Issue
+
 We create backups for every update, which will eventually fill up storage.
 
 ### Proposed Solution
@@ -92,12 +94,12 @@ private void createAppBackup(String packageName, Context context) {
             Log.w(TAG, "Low storage, cleaning up old files");
             cleanupOldFiles();
         }
-        
+
         // Rotate backups (keep only last 2)
         rotateBackups(packageName);
-        
+
         // Create new backup (existing code)...
-        
+
     } catch (Exception e) {
         Log.e(TAG, "Failed to create backup", e);
     }
@@ -113,23 +115,23 @@ private boolean hasEnoughStorage() {
 
 private void cleanupOldFiles() {
     File asgDir = new File(BASE_DIR);
-    
+
     // Delete old APK files (except backups)
-    File[] files = asgDir.listFiles((dir, name) -> 
-        name.endsWith(".apk") && 
+    File[] files = asgDir.listFiles((dir, name) ->
+        name.endsWith(".apk") &&
         !name.contains("backup") &&
         !name.equals("update.apk") &&
         !name.equals("ota_updater_update.apk")
     );
-    
+
     if (files != null) {
         // Sort by last modified (oldest first)
         Arrays.sort(files, (f1, f2) -> Long.compare(f1.lastModified(), f2.lastModified()));
-        
+
         // Delete oldest files until we have enough space
         for (File file : files) {
             if (hasEnoughStorage()) break;
-            
+
             Log.i(TAG, "Deleting old file: " + file.getName());
             file.delete();
         }
@@ -137,25 +139,25 @@ private void cleanupOldFiles() {
 }
 
 private void rotateBackups(String packageName) {
-    String backupBaseName = packageName.equals("com.augmentos.asg_client") 
+    String backupBaseName = packageName.equals("com.mentra.asg_client")
         ? "asg_client_backup"
         : "ota_updater_backup";
-    
+
     // Rename existing backups
     // backup.apk -> backup.1.apk
     // backup.1.apk -> backup.2.apk
     // Delete backup.2.apk if exists
-    
+
     File backup2 = new File(BASE_DIR, backupBaseName + ".2.apk");
     if (backup2.exists()) {
         backup2.delete();
     }
-    
+
     File backup1 = new File(BASE_DIR, backupBaseName + ".1.apk");
     if (backup1.exists()) {
         backup1.renameTo(backup2);
     }
-    
+
     File backup = new File(BASE_DIR, backupBaseName + ".apk");
     if (backup.exists()) {
         backup.renameTo(backup1);
@@ -165,10 +167,10 @@ private void rotateBackups(String packageName) {
 // Clean up after successful installation
 private void cleanupAfterInstall(String packageName) {
     // Delete the update APK after successful install
-    String filename = packageName.equals(context.getPackageName()) 
-        ? "ota_updater_update.apk" 
+    String filename = packageName.equals(context.getPackageName())
+        ? "ota_updater_update.apk"
         : "update.apk";
-    
+
     File updateFile = new File(BASE_DIR, filename);
     if (updateFile.exists()) {
         updateFile.delete();
@@ -185,7 +187,7 @@ private void cleanupAfterInstall(String packageName) {
 ├── ota_updater_update.apk        # Current OTA updater update (deleted after install)
 ├── asg_client_backup.apk         # Most recent ASG backup
 ├── asg_client_backup.1.apk       # Previous ASG backup
-├── ota_updater_backup.apk        # Most recent OTA backup  
+├── ota_updater_backup.apk        # Most recent OTA backup
 ├── ota_updater_backup.1.apk      # Previous OTA backup
 ├── ota_updater.apk           # Temporary (deleted after v2 deployed)
 └── metadata.json                 # Version tracking
@@ -206,7 +208,7 @@ For immediate implementation without major changes:
 if (downloadOk) {
     // Install
     installApk(context, apkFile.getAbsolutePath());
-    
+
     // Clean up download file after 30 seconds
     new Handler().postDelayed(() -> {
         if (apkFile.exists()) {
@@ -214,7 +216,7 @@ if (downloadOk) {
             Log.d(TAG, "Cleaned up update file: " + apkFile.getName());
         }
     }, 30000);
-    
+
     return true;
 }
 ```

@@ -1,22 +1,35 @@
 {
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "packages/*/*",
+    "websites/*"
   ],
+  "overrides": {
+    "@types/express": "4.17.21",
+    "@types/express-serve-static-core": "4.19.6"
+  },
   "scripts": {
-    "build": "cd packages/sdk && bun run build && cd ../utils && bun run build",
+    "build": "cd packages/types && bun run build && cd ../display-utils && bun run build && cd ../sdk && bun run build",
+    "build:console": "cd packages/types && bun run build && cd ../display-utils && bun run build && cd ../sdk && bun run build && cd ../.. && cd websites/console && bun run build",
+    "postinstall": "cd packages/types && bun run build && cd ../display-utils && bun run build && cd ../sdk && bun run build",
     "setup-deps": "bun install --no-link",
+    "start": "bun packages/cloud/src/index.ts",
     "dev": "bun run dev:stop && bun run dev:rebuild && docker compose -f docker-compose.dev.yml -p dev up",
     "dev:detached": "docker compose -f docker-compose.dev.yml -p dev up -d",
     "dev:rebuild": "docker compose -f docker-compose.dev.yml -p dev up -d --build --remove-orphans",
     "dev:stop": "docker compose -f docker-compose.dev.yml -p dev down --timeout 5 || docker kill $(docker ps -q)",
     "dev:clean": "docker compose -f docker-compose.dev.yml -p dev down -v && docker system prune -f",
     "logs": "docker compose -f docker-compose.dev.yml -p dev logs -f --tail=50",
+    "porter": "docker compose -f docker-compose.porter.local.yml up --build",
     "test": "bun run packages/cloud/src/tests/run-tests.ts",
     "test:bun": "bun test",
-    "ngrok:isaiah": "ngrok http --url=isaiah.augmentos.cloud 8002",
+    "console": "cd websites/console && bun run dev",
+    "store": "cd websites/store && bun run dev",
+    "ngrok:isaiah": "ngrok http --url=isaiah.augmentos.cloud 0.0.0.0:8002",
     "ngrok:isaiah2": "ngrok http --url=isaiah.mentra.glass 8002",
-    "ngrok:israelov": "ngrok http --url=israelovpuddle.ngrok.app 8002"
+    "ngrok:israelov": "ngrok http --url=israelovpuddle.ngrok.app 8002",
+    "captions": "bun run --cwd packages/apps/captions/ start"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.13",
@@ -30,6 +43,8 @@
     "@sentry/node": "^9.1.0",
     "@sentry/profiling-node": "^9.1.0",
     "@sentry/tracing": "^7.120.3",
+    "@types/react": "18.2.79",
+    "@types/react-dom": "18.2.25",
     "assemblyai": "^4.9.0",
     "axios": "^1.8.1",
     "cookie-parser": "^1.4.7",
@@ -40,6 +55,7 @@
     "pino-pretty": "^13.0.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
+    "tweetnacl": "^1.0.3",
     "tz-lookup": "^6.1.25",
     "uuid": "^11.1.0",
     "winston": "^3.17.0"
@@ -50,6 +66,7 @@
     "bun-types": "1.0.17",
     "concurrently": "^9.1.2",
     "eslint": "^9.20.1",
+    "eslint-plugin-import": "^2.32.0",
     "globals": "^15.15.0",
     "pm2": "^5.4.3",
     "tsx": "^4.19.3",

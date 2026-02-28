@@ -1,34 +1,28 @@
-import React, {useRef, useState, useCallback, useEffect, useMemo} from "react"
-import {View, StyleSheet, ActivityIndicator, BackHandler} from "react-native"
+import {useFocusEffect} from "@react-navigation/native"
+import {useLocalSearchParams} from "expo-router"
+import {useState, useCallback, useMemo, useEffect} from "react"
+import {View, ViewStyle, ActivityIndicator, BackHandler, TextStyle} from "react-native"
 import {WebView} from "react-native-webview"
-import Config from "react-native-config"
-import InternetConnectionFallbackComponent from "@/components/misc/InternetConnectionFallbackComponent"
-import {RouteProp, useFocusEffect} from "@react-navigation/native"
-import {RootStackParamList} from "@/components/misc/types"
-import {useAppStatus} from "@/contexts/AppletStatusProvider"
-import {useAppStoreWebviewPrefetch} from "@/contexts/AppStoreWebviewPrefetchProvider"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {useLocalSearchParams, router} from "expo-router"
-import {Text, Screen, Header} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 
-// Define package name for the store webview
-const STORE_PACKAGE_NAME = "org.augmentos.store"
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {Text, Screen, Header} from "@/components/ignite"
+import InternetConnectionFallbackComponent from "@/components/ui/InternetConnectionFallbackComponent"
+import {useAppStoreWebviewPrefetch} from "@/contexts/AppStoreContext"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {useRefreshApplets} from "@/stores/applets"
+import {ThemedStyle} from "@/theme"
 
 export default function AppStoreWeb() {
-  const [webviewLoading, setWebviewLoading] = useState(true)
+  const [_webviewLoading, setWebviewLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
-  // const packageName = route?.params?.packageName;
   const {packageName} = useLocalSearchParams()
   const [canGoBack, setCanGoBack] = useState(false)
+  const [isAuthReady, setIsAuthReady] = useState(false)
   const {push} = useNavigationHistory()
-  const {
-    appStoreUrl,
-    webviewLoading: prefetchedWebviewLoading,
-    webViewRef: prefetchedWebviewRef,
-  } = useAppStoreWebviewPrefetch()
-  const {refreshAppStatus} = useAppStatus()
+  const {appStoreUrl, webViewRef: prefetchedWebviewRef} = useAppStoreWebviewPrefetch()
+  const refreshApplets = useRefreshApplets()
   const {theme, themed} = useAppTheme()
 
   // Construct the final URL with packageName if provided
@@ -47,24 +41,20 @@ export default function AppStoreWeb() {
     return url.toString()
   }, [appStoreUrl, packageName])
 
-  // Theme colors - using theme system instead of hardcoded values
-  const theme2 = {
-    backgroundColor: theme.colors.background,
-    headerBg: theme.colors.background,
-    textColor: theme.colors.text,
-    secondaryTextColor: theme.colors.textDim,
-    borderColor: theme.colors.border,
-    buttonBg: theme.colors.palette.gray200,
-    buttonTextColor: theme.colors.text,
-    primaryColor: theme.colors.palette.blue500,
-  }
+  // Reset auth ready state when URL changes (e.g., new tokens, theme change)
+  useEffect(() => {
+    setIsAuthReady(false)
+  }, [finalUrl])
 
-  // Handle WebView loading events
-  const handleLoadStart = () => setWebviewLoading(true)
-  const handleLoadEnd = () => {
-    setWebviewLoading(false)
-    setHasError(false)
-  }
+  // prevents the auth getting stuck after a hot-reload during development:
+  useEffect(() => {
+    // reload the webview when auth is false:
+    if (!isAuthReady) {
+      if (prefetchedWebviewRef.current) {
+        prefetchedWebviewRef.current.reload()
+      }
+    }
+  }, [isAuthReady])
 
   const handleError = (syntheticEvent: any) => {
     const {nativeEvent} = syntheticEvent
@@ -110,6 +100,13 @@ export default function AppStoreWeb() {
     try {
       const data = JSON.parse(event.nativeEvent.data)
 
+      // Handle auth ready message from store - hides loading overlay
+      if (data.type === "AUTH_READY") {
+        console.log("AppStoreWeb: Received AUTH_READY from store")
+        setIsAuthReady(true)
+        return
+      }
+
       if ((data.type === "OPEN_APP_SETTINGS" || data.type === "OPEN_TPA_SETTINGS") && data.packageName) {
         // Navigate to TPA settings page
         push("/applet/settings", {packageName: data.packageName})
@@ -140,7 +137,7 @@ export default function AppStoreWeb() {
   useFocusEffect(
     useCallback(() => {
       return async () => {
-        await refreshAppStatus()
+        await refreshApplets()
       }
     }, []),
   )
@@ -148,15 +145,11 @@ export default function AppStoreWeb() {
   // Show loading state while getting the URL
   if (!finalUrl) {
     return (
-      <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.lg}}>
-        <Header leftTx="store:title" />
-        <View
-          style={[
-            styles.loadingContainer,
-            {backgroundColor: theme.colors.background, marginHorizontal: -theme.spacing.lg},
-          ]}>
-          <ActivityIndicator size="large" color={theme2.primaryColor} />
-          <Text text="Preparing App Store..." style={[styles.loadingText, {color: theme2.textColor}]} />
+      <Screen preset="fixed">
+        <Header leftTx="store:title" RightActionComponent={<MentraLogoStandalone />} />
+        <View style={[themed($loadingContainer), {marginHorizontal: -theme.spacing.s4}]}>
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <Text text="Preparing App Store..." style={themed($loadingText)} />
         </View>
       </Screen>
     )
@@ -164,8 +157,8 @@ export default function AppStoreWeb() {
 
   if (hasError) {
     return (
-      <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.lg}}>
-        <Header leftTx="store:title" />
+      <Screen preset="fixed">
+        <Header leftTx="store:title" RightActionComponent={<MentraLogoStandalone />} />
         <InternetConnectionFallbackComponent
           retry={handleRetry}
           message={errorMessage || "Unable to load the App Store. Please check your connection and try again."}
@@ -176,72 +169,90 @@ export default function AppStoreWeb() {
 
   // If the prefetched WebView is ready, show it in the correct style
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.lg}}>
-      <Header leftTx="store:title" />
-      <View
-        style={[
-          styles.webViewContainer,
-          {backgroundColor: theme.colors.background, marginHorizontal: -theme.spacing.lg},
-        ]}>
+    <Screen preset="fixed">
+      <Header leftTx="store:title" RightActionComponent={<MentraLogoStandalone />} />
+      <View style={[themed($webViewContainer), {marginHorizontal: -theme.spacing.s6}]}>
         {/* Show the prefetched WebView, but now visible and full size */}
         <WebView
           ref={prefetchedWebviewRef}
           source={{uri: finalUrl}}
-          style={[styles.webView, {backgroundColor: theme.colors.background}]}
+          style={themed($webView)}
           onLoadStart={() => setWebviewLoading(true)}
-          onLoadEnd={() => setWebviewLoading(false)}
+          onLoadEnd={() => {
+            setWebviewLoading(false)
+            setIsAuthReady(true)
+          }}
           onError={handleError}
-          onNavigationStateChange={navState => setCanGoBack(navState.canGoBack)}
+          onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
           onMessage={handleWebViewMessage}
           javaScriptEnabled={true}
           domStorageEnabled={true}
-          startInLoadingState={true}
+          startInLoadingState={false}
           scalesPageToFit={false}
           bounces={false}
           scrollEnabled={true}
+          // Inject CSS/JS to disable zoom and selection
           injectedJavaScript={`
+              document.body.style.userSelect = 'none';
+              document.body.style.webkitUserSelect = 'none';
+              document.body.style.webkitTouchCallout = 'none';
+              
+              document.addEventListener('gesturestart', function(e) {
+                e.preventDefault();
+              });
+
               const meta = document.createElement('meta');
-              meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-              meta.setAttribute('name', 'viewport');
-              document.getElementsByTagName('head')[0].appendChild(meta);
+              meta.name = 'viewport';
+              meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+              document.head.appendChild(meta);
               true;
-            `}
-          renderLoading={() => (
-            <View style={[styles.loadingOverlay, {backgroundColor: theme.colors.background}]}>
-              <ActivityIndicator size="large" color={theme2.primaryColor} />
-              <Text text="Loading App Store..." style={[styles.loadingText, {color: theme2.textColor}]} />
-            </View>
-          )}
+              
+              true;
+          `}
         />
+        {/* Loading overlay - stays visible until store confirms auth ready */}
+        {!isAuthReady && (
+          <View style={themed($loadingOverlay)}>
+            <ActivityIndicator size="large" color={theme.colors.foreground} />
+            <Text text="Loading App Store..." style={themed($loadingText)} />
+          </View>
+        )}
       </View>
     </Screen>
   )
 }
 
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadingOverlay: {
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
-    bottom: 0,
-    justifyContent: "center",
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0, // Keep this overlay as is since it's theme-neutral
-  },
-  loadingText: {
-    fontSize: 16,
-    marginTop: 10,
-  },
-  webView: {
-    flex: 1,
-  },
-  webViewContainer: {
-    flex: 1,
-  },
+// Themed styles using ThemedStyle pattern
+const $loadingContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
+  flex: 1,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: colors.background,
+})
+
+const $loadingOverlay: ThemedStyle<ViewStyle> = () => ({
+  alignItems: "center",
+  backgroundColor: "rgba(0, 0, 0, 0.3)",
+  bottom: 0,
+  justifyContent: "center",
+  left: 0,
+  position: "absolute",
+  right: 0,
+  top: 0,
+})
+
+const $loadingText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: spacing.s4,
+  marginTop: 10,
+  color: colors.text,
+})
+
+const $webView: ThemedStyle<ViewStyle> = ({colors}) => ({
+  flex: 1,
+  backgroundColor: colors.background,
+})
+
+const $webViewContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
+  flex: 1,
+  backgroundColor: colors.background,
 })

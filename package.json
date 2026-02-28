@@ -1,43 +1,29 @@
 {
-  "dependencies": {
-    "@langchain/anthropic": "^0.3.13",
-    "@langchain/community": "^0.3.30",
-    "@langchain/core": "^0.3.40",
-    "@langchain/google-vertexai": "^0.1.8",
-    "@langchain/openai": "^0.4.3",
-    "langchain": "^0.3.15"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@eslint/css": "^0.10.0",
-    "@eslint/js": "^9.31.0",
-    "@eslint/json": "^0.13.0",
-    "@eslint/markdown": "^7.0.0",
-    "@types/form-data": "^2.5.2",
-    "@types/jest": "^29.5.14",
-    "@types/ws": "^8.18.1",
-    "@typescript-eslint/eslint-plugin": "^8.37.0",
-    "@typescript-eslint/utils": "^8.37.0",
-    "concurrently": "^9.1.2",
-    "eslint": "^9.31.0",
-    "eslint-plugin-prettier": "^5.5.1",
+    "@eslint/js": "^9.36.0",
+    "@eslint/json": "^0.13.2",
+    "@eslint/markdown": "^7.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.44.1",
+    "@typescript-eslint/utils": "^8.44.1",
+    "eslint": "^9.36.0",
+    "eslint-config-expo": "^10.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-prettier": "^5.5.4",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-native": "^5.0.0",
-    "eslint-plugin-reactotron": "^0.1.7",
-    "form-data": "^4.0.3",
-    "globals": "^16.3.0",
+    "eslint-plugin-reactotron": "^0.1.9",
     "husky": "^9.1.7",
-    "jest": "^29.7.0",
-    "lint-staged": "^16.1.2",
+    "lint-staged": "^16.2.1",
     "prettier": "^3.6.2",
-    "ts-jest": "^29.3.4",
-    "typescript-eslint": "^8.37.0"
+    "typesafe-ts": "^1.7.0",
+    "typescript-eslint": "^8.44.1"
   },
   "scripts": {
-    "prepare": "husky"
-  },
-  "lint-staged": {
-    "*.{js,jsx,ts,tsx}": "eslint --fix --quiet",
-    "*.{js,jsx,ts,tsx,json,css,md,html,yml,yaml}": "prettier --write",
-    "*.swift": "swiftformat"
+    "prepare": "husky",
+    "generate-licenses": "bun docs/generate-licenses.ts"
   }
 }

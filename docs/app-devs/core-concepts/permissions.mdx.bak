@@ -1,0 +1,178 @@
+---
+title: "Permissions"
+description: "Control what device data your app can access"
+icon: "lock"
+---
+
+## Available Permissions
+
+| Permission | Unlocks | Required For |
+|------------|---------|--------------|
+| **MICROPHONE** | Voice input, audio processing | Transcription, audio chunks |
+| **LOCATION** | GPS coordinates | Location tracking |
+| **BACKGROUND_LOCATION** | Location when app inactive | Background tracking |
+| **CAMERA** | Photos, video streaming | Photo capture, RTMP streaming |
+| **CALENDAR** | Calendar events | Event notifications |
+| **READ_NOTIFICATIONS** | Phone notifications | Notification filtering |
+| **POST_NOTIFICATIONS** | Send notifications | Push notifications |
+
+## How Permissions Work
+
+1. **Declare in Developer Console** - Set required permissions for your app
+2. **User approval** - Users see and approve permissions when installing
+3. **Automatic enforcement** - Cloud blocks access to features without permission
+4. **No code needed** - Just declare permissions, SDK handles the rest
+
+## Setting Permissions
+
+**In the [Developer Console](https://console.mentra.glass/apps):**
+
+1. Open your app
+2. Go to "Permissions" section
+3. Click "Add Permission"
+4. Select permission type
+5. Add description (shown to users)
+6. Save
+
+**Example:**
+
+```json
+{
+  "type": "MICROPHONE",
+  "description": "To listen to your voice commands"
+}
+```
+
+## Permission Descriptions
+
+**Write clear descriptions explaining why you need each permission:**
+
+```
+✅ Good:
+"To transcribe your voice commands and control the app hands-free"
+
+❌ Avoid:
+"Microphone access"
+```
+
+## What Each Permission Unlocks
+
+### MICROPHONE
+
+```typescript
+// These require MICROPHONE permission:
+session.events.onTranscription((data) => {});
+session.events.onAudioChunk((data) => {});
+session.events.onVAD((data) => {});
+```
+
+### LOCATION
+
+```typescript
+// These require LOCATION permission:
+session.location.subscribeToStream({ accuracy: 'high' }, (data) => {});
+const location = await session.location.getLatestLocation();
+```
+
+### CAMERA
+
+```typescript
+// These require CAMERA permission:
+const photo = await session.camera.requestPhoto();
+await session.camera.startStream({ rtmpUrl: 'rtmp://...' });
+```
+
+### READ_NOTIFICATIONS
+
+```typescript
+// These require READ_NOTIFICATIONS permission:
+session.events.onPhoneNotification((data) => {});
+session.events.onNotificationDismissed((data) => {});
+```
+
+### CALENDAR
+
+```typescript
+// Requires CALENDAR permission:
+session.events.on(StreamType.CALENDAR_EVENT, (data) => {});
+```
+
+## Runtime Behavior
+
+**Permission granted:**
+- Events work normally
+- Data streams to your app
+- No errors
+
+**Permission not declared:**
+- SDK shows warning in console
+- Events don't fire
+- No data received
+
+**Permission denied by user:**
+- Same as not declared
+- User must approve in settings to enable
+
+## Best Practices
+
+**Only request what you need:**
+
+```typescript
+// ✅ Good - minimal permissions
+{
+  "permissions": [
+    { "type": "MICROPHONE", "description": "For voice commands" }
+  ]
+}
+
+// ❌ Avoid - requesting everything
+{
+  "permissions": [
+    { "type": "MICROPHONE", ... },
+    { "type": "CAMERA", ... },
+    { "type": "LOCATION", ... }
+    // User less likely to install
+  ]
+}
+```
+
+**Be transparent:**
+- Explain why you need each permission
+- Use permissions for stated purpose only
+- Don't request permissions you don't use
+
+**No code needed:**
+- Don't check permissions in code
+- Declare in Developer Console
+- Cloud handles enforcement automatically
+
+## Troubleshooting
+
+**Events not firing:**
+1. Check permission is declared in Developer Console
+2. Verify user approved permission
+3. Look for SDK warnings in console logs
+
+**SDK warnings:**
+```
+⚠️ MICROPHONE permission not declared for com.example.myapp
+```
+
+Solution: Add permission in Developer Console
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Hardware & Capabilities" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
+    Check what hardware is available
+  </Card>
+  <Card title="Events & Data" icon="bolt" href="/app-devs/core-concepts/app-session/events-and-data">
+    Subscribe to event streams
+  </Card>
+  <Card title="Developer Console" icon="browser" href="https://console.mentra.glass/apps">
+    Manage your app permissions
+  </Card>
+  <Card title="Event Types" icon="book" href="/reference/interfaces/event-types">
+    See all event types
+  </Card>
+</CardGroup>

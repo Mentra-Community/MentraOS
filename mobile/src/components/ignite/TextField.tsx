@@ -9,11 +9,13 @@ import {
   View,
   ViewStyle,
 } from "react-native"
+
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {isRTL, translate} from "@/i18n"
 import type {ThemedStyle, ThemedStyleArray} from "@/theme"
 import {$styles} from "@/theme"
+
 import {Text, TextProps} from "./Text"
-import {useAppTheme} from "@/utils/useAppTheme"
 
 export interface TextFieldAccessoryProps {
   style: StyleProp<ViewStyle | TextStyle | ImageStyle>
@@ -232,7 +234,7 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
 })
 
 const $labelStyle: ThemedStyle<TextStyle> = ({spacing}) => ({
-  marginBottom: spacing.xs,
+  marginBottom: spacing.s2,
 })
 
 const $inputWrapperStyle: ThemedStyle<ViewStyle> = ({colors}) => ({
@@ -254,23 +256,23 @@ const $inputStyle: ThemedStyle<ViewStyle> = ({colors, typography, spacing}) => (
   // https://github.com/facebook/react-native/issues/21720#issuecomment-532642093
   paddingVertical: 0,
   paddingHorizontal: 0,
-  marginVertical: spacing.xs,
-  marginHorizontal: spacing.sm,
+  marginVertical: spacing.s2,
+  marginHorizontal: spacing.s3,
 })
 
 const $helperStyle: ThemedStyle<TextStyle> = ({spacing}) => ({
-  marginTop: spacing.xs,
+  marginTop: spacing.s2,
 })
 
 const $rightAccessoryStyle: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginEnd: spacing.xs,
+  marginEnd: spacing.s2,
   height: 40,
   justifyContent: "center",
   alignItems: "center",
 })
 
 const $leftAccessoryStyle: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginStart: spacing.xs,
+  marginStart: spacing.s2,
   height: 40,
   justifyContent: "center",
   alignItems: "center",

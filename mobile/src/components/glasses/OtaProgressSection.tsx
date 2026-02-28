@@ -1,6 +1,7 @@
-import React from "react"
-import {View, Text} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {View} from "react-native"
+
+import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {OtaProgress} from "@/utils/CoreStatusParser"
 
@@ -60,14 +61,9 @@ export default function OtaProgressSection({otaProgress}: OtaProgressSectionProp
   const showInstallation = installation && (installation.status !== "FINISHED" || download?.status === "FINISHED")
   const showDownload = download && !showInstallation
 
-  console.log("installation", installation)
-  console.log("download", download)
-  console.log("showInstallation", showInstallation)
-  console.log("showDownload", showDownload)
-
   return (
     <View style={themed($container)}>
-      <Text style={[themed($subtitle), {marginBottom: theme.spacing.xs}]}>Mentra Live Software Update</Text>
+      <Text style={[themed($subtitle), {marginBottom: theme.spacing.s2}]}>Mentra Live Software Update</Text>
 
       {/* Show Installation Progress (if active) */}
       {showInstallation && (
@@ -139,29 +135,29 @@ export default function OtaProgressSection({otaProgress}: OtaProgressSectionProp
 }
 
 const $container: ThemedStyle<any> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
+  backgroundColor: colors.primary_foreground,
   paddingVertical: 12,
   paddingHorizontal: 16,
-  borderRadius: spacing.md,
-  borderWidth: 2,
-  borderColor: colors.border,
+  borderRadius: spacing.s4,
+  // borderWidth: 2,
+  // borderColor: colors.border,
 })
 
 const $subtitle: ThemedStyle<any> = ({colors, spacing}) => ({
   color: colors.textDim,
-  fontSize: spacing.sm,
+  fontSize: spacing.s3,
   fontWeight: "600",
 })
 
 const $progressItem: ThemedStyle<any> = ({spacing}) => ({
-  marginBottom: spacing.sm,
+  marginBottom: spacing.s3,
 })
 
 const $progressHeader: ThemedStyle<any> = ({spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
   alignItems: "center",
-  marginBottom: spacing.xs,
+  marginBottom: spacing.s2,
 })
 
 const $progressTitle: ThemedStyle<any> = ({colors}) => ({
@@ -170,7 +166,7 @@ const $progressTitle: ThemedStyle<any> = ({colors}) => ({
   fontWeight: "500",
 })
 
-const $progressStatus: ThemedStyle<any> = ({colors}) => ({
+const $progressStatus: ThemedStyle<any> = () => ({
   fontSize: 12,
   fontWeight: "600",
 })
@@ -179,7 +175,7 @@ const $progressBarContainer: ThemedStyle<any> = ({colors, spacing}) => ({
   height: 8,
   borderRadius: 4,
   backgroundColor: colors.palette.neutral300,
-  marginBottom: spacing.xs,
+  marginBottom: spacing.s2,
   overflow: "hidden",
 })
 
@@ -189,7 +185,7 @@ const $progressBar: ThemedStyle<any> = ({colors}) => ({
 })
 
 const $progressDetails: ThemedStyle<any> = ({spacing}) => ({
-  marginBottom: spacing.xs,
+  marginBottom: spacing.s2,
 })
 
 const $progressText: ThemedStyle<any> = ({colors}) => ({

@@ -1,11 +1,10 @@
-// in ../icons/MicIcon.tsx
-import React from "react"
-import {View, TouchableOpacity} from "react-native"
-import Svg, {G, Path, Defs, ClipPath, Rect} from "react-native-svg"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {useCoreStatus} from "@/contexts/CoreStatusProvider"
-import showAlert from "@/utils/AlertUtils"
+import {TouchableOpacity, View} from "react-native"
+import Svg, {ClipPath, Defs, G, Path, Rect} from "react-native-svg"
+
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import {useGlassesStore} from "@/stores/glasses"
+import showAlert from "@/utils/AlertUtils"
 interface MicIconProps {
   color?: string
   height?: number
@@ -14,8 +13,9 @@ interface MicIconProps {
 }
 
 const MicIcon = ({color, width = 17, height = 16, withBackground = false}: MicIconProps) => {
-  const {themed, theme} = useAppTheme()
-  const {status} = useCoreStatus()
+  const {theme} = useAppTheme()
+  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesMicEnabled = useGlassesStore((state) => state.micEnabled)
 
   const iconColor = color || theme.colors.icon
 
@@ -32,13 +32,13 @@ const MicIcon = ({color, width = 17, height = 16, withBackground = false}: MicIc
   }
 
   // Don't show mic indicator if:
-  // 1. Mic is not enabled for frontend OR
-  // 2. Preferred mic is glasses but no glasses are connected
-  if (!status.core_info.is_mic_enabled_for_frontend) {
+  // 1. Mic is not enabled
+  // 2. no glasses are connected
+  if (!glassesMicEnabled) {
     return null
   }
 
-  if (status.core_info.preferred_mic === "glasses" && !status.glasses_info) {
+  if (!glassesConnected) {
     return null
   }
 

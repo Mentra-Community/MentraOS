@@ -16,62 +16,57 @@ The button press system in ASG Client handles physical button interactions on th
 
 ### Button Press Modes
 
-The ASG Client supports three configurable modes for handling button presses:
+The ASG Client supports two configurable modes for handling button presses:
+
+**IMPORTANT**: As of the latest update, **ALL button presses are now forwarded to phone/apps regardless of mode**. The mode now only controls additional local actions.
 
 #### PHOTO Mode (Default)
 
-- Button press triggers local photo/video capture only
-- Photos are taken immediately on the device
-- No communication with phone/cloud for the button press
+- Button press is **ALWAYS forwarded** to phone/apps
+- Additionally triggers local photo/video capture
+- Apps receive the button press event AND local capture occurs
 
 ```java
-// Short press behavior in PHOTO mode
-case "cs_pho":
-    mMediaCaptureService.takePhotoLocally();
-    break;
+// Universal forwarding + local capture in PHOTO mode
+sendButtonPressToPhone(isLongPress); // Always forwarded
+mMediaCaptureService.takePhotoLocally(); // Local action
 ```
 
 #### APPS Mode
 
 - Button press events are sent to the phone/apps only
-- No local photo capture
-- Apps can decide what to do with the button press
+- No additional local photo capture
+- Apps receive the button press event and decide what to do
 
 ```java
-// Button press sent to phone in APPS mode
-sendButtonPressToPhone(isLongPress);
+// Universal forwarding in APPS mode
+sendButtonPressToPhone(isLongPress); // Always forwarded
+// No local actions
 ```
-
-#### BOTH Mode
-
-- Combines PHOTO and APPS modes
-- Takes photo locally AND sends event to apps
-- Maximum flexibility for developers
 
 ### Implementation Details
 
-The button handling is implemented in `AsgClientService.java`:
+The button handling is implemented in `K900CommandHandler.java`:
 
 ```java
 private void handleConfigurableButtonPress(boolean isLongPress) {
-    AsgSettings.ButtonPressMode mode = asgSettings.getButtonPressMode();
+    AsgSettings.ButtonPressMode mode = serviceManager.getAsgSettings().getButtonPressMode();
     String pressType = isLongPress ? "long" : "short";
+    Log.d(TAG, "Handling " + pressType + " button press with mode: " + mode.getValue());
 
+    // ALWAYS send button press to phone/apps regardless of mode
+    Log.d(TAG, "📱 ALWAYS forwarding button press to phone/apps (universal forwarding)");
+    sendButtonPressToPhone(isLongPress);
+
+    // Then handle mode-specific local actions
     switch (mode) {
         case PHOTO:
-            if (isLongPress) {
-                // Video recording (TODO)
-            } else {
-                mMediaCaptureService.takePhotoLocally();
-            }
+            handlePhotoMode(isLongPress); // Local capture + forwarding
             break;
 
         case APPS:
-            sendButtonPressToPhone(isLongPress);
-            break;
-
-        case BOTH:
-            // Do both actions
+            // APPS mode: only forwarding (already done above)
+            Log.d(TAG, "📱 APPS mode: button press forwarded, no local action");
             break;
     }
 }
@@ -79,7 +74,7 @@ private void handleConfigurableButtonPress(boolean isLongPress) {
 
 ### Button Press Message Format
 
-When sending button press to phone (APPS or BOTH mode):
+When sending button press to phone (now **ALL modes**):
 
 ```json
 {
@@ -110,13 +105,14 @@ The button mode can be configured via:
 
 ### Mode Selection Guidelines
 
-- **Use PHOTO mode** for simple camera glasses functionality
-- **Use APPS mode** when apps need full control over button behavior
-- **Use BOTH mode** for advanced scenarios where both local and remote actions are needed
+- **Use PHOTO mode** for camera glasses functionality with universal app forwarding
+- **Use APPS mode** when apps need full control over button behavior (no local capture)
+
+**Note**: Both modes now forward button presses to apps. The mode only controls whether local photo/video capture also occurs.
 
 ## Photo Capture Process
 
-When a photo is triggered (PHOTO or BOTH mode):
+When a photo is triggered (PHOTO mode):
 
 1. **Capture**: CameraNeo takes the photo
 2. **Save**: Photo saved to device storage

@@ -1,0 +1,341 @@
+name: Nightly Builds
+
+on:
+  schedule:
+    # Run at 2am PT (10am UTC) every day
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+    inputs:
+      skip_cleanup:
+        description: "Skip cleanup of old builds"
+        required: false
+        default: "false"
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-mobile:
+    name: Build Mobile App
+    runs-on: self-hosted
+
+    steps:
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          rm -rf mobile/android/build mobile/android/app/build mobile/android/.gradle
+          rm -rf mobile/node_modules
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.os }}-
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: ./mobile
+        run: bun install
+
+      - name: Setup environment
+        working-directory: ./mobile
+        run: |
+          cp .env.example .env
+
+      - name: Run Expo prebuild
+        working-directory: ./mobile
+        run: bun expo prebuild --platform android
+
+      - name: Fix React Native symlinks
+        working-directory: ./mobile
+        run: |
+          if [ -f "./fix-react-native-symlinks.sh" ]; then
+            chmod +x ./fix-react-native-symlinks.sh
+            ./fix-react-native-symlinks.sh
+          fi
+
+      - name: Build Android Release APK
+        id: gradle-build
+        working-directory: ./mobile/android
+        run: ./gradlew assembleRelease --build-cache --parallel
+        continue-on-error: true
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+
+      - name: Retry build with clean cache (if first attempt failed)
+        if: steps.gradle-build.outcome == 'failure'
+        working-directory: ./mobile/android
+        run: |
+          echo "First build failed, cleaning Gradle cache and retrying..."
+          ./gradlew --stop || true
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
+          ./gradlew assembleRelease --build-cache --parallel
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-nightly
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+
+  build-asg:
+    name: Build ASG Client
+    runs-on: self-hosted
+
+    steps:
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup environment
+        working-directory: ./asg_client
+        run: |
+          cp .env.example .env
+
+      - name: Clone StreamPackLite dependency
+        working-directory: ./asg_client
+        run: |
+          git clone https://github.com/Mentra-Community/StreamPackLite.git
+          cd StreamPackLite
+          git checkout working
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.os }}-
+
+      - name: Build Release APK
+        id: gradle-build
+        working-directory: ./asg_client
+        run: ./gradlew assembleRelease --build-cache --parallel
+        continue-on-error: true
+
+      - name: Retry build with clean cache (if first attempt failed)
+        if: steps.gradle-build.outcome == 'failure'
+        working-directory: ./asg_client
+        run: |
+          echo "First build failed, cleaning Gradle cache and retrying..."
+          ./gradlew --stop || true
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
+          ./gradlew assembleRelease --build-cache --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asg-nightly
+          path: asg_client/app/build/outputs/apk/release/app-release.apk
+
+  upload-releases:
+    name: Upload to Releases
+    needs: [build-mobile, build-asg]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout to get dev SHA
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 1
+
+      - name: Download mobile artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-nightly
+          path: ./mobile-apk
+
+      - name: Download ASG artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: asg-nightly
+          path: ./asg-apk
+
+      - name: Get build info
+        id: build-info
+        run: |
+          echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Upload APKs to nightly-builds release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const date = '${{ steps.build-info.outputs.date }}';
+            const sha = '${{ steps.build-info.outputs.sha }}';
+
+            // Get or create the nightly-builds release
+            let release;
+            try {
+              release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'nightly-builds'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                // Create the release if it doesn't exist
+                release = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: 'nightly-builds',
+                  name: 'Nightly Builds',
+                  body: `Automated nightly builds from the \`dev\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/nightly-builds/mobile-latest.apk)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/nightly-builds/asg-latest.apk)\n\n---\n\n*Builds older than 7 days are automatically cleaned up.*`,
+                  prerelease: true,
+                  draft: false
+                });
+              } else {
+                throw error;
+              }
+            }
+
+            const releaseId = release.data.id;
+
+            // Files to upload
+            const uploads = [
+              { path: './mobile-apk/app-release.apk', latestName: 'mobile-latest.apk', datedName: `mobile-nightly-${date}-${sha}.apk` },
+              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-nightly-${date}-${sha}.apk` }
+            ];
+
+            for (const upload of uploads) {
+              const apkData = fs.readFileSync(upload.path);
+
+              // Delete existing -latest.apk if it exists
+              for (const asset of release.data.assets) {
+                if (asset.name === upload.latestName) {
+                  console.log(`Deleting existing ${upload.latestName}`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                  break;
+                }
+              }
+
+              // Upload the -latest.apk
+              console.log(`Uploading ${upload.latestName} (${apkData.length} bytes)...`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+                name: upload.latestName,
+                data: apkData
+              });
+
+              // Also upload dated version (for history)
+              console.log(`Uploading ${upload.datedName} (${apkData.length} bytes)...`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+                name: upload.datedName,
+                data: apkData
+              });
+            }
+
+            // Update release body with latest build info
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              body: `Automated nightly builds from the \`dev\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/nightly-builds/mobile-latest.apk)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/nightly-builds/asg-latest.apk)\n\n---\n\n*Builds older than 7 days are automatically cleaned up.*`
+            });
+
+            console.log('Successfully uploaded all APKs');
+
+      - name: Cleanup old nightly builds
+        if: ${{ github.event.inputs.skip_cleanup != 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'nightly-builds'
+              });
+
+              for (const asset of release.data.assets) {
+                // Skip -latest.apk files
+                if (asset.name.endsWith('-latest.apk')) continue;
+
+                const createdAt = new Date(asset.created_at);
+                if (createdAt < sevenDaysAgo) {
+                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                }
+              }
+            } catch (error) {
+              console.log('Cleanup skipped:', error.message);
+            }

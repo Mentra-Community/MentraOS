@@ -1,0 +1,307 @@
+---
+title: "Location"
+description: "Access user's GPS location from smart glasses"
+icon: "location-dot"
+---
+
+Access the user's GPS coordinates to build location-aware apps on MentraOS using the `LocationManager`.
+
+## Quick Start
+
+### Subscribe to Location Stream
+
+Get continuous location updates as the user moves:
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Subscribe to continuous location updates
+  const unsubscribe = session.location.subscribeToStream(
+    { accuracy: "standard" },
+    (data) => {
+      const { latitude, longitude, accuracy } = data;
+      
+      session.logger.info(`Location: ${latitude}, ${longitude}, accuracy: ${accuracy}m`);
+    }
+  );
+  
+  // Cleanup when done
+  // unsubscribe();
+}
+```
+
+### Get Latest Location (One-Time Poll)
+
+Request a single location fix without subscribing to a stream:
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  try {
+    const location = await session.location.getLatestLocation({
+      accuracy: "high"
+    });
+    
+    session.logger.info(`Got location: ${location.latitude}, ${location.longitude}`);
+  } catch (error) {
+    session.logger.error("Failed to get location:", error);
+  }
+}
+```
+
+---
+
+## LocationManager API
+
+The SDK provides `session.location` with three main methods:
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `subscribeToStream(options, handler)` | `{ accuracy: string }`, `(data: LocationUpdate) => void` | `() => void` (cleanup function) | Subscribe to continuous location updates |
+| `unsubscribeFromStream()` | None | `void` | Unsubscribe from the location stream |
+| `getLatestLocation(options)` | `{ accuracy: string }` | `Promise<LocationUpdate>` | One-time location poll (15 second timeout) |
+
+---
+
+## Accuracy Tiers
+
+Choose the accuracy tier based on your app's needs. Higher accuracy tiers provide more precise location data but drain more battery.
+
+| Accuracy Tier | Description | Update Frequency | Battery Impact | Use Case |
+|---------------|-------------|------------------|----------------|----------|
+| `"realtime"` | Highest precision, fastest updates | Very High | High | Navigation, real-time tracking |
+| `"high"` | High precision GPS | High | Medium-High | Precise location features |
+| `"tenMeters"` | ~10m accuracy | Medium | Medium | Local place detection |
+| `"standard"` | Default accuracy (balanced) | Medium | Low-Medium | General location features |
+| `"hundredMeters"` | ~100m accuracy | Low | Low | City-level features |
+| `"kilometer"` | ~1km accuracy | Very Low | Very Low | Regional features |
+| `"threeKilometers"` | ~3km accuracy | Very Low | Very Low | Wide-area features |
+| `"reduced"` | Battery-saving mode | Minimal | Minimal | Background location |
+
+**Example:**
+
+```typescript
+// High accuracy for precise features
+session.location.subscribeToStream(
+  { accuracy: "high" },
+  handler
+);
+
+// Lower accuracy for battery efficiency
+session.location.subscribeToStream(
+  { accuracy: "hundredMeters" },
+  handler
+);
+```
+
+---
+
+## LocationUpdate Data Structure
+
+The `LocationUpdate` interface contains location data:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `latitude` | `number` | ✅ | Latitude in decimal degrees |
+| `longitude` | `number` | ✅ | Longitude in decimal degrees |
+| `accuracy` | `number` | ✅ | Accuracy in meters |
+| `altitude` | `number` | ❌ | Elevation in meters above sea level |
+| `timestamp` | `Date` | ✅ | When the location was captured |
+| `correlationId` | `string` | ❌ | Used for tracking poll requests |
+
+**TypeScript Interface:**
+
+```typescript
+interface LocationUpdate {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  altitude?: number;
+  timestamp: Date;
+  correlationId?: string;
+}
+```
+
+---
+
+## Usage Examples
+
+### Display Location on Dashboard
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  session.location.subscribeToStream(
+    { accuracy: "standard" },
+    (data) => {
+      session.dashboard.content.writeToMain(
+        `Lat: ${data.latitude.toFixed(4)}\n` +
+        `Lon: ${data.longitude.toFixed(4)}\n` +
+        `Accuracy: ${data.accuracy}m`
+      );
+    }
+  );
+}
+```
+
+### Show Location on Voice Command
+
+```typescript
+protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+  if (toolCall.toolId === "show_location") {
+    const session = this.getSessionByUserId(toolCall.userId);
+    
+    try {
+      const location = await session.location.getLatestLocation({
+        accuracy: "high"
+      });
+      
+      return `Your current location is ${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)} with ${location.accuracy}m accuracy`;
+    } catch (error) {
+      return "Could not get your current location";
+    }
+  }
+}
+```
+
+### Cleanup Subscriptions
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const unsubscribe = session.location.subscribeToStream(
+    { accuracy: "standard" },
+    (data) => {
+      // Handle location updates
+    }
+  );
+  
+  // Clean up when session ends
+  session.events.on('disconnect', () => {
+    unsubscribe();
+  });
+}
+```
+
+---
+
+## Permissions
+
+Location access requires the `location` permission in your app manifest. Configure this in the Developer Console at [console.mentra.glass](https://console.mentra.glass/apps).
+
+<Warning>
+Users must grant location permission for your app to access GPS data. Always handle cases where location data is unavailable.
+</Warning>
+
+---
+
+## Best Practices
+
+**Choose appropriate accuracy:**
+
+```typescript
+// Good - Use lowest accuracy needed
+session.location.subscribeToStream(
+  { accuracy: "hundredMeters" }, // Fine for city-level features
+  handler
+);
+
+// Avoid - Don't use highest accuracy unless needed
+session.location.subscribeToStream(
+  { accuracy: "realtime" }, // Drains battery quickly
+  handler
+);
+```
+
+**Always unsubscribe when done:**
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const unsubscribe = session.location.subscribeToStream(
+    { accuracy: "standard" },
+    handler
+  );
+  
+  // Important: Clean up to stop location updates
+  session.events.on('disconnect', () => {
+    unsubscribe();
+  });
+}
+```
+
+**Handle poll timeouts:**
+
+```typescript
+try {
+  const location = await session.location.getLatestLocation({ accuracy: "high" });
+  // Use location
+} catch (error) {
+  // Handle timeout (after 15 seconds)
+  session.logger.error("Location poll timed out");
+}
+```
+
+**Check accuracy in handler:**
+
+```typescript
+session.location.subscribeToStream(
+  { accuracy: "standard" },
+  (data) => {
+    if (data.accuracy > 100) {
+      session.logger.warn(`Low accuracy: ${data.accuracy}m`);
+    }
+    
+    // Use location data
+  }
+);
+```
+
+---
+
+## Error Handling
+
+### Handling Stream Errors
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  try {
+    const unsubscribe = session.location.subscribeToStream(
+      { accuracy: "standard" },
+      (data) => {
+        if (data.accuracy > 100) {
+          session.logger.warn(`Low accuracy: ${data.accuracy}m`);
+        }
+      }
+    );
+  } catch (error) {
+    session.logger.error("Failed to subscribe to location stream:", error);
+  }
+}
+```
+
+### Handling Poll Timeouts
+
+```typescript
+try {
+  const location = await session.location.getLatestLocation({ accuracy: "high" });
+  session.logger.info(`Location: ${location.latitude}, ${location.longitude}`);
+} catch (error) {
+  session.logger.error("Location request failed:", error);
+  // Provide fallback or notify user
+}
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
+    Configure location permissions
+  </Card>
+  <Card title="Location Manager API" icon="book" href="/app-devs/reference/managers/location-manager">
+    Complete API reference
+  </Card>
+  <Card title="Dashboard" icon="gauge" href="/app-devs/core-concepts/display/dashboard">
+    Display location on dashboard
+  </Card>
+  <Card title="Mira Tool Calls" icon="wrench" href="/app-devs/core-concepts/mira-tool-calls">
+    Add voice commands for location
+  </Card>
+</CardGroup>

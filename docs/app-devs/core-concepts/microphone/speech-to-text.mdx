@@ -1,0 +1,420 @@
+---
+title: "Speech-to-Text"
+description: "Capture and process user voice input in real-time"
+---
+
+Listen to user voice input with `session.events.onTranscription()`. Get real-time speech-to-text transcription from the user's microphone.
+
+## Basic Usage
+
+```typescript
+session.events.onTranscription((data) => {
+  if (data.isFinal) {
+    session.logger.info('User said:', data.text);
+  }
+});
+```
+
+## How It Works
+
+1. User speaks into microphone
+2. Audio streams to MentraOS Cloud
+3. Speech recognition processes audio
+4. Transcription events sent to your app
+5. You receive interim and final results
+
+## Transcription Data
+
+```typescript
+interface TranscriptionData {
+  text: string;           // Transcribed text
+  isFinal: boolean;       // True when transcription is complete
+  language: string;       // Language code (e.g., 'en-US')
+  confidence: number;     // Confidence score (0-1)
+  timestamp: Date;        // When transcription was generated
+}
+```
+
+## Interim vs Final Results
+
+**Interim results** - Partial transcription while user is speaking:
+
+```typescript
+session.events.onTranscription((data) => {
+  if (!data.isFinal) {
+    // Show real-time preview
+    session.layouts.showTextWall(`${data.text}...`);
+  }
+});
+```
+
+**Final results** - Complete transcription when user finishes:
+
+```typescript
+session.events.onTranscription((data) => {
+  if (data.isFinal) {
+    // Process complete command
+    session.layouts.showTextWall(data.text);
+    await this.handleCommand(data.text);
+  }
+});
+```
+
+## Common Patterns
+
+### Voice Commands
+
+```typescript
+session.events.onTranscription((data) => {
+  if (!data.isFinal) return;
+
+  const command = data.text.toLowerCase();
+
+  if (command.includes('help')) {
+    this.showHelp(session);
+  } else if (command.includes('weather')) {
+    this.showWeather(session);
+  } else if (command.includes('time')) {
+    this.showTime(session);
+  } else {
+    session.layouts.showTextWall('Unknown command');
+  }
+});
+```
+
+### Voice Search
+
+```typescript
+session.events.onTranscription(async (data) => {
+  if (!data.isFinal) {
+    // Show what user is saying
+    session.layouts.showTextWall(`Searching: ${data.text}...`);
+    return;
+  }
+
+  // Perform search with final text
+  session.layouts.showTextWall('Searching...');
+  const results = await this.search(data.text);
+  session.layouts.showReferenceCard('Results', results);
+});
+```
+
+### Voice Notes
+
+```typescript
+session.events.onTranscription(async (data) => {
+  if (!data.isFinal) return;
+
+  // Save note
+  const note = {
+    text: data.text,
+    timestamp: new Date(),
+    confidence: data.confidence
+  };
+
+  await session.simpleStorage.set(
+    `note_${Date.now()}`,
+    JSON.stringify(note)
+  );
+
+  await session.audio.speak('Note saved');
+});
+```
+
+### Conversation
+
+```typescript
+session.events.onTranscription(async (data) => {
+  if (!data.isFinal) return;
+
+  // Show what user said
+  session.layouts.showDoubleTextWall({
+    topText: 'You:',
+    bottomText: data.text
+  });
+
+  // Generate response
+  const response = await this.generateResponse(data.text);
+
+  // Show and speak response
+  session.layouts.showDoubleTextWall({
+    topText: 'App:',
+    bottomText: response
+  });
+
+  await session.audio.speak(response);
+});
+```
+
+### Confidence Checking
+
+```typescript
+session.events.onTranscription((data) => {
+  if (!data.isFinal) return;
+
+  if (data.confidence < 0.5) {
+    // Low confidence - ask for clarification
+    session.layouts.showTextWall(`Did you say: ${data.text}?`);
+    await session.audio.speak('Please repeat that');
+  } else {
+    // High confidence - process command
+    this.processCommand(data.text);
+  }
+});
+```
+
+## Language Support
+
+**Default language:**
+
+```typescript
+// Uses default language from user's device settings
+session.events.onTranscription((data) => {
+  session.logger.info('Language:', data.language);
+  session.logger.info('Text:', data.text);
+});
+```
+
+**Multiple languages** - Transcription automatically detects the spoken language based on device settings.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always Check isFinal" icon="check">
+    Only process commands on final results:
+
+    ```typescript
+    // ✅ Good
+    session.events.onTranscription((data) => {
+      if (!data.isFinal) return;
+      this.processCommand(data.text);
+    });
+
+    // ❌ Avoid - processes interim results
+    session.events.onTranscription((data) => {
+      this.processCommand(data.text); // Called too often
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Show Visual Feedback" icon="eye">
+    Display what the user said:
+
+    ```typescript
+    session.events.onTranscription((data) => {
+      if (data.isFinal) {
+        session.layouts.showTextWall(`You: ${data.text}`);
+      }
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Provide Audio Confirmation" icon="volume">
+    Acknowledge user input:
+
+    ```typescript
+    session.events.onTranscription(async (data) => {
+      if (!data.isFinal) return;
+
+      await session.audio.speak('Got it');
+      await this.processCommand(data.text);
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Handle Errors Gracefully" icon="circle-exclamation">
+    User might say something unexpected:
+
+    ```typescript
+    session.events.onTranscription(async (data) => {
+      if (!data.isFinal) return;
+
+      try {
+        await this.processCommand(data.text);
+      } catch (error) {
+        session.logger.error('Command failed:', error);
+        await session.audio.speak('Sorry, I could not do that');
+      }
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Permissions Required
+
+<Warning>
+Transcription requires the **MICROPHONE** permission. Set this in the [Developer Console](https://console.mentra.glass/apps).
+</Warning>
+
+```typescript
+// In Developer Console, add permission:
+{
+  "type": "MICROPHONE",
+  "description": "To listen to your voice commands"
+}
+```
+
+## Unsubscribing
+
+```typescript
+// Store unsubscribe function
+const unsubscribe = session.events.onTranscription((data) => {
+  session.logger.info(data.text);
+});
+
+// Later, stop listening
+unsubscribe();
+```
+
+## Example: Voice Assistant
+
+```typescript
+class VoiceAssistant extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    session.layouts.showTextWall('Voice Assistant Ready\nSay "help" for commands');
+
+    session.events.onTranscription(async (data) => {
+      if (!data.isFinal) {
+        // Show interim results
+        session.layouts.showTextWall(`Listening: ${data.text}...`);
+        return;
+      }
+
+      // Process final command
+      const command = data.text.toLowerCase().trim();
+
+      session.logger.info('Command:', command, 'Confidence:', data.confidence);
+
+      if (command.includes('help')) {
+        await this.showHelp(session);
+      } else if (command.includes('weather')) {
+        await this.showWeather(session);
+      } else if (command.includes('time')) {
+        await this.showTime(session);
+      } else if (command.includes('reminder')) {
+        await this.setReminder(session, command);
+      } else {
+        session.layouts.showTextWall(`Unknown: ${data.text}`);
+        await session.audio.speak('I did not understand that. Say help for commands.');
+      }
+    });
+  }
+
+  private async showHelp(session: AppSession) {
+    const helpText = 'Commands:\n- Weather\n- Time\n- Set reminder';
+    session.layouts.showReferenceCard('Help', helpText);
+    await session.audio.speak('You can ask about weather, time, or set a reminder');
+  }
+
+  private async showWeather(session: AppSession) {
+    // Fetch weather data
+    const weather = await this.fetchWeather();
+    session.layouts.showReferenceCard('Weather', `${weather.condition}, ${weather.temp}°F`);
+    await session.audio.speak(`The weather is ${weather.condition} and ${weather.temp} degrees`);
+  }
+
+  private async showTime(session: AppSession) {
+    const time = new Date().toLocaleTimeString();
+    session.layouts.showTextWall(`Time: ${time}`);
+    await session.audio.speak(`The time is ${time}`);
+  }
+
+  private async setReminder(session: AppSession, command: string) {
+    // Parse reminder from command
+    // "set reminder to call mom at 3pm"
+    session.layouts.showTextWall('Reminder set!');
+    await session.audio.speak('Reminder set');
+  }
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="No Transcription Events" icon="microphone-slash">
+    **Check permission:**
+
+    - Ensure MICROPHONE permission is set in Developer Console
+    - User must approve permission when installing app
+    - Check logs for permission errors
+  </Accordion>
+
+  <Accordion title="Poor Transcription Quality" icon="triangle-exclamation">
+    **Possible causes:**
+
+    - Background noise
+    - User speaking too quietly
+    - Microphone quality
+    - Non-standard accent or pronunciation
+
+    Check `data.confidence` to detect low-quality transcriptions.
+  </Accordion>
+
+  <Accordion title="Delayed Transcriptions" icon="clock">
+    **Network latency:**
+
+    - Transcription requires internet connection
+    - Processing happens in cloud
+    - Some delay is normal (typically < 1 second)
+  </Accordion>
+</AccordionGroup>
+
+## Performance Tips
+
+<AccordionGroup>
+  <Accordion title="Use Final Results Only" icon="bolt">
+    Avoid processing every interim result:
+
+    ```typescript
+    // Processes only when complete
+    if (data.isFinal) {
+      await heavyProcessing(data.text);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Debounce Expensive Operations" icon="clock">
+    If you must process interim results:
+
+    ```typescript
+    let timeoutId: NodeJS.Timeout;
+
+    session.events.onTranscription((data) => {
+      clearTimeout(timeoutId);
+
+      timeoutId = setTimeout(() => {
+        this.updateSearch(data.text);
+      }, 300); // Wait 300ms after user stops speaking
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Cache Common Commands" icon="floppy-disk">
+    Store frequently used command responses:
+
+    ```typescript
+    const responses = new Map<string, string>();
+
+    if (responses.has(command)) {
+      await session.audio.speak(responses.get(command)!);
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Text-to-Speech" icon="comment" href="/app-devs/core-concepts/speakers/text-to-speech">
+    Respond with voice synthesis
+  </Card>
+  <Card title="Audio Chunks" icon="waveform" href="/app-devs/core-concepts/microphone/audio-chunks">
+    Process raw audio data
+  </Card>
+  <Card title="Event Manager" icon="book" href="/app-devs/reference/managers/event-manager">
+    Complete event API reference
+  </Card>
+  <Card title="Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
+    Learn about permissions
+  </Card>
+</CardGroup>

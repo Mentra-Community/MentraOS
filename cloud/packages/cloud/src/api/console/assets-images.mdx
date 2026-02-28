@@ -1,0 +1,194 @@
+---
+title: "Console Assets – Images (Planning)"
+description: "Scoping and migration notes for image upload/delete used by the Developer Console"
+---
+
+# Console Assets – Images (Planning)
+
+Status: planning only (no API changes in this scope).  
+Scope: document current behavior, risks, and a migration plan to extract logic into a service and eventually provide a console-scoped API.  
+Non-goals (for now): changing route shapes or adding org in the path; keep legacy routes as-is until the broader console migration is ready.
+
+---
+
+## Current State (Legacy)
+
+Routes (defined in `routes/developer.routes.ts`):
+- `POST /api/dev/images/upload`
+- `DELETE /api/dev/images/:imageId`
+
+Auth:
+- Both are protected by the developer console auth middleware (`validateSupabaseToken`) and rely on the implicit org resolution applied by that middleware.
+
+Behavior (upload):
+- Accepts multipart form-data with a single file (via `multer.memoryStorage()`).
+- Accepts optional metadata (stringified JSON).
+- Uploads to Cloudflare Images:
+  - Uses `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
+  - Receives `result.id` (Cloudflare image ID) and a `variants` array.
+  - Picks/derives a delivery URL (prefers a “square” variant if present).
+- If `replaceImageId` is provided, attempts to delete the old image after a successful upload.
+- Returns `{ url, imageId }`.
+
+Behavior (delete):
+- Calls Cloudflare Images DELETE with the `imageId`.
+
+Where does `imageId` come from?
+- It is the Cloudflare Images `result.id` returned by the upload API.
+- The backend returns this `imageId` to the client for future delete/replace operations.
+- Today, ownership/authorization is not coupled to `imageId` beyond general auth/org checks in middleware.
+
+---
+
+## Risks and Issues
+
+- Authorization coupling:
+  - There is no persisted mapping of `imageId -> orgId/app -> owner`.
+  - Deletes rely on the caller being authenticated; fine for now, but org-level authorization per image would be cleaner.
+- Orphaned images:
+  - If metadata is not recorded and a subsequent process fails, images may remain in Cloudflare without references.
+- “Two sources of truth” concern:
+  - Mixing org context via header/middleware and image-level state can create ambiguity. We’ll avoid API changes for now; this doc scopes how to centralize logic without altering route shapes.
+- Complex route logic:
+  - The route handlers contain business logic (Cloudflare calls, metadata parsing, replacement flow).
+  - This should live in a service to simplify testing and enable future API evolution.
+- Content/type constraints:
+  - Enforced in multer and mime checks, but we should keep the logic consolidated for easier maintenance.
+- Observability:
+  - Limited audit trail (who uploaded/deleted which image).
+- Quotas and lifecycle:
+  - No quotas or expiry policy. Consider adding cost/usage monitoring later.
+
+---
+
+## Target (Internal Refactor First, No API Shape Changes)
+
+1) Extract to a service
+   - Create `src/services/console/assets.service.ts` (or `images.service.ts`) to encapsulate:
+     - Upload: `uploadImage({ email, file, metadata, orgId?, replaceImageId? })`
+     - Delete: `deleteImage({ email, imageId, orgId? })`
+     - Helpers: build Cloudflare request, choose delivery variant, audit logging
+   - Service accepts an explicit context `{ email, orgId? }` passed by route handlers.
+   - Service decides whether to allow the operation (authorization checks will be incremental, still honoring legacy behavior at first).
+
+2) Keep legacy routes unchanged
+   - `POST /api/dev/images/upload` → handler becomes thin: parse form-data, call service, return result
+   - `DELETE /api/dev/images/:imageId` → handler calls service, return result
+   - No breaking changes for the Console front-end.
+
+3) Optional internal persistence (deferred)
+   - Optionally introduce a local collection to record `imageId`, uploader email, orgId, app package name, createdAt, replacedImageId, etc.
+   - Benefits:
+     - Better authorization decisions (e.g., only org members/admins can delete).
+     - Lifecycle management (cleanup/retention).
+     - Analytics (per-org usage, costs).
+
+4) Observability and security
+   - Centralize logging (start/end, errors, Cloudflare responses) in the service logger.
+   - Scrub secrets from logs (never print tokens or raw credentials).
+   - Maintain current file size/type limits; move to service-level config.
+
+---
+
+## Future API (Out of Scope for Now)
+
+We will NOT change endpoints in this phase, but here are options for later:
+
+- Flat console API (org in body):
+  - `POST /api/console/assets/images` (body/form-data can include `orgId`)
+  - `DELETE /api/console/assets/images/:imageId` (org derived by image record, no need for path-level org)
+- Org-scoped path API:
+  - `POST /api/console/orgs/:orgId/assets/images`
+  - `DELETE /api/console/orgs/:orgId/assets/images/:imageId`
+
+Notes:
+- Either approach needs a single source of truth for authorization (likely a DB mapping of `imageId` to org/app).
+- The choice affects how the console UI passes org context (path vs body); we’ll align with the broader console API design later.
+
+---
+
+## Authorization (Incremental)
+
+Phase A (current parity):
+- Authenticated console users can upload/delete via legacy routes.
+- Route keeps relying on auth middleware for base checks.
+
+Phase B (service-level checks):
+- If an orgId is provided (header, body, or derived elsewhere), ensure user is a member/admin before:
+  - Uploading an image “for” an org
+  - Deleting an image associated to that org (requires a persisted mapping)
+- If no org association: allow for now (maintain legacy behavior), but emit a warning log.
+
+Phase C (mapping required):
+- Require a persisted record (`imageId -> org/app -> owner`) and enforce role checks strictly.
+- This also unlocks features like quotas per org, cleanup jobs, and analytics.
+
+---
+
+## Migration Plan
+
+1) Extract logic into a service:
+   - Implement `assets.service.ts` with pure functions for `uploadImage` and `deleteImage`.
+   - Move Cloudflare API calls, metadata parsing, and replacement logic from route to service.
+   - Add structured logs and error handling.
+
+2) Keep legacy routes as thin handlers:
+   - No functional changes in the API shape or response contract.
+   - Websites/console keeps using the same endpoints and payloads.
+
+3) Add (optional) persistence:
+   - Introduce an `assets` or `images` collection later to record ownership and enable stronger authorization and lifecycle.
+
+4) Consider new console API endpoints only after broader console migration is ready:
+   - If we adopt a flat console namespace for apps, we’ll likely mirror that for assets.
+
+---
+
+## Frontend Notes (websites/console)
+
+- Current usage:
+  - `POST /api/dev/images/upload` with multipart form-data (file) and optional `metadata`
+  - Returns `{ url, imageId }`
+  - For replacement: include `replaceImageId` in the form data; backend deletes the old image after successful upload
+  - `DELETE /api/dev/images/:imageId`
+- Contract to keep stable in this refactor:
+  - Request/response shapes unchanged
+  - No org param changes
+
+---
+
+## Testing Checklist (Service-backed Legacy Routes)
+
+Upload
+- Accepts valid image types and enforces size limit
+- Returns `{ url, imageId }`
+- Replacing (`replaceImageId`) deletes old image after new upload succeeds
+- Fails gracefully on Cloudflare errors; does not delete old image on failure
+- Logs include request correlation id (best effort)
+
+Delete
+- Deletes the specified image by `imageId`
+- 404-equivalent behavior on non-existent `imageId` still returns a friendly error
+- Errors are logged; secrets are not
+
+Edge cases
+- Invalid metadata JSON handled without crashing (ignored with warning)
+- Cloudflare credentials missing → 500 with clear message (no secret leakage)
+- Large files rejected with appropriate status
+
+---
+
+## Open Questions
+
+- Do we need to persist image ownership now or can it wait until after the console API migration?
+- What is the desired default variant/transform for delivery URLs (e.g., “square”)? Should this be configurable?
+- Quotas and cleanup: do we need auto-expiry for images not referenced by any app?
+- Moderation/content scanning required?
+
+---
+
+## Decision Log
+
+- Keep legacy endpoints and behavior; do not change shapes or add org in path in this scope.
+- Extract logic into a `console` service module first to reduce route complexity.
+- Defer authorization hardening (imageId mapping) and any new console routes until the broader console migration proceeds.

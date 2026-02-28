@@ -1,0 +1,76 @@
+name: 🧪 Test Store build
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+      - staging
+  push:
+    branches:
+      - main
+      - dev
+      - staging
+    paths:
+      - "cloud/websites/store/**"
+      - "cloud/websites/shared/**"
+
+concurrency:
+  group: store-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  store:
+    name: Build cloud/websites/store
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            store:
+              - 'cloud/websites/store/**'
+              - 'cloud/websites/shared/**'
+
+      - name: Skip if no store changes
+        if: steps.filter.outputs.store != 'true'
+        run: echo "No changes under cloud/websites/store; skipping build."
+
+      - name: Setup Bun
+        if: steps.filter.outputs.store == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        if: steps.filter.outputs.store == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-store-${{ hashFiles('cloud/websites/store/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-store-
+
+      - name: Install dependencies
+        if: steps.filter.outputs.store == 'true'
+        working-directory: cloud
+        run: bun install --frozen-lockfile
+
+      - name: Build SDK package (required for TypeScript types)
+        if: steps.filter.outputs.store == 'true'
+        working-directory: cloud/packages/sdk
+        run: bun run build
+
+      - name: Run build
+        if: steps.filter.outputs.store == 'true'
+        working-directory: cloud/websites/store
+        run: bun run build

@@ -1,19 +1,24 @@
+/* eslint-disable import/order */
+ 
 /**
  * 🎯 App Session Module
  *
  * Manages an active Third Party App session with MentraOS Cloud.
  * Handles real-time communication, event subscriptions, and display management.
  */
+
+// Patch version for tracking Bug 007 fix (subscriptions derived from handlers)
+// v1: Derive subscriptions from handlers (single source of truth)
+// v2: Add 'terminated' flag to prevent reconnection after "User session ended"
+// This helps verify the correct SDK version is running in production
+const SDK_SUBSCRIPTION_PATCH = "bug007-fix-v2";
 import { WebSocket } from "ws";
-import { EventManager, EventData, StreamDataTypes } from "./events";
+import { EventManager, EventData } from "./events";
 import { LayoutManager } from "./layouts";
 import { SettingsManager } from "./settings";
 import { LocationManager } from "./modules/location";
-import {
-  CameraModule,
-  PhotoRequestOptions,
-  RtmpStreamOptions,
-} from "./modules/camera";
+import { CameraModule } from "./modules/camera";
+import { LedModule } from "./modules/led";
 import { AudioManager } from "./modules/audio";
 import { ResourceTracker } from "../../utils/resource-tracker";
 import {
@@ -22,10 +27,9 @@ import {
   CloudToAppMessage,
   AppConnectionInit,
   AppSubscriptionUpdate,
-  PhotoRequest,
-  AudioPlayRequest,
   AudioPlayResponse,
-  AudioStopRequest,
+  RequestWifiSetup,
+  OwnershipReleaseMessage,
   AppToCloudMessageType,
   CloudToAppMessageType,
 
@@ -34,10 +38,12 @@ import {
   ExtendedStreamType,
   ButtonPress,
   HeadPosition,
+  TouchEvent,
   PhoneNotification,
   PhoneNotificationDismissed,
   TranscriptionData,
   TranslationData,
+  createTouchEventStream,
 
   // Type guards
   isAppConnectionAck,
@@ -56,16 +62,10 @@ import {
   AppConfig,
   validateAppConfig,
   AudioChunk,
-  isAudioChunk,
-  createTranscriptionStream,
-  createTranslationStream,
-  GlassesToCloudMessage,
-  PhotoResponse,
   VpsCoordinates,
   PhotoTaken,
   SubscriptionRequest,
   Capabilities,
-  PhotoData,
   CapabilitiesUpdate,
 } from "../../types";
 import { DashboardAPI } from "../../types/dashboard";
@@ -74,15 +74,19 @@ import { Logger } from "pino";
 import { AppServer } from "../server";
 import axios from "axios";
 import EventEmitter from "events";
-import fetch from "node-fetch";
 
 // Import the cloud-to-app specific type guards
 import {
   isPhotoResponse,
+  isRgbLedControlResponse,
   isRtmpStreamStatus,
   isManagedStreamStatus,
   isStreamStatusCheckResponse,
+  isDeviceStateUpdate,
 } from "../../types/messages/cloud-to-app";
+import { SimpleStorage } from "./modules/simple-storage";
+import { DeviceState } from "./device-state";
+import { readNotificationWarnLog } from "../../utils/permissions-utils";
 
 /**
  * ⚙️ Configuration options for App Session
@@ -157,8 +161,12 @@ export class AppSession {
   private sessionId: string | null = null;
   /** Number of reconnection attempts made */
   private reconnectAttempts = 0;
-  /** Active event subscriptions */
-  private subscriptions = new Set<ExtendedStreamType>();
+  /** Flag to prevent reconnection after session termination (e.g., "User session ended") */
+  private terminated = false;
+  // REMOVED: private subscriptions = new Set<ExtendedStreamType>()
+  // Subscriptions are now derived from EventManager.handlers (single source of truth)
+  // This prevents drift between handlers and subscriptions that caused Bug 007
+  // See: cloud/issues/006-captions-and-apps-stopping/011-sdk-subscription-architecture-mismatch.md
   /** Map to store rate options for streams */
   private streamRates = new Map<ExtendedStreamType, string>();
   /** Resource tracker for automatic cleanup */
@@ -170,9 +178,7 @@ export class AppSession {
   /** Whether to update subscriptions when settings change */
   private shouldUpdateSubscriptionsOnSettingsChange = false;
   /** Custom subscription handler for settings-based subscriptions */
-  private subscriptionSettingsHandler?: (
-    settings: AppSettings,
-  ) => ExtendedStreamType[];
+  private subscriptionSettingsHandler?: (settings: AppSettings) => ExtendedStreamType[];
   /** Settings that should trigger subscription updates when changed */
   private subscriptionUpdateTriggers: string[] = [];
   /** Pending user discovery requests waiting for responses */
@@ -204,8 +210,14 @@ export class AppSession {
   public readonly location: LocationManager;
   /** 📷 Camera interface for photos and streaming */
   public readonly camera: CameraModule;
+  /** 💡 LED interface for RGB LED control */
+  public readonly led: LedModule;
   /** 🔊 Audio interface for audio playback */
   public readonly audio: AudioManager;
+  /** 🔐 Simple key-value storage interface */
+  public readonly simpleStorage: SimpleStorage;
+  /** 📱 Reactive device state (WebSocket-based observables) */
+  public readonly device: { state: DeviceState };
 
   public readonly appServer: AppServer;
   public readonly logger: Logger;
@@ -213,6 +225,9 @@ export class AppSession {
 
   /** 🔧 Device capabilities available for this session */
   public capabilities: Capabilities | null = null;
+
+  /** 📡 Latest glasses connection state (includes WiFi status) */
+  private glassesConnectionState: any = null; // Using any for now since GlassesConnectionState is in glasses-to-cloud types
 
   /** Dedicated emitter for App-to-App events */
   private appEvents = new EventEmitter();
@@ -240,14 +255,9 @@ export class AppSession {
         const url = new URL(this.config.mentraOSWebsocketUrl);
         if (!["ws:", "wss:"].includes(url.protocol)) {
           // Fix URLs with incorrect protocol (e.g., 'ws://http://host')
-          const fixedUrl = this.config.mentraOSWebsocketUrl.replace(
-            /^ws:\/\/http:\/\//,
-            "ws://",
-          );
+          const fixedUrl = this.config.mentraOSWebsocketUrl.replace(/^ws:\/\/http:\/\//, "ws://");
           this.config.mentraOSWebsocketUrl = fixedUrl;
-          this.logger.warn(
-            `⚠️ [${this.config.packageName}] Fixed malformed WebSocket URL: ${fixedUrl}`,
-          );
+          this.logger.warn(`⚠️ [${this.config.packageName}] Fixed malformed WebSocket URL: ${fixedUrl}`);
         }
       } catch (error) {
         this.logger.error(
@@ -258,12 +268,8 @@ export class AppSession {
     }
 
     // Log initialization
-    this.logger.debug(
-      `🚀 [${this.config.packageName}] App Session initialized`,
-    );
-    this.logger.debug(
-      `🚀 [${this.config.packageName}] WebSocket URL: ${this.config.mentraOSWebsocketUrl}`,
-    );
+    this.logger.debug(`🚀 [${this.config.packageName}] App Session initialized`);
+    this.logger.debug(`🚀 [${this.config.packageName}] WebSocket URL: ${this.config.mentraOSWebsocketUrl}`);
 
     // Validate URL format - give early warning for obvious issues
     // Check URL format but handle undefined case
@@ -287,6 +293,8 @@ export class AppSession {
     this.events = new EventManager(
       this.subscribe.bind(this),
       this.unsubscribe.bind(this),
+      this.config.packageName,
+      this.getHttpsServerUrl() || "",
     );
     this.layouts = new LayoutManager(config.packageName, this.send.bind(this));
 
@@ -297,35 +305,28 @@ export class AppSession {
       this.config.mentraOSWebsocketUrl,
       this.sessionId ?? undefined,
       async (streams: string[]) => {
+        // NOTE: With Bug 007 fix, subscriptions are derived from EventManager.handlers
+        // This subscribeFn is called by SettingsManager to auto-subscribe to streams for MentraOS settings
+        // The actual subscription intent should be tracked via handlers, not a separate Set
+        this.logger.debug({ streams: JSON.stringify(streams) }, `[AppSession] subscribeFn called for streams`);
+
+        // Log current handler-based subscriptions for debugging
+        const currentHandlerStreams = this.events.getRegisteredStreams();
         this.logger.debug(
-          { streams: JSON.stringify(streams) },
-          `[AppSession] subscribeFn called for streams`,
+          {
+            requestedStreams: JSON.stringify(streams),
+            currentHandlerStreams: JSON.stringify(currentHandlerStreams),
+          },
+          `[AppSession] subscribeFn: requested streams vs current handler streams`,
         );
-        streams.forEach((stream) => {
-          if (!this.subscriptions.has(stream as ExtendedStreamType)) {
-            this.subscriptions.add(stream as ExtendedStreamType);
-            this.logger.debug(
-              `[AppSession] Auto-subscribed to stream '${stream}' for MentraOS setting.`,
-            );
-          } else {
-            this.logger.debug(
-              `[AppSession] Already subscribed to stream '${stream}'.`,
-            );
-          }
-        });
-        this.logger.debug(
-          { subscriptions: JSON.stringify(Array.from(this.subscriptions)) },
-          `[AppSession] Current subscriptions after subscribeFn`,
-        );
+
+        // Send subscription update if connected
+        // Note: The actual subscriptions sent are derived from handlers
         if (this.ws?.readyState === 1) {
           this.updateSubscriptions();
-          this.logger.debug(
-            `[AppSession] Sent updated subscriptions to cloud after auto-subscribing to MentraOS setting.`,
-          );
+          this.logger.debug(`[AppSession] Sent updated subscriptions to cloud (derived from handlers).`);
         } else {
-          this.logger.debug(
-            `[AppSession] WebSocket not open, will send subscriptions when connected.`,
-          );
+          this.logger.debug(`[AppSession] WebSocket not open, will send subscriptions when connected.`);
         }
       },
     );
@@ -333,27 +334,36 @@ export class AppSession {
     // Initialize dashboard API with this session instance
     // Import DashboardManager dynamically to avoid circular dependency
     const { DashboardManager } = require("./dashboard");
-    this.dashboard = new DashboardManager(this, this.send.bind(this));
+    this.dashboard = new DashboardManager(this);
 
     // Initialize camera module with session reference
     this.camera = new CameraModule(
+      this,
       this.config.packageName,
       this.sessionId || "unknown-session-id",
-      this.send.bind(this),
-      this, // Pass session reference
       this.logger.child({ module: "camera" }),
+    );
+
+    // Initialize LED control module
+    this.led = new LedModule(
+      this,
+      this.config.packageName,
+      this.sessionId || "unknown-session-id",
+      this.logger.child({ module: "led" }),
     );
 
     // Initialize audio module with session reference
     this.audio = new AudioManager(
+      this,
       this.config.packageName,
       this.sessionId || "unknown-session-id",
-      this.send.bind(this),
-      this, // Pass session reference
       this.logger.child({ module: "audio" }),
     );
 
-    this.location = new LocationManager(this, this.send.bind(this));
+    this.simpleStorage = new SimpleStorage(this);
+    this.device = { state: new DeviceState(this) };
+
+    this.location = new LocationManager(this);
   }
 
   /**
@@ -396,11 +406,7 @@ export class AppSession {
     handler: (data: TranscriptionData) => void,
     disableLanguageIdentification = false,
   ): () => void {
-    return this.events.onTranscriptionForLanguage(
-      language,
-      handler,
-      disableLanguageIdentification,
-    );
+    return this.events.onTranscriptionForLanguage(language, handler, disableLanguageIdentification);
   }
 
   /**
@@ -417,11 +423,7 @@ export class AppSession {
     targetLanguage: string,
     handler: (data: TranslationData) => void,
   ): () => void {
-    return this.events.ontranslationForLanguage(
-      sourceLanguage,
-      targetLanguage,
-      handler,
-    );
+    return this.events.ontranslationForLanguage(sourceLanguage, targetLanguage, handler);
   }
 
   /**
@@ -445,12 +447,55 @@ export class AppSession {
   }
 
   /**
+   * 👆 Listen for touch gesture events
+   * @param gestureOrHandler - Gesture name or handler function
+   * @param handler - Handler function (if first param is gesture name)
+   * @returns Cleanup function
+   *
+   * @example
+   * // Subscribe to all touch events
+   * session.onTouchEvent((event) => console.log(event.gesture_name));
+   *
+   * // Subscribe to specific gesture
+   * session.onTouchEvent("forward_swipe", (event) => console.log("Forward swipe!"));
+   */
+  onTouchEvent(
+    gestureOrHandler: string | ((data: TouchEvent) => void),
+    handler?: (data: TouchEvent) => void,
+  ): () => void {
+    return this.events.onTouchEvent(gestureOrHandler as any, handler as any);
+  }
+
+  /**
+   * 👆 Subscribe to multiple touch gestures
+   * @param gestures - Array of gesture names
+   * @returns Cleanup function that unsubscribes from all
+   *
+   * @example
+   * session.subscribeToGestures(["forward_swipe", "backward_swipe"]);
+   */
+  subscribeToGestures(gestures: string[]): () => void {
+    gestures.forEach((gesture) => {
+      const stream = createTouchEventStream(gesture);
+      this.subscribe(stream);
+    });
+
+    return () => {
+      gestures.forEach((gesture) => {
+        const stream = createTouchEventStream(gesture);
+        this.unsubscribe(stream);
+      });
+    };
+  }
+
+  /**
    * 📱 Listen for phone notification events
    * @param handler - Function to handle notifications
    * @returns Cleanup function to remove the handler
    * @deprecated Use session.events.onPhoneNotifications() instead
    */
   onPhoneNotifications(handler: (data: PhoneNotification) => void): () => void {
+    readNotificationWarnLog(this.getHttpsServerUrl() || "", this.getPackageName(), "onPhoneNotifications");
     return this.events.onPhoneNotifications(handler);
   }
 
@@ -460,9 +505,7 @@ export class AppSession {
    * @returns Cleanup function to remove the handler
    * @deprecated Use session.events.onPhoneNotificationDismissed() instead
    */
-  onPhoneNotificationDismissed(
-    handler: (data: PhoneNotificationDismissed) => void,
-  ): () => void {
+  onPhoneNotificationDismissed(handler: (data: PhoneNotificationDismissed) => void): () => void {
     return this.events.onPhoneNotificationDismissed(handler);
   }
 
@@ -515,7 +558,10 @@ export class AppSession {
       return;
     }
 
-    this.subscriptions.add(type);
+    // NOTE: We no longer maintain this.subscriptions - subscriptions are derived from handlers
+    // This prevents drift between handlers and subscriptions (Bug 007 fix)
+    // The EventManager.addHandler() already tracks the subscription intent via handlers
+
     if (rate) {
       this.streamRates.set(type, rate);
     }
@@ -543,7 +589,9 @@ export class AppSession {
       );
       return;
     }
-    this.subscriptions.delete(type);
+    // NOTE: We no longer maintain this.subscriptions - subscriptions are derived from handlers
+    // The EventManager.removeHandler() already tracks the unsubscription intent
+
     this.streamRates.delete(type); // also remove from our rate map
     if (this.ws?.readyState === 1) {
       this.updateSubscriptions();
@@ -555,10 +603,7 @@ export class AppSession {
    * @param event - Event name to listen for
    * @param handler - Event handler function
    */
-  on<T extends ExtendedStreamType>(
-    event: T,
-    handler: (data: EventData<T>) => void,
-  ): () => void {
+  on<T extends ExtendedStreamType>(event: T, handler: (data: EventData<T>) => void): () => void {
     return this.events.on(event, handler);
   }
 
@@ -576,11 +621,7 @@ export class AppSession {
 
     // Configure settings API client with the WebSocket URL and session ID
     // This allows settings to be fetched from the correct server
-    this.settings.configureApiClient(
-      this.config.packageName,
-      this.config.mentraOSWebsocketUrl || "",
-      sessionId,
-    );
+    this.settings.configureApiClient(this.config.packageName, this.config.mentraOSWebsocketUrl || "", sessionId);
 
     // Update the sessionId in the camera module
     if (this.camera) {
@@ -632,39 +673,26 @@ export class AppSession {
             this.sendConnectionInit();
           } catch (error: unknown) {
             this.logger.error(error, "Error during connection initialization");
-            const errorMessage =
-              error instanceof Error ? error.message : String(error);
-            this.events.emit(
-              "error",
-              new Error(`Connection initialization failed: ${errorMessage}`),
-            );
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.events.emit("error", new Error(`Connection initialization failed: ${errorMessage}`));
             reject(error);
           }
         });
 
         // Message handler with comprehensive error recovery
-        const messageHandler = async (
-          data: Buffer | string,
-          isBinary: boolean,
-        ) => {
+        const messageHandler = async (data: Buffer | string, isBinary: boolean) => {
           try {
             // Handle binary messages (typically audio data)
             if (isBinary && Buffer.isBuffer(data)) {
               try {
                 // Validate buffer before processing
                 if (data.length === 0) {
-                  this.events.emit(
-                    "error",
-                    new Error("Received empty binary data"),
-                  );
+                  this.events.emit("error", new Error("Received empty binary data"));
                   return;
                 }
 
                 // Convert Node.js Buffer to ArrayBuffer safely
-                const arrayBuf: ArrayBufferLike = data.buffer.slice(
-                  data.byteOffset,
-                  data.byteOffset + data.byteLength,
-                );
+                const arrayBuf: ArrayBufferLike = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
 
                 // Create AUDIO_CHUNK event message with validation
                 const audioChunk: AudioChunk = {
@@ -677,14 +705,8 @@ export class AppSession {
                 return;
               } catch (error: unknown) {
                 this.logger.error(error, "Error processing binary message:");
-                const errorMessage =
-                  error instanceof Error ? error.message : String(error);
-                this.events.emit(
-                  "error",
-                  new Error(
-                    `Failed to process binary message: ${errorMessage}`,
-                  ),
-                );
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                this.events.emit("error", new Error(`Failed to process binary message: ${errorMessage}`));
                 return;
               }
             }
@@ -708,10 +730,7 @@ export class AppSession {
 
               // Validate JSON before parsing
               if (!jsonData || jsonData.trim() === "") {
-                this.events.emit(
-                  "error",
-                  new Error("Received empty JSON message"),
-                );
+                this.events.emit("error", new Error("Received empty JSON message"));
                 return;
               }
 
@@ -719,15 +738,8 @@ export class AppSession {
               const message = JSON.parse(jsonData) as CloudToAppMessage;
 
               // Basic schema validation
-              if (
-                !message ||
-                typeof message !== "object" ||
-                !("type" in message)
-              ) {
-                this.events.emit(
-                  "error",
-                  new Error("Malformed message: missing type property"),
-                );
+              if (!message || typeof message !== "object" || !("type" in message)) {
+                this.events.emit("error", new Error("Malformed message: missing type property"));
                 return;
               }
 
@@ -735,22 +747,14 @@ export class AppSession {
               this.handleMessage(message);
             } catch (error: unknown) {
               this.logger.error(error, "JSON parsing error");
-              const errorMessage =
-                error instanceof Error ? error.message : String(error);
-              this.events.emit(
-                "error",
-                new Error(`Failed to parse JSON message: ${errorMessage}`),
-              );
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              this.events.emit("error", new Error(`Failed to parse JSON message: ${errorMessage}`));
             }
           } catch (error: unknown) {
             // Final catch - should never reach here if individual handlers work correctly
             this.logger.error({ error }, "Unhandled message processing error");
-            const errorMessage =
-              error instanceof Error ? error.message : String(error);
-            this.events.emit(
-              "error",
-              new Error(`Unhandled message error: ${errorMessage}`),
-            );
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.events.emit("error", new Error(`Unhandled message error: ${errorMessage}`));
           }
         };
 
@@ -781,28 +785,30 @@ export class AppSession {
           // 1000 (Normal Closure) and 1001 (Going Away) are normal
           // 1002-1015 are abnormal, and reason "App stopped" means intentional closure
           // 1008 usually when the userSession no longer exists on server. i.e user disconnected from cloud.
-          const isNormalClosure =
-            code === 1000 || code === 1001 || code === 1008;
+          const isNormalClosure = code === 1000 || code === 1001 || code === 1008;
           const isManualStop = reason && reason.includes("App stopped");
-          const isUserSessionEnded =
-            reason && reason.includes("User session ended");
+          const isUserSessionEnded = reason && reason.includes("User session ended");
 
           // Log closure details for diagnostics
-          this.logger.debug(
-            `🔌 [${this.config.packageName}] WebSocket closed with code ${code}${reasonStr}`,
-          );
+          this.logger.debug(`🔌 [${this.config.packageName}] WebSocket closed with code ${code}${reasonStr}`);
           this.logger.debug(
             `🔌 [${this.config.packageName}] isNormalClosure: ${isNormalClosure}, isManualStop: ${isManualStop}, isUserSessionEnded: ${isUserSessionEnded}`,
           );
 
-          if (!isNormalClosure && !isManualStop) {
-            this.logger.warn(
-              `🔌 [${this.config.packageName}] Abnormal closure detected, attempting reconnection`,
+          // If user session ended, mark as terminated to prevent any future reconnection
+          if (isUserSessionEnded) {
+            this.terminated = true;
+            this.logger.info(
+              `🛑 [${this.config.packageName}] User session ended - marking as terminated, no reconnection allowed`,
             );
+          }
+
+          if (!isNormalClosure && !isManualStop && !this.terminated) {
+            this.logger.warn(`🔌 [${this.config.packageName}] Abnormal closure detected, attempting reconnection`);
             this.handleReconnection();
           } else {
             this.logger.debug(
-              `🔌 [${this.config.packageName}] Normal closure detected, not attempting reconnection`,
+              `🔌 [${this.config.packageName}] Normal/terminated closure detected, not attempting reconnection (terminated: ${this.terminated})`,
             );
           }
 
@@ -888,10 +894,7 @@ export class AppSession {
             `⏱️⏱️⏱️ [${this.config.packageName}] Connection timeout after ${timeoutMs}ms`,
           );
 
-          this.events.emit(
-            "error",
-            new Error(`Connection timeout after ${timeoutMs}ms`),
-          );
+          this.events.emit("error", new Error(`Connection timeout after ${timeoutMs}ms`));
           reject(new Error("Connection timeout"));
         }, timeoutMs);
 
@@ -905,17 +908,70 @@ export class AppSession {
         this.resources.track(timeoutCleanup);
       } catch (error: unknown) {
         this.logger.error(error, "Connection setup error");
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         reject(new Error(`Failed to setup connection: ${errorMessage}`));
       }
     });
   }
 
   /**
-   * 👋 Disconnect from MentraOS Cloud
+   * 🔄 Release ownership of this session to allow clean handoff
+   * Call this before connecting to a different cloud instance or shutting down cleanly.
+   * This signals to the cloud that no resurrection is needed.
+   *
+   * @param reason - Why ownership is being released
    */
-  disconnect(): void {
+  async releaseOwnership(reason: "switching_clouds" | "clean_shutdown" | "user_logout"): Promise<void> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.logger.debug(`[${this.config.packageName}] Cannot release ownership - WebSocket not open`);
+      return;
+    }
+
+    const message: OwnershipReleaseMessage = {
+      type: AppToCloudMessageType.OWNERSHIP_RELEASE,
+      packageName: this.config.packageName,
+      sessionId: this.sessionId || "",
+      reason,
+      timestamp: new Date(),
+    };
+
+    this.logger.info(
+      { reason, sessionId: this.sessionId },
+      `🔄 [${this.config.packageName}] Releasing ownership: ${reason}`,
+    );
+
+    this.send(message);
+
+    // Small delay to ensure message is sent before any subsequent disconnect
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  /**
+   * 👋 Disconnect from MentraOS Cloud
+   * Flushes any pending SimpleStorage writes before closing
+   *
+   * @param options - Optional disconnect options
+   * @param options.releaseOwnership - If true, send OWNERSHIP_RELEASE before disconnecting (enables clean handoff)
+   * @param options.reason - Reason for ownership release (required if releaseOwnership is true)
+   */
+  async disconnect(options?: {
+    releaseOwnership?: boolean;
+    reason?: "switching_clouds" | "clean_shutdown" | "user_logout";
+  }): Promise<void> {
+    // Release ownership if requested (for clean handoffs)
+    if (options?.releaseOwnership && options?.reason) {
+      await this.releaseOwnership(options.reason);
+    }
+
+    // Flush any pending SimpleStorage writes before closing
+    try {
+      await this.simpleStorage.flush();
+      console.log("SimpleStorage flushed on disconnect");
+    } catch (error) {
+      console.error("Error flushing SimpleStorage on disconnect:", error);
+      // Continue with disconnect even if flush fails
+    }
+
     // Clean up camera module first
     if (this.camera) {
       this.camera.cancelAllRequests();
@@ -932,7 +988,11 @@ export class AppSession {
     // Clean up additional resources not handled by the tracker
     this.ws = null;
     this.sessionId = null;
-    this.subscriptions.clear();
+    // REMOVED: this.subscriptions.clear()
+    // We no longer clear subscriptions here - they are derived from handlers
+    // This is the key fix for Bug 007: clearing subscriptions here caused
+    // empty subscription updates on reconnect when handlers still existed
+    // See: cloud/issues/006-captions-and-apps-stopping/011-sdk-subscription-architecture-mismatch.md
     this.reconnectAttempts = 0;
   }
 
@@ -982,29 +1042,37 @@ export class AppSession {
     if (!this.subscriptionSettingsHandler) return;
 
     try {
-      // Get new subscriptions from handler
-      const newSubscriptions = this.subscriptionSettingsHandler(
-        this.settingsData,
-      );
+      // Get desired subscriptions from settings handler
+      const settingsSubscriptions = this.subscriptionSettingsHandler(this.settingsData);
 
-      // Update all subscriptions at once
-      this.subscriptions.clear();
-      newSubscriptions.forEach((subscription) => {
-        this.subscriptions.add(subscription);
-      });
+      // NOTE: Settings-based subscriptions work differently from handler-based subscriptions
+      // With the Bug 007 fix, subscriptions are now derived from EventManager.handlers
+      // Apps using setSubscriptionSettings() should ensure their settings correspond to
+      // registered handlers for the subscriptions to take effect.
+      //
+      // Log if there's a mismatch (for debugging during migration)
+      const handlerStreams = this.events.getRegisteredStreams();
+      if (settingsSubscriptions.length !== handlerStreams.length) {
+        this.logger.warn(
+          {
+            settingsSubscriptions: JSON.stringify(settingsSubscriptions),
+            handlerStreams: JSON.stringify(handlerStreams),
+          },
+          `[AppSession] Settings-based subscriptions (${settingsSubscriptions.length}) differ from handler-based subscriptions (${handlerStreams.length}). ` +
+            `Subscriptions are now derived from handlers. Ensure handlers are registered for desired streams.`,
+        );
+      }
 
       // Send subscription update to cloud if connected
+      // Note: updateSubscriptions() derives from handlers, so settings-based apps
+      // should ensure their settings correspond to registered handlers
       if (this.ws && this.ws.readyState === 1) {
         this.updateSubscriptions();
       }
     } catch (error: unknown) {
       this.logger.error(error, "Error updating subscriptions from settings");
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.events.emit(
-        "error",
-        new Error(`Failed to update subscriptions: ${errorMessage}`),
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.events.emit("error", new Error(`Failed to update subscriptions: ${errorMessage}`));
     }
   }
 
@@ -1045,8 +1113,7 @@ export class AppSession {
         throw new Error("Invalid App configuration format");
       }
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to load App configuration: ${errorMessage}`);
     }
   }
@@ -1091,16 +1158,11 @@ export class AppSession {
    */
   getDefaultSettings(): AppSettings {
     if (!this.appConfig) {
-      throw new Error(
-        "App configuration not loaded. Call loadConfigFromJson first.",
-      );
+      throw new Error("App configuration not loaded. Call loadConfigFromJson first.");
     }
 
     return this.appConfig.settings
-      .filter(
-        (s: AppSetting | { type: "group"; title: string }): s is AppSetting =>
-          s.type !== "group",
-      )
+      .filter((s: AppSetting | { type: "group"; title: string }): s is AppSetting => s.type !== "group")
       .map((s: AppSetting) => ({
         ...s,
         value: s.defaultValue, // Set value to defaultValue
@@ -1116,11 +1178,59 @@ export class AppSession {
     if (!this.appConfig) return undefined;
 
     const setting = this.appConfig.settings.find(
-      (s: AppSetting | { type: "group"; title: string }) =>
-        s.type !== "group" && "key" in s && s.key === key,
+      (s: AppSetting | { type: "group"; title: string }) => s.type !== "group" && "key" in s && s.key === key,
     );
 
     return setting as AppSetting | undefined;
+  }
+
+  /**
+   * 📡 Get WiFi connection status of glasses
+   * @returns WiFi status object or null if glasses don't support WiFi or status not available
+   */
+  getWifiStatus(): { connected: boolean; ssid?: string | null } | null {
+    if (!this.capabilities?.hasWifi) {
+      return null;
+    }
+    return this.glassesConnectionState?.wifi || null;
+  }
+
+  /**
+   * ✅ Check if glasses are connected to WiFi
+   * @returns true if connected to WiFi, false otherwise
+   */
+  isWifiConnected(): boolean {
+    return this.getWifiStatus()?.connected === true;
+  }
+
+  /**
+   * 🌐 Request WiFi setup from mobile app
+   * Triggers a popup on the mobile app that allows user to set up WiFi on glasses
+   * @param reason Optional reason message to display to the user
+   */
+  requestWifiSetup(reason?: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("Not connected to MentraOS Cloud");
+    }
+
+    const message: RequestWifiSetup = {
+      type: AppToCloudMessageType.REQUEST_WIFI_SETUP,
+      packageName: this.config.packageName,
+      sessionId: this.sessionId || "",
+      reason,
+      timestamp: new Date(),
+    };
+
+    this.send(message);
+  }
+
+  /**
+   * 👂 Listen for glasses connection state changes (includes WiFi status)
+   * @param handler Callback function to handle connection state updates
+   * @returns Cleanup function to remove the listener
+   */
+  onGlassesConnectionState(handler: (state: any) => void): () => void {
+    return this.events.on(StreamType.GLASSES_CONNECTION_STATE, handler);
   }
 
   // =====================================
@@ -1161,10 +1271,7 @@ export class AppSession {
             try {
               this.settingsData = this.getDefaultSettings();
             } catch (error) {
-              this.logger.warn(
-                error,
-                "Failed to load default settings from config:",
-              );
+              this.logger.warn(error, "Failed to load default settings from config:");
             }
           }
 
@@ -1183,47 +1290,59 @@ export class AppSession {
             );
             this.settings.updateMentraosSettings(message.mentraosSettings);
           } else {
-            this.logger.warn(
-              `[AppSession] CONNECTION_ACK message missing mentraosSettings field`,
-            );
+            this.logger.warn(`[AppSession] CONNECTION_ACK message missing mentraosSettings field`);
           }
 
           // Handle device capabilities if provided
           if (message.capabilities) {
             this.capabilities = message.capabilities;
-            this.logger.info(
-              `[AppSession] Device capabilities loaded for model: ${message.capabilities.modelName}`,
-            );
+            this.logger.info(`[AppSession] Device capabilities loaded for model: ${message.capabilities.modelName}`);
           } else {
-            this.logger.debug(
-              `[AppSession] No capabilities provided in CONNECTION_ACK`,
-            );
+            this.logger.debug(`[AppSession] No capabilities provided in CONNECTION_ACK`);
           }
 
           // Emit connected event with settings
           this.events.emit("connected", this.settingsData);
 
+          // Log once to confirm Bug 007 fix is active (subscriptions derived from handlers)
+          const handlerCount = this.events.getRegisteredStreams().length;
+          this.logger.info(
+            { patch: SDK_SUBSCRIPTION_PATCH, handlerCount },
+            `[AppSession] 🔧 SDK Patch Active: ${SDK_SUBSCRIPTION_PATCH} - Subscriptions derived from ${handlerCount} handler(s)`,
+          );
+
           // Update subscriptions (normal flow)
           this.updateSubscriptions();
 
           // If settings-based subscriptions are enabled, update those too
-          if (
-            this.shouldUpdateSubscriptionsOnSettingsChange &&
-            this.settingsData.length > 0
-          ) {
+          if (this.shouldUpdateSubscriptionsOnSettingsChange && this.settingsData.length > 0) {
             this.updateSubscriptionsFromSettings();
           }
-        } else if (
-          isAppConnectionError(message) ||
-          message.type === "connection_error"
-        ) {
+        } else if (isAppConnectionError(message) || message.type === "connection_error") {
           // Handle both App-specific connection_error and standard connection_error
           const errorMessage = message.message || "Unknown connection error";
           this.events.emit("error", new Error(errorMessage));
         } else if (message.type === StreamType.AUDIO_CHUNK) {
-          if (this.subscriptions.has(StreamType.AUDIO_CHUNK)) {
+          // Check if we have a handler registered for AUDIO_CHUNK (derived from handlers)
+          const hasAudioHandler = this.events.getRegisteredStreams().includes(StreamType.AUDIO_CHUNK);
+          if (hasAudioHandler) {
             // Only process if we're subscribed to avoid unnecessary processing
             this.events.emit(StreamType.AUDIO_CHUNK, message);
+          }
+        } else if (isDataStream(message) && message.streamType === StreamType.GLASSES_CONNECTION_STATE) {
+          // Store latest glasses connection state (includes WiFi info)
+          this.glassesConnectionState = message.data;
+
+          // Emit to subscribed listeners (check derived from handlers)
+          const hasGlassesStateHandler = this.events
+            .getRegisteredStreams()
+            .includes(StreamType.GLASSES_CONNECTION_STATE);
+          if (hasGlassesStateHandler) {
+            const sanitizedData = this.sanitizeEventData(
+              StreamType.GLASSES_CONNECTION_STATE,
+              message.data,
+            ) as EventData<typeof StreamType.GLASSES_CONNECTION_STATE>;
+            this.events.emit(StreamType.GLASSES_CONNECTION_STATE, sanitizedData);
           }
         } else if (isDataStream(message)) {
           // Ensure streamType exists before emitting the event
@@ -1240,24 +1359,27 @@ export class AppSession {
           //   }
           // }
 
-          if (messageStreamType && this.subscriptions.has(messageStreamType)) {
-            const sanitizedData = this.sanitizeEventData(
-              messageStreamType,
-              message.data,
-            ) as EventData<typeof messageStreamType>;
+          // Check if we have a handler registered for this stream type (derived from handlers)
+          const hasHandler = this.events.getRegisteredStreams().includes(messageStreamType);
+          if (messageStreamType && hasHandler) {
+            const sanitizedData = this.sanitizeEventData(messageStreamType, message.data) as EventData<
+              typeof messageStreamType
+            >;
             this.events.emit(messageStreamType, sanitizedData);
           }
         } else if (isRtmpStreamStatus(message)) {
-          // Emit as a standard stream event if subscribed
-          if (this.subscriptions.has(StreamType.RTMP_STREAM_STATUS)) {
+          // Emit as a standard stream event if subscribed (check derived from handlers)
+          const hasRtmpHandler = this.events.getRegisteredStreams().includes(StreamType.RTMP_STREAM_STATUS);
+          if (hasRtmpHandler) {
             this.events.emit(StreamType.RTMP_STREAM_STATUS, message);
           }
 
           // Update camera module's internal stream state
           this.camera.updateStreamState(message);
         } else if (isManagedStreamStatus(message)) {
-          // Emit as a standard stream event if subscribed
-          if (this.subscriptions.has(StreamType.MANAGED_STREAM_STATUS)) {
+          // Emit as a standard stream event if subscribed (check derived from handlers)
+          const hasManagedStreamHandler = this.events.getRegisteredStreams().includes(StreamType.MANAGED_STREAM_STATUS);
+          if (hasManagedStreamHandler) {
             this.events.emit(StreamType.MANAGED_STREAM_STATUS, message);
           }
 
@@ -1269,7 +1391,7 @@ export class AppSession {
           this.camera.handleStreamCheckResponse(message);
         } else if (isSettingsUpdate(message)) {
           // Store previous settings to check for changes
-          const prevSettings = [...this.settingsData];
+          const _prevSettings = [...this.settingsData];
 
           // Update internal settings storage
           this.settingsData = message.settings || [];
@@ -1289,11 +1411,9 @@ export class AppSession {
           // Check if we should update subscriptions
           if (this.shouldUpdateSubscriptionsOnSettingsChange) {
             // Check if any subscription trigger settings changed
-            const shouldUpdateSubs = this.subscriptionUpdateTriggers.some(
-              (key) => {
-                return key in changes;
-              },
-            );
+            const shouldUpdateSubs = this.subscriptionUpdateTriggers.some((key) => {
+              return key in changes;
+            });
 
             if (shouldUpdateSubs) {
               this.updateSubscriptionsFromSettings();
@@ -1314,15 +1434,24 @@ export class AppSession {
             modelName: capabilitiesMessage.modelName,
             timestamp: capabilitiesMessage.timestamp,
           });
+        } else if (isDeviceStateUpdate(message)) {
+          // Update device state observables
+          this.device.state.updateFromMessage(message.state);
+
+          this.logger.debug(
+            {
+              changedFields: Object.keys(message.state),
+              fullSnapshot: message.fullSnapshot,
+            },
+            `[AppSession] Device state updated via WebSocket`,
+          );
         } else if (isAppStopped(message)) {
           const reason = message.reason || "unknown";
           const displayReason = `App stopped: ${reason}`;
 
           // Don't emit disconnected event here - let the WebSocket close handler do it
           // This prevents duplicate disconnected events when the session is disposed
-          this.logger.info(
-            `📤 [${this.config.packageName}] Received APP_STOPPED message: ${displayReason}`,
-          );
+          this.logger.info(`📤 [${this.config.packageName}] Received APP_STOPPED message: ${displayReason}`);
 
           // Clear reconnection state
           this.reconnectAttempts = 0;
@@ -1352,10 +1481,7 @@ export class AppSession {
               (this.dashboard.content as any).setAlwaysOnEnabled(enabled);
             }
           } catch (error) {
-            this.logger.error(
-              error,
-              "Error handling dashboard always-on change",
-            );
+            this.logger.error(error, "Error handling dashboard always-on change");
           }
         }
         // Handle custom messages
@@ -1374,22 +1500,14 @@ export class AppSession {
           this.appEvents.emit("app_room_updated", message as any);
         } else if ((message as any).type === "app_direct_message_response") {
           const response = message as any;
-          if (
-            response.messageId &&
-            this.pendingDirectMessages.has(response.messageId)
-          ) {
-            const { resolve } = this.pendingDirectMessages.get(
-              response.messageId,
-            )!;
+          if (response.messageId && this.pendingDirectMessages.has(response.messageId)) {
+            const { resolve } = this.pendingDirectMessages.get(response.messageId)!;
             resolve(response.success);
             this.pendingDirectMessages.delete(response.messageId);
           }
         } else if (message.type === "augmentos_settings_update") {
           const mentraosMsg = message as MentraosSettingsUpdate;
-          if (
-            mentraosMsg.settings &&
-            typeof mentraosMsg.settings === "object"
-          ) {
+          if (mentraosMsg.settings && typeof mentraosMsg.settings === "object") {
             this.settings.updateMentraosSettings(mentraosMsg.settings);
           }
         }
@@ -1398,9 +1516,7 @@ export class AppSession {
           // Treat 'connection_error' (string literal) like AppConnectionError
           // This handles cases where the cloud might send the type as a direct string
           // instead of the enum's 'tpa_connection_error' value.
-          const errorMessage =
-            (message as any).message ||
-            "Unknown connection error (type: connection_error)";
+          const errorMessage = (message as any).message || "Unknown connection error (type: connection_error)";
           this.logger.warn(
             `Received 'connection_error' type directly. Consider aligning cloud to send 'tpa_connection_error'. Message: ${errorMessage}`,
           );
@@ -1441,40 +1557,29 @@ export class AppSession {
           // Legacy photo response handling - now photos come directly via webhook
           // This branch can be removed in the future as all photos now go through /photo-upload
           this.logger.warn(
+            { message },
             "Received legacy photo response - photos should now come via /photo-upload webhook",
           );
+        } else if (isRgbLedControlResponse(message)) {
+          // LED control responses are no longer handled - fire-and-forget mode
+          this.logger.debug({ message }, "Received LED control response (ignored - fire-and-forget mode)");
         }
         // Handle unrecognized message types gracefully
         else {
-          this.logger.warn(
-            `Unrecognized message type: ${(message as any).type}`,
-          );
-          this.events.emit(
-            "error",
-            new Error(`Unrecognized message type: ${(message as any).type}`),
-          );
+          this.logger.warn(`Unrecognized message type: ${(message as any).type}`);
+          this.events.emit("error", new Error(`Unrecognized message type: ${(message as any).type}`));
         }
       } catch (processingError: unknown) {
         // Catch any errors during message processing to prevent App crashes
         this.logger.error(processingError, "Error processing message:");
-        const errorMessage =
-          processingError instanceof Error
-            ? processingError.message
-            : String(processingError);
-        this.events.emit(
-          "error",
-          new Error(`Error processing message: ${errorMessage}`),
-        );
+        const errorMessage = processingError instanceof Error ? processingError.message : String(processingError);
+        this.events.emit("error", new Error(`Error processing message: ${errorMessage}`));
       }
     } catch (error: unknown) {
       // Final safety net to ensure the App doesn't crash on any unexpected errors
       this.logger.error(error, "Unexpected error in message handler");
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.events.emit(
-        "error",
-        new Error(`Unexpected error in message handler: ${errorMessage}`),
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.events.emit("error", new Error(`Unexpected error in message handler: ${errorMessage}`));
     }
   }
 
@@ -1509,8 +1614,9 @@ export class AppSession {
    */
   private handleBinaryMessage(buffer: ArrayBuffer): void {
     try {
-      // Safety check - only process if we're subscribed to avoid unnecessary work
-      if (!this.subscriptions.has(StreamType.AUDIO_CHUNK)) {
+      // Safety check - only process if we have a handler registered (derived from handlers)
+      const hasAudioHandler = this.events.getRegisteredStreams().includes(StreamType.AUDIO_CHUNK);
+      if (!hasAudioHandler) {
         return;
       }
 
@@ -1532,12 +1638,8 @@ export class AppSession {
       this.events.emit(StreamType.AUDIO_CHUNK, audioChunk);
     } catch (error: unknown) {
       this.logger.error(error, "Error processing binary message");
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.events.emit(
-        "error",
-        new Error(`Error processing binary message: ${errorMessage}`),
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.events.emit("error", new Error(`Error processing binary message: ${errorMessage}`));
     }
   }
 
@@ -1547,10 +1649,7 @@ export class AppSession {
    * @param data - The potentially unsafe data to sanitize
    * @returns Sanitized data safe for processing
    */
-  private sanitizeEventData(
-    streamType: ExtendedStreamType,
-    data: unknown,
-  ): any {
+  private sanitizeEventData(streamType: ExtendedStreamType, data: unknown): any {
     try {
       // If data is null or undefined, return an empty object to prevent crashes
       if (data === null || data === undefined) {
@@ -1559,7 +1658,7 @@ export class AppSession {
 
       // For specific stream types, perform targeted sanitization
       switch (streamType) {
-        case StreamType.TRANSCRIPTION:
+        case StreamType.TRANSCRIPTION: {
           // Ensure text field exists and is a string
           if (typeof (data as TranscriptionData).text !== "string") {
             return {
@@ -1570,8 +1669,9 @@ export class AppSession {
             };
           }
           break;
+        }
 
-        case StreamType.HEAD_POSITION:
+        case StreamType.HEAD_POSITION: {
           // Ensure position data has required numeric fields
           // Handle HeadPosition - Note the property position instead of x,y,z
           const pos = data as any;
@@ -1579,8 +1679,9 @@ export class AppSession {
             return { position: "up", timestamp: new Date() };
           }
           break;
+        }
 
-        case StreamType.BUTTON_PRESS:
+        case StreamType.BUTTON_PRESS: {
           // Ensure button type is valid
           const btn = data as any;
           if (!btn.buttonId || !btn.pressType) {
@@ -1591,6 +1692,7 @@ export class AppSession {
             };
           }
           break;
+        }
       }
 
       return data;
@@ -1619,15 +1721,19 @@ export class AppSession {
    * 📝 Update subscription list with cloud
    */
   private updateSubscriptions(): void {
+    // CRITICAL FIX (Bug 007): Derive subscriptions from EventManager.handlers
+    // This ensures subscriptions can NEVER be empty if handlers exist
+    // Previously, this.subscriptions could drift out of sync with handlers
+    // See: cloud/issues/006-captions-and-apps-stopping/011-sdk-subscription-architecture-mismatch.md
+    const derivedSubscriptions = this.events.getRegisteredStreams();
+
     this.logger.info(
-      { subscriptions: JSON.stringify(Array.from(this.subscriptions)) },
-      `[AppSession] updateSubscriptions: sending subscriptions to cloud`,
+      { subscriptions: JSON.stringify(derivedSubscriptions) },
+      `[AppSession] updateSubscriptions: sending ${derivedSubscriptions.length} subscriptions to cloud (derived from handlers)`,
     );
 
-    // [MODIFIED] builds the array of SubscriptionRequest objects to send to the cloud
-    const subscriptionPayload: SubscriptionRequest[] = Array.from(
-      this.subscriptions,
-    ).map((stream) => {
+    // Build the array of SubscriptionRequest objects to send to the cloud
+    const subscriptionPayload: SubscriptionRequest[] = derivedSubscriptions.map((stream) => {
       const rate = this.streamRates.get(stream);
       if (rate && stream === StreamType.LOCATION_STREAM) {
         return { stream: "location_stream", rate: rate as any };
@@ -1638,7 +1744,7 @@ export class AppSession {
     const message: AppSubscriptionUpdate = {
       type: AppToCloudMessageType.SUBSCRIPTION_UPDATE,
       packageName: this.config.packageName,
-      subscriptions: subscriptionPayload, // [MODIFIED]
+      subscriptions: subscriptionPayload,
       sessionId: this.sessionId!,
       timestamp: new Date(),
     };
@@ -1649,10 +1755,21 @@ export class AppSession {
    * 🔄 Handle reconnection with exponential backoff
    */
   private async handleReconnection(): Promise<void> {
+    // Check if session was terminated (e.g., "User session ended")
+    if (this.terminated) {
+      this.logger.info(
+        `🔄 Reconnection skipped: session was terminated (User session ended). ` +
+          `If cloud restarts app, onSession will be called with fresh handlers.`,
+      );
+      return;
+    }
+
     // Check if reconnection is allowed
     if (!this.config.autoReconnect || !this.sessionId) {
       this.logger.debug(
-        `🔄 Reconnection skipped: autoReconnect=${this.config.autoReconnect}, sessionId=${this.sessionId ? "valid" : "invalid"}`,
+        `🔄 Reconnection skipped: autoReconnect=${this.config.autoReconnect}, sessionId=${
+          this.sessionId ? "valid" : "invalid"
+        }`,
       );
       return;
     }
@@ -1660,9 +1777,7 @@ export class AppSession {
     // Check if we've exceeded the maximum attempts
     const maxAttempts = this.config.maxReconnectAttempts || 3;
     if (this.reconnectAttempts >= maxAttempts) {
-      this.logger.info(
-        `🔄 Maximum reconnection attempts (${maxAttempts}) reached, giving up`,
-      );
+      this.logger.info(`🔄 Maximum reconnection attempts (${maxAttempts}) reached, giving up`);
 
       // Emit a permanent disconnection event to trigger onStop in the App server
       this.events.emit("disconnected", {
@@ -1691,25 +1806,14 @@ export class AppSession {
     });
 
     try {
-      this.logger.debug(
-        `🔄 [${this.config.packageName}] Attempting to reconnect...`,
-      );
+      this.logger.debug(`🔄 [${this.config.packageName}] Attempting to reconnect...`);
       await this.connect(this.sessionId);
-      this.logger.debug(
-        `✅ [${this.config.packageName}] Reconnection successful!`,
-      );
+      this.logger.debug(`✅ [${this.config.packageName}] Reconnection successful!`);
       this.reconnectAttempts = 0;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        error,
-        `❌ [${this.config.packageName}] Reconnection failed for user ${this.userId}`,
-      );
-      this.events.emit(
-        "error",
-        new Error(`Reconnection failed: ${errorMessage}`),
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(error, `❌ [${this.config.packageName}] Reconnection failed for user ${this.userId}`);
+      this.events.emit("error", new Error(`Reconnection failed: ${errorMessage}`));
 
       // Check if this was the last attempt
       if (this.reconnectAttempts >= maxAttempts) {
@@ -1727,6 +1831,14 @@ export class AppSession {
         });
       }
     }
+  }
+
+  /**
+   * 📤 Public API for modules to send messages
+   * Always uses current WebSocket connection
+   */
+  public sendMessage(message: AppToCloudMessage): void {
+    return this.send(message);
   }
 
   /**
@@ -1748,9 +1860,7 @@ export class AppSession {
           3: "CLOSED",
         };
         const stateName = stateMap[this.ws.readyState] || "UNKNOWN";
-        throw new Error(
-          `WebSocket not connected (current state: ${stateName})`,
-        );
+        throw new Error(`WebSocket not connected (current state: ${stateName})`);
       }
 
       // Validate message before sending
@@ -1772,13 +1882,25 @@ export class AppSession {
         const serializedMessage = JSON.stringify(message);
         this.ws.send(serializedMessage);
       } catch (sendError: unknown) {
-        const errorMessage =
-          sendError instanceof Error ? sendError.message : String(sendError);
+        const errorMessage = sendError instanceof Error ? sendError.message : String(sendError);
         throw new Error(`Failed to send message: ${errorMessage}`);
       }
     } catch (error: unknown) {
-      // Log the error and emit an event so App developers are aware
-      this.logger.error(error, "Message send error");
+      // Check if this is an expected disconnection error (not a real error)
+      const isDisconnectError =
+        error instanceof Error &&
+        (error.message.includes("WebSocket not connected") ||
+          error.message.includes("CLOSED") ||
+          error.message.includes("CLOSING"));
+
+      if (isDisconnectError) {
+        // Don't log as error - this is expected when user disconnects
+        // Apps should handle this gracefully by checking session.isConnected
+        this.logger.debug(error, "Message send skipped - session disconnected");
+      } else {
+        // This is an actual error that needs attention
+        this.logger.error(error, "Message send error");
+      }
 
       // Ensure we always emit an Error object
       if (error instanceof Error) {
@@ -1817,10 +1939,7 @@ export class AppSession {
    * @param includeProfiles - Whether to include user profile information
    * @returns Promise that resolves with list of active users
    */
-  async discoverAppUsers(
-    domain: string,
-    includeProfiles = false,
-  ): Promise<any> {
+  async discoverAppUsers(domain: string, includeProfiles = false): Promise<any> {
     // Use the domain argument as the base URL if provided
     if (!domain) {
       throw new Error("Domain (API base URL) is required for user discovery");
@@ -1847,9 +1966,7 @@ export class AppSession {
     });
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Failed to discover users: ${response.status} ${response.statusText} - ${errorText}`,
-      );
+      throw new Error(`Failed to discover users: ${response.status} ${response.statusText} - ${errorText}`);
     }
     return await response.json();
   }
@@ -1889,7 +2006,7 @@ export class AppSession {
    * @param roomId - Optional room ID for room-based messaging
    * @returns Promise that resolves when message is sent
    */
-  async broadcastToAppUsers(payload: any, roomId?: string): Promise<void> {
+  async broadcastToAppUsers(payload: any, _roomId?: string): Promise<void> {
     try {
       const messageId = this.generateMessageId();
 
@@ -1905,8 +2022,7 @@ export class AppSession {
 
       this.send(message as any);
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to broadcast message: ${errorMessage}`);
     }
   }
@@ -1917,10 +2033,7 @@ export class AppSession {
    * @param payload - Message payload to send
    * @returns Promise that resolves with success status
    */
-  async sendDirectMessage(
-    targetUserId: string,
-    payload: any,
-  ): Promise<boolean> {
+  async sendDirectMessage(targetUserId: string, payload: any): Promise<boolean> {
     return new Promise((resolve, reject) => {
       try {
         const messageId = this.generateMessageId();
@@ -1945,15 +2058,12 @@ export class AppSession {
         const timeoutMs = 15000; // 15 seconds
         this.resources.setTimeout(() => {
           if (this.pendingDirectMessages.has(messageId)) {
-            this.pendingDirectMessages
-              .get(messageId)!
-              .reject(new Error("Direct message timed out"));
+            this.pendingDirectMessages.get(messageId)!.reject(new Error("Direct message timed out"));
             this.pendingDirectMessages.delete(messageId);
           }
         }, timeoutMs);
       } catch (error: unknown) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         reject(new Error(`Failed to send direct message: ${errorMessage}`));
       }
     });
@@ -1985,8 +2095,7 @@ export class AppSession {
 
       this.send(message as any);
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to join room: ${errorMessage}`);
     }
   }
@@ -2008,8 +2117,7 @@ export class AppSession {
 
       this.send(message as any);
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to leave room: ${errorMessage}`);
     }
   }
@@ -2104,14 +2212,7 @@ export class TpaSession extends AppSession {
 }
 
 // Export module types for developers
-export {
-  CameraModule,
-  PhotoRequestOptions,
-  RtmpStreamOptions,
-} from "./modules/camera";
-export {
-  AudioManager,
-  AudioPlayOptions,
-  AudioPlayResult,
-  SpeakOptions,
-} from "./modules/audio";
+export { CameraModule, PhotoRequestOptions, RtmpStreamOptions } from "./modules/camera";
+export { LedModule, LedControlOptions } from "./modules/led";
+export { AudioManager, AudioPlayOptions, AudioPlayResult, SpeakOptions } from "./modules/audio";
+export { SimpleStorage } from "./modules/simple-storage";

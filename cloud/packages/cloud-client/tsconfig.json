@@ -16,18 +16,16 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false,
     "noEmit": false,
-  "lib": ["ES2022", "DOM"],
-  "types": ["node"]
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
   },
-  "include": [
-    "src/**/*"
-  ],
+  "include": ["src/**/*"],
   "exclude": [
     "node_modules",
     "dist",
-  "**/*.test.ts",
-  "**/*.spec.ts",
-  "src/examples/**",
-  "src/testing/**"
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "src/examples/**",
+    "src/testing/**"
   ]
 }

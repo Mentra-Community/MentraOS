@@ -60,6 +60,8 @@ interface SettingsEditorProps {
   settings: Setting[];
   onChange: (settings: Setting[]) => void;
   className?: string;
+  setSameValueWarning: (value: boolean) => void;
+  toast: typeof import("sonner").toast;
 }
 
 /**
@@ -82,7 +84,10 @@ interface SortableSettingItemProps {
   ) => void;
   addSelectOption: (settingIndex: number) => void;
   removeSelectOption: (settingIndex: number, optionIndex: number) => void;
+  toast: typeof import("sonner").toast;
+  setSameValueWarning: (value: boolean) => void;
 }
+const specialSettings = ["multiselect", "select"]
 
 const SortableSettingItem: React.FC<SortableSettingItemProps> = ({
   setting,
@@ -96,6 +101,8 @@ const SortableSettingItem: React.FC<SortableSettingItemProps> = ({
   updateSelectOptions,
   addSelectOption,
   removeSelectOption,
+  toast,
+  setSameValueWarning,
 }) => {
   const {
     attributes,
@@ -639,20 +646,46 @@ const SortableSettingItem: React.FC<SortableSettingItemProps> = ({
                               }
                               className="flex-1"
                             />
+                            {/* right here boss */}
                             <Input
                               placeholder="Value"
                               value={option.value}
                               onChange={(
                                 e: React.ChangeEvent<HTMLInputElement>,
-                              ) =>
+                              ) => {
+                                const newValue = e.currentTarget.value;
+                                
+                                // Check for conflicts and show toast if needed
+                                if (specialSettings.includes(newValue)) {
+                                  toast?.error("Warning: This is a reserved setting type!");
+                                  setSameValueWarning(false);
+                                } else if (setting.options && 
+                                          setting.options.filter((_: any, idx: number) => idx !== optionIndex)
+                                            .some((otherOpt: any) => otherOpt.value === newValue)) {
+                                  toast?.error("Warning: Duplicate option value!");
+                                  setSameValueWarning(true);
+                                  
+                                }
+                                else {
+                                  setSameValueWarning(false);
+                                } 
+                                
+                                
                                 updateSelectOptions(
                                   index,
                                   optionIndex,
                                   "value",
-                                  e.currentTarget.value,
-                                )
-                              }
-                              className="flex-1 font-mono"
+                                  newValue,
+                                );
+                              }}
+                              className={`flex-1 font-mono ${
+                                specialSettings.includes(option.value) ||
+                                (setting.options && 
+                                 setting.options.filter((_: any, idx: number) => idx !== optionIndex)
+                                   .some((otherOpt: any) => otherOpt.value === option.value))
+                                  ? "text-red-500"
+                                  : ""
+                              }`}
                             />
                             <Button
                               onClick={() =>
@@ -794,6 +827,8 @@ const SettingsEditor: React.FC<SettingsEditorProps> = ({
   settings,
   onChange,
   className,
+  setSameValueWarning,
+  toast
 }) => {
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
@@ -940,6 +975,7 @@ const SettingsEditor: React.FC<SettingsEditorProps> = ({
           "options" in currentSetting &&
           Array.isArray((currentSetting as any).options)
         ) {
+          
           updates.options = (currentSetting as any).options;
           // Convert single defaultValue to array, or preserve if already array
           if (Array.isArray(currentSetting.defaultValue)) {
@@ -1211,6 +1247,8 @@ const SettingsEditor: React.FC<SettingsEditorProps> = ({
                   updateSelectOptions={updateSelectOptions}
                   addSelectOption={addSelectOption}
                   removeSelectOption={removeSelectOption}
+                  toast={toast}
+                  setSameValueWarning={setSameValueWarning}
                 />
               ))}
             </div>

@@ -1,0 +1,263 @@
+syntax = "proto3";
+
+package mentra.livekit.bridge;
+
+option go_package = "github.com/mentra/livekit-bridge/proto";
+
+// LiveKit Bridge Service
+//
+// Provides gRPC interface between TypeScript cloud and Go LiveKit bridge.
+// Handles bidirectional audio streaming and room management.
+service LiveKitBridge {
+  // Bidirectional audio streaming
+  //
+  // Client can send audio TO LiveKit room and receive audio FROM room
+  // in a single multiplexed stream. Audio arrives bursty from LiveKit
+  // (network/buffering), TypeScript handles jitter buffering for Soniox.
+  rpc StreamAudio(stream AudioChunk) returns (stream AudioChunk);
+
+  // Room lifecycle management
+  rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
+  rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
+  // Server-side audio playback (MP3/WAV → LiveKit track)
+  //
+  // Returns streaming events for progress tracking.
+  // Used by session.audio.playAudio() and session.audio.speak()
+  rpc PlayAudio(PlayAudioRequest) returns (stream PlayAudioEvent);
+  rpc StopAudio(StopAudioRequest) returns (StopAudioResponse);
+
+  // Health check (for monitoring/load balancing)
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // Bridge status (room connectivity for a specific user session)
+  rpc GetStatus(BridgeStatusRequest) returns (BridgeStatusResponse);
+}
+
+// Audio chunk (PCM16 mono)
+//
+// Represents raw audio data flowing between TypeScript and Go bridge.
+// Audio may arrive bursty from LiveKit (e.g., 4 chunks in 5ms, then gap).
+message AudioChunk {
+  // Raw PCM16 LE data (16-bit signed little-endian)
+  bytes pcm_data = 1;
+
+  // Sample rate in Hz (typically 16000)
+  int32 sample_rate = 2;
+
+  // Number of channels (1 = mono, 2 = stereo)
+  int32 channels = 3;
+
+  // Timestamp in milliseconds since epoch
+  int64 timestamp_ms = 4;
+
+  // User ID for routing (required for first message in stream)
+  string user_id = 5;
+
+  // Track name (optional, defaults to "speaker")
+  // Track ID for routing audio to specific LiveKit tracks (optional)
+  // 0: speaker (default audio playback)
+  // 1: app_audio (app-specific audio)
+  // 2: tts (text-to-speech audio)
+  // >2: custom app tracks
+  int32 track_id = 6;
+}
+
+// Join LiveKit room request
+message JoinRoomRequest {
+  // User ID (also used as room participant identity)
+  string user_id = 1;
+
+  // LiveKit room name (typically same as user_id)
+  string room_name = 2;
+
+  // LiveKit JWT token (minted by TypeScript with appropriate grants)
+  string token = 3;
+
+  // LiveKit server URL (wss://...)
+  string livekit_url = 4;
+
+  // Optional: Identity to subscribe to (typically user_id for self-audio)
+  // If set, bridge will subscribe to this participant's DataChannel packets
+  string target_identity = 5;
+}
+
+// Join room response
+message JoinRoomResponse {
+  // Whether join succeeded
+  bool success = 1;
+
+  // Error message if failed
+  string error = 2;
+
+  // Participant ID assigned by LiveKit
+  string participant_id = 3;
+
+  // Number of participants in room (including self)
+  int32 participant_count = 4;
+
+  // Room metadata (optional)
+  map<string, string> metadata = 5;
+}
+
+// Leave room request
+message LeaveRoomRequest {
+  // User ID of room to leave
+  string user_id = 1;
+
+  // Optional reason for leaving
+  string reason = 2;
+}
+
+// Leave room response
+message LeaveRoomResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Play audio from URL request
+//
+// Downloads audio file (MP3/WAV), decodes, resamples to 16kHz,
+// and publishes to LiveKit room as audio track.
+message PlayAudioRequest {
+  // Unique request ID (for tracking events)
+  string request_id = 1;
+
+  // URL to audio file (HTTP/HTTPS)
+  // Supports: MP3 (audio/mpeg), WAV (audio/wav, audio/x-wav)
+  string audio_url = 2;
+
+  // Volume level (0.0 = mute, 1.0 = full volume, >1.0 = boost)
+  float volume = 3;
+
+  // Whether to stop other audio playback before starting
+  bool stop_other = 4;
+
+  // User ID (for routing to correct room session)
+  string user_id = 5;
+
+  // Track ID (optional, defaults to 0 = "speaker")
+  int32 track_id = 6;
+}
+
+// Play audio event (streaming response)
+//
+// Emitted during audio playback lifecycle.
+message PlayAudioEvent {
+  // Event type
+  enum EventType {
+    STARTED = 0;    // Playback started
+    PROGRESS = 1;   // Playback progress update
+    COMPLETED = 2;  // Playback finished successfully
+    FAILED = 3;     // Playback failed with error
+  }
+
+  EventType type = 1;
+
+  // Request ID (matches PlayAudioRequest.request_id)
+  string request_id = 2;
+
+  // Total duration in milliseconds (if known)
+  int64 duration_ms = 3;
+
+  // Current playback position in milliseconds
+  int64 position_ms = 4;
+
+  // Error message (if type = FAILED)
+  string error = 5;
+
+  // Additional metadata
+  map<string, string> metadata = 6;
+}
+
+// Stop audio playback request
+message StopAudioRequest {
+  // User ID (for routing)
+  string user_id = 1;
+
+  // Optional: Specific request ID to stop (if not set, stops current playback)
+  string request_id = 2;
+
+  // Reason for stopping (for debugging/logging)
+  string reason = 3;
+
+  // Track ID to stop (optional, defaults to 0 = "speaker")
+  int32 track_id = 4;
+}
+
+// Stop audio response
+message StopAudioResponse {
+  bool success = 1;
+  string error = 2;
+
+  // Request ID that was stopped (if any)
+  string stopped_request_id = 3;
+}
+
+// Health check request
+message HealthCheckRequest {
+  // Optional service name to check (empty = check all)
+  string service = 1;
+}
+
+// Health check response
+message HealthCheckResponse {
+  // Service status
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+
+  ServingStatus status = 1;
+
+  // Total active sessions
+  int32 active_sessions = 2;
+
+  // Total active streams
+  int32 active_streams = 3;
+
+  // Uptime in seconds
+  int64 uptime_seconds = 4;
+
+  // Additional diagnostics
+  map<string, string> metadata = 5;
+}
+
+// Bridge status request/response messages
+message BridgeStatusRequest {
+  // User ID (for routing to correct room session)
+  string user_id = 1;
+}
+
+message BridgeStatusResponse {
+  // Whether the bridge is currently connected to the LiveKit room
+  bool connected = 1;
+
+  // Local participant ID (e.g., cloud-agent:{userId})
+  string participant_id = 2;
+
+  // Number of participants in room (including self)
+  int32 participant_count = 3;
+
+  // Last disconnect timestamp (milliseconds since epoch), 0 if never
+  int64 last_disconnect_at = 4;
+
+  // Best-effort reason for last disconnect (may be empty)
+  string last_disconnect_reason = 5;
+
+  // Optional: bridge/server version string for diagnostics
+  string server_version = 6;
+}
+
+// Statistics message (for future monitoring/debugging)
+message SessionStats {
+  string user_id = 1;
+  int64 audio_frames_sent = 2;
+  int64 audio_frames_received = 3;
+  int64 bytes_sent = 4;
+  int64 bytes_received = 5;
+  int64 session_duration_ms = 6;
+  string room_name = 7;
+  int32 participant_count = 8;
+}

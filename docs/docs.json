@@ -1,99 +1,196 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
+  "theme": "aspen",
   "name": "MentraOS",
   "colors": {
-    "primary": "#40915e",
-    "light": "#5bce84",
-    "dark": "#398254"
+    "primary": "#00b869",
+    "light": "#00b869",
+    "dark": "#00b869"
   },
   "favicon": "/static/img/favicon.ico",
   "navigation": {
-    "pages": ["index"],
-    "groups": [
+    "tabs": [
       {
-        "group": "Getting Started",
-        "pages": [
-          "quickstart",
-          "example-apps",
-          "getting-started",
-          "voice-activation",
-          "railway-deployment",
-          "ubuntu-deployment"
+        "tab": "Welcome",
+        "groups": [
+          {
+            "group": "Welcome",
+            "pages": ["index"]
+          },
+          {
+            "group": "Legal",
+            "pages": ["third-party-licenses"]
+          }
         ]
       },
       {
-        "group": "Core Concepts",
-        "pages": [
-          "core-concepts",
-          "app-lifecycle",
-          "events",
-          "permissions",
-          "layouts",
-          "settings",
-          "audio",
-          "tools",
-          "capabilities",
+        "tab": "App Devs",
+        "groups": [
           {
-            "group": "Camera",
-            "pages": ["camera/README", "camera/photo-capture", "camera/rtmp-streaming"]
+            "group": "Getting Started",
+            "icon": "terminal",
+            "pages": [
+              "app-devs/getting-started/overview",
+              "app-devs/getting-started/quickstart",
+              "app-devs/getting-started/ai-ide-integration",
+              "app-devs/getting-started/example-apps",
+              {
+                "group": "Deployment",
+                "pages": [
+                  "app-devs/getting-started/deployment/overview",
+                  "app-devs/getting-started/deployment/local-development",
+                  "app-devs/getting-started/deployment/railway-deployment",
+                  "app-devs/getting-started/deployment/ubuntu-deployment"
+                ]
+              }
+            ]
           },
-          "webview-auth-overview",
-          "react-webviews",
-          "dashboard"
+          {
+            "group": "Core Concepts",
+            "icon": "brain",
+            "pages": [
+              "app-devs/core-concepts/app-lifecycle-overview",
+              "app-devs/core-concepts/app-server",
+              "app-devs/core-concepts/app-session/app-session",
+              {
+                "group": "Display",
+                "icon": "display",
+                "pages": ["app-devs/core-concepts/display/layouts", "app-devs/core-concepts/display/dashboard"]
+              },
+              {
+                "group": "Microphone",
+                "icon": "microphone",
+                "pages": [
+                  "app-devs/core-concepts/microphone/speech-to-text",
+                  "app-devs/core-concepts/microphone/audio-chunks"
+                ]
+              },
+              {
+                "group": "Speakers",
+                "icon": "volume",
+                "pages": [
+                  "app-devs/core-concepts/speakers/text-to-speech",
+                  "app-devs/core-concepts/speakers/playing-audio-files"
+                ]
+              },
+              {
+                "group": "Camera",
+                "icon": "camera",
+                "pages": [
+                  "app-devs/core-concepts/camera/README",
+                  "app-devs/core-concepts/camera/photo-capture",
+                  "app-devs/core-concepts/camera/rtmp-streaming"
+                ]
+              },
+              {
+                "group": "Webviews",
+                "icon": "browser",
+                "pages": [
+                  "app-devs/core-concepts/webviews/react-webviews",
+                  "app-devs/core-concepts/webviews/webview-authentication"
+                ]
+              },
+              "app-devs/core-concepts/permissions",
+              "app-devs/core-concepts/simple-storage",
+              "app-devs/core-concepts/led/overview",
+              "app-devs/core-concepts/location",
+              {
+                "group": "Hardware & Capabilities",
+                "icon": "microchip",
+                "pages": [
+                  "app-devs/core-concepts/hardware-capabilities/overview",
+                  "app-devs/core-concepts/hardware-capabilities/display-glasses",
+                  "app-devs/core-concepts/hardware-capabilities/camera-glasses",
+                  "app-devs/core-concepts/hardware-capabilities/device-capabilities"
+                ]
+              },
+              "app-devs/core-concepts/mira-tool-calls"
+            ]
+          },
+          {
+            "group": "SDK Reference",
+            "icon": "code",
+            "pages": [
+              "app-devs/reference/index",
+              "app-devs/reference/app-server",
+              "app-devs/reference/app-session",
+              {
+                "group": "Managers",
+                "icon": "gear",
+                "pages": [
+                  "app-devs/reference/managers/event-manager",
+                  "app-devs/reference/managers/layout-manager",
+                  "app-devs/reference/managers/settings-manager",
+                  "app-devs/reference/managers/audio-manager",
+                  "app-devs/reference/managers/led-manager",
+                  "app-devs/reference/managers/camera",
+                  "app-devs/reference/managers/location-manager"
+                ]
+              },
+              "app-devs/reference/enums",
+              {
+                "group": "Interfaces",
+                "icon": "shapes",
+                "pages": [
+                  "app-devs/reference/interfaces/config-types",
+                  "app-devs/reference/interfaces/event-types",
+                  "app-devs/reference/interfaces/layout-types",
+                  "app-devs/reference/interfaces/capabilities",
+                  "app-devs/reference/interfaces/webhook-types",
+                  "app-devs/reference/interfaces/message-types",
+                  "app-devs/reference/interfaces/tool-types",
+                  "app-devs/reference/interfaces/setting-types"
+                ]
+              },
+              "app-devs/reference/dashboard-api",
+              "app-devs/reference/token-utils",
+              "app-devs/reference/utilities"
+            ]
+          }
         ]
       },
       {
-        "group": "SDK Reference",
-        "pages": [
-          "reference/index",
-          "reference/app-server",
-          "reference/app-session",
+        "tab": "OS Devs",
+        "groups": [
           {
-            "group": "Managers",
+            "group": "Contributing",
+            "icon": "users",
             "pages": [
-              "reference/managers/event-manager",
-              "reference/managers/layout-manager",
-              "reference/managers/settings-manager",
-              "reference/managers/audio-manager",
-              "reference/managers/camera",
-              "reference/managers/location-manager"
+              "os-devs/contributing/overview",
+              "os-devs/contributing/mentraos-manager-guidelines",
+              "os-devs/contributing/mentraos-asg-client-guidelines",
+              "os-devs/contributing/add-new-glasses-support",
+              {
+                "group": "Android Smart Glasses (ASG) Client",
+                "icon": "microchip",
+                "pages": [
+                  "os-devs/asg-client/README",
+                  "os-devs/asg-client/architecture",
+                  "os-devs/asg-client/mentra-live",
+                  "os-devs/asg-client/button-system",
+                  "os-devs/asg-client/rtmp-streaming"
+                ]
+              }
             ]
-          },
-          "reference/enums",
-          {
-            "group": "Interfaces",
-            "pages": [
-              "reference/interfaces/config-types",
-              "reference/interfaces/event-types",
-              "reference/interfaces/layout-types",
-              "reference/interfaces/capabilities",
-              "reference/interfaces/webhook-types",
-              "reference/interfaces/message-types",
-              "reference/interfaces/tool-types",
-              "reference/interfaces/setting-types"
-            ]
-          },
-          "reference/dashboard-api",
-          "reference/utilities"
+          }
         ]
       },
       {
-        "group": "Contributing",
-        "pages": [
-          "contributing",
-          "contributing/mentraos-manager-guidelines",
-          "contributing/mentraos-asg-client-guidelines",
-          "contributing/add-new-glasses-support",
+        "tab": "Glasses OEMs",
+        "groups": [
           {
-            "group": "ASG Client",
-            "pages": [
-              "asg-client/README",
-              "asg-client/architecture",
-              "asg-client/mentra-live",
-              "asg-client/button-system",
-              "asg-client/rtmp-streaming"
-            ]
+            "group": "Glasses OEMs",
+            "icon": "industry",
+            "pages": ["glasses-oems/overview"]
+          }
+        ]
+      },
+      {
+        "tab": "Cookbook",
+        "groups": [
+          {
+            "group": "Recipes",
+            "pages": ["cookbook/dashboard-note-app"]
           }
         ]
       }
@@ -138,7 +235,7 @@
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mentraos",
+      "x": "https://x.com/mentralabs",
       "github": "https://github.com/Mentra-Community",
       "discord": "https://discord.gg/5ukNvkEAqT"
     }

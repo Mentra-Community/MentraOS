@@ -63,9 +63,9 @@ export interface CameraSettings {
 
 // Photo size mappings for display
 export const PHOTO_SIZE_LABELS = {
-  small: "Small (800×600)",
-  medium: "Medium (1440×1080)",
-  large: "Large (3200×2400)",
+  small: "Small (960×720)",
+  medium: "Medium (1440×1088)",
+  large: "Large (3264×2448)",
 }
 
 // Video resolution mappings for display
@@ -218,7 +218,7 @@ import {setCameraSettings} from "../store/glassesSlice"
 
 export const CameraSettingsScreen = () => {
   const dispatch = useDispatch()
-  const {cameraSettings, isConnected} = useSelector(state => state.glasses)
+  const {cameraSettings, isConnected} = useSelector((state) => state.glasses)
   const [loading, setLoading] = useState(false)
   const [localSettings, setLocalSettings] = useState(cameraSettings)
 
@@ -248,7 +248,7 @@ export const CameraSettingsScreen = () => {
     try {
       setLoading(true)
       await SmartGlassesManager.setButtonPhotoSize(size)
-      setLocalSettings(prev => ({...prev, buttonPhotoSize: size}))
+      setLocalSettings((prev) => ({...prev, buttonPhotoSize: size}))
       dispatch(setCameraSettings({...localSettings, buttonPhotoSize: size}))
       Alert.alert("Success", "Photo size updated")
     } catch (error) {
@@ -268,7 +268,7 @@ export const CameraSettingsScreen = () => {
     try {
       setLoading(true)
       await SmartGlassesManager.setButtonVideoResolution(resolution)
-      setLocalSettings(prev => ({...prev, buttonVideoResolution: resolution}))
+      setLocalSettings((prev) => ({...prev, buttonVideoResolution: resolution}))
       dispatch(setCameraSettings({...localSettings, buttonVideoResolution: resolution}))
       Alert.alert("Success", "Video resolution updated")
     } catch (error) {
@@ -291,7 +291,7 @@ export const CameraSettingsScreen = () => {
     <ScrollView style={styles.container}>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Button Photo Settings</Text>
-        <Text style={styles.description}>Choose the resolution for photos taken with the camera button</Text>
+        <Text style={styles.description}>Choose the resolution for photos taken with the action button.</Text>
         <View style={styles.pickerContainer}>
           <Picker
             selectedValue={localSettings.buttonPhotoSize}
@@ -306,7 +306,7 @@ export const CameraSettingsScreen = () => {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Button Video Settings</Text>
-        <Text style={styles.description}>Choose the resolution for videos recorded with the camera button</Text>
+        <Text style={styles.description}>Choose the resolution for videos recorded with the action button.</Text>
         <View style={styles.pickerContainer}>
           <Picker
             selectedValue={localSettings.buttonVideoResolution}

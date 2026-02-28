@@ -12,10 +12,11 @@ import {
   ViewProps,
   ViewStyle,
 } from "react-native"
-import {$styles} from "../../../theme"
-import {Text, TextProps} from "../Text"
-import {useAppTheme} from "@/utils/useAppTheme"
+
+import {Text, TextProps} from "@/components/ignite/Text"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import type {ThemedStyle} from "@/theme"
+import {$styles} from "@/theme"
 
 export interface ToggleProps<T> extends Omit<TouchableOpacityProps, "style"> {
   /**
@@ -254,7 +255,7 @@ export const $inputOuterBase: ViewStyle = {
 }
 
 const $helper: ThemedStyle<TextStyle> = ({spacing}) => ({
-  marginTop: spacing.xs,
+  marginTop: spacing.s2,
 })
 
 const $label: TextStyle = {
@@ -262,9 +263,9 @@ const $label: TextStyle = {
 }
 
 const $labelRight: ThemedStyle<TextStyle> = ({spacing}) => ({
-  marginStart: spacing.md,
+  marginStart: spacing.s4,
 })
 
 const $labelLeft: ThemedStyle<TextStyle> = ({spacing}) => ({
-  marginEnd: spacing.md,
+  marginEnd: spacing.s4,
 })

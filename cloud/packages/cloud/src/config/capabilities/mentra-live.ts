@@ -71,15 +71,25 @@ export const mentraLive: Capabilities = {
     ],
   },
 
-  // Light capabilities - Mentra Live has one white light
+  // Light capabilities - Mentra Live has two lights: privacy light + RGB LED
   hasLight: true,
   light: {
-    count: 1,
+    count: 2,
     lights: [
       {
+        id: "privacy",
+        purpose: "privacy",
         isFullColor: false,
         color: "white",
-      },
+        position: "front_facing",
+      } as any,
+      {
+        id: "user_feedback",
+        purpose: "user_feedback",
+        isFullColor: true,
+        color: "rgb",
+        position: "user_facing",
+      } as any,
     ],
   },
 

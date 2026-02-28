@@ -70,8 +70,8 @@ android/credentials/*
 # Expo
 .expo/*
 bin/Exponent.app
-# /android
-# /ios
+/android/
+/ios/
 expo-env.d.ts
 
 ## Secrets

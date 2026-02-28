@@ -1,46 +1,61 @@
 ---
-title: MentraOS Developer Documentation
-description: Build smart glasses apps with MentraOS, the cloud OS for wearable devices. Learn what MentraOS is, supported hardware, quickstart, deployment, and resources.
+title: "Welcome to MentraOS"
+description: "Cloud operating system for smart glasses"
+mode: "custom"
 ---
 
-# Intro to the MentraOS SDK
+<div className="px-4 pt-16 pb-12 lg:pt-20 max-w-4xl mx-auto text-center space-y-6">
+  <h1 className="text-3xl lg:text-4xl font-bold text-gray-900 dark:text-zinc-50 tracking-tight mb-3">
+    Build with <span style={{color: "#00b869"}}>MentraOS</span>
+  </h1>
 
-## What is MentraOS?
+<p className="max-w-2xl mx-auto text-base text-gray-600 dark:text-zinc-400 leading-relaxed">
+  Build and deploy smart glasses apps on MentraOS.
+</p>
 
-MentraOS is a cloud operating system for smart glasses that handles the hard parts: connections, Bluetooth, streaming, and more. This lets you focus on creating great smart glasses apps.
+  <a
+    href="/app-devs/getting-started/overview"
+    className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-zinc-500 hover:opacity-80 transition-colors mr-6"
+    style={{color: "#00b869"}}
+  >
+    Overview
+    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+  </a>
 
-<img
-  className="block dark:hidden"
-  src="/static/img/mentraos-arch-light.png"
-  alt="MentraOS architecture"
-  />
-<img
-  className="hidden dark:block"
-  src="/static/img/mentraos-arch-dark.png"
-  alt="MentraOS architecture"
-  />
+  <a
+    href="/app-devs/getting-started/quickstart"
+    className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-zinc-500 hover:opacity-80 transition-colors"
+    style={{color: "#00b869"}}
+  >
+    Build your first app
+    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+  </a>
+</div>
 
-As a Cloud OS, you can write apps in JavaScript/TypeScript (with Python coming soon) and use our SDK to build for smart glasses. Our SDK enables you to access smart glasses I/O with low latency from a cloud application.
+<section className="px-4 max-w-6xl mx-auto space-y-4">
+  <CardGroup cols={3}>
+    <Card
+      title="Build a smart glasses app"
+      icon="Glasses"
+      href="/app-devs/getting-started/overview"
+    >
+      Developers who want to build smart glasses apps.
+    </Card>
 
-## Compatible Hardware
+    <Card
+      title="Contribute to MentraOS"
+      icon="users-gear"
+      href="/os-devs/contributing/overview"
+    >
+      Developers working on the core MentraOS platform.
+    </Card>
 
-You'll need [compatible smart glasses](https://mentra.glass/os#glasses) to build with MentraOS.
-
-## Getting Started
-
-- [Quickstart](/quickstart) - Build your first app in minutes
-- [Complete Setup](/getting-started) - Detailed step-by-step guide
-
-## Deployment
-
-Developers can deploy finished apps to the [Mentra Store](https://apps.mentra.glass) for users to discover and install.
-
-## Resources
-
-- [Mentra Website](https://mentra.glass)
-- [GitHub Repo](https://github.com/Mentra-Community/MentraOS)
-- [Example App Repo](https://github.com/Mentra-Community/MentraOS-Cloud-Example-App)
-- [Live-Captions Repo](https://github.com/Mentra-Community/LiveCaptionsOnSmartGlasses) - A more in-depth example with app settings support
-- [Discord Community](https://discord.gg/5ukNvkEAqT) - Get help from the team and community
-
-Ready to dive deeper? Follow our [Quickstart guide](/quickstart) to build your first app!
+    <Card
+      title="Glasses OEMs: Run MentraOS on your custom hardware"
+      icon="industry-windows"
+      href="/glasses-oems/overview"
+    >
+      Companies building smart glasses that run MentraOS.
+    </Card>
+  </CardGroup>
+</section>

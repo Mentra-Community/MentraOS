@@ -1,15 +1,16 @@
-import React, {useState, useEffect} from "react"
-import {View, TextInput, TouchableOpacity, ActivityIndicator, ScrollView, ViewStyle, TextStyle} from "react-native"
-import {supabase} from "@/supabase/supabaseClient"
-import {Button, Header, Screen, Text} from "@/components/ignite"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {ThemedStyle, spacing} from "@/theme"
-import {translate} from "@/i18n"
-import {router} from "expo-router"
-import showAlert from "@/utils/AlertUtils"
 import {FontAwesome} from "@expo/vector-icons"
-import {Spacer} from "@/components/misc/Spacer"
-import Toast from "react-native-toast-message"
+import {useEffect, useState} from "react"
+import {ActivityIndicator, ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+
+import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Spacer} from "@/components/ui/Spacer"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
+import {ThemedStyle, spacing} from "@/theme"
+import showAlert from "@/utils/AlertUtils"
+import mentraAuth from "@/utils/auth/authClient"
+import {mapAuthError} from "@/utils/auth/authErrors"
 
 export default function ResetPasswordScreen() {
   const [email, setEmail] = useState("")
@@ -21,6 +22,7 @@ export default function ResetPasswordScreen() {
   const [isValidToken, setIsValidToken] = useState(false)
 
   const {theme, themed} = useAppTheme()
+  const {goBack, replaceAll} = useNavigationHistory()
 
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0
   const isFormValid = passwordsMatch && newPassword.length >= 6
@@ -31,17 +33,18 @@ export default function ResetPasswordScreen() {
   }, [])
 
   const checkSession = async () => {
-    const {data: {session}} = await supabase.auth.getSession()
-    if (session) {
-      setIsValidToken(true)
-      // Get the user's email from the session
-      if (session.user?.email) {
-        setEmail(session.user.email)
-      }
-    } else {
+    const res = await mentraAuth.getSession()
+    if (res.is_error()) {
       // No valid session, redirect back to login
       showAlert(translate("common:error"), translate("login:invalidResetLink"))
-      router.replace("/auth/login")
+      replaceAll("/auth/start")
+      return
+    }
+    const session = res.value
+    setIsValidToken(true)
+    // Get the user's email from the session
+    if (session.user?.email) {
+      setEmail(session.user.email)
     }
   }
 
@@ -59,77 +62,50 @@ export default function ResetPasswordScreen() {
 
     setIsLoading(true)
 
-    try {
-      const {error} = await supabase.auth.updateUser({
-        password: newPassword,
-      })
-
-      if (error) {
-        showAlert(translate("common:error"), error.message)
-      } else {
-        // Try to automatically log the user in with the new password
-        if (email) {
-          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-            email,
-            password: newPassword,
-          })
-
-          if (!signInError && signInData.session) {
-            Toast.show({
-              type: "success",
-              text1: translate("login:passwordResetSuccess"),
-              text2: translate("login:loggingYouIn"),
-              position: "bottom",
-            })
-            
-            setTimeout(() => {
-              router.replace("/")
-            }, 1000)
-          } else {
-            // If auto-login fails, just redirect to login
-            Toast.show({
-              type: "success",
-              text1: translate("login:passwordResetSuccess"),
-              text2: translate("login:redirectingToLogin"),
-              position: "bottom",
-            })
-            
-            await supabase.auth.signOut()
-            
-            setTimeout(() => {
-              router.replace("/auth/login")
-            }, 2000)
-          }
-        } else {
-          // No email, fallback to login redirect
-          Toast.show({
-            type: "success",
-            text1: translate("login:passwordResetSuccess"),
-            text2: translate("login:redirectingToLogin"),
-            position: "bottom",
-          })
-          
-          await supabase.auth.signOut()
-          
-          setTimeout(() => {
-            router.replace("/auth/login")
-          }, 2000)
-        }
-      }
-    } catch (err) {
-      console.error("Error resetting password:", err)
-      showAlert(translate("common:error"), err.toString())
-    } finally {
+    let res = await mentraAuth.updateUserPassword(newPassword)
+    if (res.is_error()) {
+      console.error("Error resetting password:", res.error)
+      showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
       setIsLoading(false)
+      return
     }
+
+    if (!email) {
+      // No email, fallback to login redirect
+      setIsLoading(false)
+      await mentraAuth.signOut()
+      showAlert(translate("login:passwordResetSuccess"), translate("login:redirectingToLogin"), [
+        {text: translate("common:ok"), onPress: () => replaceAll("/auth/start")},
+      ])
+      return
+    }
+
+    // Try to automatically log the user in with the new password
+    const res2 = await mentraAuth.signInWithPassword({email, password: newPassword})
+    setIsLoading(false)
+
+    if (res2.is_error()) {
+      // If auto-login fails, just redirect to login
+      console.error("Error auto-logging in after password reset:", res2.error)
+      await mentraAuth.signOut()
+      showAlert(translate("login:passwordResetSuccess"), translate("login:redirectingToLogin"), [
+        {text: translate("common:ok"), onPress: () => replaceAll("/auth/start")},
+      ])
+      return
+    }
+
+    // Auto-login succeeded
+    showAlert(translate("login:passwordResetSuccess"), translate("login:loggingYouIn"), [
+      {text: translate("common:ok"), onPress: () => replaceAll("/")},
+    ])
   }
 
   if (!isValidToken) {
     return (
-      <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}}>
+      <Screen preset="fixed">
         <View style={{flex: 1, justifyContent: "center", alignItems: "center"}}>
-          <ActivityIndicator size="large" color={theme.colors.tint} />
-          <Spacer height={spacing.md} />
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <Spacer height={spacing.s4} />
           <Text tx="login:verifyingResetLink" />
         </View>
       </Screen>
@@ -137,14 +113,10 @@ export default function ResetPasswordScreen() {
   }
 
   return (
-    <Screen preset="fixed" style={{paddingHorizontal: theme.spacing.md}}>
-      <Header 
-        title={translate("login:resetPasswordTitle")} 
-        leftIcon="caretLeft" 
-        onLeftPress={() => router.replace("/auth/login")} 
-      />
-      <ScrollView 
-        contentContainerStyle={themed($scrollContent)} 
+    <Screen preset="fixed">
+      <Header title={translate("login:resetPasswordTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <ScrollView
+        contentContainerStyle={themed($scrollContent)}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled">
         <View style={themed($card)}>
@@ -157,7 +129,7 @@ export default function ResetPasswordScreen() {
                 <Text tx="login:email" style={themed($inputLabel)} />
                 <View style={[themed($enhancedInputContainer), themed($disabledInput)]}>
                   <FontAwesome name="envelope" size={16} color={theme.colors.textDim} />
-                  <Spacer width={spacing.xxs} />
+                  <Spacer width={spacing.s1} />
                   <TextInput
                     style={themed($enhancedInput)}
                     value={email}
@@ -173,7 +145,7 @@ export default function ResetPasswordScreen() {
               <Text tx="profileSettings:newPassword" style={themed($inputLabel)} />
               <View style={themed($enhancedInputContainer)}>
                 <FontAwesome name="lock" size={16} color={theme.colors.text} />
-                <Spacer width={spacing.xxs} />
+                <Spacer width={spacing.s1} />
                 <TextInput
                   hitSlop={{top: 16, bottom: 16}}
                   style={themed($enhancedInput)}
@@ -197,7 +169,7 @@ export default function ResetPasswordScreen() {
               <Text tx="profileSettings:confirmPassword" style={themed($inputLabel)} />
               <View style={themed($enhancedInputContainer)}>
                 <FontAwesome name="lock" size={16} color={theme.colors.text} />
-                <Spacer width={spacing.xxs} />
+                <Spacer width={spacing.s1} />
                 <TextInput
                   hitSlop={{top: 16, bottom: 16}}
                   style={themed($enhancedInput)}
@@ -220,7 +192,7 @@ export default function ResetPasswordScreen() {
               <Text tx="profileSettings:passwordsDoNotMatch" style={themed($errorText)} />
             )}
 
-            <Spacer height={spacing.lg} />
+            <Spacer height={spacing.s6} />
 
             <Button
               tx="login:resetPassword"
@@ -229,9 +201,11 @@ export default function ResetPasswordScreen() {
               textStyle={themed($buttonText)}
               onPress={handleResetPassword}
               disabled={!isFormValid || isLoading}
-              LeftAccessory={() =>
-                isLoading && <ActivityIndicator size="small" color={theme.colors.icon} style={{marginRight: 8}} />
-              }
+              {...(isLoading && {
+                LeftAccessory: () => (
+                  <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: 8}} />
+                ),
+              })}
             />
           </View>
         </View>
@@ -247,14 +221,14 @@ const $scrollContent: ThemedStyle<ViewStyle> = () => ({
 
 const $card: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 1,
-  padding: spacing.lg,
+  padding: spacing.s6,
 })
 
 const $subtitle: ThemedStyle<TextStyle> = ({spacing, colors}) => ({
   fontSize: 16,
   color: colors.text,
   textAlign: "left",
-  marginBottom: spacing.lg,
+  marginBottom: spacing.s6,
 })
 
 const $form: ThemedStyle<ViewStyle> = () => ({
@@ -262,7 +236,7 @@ const $form: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $inputGroup: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginBottom: spacing.sm,
+  marginBottom: spacing.s3,
 })
 
 const $inputLabel: ThemedStyle<TextStyle> = ({colors}) => ({
@@ -279,8 +253,8 @@ const $enhancedInputContainer: ThemedStyle<ViewStyle> = ({colors, spacing, isDar
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 8,
-  paddingHorizontal: spacing.sm,
-  backgroundColor: isDark ? colors.transparent : colors.background,
+  paddingHorizontal: spacing.s3,
+  backgroundColor: isDark ? colors.palette.transparent : colors.background,
   ...(isDark
     ? {
         shadowOffset: {
@@ -303,13 +277,13 @@ const $enhancedInput: ThemedStyle<TextStyle> = ({colors}) => ({
 const $errorText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 14,
   color: colors.error,
-  marginTop: spacing.xs,
+  marginTop: spacing.s2,
 })
 
 const $primaryButton: ThemedStyle<ViewStyle> = () => ({})
 
 const $pressedButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.buttonPressed,
+  backgroundColor: colors.primary_foreground,
   opacity: 0.9,
 })
 
@@ -320,6 +294,6 @@ const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
 })
 
 const $disabledInput: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.backgroundDim,
+  backgroundColor: colors.primary_foreground,
   opacity: 0.7,
 })

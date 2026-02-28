@@ -1,19 +1,11 @@
-import React, { useState, useEffect } from "react";
-import { useAuth } from "../hooks/useAuth";
-import DashboardLayout from "../components/DashboardLayout";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
+import {useAuth} from "@mentra/shared"
+import DashboardLayout from "../components/DashboardLayout"
+import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "../components/ui/card"
+import {Input} from "../components/ui/input"
+import {Label} from "../components/ui/label"
 
 const AccountPage: React.FC = () => {
-  const { user, isLoading } = useAuth();
+  const {user, isLoading} = useAuth()
 
   if (isLoading) {
     return (
@@ -22,7 +14,7 @@ const AccountPage: React.FC = () => {
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
         </div>
       </DashboardLayout>
-    );
+    )
   }
 
   return (
@@ -37,41 +29,25 @@ const AccountPage: React.FC = () => {
           <Card>
             <CardHeader>
               <CardTitle>Profile Information</CardTitle>
-              <CardDescription>
-                Manage your account details and preferences
-              </CardDescription>
+              <CardDescription>Manage your account details and preferences</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-4">
                   <div>
                     <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={user?.email || ""}
-                      disabled
-                      className="bg-gray-100"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Your email address cannot be changed
-                    </p>
+                    <Input id="email" type="email" value={user?.email || ""} disabled className="bg-gray-100" />
+                    <p className="text-xs text-gray-500 mt-1">Your email address cannot be changed</p>
                   </div>
                   <div>
                     <Label htmlFor="displayName">Display Name</Label>
                     <Input
                       id="displayName"
-                      value={
-                        user?.user_metadata?.full_name ||
-                        user?.email?.split("@")[0] ||
-                        ""
-                      }
+                      value={user?.name || user?.email?.split("@")[0] || ""}
                       disabled
                       className="bg-gray-100"
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Display name is based on your account information
-                    </p>
+                    <p className="text-xs text-gray-500 mt-1">Display name is based on your account information</p>
                   </div>
                 </div>
               </div>
@@ -178,7 +154,7 @@ const AccountPage: React.FC = () => {
         </div>
       </div>
     </DashboardLayout>
-  );
-};
+  )
+}
 
-export default AccountPage;
+export default AccountPage

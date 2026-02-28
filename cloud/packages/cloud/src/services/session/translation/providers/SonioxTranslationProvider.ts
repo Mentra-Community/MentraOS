@@ -5,6 +5,10 @@
 
 import { Logger } from "pino";
 import WebSocket from "ws";
+
+import { TranslationData, StreamType } from "@mentra/sdk";
+
+import { ResourceTracker } from "../../../../utils/resource-tracker";
 import {
   TranslationProvider,
   TranslationProviderType,
@@ -19,7 +23,7 @@ import {
   TranslationProviderError,
   InvalidLanguagePairError,
 } from "../types";
-import { TranslationData, StreamType } from "@mentra/sdk";
+
 import { SonioxTranslationUtils } from "./SonioxTranslationUtils";
 
 /**
@@ -78,6 +82,8 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
   private ws?: WebSocket;
   private isClosing = false;
+  private disposed = false;
+  private resources = new ResourceTracker();
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 3;
   private pendingAudioChunks: ArrayBuffer[] = [];
@@ -143,10 +149,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
         "Soniox translation stream initialized",
       );
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to initialize Soniox translation stream",
-      );
+      this.logger.error({ error }, "Failed to initialize Soniox translation stream");
       this.handleError(error as Error);
       throw error;
     }
@@ -167,15 +170,18 @@ class SonioxTranslationStream implements TranslationStreamInstance {
           reject(new Error("Soniox WebSocket connection timeout"));
         }, 10000); // 10 second timeout
 
-        this.ws.on("open", () => {
+        // Store handler references for proper cleanup (prevents memory leaks)
+        const openHandler = () => {
+          if (this.disposed) return;
           clearTimeout(connectionTimeout);
           this.logger.debug("Soniox translation WebSocket connected");
           this.sendConfigMessage();
           // Resolve after sending config
           resolve();
-        });
+        };
 
-        this.ws.on("message", (data: WebSocket.Data) => {
+        const messageHandler = (data: WebSocket.Data) => {
+          if (this.disposed) return;
           try {
             const message = JSON.parse(data.toString()) as SonioxMessage;
             this.handleMessage(message);
@@ -183,14 +189,12 @@ class SonioxTranslationStream implements TranslationStreamInstance {
             // Don't resolve here - Soniox doesn't send 'ready' in the message handler
             // The actual ready state is handled in handleMessage
           } catch (error) {
-            this.logger.error(
-              { error, data: data.toString() },
-              "Error parsing Soniox message",
-            );
+            this.logger.error({ error, data: data.toString() }, "Error parsing Soniox message");
           }
-        });
+        };
 
-        this.ws.on("error", (error) => {
+        const errorHandler = (error: Error) => {
+          if (this.disposed) return;
           this.logger.error({ error }, "Soniox translation WebSocket error");
           this.handleError(
             new TranslationProviderError(
@@ -200,18 +204,13 @@ class SonioxTranslationStream implements TranslationStreamInstance {
             ),
           );
           reject(error);
-        });
+        };
 
-        this.ws.on("close", (code, reason) => {
-          this.logger.info(
-            { code, reason: reason.toString() },
-            "Soniox translation WebSocket closed",
-          );
+        const closeHandler = (code: number, reason: Buffer) => {
+          if (this.disposed) return;
+          this.logger.info({ code, reason: reason.toString() }, "Soniox translation WebSocket closed");
 
-          if (
-            !this.isClosing &&
-            this.reconnectAttempts < this.maxReconnectAttempts
-          ) {
+          if (!this.isClosing && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             this.logger.info(
               { attempt: this.reconnectAttempts },
@@ -222,12 +221,24 @@ class SonioxTranslationStream implements TranslationStreamInstance {
             this.state = TranslationStreamState.CLOSED;
             this.callbacks.onClosed?.();
           }
+        };
+
+        this.ws.on("open", openHandler);
+        this.ws.on("message", messageHandler);
+        this.ws.on("error", errorHandler);
+        this.ws.on("close", closeHandler);
+
+        // Track handlers for cleanup
+        this.resources.track(() => {
+          if (this.ws) {
+            this.ws.off("open", openHandler);
+            this.ws.off("message", messageHandler);
+            this.ws.off("error", errorHandler);
+            this.ws.off("close", closeHandler);
+          }
         });
       } catch (error) {
-        this.logger.error(
-          { error },
-          "Failed to create Soniox translation WebSocket",
-        );
+        this.logger.error({ error }, "Failed to create Soniox translation WebSocket");
         reject(error);
       }
     });
@@ -236,15 +247,35 @@ class SonioxTranslationStream implements TranslationStreamInstance {
   private sendConfigMessage(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
+    // Check if this is "all-to-LANG" format (one-way from any language)
+    const isAllToFormat = this.sourceLanguage === "all";
+
     // Normalize language codes for Soniox
-    const sourceLang = this.normalizeLanguageCode(this.sourceLanguage);
+    const sourceLang = isAllToFormat ? "auto" : this.normalizeLanguageCode(this.sourceLanguage);
     const targetLang = this.normalizeLanguageCode(this.targetLanguage);
 
     // Build translation config optimized for translation only
     let translationConfig: any;
 
-    // Check if this is a two-way translation pair
-    if (this.isTwoWayPair(sourceLang, targetLang)) {
+    if (isAllToFormat) {
+      // One-way translation from ALL languages to target
+      this.isTwoWay = false;
+
+      translationConfig = {
+        type: "one_way",
+        target_language: targetLang,
+      };
+
+      this.logger.debug(
+        {
+          format: "all-to-target",
+          targetLanguage: targetLang,
+        },
+        "Using one-way translation from all languages",
+      );
+    } else if (this.isTwoWayPair(sourceLang, targetLang)) {
+      // Two-way translation between specific language pair
+      // This gives better accuracy with language hints
       this.isTwoWay = true;
       this.langA = sourceLang;
       this.langB = targetLang;
@@ -254,8 +285,17 @@ class SonioxTranslationStream implements TranslationStreamInstance {
         language_a: sourceLang,
         language_b: targetLang,
       };
+
+      this.logger.debug(
+        {
+          format: "two-way",
+          languageA: sourceLang,
+          languageB: targetLang,
+        },
+        "Using two-way translation with language hints for better accuracy",
+      );
     } else {
-      // One-way translation
+      // One-way translation from specific source to target
       this.isTwoWay = false;
 
       translationConfig = {
@@ -263,27 +303,35 @@ class SonioxTranslationStream implements TranslationStreamInstance {
         target_language: targetLang,
       };
 
-      // If source is specific, set it
+      // If source is specific, set it as hint
       if (sourceLang !== "auto") {
         translationConfig.source_languages = [sourceLang];
       }
+
+      this.logger.debug(
+        {
+          format: "one-way",
+          sourceLanguage: sourceLang,
+          targetLanguage: targetLang,
+        },
+        "Using one-way translation with specific source",
+      );
     }
 
     const config = {
       api_key: this.config.apiKey,
-      model: this.config.model || "stt-rt-preview-v2",
+      model: this.config.model || "stt-rt-v4",
       audio_format: "pcm_s16le",
       sample_rate: 16000,
       num_channels: 1,
       language: sourceLang === "auto" ? "auto" : sourceLang,
       translation: translationConfig,
 
+      // Enable language identification for better accuracy
+      enable_language_identification: true,
+
       // Optimize for translation
       include_nonfinal: false, // for translation, we don't need non final results.
-      enable_profanity_filter: false,
-      enable_automatic_punctuation: true,
-      enable_speaker_diarization: true,
-      enable_language_identification: true,
       enable_endpoint_detection: true,
 
       // max time for final.
@@ -294,8 +342,13 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
     this.logger.debug(
       {
-        config,
-        languages: `${this.sourceLanguage} → ${this.targetLanguage}`,
+        translationType: translationConfig.type,
+        sourceLanguage: this.sourceLanguage,
+        targetLanguage: this.targetLanguage,
+        normalizedSource: sourceLang,
+        normalizedTarget: targetLang,
+        isAllToFormat,
+        isTwoWay: this.isTwoWay,
       },
       "Sent Soniox translation config",
     );
@@ -467,14 +520,10 @@ class SonioxTranslationStream implements TranslationStreamInstance {
           }
 
           const lastOriginal = langData.original[langData.original.length - 1];
-          utterance.lastOriginalEndTime =
-            (lastOriginal.start_ms || 0) + (lastOriginal.duration_ms || 0);
+          utterance.lastOriginalEndTime = (lastOriginal.start_ms || 0) + (lastOriginal.duration_ms || 0);
 
           // Mark that we're waiting for translation
-          if (
-            !utterance.waitingForTranslation &&
-            langData.translation.length === 0
-          ) {
+          if (!utterance.waitingForTranslation && langData.translation.length === 0) {
             utterance.waitingForTranslation = true;
             this.startTranslationTimeout(sourceLang);
           }
@@ -497,15 +546,10 @@ class SonioxTranslationStream implements TranslationStreamInstance {
         const shouldSend =
           utterance.translationTokens.length > 0 && // Have translation
           (langData.hasEnd || // End token received
-            (utterance.originalTokens.length > 0 &&
-              !utterance.waitingForTranslation)); // Have complete pair
+            (utterance.originalTokens.length > 0 && !utterance.waitingForTranslation)); // Have complete pair
 
         if (shouldSend) {
-          this.sendLanguageUtterance(
-            sourceLang,
-            langData.hasEnd,
-            langData.hasEnd ? "end_token" : "complete_pair",
-          );
+          this.sendLanguageUtterance(sourceLang, langData.hasEnd, langData.hasEnd ? "end_token" : "complete_pair");
         }
 
         // Clear utterance if we hit an end token
@@ -521,10 +565,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
   async writeAudio(data: ArrayBuffer): Promise<boolean> {
     try {
-      if (
-        this.state !== TranslationStreamState.READY &&
-        this.state !== TranslationStreamState.ACTIVE
-      ) {
+      if (this.state !== TranslationStreamState.READY && this.state !== TranslationStreamState.ACTIVE) {
         // Buffer audio if still initializing
         if (this.state === TranslationStreamState.INITIALIZING) {
           this.pendingAudioChunks.push(data);
@@ -551,10 +592,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
       return true;
     } catch (error) {
-      this.logger.warn(
-        { error },
-        "Failed to write audio to Soniox translation stream",
-      );
+      this.logger.warn({ error }, "Failed to write audio to Soniox translation stream");
       this.metrics.audioWriteFailures++;
       this.metrics.consecutiveFailures++;
       return false;
@@ -564,10 +602,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
   private processPendingAudio(): void {
     if (this.pendingAudioChunks.length === 0) return;
 
-    this.logger.debug(
-      { count: this.pendingAudioChunks.length },
-      "Processing pending audio chunks",
-    );
+    this.logger.debug({ count: this.pendingAudioChunks.length }, "Processing pending audio chunks");
 
     for (const chunk of this.pendingAudioChunks) {
       this.writeAudio(chunk);
@@ -577,20 +612,21 @@ class SonioxTranslationStream implements TranslationStreamInstance {
   }
 
   async close(): Promise<void> {
-    if (this.isClosing || this.state === TranslationStreamState.CLOSED) {
+    if (this.isClosing || this.state === TranslationStreamState.CLOSED || this.disposed) {
       return;
     }
 
+    this.disposed = true;
     this.isClosing = true;
     this.state = TranslationStreamState.CLOSING;
 
     try {
+      // Clean up all tracked resources (removes event listeners)
+      this.resources.dispose();
+
       // Send any remaining utterance data for all languages
       for (const [sourceLang, utterance] of this.utterancesByLanguage) {
-        if (
-          utterance.translationTokens.length > 0 ||
-          utterance.originalTokens.length > 0
-        ) {
+        if (utterance.translationTokens.length > 0 || utterance.originalTokens.length > 0) {
           this.logger.info(
             {
               sourceLang,
@@ -651,9 +687,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
   getHealth(): TranslationStreamHealth {
     return {
-      isAlive:
-        this.state === TranslationStreamState.READY ||
-        this.state === TranslationStreamState.ACTIVE,
+      isAlive: this.state === TranslationStreamState.READY || this.state === TranslationStreamState.ACTIVE,
       lastActivity: this.lastActivity,
       consecutiveFailures: this.metrics.consecutiveFailures,
       lastSuccessfulWrite: this.metrics.lastSuccessfulWrite,
@@ -748,11 +782,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
     return languageMap[normalizedCode] || normalizedCode;
   }
 
-  private sendLanguageUtterance(
-    sourceLang: string,
-    isFinal: boolean,
-    reason: string,
-  ): void {
+  private sendLanguageUtterance(sourceLang: string, isFinal: boolean, reason: string): void {
     const utterance = this.utterancesByLanguage.get(sourceLang);
     if (!utterance || utterance.translationTokens.length === 0) {
       return; // Nothing to send
@@ -760,9 +790,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
     // Build texts from tokens
     const originalText = utterance.originalTokens.map((t) => t.text).join("");
-    const translationText = utterance.translationTokens
-      .map((t) => t.text)
-      .join("");
+    const translationText = utterance.translationTokens.map((t) => t.text).join("");
 
     // Calculate timing
     const utteranceStartTime = utterance.startTime || 0;
@@ -770,8 +798,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
     // Use translation tokens for end time (they usually come after original)
     if (utterance.translationTokens.length > 0) {
-      const lastToken =
-        utterance.translationTokens[utterance.translationTokens.length - 1];
+      const lastToken = utterance.translationTokens[utterance.translationTokens.length - 1];
       endTime = (lastToken.start_ms || 0) + (lastToken.duration_ms || 0);
     } else if (utterance.lastOriginalEndTime) {
       endTime = utterance.lastOriginalEndTime;
@@ -780,9 +807,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
     // Create translation data with original text
     // Use full language codes for SDK compatibility (e.g., 'en-US' instead of 'en')
     const transcribeLanguageCode = this.getFullLanguageCode(sourceLang);
-    const translateLanguageCode = this.getFullLanguageCode(
-      utterance.targetLanguage!,
-    );
+    const translateLanguageCode = this.getFullLanguageCode(utterance.targetLanguage!);
 
     const translationData: TranslationData = {
       type: StreamType.TRANSLATION,
@@ -809,18 +834,14 @@ class SonioxTranslationStream implements TranslationStreamInstance {
     if (this.latencyMeasurements.length > 100) {
       this.latencyMeasurements.shift();
     }
-    this.metrics.averageLatency =
-      this.latencyMeasurements.reduce((a, b) => a + b, 0) /
-      this.latencyMeasurements.length;
+    this.metrics.averageLatency = this.latencyMeasurements.reduce((a, b) => a + b, 0) / this.latencyMeasurements.length;
 
     // Send to callback
     this.callbacks.onData?.(translationData);
 
     this.logger.info(
       {
-        originalText: originalText
-          ? originalText.substring(0, 50) + "..."
-          : "none",
+        originalText: originalText ? originalText.substring(0, 50) + "..." : "none",
         translatedText: translationText.substring(0, 50) + "...",
         isFinal,
         reason,
@@ -854,11 +875,7 @@ class SonioxTranslationStream implements TranslationStreamInstance {
     // Set new timeout
     const timeout = setTimeout(() => {
       const utterance = this.utterancesByLanguage.get(sourceLang);
-      if (
-        utterance &&
-        utterance.originalTokens.length > 0 &&
-        utterance.waitingForTranslation
-      ) {
+      if (utterance && utterance.originalTokens.length > 0 && utterance.waitingForTranslation) {
         this.logger.warn(
           {
             sourceLang,
@@ -901,9 +918,7 @@ export class SonioxTranslationProvider implements TranslationProvider {
   };
 
   // Get supported languages from the actual Soniox mappings
-  private supportedLanguages = new Set(
-    SonioxTranslationUtils.getSupportedLanguages(),
-  );
+  private supportedLanguages = new Set(SonioxTranslationUtils.getSupportedLanguages());
 
   constructor(
     private config: SonioxTranslationConfig,
@@ -926,10 +941,7 @@ export class SonioxTranslationProvider implements TranslationProvider {
       this.isInitialized = true;
       this.logger.info("Soniox translation provider initialized");
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to initialize Soniox translation provider",
-      );
+      this.logger.error({ error }, "Failed to initialize Soniox translation provider");
       throw error;
     }
   }
@@ -939,17 +951,13 @@ export class SonioxTranslationProvider implements TranslationProvider {
     this.logger.info("Soniox translation provider disposed");
   }
 
-  async createTranslationStream(
-    options: TranslationStreamOptions,
-  ): Promise<TranslationStreamInstance> {
+  async createTranslationStream(options: TranslationStreamOptions): Promise<TranslationStreamInstance> {
     if (!this.isInitialized) {
       throw new Error("Soniox translation provider not initialized");
     }
 
     // Validate language pair
-    if (
-      !this.supportsLanguagePair(options.sourceLanguage, options.targetLanguage)
-    ) {
+    if (!this.supportsLanguagePair(options.sourceLanguage, options.targetLanguage)) {
       throw new InvalidLanguagePairError(
         `Soniox does not support translation from ${options.sourceLanguage} to ${options.targetLanguage}`,
         options.sourceLanguage,
@@ -965,6 +973,11 @@ export class SonioxTranslationProvider implements TranslationProvider {
   }
 
   supportsLanguagePair(source: string, target: string): boolean {
+    // Special case: "all" means translate from any language to target
+    if (source === "all") {
+      return this.supportedLanguages.has(SonioxTranslationUtils.normalizeLanguageCode(target));
+    }
+
     // Use the utility to check if the language pair is supported
     return SonioxTranslationUtils.supportsTranslation(source, target);
   }
@@ -984,10 +997,7 @@ export class SonioxTranslationProvider implements TranslationProvider {
       for (const targetLanguage of this.supportedLanguages) {
         if (
           sourceLanguage !== targetLanguage &&
-          SonioxTranslationUtils.supportsTranslation(
-            sourceLanguage,
-            targetLanguage,
-          )
+          SonioxTranslationUtils.supportsTranslation(sourceLanguage, targetLanguage)
         ) {
           targets.push(targetLanguage);
         }

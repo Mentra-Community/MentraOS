@@ -1,6 +1,6 @@
-import { NextFunction, Request, Response } from 'express';
-import { supabaseAdmin } from '../utils/supabase';
-import jwt from 'jsonwebtoken';
+import { NextFunction, Request, Response } from "express";
+import { supabaseAdmin } from "../utils/supabase";
+import jwt from "jsonwebtoken";
 import { logger } from "../services/logging/pino-logger";
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
 
@@ -13,13 +13,17 @@ export interface UserRequest extends Request {
 /**
  * Middleware to validate Supabase token
  */
-export const validateSupabaseToken = async (req: Request, res: Response, next: NextFunction) => {
+export const validateSupabaseToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   // Extract token from Authorization header
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
       success: false,
-      message: 'Missing or invalid Authorization header'
+      message: "Missing or invalid Authorization header",
     });
   }
 
@@ -30,10 +34,9 @@ export const validateSupabaseToken = async (req: Request, res: Response, next: N
     const { data, error } = await supabaseAdmin.auth.getUser(token);
 
     if (error || !data.user || !data.user.email) {
-
       return res.status(401).json({
         success: false,
-        message: 'Invalid Supabase token'
+        message: "Invalid Supabase token",
       });
     }
 
@@ -42,36 +45,45 @@ export const validateSupabaseToken = async (req: Request, res: Response, next: N
 
     next();
   } catch (error) {
-    console.error('Supabase authentication error:', error);
+    console.error("Supabase authentication error:", error);
     return res.status(500).json({
       success: false,
-      message: 'Authentication failed'
+      message: "Authentication failed",
     });
   }
 };
 
 // TODO(isaiah): Depricate this, and replace all usages with middleware/client/client-auth-middleware.ts authWithEmail.
-export const validateCoreToken = (req: Request, res: Response, next: NextFunction) => {
+export const validateCoreToken = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    logger.warn('Auth Middleware: Missing or invalid Authorization header');
-    return res.status(401).json({ error: 'Authorization header missing or invalid' });
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    logger.warn("Auth Middleware: Missing or invalid Authorization header");
+    return res
+      .status(401)
+      .json({ error: "Authorization header missing or invalid" });
   }
 
   const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
-  if (!token || token === 'null' || token === 'undefined') {
-    logger.warn('Auth Middleware: Empty or invalid token value');
-    return res.status(401).json({ error: 'Invalid token' });
+  if (!token || token === "null" || token === "undefined") {
+    logger.warn("Auth Middleware: Empty or invalid token value");
+    return res.status(401).json({ error: "Invalid token" });
   }
 
   try {
-    const decoded = jwt.verify(token, AUGMENTOS_AUTH_JWT_SECRET) as jwt.JwtPayload;
+    const decoded = jwt.verify(
+      token,
+      AUGMENTOS_AUTH_JWT_SECRET,
+    ) as jwt.JwtPayload;
 
     if (!decoded || !decoded.email) {
-      logger.warn('Auth Middleware: Missing email in token payload');
-      return res.status(401).json({ error: 'Invalid token data' });
+      logger.warn("Auth Middleware: Missing email in token payload");
+      return res.status(401).json({ error: "Invalid token data" });
     }
 
     // Attach userId (email) to the request object
@@ -79,13 +91,12 @@ export const validateCoreToken = (req: Request, res: Response, next: NextFunctio
     (req as UserRequest).email = email;
     logger.info(`Auth Middleware: User ${email} authenticated.`);
     next();
-
   } catch (error) {
     const jwtError = error as Error;
-    logger.error('Auth Middleware: JWT verification failed:', jwtError);
+    logger.error(jwtError, "Auth Middleware: JWT verification failed:");
     return res.status(401).json({
-      error: 'Invalid or expired token',
-      message: jwtError.message
+      error: "Invalid or expired token",
+      message: jwtError.message,
     });
   }
 };

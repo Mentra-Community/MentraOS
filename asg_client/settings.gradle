@@ -16,14 +16,14 @@ dependencyResolutionManagement {
 rootProject.name = "AugmentOS ASG Client"
 include ':app'
 
-include ':AugmentOSLib'
-project(':AugmentOSLib').projectDir = new File(rootProject.projectDir, '../android_library/AugmentOSLib')
+// include ':AugmentOSLib'
+// project(':AugmentOSLib').projectDir = new File(rootProject.projectDir, '../android_library/AugmentOSLib')
 
-include ':SmartGlassesManager'
-project(':SmartGlassesManager').projectDir = new File(rootProject.projectDir, '../SmartGlassesManager/SGM_android/SmartGlassesManager')
+// include ':SmartGlassesManager'
+// project(':SmartGlassesManager').projectDir = new File(rootProject.projectDir, '../SmartGlassesManager/SGM_android/SmartGlassesManager')
 
-include ':augmentos_core'
-project(':augmentos_core').projectDir = new File(rootProject.projectDir, '../android_core/app')
+// include ':augmentos_core'
+// project(':augmentos_core').projectDir = new File(rootProject.projectDir, '../android_core/app')
 
 // StreamPackLite modules
 include ':core'

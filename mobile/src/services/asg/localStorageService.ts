@@ -3,9 +3,10 @@
  * Manages downloaded files and sync state
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage"
-import RNFS from "react-native-fs"
-import {PhotoInfo} from "../../types/asg"
+import * as RNFS from "@dr.pogodin/react-native-fs"
+
+import {PhotoInfo} from "@/types/asg"
+import {storage} from "@/utils/storage"
 
 export interface DownloadedFile {
   name: string
@@ -19,11 +20,22 @@ export interface DownloadedFile {
   glassesModel?: string // Model of glasses that captured this media
 }
 
-export interface SyncState {
+interface SyncState {
   last_sync_time: number
   client_id: string
   total_downloaded: number
   total_size: number
+}
+
+export interface SyncQueueData {
+  files: PhotoInfo[]
+  currentIndex: number
+  startedAt: number
+  hotspotInfo: {
+    ssid: string
+    password: string
+    ip: string
+  }
 }
 
 export class LocalStorageService {
@@ -31,6 +43,7 @@ export class LocalStorageService {
   private readonly DOWNLOADED_FILES_KEY = "asg_downloaded_files"
   private readonly SYNC_STATE_KEY = "asg_sync_state"
   private readonly CLIENT_ID_KEY = "asg_client_id"
+  private readonly SYNC_QUEUE_KEY = "asg_sync_queue"
   private readonly ASG_PHOTOS_DIR = `${RNFS.DocumentDirectoryPath}/MentraPhotos`
   private readonly ASG_THUMBNAILS_DIR = `${RNFS.DocumentDirectoryPath}/MentraPhotos/thumbnails`
 
@@ -86,41 +99,26 @@ export class LocalStorageService {
    * Initialize client ID if not exists
    */
   async initializeClientId(): Promise<string> {
-    try {
-      let clientId = await AsyncStorage.getItem(this.CLIENT_ID_KEY)
-      if (!clientId) {
-        clientId = `mobile_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        await AsyncStorage.setItem(this.CLIENT_ID_KEY, clientId)
-      }
-      return clientId
-    } catch (error) {
-      console.error("Error initializing client ID:", error)
-      throw error
+    let res = storage.load<string>(this.CLIENT_ID_KEY)
+    let clientId
+    if (res.is_error()) {
+      clientId = `mobile_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      storage.save(this.CLIENT_ID_KEY, clientId)
+    } else {
+      clientId = res.value
     }
+    return clientId
   }
 
   /**
    * Get current sync state
    */
   async getSyncState(): Promise<SyncState> {
-    try {
-      const clientId = await this.initializeClientId()
-      const syncStateStr = await AsyncStorage.getItem(this.SYNC_STATE_KEY)
+    const clientId = await this.initializeClientId()
+    const res = storage.load<SyncState>(this.SYNC_STATE_KEY)
 
-      if (syncStateStr) {
-        const syncState = JSON.parse(syncStateStr)
-        return {...syncState, client_id: clientId}
-      }
-
-      return {
-        last_sync_time: 0,
-        client_id: clientId,
-        total_downloaded: 0,
-        total_size: 0,
-      }
-    } catch (error) {
-      console.error("Error getting sync state:", error)
-      const clientId = await this.initializeClientId()
+    if (res.is_error()) {
+      console.error("Error getting sync state:", res.error)
       return {
         last_sync_time: 0,
         client_id: clientId,
@@ -128,6 +126,9 @@ export class LocalStorageService {
         total_size: 0,
       }
     }
+
+    const syncState = res.value
+    return {...syncState, client_id: clientId}
   }
 
   /**
@@ -137,7 +138,7 @@ export class LocalStorageService {
     try {
       const currentState = await this.getSyncState()
       const newState = {...currentState, ...updates}
-      await AsyncStorage.setItem(this.SYNC_STATE_KEY, JSON.stringify(newState))
+      await storage.save(this.SYNC_STATE_KEY, newState)
     } catch (error) {
       console.error("Error updating sync state:", error)
       throw error
@@ -150,6 +151,26 @@ export class LocalStorageService {
   async saveDownloadedFile(file: DownloadedFile): Promise<void> {
     try {
       const files = await this.getDownloadedFiles()
+
+      // 🔍 DIAGNOSTIC: Check if file already exists
+      // const existingFile = files[file.name]
+      // if (existingFile) {
+      //   console.log(`[LocalStorage] ⚠️ WARNING: File ${file.name} ALREADY EXISTS - will be REPLACED!`)
+      //   console.log(`[LocalStorage]   📁 Existing file:`)
+      //   console.log(`[LocalStorage]      - Downloaded at: ${new Date(existingFile.downloaded_at).toISOString()}`)
+      //   console.log(`[LocalStorage]      - Modified: ${new Date(existingFile.modified).toISOString()}`)
+      //   console.log(`[LocalStorage]      - Size: ${existingFile.size} bytes`)
+      //   console.log(`[LocalStorage]      - Path: ${existingFile.filePath}`)
+      //   console.log(`[LocalStorage]   📁 New file:`)
+      //   console.log(`[LocalStorage]      - Downloaded at: ${new Date(file.downloaded_at).toISOString()}`)
+      //   console.log(`[LocalStorage]      - Modified: ${new Date(file.modified).toISOString()}`)
+      //   console.log(`[LocalStorage]      - Size: ${file.size} bytes`)
+      //   console.log(`[LocalStorage]      - Path: ${file.filePath}`)
+      //   console.log(`[LocalStorage]   🔄 This will OVERWRITE the existing entry!`)
+      // } else {
+      //   console.log(`[LocalStorage] ✅ File ${file.name} is NEW - saving metadata`)
+      // }
+
       // Store relative paths to handle iOS app container changes between launches
       // Convert absolute paths to relative (remove DocumentDirectoryPath prefix)
       const docPath = RNFS.DocumentDirectoryPath
@@ -168,8 +189,8 @@ export class LocalStorageService {
         filePath: relativePath,
         thumbnailPath: relativeThumbnailPath,
       }
-      await AsyncStorage.setItem(this.DOWNLOADED_FILES_KEY, JSON.stringify(files))
-      console.log(`[LocalStorage] Saved metadata for ${file.name} with relative path: ${relativePath}`)
+      await storage.save(this.DOWNLOADED_FILES_KEY, files)
+      // console.log(`[LocalStorage] 💾 Saved metadata for ${file.name} with relative path: ${relativePath}`)
     } catch (error) {
       console.error("Error saving downloaded file metadata:", error)
       throw error
@@ -180,39 +201,39 @@ export class LocalStorageService {
    * Get all downloaded files
    */
   async getDownloadedFiles(): Promise<Record<string, DownloadedFile>> {
-    try {
-      const filesStr = await AsyncStorage.getItem(this.DOWNLOADED_FILES_KEY)
-      if (!filesStr) return {}
-
-      const files = JSON.parse(filesStr)
-      const reconstructedFiles: Record<string, DownloadedFile> = {}
-      const docPath = RNFS.DocumentDirectoryPath
-
-      // Reconstruct absolute paths from relative paths
-      for (const [name, file] of Object.entries(files as Record<string, DownloadedFile>)) {
-        // Check if path is already absolute (legacy data) or relative
-        const absolutePath = file.filePath.startsWith("/")
-          ? file.filePath // Already absolute (legacy data)
-          : `${docPath}/${file.filePath}` // Relative path, prepend DocumentDirectoryPath
-
-        const absoluteThumbnailPath = file.thumbnailPath
-          ? file.thumbnailPath.startsWith("/")
-            ? file.thumbnailPath // Already absolute (legacy data)
-            : `${docPath}/${file.thumbnailPath}` // Relative path
-          : undefined
-
-        reconstructedFiles[name] = {
-          ...file,
-          filePath: absolutePath,
-          thumbnailPath: absoluteThumbnailPath,
-        }
-      }
-
-      return reconstructedFiles
-    } catch (error) {
-      console.error("Error getting downloaded files:", error)
+    const res = storage.load<Record<string, DownloadedFile>>(this.DOWNLOADED_FILES_KEY)
+    if (res.is_error()) {
+      // Not an error - just means no files have been downloaded yet (first use)
+      // Only log as debug, not error, since this is expected on first launch
+      console.log("[LocalStorage] No downloaded files found (first use or empty gallery)")
       return {}
     }
+
+    const files = res.value
+    const reconstructedFiles: Record<string, DownloadedFile> = {}
+    const docPath = RNFS.DocumentDirectoryPath
+
+    // Reconstruct absolute paths from relative paths
+    for (const [name, file] of Object.entries(files as Record<string, DownloadedFile>)) {
+      // Check if path is already absolute (legacy data) or relative
+      const absolutePath = file.filePath.startsWith("/")
+        ? file.filePath // Already absolute (legacy data)
+        : `${docPath}/${file.filePath}` // Relative path, prepend DocumentDirectoryPath
+
+      const absoluteThumbnailPath = file.thumbnailPath
+        ? file.thumbnailPath.startsWith("/")
+          ? file.thumbnailPath // Already absolute (legacy data)
+          : `${docPath}/${file.thumbnailPath}` // Relative path
+        : undefined
+
+      reconstructedFiles[name] = {
+        ...file,
+        filePath: absolutePath,
+        thumbnailPath: absoluteThumbnailPath,
+      }
+    }
+
+    return reconstructedFiles
   }
 
   /**
@@ -250,10 +271,15 @@ export class LocalStorageService {
         }
 
         // Delete metadata - need to get raw data to maintain relative paths
-        const filesStr = await AsyncStorage.getItem(this.DOWNLOADED_FILES_KEY)
-        const rawFiles = filesStr ? JSON.parse(filesStr) : {}
+        const res = storage.load(this.DOWNLOADED_FILES_KEY)
+        if (res.is_error()) {
+          console.error("Error loading downloaded files:", res.error)
+          return false
+        }
+        const rawFiles = files.value
+        // @ts-ignore
         delete rawFiles[fileName]
-        await AsyncStorage.setItem(this.DOWNLOADED_FILES_KEY, JSON.stringify(rawFiles))
+        await storage.save(this.DOWNLOADED_FILES_KEY, rawFiles)
         return true
       }
       return false
@@ -354,28 +380,104 @@ export class LocalStorageService {
    * Clear all downloaded files (both metadata and actual files)
    */
   async clearAllFiles(): Promise<void> {
-    try {
-      // Get all files before clearing
-      const files = await this.getDownloadedFiles()
+    // Get all files before clearing
+    const files = await this.getDownloadedFiles()
 
-      // Delete each file from filesystem
-      for (const fileName in files) {
-        const file = files[fileName]
-        if (file.filePath && (await RNFS.exists(file.filePath))) {
-          await RNFS.unlink(file.filePath)
-        }
-        if (file.thumbnailPath && (await RNFS.exists(file.thumbnailPath))) {
-          await RNFS.unlink(file.thumbnailPath)
-        }
+    // Delete each file from filesystem
+    for (const fileName in files) {
+      const file = files[fileName]
+      if (file.filePath && (await RNFS.exists(file.filePath))) {
+        await RNFS.unlink(file.filePath)
       }
+      if (file.thumbnailPath && (await RNFS.exists(file.thumbnailPath))) {
+        await RNFS.unlink(file.thumbnailPath)
+      }
+    }
 
-      // Clear metadata
-      await AsyncStorage.removeItem(this.DOWNLOADED_FILES_KEY)
-      console.log("[LocalStorage] Cleared all downloaded files")
+    // Clear metadata
+    const res = await storage.remove(this.DOWNLOADED_FILES_KEY)
+    if (res.is_error()) {
+      console.error("[LocalStorage] Error clearing downloaded files:", res.error)
+      throw res.error
+    }
+    console.log("[LocalStorage] Cleared all downloaded files")
+  }
+
+  // ============================================
+  // Sync Queue Persistence (for background sync resume)
+  // ============================================
+
+  /**
+   * Save sync queue for potential resume after app restart
+   */
+  async saveSyncQueue(queue: SyncQueueData): Promise<void> {
+    try {
+      await storage.save(this.SYNC_QUEUE_KEY, queue)
+      console.log(`[LocalStorage] Saved sync queue: ${queue.files.length} files, index ${queue.currentIndex}`)
     } catch (error) {
-      console.error("Error clearing all files:", error)
+      console.error("[LocalStorage] Error saving sync queue:", error)
       throw error
     }
+  }
+
+  /**
+   * Get saved sync queue (for resume on app restart)
+   */
+  async getSyncQueue(): Promise<SyncQueueData | null> {
+    try {
+      const res = storage.load<SyncQueueData>(this.SYNC_QUEUE_KEY)
+      if (res.is_error()) {
+        // No queue saved - this is normal
+        return null
+      }
+      const queue = res.value
+      console.log(`[LocalStorage] Loaded sync queue: ${queue.files.length} files, index ${queue.currentIndex}`)
+      return queue
+    } catch (error) {
+      console.error("[LocalStorage] Error loading sync queue:", error)
+      return null
+    }
+  }
+
+  /**
+   * Update the current index of the sync queue (called after each file completes)
+   */
+  async updateSyncQueueIndex(newIndex: number): Promise<void> {
+    try {
+      const queue = await this.getSyncQueue()
+      if (queue) {
+        queue.currentIndex = newIndex
+        await this.saveSyncQueue(queue)
+      }
+    } catch (error) {
+      console.error("[LocalStorage] Error updating sync queue index:", error)
+    }
+  }
+
+  /**
+   * Clear sync queue (called on sync complete or cancel)
+   */
+  async clearSyncQueue(): Promise<void> {
+    try {
+      const res = await storage.remove(this.SYNC_QUEUE_KEY)
+      if (res.is_error()) {
+        console.error("[LocalStorage] Error clearing sync queue:", res.error)
+        return
+      }
+      console.log("[LocalStorage] Cleared sync queue")
+    } catch (error) {
+      console.error("[LocalStorage] Error clearing sync queue:", error)
+    }
+  }
+
+  /**
+   * Check if there's a resumable sync queue
+   */
+  async hasResumableSyncQueue(): Promise<boolean> {
+    const queue = await this.getSyncQueue()
+    if (!queue) return false
+    // Has resumable queue if there are still files to process
+    return queue.currentIndex < queue.files.length
   }
 }
 

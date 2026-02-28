@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-
 # Gallery Delta Sync Implementation
 
 This document describes the delta sync functionality implemented in the ASG Gallery component.
@@ -265,4 +263,3 @@ The component handles various error scenarios:
 - **Photo Editing**: Basic photo editing capabilities
 - **Sharing**: Share photos directly from the gallery
 - **Filters**: Filter photos by date, type, or other criteria
-  > > > > > > > origin/galley-sync

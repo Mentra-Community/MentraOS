@@ -1,5 +1,8 @@
 FROM oven/bun:latest
 
+# Install ca-certificates for SSL/TLS connections
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=development
 ENV CONTAINER_ENVIRONMENT=true
 
@@ -11,22 +14,13 @@ WORKDIR /app
 
 # Copy package.json and tsconfig files
 COPY package.json tsconfig.json tsconfig.base.json ./
+COPY packages/types/package.json packages/types/tsconfig.json ./packages/types/
+COPY packages/display-utils/package.json packages/display-utils/tsconfig.json ./packages/display-utils/
 COPY packages/sdk/package.json packages/sdk/tsconfig.json ./packages/sdk/
-# COPY packages/utils/package.json packages/utils/tsconfig.json ./packages/utils/
-# COPY packages/agents/package.json packages/agents/tsconfig.json ./packages/agents/
 COPY packages/cloud/package.json packages/cloud/tsconfig.json ./packages/cloud/
 
-# Copy source files for build
-COPY packages/sdk/src ./packages/sdk/src
-# COPY packages/utils/src ./packages/utils/src
-# COPY packages/agents/src ./packages/agents/src
-
-# Install dependencies and build packages
-RUN bun install --no-link && \
-    cd packages/sdk && bun run build
-    
-# Cloud no longer depends on utils or agents, so we don't need to build them anymore
-# && cd ../utils && bun run build && \
-# cd ../agents && bun run build
+# Install dependencies only (skip prepare scripts that build SDK)
+# SDK will be built at runtime after volume mount
+RUN bun install --no-link --ignore-scripts
 
 CMD ["echo", "Ready to run services"]

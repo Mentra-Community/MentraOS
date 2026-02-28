@@ -3,31 +3,30 @@
  */
 
 import { ExtendedStreamType, TranscriptionData } from "@mentra/sdk";
-import { Logger } from "pino";
-import UserSession from "../UserSession";
 import dotenv from "dotenv";
+import { Logger } from "pino";
+
+import UserSession from "../UserSession";
 dotenv.config();
 
 // Environment variables for provider configuration
 export const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY || "";
 export const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "";
 export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || "";
-export const SONIOX_ENDPOINT =
-  process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
+export const SONIOX_ENDPOINT = process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
+export const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v4";
+export const ALIBABA_ENDPOINT = process.env.ALIBABA_ENDPOINT || "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+export const ALIBABA_WORKSPACE = process.env.ALIBABA_WORKSPACE || "";
+export const ALIBABA_DASHSCOPE_API_KEY = process.env.ALIBABA_DASHSCOPE_API_KEY || "";
 
-// Ensure required environment variables are set (warn if missing in development)
+// Azure is deprecated — warn if keys are present (they shouldn't be needed)
 if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
-  const message =
-    "Missing required Azure Speech environment variables: AZURE_SPEECH_KEY and AZURE_SPEECH_REGION";
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(message);
-  } else {
-    console.warn(`⚠️  ${message}. Transcription features may not work.`);
-  }
+  console.warn(
+    "⚠️  Azure Speech env vars not set (AZURE_SPEECH_KEY, AZURE_SPEECH_REGION). Azure provider will be unavailable — this is expected, Soniox is the primary provider.",
+  );
 }
 if (!SONIOX_API_KEY || !SONIOX_ENDPOINT) {
-  const message =
-    "Missing required Soniox environment variables: SONIOX_API_KEY and SONIOX_ENDPOINT";
+  const message = "Missing required Soniox environment variables: SONIOX_API_KEY and SONIOX_ENDPOINT";
   if (process.env.NODE_ENV === "production") {
     throw new Error(message);
   } else {
@@ -51,6 +50,7 @@ export enum StreamState {
 export enum ProviderType {
   AZURE = "azure",
   SONIOX = "soniox",
+  ALIBABA = "alibaba",
 }
 
 export enum AzureErrorType {
@@ -74,6 +74,7 @@ export interface TranscriptionConfig {
 
   azure: AzureProviderConfig;
   soniox: SonioxProviderConfig;
+  alibaba: AlibabaProviderConfig;
 
   performance: {
     maxTotalStreams: number;
@@ -97,8 +98,15 @@ export interface AzureProviderConfig {
 export interface SonioxProviderConfig {
   apiKey: string;
   endpoint: string;
-  model?: string; // Default: 'stt-rt-preview-v2'
+  model?: string; // Default: SONIOX_MODEL env var or 'stt-rt-v4'
   maxConnections?: number;
+}
+
+export interface AlibabaProviderConfig {
+  endpoint: string;
+  workspace: string;
+  dashscopeApiKey: string;
+  model: string;
 }
 
 //===========================================================
@@ -128,7 +136,12 @@ export interface StreamOptions {
 export interface StreamCallbacks {
   onReady?: () => void;
   onError?: (error: Error) => void;
-  onClosed?: () => void;
+  /**
+   * Called when stream is closed.
+   * @param code - WebSocket close code (1000 = normal/intentional, 1006 = abnormal/unexpected)
+   *               undefined means close code is not available (e.g., non-WebSocket providers)
+   */
+  onClosed?: (code?: number) => void;
   onData?: (data: TranscriptionData) => void;
 }
 
@@ -141,10 +154,7 @@ export interface TranscriptionProvider {
   dispose(): Promise<void>;
 
   // Stream Management
-  createTranscriptionStream(
-    language: string,
-    options: StreamOptions,
-  ): Promise<StreamInstance>;
+  createTranscriptionStream(language: string, options: StreamOptions): Promise<StreamInstance>;
 
   // Capabilities
   supportsSubscription(subscription: ExtendedStreamType): boolean;
@@ -173,6 +183,30 @@ export interface StreamMetrics {
   audioWriteFailures: number;
   consecutiveFailures: number;
   lastSuccessfulWrite?: number;
+
+  // Latency & Backlog Tracking (Legacy - kept for backwards compatibility)
+  totalAudioBytesSent?: number; // Total bytes sent to provider
+  lastTranscriptEndMs?: number; // Last transcript end time (relative to stream start)
+  lastTranscriptLagMs?: number; // Real lag: audio sent duration - transcript end (processingDeficit)
+  maxTranscriptLagMs?: number; // Maximum real lag observed
+  processingDeficitMs?: number; // DEPRECATED: Misleading during silence - use realtimeLatencyMs instead
+  wallClockLagMs?: number; // Wall-clock lag: stream age - transcript end (for debugging only, includes VAD gaps)
+  transcriptLagWarnings?: number; // Count of lag warnings (>5s processingDeficit)
+
+  // Activity Tracking (NEW - distinguishes silence from actual lag)
+  lastTokenReceivedAt?: number; // Timestamp when we last received ANY token from provider
+  tokenBatchesReceived?: number; // Count of token batches received
+  lastTokenBatchSize?: number; // Size of last token batch received
+  audioBytesSentAtLastToken?: number; // Audio bytes sent at time of last token (for calculating audio during silence)
+
+  // Silence Detection (NEW)
+  timeSinceLastTokenMs?: number; // Calculated: now - lastTokenReceivedAt
+  audioSentSinceLastTokenMs?: number; // Audio duration (ms) sent since last token received
+  isReceivingTokens?: boolean; // Have we received tokens in the last 30s?
+
+  // True Latency (NEW - only meaningful when isReceivingTokens === true)
+  realtimeLatencyMs?: number; // When tokens ARE received, how far behind is the provider?
+  avgRealtimeLatencyMs?: number; // Rolling average of realtime latency
 
   // Error Tracking
   errorCount: number;
@@ -214,6 +248,17 @@ export interface StreamHealth {
   consecutiveFailures: number;
   lastSuccessfulWrite?: number;
   providerHealth: ProviderHealthStatus;
+  // Legacy metrics (kept for backwards compatibility)
+  transcriptLagMs?: number;
+  maxTranscriptLagMs?: number;
+  processingDeficitMs?: number;
+  wallClockLagMs?: number;
+  // NEW: Activity tracking - distinguishes silence from actual lag
+  isReceivingTokens?: boolean; // Have we received tokens in the last 30s?
+  realtimeLatencyMs?: number; // TRUE latency when actively receiving tokens
+  avgRealtimeLatencyMs?: number; // Rolling average of realtime latency
+  timeSinceLastTokenMs?: number; // How long since any transcription activity
+  audioSentSinceLastTokenMs?: number; // Audio duration sent during quiet period
 }
 
 //===========================================================
@@ -249,12 +294,11 @@ export class AzureProviderError extends ProviderError {
     public readonly errorType: AzureErrorType,
     originalError?: Error,
   ) {
-    super(
-      `Azure error ${errorCode}: ${errorDetails}`,
-      ProviderType.AZURE,
-      originalError,
-      { errorCode, errorDetails, errorType },
-    );
+    super(`Azure error ${errorCode}: ${errorDetails}`, ProviderType.AZURE, originalError, {
+      errorCode,
+      errorDetails,
+      errorType,
+    });
     this.name = "AzureProviderError";
   }
 }
@@ -337,9 +381,7 @@ export interface ValidationResult {
 export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
   providers: {
     defaultProvider: ProviderType.SONIOX,
-    fallbackProvider: ProviderType.AZURE,
-    // defaultProvider: ProviderType.AZURE,
-    // fallbackProvider: ProviderType.SONIOX
+    fallbackProvider: ProviderType.SONIOX,
   },
 
   azure: {
@@ -350,6 +392,14 @@ export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
   soniox: {
     apiKey: SONIOX_API_KEY,
     endpoint: SONIOX_ENDPOINT,
+    model: SONIOX_MODEL,
+  },
+
+  alibaba: {
+    endpoint: ALIBABA_ENDPOINT,
+    workspace: ALIBABA_WORKSPACE,
+    dashscopeApiKey: ALIBABA_DASHSCOPE_API_KEY,
+    model: "gummy-realtime-v1",
   },
 
   performance: {

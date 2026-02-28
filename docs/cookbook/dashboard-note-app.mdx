@@ -1,0 +1,512 @@
+---
+title: "Dashboard Note App"
+description: "Build a voice-controlled dashboard note app using Mira Tool Calls, Simple Storage, and Dashboard API"
+icon: "note-sticky"
+---
+
+Learn how to build a simple but practical app that lets users save a quick note to their dashboard using voice commands. This cookbook demonstrates three core MentraOS features working together.
+
+## What You'll Build
+
+A voice-controlled note app where users can:
+- Say "Save a note saying pick up milk" → Note appears on dashboard
+- Say "What's my note?" → Mira reads it back
+- Say "Clear my note" → Note is removed
+
+The note displays in the bottom-right of the dashboard (visible when user looks up) and persists across app sessions.
+
+## Features Demonstrated
+
+<CardGroup cols={3}>
+  <Card title="Mira Tool Calls" icon="wand-magic-sparkles">
+    Voice commands that trigger functions
+  </Card>
+  <Card title="Simple Storage" icon="database">
+    Persist data across sessions
+  </Card>
+  <Card title="Dashboard API" icon="gauge">
+    Display persistent UI
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+- Basic understanding of MentraOS apps ([Quickstart](/app-devs/getting-started/quickstart))
+- Developer Console account ([console.mentra.glass](https://console.mentra.glass))
+- Local development setup with ngrok ([Deployment Overview](/app-devs/getting-started/deployment/overview))
+
+---
+
+## Step 1: Define Tools in Developer Console
+
+First, create three tools in the [Developer Console](https://console.mentra.glass/apps) for your app:
+
+### Tool 1: Save Note
+
+```json
+{
+  "id": "save_note",
+  "description": "Save a short note to display on the user's dashboard. The note will be visible when they look up at their glasses. Use this when the user wants to remember something quickly.",
+  "parameters": {
+    "note": {
+      "type": "string",
+      "description": "The note content to save. Keep it short for dashboard display.",
+      "required": true
+    }
+  }
+}
+```
+
+<Tip>
+**Good tool description:** Notice how the description tells Mira *when* to use this tool ("when the user wants to remember something quickly") and *what* it does ("visible when they look up"). This helps Mira understand context.
+</Tip>
+
+### Tool 2: Read Note
+
+```json
+{
+  "id": "read_note",
+  "description": "Read the current note saved on the user's dashboard. Use this when the user asks what their note is or wants to check what they saved.",
+  "parameters": {}
+}
+```
+
+### Tool 3: Clear Note
+
+```json
+{
+  "id": "clear_note",
+  "description": "Clear and remove the note from the user's dashboard. Use this when the user wants to delete or remove their saved note.",
+  "parameters": {}
+}
+```
+
+<Info>
+These tool definitions are configured in the Developer Console, not in your code. Mira uses these descriptions to decide when to call each tool.
+</Info>
+
+---
+
+## Step 2: Create the App Server
+
+Create a new file `src/index.ts`:
+
+```typescript
+import { AppServer, AppSession, ToolCall, GIVE_APP_CONTROL_OF_TOOL_RESPONSE } from '@mentra/sdk';
+
+class DashboardNoteApp extends AppServer {
+  /**
+   * Called when a user starts a session with your app
+   * Load any saved note and display it on the dashboard
+   */
+  protected async onSession(
+    session: AppSession,
+    sessionId: string,
+    userId: string
+  ): Promise<void> {
+    session.logger.info(`Session started for user ${userId}`);
+
+    // Load saved note from Simple Storage
+    const savedNote = await session.simpleStorage.get('dashboard_note');
+    
+    if (savedNote) {
+      // Display it on the dashboard
+      session.dashboard.content.writeToMain(savedNote);
+      session.logger.info(`Loaded saved note: ${savedNote}`);
+    } else {
+      session.logger.info('No saved note found');
+    }
+  }
+
+  /**
+   * Called when Mira triggers one of your tools
+   * Handle save, read, and clear operations
+   */
+  protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+    const session = this.getSessionByUserId(toolCall.userId);
+    
+    if (!session) {
+      return "Could not find your session";
+    }
+
+    // Handle save_note tool
+    if (toolCall.toolId === "save_note") {
+      const note = toolCall.toolParameters.note as string;
+      
+      // Validate note length
+      if (note.length > 100) {
+        return "That note is too long for the dashboard. Please keep it under 100 characters.";
+      }
+      
+      // Save to Simple Storage (persists across sessions)
+      await session.simpleStorage.set('dashboard_note', note);
+      
+      // Display on dashboard (bottom-right, visible when user looks up)
+      session.dashboard.content.writeToMain(note);
+      
+      session.logger.info(`Saved note: ${note}`);
+      
+      // Return context for Mira - she'll formulate a natural response
+      return `Note saved successfully: "${note}"`;
+    }
+
+    // Handle read_note tool
+    if (toolCall.toolId === "read_note") {
+      const note = await session.simpleStorage.get('dashboard_note');
+      
+      if (note) {
+        session.logger.info(`Reading note: ${note}`);
+        // Mira will speak this naturally to the user
+        return `Your note says: "${note}"`;
+      } else {
+        return "You don't have a note saved on your dashboard";
+      }
+    }
+
+    // Handle clear_note tool
+    if (toolCall.toolId === "clear_note") {
+      // Delete from Simple Storage
+      await session.simpleStorage.delete('dashboard_note');
+      
+      // Clear from dashboard
+      session.dashboard.content.writeToMain('');
+      
+      session.logger.info('Note cleared');
+      
+      return "Your note has been cleared from the dashboard";
+    }
+
+    return undefined;
+  }
+}
+
+// Start the server
+const server = new DashboardNoteApp({
+  packageName: 'your.package.name', // Replace with your package name from console
+  apiKey: process.env.MENTRA_API_KEY!,
+  port: 3000,
+});
+
+server.start();
+```
+
+---
+
+## Step 3: Understanding the Code
+
+### Session Management
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // This runs when user opens your app
+  const savedNote = await session.simpleStorage.get('dashboard_note');
+  
+  if (savedNote) {
+    session.dashboard.content.writeToMain(savedNote);
+  }
+}
+```
+
+**What's happening:**
+1. User opens your app on glasses
+2. App loads saved note from Simple Storage
+3. If note exists, display it on dashboard immediately
+4. User sees their note when they look up
+
+### Tool Call Handling
+
+```typescript
+protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
+  // Get the session for this user
+  const session = this.getSessionByUserId(toolCall.userId);
+  
+  // Check which tool was called
+  if (toolCall.toolId === "save_note") {
+    // Get parameters Mira extracted
+    const note = toolCall.toolParameters.note as string;
+    
+    // Do your logic...
+  }
+}
+```
+
+**What's happening:**
+1. User says something like "Save a note saying pick up milk"
+2. Mira recognizes this matches the `save_note` tool
+3. Mira extracts parameters: `{ note: "pick up milk" }`
+4. Your `onToolCall` is triggered with the tool ID and parameters
+5. You handle the logic (save to storage, update dashboard)
+6. You return context for Mira to formulate a response
+
+### Tool Response: Context vs Control
+
+**By default (what we're using):**
+
+```typescript
+return `Note saved successfully: "${note}"`;
+```
+
+This is **context for Mira**, not what the user sees/hears. Mira uses this to formulate a natural response like:
+- "Got it, I've saved that note for you"
+- "Your note has been added to the dashboard"
+- "Done, I've saved that"
+
+**Taking control of the response:**
+
+```typescript
+// If you want to control the exact response
+session.audio.speak("Note saved!");
+session.layouts.showTextWall("Saved");
+
+return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
+```
+
+This tells Mira "I've handled the response myself, don't say anything."
+
+<Accordion title="When to use each approach">
+**Let Mira respond (default - recommended):**
+- Natural, conversational responses
+- User expects voice assistant behavior
+- Simple confirmations
+
+**Take control:**
+- Need specific formatting
+- Want to show custom UI
+- Need to display data that doesn't translate well to speech
+- Want precise control over wording
+</Accordion>
+
+---
+
+## Step 4: Simple Storage API
+
+Simple Storage provides localStorage-like API with cloud sync:
+
+```typescript
+// Get a value (returns Promise<string | undefined>)
+const note = await session.simpleStorage.get('dashboard_note');
+
+// Set a value (returns Promise<void>)
+await session.simpleStorage.set('dashboard_note', 'Buy milk');
+
+// Delete a value (returns Promise<boolean>)
+await session.simpleStorage.delete('dashboard_note');
+
+// Check if key exists (returns Promise<boolean>)
+const hasNote = await session.simpleStorage.hasKey('dashboard_note');
+
+// Get all keys (returns Promise<string[]>)
+const keys = await session.simpleStorage.keys();
+
+// Clear all data (returns Promise<boolean>)
+await session.simpleStorage.clear();
+```
+
+**Key features:**
+- **Per-user isolation** - Each user has their own storage
+- **Cloud sync** - Data persists across devices and sessions
+- **Local caching** - Fast reads after initial fetch
+- **String values** - Store strings (use JSON.stringify/parse for objects)
+
+---
+
+## Step 5: Dashboard API
+
+The dashboard displays persistent UI in the bottom-right when user looks up:
+
+```typescript
+// Write to main dashboard area
+session.dashboard.content.writeToMain('Your note here');
+
+// Clear dashboard
+session.dashboard.content.writeToMain('');
+
+// Write to expanded view (more detail)
+session.dashboard.content.writeToExpanded('Detailed info here');
+```
+
+**Best practices:**
+- Keep text short (dashboard space is limited)
+- Use for glanceable information
+- Update when data changes
+- Clear when no longer relevant
+
+<Warning>
+Dashboard updates are automatically throttled to 1 per 300ms by MentraOS Cloud to prevent display desync.
+</Warning>
+
+---
+
+## Step 6: Testing
+
+### Local Testing
+
+1. **Start your app:**
+   ```bash
+   bun run dev
+   ```
+
+2. **Create ngrok tunnel:**
+   ```bash
+   ngrok http 3000
+   ```
+
+3. **Update Developer Console:**
+   - Go to [console.mentra.glass/apps](https://console.mentra.glass/apps)
+   - Set your app's URL to the ngrok URL
+
+4. **Test on glasses:**
+   - Open your app on MentraOS glasses
+   - Say: "Save a note saying test message"
+   - Look up → You should see "test message" on dashboard
+   - Say: "What's my note?"
+   - Say: "Clear my note"
+
+### What to Expect
+
+**When saving:**
+- User: "Save a note saying pick up milk"
+- Mira: "Got it, I've saved that note"
+- Dashboard displays: "pick up milk"
+
+**When reading:**
+- User: "What's my note?"
+- Mira: "Your note says: pick up milk"
+
+**When clearing:**
+- User: "Clear my note"
+- Mira: "Your note has been cleared"
+- Dashboard becomes empty
+
+---
+
+## Common Issues
+
+### Tool Not Being Called
+
+**Problem:** Mira doesn't recognize your voice command
+
+**Solution:** Improve tool descriptions
+
+```json
+// Bad - too vague
+{
+  "description": "Save note"
+}
+
+// Good - clear context
+{
+  "description": "Save a short note to display on the user's dashboard. The note will be visible when they look up at their glasses. Use this when the user wants to remember something quickly."
+}
+```
+
+### Note Not Persisting
+
+**Problem:** Note disappears when app restarts
+
+**Solution:** Make sure you're loading the note in `onSession`:
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // MUST load and display saved note
+  const savedNote = await session.simpleStorage.get('dashboard_note');
+  if (savedNote) {
+    session.dashboard.content.writeToMain(savedNote);
+  }
+}
+```
+
+### Dashboard Not Updating
+
+**Problem:** Dashboard shows old/wrong content
+
+**Solution:** Always update dashboard after storage changes:
+
+```typescript
+// Save to storage
+await session.simpleStorage.set('dashboard_note', note);
+
+// MUST also update dashboard
+session.dashboard.content.writeToMain(note);
+```
+
+---
+
+## Extending This Example
+
+### Add Note Categories
+
+```typescript
+// Save with category
+await session.simpleStorage.set('work_note', workNote);
+await session.simpleStorage.set('personal_note', personalNote);
+
+// Display on dashboard
+session.dashboard.content.writeToMain(
+  `Work: ${workNote}\nPersonal: ${personalNote}`
+);
+```
+
+### Add Timestamps
+
+```typescript
+const note = {
+  text: noteText,
+  timestamp: new Date().toISOString()
+};
+
+await session.simpleStorage.set('dashboard_note', JSON.stringify(note));
+
+// When reading
+const savedNote = await session.simpleStorage.get('dashboard_note');
+if (savedNote) {
+  const parsed = JSON.parse(savedNote);
+  return `Note from ${new Date(parsed.timestamp).toLocaleDateString()}: ${parsed.text}`;
+}
+```
+
+### Add Note History
+
+```typescript
+// Save multiple notes
+const notes = await session.simpleStorage.get('note_history');
+const noteList = notes ? JSON.parse(notes) : [];
+noteList.push({ text: note, date: new Date().toISOString() });
+
+await session.simpleStorage.set('note_history', JSON.stringify(noteList));
+```
+
+---
+
+## Key Takeaways
+
+**Tool descriptions matter** - They help Mira understand when to call your tools  
+**Simple Storage persists data** - Perfect for user preferences and quick data  
+**Dashboard is glanceable** - Great for persistent, at-a-glance information  
+**Tool responses are context** - Mira uses them to formulate natural responses  
+**Load data in onSession** - Always restore saved data when user opens app
+
+---
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Mira Tool Calls" icon="wrench" href="/app-devs/core-concepts/mira-tool-calls">
+    Learn more about tool calls
+  </Card>
+  <Card title="Simple Storage" icon="database" href="/app-devs/core-concepts/simple-storage">
+    Complete storage API reference
+  </Card>
+  <Card title="Dashboard API" icon="gauge" href="/app-devs/core-concepts/display/dashboard">
+    Dashboard display guide
+  </Card>
+  <Card title="Camera + LLM" icon="camera" href="/cookbook/camera-llm-vision">
+    Next cookbook example
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/app-devs/getting-started/deployment/overview">
+    Deploy your app
+  </Card>
+  <Card title="Discord Community" icon="discord" href="https://discord.gg/5ukNvkEAqT">
+    Get help and share
+  </Card>
+</CardGroup>

@@ -7,7 +7,7 @@ export interface PhotoInfo {
   url: string
   download: string
   size: number
-  modified: string
+  modified: string | number // Unix timestamp (milliseconds) - can be string or number from API
   mime_type?: string
   is_video?: boolean
   thumbnail_data?: string

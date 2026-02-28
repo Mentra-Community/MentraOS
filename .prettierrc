@@ -4,7 +4,7 @@
   "singleQuote": false,
   "trailingComma": "all",
   "quoteProps": "consistent",
-  "arrowParens": "avoid",
+  "arrowParens": "always",
   "bracketSameLine": true,
   "bracketSpacing": false
 }

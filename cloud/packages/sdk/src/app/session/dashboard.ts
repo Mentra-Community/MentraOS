@@ -12,45 +12,45 @@ import {
   DashboardSystemAPI,
   DashboardContentUpdate,
   DashboardModeChange,
-  DashboardSystemUpdate
-} from '../../types/dashboard';
-import { AppToCloudMessageType } from '../../types/message-types';
-import { Layout } from '../../types/layouts';
-import { EventManager } from './events';
+  DashboardSystemUpdate,
+} from "../../types/dashboard"
+import {AppToCloudMessageType} from "../../types/message-types"
+import {EventManager} from "./events"
 
 // Import AppSession interface for typing
-import type { AppSession } from './index';
-import { AppToCloudMessage } from 'src/types';
-import dotenv from 'dotenv';
+import type {AppSession} from "./index"
+import dotenv from "dotenv"
 // Load environment variables from .env file
-dotenv.config();
+dotenv.config()
 
-const SYSTEM_DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || 'system.augmentos.dashboard';
+const SYSTEM_DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "system.augmentos.dashboard"
 
 /**
  * Implementation of DashboardSystemAPI interface for system dashboard App
  */
 export class DashboardSystemManager implements DashboardSystemAPI {
-  constructor(
-    private session: AppSession,
-    private packageName: string,
-    private send: (message: any) => void
-  ) { }
+  private session: AppSession
+  private packageName: string
+
+  constructor(session: AppSession, packageName: string) {
+    this.session = session
+    this.packageName = packageName
+  }
 
   setTopLeft(content: string): void {
-    this.updateSystemSection('topLeft', content);
+    this.updateSystemSection("topLeft", content)
   }
 
   setTopRight(content: string): void {
-    this.updateSystemSection('topRight', content);
+    this.updateSystemSection("topRight", content)
   }
 
   setBottomLeft(content: string): void {
-    this.updateSystemSection('bottomLeft', content);
+    this.updateSystemSection("bottomLeft", content)
   }
 
   setBottomRight(content: string): void {
-    this.updateSystemSection('bottomRight', content);
+    this.updateSystemSection("bottomRight", content)
   }
 
   setViewMode(mode: DashboardMode): void {
@@ -59,21 +59,21 @@ export class DashboardSystemManager implements DashboardSystemAPI {
       packageName: this.packageName,
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       mode,
-      timestamp: new Date()
-    };
-    this.send(message);
+      timestamp: new Date(),
+    }
+    this.session.sendMessage(message)
   }
 
-  private updateSystemSection(section: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight', content: string): void {
+  private updateSystemSection(section: "topLeft" | "topRight" | "bottomLeft" | "bottomRight", content: string): void {
     const message: DashboardSystemUpdate = {
       type: AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE,
       packageName: this.packageName,
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       section,
       content,
-      timestamp: new Date()
-    };
-    this.send(message);
+      timestamp: new Date(),
+    }
+    this.session.sendMessage(message)
   }
 }
 
@@ -81,15 +81,17 @@ export class DashboardSystemManager implements DashboardSystemAPI {
  * Implementation of DashboardContentAPI interface for all Apps
  */
 export class DashboardContentManager implements DashboardContentAPI {
-  private currentMode: DashboardMode | 'none' = 'none';
+  private session: AppSession
+  private packageName: string
+  private events: EventManager
+  private currentMode: DashboardMode | "none" = "none"
   // private alwaysOnEnabled: boolean = false;
 
-  constructor(
-    private session: AppSession,
-    private packageName: string,
-    private send: (message: any) => void,
-    private events: EventManager
-  ) { }
+  constructor(session: AppSession, packageName: string, events: EventManager) {
+    this.session = session
+    this.packageName = packageName
+    this.events = events
+  }
 
   write(content: string, targets: DashboardMode[] = [DashboardMode.MAIN]): void {
     const message: DashboardContentUpdate = {
@@ -98,13 +100,13 @@ export class DashboardContentManager implements DashboardContentAPI {
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       content,
       modes: targets,
-      timestamp: new Date()
-    };
-    this.send(message);
+      timestamp: new Date(),
+    }
+    this.session.sendMessage(message)
   }
 
   writeToMain(content: string): void {
-    this.write(content, [DashboardMode.MAIN]);
+    this.write(content, [DashboardMode.MAIN])
   }
 
   writeToExpanded(content: string): void {
@@ -114,28 +116,28 @@ export class DashboardContentManager implements DashboardContentAPI {
       sessionId: `${this.session.getSessionId()}-${this.packageName}`,
       content,
       modes: [DashboardMode.EXPANDED],
-      timestamp: new Date()
-    };
-    this.send(message);
+      timestamp: new Date(),
+    }
+    this.session.sendMessage(message)
   }
 
   // writeToAlwaysOn(content: string): void {
   //   this.write(content, [DashboardMode.ALWAYS_ON]);
   // }
 
-  async getCurrentMode(): Promise<DashboardMode | 'none'> {
-    return this.currentMode;
+  async getCurrentMode(): Promise<DashboardMode | "none"> {
+    return this.currentMode
   }
 
   // async isAlwaysOnEnabled(): Promise<boolean> {
   //   return this.alwaysOnEnabled;
   // }
 
-  onModeChange(callback: (mode: DashboardMode | 'none') => void): () => void {
+  onModeChange(callback: (mode: DashboardMode | "none") => void): () => void {
     return this.events.onDashboardModeChange((data) => {
-      this.currentMode = data.mode;
-      callback(data.mode);
-    });
+      this.currentMode = data.mode
+      callback(data.mode)
+    })
   }
 
   // onAlwaysOnChange(callback: (enabled: boolean) => void): () => void {
@@ -146,9 +148,9 @@ export class DashboardContentManager implements DashboardContentAPI {
   // }
 
   // Internal methods to update state
-  setCurrentMode(mode: DashboardMode | 'none'): void {
-    this.currentMode = mode;
-    this.events.emit('dashboard_mode_change', { mode });
+  setCurrentMode(mode: DashboardMode | "none"): void {
+    this.currentMode = mode
+    this.events.emit("dashboard_mode_change", {mode})
   }
 
   // setAlwaysOnEnabled(enabled: boolean): void {
@@ -162,22 +164,22 @@ export class DashboardContentManager implements DashboardContentAPI {
  * Each AppSession instance gets its own DashboardManager instance
  */
 export class DashboardManager implements DashboardAPI {
-  public readonly content: DashboardContentAPI;
-  public readonly system?: DashboardSystemAPI;
+  public content: DashboardContentAPI
+  public system?: DashboardSystemAPI
 
-  constructor(session: AppSession, send: (message: AppToCloudMessage) => void) {
-    const packageName = session.getPackageName();
-    const events = session.events;
+  constructor(session: AppSession) {
+    const packageName = session.getPackageName()
+    const events = session.events
 
     // Create content API (available to all Apps)
-    this.content = new DashboardContentManager(session, packageName, send, events);
+    this.content = new DashboardContentManager(session, packageName, events)
 
     // Add system API if this is the system dashboard App
     if (packageName === SYSTEM_DASHBOARD_PACKAGE_NAME) {
-      session.logger.info({ service: "SDK:DashboardManager" }, 'Initializing system dashboard manager');
-      this.system = new DashboardSystemManager(session, packageName, send);
+      session.logger.info({service: "SDK:DashboardManager"}, "Initializing system dashboard manager")
+      this.system = new DashboardSystemManager(session, packageName)
     } else {
-      session.logger.info({ service: "SDK:DashboardManager" }, `Not the system dashboard: ${packageName}`);
+      session.logger.info({service: "SDK:DashboardManager"}, `Not the system dashboard: ${packageName}`)
     }
   }
 }

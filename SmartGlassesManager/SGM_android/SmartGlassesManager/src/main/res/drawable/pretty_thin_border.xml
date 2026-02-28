@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle" >
-    <!-- use this for transparent -->
-    <!-- <solid android:color="#00000000" /> -->
-    <!-- use this for a background colour -->
-    <solid android:color="#FFF" />
-    <stroke android:width="2dip" android:color="#000000" />
-</shape>

@@ -1,62 +1,40 @@
-// src/AppSettings.tsx
-import React, {useEffect, useState, useMemo, useLayoutEffect, useCallback, useRef} from "react"
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  ViewStyle,
-  TextStyle,
-  Animated,
-  BackHandler,
-  KeyboardAvoidingView,
-  Platform,
-} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
-import GroupTitle from "@/components/settings/GroupTitle"
-import ToggleSetting from "@/components/settings/ToggleSetting"
-import TextSettingNoSave from "@/components/settings/TextSettingNoSave"
-import SliderSetting from "@/components/settings/SliderSetting"
-import SelectSetting from "@/components/settings/SelectSetting"
-import MultiSelectSetting from "@/components/settings/MultiSelectSetting"
-import TitleValueSetting from "@/components/settings/TitleValueSetting"
-import LoadingOverlay from "@/components/misc/LoadingOverlay"
-import restComms from "@/managers/RestComms"
-import FontAwesome from "react-native-vector-icons/FontAwesome"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {useAppStatus} from "@/contexts/AppletStatusProvider"
-import AppIcon from "@/components/misc/AppIcon"
-import SelectWithSearchSetting from "@/components/settings/SelectWithSearchSetting"
-import NumberSetting from "@/components/settings/NumberSetting"
-import TimeSetting from "@/components/settings/TimeSetting"
-import {saveSetting, loadSetting} from "@/utils/SettingsHelper"
-import {SETTINGS_KEYS} from "@/utils/SettingsHelper"
-import SettingsSkeleton from "@/components/misc/SettingsSkeleton"
 import {useFocusEffect, useLocalSearchParams} from "expo-router"
-import {useAppTheme} from "@/utils/useAppTheme"
-import {Header, Screen, PillButton} from "@/components/ignite"
-import {ThemedStyle} from "@/theme"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
+import {Animated, BackHandler, TextStyle, View, ViewStyle} from "react-native"
+import {useSafeAreaInsets} from "react-native-safe-area-context"
+
+import {Header, Icon, PillButton, Screen, Text} from "@/components/ignite"
+import AppIcon from "@/components/home/AppIcon"
+import LoadingOverlay from "@/components/ui/LoadingOverlay"
+import SettingsSkeleton from "@/components/settings/SettingsSkeleton"
+import GroupTitle from "@/components/settings/GroupTitle"
+import MultiSelectSetting from "@/components/settings/MultiSelectSetting"
+import NumberSetting from "@/components/settings/NumberSetting"
+import SelectSetting from "@/components/settings/SelectSetting"
+import SelectWithSearchSetting from "@/components/settings/SelectWithSearchSetting"
+import SliderSetting from "@/components/settings/SliderSetting"
+import TextSettingNoSave from "@/components/settings/TextSettingNoSave"
+import TimeSetting from "@/components/settings/TimeSetting"
+import TitleValueSetting from "@/components/settings/TitleValueSetting"
+import ToggleSetting from "@/components/settings/ToggleSetting"
+import Divider from "@/components/ui/Divider"
+import InfoCardSection from "@/components/ui/InfoCard"
+import {RouteButton} from "@/components/ui/RouteButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import ActionButton from "@/components/ui/ActionButton"
-import Divider from "@/components/misc/Divider"
-import {InfoRow} from "@/components/settings/InfoRow"
-import {SettingsGroup} from "@/components/settings/SettingsGroup"
-import {showAlert} from "@/utils/AlertUtils"
-import {
-  askPermissionsUI,
-  checkPermissionsUI,
-  PERMISSION_CONFIG,
-  PermissionFeatures,
-  requestPermissionsUI,
-} from "@/utils/PermissionsUtils"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import restComms from "@/services/RestComms"
+import {useApplets, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
+import {ThemedStyle} from "@/theme"
+import {showAlert} from "@/utils/AlertUtils"
+import {askPermissionsUI} from "@/utils/PermissionsUtils"
+import {storage} from "@/utils/storage"
 
 export default function AppSettings() {
-  const {packageName, appName: appNameParam, fromWebView} = useLocalSearchParams()
+  const {packageName, appName: appNameParam} = useLocalSearchParams()
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
-  const {goBack, push, replace, navigate} = useNavigationHistory()
+  const {goBack, replaceAll} = useNavigationHistory()
   const insets = useSafeAreaInsets()
   const hasLoadedData = useRef(false)
 
@@ -76,75 +54,31 @@ export default function AppSettings() {
   // Local state to track current values for each setting.
   const [settingsState, setSettingsState] = useState<{[key: string]: any}>({})
 
-  const {
-    appStatus,
-    refreshAppStatus,
-    optimisticallyStartApp,
-    optimisticallyStopApp,
-    clearPendingOperation,
-    checkAppHealthStatus,
-  } = useAppStatus()
+  const startApp = useStartApplet()
+  const applets = useApplets()
+  const refreshApplets = useRefreshApplets()
+  const stopApp = useStopApplet()
+
   const appInfo = useMemo(() => {
-    return appStatus.find(app => app.packageName === packageName) || null
-  }, [appStatus, packageName])
+    return applets.find((app) => app.packageName === packageName) || null
+  }, [applets, packageName])
 
   const SETTINGS_CACHE_KEY = (packageName: string) => `app_settings_cache_${packageName}`
   const [settingsLoading, setSettingsLoading] = useState(true)
   const [hasCachedSettings, setHasCachedSettings] = useState(false)
-
-  // Check if we're in old UI mode
-  const [isOldUI, setIsOldUI] = useState(false)
-
-  if (!packageName || typeof packageName !== "string") {
-    console.error("No packageName found in params")
-    return null
-  }
-
-  useEffect(() => {
-    const checkUIMode = async () => {
-      const newUiSetting = await loadSetting(SETTINGS_KEYS.NEW_UI, false)
-      setIsOldUI(!newUiSetting) // Old UI is when NEW_UI is false
-    }
-    checkUIMode()
-  }, [])
-
-  // IMMEDIATE TACTICAL BYPASS: Check for webviewURL in app status data and redirect instantly (OLD UI ONLY)
-  useEffect(() => {
-    if (isOldUI && appInfo?.webviewURL && fromWebView !== "true" && appInfo?.isOnline !== false) {
-      console.log("OLD UI: webviewURL detected in app status, executing immediate redirect")
-      replace("/applet/webview", {
-        webviewURL: appInfo.webviewURL,
-        appName: appName,
-        packageName: packageName,
-      })
-    }
-  }, [appInfo, fromWebView, appName, packageName, replace, isOldUI])
-
-  useFocusEffect(
-    useCallback(() => {
-      const onBackPress = () => {
-        replace("/(tabs)/home")
-        return true
-      }
-      BackHandler.addEventListener("hardwareBackPress", onBackPress)
-      return () => {
-        BackHandler.removeEventListener("hardwareBackPress", onBackPress)
-      }
-    }, []),
-  )
 
   // Handle app start/stop actions with debouncing
   const handleStartStopApp = async () => {
     if (!appInfo) return
 
     try {
-      if (appInfo.is_running) {
-        optimisticallyStopApp(packageName)
+      if (appInfo.running) {
+        stopApp(packageName)
         return
       }
 
       // If the app appears offline, confirm before proceeding
-      if (appInfo.isOnline === false) {
+      if (!appInfo.healthy) {
         const developerName = (
           " " +
           ((serverAppInfo as any)?.organization?.name ||
@@ -153,14 +87,14 @@ export default function AppSettings() {
             "") +
           " "
         ).replace("  ", " ")
-        const proceed = await new Promise<boolean>(resolve => {
+        const proceed = await new Promise<boolean>((resolve) => {
           // Use the shared alert utility
           showAlert(
-            "App is down for maintenance",
-            `${appInfo.name} appears offline. Try anyway?\n\nThe developer${developerName}needs to get their server back up and running. Please contact them for more details.`,
+            translate("appSettings:appDownForMaintenance"),
+            translate("appSettings:appOfflineMessage", {appName: appInfo.name, developerName}),
             [
               {text: translate("common:cancel"), style: "cancel", onPress: () => resolve(false)},
-              {text: "Try Anyway", onPress: () => resolve(true)},
+              {text: translate("appSettings:tryAnyway"), onPress: () => resolve(true)},
             ],
             {iconName: "alert-circle-outline", iconColor: theme.colors.palette.angry500},
           )
@@ -168,7 +102,8 @@ export default function AppSettings() {
         if (!proceed) return
       }
 
-      if (!(await checkAppHealthStatus(appInfo.packageName))) {
+      const health = await restComms.checkAppHealthStatus(appInfo.packageName)
+      if (health.is_error() || !health.value) {
         showAlert(translate("errors:appNotOnlineTitle"), translate("errors:appNotOnlineMessage"), [
           {text: translate("common:ok")},
         ])
@@ -184,12 +119,12 @@ export default function AppSettings() {
         return
       }
 
-      optimisticallyStartApp(packageName)
+      startApp(packageName)
     } catch (error) {
       // Refresh the app status to get the accurate state from the server
-      refreshAppStatus()
+      refreshApplets()
 
-      console.error(`Error ${appInfo.is_running ? "stopping" : "starting"} app:`, error)
+      console.error(`Error ${appInfo.running ? "stopping" : "starting"} app:`, error)
     }
   }
 
@@ -197,45 +132,43 @@ export default function AppSettings() {
     console.log(`Uninstalling app: ${packageName}`)
 
     showAlert(
-      "Uninstall App",
-      `Are you sure you want to uninstall ${appInfo?.name || appName}?`,
+      translate("appSettings:uninstallApp"),
+      translate("appSettings:uninstallConfirm", {appName: appInfo?.name || appName}),
       [
         {
-          text: "Cancel",
+          text: translate("common:cancel"),
           style: "cancel",
         },
         {
-          text: "Uninstall",
+          text: translate("appSettings:uninstall"),
           style: "destructive",
           onPress: async () => {
             try {
               setIsUninstalling(true)
               // First stop the app if it's running
-              if (appInfo?.is_running) {
+              if (appInfo?.running) {
                 // Optimistically update UI first
-                optimisticallyStopApp(packageName)
+                stopApp(packageName)
                 await restComms.stopApp(packageName)
-                clearPendingOperation(packageName)
               }
 
               // Then uninstall it
               await restComms.uninstallApp(packageName)
 
-              // Show success message
-              GlobalEventEmitter.emit("SHOW_BANNER", {
-                message: `${appInfo?.name || appName} has been uninstalled successfully`,
-                type: "success",
-              })
-
-              replace("/(tabs)/home")
+              // Show success message and navigate after dismissal
+              showAlert(
+                translate("common:success"),
+                translate("appSettings:uninstalledSuccess", {appName: appInfo?.name || appName}),
+                [{text: translate("common:ok"), onPress: () => replaceAll("/home")}],
+              )
             } catch (error: any) {
               console.error("Error uninstalling app:", error)
-              clearPendingOperation(packageName)
-              refreshAppStatus()
-              GlobalEventEmitter.emit("SHOW_BANNER", {
-                message: `Error uninstalling app: ${error.message || "Unknown error"}`,
-                type: "error",
-              })
+              refreshApplets()
+              showAlert(
+                translate("common:error"),
+                translate("appSettings:uninstallError", {error: error.message || "Unknown error"}),
+                [{text: translate("common:ok")}],
+              )
             } finally {
               setIsUninstalling(false)
             }
@@ -243,9 +176,8 @@ export default function AppSettings() {
         },
       ],
       {
-        iconName: "delete-forever",
+        iconName: "trash",
         iconSize: 48,
-        iconColor: theme.colors.palette.angry600,
       },
     )
   }
@@ -255,17 +187,17 @@ export default function AppSettings() {
     if (!hasCachedSettings) setSettingsLoading(true)
     const startTime = Date.now() // For profiling
     try {
-      const data = await restComms.getAppSettings(packageName)
+      const res = await restComms.getAppSettings(packageName)
+
       const elapsed = Date.now() - startTime
       console.log(`[PROFILE] getTpaSettings for ${packageName} took ${elapsed}ms`)
       console.log("GOT TPA SETTING")
-      console.log(JSON.stringify(data))
       // TODO: Profile backend and optimize if slow
       // If no data is returned from the server, create a minimal app info object
-      if (!data) {
+      if (res.is_error()) {
         setServerAppInfo({
           name: appInfo?.name || appName,
-          description: appInfo?.description || "No description available.",
+          description: translate("appSettings:noDescription"),
           settings: [],
           uninstallable: true,
         })
@@ -274,7 +206,10 @@ export default function AppSettings() {
         setSettingsLoading(false)
         return
       }
+      const data: any = res.value
       setServerAppInfo(data)
+
+      console.log("GOT TPA SETTING", JSON.stringify(data))
 
       // Update appName if we got it from server
       if (data.name) {
@@ -283,10 +218,6 @@ export default function AppSettings() {
 
       // Initialize local state using the "selected" property.
       if (data.settings && Array.isArray(data.settings)) {
-        // Get cached settings to preserve user values for existing settings
-        const cached = await loadSetting(SETTINGS_CACHE_KEY(packageName), null)
-        const cachedState = cached?.settingsState || {}
-
         const initialState: {[key: string]: any} = {}
         data.settings.forEach((setting: any) => {
           if (setting.type !== "group") {
@@ -297,7 +228,7 @@ export default function AppSettings() {
         })
         setSettingsState(initialState)
         // Cache the settings
-        saveSetting(SETTINGS_CACHE_KEY(packageName), {
+        storage.save(SETTINGS_CACHE_KEY(packageName), {
           serverAppInfo: data,
           settingsState: initialState,
         })
@@ -322,7 +253,7 @@ export default function AppSettings() {
       console.error("Error fetching App settings:", err)
       setServerAppInfo({
         name: appInfo?.name || appName,
-        description: appInfo?.description || "No description available.",
+        description: translate("appSettings:noDescription"),
         settings: [],
         uninstallable: true,
       })
@@ -332,29 +263,71 @@ export default function AppSettings() {
 
   // When a setting changes, update local state and send the full updated settings payload.
   const handleSettingChange = (key: string, value: any) => {
-    setSettingsState(prevState => ({
+    setSettingsState((prevState) => ({
       ...prevState,
       [key]: value,
     }))
 
     // Build an array of settings to send.
-    const updatedPayload = Object.keys(settingsState).map(settingKey => ({
-      key: settingKey,
-      value: settingKey === key ? value : settingsState[settingKey],
-    }))
-
     restComms
       .updateAppSetting(packageName, {key, value})
-      .then(data => {
+      .then((data) => {
         console.log("Server update response:", data)
       })
-      .catch(error => {
+      .catch((error) => {
         console.error("Error updating setting on server:", error)
       })
   }
 
+  // Pre-process settings into groups for proper isFirst/isLast styling
+  const processedSettings = useMemo(() => {
+    if (!serverAppInfo?.settings) return []
+
+    const settings = serverAppInfo.settings
+    const result: Array<{setting: any; isFirst: boolean; isLast: boolean; isGrouped: boolean}> = []
+    let currentGroupStart = -1
+
+    for (let i = 0; i < settings.length; i++) {
+      const setting = settings[i]
+
+      if (setting.type === "group") {
+        // Close previous group if exists
+        if (currentGroupStart !== -1 && result.length > 0) {
+          // Find last non-group setting and mark as last
+          for (let j = result.length - 1; j >= 0; j--) {
+            if (result[j].isGrouped) {
+              result[j].isLast = true
+              break
+            }
+          }
+        }
+        // Add group title (not styled as grouped)
+        result.push({setting, isFirst: false, isLast: false, isGrouped: false})
+        currentGroupStart = result.length
+      } else {
+        // Check if this is the first setting after a group title or at the start
+        const isFirstInGroup =
+          currentGroupStart === result.length ||
+          (currentGroupStart === -1 && result.filter((r) => r.isGrouped).length === 0)
+
+        // Check if next is a group or end
+        const nextSetting = settings[i + 1]
+        const isLastInGroup = !nextSetting || nextSetting.type === "group"
+
+        result.push({
+          setting,
+          isFirst: isFirstInGroup,
+          isLast: isLastInGroup,
+          isGrouped: true,
+        })
+      }
+    }
+
+    return result
+  }, [serverAppInfo?.settings])
+
   // Render each setting.
-  const renderSetting = (setting: any, index: number) => {
+  const renderSetting = (setting: any, isFirst: boolean, isLast: boolean, index: number) => {
     switch (setting.type) {
       case "group":
         return <GroupTitle key={`group-${index}`} title={setting.title} />
@@ -364,7 +337,9 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "text":
@@ -373,8 +348,10 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onChangeText={text => handleSettingChange(setting.key, text)}
+            onChangeText={(text) => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "text_no_save_button":
@@ -383,8 +360,10 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onChangeText={text => handleSettingChange(setting.key, text)}
+            onChangeText={(text) => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "slider":
@@ -395,13 +374,15 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             min={setting.min}
             max={setting.max}
-            onValueChange={val =>
-              setSettingsState(prevState => ({
+            onValueChange={(val) =>
+              setSettingsState((prevState) => ({
                 ...prevState,
                 [setting.key]: val,
               }))
             }
-            onValueSet={val => handleSettingChange(setting.key, val)}
+            onValueSet={(val) => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "select":
@@ -412,7 +393,9 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             options={setting.options}
             defaultValue={setting.defaultValue}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "select_with_search":
@@ -423,7 +406,9 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             options={setting.options}
             defaultValue={setting.defaultValue}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "numeric_input":
@@ -436,7 +421,9 @@ export default function AppSettings() {
             max={setting.max}
             step={setting.step}
             placeholder={setting.placeholder}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "time_picker":
@@ -446,7 +433,9 @@ export default function AppSettings() {
             label={setting.label}
             value={settingsState[setting.key] || 0}
             showSeconds={setting.showSeconds !== false}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "multiselect":
@@ -456,45 +445,38 @@ export default function AppSettings() {
             label={setting.label}
             values={settingsState[setting.key]}
             options={setting.options}
-            onValueChange={vals => handleSettingChange(setting.key, vals)}
+            onValueChange={(vals) => handleSettingChange(setting.key, vals)}
+            isFirst={isFirst}
+            isLast={isLast}
           />
         )
       case "titleValue":
-        return <TitleValueSetting key={index} label={setting.label} value={setting.value} />
+        return (
+          <TitleValueSetting
+            key={index}
+            label={setting.label}
+            value={setting.value}
+            isFirst={isFirst}
+            isLast={isLast}
+          />
+        )
       default:
         return null
     }
   }
 
-  // Add header button when webviewURL exists
-  useLayoutEffect(() => {
-    if (serverAppInfo?.webviewURL) {
-      // TODO2.0:
-      // navigation.setOptions({
-      //   headerRight: () => (
-      //     <View style={{marginRight: 8}}>
-      //       <FontAwesome.Button
-      //         name="globe"
-      //         size={22}
-      //         color={isDarkTheme ? "#FFFFFF" : "#000000"}
-      //         backgroundColor="transparent"
-      //         underlayColor="transparent"
-      //         onPress={() => {
-      //           navigation.replace("AppWebView", {
-      //             webviewURL: serverAppInfo.webviewURL,
-      //             appName: appName,
-      //             packageName: packageName,
-      //             fromSettings: true,
-      //           })
-      //         }}
-      //         style={{padding: 0, margin: 0}}
-      //         iconStyle={{marginRight: 0}}
-      //       />
-      //     </View>
-      //   ),
-      // })
-    }
-  }, [serverAppInfo, packageName, appName])
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        goBack()
+        return true
+      }
+      const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress)
+      return () => {
+        subscription.remove()
+      }
+    }, [goBack]),
+  )
 
   // Reset hasLoadedData when packageName changes
   useEffect(() => {
@@ -512,31 +494,36 @@ export default function AppSettings() {
     let debounceTimeout: NodeJS.Timeout
 
     const loadCachedSettings = async () => {
-      const cached = await loadSetting(SETTINGS_CACHE_KEY(packageName), null)
-      if (cached && isMounted) {
-        setServerAppInfo(cached.serverAppInfo)
-        setSettingsState(cached.settingsState)
-        setHasCachedSettings(!!(cached.serverAppInfo?.settings && cached.serverAppInfo.settings.length > 0))
-        setSettingsLoading(false)
-
-        // Update appName from cached data if available
-        if (cached.serverAppInfo?.name) {
-          setAppName(cached.serverAppInfo.name)
-        }
-
-        // TACTICAL BYPASS: If webviewURL exists in cached data, execute immediate redirect
-        // if (cached.serverAppInfo?.webviewURL && fromWebView !== "true") {
-        //   replace("/applet/webview", {
-        //     webviewURL: cached.serverAppInfo.webviewURL,
-        //     appName: appName,
-        //     packageName: packageName,
-        //   })
-        //   return
-        // }
-      } else {
+      const res = await storage.load(SETTINGS_CACHE_KEY(packageName))
+      if (res.is_error()) {
         setHasCachedSettings(false)
         setSettingsLoading(true)
+        return
       }
+      const cached: any = res.value
+      if (!isMounted) {
+        return
+      }
+
+      setServerAppInfo(cached.serverAppInfo)
+      setSettingsState(cached.settingsState)
+      setHasCachedSettings(!!(cached.serverAppInfo?.settings && cached.serverAppInfo.settings.length > 0))
+      setSettingsLoading(false)
+
+      // Update appName from cached data if available
+      if (cached.serverAppInfo?.name) {
+        setAppName(cached.serverAppInfo.name)
+      }
+
+      // TACTICAL BYPASS: If webviewURL exists in cached data, execute immediate redirect
+      // if (cached.serverAppInfo?.webviewURL && fromWebView !== "true") {
+      //   replace("/applet/webview", {
+      //     webviewURL: cached.serverAppInfo.webviewURL,
+      //     appName: appName,
+      //     packageName: packageName,
+      //   })
+      //   return
+      // }
     }
 
     // Load cached settings immediately
@@ -559,48 +546,17 @@ export default function AppSettings() {
     return null
   }
 
+  if (!packageName || typeof packageName !== "string") {
+    console.error("No packageName found in params")
+    return null
+  }
+
   return (
-    <Screen preset="fixed" safeAreaEdges={[]} style={{paddingHorizontal: theme.spacing.md}}>
+    <Screen preset="fixed" safeAreaEdges={[]}>
       {isUninstalling && <LoadingOverlay message={`Uninstalling ${appInfo?.name || appName}...`} />}
 
       <View>
-        <Header
-          title=""
-          leftIcon="caretLeft"
-          onLeftPress={() => {
-            if (!isOldUI) {
-              goBack()
-              return
-            }
-
-            if (serverAppInfo?.webviewURL) {
-              replace("/applet/webview", {
-                webviewURL: serverAppInfo.webviewURL,
-                appName: appName as string,
-                packageName: packageName as string,
-                fromSettings: "true",
-              })
-              return
-            }
-            goBack()
-          }}
-          RightActionComponent={
-            isOldUI && serverAppInfo?.webviewURL ? (
-              <TouchableOpacity
-                style={{marginRight: 8}}
-                onPress={() => {
-                  replace("/applet/webview", {
-                    webviewURL: serverAppInfo.webviewURL,
-                    appName: appName as string,
-                    packageName: packageName as string,
-                    fromSettings: "true",
-                  })
-                }}>
-                <FontAwesome name="globe" size={22} color={theme.colors.text} />
-              </TouchableOpacity>
-            ) : undefined
-          }
-        />
+        <Header title="" leftIcon="chevron-left" onLeftPress={() => goBack()} />
         <Animated.View
           style={{
             opacity: headerOpacity,
@@ -631,13 +587,13 @@ export default function AppSettings() {
         style={{flex: 1}}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}> */}
       <Animated.ScrollView
-        style={{marginRight: -theme.spacing.md, paddingRight: theme.spacing.md}}
+        style={{marginRight: -theme.spacing.s4, paddingRight: theme.spacing.s4}}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event([{nativeEvent: {contentOffset: {y: scrollY}}}], {useNativeDriver: true})}
         scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled">
-        <View style={{gap: theme.spacing.lg}}>
+        <View style={{gap: theme.spacing.s6}}>
           {/* Combined App Info and Action Section */}
           <View style={themed($topSection)}>
             <AppIcon app={appInfo} style={themed($appIconLarge)} />
@@ -645,34 +601,34 @@ export default function AppSettings() {
             <View style={themed($rightColumn)}>
               <View style={themed($textContainer)}>
                 <Text style={themed($appNameSmall)}>{appInfo.name}</Text>
-                <Text style={themed($versionText)}>{appInfo.version || "1.0.0"}</Text>
+                {serverAppInfo?.version && (
+                  <Text style={themed($versionText)}>{serverAppInfo?.version || "1.0.0"}</Text>
+                )}
               </View>
               <View style={themed($buttonContainer)}>
                 <PillButton
-                  text={appInfo.is_running ? "Stop" : "Start"}
+                  text={appInfo.running ? translate("common:stop") : translate("common:start")}
                   onPress={handleStartStopApp}
                   variant="icon"
-                  buttonStyle={{paddingHorizontal: theme.spacing.lg, minWidth: 80}}
+                  buttonStyle={{paddingHorizontal: theme.spacing.s6, minWidth: 80}}
                 />
               </View>
             </View>
           </View>
 
-          {appInfo.isOnline === false && (
+          {!appInfo.healthy && !appInfo.offline && (
             <View
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                gap: theme.spacing.xs,
-                backgroundColor: (theme as any).colors?.errorBackground || "#FDECEA",
+                gap: theme.spacing.s2,
+                backgroundColor: theme.colors.errorBackground,
                 borderRadius: 8,
-                paddingHorizontal: theme.spacing.sm,
-                paddingVertical: theme.spacing.xs,
+                paddingHorizontal: theme.spacing.s3,
+                paddingVertical: theme.spacing.s2,
               }}>
-              <FontAwesome name="warning" size={16} color={theme.colors.error} />
-              <Text style={{color: theme.colors.error, flex: 1}}>
-                This app appears to be offline. Some actions may not work.
-              </Text>
+              <Icon name="alert" size={16} color={theme.colors.error} />
+              <Text style={{color: theme.colors.error, flex: 1}}>{translate("appSettings:appOfflineWarning")}</Text>
             </View>
           )}
 
@@ -680,7 +636,9 @@ export default function AppSettings() {
 
           {/* Description Section */}
           <View style={themed($descriptionSection)}>
-            <Text style={themed($descriptionText)}>{appInfo.description || "No description available."}</Text>
+            <Text style={themed($descriptionText)}>
+              {serverAppInfo?.description || translate("appSettings:noDescription")}
+            </Text>
           </View>
 
           <Divider variant="full" />
@@ -688,7 +646,7 @@ export default function AppSettings() {
           {/* App Instructions Section */}
           {serverAppInfo?.instructions && (
             <View style={themed($sectionContainer)}>
-              <Text style={themed($sectionTitle)}>About this App</Text>
+              <Text style={themed($sectionTitle)}>{translate("appSettings:aboutThisApp")}</Text>
               <Text style={themed($instructionsText)}>{serverAppInfo.instructions}</Text>
             </View>
           )}
@@ -697,58 +655,60 @@ export default function AppSettings() {
           <View style={themed($settingsContainer)}>
             {settingsLoading && (!serverAppInfo?.settings || typeof serverAppInfo.settings === "undefined") ? (
               <SettingsSkeleton />
-            ) : serverAppInfo?.settings && serverAppInfo.settings.length > 0 ? (
-              serverAppInfo.settings.map((setting: any, index: number) =>
-                renderSetting({...setting, uniqueKey: `${setting.key}-${index}`}, index),
+            ) : processedSettings.length > 0 ? (
+              processedSettings.map(({setting, isFirst, isLast}, index) =>
+                renderSetting(setting, isFirst, isLast, index),
               )
             ) : (
-              <Text style={themed($noSettingsText)}>No settings available for this app</Text>
+              <Text style={themed($noSettingsText)}>{translate("appSettings:noSettings")}</Text>
             )}
           </View>
 
           {/* Additional Information Section */}
           <View>
-            <Text
-              style={[
-                themed($groupTitle),
+            <Text style={themed($sectionTitleText)}>{translate("appSettings:appInfo")}</Text>
+            <InfoCardSection
+              items={[
                 {
-                  marginTop: theme.spacing.md,
-                  marginBottom: theme.spacing.xs,
-                  paddingHorizontal: theme.spacing.md,
-                  fontSize: 16,
-                  fontFamily: "Montserrat-Regular",
-                  color: theme.colors.textDim,
+                  label: translate("appSettings:company"),
+                  value: serverAppInfo?.organization?.name || "—",
                 },
-              ]}>
-              Other
-            </Text>
-            <SettingsGroup>
-              <View style={{paddingVertical: theme.spacing.sm}}>
-                <Text style={{fontSize: 15, color: theme.colors.text}}>Additional Information</Text>
-              </View>
-              <InfoRow label="Company" value={serverAppInfo?.organization?.name || "-"} showDivider={false} />
-              <InfoRow label="Website" value={serverAppInfo?.organization?.website || "-"} showDivider={false} />
-              <InfoRow label="Contact" value={serverAppInfo?.organization?.contactEmail || "-"} showDivider={false} />
-              <InfoRow
-                label="App Type"
-                value={
-                  appInfo?.type === "standard" ? "Foreground" : appInfo?.type === "background" ? "Background" : "-"
-                }
-                showDivider={false}
-              />
-              <InfoRow label="Package Name" value={packageName} showDivider={false} />
-            </SettingsGroup>
+                {
+                  label: translate("appSettings:website"),
+                  value: serverAppInfo?.organization?.website || "—",
+                },
+                {
+                  label: translate("appSettings:contact"),
+                  value: serverAppInfo?.organization?.contactEmail || "—",
+                },
+                {
+                  label: translate("appSettings:appType"),
+                  value:
+                    appInfo?.type === "standard"
+                      ? translate("appSettings:foreground")
+                      : appInfo?.type === "background"
+                        ? translate("appSettings:background")
+                        : "—",
+                },
+                {
+                  label: translate("appSettings:packageName"),
+                  value: packageName,
+                },
+              ]}
+            />
           </View>
 
           {/* Uninstall Button at the bottom */}
-          <ActionButton
-            label="Uninstall"
-            variant="destructive"
+          <RouteButton
+            label={translate("appSettings:uninstall")}
+            preset="destructive"
             onPress={() => {
               if (serverAppInfo?.uninstallable) {
                 handleUninstallApp()
               } else {
-                showAlert("Cannot Uninstall", "This app cannot be uninstalled.", [{text: "OK", style: "default"}])
+                showAlert(translate("appSettings:cannotUninstall"), translate("appSettings:cannotUninstallMessage"), [
+                  {text: translate("common:ok"), style: "default"},
+                ])
               }
             }}
             disabled={!serverAppInfo?.uninstallable}
@@ -765,7 +725,7 @@ export default function AppSettings() {
 
 const $topSection: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
-  gap: spacing.lg,
+  gap: spacing.s6,
   alignItems: "center",
 })
 
@@ -775,18 +735,18 @@ const $rightColumn: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $textContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  gap: spacing.xxs,
+  gap: spacing.s1,
 })
 
 const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   alignSelf: "flex-start",
-  marginTop: spacing.sm,
+  marginTop: spacing.s3,
 })
 
-const $appIconLarge: ThemedStyle<ViewStyle> = () => ({
+const $appIconLarge: ThemedStyle<ViewStyle> = ({spacing}) => ({
   width: 90,
   height: 90,
-  borderRadius: 45, // Half of width/height for perfect circle
+  borderRadius: spacing.s6, // Squircle-friendly radius
 })
 
 const $appNameSmall: ThemedStyle<TextStyle> = ({colors}) => ({
@@ -803,26 +763,8 @@ const $versionText: ThemedStyle<TextStyle> = ({colors}) => ({
 })
 
 const $descriptionSection: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingVertical: spacing.xs,
-  paddingHorizontal: spacing.md,
-})
-
-const $appInfoHeader: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  padding: spacing.md,
-  borderRadius: spacing.sm,
-  borderWidth: 1,
-  elevation: 2,
-  shadowColor: "#000",
-  shadowOffset: {width: 0, height: 2},
-  shadowOpacity: 0.1,
-  shadowRadius: spacing.xxs,
-})
-
-const $descriptionContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  paddingTop: spacing.sm,
-  borderTopWidth: 1,
-  borderTopColor: colors.separator,
+  paddingVertical: spacing.s2,
+  paddingHorizontal: spacing.s4,
 })
 
 const $descriptionText: ThemedStyle<TextStyle> = ({colors}) => ({
@@ -832,23 +774,15 @@ const $descriptionText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
 })
 
-const $appName: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 24,
-  fontWeight: "bold",
-  fontFamily: "Montserrat-Bold",
-  marginBottom: spacing.xxs,
-  color: colors.text,
-})
-
 const $sectionContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  borderRadius: spacing.sm,
+  borderRadius: spacing.s3,
   borderWidth: 1,
-  padding: spacing.md,
+  padding: spacing.s4,
   elevation: 2,
   shadowColor: "#000",
   shadowOffset: {width: 0, height: 2},
   shadowOpacity: 0.1,
-  shadowRadius: spacing.xxs,
+  shadowRadius: spacing.s1,
   backgroundColor: colors.background,
   borderColor: colors.border,
 })
@@ -857,7 +791,7 @@ const $sectionTitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 18,
   fontWeight: "bold",
   fontFamily: "Montserrat-Bold",
-  marginBottom: spacing.sm,
+  marginBottom: spacing.s3,
   color: colors.text,
 })
 
@@ -868,8 +802,8 @@ const $instructionsText: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
 })
 
-const $settingsContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  gap: spacing.md,
+const $settingsContainer: ThemedStyle<ViewStyle> = () => ({
+  // Gap is handled by individual settings via isFirst/isLast marginBottom
 })
 
 const $noSettingsText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
@@ -877,15 +811,17 @@ const $noSettingsText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontFamily: "Montserrat-Regular",
   fontStyle: "italic",
   textAlign: "center",
-  padding: spacing.md,
+  padding: spacing.s4,
   color: colors.textDim,
 })
 
-const $loadingContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  justifyContent: "center",
-  alignItems: "center",
-  marginHorizontal: spacing.md + spacing.xxs, // 20px
-})
+const _$groupTitle: ThemedStyle<TextStyle> = () => ({})
 
-const $groupTitle: ThemedStyle<TextStyle> = () => ({})
+const $sectionTitleText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
+  fontSize: 14,
+  color: colors.text,
+  lineHeight: 20,
+  letterSpacing: 0,
+  marginBottom: spacing.s2,
+  marginTop: spacing.s3,
+})

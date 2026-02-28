@@ -41,8 +41,8 @@ export const evenRealitiesG1: Capabilities = {
   hasSpeaker: false,
   speaker: null,
 
-  // IMU capabilities - G1 does not have access to its IMU
-  hasIMU: false,
+  // IMU capabilities - G1 has IMU for head-up/down detection but raw data not exposed to apps
+  hasIMU: true,
   imu: null,
 
   // Button capabilities - G1 does not have buttons

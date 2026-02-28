@@ -15,7 +15,7 @@ const FeedbackSchema = new Schema<FeedbackI>(
       required: true,
       index: true,
     },
-    
+
     feedback: {
       type: Schema.Types.String,
       required: true,
@@ -23,12 +23,12 @@ const FeedbackSchema = new Schema<FeedbackI>(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Index for efficient queries
 FeedbackSchema.index({ email: 1 });
 
-
-export const Feedback = mongoose.models.Feedback ||
+export const Feedback =
+  mongoose.models.Feedback ||
   mongoose.model<FeedbackI>("Feedback", FeedbackSchema);

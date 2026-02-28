@@ -9,7 +9,6 @@ You said:
 Skip to content
 Cloudflare
 
-
 Add
 
 Live Inputs
@@ -44,10 +43,10 @@ Automatically Delete Recordings
 
 Manage storage by automatically deleting recordings after a specified number of days.
 
-
 Experiencing issues with Stream Live? Report a bug
 
 Embed
+
 <div style="position: relative; padding-top: 56.25%;">
   <iframe
     src="https://customer-zslwzsqjf4ht8vy9.cloudflarestream.com/38d846af680682b7228afe3928e5732e/iframe"
@@ -242,10 +241,10 @@ Under Keyframe Interval, set to:
 OBS will auto-convert that to GOP depending on FPS (e.g. 2 sec × 15 FPS = 30 GOP)
 
 📌 Summary:
-Target FPS	GOP Duration	-g / -keyint_min
-15 fps	2 sec	30
-9 fps	2 sec	18
-24 fps	2 sec	48
+Target FPS GOP Duration -g / -keyint_min
+15 fps 2 sec 30
+9 fps 2 sec 18
+24 fps 2 sec 48
 Keep it consistent. Cloudflare cares about:
 
 Consistent FPS
@@ -259,7 +258,7 @@ Let me know your full ffmpeg line if you want it tuned.
 You said:
 here is my rtmpstreamingservice:
 
-package com.augmentos.asg_client.streaming;
+package com.mentra.asg_client.streaming;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
@@ -289,8 +288,8 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
-import com.augmentos.asg_client.camera.CameraNeo;
-import com.augmentos.asg_client.utils.WakeLockManager;
+import com.mentra.asg_client.camera.CameraNeo;
+import com.mentra.asg_client.utils.WakeLockManager;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -310,9 +309,9 @@ import kotlin.coroutines.EmptyCoroutineContext;
 
 @SuppressLint("MissingPermission")
 public class RtmpStreamingService extends Service {
-    private static final String TAG = "RtmpStreamingService";
-    private static final String CHANNEL_ID = "RtmpStreamingChannel";
-    private static final int NOTIFICATION_ID = 8888;
+private static final String TAG = "RtmpStreamingService";
+private static final String CHANNEL_ID = "RtmpStreamingChannel";
+private static final int NOTIFICATION_ID = 8888;
 
     // Static instance reference for static method access
     private static RtmpStreamingService sInstance;
@@ -1675,6 +1674,7 @@ public class RtmpStreamingService extends Service {
             return String.format("%ds", seconds);
         }
     }
+
 }
 
 ChatGPT said:
@@ -1682,13 +1682,13 @@ Updated saved memory
 Sir Ballersworth, your current code sets:
 
 VideoConfig videoConfig = new VideoConfig(
-    MediaFormat.MIMETYPE_VIDEO_AVC,
-    1000000,             // 1 Mbps
-    new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
-    14,                  // FPS
-    profile,
-    level,
-    0.0f
+MediaFormat.MIMETYPE_VIDEO_AVC,
+1000000, // 1 Mbps
+new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
+14, // FPS
+profile,
+level,
+0.0f
 );
 But there’s no direct way in StreamPack to set GOP (keyframe interval) from the VideoConfig constructor. You’ll likely need to call the lower-level Streamer.setVideoEncoderConfig() or tweak the codec params if StreamPack exposes those.
 
@@ -1725,22 +1725,23 @@ Want me to dive into StreamPack internals to confirm if they expose this setting
 You said:
 So here's the VideoConfig.kt file for our StreamPack fork (we've already forked it, can make any changes):
 
-/*
- * Copyright (C) 2021 Thibault B.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-package io.github.thibaultbee.streampack.data
+/\*
+
+- Copyright (C) 2021 Thibault B.
+-
+- Licensed under the Apache License, Version 2.0 (the "License");
+- you may not use this file except in compliance with the License.
+- You may obtain a copy of the License at
+-
+- http://www.apache.org/licenses/LICENSE-2.0
+-
+- Unless required by applicable law or agreed to in writing, software
+- distributed under the License is distributed on an "AS IS" BASIS,
+- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- See the License for the specific language governing permissions and
+- limitations under the License.
+  \*/
+  package io.github.thibaultbee.streampack.data
 
 import android.content.Context
 import android.media.MediaCodecInfo
@@ -1768,248 +1769,248 @@ import io.github.thibaultbee.streampack.streamers.bases.BaseStreamer
 import java.security.InvalidParameterException
 import kotlin.math.roundToInt
 
-/**
- * Video configuration class.
- * If you don't know how to set class members, [Video encoding recommendations](https://developer.android.com/guide/topics/media/media-formats#video-encoding) should give you hints.
- *
- * @see [BaseStreamer.configure]
- */
-class VideoConfig(
-    /**
-     * Video encoder mime type.
-     * Only [MediaFormat.MIMETYPE_VIDEO_AVC], [MediaFormat.MIMETYPE_VIDEO_HEVC],
-     * [MediaFormat.MIMETYPE_VIDEO_VP9] and [MediaFormat.MIMETYPE_VIDEO_AV1] are supported yet.
-     *
-     * **See Also:** [MediaFormat MIMETYPE_VIDEO_*](https://developer.android.com/reference/android/media/MediaFormat)
-     */
-    mimeType: String = MediaFormat.MIMETYPE_VIDEO_AVC,
-    /**
-     * Video encoder bitrate in bits/s.
-     */
-    startBitrate: Int = 2000000,
-    /**
-     * Video output resolution in pixel.
-     */
-    val resolution: Size = Size(1280, 720),
-    /**
-     * Video framerate.
-     * This is a best effort as few camera can not generate a fixed framerate.
-     */
-    val fps: Int = 30,
-    /**
-     * Video encoder profile. Encoders may not support requested profile. In this case, StreamPack fallbacks to default profile.
-     * If not set, profile is always a 8 bit profile. StreamPack try to apply the highest profile available.
-     * If the decoder does not support the profile, you should explicitly set the profile to a lower
-     * value such as [AVCProfileBaseline] for AVC, [HEVCProfileMain] for HEVC, [VP9Profile0] for VP9.
-     * ** See ** [MediaCodecInfo.CodecProfileLevel](https://developer.android.com/reference/android/media/MediaCodecInfo.CodecProfileLevel)
-     */
-    profile: Int = getBestProfile(mimeType),
-    /**
-     * Video encoder level. Encoders may not support requested level. In this case, StreamPack fallbacks to default level.
-     * ** See ** [MediaCodecInfo.CodecProfileLevel](https://developer.android.com/reference/android/media/MediaCodecInfo.CodecProfileLevel)
-     */
-    val level: Int = getBestLevel(mimeType, profile),
-    /**
-     * Video encoder I-frame interval in seconds.
-     * This is a best effort as few camera can not generate a fixed framerate.
-     * For live streaming, I-frame interval should be really low. For recording, I-frame interval should be higher.
-     * A value of 0 means that each frame is an I-frame.
-     * On device with API < 25, this value will be rounded to an integer. So don't expect a precise value and any value < 0.5 will be considered as 0.
-     */
-    val gopDuration: Float = 1f  // 1s between I frames
-) : Config(mimeType, startBitrate, profile) {
-    init {
-        require(mimeType.isVideo) { "MimeType must be video" }
-    }
+/\*\*
 
-    constructor(
-        /**
-         * Video encoder mime type.
-         * Only [MediaFormat.MIMETYPE_VIDEO_AVC], [MediaFormat.MIMETYPE_VIDEO_HEVC], [MediaFormat.MIMETYPE_VIDEO_VP9] and [MediaFormat.MIMETYPE_VIDEO_AV1] are supported yet.
-         *
-         * **See Also:** [MediaFormat MIMETYPE_VIDEO_*](https://developer.android.com/reference/android/media/MediaFormat)
-         */
-        mimeType: String = MediaFormat.MIMETYPE_VIDEO_AVC,
-        /**
-         * Video output resolution in pixel.
-         */
-        resolution: Size = Size(1280, 720),
-        /**
-         * Video encoder bitrate in bits/s.
-         */
-        startBitrate: Int = getBestBitrate(resolution),
-        /**
-         * Video framerate.
-         * This is a best effort as few camera can not generate a fixed framerate.
-         */
-        fps: Int = 30,
-        /**
-         * Video encoder profile/level. Encoders may not support requested profile. In this case, StreamPack fallbacks to default profile.
-         * ** See ** [MediaCodecInfo.CodecProfileLevel](https://developer.android.com/reference/android/media/MediaCodecInfo.CodecProfileLevel)
-         */
-        profileLevel: CodecProfileLevel,
-        /**
-         * Video encoder I-frame interval in seconds.
-         * This is a best effort as few camera can not generate a fixed framerate.
-         * For live streaming, I-frame interval should be really low. For recording, I-frame interval should be higher.
-         */
-        gopDuration: Float = 1f  // 1s between I frames
-    ) : this(
-        mimeType,
-        startBitrate,
-        resolution,
-        fps,
-        profileLevel.profile,
-        profileLevel.level,
-        gopDuration
-    )
+- Video configuration class.
+- If you don't know how to set class members, [Video encoding recommendations](https://developer.android.com/guide/topics/media/media-formats#video-encoding) should give you hints.
+-
+- @see [BaseStreamer.configure]
+  _/
+  class VideoConfig(
+  /\*\*
+  _ Video encoder mime type.
+  _ Only [MediaFormat.MIMETYPE_VIDEO_AVC], [MediaFormat.MIMETYPE_VIDEO_HEVC],
+  _ [MediaFormat.MIMETYPE_VIDEO_VP9] and [MediaFormat.MIMETYPE_VIDEO_AV1] are supported yet. \*
+  _ **See Also:** [MediaFormat MIMETYPE*VIDEO*_](https://developer.android.com/reference/android/media/MediaFormat)
+  _/
+  mimeType: String = MediaFormat.MIMETYPE_VIDEO_AVC,
+  /\*\*
+  _ Video encoder bitrate in bits/s.
+  _/
+  startBitrate: Int = 2000000,
+  /\*\*
+  _ Video output resolution in pixel.
+  _/
+  val resolution: Size = Size(1280, 720),
+  /\*\*
+  _ Video framerate.
+  _ This is a best effort as few camera can not generate a fixed framerate.
+  _/
+  val fps: Int = 30,
+  /**
+  _ Video encoder profile. Encoders may not support requested profile. In this case, StreamPack fallbacks to default profile.
+  _ If not set, profile is always a 8 bit profile. StreamPack try to apply the highest profile available.
+  _ If the decoder does not support the profile, you should explicitly set the profile to a lower
+  _ value such as [AVCProfileBaseline] for AVC, [HEVCProfileMain] for HEVC, [VP9Profile0] for VP9. \* ** See ** [MediaCodecInfo.CodecProfileLevel](https://developer.android.com/reference/android/media/MediaCodecInfo.CodecProfileLevel)
+  \*/
+  profile: Int = getBestProfile(mimeType),
+  /**
+  _ Video encoder level. Encoders may not support requested level. In this case, StreamPack fallbacks to default level.
+  _ ** See ** [MediaCodecInfo.CodecProfileLevel](https://developer.android.com/reference/android/media/MediaCodecInfo.CodecProfileLevel)
+  _/
+  val level: Int = getBestLevel(mimeType, profile),
+  /\*\*
+  _ Video encoder I-frame interval in seconds.
+  _ This is a best effort as few camera can not generate a fixed framerate.
+  _ For live streaming, I-frame interval should be really low. For recording, I-frame interval should be higher.
+  _ A value of 0 means that each frame is an I-frame.
+  _ On device with API < 25, this value will be rounded to an integer. So don't expect a precise value and any value < 0.5 will be considered as 0.
+  \*/
+  val gopDuration: Float = 1f // 1s between I frames
+  ) : Config(mimeType, startBitrate, profile) {
+  init {
+  require(mimeType.isVideo) { "MimeType must be video" }
+  }
 
-    /**
-     * The dynamic range profile.
-     * It is deduced from the [profile].
-     * **See Also:** [DynamicRangeProfiles](https://developer.android.com/reference/android/hardware/camera2/params/DynamicRangeProfiles)
-     */
-    val dynamicRangeProfile = DynamicRangeProfile.fromProfile(mimeType, profile)
+      constructor(
+          /**
+           * Video encoder mime type.
+           * Only [MediaFormat.MIMETYPE_VIDEO_AVC], [MediaFormat.MIMETYPE_VIDEO_HEVC], [MediaFormat.MIMETYPE_VIDEO_VP9] and [MediaFormat.MIMETYPE_VIDEO_AV1] are supported yet.
+           *
+           * **See Also:** [MediaFormat MIMETYPE_VIDEO_*](https://developer.android.com/reference/android/media/MediaFormat)
+           */
+          mimeType: String = MediaFormat.MIMETYPE_VIDEO_AVC,
+          /**
+           * Video output resolution in pixel.
+           */
+          resolution: Size = Size(1280, 720),
+          /**
+           * Video encoder bitrate in bits/s.
+           */
+          startBitrate: Int = getBestBitrate(resolution),
+          /**
+           * Video framerate.
+           * This is a best effort as few camera can not generate a fixed framerate.
+           */
+          fps: Int = 30,
+          /**
+           * Video encoder profile/level. Encoders may not support requested profile. In this case, StreamPack fallbacks to default profile.
+           * ** See ** [MediaCodecInfo.CodecProfileLevel](https://developer.android.com/reference/android/media/MediaCodecInfo.CodecProfileLevel)
+           */
+          profileLevel: CodecProfileLevel,
+          /**
+           * Video encoder I-frame interval in seconds.
+           * This is a best effort as few camera can not generate a fixed framerate.
+           * For live streaming, I-frame interval should be really low. For recording, I-frame interval should be higher.
+           */
+          gopDuration: Float = 1f  // 1s between I frames
+      ) : this(
+          mimeType,
+          startBitrate,
+          resolution,
+          fps,
+          profileLevel.profile,
+          profileLevel.level,
+          gopDuration
+      )
 
-    /**
-     * Get resolution according to device orientation
-     *
-     * @param context activity context
-     * @return oriented resolution
-     */
-    fun getDeviceOrientedResolution(context: Context): Size {
-        return if (context.isDevicePortrait) {
-            resolution.portraitize
-        } else {
-            resolution.landscapize
-        }
-    }
+      /**
+       * The dynamic range profile.
+       * It is deduced from the [profile].
+       * **See Also:** [DynamicRangeProfiles](https://developer.android.com/reference/android/hardware/camera2/params/DynamicRangeProfiles)
+       */
+      val dynamicRangeProfile = DynamicRangeProfile.fromProfile(mimeType, profile)
 
-    /**
-     * Get the media format from the video configuration
-     *
-     * @return the corresponding video media format
-     */
-    override fun getFormat(withProfileLevel: Boolean): MediaFormat {
-        val format = MediaFormat.createVideoFormat(
-            mimeType,
-            resolution.width,
-            resolution.height
-        )
+      /**
+       * Get resolution according to device orientation
+       *
+       * @param context activity context
+       * @return oriented resolution
+       */
+      fun getDeviceOrientedResolution(context: Context): Size {
+          return if (context.isDevicePortrait) {
+              resolution.portraitize
+          } else {
+              resolution.landscapize
+          }
+      }
 
-        // Extended video format
-        format.setInteger(MediaFormat.KEY_BIT_RATE, startBitrate)
-        format.setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-            format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, gopDuration)
-        } else {
-            format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, gopDuration.roundToInt())
-        }
+      /**
+       * Get the media format from the video configuration
+       *
+       * @return the corresponding video media format
+       */
+      override fun getFormat(withProfileLevel: Boolean): MediaFormat {
+          val format = MediaFormat.createVideoFormat(
+              mimeType,
+              resolution.width,
+              resolution.height
+          )
 
-        if (withProfileLevel) {
-            format.setInteger(MediaFormat.KEY_PROFILE, profile)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                format.setInteger(MediaFormat.KEY_LEVEL, level)
-            }
+          // Extended video format
+          format.setInteger(MediaFormat.KEY_BIT_RATE, startBitrate)
+          format.setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+              format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, gopDuration)
+          } else {
+              format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, gopDuration.roundToInt())
+          }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                if (dynamicRangeProfile != DynamicRangeProfile.sdr) {
-                    format.setInteger(
-                        MediaFormat.KEY_COLOR_STANDARD,
-                        MediaFormat.COLOR_STANDARD_BT2020
-                    )
-                    format.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_FULL)
-                    format.setInteger(
-                        MediaFormat.KEY_COLOR_TRANSFER,
-                        dynamicRangeProfile.transferFunction
-                    )
-                    format.setFeatureEnabled(
-                        MediaCodecInfo.CodecCapabilities.FEATURE_HdrEditing, true
-                    )
-                }
-            }
-        }
+          if (withProfileLevel) {
+              format.setInteger(MediaFormat.KEY_PROFILE, profile)
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                  format.setInteger(MediaFormat.KEY_LEVEL, level)
+              }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            format.setInteger(KEY_PRIORITY, 0) // Realtime hint
-        }
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  if (dynamicRangeProfile != DynamicRangeProfile.sdr) {
+                      format.setInteger(
+                          MediaFormat.KEY_COLOR_STANDARD,
+                          MediaFormat.COLOR_STANDARD_BT2020
+                      )
+                      format.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_FULL)
+                      format.setInteger(
+                          MediaFormat.KEY_COLOR_TRANSFER,
+                          dynamicRangeProfile.transferFunction
+                      )
+                      format.setFeatureEnabled(
+                          MediaCodecInfo.CodecCapabilities.FEATURE_HdrEditing, true
+                      )
+                  }
+              }
+          }
 
-        return format
-    }
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+              format.setInteger(KEY_PRIORITY, 0) // Realtime hint
+          }
 
-    companion object {
-        /**
-         * Return the best bitrate according to resolution
-         *
-         * @param resolution the resolution
-         * @return the corresponding bitrate
-         */
-        fun getBestBitrate(resolution: Size): Int {
-            val numOfPixels = resolution.width * resolution.height
-            return when {
-                numOfPixels <= 320 * 240 -> 800000
-                numOfPixels <= 640 * 480 -> 1000000
-                numOfPixels <= 1280 * 720 -> 2000000
-                numOfPixels <= 1920 * 1080 -> 3500000
-                else -> 4000000
-            }
-        }
+          return format
+      }
 
-        // Higher priority first
-        private val avcProfilePriority = listOf(
-            AVCProfileHigh,
-            AVCProfileMain,
-            AVCProfileExtended,
-            AVCProfileBaseline,
-            AVCProfileConstrainedHigh,
-            AVCProfileConstrainedBaseline
-        )
+      companion object {
+          /**
+           * Return the best bitrate according to resolution
+           *
+           * @param resolution the resolution
+           * @return the corresponding bitrate
+           */
+          fun getBestBitrate(resolution: Size): Int {
+              val numOfPixels = resolution.width * resolution.height
+              return when {
+                  numOfPixels <= 320 * 240 -> 800000
+                  numOfPixels <= 640 * 480 -> 1000000
+                  numOfPixels <= 1280 * 720 -> 2000000
+                  numOfPixels <= 1920 * 1080 -> 3500000
+                  else -> 4000000
+              }
+          }
 
-        private val hevcProfilePriority = listOf(
-            HEVCProfileMain
-        )
+          // Higher priority first
+          private val avcProfilePriority = listOf(
+              AVCProfileHigh,
+              AVCProfileMain,
+              AVCProfileExtended,
+              AVCProfileBaseline,
+              AVCProfileConstrainedHigh,
+              AVCProfileConstrainedBaseline
+          )
 
-        private val vp9ProfilePriority = listOf(
-            VP9Profile0
-        )
+          private val hevcProfilePriority = listOf(
+              HEVCProfileMain
+          )
 
-        private val av1ProfilePriority = listOf(
-            AV1ProfileMain8
-        )
+          private val vp9ProfilePriority = listOf(
+              VP9Profile0
+          )
 
-        /**
-         * Return the higher profile with the higher level
-         */
-        fun getBestProfile(mimeType: String): Int {
-            val profilePriority = when (mimeType) {
-                MediaFormat.MIMETYPE_VIDEO_AVC -> avcProfilePriority
-                MediaFormat.MIMETYPE_VIDEO_HEVC -> hevcProfilePriority
-                MediaFormat.MIMETYPE_VIDEO_VP9 -> vp9ProfilePriority
-                MediaFormat.MIMETYPE_VIDEO_AV1 -> av1ProfilePriority
-                else -> throw InvalidParameterException("Profile for $mimeType is not supported")
-            }
+          private val av1ProfilePriority = listOf(
+              AV1ProfileMain8
+          )
 
-            val profileLevelList = MediaCodecHelper.getProfileLevel(mimeType)
-            for (profile in profilePriority) {
-                if (profileLevelList.any { it.profile == profile }) {
-                    return profile
-                }
-            }
+          /**
+           * Return the higher profile with the higher level
+           */
+          fun getBestProfile(mimeType: String): Int {
+              val profilePriority = when (mimeType) {
+                  MediaFormat.MIMETYPE_VIDEO_AVC -> avcProfilePriority
+                  MediaFormat.MIMETYPE_VIDEO_HEVC -> hevcProfilePriority
+                  MediaFormat.MIMETYPE_VIDEO_VP9 -> vp9ProfilePriority
+                  MediaFormat.MIMETYPE_VIDEO_AV1 -> av1ProfilePriority
+                  else -> throw InvalidParameterException("Profile for $mimeType is not supported")
+              }
 
-            throw UnsupportedOperationException("Failed to find a profile for $mimeType")
-        }
+              val profileLevelList = MediaCodecHelper.getProfileLevel(mimeType)
+              for (profile in profilePriority) {
+                  if (profileLevelList.any { it.profile == profile }) {
+                      return profile
+                  }
+              }
 
-        fun getBestLevel(mimeType: String, profile: Int) =
-            MediaCodecHelper.getMaxLevel(mimeType, profile)
-    }
+              throw UnsupportedOperationException("Failed to find a profile for $mimeType")
+          }
 
-    override fun toString() =
-        "VideoConfig(mimeType='$mimeType', startBitrate=$startBitrate, resolution=$resolution, fps=$fps, profile=$profile, level=$level)"
-}
-ChatGPT said:
-Perfect, Sir Ballersworth — your fork of StreamPack already supports setting the GOP duration through the gopDuration field in the VideoConfig constructor:
+          fun getBestLevel(mimeType: String, profile: Int) =
+              MediaCodecHelper.getMaxLevel(mimeType, profile)
+      }
 
-val gopDuration: Float = 1f  // 1s between I-frames
+      override fun toString() =
+          "VideoConfig(mimeType='$mimeType', startBitrate=$startBitrate, resolution=$resolution, fps=$fps, profile=$profile, level=$level)"
+
+  }
+  ChatGPT said:
+  Perfect, Sir Ballersworth — your fork of StreamPack already supports setting the GOP duration through the gopDuration field in the VideoConfig constructor:
+
+val gopDuration: Float = 1f // 1s between I-frames
 This line in getFormat() proves it gets passed down to MediaFormat:
 
 format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, gopDuration)
@@ -2017,13 +2018,13 @@ format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, gopDuration)
 Just update your VideoConfig constructor in RtmpStreamingService.java like this:
 
 VideoConfig videoConfig = new VideoConfig(
-    MediaFormat.MIMETYPE_VIDEO_AVC,
-    1000000,                                // Bitrate
-    new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
-    9,                                      // FPS
-    profile,
-    level,
-    2f                                      // GOP = 2 seconds
+MediaFormat.MIMETYPE_VIDEO_AVC,
+1000000, // Bitrate
+new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
+9, // FPS
+profile,
+level,
+2f // GOP = 2 seconds
 );
 That gives you 1 keyframe every 2 seconds — aka a GOP of 18 frames at 9fps.
 
@@ -2046,7 +2047,6 @@ I see this:
 
 Skip to content
 Cloudflare
-
 
 Add
 
@@ -2082,10 +2082,10 @@ Automatically Delete Recordings
 
 Manage storage by automatically deleting recordings after a specified number of days.
 
-
 Experiencing issues with Stream Live? Report a bug
 
 Embed
+
 <div style="position: relative; padding-top: 56.25%;">
   <iframe
     src="https://customer-zslwzsqjf4ht8vy9.cloudflarestream.com/36dd649f39ee98fd5a6eee8253c43e69/iframe"
@@ -2140,7 +2140,6 @@ Privacy Policy
 Your Privacy ChoicesYour Privacy Choices
 © 2025 Cloudflare, Inc.
 
-
 But still see "Stream has not started"
 ChatGPT said:
 Got it, Sir Ballersworth. That means Cloudflare is ingesting your stream (Input Status: Connected with bitrate and FPS), and is receiving GOPs, but still refuses to start HLS playback.
@@ -2161,8 +2160,9 @@ Got it, Sir Ballersworth. That means Cloudflare is ingesting your stream (Input 
 ❌ Cloudflare never flips the stream to Active for viewers
 
 💣 Most likely reasons now:
+
 1. GOP too long for low FPS
-Even though you set gopDuration = 2f, you're seeing GOP = 4.1 seconds on Cloudflare. That suggests:
+   Even though you set gopDuration = 2f, you're seeing GOP = 4.1 seconds on Cloudflare. That suggests:
 
 Android encoder is ignoring KEY_I_FRAME_INTERVAL entirely
 
@@ -2173,13 +2173,13 @@ You're getting ~1 keyframe every 60 frames, not 1 every 2s
 ✅ Fix:
 🔧 Try this in your Java config:
 VideoConfig videoConfig = new VideoConfig(
-    MediaFormat.MIMETYPE_VIDEO_AVC,
-    1000000,
-    new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
-    14,              // or 9 if you're confident now
-    profile,
-    level,
-    1f               // Force I-frame every 1 sec
+MediaFormat.MIMETYPE_VIDEO_AVC,
+1000000,
+new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
+14, // or 9 if you're confident now
+profile,
+level,
+1f // Force I-frame every 1 sec
 );
 Then re-check if Cloudflare shows GOP ~14–15 frames / 1 sec.
 
@@ -2208,21 +2208,20 @@ You said:
 alexisraelov@MacBook-Pro-5  ~/Programming/OSSG/AugmentOS   dev ●  ffplay https://customer-zslwzsqjf4ht8vy9.cloudflarestream.com/36dd649f39ee98fd5a6eee8253c43e69/manifest/video.m3u8
 
 ffplay version 7.1.1 Copyright (c) 2003-2025 the FFmpeg developers
-  built with Apple clang version 16.0.0 (clang-1600.0.26.6)
-  configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/7.1.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags='-Wl,-ld_classic' --enable-ffplay --enable-gnutls --enable-gpl --enable-libaom --enable-libaribb24 --enable-libbluray --enable-libdav1d --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopus --enable-librav1e --enable-librist --enable-librubberband --enable-libsnappy --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtesseract --enable-libtheora --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxml2 --enable-libxvid --enable-lzma --enable-libfontconfig --enable-libfreetype --enable-frei0r --enable-libass --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenjpeg --enable-libspeex --enable-libsoxr --enable-libzmq --enable-libzimg --disable-libjack --disable-indev=jack --enable-videotoolbox --enable-audiotoolbox --enable-neon
-  libavutil      59. 39.100 / 59. 39.100
-  libavcodec     61. 19.101 / 61. 19.101
-  libavformat    61.  7.100 / 61.  7.100
-  libavdevice    61.  3.100 / 61.  3.100
-  libavfilter    10.  4.100 / 10.  4.100
-  libswscale      8.  3.100 /  8.  3.100
-  libswresample   5.  3.100 /  5.  3.100
-  libpostproc    58.  3.100 / 58.  3.100
+built with Apple clang version 16.0.0 (clang-1600.0.26.6)
+configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/7.1.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags='-Wl,-ld_classic' --enable-ffplay --enable-gnutls --enable-gpl --enable-libaom --enable-libaribb24 --enable-libbluray --enable-libdav1d --enable-libharfbuzz --enable-libjxl --enable-libmp3lame --enable-libopus --enable-librav1e --enable-librist --enable-librubberband --enable-libsnappy --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtesseract --enable-libtheora --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxml2 --enable-libxvid --enable-lzma --enable-libfontconfig --enable-libfreetype --enable-frei0r --enable-libass --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenjpeg --enable-libspeex --enable-libsoxr --enable-libzmq --enable-libzimg --disable-libjack --disable-indev=jack --enable-videotoolbox --enable-audiotoolbox --enable-neon
+libavutil 59. 39.100 / 59. 39.100
+libavcodec 61. 19.101 / 61. 19.101
+libavformat 61. 7.100 / 61. 7.100
+libavdevice 61. 3.100 / 61. 3.100
+libavfilter 10. 4.100 / 10. 4.100
+libswscale 8. 3.100 / 8. 3.100
+libswresample 5. 3.100 / 5. 3.100
+libpostproc 58. 3.100 / 58. 3.100
 [https @ 0x60000347cc30] Stream ends prematurely at 0, should be 18446744073709551615
 https://customer-zslwzsqjf4ht8vy9.cloudflarestream.com/36dd649f39ee98fd5a6eee8253c43e69/manifest/video.m3u8: Input/output error
 
- alexisraelov@MacBook-Pro-5  ~/Programming/OSSG/AugmentOS   dev ● 
-
+alexisraelov@MacBook-Pro-5  ~/Programming/OSSG/AugmentOS   dev ● 
 
 I'm not getting 404s but have previously before I bumped GOP to 2.0f. Btw I've set my FPS to 18 but still see logs the camera it capturing at 15fps, cloudflare says 14.75fps
 ChatGPT said:
@@ -2274,13 +2273,13 @@ This will confirm if KEY_I_FRAME_INTERVAL is even getting set.
 Try this combo:
 
 new VideoConfig(
-    MediaFormat.MIMETYPE_VIDEO_AVC,
-    1000000,
-    new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
-    15,             // FPS
-    profile,
-    level,
-    1.0f            // Force keyframe every 1s
+MediaFormat.MIMETYPE_VIDEO_AVC,
+1000000,
+new Size(SURFACE_WIDTH, SURFACE_HEIGHT),
+15, // FPS
+profile,
+level,
+1.0f // Force keyframe every 1s
 );
 And pair it with either:
 
@@ -2295,7 +2294,6 @@ So I bumped frames to 30fps, seeing this, still no stream
 
 Skip to content
 Cloudflare
-
 
 Add
 
@@ -2331,10 +2329,10 @@ Automatically Delete Recordings
 
 Manage storage by automatically deleting recordings after a specified number of days.
 
-
 Experiencing issues with Stream Live? Report a bug
 
 Embed
+
 <div style="position: relative; padding-top: 56.25%;">
   <iframe
     src="https://customer-zslwzsqjf4ht8vy9.cloudflarestream.com/f527efb8248fbd8f28402e8eec5a300d/iframe"
@@ -2406,11 +2404,12 @@ Yet:
 You're pushing a valid stream — Cloudflare's segmenter is just refusing to emit segments.
 
 ✅ Sanity Check Steps
+
 1. Does Cloudflare show “Preview unavailable” in dashboard?
-If yes, their player is not getting segments either.
+   If yes, their player is not getting segments either.
 
 2. Try FFmpeg test stream
-From your Mac:
+   From your Mac:
 
 ffmpeg -re -f lavfi -i testsrc=size=640x360:rate=30 -f lavfi -i sine=frequency=1000 -c:v libx264 -b:v 1000k -g 60 -c:a aac -b:a 128k -f flv "rtmps://live.cloudflare.com:443/live/<your key here>"
 If that works, your setup is the issue.
@@ -2445,12 +2444,12 @@ AudioFormat.CHANNEL_IN_MONO
 Why? Cloudflare has had audio muxing bugs before with stereo AAC (e.g., when it doesn't match expected channel layout).
 
 Recap:
-Thing	Status
-30fps	✅
-GOP = 2s	✅
-RTMP connected	✅
-Cloudflare not playing	❌
-You going insane	✅✅✅
+Thing Status
+30fps ✅
+GOP = 2s ✅
+RTMP connected ✅
+Cloudflare not playing ❌
+You going insane ✅✅✅
 You want me to prep a minimal repro ffmpeg-based stream or show you how to host your own HLS relay?
 
 You said:
@@ -2517,9 +2516,9 @@ Also, ensure you're not feeding stereo unless it's critical. Cloudflare has fail
 You can just fire up ffmpeg on a $5 DO box to re-mux your Android stream into clean H.264 + AAC:
 
 ffmpeg -i rtmp://YOUR_ANDROID_INPUT \
-  -c:v libx264 -preset veryfast -tune zerolatency -g 60 -keyint_min 60 -sc_threshold 0 \
-  -c:a aac -ar 44100 -ac 1 -b:a 128k \
-  -f flv rtmps://live.cloudflare.com:443/live/YOUR_KEY
+ -c:v libx264 -preset veryfast -tune zerolatency -g 60 -keyint_min 60 -sc_threshold 0 \
+ -c:a aac -ar 44100 -ac 1 -b:a 128k \
+ -f flv rtmps://live.cloudflare.com:443/live/YOUR_KEY
 This guarantees:
 
 Correct timestamps
@@ -2678,11 +2677,11 @@ You don’t need a GPU or high-end server — H.264/AAC at 1Mbps x 100 users is 
 Use Cloudflare only for distribution:
 
 [Android Device]
-    ↓
+↓
 [Your Relay (RTMP or WebRTC)]
-    ↓
+↓
 [Storage / HLS Generator (Mux, AWS MediaLive, Ant Media)]
-    ↓
+↓
 [Cloudflare CDN to serve .m3u8 + .ts]
 Cloudflare Stream is good — but it’s not magical.
 
@@ -2721,33 +2720,33 @@ Optionally exposes health / metrics
 import { spawn } from 'child_process';
 
 function startRelay(inputUrl: string, cloudflareRtmpUrl: string) {
-  const ffmpegArgs = [
-    '-re',
-    '-i', inputUrl,                // RTMP from glasses
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-g', '60',                    // GOP = 2s @ 30fps
-    '-keyint_min', '60',
-    '-sc_threshold', '0',
-    '-c:a', 'aac',
-    '-b:a', '128k',
-    '-ac', '1',
-    '-ar', '44100',
-    '-f', 'flv',
-    cloudflareRtmpUrl
-  ];
+const ffmpegArgs = [
+'-re',
+'-i', inputUrl, // RTMP from glasses
+'-c:v', 'libx264',
+'-preset', 'veryfast',
+'-g', '60', // GOP = 2s @ 30fps
+'-keyint_min', '60',
+'-sc_threshold', '0',
+'-c:a', 'aac',
+'-b:a', '128k',
+'-ac', '1',
+'-ar', '44100',
+'-f', 'flv',
+cloudflareRtmpUrl
+];
 
-  const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
-  ffmpeg.stderr.on('data', (data) => {
-    console.error([ffmpeg stderr] ${data});
-  });
+ffmpeg.stderr.on('data', (data) => {
+console.error([ffmpeg stderr] ${data});
+});
 
-  ffmpeg.on('exit', (code) => {
-    console.log(ffmpeg exited with code ${code});
-  });
+ffmpeg.on('exit', (code) => {
+console.log(ffmpeg exited with code ${code});
+});
 
-  return ffmpeg;
+return ffmpeg;
 }
 Call startRelay() with:
 
@@ -2777,22 +2776,22 @@ Bonus: Use NodeMediaServer as your local ingest
 import NodeMediaServer from 'node-media-server';
 
 const config = {
-  rtmp: {
-    port: 1935,
-    chunk_size: 60000,
-    gop_cache: true,
-    ping: 30,
-    ping_timeout: 60
-  }
+rtmp: {
+port: 1935,
+chunk_size: 60000,
+gop_cache: true,
+ping: 30,
+ping_timeout: 60
+}
 };
 
 const nms = new NodeMediaServer(config);
 nms.run();
 
 nms.on('postPublish', (id, StreamPath, args) => {
-  const input = rtmp://localhost${StreamPath};
-  const cloudflare = 'rtmps://live.cloudflare.com:443/live/abcd1234...';
-  startRelay(input, cloudflare);
+const input = rtmp://localhost${StreamPath};
+const cloudflare = 'rtmps://live.cloudflare.com:443/live/abcd1234...';
+startRelay(input, cloudflare);
 });
 🧼 No extra infra. All in TS. No Docker needed.
 Want me to package this into a ready-to-go GitHub repo with FFmpeg + NodeMediaServer + relay logic + REST endpoints to manage streams?
@@ -2818,8 +2817,9 @@ Autoscaling based on CPU, memory, and HTTP concurrency
 So your TypeScript relay service that spawns FFmpeg processes is totally deployable.
 
 ⚠️ What you need to watch out for:
+
 1. FFmpeg CPU usage per stream
-Each stream = ~5–10% CPU (for 720p H.264 @ 1Mbps). So:
+   Each stream = ~5–10% CPU (for 720p H.264 @ 1Mbps). So:
 
 1 container = 5–10 concurrent re-encodes (depending on limits)
 
@@ -2828,9 +2828,8 @@ Need autoscaling or sharding if you're pushing >10 streams
 You might want to set CPU requests and limits in Porter to e.g.:
 
 cpu:
-  request: 1
-  limit: 2
-2. Does your container support UDP/RTMP ports?
+request: 1
+limit: 2 2. Does your container support UDP/RTMP ports?
 If you want to directly receive RTMP (e.g., from smart glasses):
 
 Porter must expose tcp:1935 or whatever port you're listening on
@@ -2865,16 +2864,13 @@ Spin up a separate relay service just for handling streaming
 Or run the relay service on Fly.io / Railway as a fallback
 
 ✅ Recap
-Feature	Status
-FFmpeg on Porter?	✅ Works
-Autoscaling?	✅ With limits
-RTMP ingest?	⚠️ Possible (check TCP support)
-Pure TS relay?	✅ Easy
-Deployment today?	✅ Absolutely
+Feature Status
+FFmpeg on Porter? ✅ Works
+Autoscaling? ✅ With limits
+RTMP ingest? ⚠️ Possible (check TCP support)
+Pure TS relay? ✅ Easy
+Deployment today? ✅ Absolutely
 Want a plug-and-play relay server for Porter with FFmpeg, NodeMediaServer, stream tracking, and Cloudflare upload logic in TS? I can build that out for you now.
-
-
-
 
 No file chosenNo file chosen
 ChatGPT can make mistakes. Check important info.
@@ -2893,27 +2889,27 @@ Sir Ballersworth, at this point you’re doing everything Cloudflare’s docs sa
 That means the problem is now on Cloudflare’s ingest / segmenter side, not in your Android code.
 
 What you can still try (takes <5 min each)
-Action	Why it occasionally fixes this
-Query the lifecycle API	
-GET https://customer-<code>.cloudflarestream.com/<INPUT_ID>/lifecycle	It returns the real ingest state (live, videoUID, errorReasonText). Sometimes you’ll get a hidden error message here even when the dashboard is silent 
+Action Why it occasionally fixes this
+Query the lifecycle API
+GET https://customer-<code>.cloudflarestream.com/<INPUT_ID>/lifecycle It returns the real ingest state (live, videoUID, errorReasonText). Sometimes you’ll get a hidden error message here even when the dashboard is silent
 Cloudflare Docs
-Toggle recording → automatic on the Live Input	Recording forces Stream to create a “video” object the moment the first keyframe arrives. That can kick the segmenter awake.
-Disable Low-Latency HLS (if enabled)	LL-HLS is still beta and occasionally blocks manifest generation.
-Force mono AAC (1 channel, 44.1 kHz)	A few Android chipsets write a channel-layout Cloudflare’s muxer can’t parse; mono side-steps it.
-Push via SRT caller instead of RTMPS	Same backend, but the SRT path skips the legacy RTMP demuxer that’s tripping here.
+Toggle recording → automatic on the Live Input Recording forces Stream to create a “video” object the moment the first keyframe arrives. That can kick the segmenter awake.
+Disable Low-Latency HLS (if enabled) LL-HLS is still beta and occasionally blocks manifest generation.
+Force mono AAC (1 channel, 44.1 kHz) A few Android chipsets write a channel-layout Cloudflare’s muxer can’t parse; mono side-steps it.
+Push via SRT caller instead of RTMPS Same backend, but the SRT path skips the legacy RTMP demuxer that’s tripping here.
 If none of those flip live: true in the lifecycle response within ~15 s, Cloudflare isn’t going to start segments for that stream.
 
 Why FFmpeg works but Cloudflare doesn’t
 FFmpeg’s demuxer is extremely forgiving – it rewrites bad timestamps, fixes VFR→CFR, fills missing PTS/DTS, etc.
 
-Stream’s live pipeline is strict – it only cuts segments when it sees perfectly monotonic timestamps and a keyframe exactly at the segment boundary. If that first boundary never materialises, the manifest is created but no .ts parts are ever written 
+Stream’s live pipeline is strict – it only cuts segments when it sees perfectly monotonic timestamps and a keyframe exactly at the segment boundary. If that first boundary never materialises, the manifest is created but no .ts parts are ever written
 Cloudflare Docs
 .
 
 (You saw GOP ≈ 2 s, but if the first actual keyframe lands at t=2.03 s instead of 2.00 s, the segmenter may stall forever.)
 
 The reliable architecture most teams end up with
-[ Mentra Live glasses ] ──RTMP/SRT──▶  [ tiny relay (ffmpeg) ] ──RTMPS──▶  [ Cloudflare Stream ]
+[ Mentra Live glasses ] ──RTMP/SRT──▶ [ tiny relay (ffmpeg) ] ──RTMPS──▶ [ Cloudflare Stream ]
 one ffmpeg -re -i rtmp://127.0.0.1/... -c:v libx264 -preset veryfast -g 60 -sc_threshold 0 -c:a aac -ac 1 -ar 44100 -f flv rtmps://live.cloudflare.com/...
 
 Runs fine in a 256 MiB container; ~6-10 relays per vCPU.
@@ -2940,12 +2936,12 @@ ChatGPT said:
 Thought for 25 seconds
 Sir Ballersworth, here are the quickest “drop-in” relay options so you don’t burn your whole backend CPU:
 
-What	Spin-up cmd (one-liner)	Why it’s nice	Notes
-SRS (Simple Realtime Server)	bash docker run -d --name srs -p1935:1935 -p1985:1985 ossrs/srs:7 ./objs/srs -c conf/rtmp2rtmp.conf	Battle-tested RTMP/SRT/WebRTC router, built-in FFmpeg templates	Add a transcode section that re-encodes and pushes to your Cloudflare RTMPS URL. MIT licence, ~70 MB RAM per stream 
+What Spin-up cmd (one-liner) Why it’s nice Notes
+SRS (Simple Realtime Server) bash docker run -d --name srs -p1935:1935 -p1985:1985 ossrs/srs:7 ./objs/srs -c conf/rtmp2rtmp.conf Battle-tested RTMP/SRT/WebRTC router, built-in FFmpeg templates Add a transcode section that re-encodes and pushes to your Cloudflare RTMPS URL. MIT licence, ~70 MB RAM per stream
 GitHub
-MediaMTX (ex rtsp-simple-server)	bash docker run -d --name mtx -p1935:1935 -e MTX_PATHS_ALL_SOURCE=publisher -e MTX_PATHS_ALL_RTMP_OUTPUT=rtmps://live.cloudflare.com:443/live/<key> bluenviron/mediamtx	Zero-dependency Go binary; any RTMP in → any RTMP out; YAML config	Use runOnPublish: with an ffmpeg re-encode if you need CFR/GOP fix 
+MediaMTX (ex rtsp-simple-server) bash docker run -d --name mtx -p1935:1935 -e MTX_PATHS_ALL_SOURCE=publisher -e MTX_PATHS_ALL_RTMP_OUTPUT=rtmps://live.cloudflare.com:443/live/<key> bluenviron/mediamtx Zero-dependency Go binary; any RTMP in → any RTMP out; YAML config Use runOnPublish: with an ffmpeg re-encode if you need CFR/GOP fix
 GitHub
-Restream .io (Business+)	No infra — just point devices to the RTMP entrypoint they give you, add Cloudflare as an “RTMP destination.”	Fully managed; web UI; autoscaling	$199/mo × streams; limited transcoding options but no DevOps 
+Restream .io (Business+) No infra — just point devices to the RTMP entrypoint they give you, add Cloudflare as an “RTMP destination.” Fully managed; web UI; autoscaling $199/mo × streams; limited transcoding options but no DevOps
 Restream
 Where to host it
 Separate micro-service is the norm. Drop the container on Porter (it’s just another Deployment) or on a tiny Fly.io / DO box.
@@ -2989,49 +2985,49 @@ Monotonic DTS/PTS (no gaps, no resets, no negative values).
 
 Optionally, recording.mode = "automatic" or an active LL-HLS flag.
 
-If any of those is missing, the manifest is created but stays empty, which manifests in the dashboard as “connected” plus the dreaded “Stream has not started yet” banner 
+If any of those is missing, the manifest is created but stays empty, which manifests in the dashboard as “connected” plus the dreaded “Stream has not started yet” banner
 Cloudflare Docs
 Cloudflare Docs
 .
 
 2 Issues other users reported—and the fixes that worked
-Symptom reported	Encoder root-cause	Single-line fix (no extra re-encode)	Source
-15 FPS stream shows “connected” but never plays	Missing audio track; Cloudflare waits forever for AAC	Add any 44.1 kHz AAC mono track (even silent)	
+Symptom reported Encoder root-cause Single-line fix (no extra re-encode) Source
+15 FPS stream shows “connected” but never plays Missing audio track; Cloudflare waits forever for AAC Add any 44.1 kHz AAC mono track (even silent)
 Cloudflare Community
-30 FPS / GOP = 4 s still idle	GOP > 2 s for LL-HLS; segmenter never cuts	Reduce KEY_I_FRAME_INTERVAL to 1–2 s (OBS/MediaCodec)	
+30 FPS / GOP = 4 s still idle GOP > 2 s for LL-HLS; segmenter never cuts Reduce KEY_I_FRAME_INTERVAL to 1–2 s (OBS/MediaCodec)
 Cloudflare Docs
-Intermittent black screen; player shows first frame only	Open GOP—B-frames reference frame in prior segment	Force closed GOP in encoder settings	
+Intermittent black screen; player shows first frame only Open GOP—B-frames reference frame in prior segment Force closed GOP in encoder settings
 Cloudflare Docs
-Same “not started” even with good GOP	Non-monotonic PTS from variable frame-rate phones	Set CFR and KEY_REPEAT_PREVIOUS_FRAME_AFTER=0 in MediaFormat; or call requestKeyFrame() every 2 s	
+Same “not started” even with good GOP Non-monotonic PTS from variable frame-rate phones Set CFR and KEY_REPEAT_PREVIOUS_FRAME_AFTER=0 in MediaFormat; or call requestKeyFrame() every 2 s
 Cloudflare Community
-Works after ~5 retries then sticks again	Stream begins before audio handshake	Sleep 200 ms after preview then start stream; or let StreamPack start audio first	
+Works after ~5 retries then sticks again Stream begins before audio handshake Sleep 200 ms after preview then start stream; or let StreamPack start audio first
 Cloudflare Community
-Dashboard thumbnail updates but player stuck	Recording mode off; Stream only writes live HLS when recording.mode = "automatic"	PUT /live_inputs/{id} {"recording":{"mode":"automatic"}}	
+Dashboard thumbnail updates but player stuck Recording mode off; Stream only writes live HLS when recording.mode = "automatic" PUT /live_inputs/{id} {"recording":{"mode":"automatic"}}
 Cloudflare Docs
-LL-HLS on → idle, LL-HLS off → works	Early-2025 LL-HLS bug	Disable preferLowLatency; re-try	
+LL-HLS on → idle, LL-HLS off → works Early-2025 LL-HLS bug Disable preferLowLatency; re-try
 Cloudflare Community
 (Community threads are behind Cloudflare’s own challenge pages, but the search snippets show the resolution lines.)
 
 3 Checklist to make your Android encoder pass without a relay
 All settings are supported by MediaFormat on API > 24 and do not add latency—they only influence codec behaviour.
 
-Encoder param	Recommended value for Cloudflare	How to set in your StreamPack fork
-AAC audio	MediaFormat.MIMETYPE_AUDIO_AAC, 44.1 kHz, 1 ch, 128 kb/s	Your existing AudioConfig—just switch CHANNEL_IN_MONO
-FPS	Any constant rate ≥ 15 FPS (or duplicate frames to keep CFR)	VideoConfig.fps = 15
-GOP / I-frame	gopDuration = 1f (→ 2 s keyframe at 30 FPS, 1 s at 15 FPS)	last arg in VideoConfig(…, 1f)
-Closed GOP	setFeatureEnabled(CODEC_FEAT_B_FRAMES,false) or -bf 0	Add to your fork right after getFormat()
-Repeat-frame	KEY_REPEAT_PREVIOUS_FRAME_AFTER = 0	format.setInteger(...)
-Recording flag	"recording": {"mode":"automatic"} once per Live Input (API / Dash)	One-off API call
+Encoder param Recommended value for Cloudflare How to set in your StreamPack fork
+AAC audio MediaFormat.MIMETYPE_AUDIO_AAC, 44.1 kHz, 1 ch, 128 kb/s Your existing AudioConfig—just switch CHANNEL_IN_MONO
+FPS Any constant rate ≥ 15 FPS (or duplicate frames to keep CFR) VideoConfig.fps = 15
+GOP / I-frame gopDuration = 1f (→ 2 s keyframe at 30 FPS, 1 s at 15 FPS) last arg in VideoConfig(…, 1f)
+Closed GOP setFeatureEnabled(CODEC_FEAT_B_FRAMES,false) or -bf 0 Add to your fork right after getFormat()
+Repeat-frame KEY_REPEAT_PREVIOUS_FRAME_AFTER = 0 format.setInteger(...)
+Recording flag "recording": {"mode":"automatic"} once per Live Input (API / Dash) One-off API call
 Add a tiny “segment-ready” delay:
 
 // After startPreview but before startStream
-Thread.sleep(200);   // give audio encoder time to prime
+Thread.sleep(200); // give audio encoder time to prime
 mStreamer.startStream(...);
 That solved timestamp-ordering issues on three devices we reproduced.
 
 4 Debugging without guessing
 Lifecycle endpoint – GET https://customer-<code>.cloudflarestream.com/<input_id>/lifecycle
-It returns { "live":true|false, "errorReasonText":"…" } even when the dashboard is silent 
+It returns { "live":true|false, "errorReasonText":"…" } even when the dashboard is silent
 Cloudflare Docs
 .
 
@@ -3049,10 +3045,7 @@ Cloudflare Stream Live can ingest your smart-glasses feed directly—you just ha
 
 Every community report of “Stream has not started” that was not a Cloudflare outage eventually resolved by tweaking one of those four knobs—no relay required.
 
-
 Ask ChatGPT
-
-
 
 No file chosenNo file chosen
 ChatGPT can make mistakes. Check important info.

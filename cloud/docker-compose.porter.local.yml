@@ -1,0 +1,33 @@
+services:
+  porter-local:
+    image: augmentos-cloud:porter
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.livekit
+    command: ./start.sh
+    environment:
+      HOST: 0.0.0.0
+      SERVICE_NAME: cloud
+      LIVEKIT_GO_BRIDGE_URL: ws://localhost:8080
+      # Provide your real LiveKit URL here or via .env
+      LIVEKIT_URL: ${LIVEKIT_URL}
+      LOG_LEVEL: info
+      # Note: start.sh sets per-process PORTs; do not set PORT globally here
+    env_file:
+      - .env
+    ports:
+      - "8002:80" # Cloud (Bun)
+      - "8080:8080" # Go bridge
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:80/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

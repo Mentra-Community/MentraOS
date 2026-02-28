@@ -1,0 +1,236 @@
+# Mentra Live Development Guide
+
+This guide covers working with Mentra Live smart glasses, the primary device running ASG Client.
+
+## Device Overview
+
+Mentra Live (K900) specifications:
+
+- **OS**: Custom Android build
+- **Connectivity**: WiFi 802.11 b/g/n, Bluetooth 5.0 LE
+- **Camera**: 1080p photo/video capability
+- **ADB**: WiFi only (no USB ADB support)
+- **MCU**: Integrated microcontroller for hardware control
+
+## Setup
+
+### Prerequisites
+
+1. **Development Machine**
+   - Android Studio with Java SDK 17
+   - ADB tools installed
+   - Same WiFi network as glasses
+
+2. **Mobile Device**
+   - MentraOS app installed
+   - Bluetooth enabled
+   - Same WiFi network as glasses
+
+### Initial Pairing
+
+1. **Turn on Mentra Live** - Press and hold power button
+2. **Open MentraOS app** on your phone
+3. **Start pairing** - Follow in-app instructions
+4. **Connect to WiFi** - Use app to configure network
+
+## ADB Connection
+
+Mentra Live only supports ADB over WiFi. Here's how to connect:
+
+### Finding the IP Address
+
+1. Open MentraOS app
+2. Go to "Glasses" screen
+3. Look for "Local IP Address"
+4. Note this IP (e.g., 192.168.1.123)
+
+### Connecting via ADB
+
+```bash
+# Connect using the IP from the app
+adb connect [IP_ADDRESS]:5555
+
+# Example
+adb connect 192.168.1.123:5555
+
+# Output should show:
+# connected to 192.168.1.123:5555
+
+# Verify connection
+adb devices
+# Should list: 192.168.1.123:5555  device
+```
+
+### Connection Troubleshooting
+
+If connection fails:
+
+```bash
+# 1. Kill and restart ADB server
+adb kill-server
+adb start-server
+
+# 2. Try connecting again
+adb connect [IP_ADDRESS]:5555
+
+# 3. Check network - ping the glasses
+ping [IP_ADDRESS]
+
+# 4. If still failing, restart glasses and try again
+```
+
+## Development Workflow
+
+### Building and Installing
+
+```bash
+# Navigate to asg_client directory
+cd /path/to/AugmentOS/asg_client
+
+# Build debug APK
+./gradlew assembleDebug
+
+# Install on connected glasses
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Local Server Development
+
+For testing with local MentraOS server:
+
+```bash
+# Forward local port to glasses
+# This makes localhost:8002 on glasses connect to your PC
+adb reverse tcp:8002 tcp:8002
+
+# Configure .env file:
+MENTRAOS_HOST=localhost
+MENTRAOS_PORT=8002
+MENTRAOS_SECURE=false
+```
+
+### Viewing Logs
+
+```bash
+# View all logs
+adb logcat
+
+# Filter ASG Client logs
+adb logcat | grep -E "AsgClient|MediaCapture|RtmpStreaming"
+
+# Save logs to file
+adb logcat -d > mentra_logs.txt
+
+# Clear old logs
+adb logcat -c
+```
+
+## Hardware Features
+
+### Button Commands
+
+The MCU sends these commands for button presses:
+
+| Action      | Command   | Description       |
+| ----------- | --------- | ----------------- |
+| Short press | `cs_pho`  | Take photo        |
+| Long press  | `cs_vdo`  | Start/stop video  |
+| Swipe       | `cs_swst` | Arm swipe gesture |
+
+### LED Indicators
+
+- **Blue blinking**: Bluetooth advertising
+- **Blue solid**: Bluetooth connected
+- **Red blinking**: Low battery
+- **Green**: Charging
+
+### Camera Access
+
+The camera is accessed through CameraNeo API:
+
+```java
+// Take photo
+CameraNeo.takePictureWithCallback(context, filePath, callback);
+
+// Start video recording
+CameraNeo.startVideoRecording(context, filePath, callback);
+```
+
+## Debugging Tips
+
+### Common Issues
+
+1. **Can't connect ADB**
+   - Ensure same WiFi network
+   - Check IP is current in app
+   - Restart glasses if needed
+
+2. **App crashes on launch**
+   - Check logcat for errors
+   - Verify permissions granted
+   - Clear app data and retry
+
+3. **Camera not working**
+   - Check camera permissions
+   - Ensure no other app using camera
+   - Restart ASG Client service
+
+### Useful Commands
+
+```bash
+# Check if service is running
+adb shell ps | grep augmentos
+
+# View service logs
+adb logcat -s AsgClientService
+
+# Force stop the app
+adb shell am force-stop com.mentra.asg_client
+
+# Start service manually
+adb shell am startservice com.mentra.asg_client/.AsgClientService
+
+# Take screenshot
+adb shell screencap -p /sdcard/screen.png
+adb pull /sdcard/screen.png
+```
+
+## Performance Optimization
+
+### Battery Life
+
+- Minimize WiFi scanning
+- Use efficient image compression
+- Implement proper wake locks
+- Stop services when not needed
+
+### Memory Usage
+
+- Monitor with: `adb shell dumpsys meminfo com.mentra.asg_client`
+- Release resources promptly
+- Use appropriate image sizes
+- Clear caches periodically
+
+### Thermal Management
+
+- Monitor device temperature
+- Throttle intensive operations
+- Add delays between captures
+- Stop streaming if overheating
+
+## Factory Reset
+
+If needed, factory reset via:
+
+1. **Settings UI** (if accessible on device)
+2. **MentraOS app** → Settings → Factory Reset
+3. **Hardware buttons** (see device manual)
+
+## Development Best Practices
+
+1. **Always test on device** - Emulator won't have MCU
+2. **Monitor battery** - Development drains faster
+3. **Use stable WiFi** - Connection drops interrupt ADB
+4. **Handle offline** - Glasses often lose connectivity
+5. **Test permissions** - Camera, storage, network
+6. **Log extensively** - Helps debug remote issues

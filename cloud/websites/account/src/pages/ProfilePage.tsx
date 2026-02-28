@@ -1,45 +1,45 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '../hooks/useAuth';
-import AccountLayout from '../components/AccountLayout';
-import { toast } from 'sonner';
+import {useState, useEffect} from "react"
+import {useAuth} from "@mentra/shared"
+import AccountLayout from "../components/AccountLayout"
+import {toast} from "sonner"
 
 const ProfilePage: React.FC = () => {
-  const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
-  const [name, setName] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const {user} = useAuth()
+  const [loading, setLoading] = useState(false)
+  const [name, setName] = useState("")
+  const [displayName, setDisplayName] = useState("")
+  const [phoneNumber, setPhoneNumber] = useState("")
 
   // Load user data
   useEffect(() => {
     if (user) {
       // Initialize form with user metadata if available
-      const metadata = user.user_metadata;
+      const metadata = user
       if (metadata) {
-        setName(metadata.name || '');
-        setDisplayName(metadata.display_name || '');
-        setPhoneNumber(metadata.phone_number || '');
+        setName(metadata.name || "")
+        setDisplayName(metadata.name || "")
+        setPhoneNumber(metadata.phoneNumber || "")
       }
     }
-  }, [user]);
+  }, [user])
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+    e.preventDefault()
+    setLoading(true)
 
     try {
       // This is a placeholder for the actual API call
       // In a real implementation, you would call your API service
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      toast.success('Profile updated successfully');
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      toast.success("Profile updated successfully")
     } catch (error) {
-      console.error('Error updating profile:', error);
-      toast.error('Failed to update profile');
+      console.error("Error updating profile:", error)
+      toast.error("Failed to update profile")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   return (
     <AccountLayout>
@@ -49,9 +49,16 @@ const ProfilePage: React.FC = () => {
         <div className="bg-blue-50 border border-blue-200 rounded-md p-4 mb-6">
           <div className="font-medium">Account Information</div>
           <div className="mt-2">
-            <div><span className="font-medium">Email:</span> {user?.email}</div>
-            <div><span className="font-medium">Account ID:</span> {user?.id}</div>
-            <div><span className="font-medium">Created at:</span> {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'Unknown'}</div>
+            <div>
+              <span className="font-medium">Email:</span> {user?.email}
+            </div>
+            <div>
+              <span className="font-medium">Account ID:</span> {user?.id}
+            </div>
+            <div>
+              <span className="font-medium">Created at:</span>{" "}
+              {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "Unknown"}
+            </div>
           </div>
         </div>
 
@@ -101,16 +108,15 @@ const ProfilePage: React.FC = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-              >
-                {loading ? 'Saving...' : 'Save Changes'}
+                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50">
+                {loading ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </form>
         </div>
       </div>
     </AccountLayout>
-  );
-};
+  )
+}
 
-export default ProfilePage;
+export default ProfilePage

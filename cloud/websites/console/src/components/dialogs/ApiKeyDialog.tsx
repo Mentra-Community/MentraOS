@@ -1,14 +1,28 @@
 // components/dialogs/ApiKeyDialog.tsx
-import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FC, useState, useEffect } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Copy, KeyRound, RefreshCw, CheckCircle, AlertCircle } from "lucide-react";
-import api from '@/services/api.service';
-import { AppI } from '@mentra/sdk';
+import {
+  Copy,
+  KeyRound,
+  RefreshCw,
+  CheckCircle,
+  AlertCircle,
+} from "lucide-react";
+import api from "@/services/api.service";
+import type { AppI } from "@mentra/sdk";
+import { App } from "@/types/app";
 
 interface ApiKeyDialogProps {
-  app: AppI | null;
+  app: AppI | App | null;
   apiKey: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -16,18 +30,18 @@ interface ApiKeyDialogProps {
   orgId?: string;
 }
 
-const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
+const ApiKeyDialog: FC<ApiKeyDialogProps> = ({
   app,
   open,
   onOpenChange,
   apiKey,
   onKeyRegenerated,
-  orgId
+  orgId,
 }) => {
   // Local states for dialog
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const [_apiKey, setApiKey] = useState('');
+  const [_apiKey, setApiKey] = useState("");
   const [isCopied, setIsCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -49,7 +63,7 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
 
   // Copy API key to clipboard
   const handleCopyApiKey = () => {
-    navigator['clipboard'].writeText(_apiKey).then(() => {
+    navigator["clipboard"].writeText(_apiKey).then(() => {
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
     });
@@ -103,10 +117,12 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
 
       // Only reset state if App has changed
       if (currentAppId !== appId) {
-        console.log(`App changed from ${currentAppId} to ${appId}, resetting dialog state`);
+        console.log(
+          `App changed from ${currentAppId} to ${appId}, resetting dialog state`,
+        );
 
         // Reset all state
-        setApiKey('');
+        setApiKey("");
         setError(null);
         setSuccess(null);
         setShowConfirmation(false);
@@ -121,7 +137,10 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
   // Update local state when apiKey prop changes (only if it's a real key)
   useEffect(() => {
     if (apiKey && apiKey.length > 10 && !apiKey.includes("********")) {
-      console.log("Setting API key from props:", apiKey.substring(0, 5) + "...");
+      console.log(
+        "Setting API key from props:",
+        apiKey.substring(0, 5) + "...",
+      );
       setApiKey(apiKey);
       setSuccess("API key regenerated successfully");
     }
@@ -156,7 +175,7 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
 
       // Important: Reset the API key when dialog closes
       // This prevents leaking keys between different Apps
-      setApiKey('');
+      setApiKey("");
     }
     onOpenChange(newOpen);
   };
@@ -187,18 +206,24 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
           {success && (
             <Alert className="mb-4 bg-green-50 text-green-800 border-green-200">
               <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertDescription className="text-green-700">{success}</AlertDescription>
+              <AlertDescription className="text-green-700">
+                {success}
+              </AlertDescription>
             </Alert>
           )}
 
           {/* Regeneration Confirmation */}
           {showConfirmation ? (
             <div className="space-y-4">
-              <Alert variant="destructive" className="bg-amber-50 border-amber-200 text-amber-800">
+              <Alert
+                variant="destructive"
+                className="bg-amber-50 border-amber-200 text-amber-800"
+              >
                 <AlertCircle className="h-4 w-4 text-amber-600" />
                 <AlertDescription className="text-amber-700">
-                  Warning: Regenerating this API key will invalidate the previous key.
-                  Any applications using the old key will stop working.
+                  Warning: Regenerating this API key will invalidate the
+                  previous key. Any applications using the old key will stop
+                  working.
                 </AlertDescription>
               </Alert>
               <p className="text-sm text-gray-500">
@@ -217,22 +242,23 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
                   onClick={handleConfirmRegenerate}
                   disabled={isRegenerating}
                 >
-                  {isRegenerating ?
+                  {isRegenerating ? (
                     <>
                       <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                       Regenerating...
-                    </> :
-                    'Regenerate Key'
-                  }
+                    </>
+                  ) : (
+                    "Regenerate Key"
+                  )}
                 </Button>
               </div>
             </div>
           ) : (
             <>
-              <div className="space-y-2 mb-4">
+              <div className="space-y-2">
                 <p className="text-sm text-gray-500">
-                  Your API key is used to authenticate your app with MentraOS cloud services.
-                  Keep it secure and never share it publicly.
+                  Your API key is used to authenticate your app with MentraOS
+                  cloud services. Keep it secure and never share it publicly.
                 </p>
                 {_apiKey ? (
                   <>
@@ -246,43 +272,50 @@ const ApiKeyDialog: React.FC<ApiKeyDialogProps> = ({
                         onClick={handleCopyApiKey}
                         className="shrink-0"
                       >
-                        {isCopied ?
-                          <CheckCircle className="h-4 w-4 text-green-600" /> :
+                        {isCopied ? (
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                        ) : (
                           <Copy className="h-4 w-4" />
-                        }
+                        )}
                       </Button>
                     </div>
                     <p className="text-xs text-red-500 font-medium mt-1">
-                      Important: This key is only shown once. Please copy it now!
+                      Important: This key is only shown once. Please copy it
+                      now!
                     </p>
                   </>
                 ) : (
                   <div className="p-4 bg-amber-50 border border-amber-200 rounded-md">
                     <p className="text-sm text-amber-800">
-                      No API key is available to view. API keys are only shown once when generated and are securely stored.
+                      No API key is available to view. API keys are only shown
+                      once when generated and are securely stored.
                     </p>
                     <p className="text-sm text-amber-800 mt-1">
-                      Click "Regenerate Key" to create a new API key. This will invalidate any previous keys.
+                      Click &quot;Regenerate Key&quot; to create a new API key.
+                      This will invalidate any previous keys.
                     </p>
                   </div>
                 )}
               </div>
 
-              <div className="space-y-2">
+              {/*<div className="space-y-2">
                 <h3 className="text-sm font-medium">Webhook URL</h3>
                 <div className="font-mono text-sm p-2 border rounded-md bg-gray-50 overflow-x-auto break-all">
-                  {app?.publicUrl ? `${app.publicUrl}/webhook` : 'No server URL defined'}
+                  {app?.publicUrl
+                    ? `${app.publicUrl}/webhook`
+                    : "No server URL defined"}
                 </div>
                 <p className="text-xs text-gray-500">
-                  This is the full webhook URL where MentraOS will send events to your app.
+                  This is the full webhook URL where MentraOS will send events
+                  to your app.
                 </p>
-              </div>
+              </div>*/}
             </>
           )}
         </div>
 
         {!showConfirmation && (
-          <DialogFooter className="flex flex-col sm:flex-row items-start sm:items-center sm:justify-between gap-4 sm:gap-2 mt-4">
+          <DialogFooter className="flex flex-col sm:flex-row items-start sm:items-center sm:justify-between gap-4 sm:gap-2 ">
             <p className="text-xs text-gray-500">
               Last regenerated: {lastRegenerated.toLocaleDateString()}
             </p>

@@ -1,8 +1,9 @@
-import React, {useState, useEffect} from "react"
-import {View, Text, TextInput, StyleSheet, Platform, Pressable, Alert} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {useState, useEffect} from "react"
+import {View, Platform, Pressable, Alert, TextInput, ViewStyle, TextStyle} from "react-native"
+
+import {Text} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {ViewStyle, TextStyle} from "react-native"
 
 type NumberSettingProps = {
   label: string
@@ -13,6 +14,8 @@ type NumberSettingProps = {
   placeholder?: string
   onValueChange: (value: number) => void
   containerStyle?: ViewStyle
+  isFirst?: boolean
+  isLast?: boolean
 }
 
 const NumberSetting: React.FC<NumberSettingProps> = ({
@@ -24,10 +27,23 @@ const NumberSetting: React.FC<NumberSettingProps> = ({
   placeholder = "Enter number...",
   onValueChange,
   containerStyle,
+  isFirst,
+  isLast,
 }) => {
   const {theme, themed} = useAppTheme()
+
+  const groupedStyle: ViewStyle | undefined =
+    isFirst !== undefined || isLast !== undefined
+      ? {
+          borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+          marginBottom: isLast ? 0 : theme.spacing.s2,
+        }
+      : undefined
   const [localValue, setLocalValue] = useState(value.toString())
-  const [isEditing, setIsEditing] = useState(false)
+  const [_isEditing, setIsEditing] = useState(false)
 
   // Update local value when prop changes
   useEffect(() => {
@@ -104,7 +120,7 @@ const NumberSetting: React.FC<NumberSettingProps> = ({
   }
 
   return (
-    <View style={[themed($container), containerStyle]}>
+    <View style={[themed($container), groupedStyle, containerStyle]}>
       <Text style={themed($label)}>{label}</Text>
 
       <View style={themed($inputContainer)}>
@@ -148,43 +164,42 @@ const NumberSetting: React.FC<NumberSettingProps> = ({
 }
 
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: 8,
-  paddingVertical: spacing.md,
-  paddingHorizontal: spacing.lg,
+  backgroundColor: colors.primary_foreground,
+  borderRadius: spacing.s4,
+  paddingVertical: spacing.s4,
+  paddingHorizontal: spacing.s4,
   width: "100%",
 })
 
 const $label: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 16,
+  fontSize: 14,
+  fontWeight: "600",
   color: colors.text,
-  marginBottom: spacing.sm,
+  marginBottom: spacing.s2,
 })
 
 const $inputContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   alignItems: "center",
-  gap: spacing.xs,
+  gap: spacing.s2,
 })
 
 const $input: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   flex: 1,
   fontSize: 16,
   color: colors.text,
-  backgroundColor: colors.background,
+  backgroundColor: colors.backgroundAlt,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
-  paddingHorizontal: spacing.sm,
-  paddingVertical: spacing.xs,
+  paddingHorizontal: spacing.s3,
+  paddingVertical: spacing.s2,
   textAlign: "center",
   minHeight: Platform.OS === "ios" ? 44 : 48,
 })
 
-const $decrementButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
+const $decrementButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.backgroundAlt,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
@@ -194,8 +209,8 @@ const $decrementButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   alignItems: "center",
 })
 
-const $incrementButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
+const $incrementButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.backgroundAlt,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
@@ -214,7 +229,7 @@ const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
 const $constraintsText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   fontSize: 12,
   color: colors.textDim,
-  marginTop: spacing.xs,
+  marginTop: spacing.s2,
   textAlign: "center",
 })
 

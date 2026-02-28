@@ -5,7 +5,7 @@
     "experimentalDecorators": true,
     "jsx": "react-native",
     "module": "es2015",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "noImplicitAny": true,
     "noImplicitReturns": true,
@@ -18,9 +18,13 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "assets/*": ["./assets/*"]
+      "@cloud/*": ["../cloud/packages/types/*"],
+      "@assets/*": ["../assets/*"],
+      "@plugins/*": ["./plugins/*"],
+      "@mentra/display-utils": ["../cloud/packages/display-utils/src"]
     },
-    "typeRoots": ["./node_modules/@types", "./types", "./src/types"]
+    "types": ["node", "react", "react-native", "jest"],
+    "typeRoots": ["./node_modules/@types", "./src/types"]
   },
   "extends": "expo/tsconfig.base",
   "ts-node": {

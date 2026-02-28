@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation, Navigate } from "react-router-dom";
-import { useAuth } from "../hooks/useAuth";
+import { useAuth } from "@mentra/shared";
 
 interface AccountLayoutProps {
   children: React.ReactNode;
@@ -8,10 +8,10 @@ interface AccountLayoutProps {
 
 const AccountLayout: React.FC<AccountLayoutProps> = ({ children }) => {
   const location = useLocation();
-  const { isAuthenticated, loading, signOut } = useAuth();
+  const { isAuthenticated, isLoading, signOut } = useAuth();
 
   // If still loading, show loading state
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>

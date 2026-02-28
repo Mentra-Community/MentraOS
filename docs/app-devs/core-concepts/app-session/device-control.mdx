@@ -1,0 +1,576 @@
+---
+title: "Device Control"
+description: "Control audio, camera, LED, and location on smart glasses"
+---
+
+Control device hardware using `session.audio`, `session.camera`, `session.led`, and `session.location`. Each manager provides methods for specific hardware features.
+
+## Audio Control
+
+Control audio playback and text-to-speech on glasses.
+
+### Text-to-Speech
+
+**Convert text to speech:**
+
+```typescript
+// Basic TTS
+await session.audio.speak('Hello from your app!');
+
+// With custom voice settings
+await session.audio.speak('Welcome back!', {
+  voice_id: 'your_voice_id',
+  voice_settings: {
+    stability: 0.5,
+    speed: 1.2
+  },
+  volume: 0.8
+});
+```
+
+### Play Audio Files
+
+**Play audio from URL:**
+
+```typescript
+const result = await session.audio.playAudio({
+  audioUrl: 'https://example.com/notification.mp3',
+  volume: 0.8,
+  stopOtherAudio: true
+});
+
+if (result.success) {
+  session.logger.info('Audio played successfully');
+} else {
+  session.logger.error('Audio failed:', result.error);
+}
+```
+
+### Stop Audio
+
+```typescript
+// Stop all currently playing audio
+session.audio.stopAudio();
+```
+
+### Audio Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `audioUrl` | string | required | URL to audio file |
+| `volume` | number | 1.0 | Volume level (0.0-1.0) |
+| `stopOtherAudio` | boolean | true | Stop other audio before playing |
+
+**TTS Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `voice_id` | string | Voice ID to use |
+| `model_id` | string | Model ID (default: eleven_flash_v2_5) |
+| `voice_settings` | object | Voice parameters (stability, speed, etc.) |
+| `volume` | number | Volume level (0.0-1.0) |
+
+## Camera Control
+
+Capture photos and stream video from camera-equipped glasses.
+
+### Check Camera Availability
+
+```typescript
+if (session.capabilities?.hasCamera) {
+  // Camera available
+  await session.camera.requestPhoto();
+} else {
+  session.logger.warn('Camera not available on this device');
+}
+```
+
+### Take Photos
+
+**Basic photo capture:**
+
+```typescript
+const photo = await session.camera.requestPhoto();
+session.logger.info('Photo captured:', photo.filename);
+```
+
+**With options:**
+
+```typescript
+const photo = await session.camera.requestPhoto({
+  saveToGallery: true,
+  size: 'large',
+  compress: 'medium'
+});
+```
+
+**Photo data returned:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `filename` | string | Photo filename |
+| `url` | string | Photo URL |
+| `timestamp` | Date | When photo was taken |
+
+### Photo Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `saveToGallery` | boolean | false | Save to device gallery |
+| `size` | string | 'medium' | 'small', 'medium', or 'large' |
+| `compress` | string | 'none' | 'none', 'medium', or 'heavy' |
+| `customWebhookUrl` | string | - | Override default webhook URL |
+| `authToken` | string | - | Auth token for custom webhook |
+
+### RTMP Streaming
+
+**Start streaming:**
+
+```typescript
+await session.camera.startStream({
+  rtmpUrl: 'rtmp://live.example.com/stream/key',
+  video: {
+    resolution: '1280x720',
+    framerate: 30,
+    bitrate: 2500000
+  },
+  audio: {
+    enabled: true,
+    bitrate: 128000
+  }
+});
+
+session.logger.info('Stream started');
+```
+
+**Monitor stream status:**
+
+```typescript
+session.camera.onStreamStatus((status) => {
+  session.logger.info('Stream status:', status.status);
+  // status values: 'starting', 'streaming', 'stopped', 'error'
+
+  if (status.status === 'error') {
+    session.logger.error('Stream error:', status.error);
+  }
+});
+```
+
+**Stop streaming:**
+
+```typescript
+await session.camera.stopStream();
+```
+
+### Managed Streaming
+
+**Zero-infrastructure streaming (MentraOS handles RTMP):**
+
+```typescript
+// Start managed stream
+const result = await session.camera.startManagedStream({
+  video: {
+    resolution: '1920x1080',
+    framerate: 30
+  }
+});
+
+session.logger.info('Streaming at:', result.streamUrl);
+session.logger.info('Watch at:', result.viewerUrl);
+
+// Stop managed stream
+await session.camera.stopManagedStream();
+```
+
+## LED Control
+
+Control RGB LEDs on supported glasses.
+
+### Check LED Availability
+
+```typescript
+if (session.capabilities?.hasLight) {
+  const lightInfo = session.capabilities.light;
+  session.logger.info(`Device has ${lightInfo.count} LEDs`);
+
+  // Check for RGB support
+  const hasRGB = lightInfo.lights?.some(led => led.isFullColor);
+  if (hasRGB) {
+    // Can use any color
+  }
+}
+```
+
+### Turn LED On
+
+**Basic usage:**
+
+```typescript
+await session.led.turnOn({
+  color: 'blue',
+  ontime: 2000 // milliseconds
+});
+```
+
+**With brightness:**
+
+```typescript
+await session.led.turnOn({
+  color: 'green',
+  brightness: 128, // 0-255
+  ontime: 1000
+});
+```
+
+### Turn LED Off
+
+```typescript
+await session.led.turnOff();
+```
+
+### LED Blink Pattern
+
+```typescript
+await session.led.blink({
+  color: 'red',
+  ontime: 500,
+  offtime: 500,
+  count: 5 // blink 5 times
+});
+```
+
+### LED Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `color` | string | 'red', 'green', 'blue', 'white', etc. |
+| `brightness` | number | 0-255 (optional) |
+| `ontime` | number | Duration in milliseconds |
+| `offtime` | number | Off duration for blinking |
+| `count` | number | Number of blinks |
+
+## Location Access
+
+Access GPS location from the user's device.
+
+### Subscribe to Location Updates
+
+**Continuous location updates:**
+
+```typescript
+session.location.subscribeToStream({ accuracy: 'high' }, (location) => {
+  session.logger.info('Location:', location.lat, location.lng);
+  session.logger.info('Accuracy:', location.accuracy, 'meters');
+
+  // Use location data
+  session.layouts.showTextWall(
+    `Lat: ${location.lat.toFixed(4)}\n` +
+    `Lng: ${location.lng.toFixed(4)}`
+  );
+});
+```
+
+### Get Latest Location
+
+**One-time location fetch:**
+
+```typescript
+const location = await session.location.getLatestLocation();
+if (location) {
+  session.logger.info('Current location:', location.lat, location.lng);
+}
+```
+
+### Location Data
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `lat` | number | Latitude |
+| `lng` | number | Longitude |
+| `accuracy` | number | Accuracy in meters |
+| `altitude` | number | Altitude in meters (optional) |
+| `timestamp` | number | When location was captured |
+
+### Accuracy Levels
+
+| Level | Description |
+|-------|-------------|
+| `high` | Best accuracy, higher battery usage |
+| `medium` | Balanced accuracy and battery |
+| `low` | Lower accuracy, battery efficient |
+
+## Common Patterns
+
+### Audio Feedback
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  // Welcome message
+  await session.audio.speak('Welcome to the app!');
+
+  // Listen for voice commands
+  session.events.onTranscription(async (data) => {
+    if (data.isFinal) {
+      // Acknowledge command
+      await session.audio.speak('Processing your request');
+
+      // Process...
+      const result = await this.processCommand(data.text);
+
+      // Speak result
+      await session.audio.speak(result);
+    }
+  });
+}
+```
+
+### Photo on Button Press
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  if (!session.capabilities?.hasCamera) {
+    session.layouts.showTextWall('No camera available');
+    return;
+  }
+
+  session.events.onButtonPress(async (data) => {
+    if (data.button === 'select') {
+      session.layouts.showTextWall('Capturing photo...');
+
+      try {
+        const photo = await session.camera.requestPhoto({
+          saveToGallery: true
+        });
+
+        session.layouts.showTextWall('Photo saved!');
+        await session.audio.speak('Photo captured successfully');
+      } catch (error) {
+        session.logger.error('Photo failed:', error);
+        session.layouts.showTextWall('Photo failed');
+      }
+    }
+  });
+}
+```
+
+### LED Notifications
+
+```typescript
+async function showNotification(session: AppSession, type: 'info' | 'success' | 'error') {
+  if (!session.capabilities?.hasLight) return;
+
+  const colors = {
+    info: 'blue',
+    success: 'green',
+    error: 'red'
+  };
+
+  await session.led.turnOn({
+    color: colors[type],
+    ontime: 1000
+  });
+}
+
+// Usage
+session.events.onTranscription(async (data) => {
+  if (data.isFinal) {
+    await showNotification(session, 'info');
+    // Process command...
+    await showNotification(session, 'success');
+  }
+});
+```
+
+### Location-Based Alerts
+
+```typescript
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  const targetLocation = { lat: 37.7749, lng: -122.4194 };
+  const alertRadius = 0.1; // km
+
+  session.location.subscribeToStream({ accuracy: 'high' }, async (location) => {
+    const distance = this.calculateDistance(
+      location.lat, location.lng,
+      targetLocation.lat, targetLocation.lng
+    );
+
+    // Update display
+    session.dashboard.content.writeToMain(`Distance: ${distance.toFixed(2)} km`);
+
+    // Alert when nearby
+    if (distance < alertRadius) {
+      await session.audio.speak('You are near your destination');
+
+      if (session.capabilities?.hasLight) {
+        await session.led.blink({
+          color: 'green',
+          ontime: 200,
+          offtime: 200,
+          count: 3
+        });
+      }
+    }
+  });
+}
+
+private calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng/2) * Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+```
+
+### Streaming Control
+
+```typescript
+class StreamingApp extends AppServer {
+  private isRecording = false;
+
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    if (!session.capabilities?.hasCamera) {
+      session.layouts.showTextWall('Camera not available');
+      return;
+    }
+
+    session.layouts.showTextWall('Say "start" or "stop"');
+
+    session.events.onTranscription(async (data) => {
+      if (!data.isFinal) return;
+
+      const text = data.text.toLowerCase();
+
+      if (text.includes('start') && !this.isRecording) {
+        await this.startRecording(session);
+      } else if (text.includes('stop') && this.isRecording) {
+        await this.stopRecording(session);
+      }
+    });
+
+    // Monitor stream status
+    session.camera.onStreamStatus((status) => {
+      session.dashboard.content.writeToMain(`Stream: ${status.status}`);
+    });
+  }
+
+  private async startRecording(session: AppSession) {
+    try {
+      const result = await session.camera.startManagedStream({
+        video: { resolution: '1280x720', framerate: 30 }
+      });
+
+      this.isRecording = true;
+      session.layouts.showTextWall('Recording started');
+      await session.audio.speak('Recording');
+
+      session.logger.info('Stream URL:', result.viewerUrl);
+    } catch (error) {
+      session.logger.error('Failed to start stream:', error);
+      await session.audio.speak('Failed to start recording');
+    }
+  }
+
+  private async stopRecording(session: AppSession) {
+    await session.camera.stopManagedStream();
+    this.isRecording = false;
+
+    session.layouts.showTextWall('Recording stopped');
+    await session.audio.speak('Recording stopped');
+  }
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Check Capabilities First" icon="check">
+    Always verify hardware availability before using device features:
+
+    ```typescript
+    // ✅ Good
+    if (session.capabilities?.hasCamera) {
+      await session.camera.requestPhoto();
+    }
+
+    // ❌ Avoid - may crash on devices without camera
+    await session.camera.requestPhoto();
+    ```
+  </Accordion>
+
+  <Accordion title="Handle Errors Gracefully" icon="circle-exclamation">
+    Device operations can fail - always handle errors:
+
+    ```typescript
+    // ✅ Good
+    try {
+      const photo = await session.camera.requestPhoto();
+      session.layouts.showTextWall('Success!');
+    } catch (error) {
+      session.logger.error('Photo failed:', error);
+      session.layouts.showTextWall('Photo failed');
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Provide User Feedback" icon="comment">
+    Let users know what's happening:
+
+    ```typescript
+    // ✅ Good
+    session.layouts.showTextWall('Taking photo...');
+    const photo = await session.camera.requestPhoto();
+    session.layouts.showTextWall('Photo captured!');
+    await session.audio.speak('Photo saved');
+
+    // ❌ Avoid - silent operations confuse users
+    await session.camera.requestPhoto();
+    ```
+  </Accordion>
+
+  <Accordion title="Clean Up Resources" icon="broom">
+    Stop streams and unsubscribe when done:
+
+    ```typescript
+    protected async onStop(sessionId: string, userId: string, reason: string) {
+      // Streams stop automatically on disconnect
+      // Location subscriptions clean up automatically
+      session.logger.info('Session ended');
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Permissions Required
+
+Device features require specific permissions:
+
+| Feature | Permission | Notes |
+|---------|------------|-------|
+| Audio playback | None | Always available |
+| Camera (photo/video) | CAMERA | Set in dev console |
+| LED control | None | If hardware available |
+| Location | LOCATION | Set in dev console |
+
+<Info>
+Set permissions in the [Developer Console](https://console.mentra.glass/apps). Users approve them when installing your app.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Capabilities" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/device-capabilities">
+    Learn about device capabilities
+  </Card>
+  <Card title="Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
+    Understand permission system
+  </Card>
+  <Card title="Audio Manager" icon="book" href="/app-devs/reference/managers/audio-manager">
+    Complete audio API reference
+  </Card>
+  <Card title="Camera Manager" icon="book" href="/app-devs/reference/managers/camera">
+    Complete camera API reference
+  </Card>
+</CardGroup>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useAuth } from "../hooks/useAuth";
+import { useAuth } from "@mentra/shared";
 import AccountLayout from "../components/AccountLayout";
 import { toast } from "sonner";
 // import api from '../services/api.service';

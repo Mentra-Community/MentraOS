@@ -1,15 +1,28 @@
-import React from "react"
-import {TouchableOpacity, Text, StyleSheet, TouchableOpacityProps, TextStyle, ViewStyle} from "react-native"
-import {useAppTheme} from "@/utils/useAppTheme"
+import {} from "react"
+import {TOptions} from "i18next"
+import {TouchableOpacity, TouchableOpacityProps, TextStyle, ViewStyle, StyleProp} from "react-native"
 
-export type PillButtonVariant = "primary" | "secondary" | "icon"
+import {Text} from "@/components/ignite/Text"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {TxKeyPath} from "@/i18n"
+import {ThemedStyle} from "@/theme"
+
+type PillButtonVariant = "primary" | "secondary" | "icon"
 
 interface PillButtonProps extends Omit<TouchableOpacityProps, "style"> {
   /**
-   * The text to display in the button
+   * Text which is looked up via i18n.
    */
-  text: string
-
+  tx?: TxKeyPath
+  /**
+   * The text to display if not using `tx` or nested components.
+   */
+  text?: string
+  /**
+   * Optional options to pass to i18n. Useful for interpolation
+   * as well as explicitly setting locale or translation fallbacks.
+   */
+  txOptions?: TOptions
   /**
    * The button variant - primary (solid color), secondary (transparent with border), or icon (gray background)
    */
@@ -46,73 +59,91 @@ export function PillButton({
   buttonStyle,
   textStyle,
   disabled = false,
+  tx,
+  txOptions,
   ...touchableProps
 }: PillButtonProps) {
-  const {theme} = useAppTheme()
+  const {themed} = useAppTheme()
 
   const isPrimary = variant === "primary"
   const isSecondary = variant === "secondary"
-  const isIcon = variant === "icon"
 
-  const getBackgroundColor = () => {
-    if (isPrimary) return theme.colors.buttonPillPrimary
-    if (isSecondary) return theme.colors.buttonPillSecondary
-    return theme.colors.buttonPillIcon
-  }
-
-  const getTextColor = () => {
-    if (isPrimary) return theme.colors.buttonPillPrimaryText
-    if (isSecondary) return theme.colors.buttonPillSecondaryText
-    return theme.colors.buttonPillIconText
-  }
-
-  const buttonStyles = [
-    styles.button,
-    {
-      backgroundColor: getBackgroundColor(),
-      ...(isSecondary && {
-        borderWidth: 1,
-        borderColor: theme.colors.buttonPillSecondaryBorder,
-      }),
-    },
-    disabled && styles.disabled,
+  const buttonStyles: StyleProp<ViewStyle> = [
+    themed($button),
+    isPrimary && themed($primaryButton),
+    isSecondary && themed($secondaryButton),
+    !isPrimary && !isSecondary && themed($iconButton),
+    disabled && themed($disabled),
     buttonStyle,
   ]
 
-  const textStyles = [
-    styles.text,
-    {
-      color: getTextColor(),
-    },
-    disabled && styles.disabledText,
+  const textStyles: StyleProp<TextStyle> = [
+    themed($text),
+    isPrimary && themed($primaryText),
+    isSecondary && themed($secondaryText),
+    !isPrimary && !isSecondary && themed($iconText),
+    disabled && themed($disabledText),
     textStyle,
   ]
 
   return (
     <TouchableOpacity style={buttonStyles} disabled={disabled} hitSlop={10} {...touchableProps}>
-      <Text style={textStyles}>{text}</Text>
+      <Text style={textStyles} tx={tx} text={text} txOptions={txOptions}></Text>
     </TouchableOpacity>
   )
 }
 
-const styles = StyleSheet.create({
-  button: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 100, // Pill shape
-    height: 36,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  disabled: {
-    opacity: 0.4,
-  },
-  disabledText: {
-    // Text color will be automatically dimmed by the container opacity
-  },
-  text: {
-    fontSize: 14,
-    fontWeight: "normal",
-    textAlign: "center",
-  },
+const $button: ThemedStyle<ViewStyle> = () => ({
+  paddingVertical: 8,
+  paddingHorizontal: 16,
+  borderRadius: 100, // Pill shape
+  height: 36,
+  justifyContent: "center",
+  alignItems: "center",
+})
+
+const $primaryButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.secondary_foreground,
+})
+
+const $secondaryButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.primary_foreground,
+  borderWidth: 1,
+  borderColor: colors.border,
+})
+
+const $iconButton: ThemedStyle<ViewStyle> = ({colors}) => ({
+  backgroundColor: colors.primary_foreground,
+  // shadow:
+  shadowColor: colors.secondary_foreground,
+  shadowOffset: {width: 0, height: 1},
+  shadowOpacity: 0.2,
+  shadowRadius: 2,
+})
+
+const $text: ThemedStyle<TextStyle> = () => ({
+  fontSize: 14,
+  fontWeight: "normal",
+  textAlign: "center",
+  lineHeight: 20, // Fix vertical centering
+})
+
+const $primaryText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.textAlt,
+})
+
+const $secondaryText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
+})
+
+const $iconText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.text,
+})
+
+const $disabled: ThemedStyle<ViewStyle> = () => ({
+  opacity: 0.4,
+})
+
+const $disabledText: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.textDim,
 })

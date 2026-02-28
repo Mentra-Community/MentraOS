@@ -1,0 +1,162 @@
+name: China Cloud Api Deployment (Dev)
+
+on:
+  push:
+    branches:
+      - "ya/clean-china-cicd"
+    paths:
+      - "cloud/**"
+      - ".github/workflows/china-deployment-dev.yml"
+
+jobs:
+  china-cloud-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      # 1. Checkout source code
+      - uses: actions/checkout@v4
+
+      # 2. Short commit SHA for tagging
+      - id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Create environment file with proper escaping
+      - name: Create environment file
+        run: |
+          cat > env.yaml << 'EOL'
+          - name: redeploy
+            value: "2"
+          - name: DEPLOYMENT_REGION
+            value: "china"
+          - name: NODE_ENV
+            value: "production"
+          - name: PORT
+            value: "80"
+          - name: SYSTEM_DASHBOARD_PACKAGE_NAME
+            value: "system.augmentos.dashboard"
+          - name: CLOUD_VERSION
+            value: "2.1.2"
+          - name: ADMIN_EMAILS
+            value: "israelov@mentra.glass, isaiah@mentra.glass, matt@mentra.glass, cayden@mentra.glass, nicolo@mentra.glass, team@mentra.glass, yash@mentraglass.com"
+          - name: CLOUD_PUBLIC_HOST_NAME
+            value: "dev-api.mentraglass.cn"
+          - name: CLOUD_HOST_NAME
+            value: "dev-api.mentraglass.cn"
+          - name: CLOUD_LOCAL_HOST_NAME
+            value: "cloud-prod-cloud.default.svc.cluster.local:80"
+          - name: PORTER_APP_NAME
+            value: "cloud-prod"
+          - name: MONGO_URL
+            value: "mongodb+srv://root:${{ secrets.MONGO_PASSWORD }}@dds-n9e5761d6d2d0f84-srv.mongodb.nosql.aliyuncs.com/prod?ssl=false"
+          - name: AUGMENTOS_AUTH_JWT_SECRET
+            value: "${{ secrets.AUGMENTOS_AUTH_JWT_SECRET }}"
+          - name: INVITE_JWT_SECRET
+            value: "${{ secrets.INVITE_JWT_SECRET }}"
+          - name: JOE_MAMA_USER_JWT
+            value: "${{ secrets.JOE_MAMA_USER_JWT }}"
+          - name: TPA_AUTH_JWT_PRIVATE_KEY
+            value: "${{ secrets.TPA_AUTH_JWT_PRIVATE_KEY }}"
+          - name: LIVEKIT_URL
+            value: "${{ secrets.LIVEKIT_URL }}"
+          - name: LIVEKIT_API_SECRET
+            value: "${{ secrets.LIVEKIT_API_SECRET }}"
+          - name: LIVEKIT_API_KEY
+            value: "${{ secrets.LIVEKIT_API_KEY }}"
+          - name: AUTHING_APP_SECRET
+            value: "${{ secrets.AUTHING_APP_SECRET }}"
+          - name: AUTHING_APP_ID
+            value: "${{ secrets.AUTHING_APP_ID }}"
+          - name: AUTHING_APP_HOST
+            value: "${{ secrets.AUTHING_APP_HOST }}"
+          - name: SUPABASE_URL
+            value: "${{ secrets.SUPABASE_URL }}"
+          - name: SUPABASE_SERVICE_KEY
+            value: "${{ secrets.SUPABASE_SERVICE_KEY }}"
+          - name: SUPABASE_JWT_SECRET
+            value: "${{ secrets.SUPABASE_JWT_SECRET }}"
+          - name: AZURE_OPENAI_API_DEPLOYMENT_NAME
+            value: "gpt-4o"
+          - name: AZURE_OPENAI_API_INSTANCE_NAME
+            value: "mentra-uscentral-resource"
+          - name: AZURE_OPENAI_API_KEY
+            value: "${{ secrets.AZURE_OPENAI_API_KEY }}"
+          - name: AZURE_OPENAI_API_VERSION
+            value: "2024-08-01-preview"
+          - name: AZURE_SPEECH_KEY
+            value: "${{ secrets.AZURE_SPEECH_KEY }}"
+          - name: AZURE_SPEECH_REGION
+            value: "centralus"
+          - name: SONIOX_API_KEY
+            value: "${{ secrets.SONIOX_API_KEY }}"
+          - name: ANTHROPIC_API_KEY
+            value: "${{ secrets.ANTHROPIC_API_KEY }}"
+          - name: ELEVENLABS_API_KEY
+            value: "${{ secrets.ELEVENLABS_API_KEY }}"
+          - name: ELEVENLABS_DEFAULT_VOICE_ID
+            value: "TX3LPaxmHKxFdv7VOQHJ"
+          - name: OPENAI_API_KEY
+            value: "${{ secrets.OPENAI_API_KEY }}"
+          - name: LLM_MODEL
+            value: "gpt-4o"
+          - name: LLM_PROVIDER
+            value: "azure"
+          - name: ALIBABA_ENDPOINT
+            value: "${{ secrets.ALIBABA_ENDPOINT }}"
+          - name: ALIBABA_WORKSPACE
+            value: "${{ secrets.ALIBABA_WORKSPACE }}"
+          - name: ALIBABA_DASHSCOPE_API_KEY
+            value: "${{ secrets.ALIBABA_DASHSCOPE_API_KEY }}"
+          - name: ALIBABA_ACCESS_KEY_ID
+            value: "${{ secrets.ALIBABA_ACCESS_KEY_ID }}"
+          - name: ALIBABA_ACCESS_KEY_SECRET
+            value: "${{ secrets.ALIBABA_ACCESS_KEY_SECRET }}"
+          - name: BETTERSTACK_SOURCE_TOKEN
+            value: "${{ secrets.BETTERSTACK_SOURCE_TOKEN }}"
+          - name: POSTHOG_HOST
+            value: "https://us.i.posthog.com"
+          - name: POSTHOG_PROJECT_API_KEY
+            value: "${{ secrets.POSTHOG_PROJECT_API_KEY }}"
+          - name: SENTRY_DSN
+            value: "${{ secrets.SENTRY_DSN }}"
+          - name: SERPAPI_API_KEY
+            value: "${{ secrets.SERPAPI_API_KEY }}"
+          - name: CLOUDFLARE_ACCOUNT_ID
+            value: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+          - name: CLOUDFLARE_API_TOKEN
+            value: "${{ secrets.CLOUDFLARE_API_TOKEN }}"
+          - name: CLOUD_URL
+            value: "cloud"
+          - name: RESEND_API_KEY
+            value: "${{ secrets.RESEND_API_KEY }}"
+          EOL
+
+      # Create start.sh file
+      - name: Create start.sh file
+        run: |
+          cat > container-start-args.yaml << 'EOL'
+          - ./start.sh
+          EOL
+
+      # Deploy using the environment file
+      - uses: Mentra-Community/cloud-actions/deploy-app-alibaba@main
+        with:
+          environment: "dev"
+          alibaba-access-key-id: ${{ secrets.ALIBABA_ACCESS_KEY_ID }}
+          alibaba-access-key-secret: ${{ secrets.ALIBABA_ACCESS_KEY_SECRET }}
+          deployment-region: "cn-shenzhen"
+          app-name: "api"
+          acr-instance-id: "cri-h675v46p9lj694l6"
+          acr-vpc-domain: "mentra-acr-cnsz-a-registry-vpc.cn-shenzhen.cr.aliyuncs.com"
+          acr-public-domain: "mentra-acr-cnsz-a-registry.cn-shenzhen.cr.aliyuncs.com"
+          docker-context: "./cloud"
+          dockerfile: "./cloud/docker/Dockerfile.livekit"
+          image-tag: ${{ steps.vars.outputs.sha_short }}
+          min-instances: 1
+          max-instances: 2
+          use-specs: "2.0-4.0Gi"
+          vswitch: "vsw-wz94gyb5cinmsod89a4tj,vsw-wz9p9qoldncmf9k5se950"
+          security-group: "sg-wz95j71022jl4tezfozp"
+          env-yaml-file: "env.yaml"
+          container-start-args-file: "container-start-args.yaml"

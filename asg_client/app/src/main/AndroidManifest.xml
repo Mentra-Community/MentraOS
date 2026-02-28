@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.augmentos.asg_client">
+    package="com.mentra.asg_client">
 
     <uses-feature
         android:name="android.hardware.telephony"
@@ -65,7 +65,7 @@
 
     <!-- Application node is not neccessary for libraries -->
     <application
-        android:name=".AsgClientApplication"
+        android:name="com.mentra.asg_client.AsgClientApplication"
         android:usesCleartextTraffic="true">
         <!--      android:usesCleartextTraffic="true"-->
         <!--      android:icon="@mipmap/ic_launcher"-->
@@ -76,7 +76,7 @@
 
 
         <receiver
-            android:name=".AsgClientBootReceiver"
+            android:name="com.mentra.asg_client.AsgClientBootReceiver"
             android:directBootAware="true"
             android:enabled="true"
             android:exported="true">
@@ -90,7 +90,7 @@
 
         <!-- Transparent bootstrap activity that starts the service -->
         <activity
-            android:name=".BootstrapActivity"
+            android:name="com.mentra.asg_client.BootstrapActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:taskAffinity=""
@@ -98,44 +98,65 @@
 
         <!-- Receiver for handling restart requests from OTA updater -->
         <receiver
-            android:name=".AsgClientRestartReceiver"
+            android:name="com.mentra.asg_client.AsgClientRestartReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.augmentos.asg_client.ACTION_RESTART_SERVICE" />
+                <action android:name="com.mentra.asg_client.ACTION_RESTART_SERVICE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.mentra.asg_client.audio.I2SAudioBroadcastReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xy.sound.AUDIO_PLAYSTATE_CHANGE" />
+                <action android:name="com.xy.sound.AUDIO_PLAYSTATE_ACTION" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- MTK OTA firmware update progress receiver -->
+        <receiver
+            android:name="com.mentra.asg_client.io.ota.receivers.MtkOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xy.otaupdateresult" />
             </intent-filter>
         </receiver>
 
         <service
-            android:name=".service.core.AsgClientService"
+            android:name="com.mentra.asg_client.service.core.AsgClientService"
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="camera|microphone">
             <intent-filter>
-                <action android:name="com.augmentos.asg_client.ACTION_RESTART_SERVICE" />
+                <action android:name="com.mentra.asg_client.ACTION_RESTART_SERVICE" />
             </intent-filter>
         </service>
 
         <service
-            android:name=".camera.CameraNeo"
+            android:name="com.mentra.asg_client.camera.CameraNeo"
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="camera|microphone" />
 
         <service
-            android:name=".io.streaming.services.RtmpStreamingService"
+            android:name="com.mentra.asg_client.io.streaming.services.RtmpStreamingService"
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="camera|microphone" />
 
         <service
-            android:name=".io.ota.services.OtaService"
+            android:name="com.mentra.asg_client.io.ota.services.OtaService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
         <activity
-            android:name="com.augmentos.asg_client.MainActivity"
+            android:name="com.mentra.asg_client.MainActivity"
             android:exported="true"
             android:theme="@style/AppTheme">
             <intent-filter>
@@ -211,8 +232,8 @@
     </queries>
 
     <queries>
-        <package android:name="com.augmentos.augmentos" />
-        <package android:name="com.augmentos.otaupdater" />
+        <package android:name="com.mentra.augmentos" />
+        <package android:name="com.mentra.otaupdater" />
     </queries>
 
 </manifest>

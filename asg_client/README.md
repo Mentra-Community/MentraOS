@@ -4,25 +4,29 @@ This is the Android code that runs on Android-based smart glasses (ex: Mentra Li
 
 ## Documentation
 
-- [ASG_MEDIA_SYSTEM.md](./ASG_MEDIA_SYSTEM.md) - Detailed documentation about the camera button press system, photo/video capture workflow, and how Apps (Third Party Applications) can interact with the media system.
+### Development Guides
 
-- [SENTRY_CONFIGURATION.md](app/src/main/java/com/augmentos/asg_client/reporting/SENTRY_CONFIGURATION.md) - Guide for configuring Sentry error reporting securely in this open-source project.
+- [AGENTS.md](./AGENTS.md) - Complete development guide with build commands, setup instructions, and code style guidelines
+- [CLAUDE.md](./CLAUDE.md) - AI assistant reference file
 
-- [Reporting System](./app/src/main/java/com/augmentos/asg_client/reporting/README.md) - Comprehensive guide to the modern, secure reporting and analytics system with enterprise-level data filtering, SOLID architecture, and dependency injection.
+### Feature Documentation
+
+- [BES_OTA_README.md](./agents/BES_OTA_README.md) - BES OTA update system
+- [CAMERA_WEBSERVER_README.md](./agents/CAMERA_WEBSERVER_README.md) - Camera web server implementation
+- [CUSTOM_GATT_AUDIO.md](./agents/CUSTOM_GATT_AUDIO.md) - Custom GATT audio protocol
+- [DELETE_FILES_ENDPOINT.md](./agents/DELETE_FILES_ENDPOINT.md) - File deletion endpoint documentation
+- [K900_LED_CONTROL.md](./agents/K900_LED_CONTROL.md) - K900-specific LED control
+- [RGB_LED_CONTROL_IMPLEMENTATION.md](./agents/RGB_LED_CONTROL_IMPLEMENTATION.md) - RGB LED control details
+- [PHOTO_TESTING_GUIDE.md](./agents/PHOTO_TESTING_GUIDE.md) - Photo capture testing guide
+
+### Error Reporting & Analytics
+
+- [SENTRY_CONFIGURATION.md](app/src/main/java/com/mentra/asg_client/reporting/SENTRY_CONFIGURATION.md) - Guide for configuring Sentry error reporting securely
+- [Reporting System](./app/src/main/java/com/mentra/asg_client/reporting/README.md) - Comprehensive reporting and analytics system guide
 
 ## Compatible Devices
 
 - Mentra Live
-
-This could be made to be compatible with other Android-based smart glasses with some work, such as:
-
-- TCL Rayneo X2
-- TCL Rayneo X3
-- INMO Air 2
-- INMO Air 3
-- Other Android-based smart glasses
-
-The necessary changes here would involve re-implementing the K900 checks (K900 or other device), and implementing the ability for the glasses to display text using an activity if the glasses have a display. Maybe use buildprop for device detection.
 
 ### Environment Setup
 
@@ -47,14 +51,58 @@ The necessary changes here would involve re-implementing the K900 checks (K900 o
    git checkout working
    ```
 
-### How to connect to Mentra Live with ADB
+### Development on Mentra Live
 
-Mentra Live suppports ADB over WiFi. The best way to access this is:
+**Important:** Mentra Live glasses ship with `com.mentra.asg_client` signed with our release key. Since this key is not public, you **must uninstall the factory app** before installing your own debug build.
+
+#### Quick Setup
+
+We provide a script that handles uninstalling the factory app and granting permissions:
+
+```bash
+# Connect to your glasses first (see below), then:
+./scripts/dev-setup.sh
+```
+
+#### Manual Setup
+
+If you prefer to do it manually:
+
+1. **Uninstall the factory app:**
+
+   ```bash
+   adb uninstall com.mentra.asg_client
+   ```
+
+2. **Build and install your debug APK:**
+
+   ```bash
+   ./gradlew installDebug
+   ```
+
+3. **Grant runtime permissions:**
+   ```bash
+   # Grant key permissions (some may fail - that's normal)
+   adb shell pm grant com.mentra.asg_client android.permission.CAMERA
+   adb shell pm grant com.mentra.asg_client android.permission.RECORD_AUDIO
+   adb shell pm grant com.mentra.asg_client android.permission.ACCESS_FINE_LOCATION
+   adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_CONNECT
+   adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_SCAN
+   adb shell pm grant com.mentra.asg_client android.permission.POST_NOTIFICATIONS
+   adb shell pm grant com.mentra.asg_client android.permission.READ_MEDIA_IMAGES
+   adb shell pm grant com.mentra.asg_client android.permission.READ_MEDIA_VIDEO
+   ```
+
+### How to Connect to Mentra Live with ADB
+
+Connect via the **magnetic USB-C clip-on cable** that comes with your Mentra Live. Just attach the cable and run `adb devices` to confirm connection.
+
+Alternatively, you can use ADB over WiFi:
 
 1. Pair your Mentra Live in the MentraOS app
 2. Connect it to your local WiFi network in the MentraOS app
 3. Get its IP address from the "Glasses" screen in the MentraOS app
-4. On your computer that's on the same WiFi network, enter `adb connect {IP_ADDRESS}:5555`
+4. Run: `adb connect {IP_ADDRESS}:5555`
 
 ### Build Notes
 
@@ -77,4 +125,4 @@ You only have to follow these specific steps if you are building the OGG/Orbis C
 6. Go into the Android folder and run `bash build_all.sh` to build everything.
 7. If you get gradle version issues, install gradle 8.0.2: https://linuxhint.com/installing_gradle_ubuntu/ (follow the instructions, but replace 7.4.2 with 8.0.2).
 8. For Subsequent builds, you can just run `assembleDebug --stacktrace` to build the APK.
-9. Install APK on your phone (located in app/build/outputs/debug/).
+9. Install APK on your glasses device (located in app/build/outputs/debug/).

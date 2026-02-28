@@ -22,7 +22,7 @@ graph TD
     D --> H[TranscriptionManager]
     D --> I[MicrophoneManager]
     D --> J[PhotoManager]
-    D --> K[VideoManager]
+    D --> K[UnmanagedStreamingExtension]
     D --> L[DashboardManager]
     D --> M[TranslationManager]
     D --> N[ManagedStreamingExtension]
@@ -66,7 +66,7 @@ public appManager: AppManager;                      // App lifecycle
 public audioManager: AudioManager;                  // Audio processing
 public transcriptionManager: TranscriptionManager;  // Speech-to-text
 public translationManager: TranslationManager;      // Translation services
-public videoManager: VideoManager;                  // Video streaming
+public unmanagedStreamingExtension: UnmanagedStreamingExtension; // Unmanaged RTMP streaming
 public photoManager: PhotoManager;                  // Photo capture
 public managedStreamingExtension: ManagedStreamingExtension; // RTMP streaming
 ```
@@ -82,17 +82,17 @@ constructor(userId: string, websocket: WebSocket) {
   this.userId = userId;
   this.websocket = websocket;
   this.logger = rootLogger.child({ userId, service: "UserSession" });
-  
+
   // Initialize all managers
   this.appManager = new AppManager(this);
   this.audioManager = new AudioManager(this);
   // ... other managers
-  
+
   this.startTime = new Date();
-  
+
   // Set up heartbeat
   this.setupGlassesHeartbeat();
-  
+
   // Register in session storage
   SessionStorage.getInstance().set(userId, this);
   this.logger.info(`✅ User session created for ${userId}`);
@@ -106,13 +106,13 @@ When glasses reconnect, the existing session is updated:
 ```typescript
 updateWebSocket(newWebSocket: WebSocket): void {
   this.logger.info(`Updating WebSocket connection for user ${this.userId}`);
-  
+
   // Clear old heartbeat
   this.clearGlassesHeartbeat();
-  
+
   // Update WebSocket reference
   this.websocket = newWebSocket;
-  
+
   // Set up new heartbeat
   this.setupGlassesHeartbeat();
 }
@@ -131,20 +131,20 @@ async dispose(): Promise<void> {
     userId: this.userId,
     disconnectedAt: new Date().toISOString()
   });
-  
+
   // Dispose all managers
   if (this.appManager) this.appManager.dispose();
   if (this.audioManager) this.audioManager.dispose();
   // ... dispose other managers
-  
+
   // Clear heartbeat
   this.clearGlassesHeartbeat();
-  
+
   // Clear timers
   if (this.cleanupTimerId) {
     clearTimeout(this.cleanupTimerId);
   }
-  
+
   // Remove from storage
   SessionStorage.getInstance().delete(this.userId);
 }
@@ -157,7 +157,7 @@ Maintains connection health with periodic ping/pong:
 ```typescript
 private setupGlassesHeartbeat(): void {
   const HEARTBEAT_INTERVAL = 10000; // 10 seconds
-  
+
   this.glassesHeartbeatInterval = setInterval(() => {
     if (this.websocket.readyState === WebSocket.OPEN) {
       this.websocket.ping();
@@ -166,7 +166,7 @@ private setupGlassesHeartbeat(): void {
       this.clearGlassesHeartbeat();
     }
   }, HEARTBEAT_INTERVAL);
-  
+
   // Set up pong handler
   this.websocket.on("pong", () => {
     // Connection still alive
@@ -183,9 +183,9 @@ Updates device model and capabilities:
 ```typescript
 async updateGlassesModel(modelName: string): Promise<void> {
   if (this.currentGlassesModel === modelName) return;
-  
+
   this.currentGlassesModel = modelName;
-  
+
   // Get capabilities for model
   const capabilities = getCapabilitiesForModel(modelName);
   if (capabilities) {
@@ -196,10 +196,10 @@ async updateGlassesModel(modelName: string): Promise<void> {
       this.capabilities = getCapabilitiesForModel("Even Realities G1");
     }
   }
-  
+
   // Notify apps of capability change
   this.sendCapabilitiesUpdateToApps();
-  
+
   // Stop incompatible apps
   await this.stopIncompatibleApps();
 }
@@ -213,21 +213,21 @@ Stops apps that require unavailable hardware:
 private async stopIncompatibleApps(): Promise<void> {
   const runningAppPackages = Array.from(this.runningApps);
   const incompatibleApps: string[] = [];
-  
+
   for (const packageName of runningAppPackages) {
     const app = await appService.getApp(packageName);
     if (!app) continue;
-    
+
     const compatibility = HardwareCompatibilityService.checkCompatibility(
-      app, 
+      app,
       this.capabilities
     );
-    
+
     if (!compatibility.isCompatible) {
       incompatibleApps.push(packageName);
     }
   }
-  
+
   // Stop all incompatible apps
   for (const packageName of incompatibleApps) {
     await this.appManager.stopApp(packageName);
@@ -241,9 +241,9 @@ private async stopIncompatibleApps(): Promise<void> {
 
 ```typescript
 public bufferedAudio: ArrayBufferLike[] = [];
-public recentAudioBuffer: { 
-  data: ArrayBufferLike; 
-  timestamp: number 
+public recentAudioBuffer: {
+  data: ArrayBufferLike;
+  timestamp: number
 }[] = [];
 
 // Track audio play requests
@@ -278,28 +278,11 @@ public sendError(message: string, code: GlassesErrorCode): void {
     message,
     timestamp: new Date()
   };
-  
+
   this.websocket.send(JSON.stringify(errorMessage));
 }
 ```
 
-## Client Data Transformation
-
-Prepare session data for API responses:
-
-```typescript
-async toClientFormat(): Promise<any> {
-  return {
-    userId: this.userId,
-    startTime: this.startTime,
-    activeAppSessions: Array.from(this.runningApps),
-    loadingApps: Array.from(this.loadingApps),
-    isTranscribing: this.isTranscribing,
-    capabilities: this.capabilities,
-    currentGlassesModel: this.currentGlassesModel
-  };
-}
-```
 
 ## Best Practices
 

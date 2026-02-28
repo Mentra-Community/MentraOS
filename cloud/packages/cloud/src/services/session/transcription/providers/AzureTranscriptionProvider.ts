@@ -323,7 +323,8 @@ export class AzureTranscriptionProvider implements TranscriptionProvider {
       stream.state = StreamState.CLOSED;
 
       if (stream.callbacks.onClosed) {
-        stream.callbacks.onClosed();
+        // Pass 1000 (normal close) since sessionStopped is a clean shutdown
+        stream.callbacks.onClosed(1000);
       }
     };
 
@@ -412,15 +413,15 @@ export class AzureTranscriptionProvider implements TranscriptionProvider {
     stream: AzureTranscriptionStream,
     recognizer: TranslationRecognizer
   ): void {
-    
+
     recognizer.recognizing = (sender, event) => {
       if (!event.result.translations) return;
-      
+
       const translatedText = event.result.translations.get(stream.targetLanguage!);
       if (!translatedText) return;
-      
+
       const didTranslate = this.didTranslationOccur(event.result.text, translatedText);
-      
+
       const data: TranslationData = {
         type: StreamType.TRANSLATION,
         text: translatedText,
@@ -434,11 +435,11 @@ export class AzureTranscriptionProvider implements TranscriptionProvider {
         didTranslate,
         provider: 'azure'
       };
-      
+
       if (stream.callbacks.onData) {
         stream.callbacks.onData(data);
       }
-      
+
       this.logger.debug({
         streamId: stream.id,
         originalText: data.originalText?.substring(0, 50),
@@ -448,15 +449,15 @@ export class AzureTranscriptionProvider implements TranscriptionProvider {
         provider: 'azure'
       }, `🌐 AZURE TRANSLATION: ${data.isFinal ? 'FINAL' : 'interim'} "${data.originalText}" → "${data.text}"`);
     };
-    
+
     recognizer.recognized = (sender, event) => {
       if (!event.result.translations) return;
-      
+
       const translatedText = event.result.translations.get(stream.targetLanguage!);
       if (!translatedText) return;
-      
+
       const didTranslate = this.didTranslationOccur(event.result.text, translatedText);
-      
+
       const data: TranslationData = {
         type: StreamType.TRANSLATION,
         text: translatedText,
@@ -470,11 +471,11 @@ export class AzureTranscriptionProvider implements TranscriptionProvider {
         didTranslate,
         provider: 'azure'
       };
-      
+
       if (stream.callbacks.onData) {
         stream.callbacks.onData(data);
       }
-      
+
       this.logger.debug({
         streamId: stream.id,
         originalText: data.originalText?.substring(0, 50),
@@ -565,7 +566,7 @@ export class AzureTranscriptionProvider implements TranscriptionProvider {
     // Simple comparison to detect if translation actually occurred
     const normalizedOriginal = originalText.toLowerCase().replace(/[^\p{L}\p{N}_]/gu, '').trim();
     const normalizedTranslated = translatedText.toLowerCase().replace(/[^\p{L}\p{N}_]/gu, '').trim();
-    
+
     return normalizedOriginal !== normalizedTranslated;
   } */
 }

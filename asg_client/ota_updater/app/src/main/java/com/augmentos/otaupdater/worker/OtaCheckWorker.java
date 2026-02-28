@@ -1,4 +1,4 @@
-package com.augmentos.otaupdater.worker;
+package com.mentra.otaupdater.worker;
 
 /**
  * Created by markiyurtdas on 21.05.2025.
@@ -11,8 +11,8 @@ import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
-import com.augmentos.otaupdater.helper.Constants;
-import com.augmentos.otaupdater.helper.OtaHelper;
+import com.mentra.otaupdater.helper.Constants;
+import com.mentra.otaupdater.helper.OtaHelper;
 
 public class OtaCheckWorker extends Worker {
         private static final String TAG = OtaCheckWorker.TAG;

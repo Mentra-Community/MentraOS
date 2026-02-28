@@ -1,0 +1,361 @@
+---
+title: "Text-to-Speech"
+description: "Make your app speak using voice synthesis"
+---
+
+Convert text to natural speech on smart glasses using `session.audio.speak()`. Powered by ElevenLabs TTS for high-quality voice synthesis.
+
+## Basic Usage
+
+```typescript
+// Simple TTS
+await session.audio.speak('Hello from your app!');
+```
+
+## How It Works
+
+1. Your app calls `session.audio.speak(text)`
+2. MentraOS Cloud generates audio using ElevenLabs TTS
+3. Audio streams to the user's device
+4. Plays through glasses speakers or phone
+
+## Voice Customization
+
+### Custom Voice
+
+```typescript
+await session.audio.speak('Welcome back!', {
+  voice_id: 'your_voice_id'
+});
+```
+
+### Voice Settings
+
+```typescript
+await session.audio.speak('Custom voice settings', {
+  voice_id: 'adam',
+  voice_settings: {
+    stability: 0.5,      // 0-1: Lower = more expressive
+    similarity_boost: 0.75, // 0-1: Voice similarity
+    style: 0.5,          // 0-1: Style exaggeration
+    speed: 1.2           // Playback speed
+  }
+});
+```
+
+### Volume Control
+
+```typescript
+await session.audio.speak('Quiet message', {
+  volume: 0.5  // 0.0 - 1.0
+});
+```
+
+## TTS Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `voice_id` | string | Server default | ElevenLabs voice ID |
+| `model_id` | string | eleven_flash_v2_5 | TTS model to use |
+| `voice_settings` | object | - | Voice customization |
+| `volume` | number | 1.0 | Volume level (0.0-1.0) |
+
+### Voice Settings Options
+
+| Setting | Type | Range | Description |
+|---------|------|-------|-------------|
+| `stability` | number | 0-1 | Lower = more expressive |
+| `similarity_boost` | number | 0-1 | Voice similarity to original |
+| `style` | number | 0-1 | Style exaggeration |
+| `speed` | number | 0.5-2.0 | Playback speed |
+| `use_speaker_boost` | boolean | - | Enhance speaker clarity |
+
+## Common Patterns
+
+### Voice Confirmation
+
+```typescript
+session.events.onTranscription(async (data) => {
+  if (data.isFinal) {
+    // Acknowledge user input
+    await session.audio.speak('Got it!');
+
+    // Process command
+    const result = await processCommand(data.text);
+
+    // Speak result
+    await session.audio.speak(result);
+  }
+});
+```
+
+### Notifications
+
+```typescript
+session.events.onPhoneNotification(async (data) => {
+  if (data.app === 'Messages') {
+    await session.audio.speak(`New message from ${data.title}`);
+  }
+});
+```
+
+### Multi-Step Instructions
+
+```typescript
+async function guideUser(session: AppSession) {
+  await session.audio.speak('Step 1: Look at the target');
+  await sleep(2000);
+
+  await session.audio.speak('Step 2: Press the button');
+  await sleep(2000);
+
+  await session.audio.speak('Step 3: Wait for confirmation');
+}
+```
+
+### Contextual Responses
+
+```typescript
+session.events.onTranscription(async (data) => {
+  if (!data.isFinal) return;
+
+  const text = data.text.toLowerCase();
+
+  if (text.includes('weather')) {
+    await session.audio.speak('The weather is sunny and 72 degrees');
+  } else if (text.includes('time')) {
+    const time = new Date().toLocaleTimeString();
+    await session.audio.speak(`The time is ${time}`);
+  } else if (text.includes('help')) {
+    await session.audio.speak('You can ask about weather, time, or directions');
+  }
+});
+```
+
+### Error Handling
+
+```typescript
+try {
+  const result = await session.audio.speak('Hello!');
+
+  if (result.success) {
+    session.logger.info('TTS played successfully');
+  } else {
+    session.logger.error('TTS failed:', result.error);
+  }
+} catch (error) {
+  session.logger.error('TTS error:', error);
+  // Fallback to text display
+  session.layouts.showTextWall('Hello!');
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep Messages Brief" icon="comment">
+    Short messages are easier to understand:
+
+    ```typescript
+    // ✅ Good
+    await session.audio.speak('Message sent');
+
+    // ❌ Avoid - too long
+    await session.audio.speak(
+      'Your message has been successfully sent to the recipient and they will receive it shortly'
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="Wait for Completion" icon="clock">
+    Don't overlap audio:
+
+    ```typescript
+    // ✅ Good - sequential
+    await session.audio.speak('First message');
+    await session.audio.speak('Second message');
+
+    // ❌ Avoid - messages overlap
+    session.audio.speak('First message');  // No await
+    session.audio.speak('Second message'); // Plays immediately
+    ```
+  </Accordion>
+
+  <Accordion title="Provide Visual Feedback" icon="eye">
+    Combine audio with visual cues:
+
+    ```typescript
+    // ✅ Good
+    session.layouts.showTextWall('Processing...');
+    await session.audio.speak('Processing your request');
+
+    // User gets both visual and audio feedback
+    ```
+  </Accordion>
+
+  <Accordion title="Handle Audio-Only Devices" icon="headphones">
+    Not all devices have displays:
+
+    ```typescript
+    if (session.capabilities?.hasDisplay) {
+      session.layouts.showTextWall('Hello!');
+    }
+
+    // Always provide audio for accessibility
+    await session.audio.speak('Hello!');
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Voice Selection
+
+**Finding Voice IDs:**
+
+1. Visit [ElevenLabs Voice Library](https://elevenlabs.io/voice-library)
+2. Choose a voice
+3. Copy the voice ID
+4. Use in your app
+
+```typescript
+// Popular voices
+await session.audio.speak('Professional voice', {
+  voice_id: 'adam'  // Male, professional
+});
+
+await session.audio.speak('Friendly voice', {
+  voice_id: 'rachel'  // Female, friendly
+});
+```
+
+<Info>
+Configure default voice ID in your environment variables: `ELEVENLABS_DEFAULT_VOICE_ID`
+</Info>
+
+## Troubleshooting
+
+### Audio Not Playing
+
+**Check device capabilities:**
+
+```typescript
+if (!session.capabilities) {
+  session.logger.warn('Capabilities not loaded');
+  return;
+}
+
+// Note: Audio should work on all devices
+// It routes through phone if glasses don't have speakers
+```
+
+### TTS Timing Out
+
+**TTS has 60 second timeout:**
+
+```typescript
+try {
+  await session.audio.speak('Your message');
+} catch (error) {
+  if (error.includes('timeout')) {
+    session.logger.error('TTS timed out');
+    // Retry or fallback to text
+  }
+}
+```
+
+### Voice Quality Issues
+
+**Adjust voice settings:**
+
+```typescript
+// For clearer speech
+await session.audio.speak('Clear message', {
+  voice_settings: {
+    stability: 0.7,       // More stable
+    similarity_boost: 0.5, // Less similarity boost
+    speed: 0.9            // Slightly slower
+  }
+});
+```
+
+## Performance Tips
+
+<AccordionGroup>
+  <Accordion title="Cache Common Phrases" icon="floppy-disk">
+    Pre-generate audio for frequently used phrases:
+
+    ```typescript
+    // Consider using pre-recorded audio files
+    // for very common phrases
+    await session.audio.playAudio({
+      audioUrl: 'https://your-cdn.com/hello.mp3'
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Batch Related Messages" icon="list">
+    Combine related information:
+
+    ```typescript
+    // ✅ Good - one TTS call
+    await session.audio.speak(
+      'You have 3 messages and 2 notifications'
+    );
+
+    // ❌ Avoid - multiple calls
+    await session.audio.speak('You have 3 messages');
+    await session.audio.speak('and 2 notifications');
+    ```
+  </Accordion>
+
+  <Accordion title="Use Appropriate Speed" icon="gauge">
+    Faster speed = less time = better UX:
+
+    ```typescript
+    // For quick confirmations
+    await session.audio.speak('Done', {
+      voice_settings: { speed: 1.3 }
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Return Value
+
+The `speak()` method returns a promise that resolves with:
+
+```typescript
+interface AudioPlayResult {
+  success: boolean;
+  error?: string;
+  duration?: number;  // Audio duration in seconds
+}
+```
+
+**Example:**
+
+```typescript
+const result = await session.audio.speak('Hello!');
+
+if (result.success) {
+  session.logger.info(`Played ${result.duration}s of audio`);
+} else {
+  session.logger.error('Failed:', result.error);
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Playing Audio Files" icon="file-audio" href="/app-devs/core-concepts/audio/playing-audio-files">
+    Play pre-recorded audio from URLs
+  </Card>
+  <Card title="Speech-to-Text" icon="microphone" href="/app-devs/core-concepts/audio/speech-to-text">
+    Listen to user voice input
+  </Card>
+  <Card title="Audio Manager" icon="book" href="/reference/managers/audio-manager">
+    Complete audio API reference
+  </Card>
+  <Card title="Device Control" icon="microchip" href="/app-devs/core-concepts/app-session/device-control">
+    All device control features
+  </Card>
+</CardGroup>

@@ -3,21 +3,32 @@
  * It adapts logic previously in a global photo-request.service.ts.
  */
 
-import WebSocket from "ws";
-import crypto from "crypto"; // Changed from uuidv4 to crypto.randomUUID for consistency
 import {
   CloudToGlassesMessageType,
-  CloudToAppMessageType,
   GlassesToCloudMessageType,
   PhotoResponse, // SDK type from Glasses
   PhotoRequest, // SDK type for App's request
-  CloudToAppMessage,
+  PhotoErrorCode,
   // Define AppPhotoResult in SDK or use a generic message structure
 } from "@mentra/sdk";
 import { Logger } from "pino";
 import UserSession from "./UserSession";
+import { ConnectionValidator } from "../validators/ConnectionValidator";
 
-const PHOTO_REQUEST_TIMEOUT_MS_DEFAULT = 30000; // Default timeout for photo requests
+// Timeout handling is managed by CameraModule in the SDK
+
+/**
+ * Packages that should have silent photo mode (no LED flash, no shutter sound).
+ * These are AI apps that take photos continuously for context awareness.
+ */
+const SILENT_PHOTO_PACKAGES_HARDCODED = ["com.mentra.mira", "com.mentra.mentraai", "com.mentra.mentraai.beta"];
+
+// Build the allowlist: hardcoded + env var
+const envPackages =
+  process.env.SILENT_PHOTO_PACKAGES?.split(",")
+    .map((p) => p.trim())
+    .filter(Boolean) || [];
+const SILENT_PHOTO_PACKAGES = new Set([...SILENT_PHOTO_PACKAGES_HARDCODED, ...envPackages]);
 
 /**
  * Internal representation of a pending photo request,
@@ -30,7 +41,6 @@ interface PendingPhotoRequest {
   // origin: 'app'; // All requests via PhotoManager are App initiated for now
   packageName: string; // Renamed from appId for consistency with App messages
   saveToGallery: boolean;
-  timeoutId: NodeJS.Timeout;
 }
 
 /**
@@ -69,6 +79,7 @@ export class PhotoManager {
       customWebhookUrl,
       authToken,
       size = "medium",
+      compress = "none",
     } = appRequest;
 
     this.logger.info(
@@ -94,20 +105,23 @@ export class PhotoManager {
     } else {
       const app = this.userSession.installedApps.get(packageName);
       webhookUrl = app?.publicUrl ? `${app.publicUrl}/photo-upload` : undefined;
-      this.logger.info(
-        { requestId, defaultWebhookUrl: webhookUrl },
-        "Using default webhook URL for photo request.",
-      );
+      this.logger.info({ requestId, defaultWebhookUrl: webhookUrl }, "Using default webhook URL for photo request.");
     }
 
-    if (
-      !this.userSession.websocket ||
-      this.userSession.websocket.readyState !== WebSocket.OPEN
-    ) {
+    // Validate connections before processing photo request
+    const validation = ConnectionValidator.validateForHardwareRequest(this.userSession, "photo");
+
+    if (!validation.valid) {
       this.logger.error(
-        "Glasses WebSocket not connected, cannot send photo request to glasses.",
+        {
+          error: validation.error,
+          errorCode: validation.errorCode,
+          connectionStatus: ConnectionValidator.getConnectionStatus(this.userSession),
+        },
+        "Photo request validation failed",
       );
-      throw new Error("Glasses WebSocket not connected.");
+
+      throw new Error(validation.error || "Connection validation failed");
     }
 
     const requestInfo: PendingPhotoRequest = {
@@ -116,12 +130,11 @@ export class PhotoManager {
       timestamp: Date.now(),
       packageName,
       saveToGallery,
-      timeoutId: setTimeout(
-        () => this._handlePhotoRequestTimeout(requestId),
-        PHOTO_REQUEST_TIMEOUT_MS_DEFAULT,
-      ),
     };
     this.pendingPhotoRequests.set(requestId, requestInfo);
+
+    // Determine if this app should use silent mode (no LED flash, no shutter sound)
+    const silent = SILENT_PHOTO_PACKAGES.has(packageName);
 
     // Message to glasses based on CloudToGlassesMessageType.PHOTO_REQUEST
     // Include webhook URL so ASG can upload directly to the app
@@ -133,6 +146,8 @@ export class PhotoManager {
       webhookUrl, // Use custom webhookUrl if provided, otherwise default
       authToken, // Include authToken for webhook authentication
       size, // Propagate desired size
+      compress, // Propagate compression setting
+      silent, // Silent mode: disables LED flash and shutter sound for AI apps
       timestamp: new Date(),
     };
 
@@ -145,8 +160,9 @@ export class PhotoManager {
           webhookUrl,
           isCustom: !!customWebhookUrl,
           hasAuthToken: !!authToken,
+          silent,
         },
-        "PHOTO_REQUEST command sent to glasses with webhook URL.",
+        `PHOTO_REQUEST command sent to glasses${silent ? " (silent mode)" : ""}.`,
       );
 
       // If using custom webhook URL, resolve immediately since glasses won't send response back to cloud
@@ -155,24 +171,20 @@ export class PhotoManager {
           { requestId },
           "Using custom webhook URL - resolving promise immediately since glasses will upload directly to custom endpoint.",
         );
-        clearTimeout(requestInfo.timeoutId);
         this.pendingPhotoRequests.delete(requestId);
 
         // Send a success response to the app immediately
         await this._sendPhotoResultToApp(requestInfo, {
           type: GlassesToCloudMessageType.PHOTO_RESPONSE,
           requestId,
+          success: true,
           photoUrl: customWebhookUrl, // Use the custom webhook URL as the photo URL
           savedToGallery: saveToGallery,
           timestamp: new Date(),
         });
       }
     } catch (error) {
-      this.logger.error(
-        { error, requestId },
-        "Failed to send PHOTO_REQUEST to glasses.",
-      );
-      clearTimeout(requestInfo.timeoutId);
+      this.logger.error({ error, requestId }, "Failed to send PHOTO_REQUEST to glasses.");
       this.pendingPhotoRequests.delete(requestId);
       throw error;
     }
@@ -183,13 +195,42 @@ export class PhotoManager {
    * Handles a photo response from glasses.
    * Adapts logic from photoRequestService.processPhotoResponse.
    */
-  async handlePhotoResponse(glassesResponse: PhotoResponse): Promise<void> {
-    const { requestId, photoUrl, savedToGallery } = glassesResponse; // `savedToGallery` from glasses confirms actual status
+  async handlePhotoResponse(glassesResponse: PhotoResponse | any): Promise<void> {
+    // Handle simplified error format from glasses/phone
+    let normalizedResponse: PhotoResponse;
+
+    if (glassesResponse.errorCode && glassesResponse.errorMessage) {
+      // Convert simplified format to expected PhotoResponse format
+      normalizedResponse = {
+        type: GlassesToCloudMessageType.PHOTO_RESPONSE,
+        requestId: glassesResponse.requestId,
+        success: glassesResponse.success || false,
+        error: {
+          code: glassesResponse.errorCode as PhotoErrorCode,
+          message: glassesResponse.errorMessage,
+        },
+      };
+    } else {
+      // Use as-is if already in expected format
+      normalizedResponse = glassesResponse as PhotoResponse;
+    }
+
+    const { requestId, success } = normalizedResponse;
     const pendingPhotoRequest = this.pendingPhotoRequests.get(requestId);
+
+    this.logger.debug(
+      {
+        pendingPhotoRequests: Array.from(this.pendingPhotoRequests.keys()),
+        glassesResponse,
+        success,
+        requestId,
+      },
+      "Photo response processing debug info",
+    );
 
     if (!pendingPhotoRequest) {
       this.logger.warn(
-        { requestId, glassesResponse },
+        { requestId, glassesResponse: normalizedResponse },
         "Received photo response for unknown, timed-out, or already processed request.",
       );
       return;
@@ -199,32 +240,68 @@ export class PhotoManager {
       {
         requestId,
         packageName: pendingPhotoRequest.packageName,
-        glassesResponse,
+        success,
+        hasError: !success && !!normalizedResponse.error,
+        errorCode: normalizedResponse.error?.code,
       },
       "Photo response received from glasses.",
     );
-    clearTimeout(pendingPhotoRequest.timeoutId);
     this.pendingPhotoRequests.delete(requestId);
 
-    await this._sendPhotoResultToApp(pendingPhotoRequest, glassesResponse);
+    if (success) {
+      // Handle success response
+      await this._sendPhotoResultToApp(pendingPhotoRequest, normalizedResponse);
+    } else {
+      // Handle error response
+      await this._sendPhotoErrorToApp(pendingPhotoRequest, normalizedResponse);
+    }
   }
 
-  private _handlePhotoRequestTimeout(requestId: string): void {
-    const requestInfo = this.pendingPhotoRequests.get(requestId);
-    if (!requestInfo) return; // Already handled or cleared
+  // Timeout handling removed - now managed by CameraModule in the SDK
 
-    this.logger.warn(
-      { requestId, packageName: requestInfo.packageName },
-      "Photo request timed out.",
-    );
-    this.pendingPhotoRequests.delete(requestId); // Remove before sending error
+  private async _sendPhotoErrorToApp(
+    pendingPhotoRequest: PendingPhotoRequest,
+    errorResponse: PhotoResponse,
+  ): Promise<void> {
+    const { requestId, packageName } = pendingPhotoRequest;
 
-    // this._sendPhotoResultToApp(requestInfo, {
-    //   success: false,
-    //   error: 'Photo request timed out waiting for glasses response.',
-    //   savedToGallery: requestInfo.saveToGallery // Reflect intended, though failed
-    // });
-    // Instead of sending a result, we throw an error to the App.
+    try {
+      // Use centralized messaging with automatic resurrection
+      const result = await this.userSession.appManager.sendMessageToApp(packageName, errorResponse);
+
+      if (result.sent) {
+        this.logger.info(
+          {
+            requestId,
+            packageName,
+            errorCode: errorResponse.error?.code,
+            resurrectionTriggered: result.resurrectionTriggered,
+          },
+          `Sent photo error to App ${packageName}${result.resurrectionTriggered ? " after resurrection" : ""}`,
+        );
+      } else {
+        this.logger.warn(
+          {
+            requestId,
+            packageName,
+            errorCode: errorResponse.error?.code,
+            resurrectionTriggered: result.resurrectionTriggered,
+            error: result.error,
+          },
+          `Failed to send photo error to App ${packageName}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+          packageName,
+          errorCode: errorResponse.error?.code,
+        },
+        `Error sending photo error to App ${packageName}`,
+      );
+    }
   }
 
   private async _sendPhotoResultToApp(
@@ -235,10 +312,7 @@ export class PhotoManager {
 
     try {
       // Use centralized messaging with automatic resurrection
-      const result = await this.userSession.appManager.sendMessageToApp(
-        packageName,
-        photoResponse,
-      );
+      const result = await this.userSession.appManager.sendMessageToApp(packageName, photoResponse);
 
       if (result.sent) {
         this.logger.info(
@@ -276,17 +350,8 @@ export class PhotoManager {
    * Called when the UserSession is ending.
    */
   dispose(): void {
-    this.logger.info(
-      "Disposing PhotoManager, cancelling pending photo requests for this session.",
-    );
-    this.pendingPhotoRequests.forEach((requestInfo, requestId) => {
-      clearTimeout(requestInfo.timeoutId);
-      // TODO(isaiah): We should extend the photo result to support error, so dev's can more gracefully handle failed photo requets.
-      // this._sendPhotoResultToApp(requestInfo, {
-      //   error: 'User session ended; photo request cancelled.',
-      //   savedToGallery: requestInfo.saveToGallery
-      // });
-    });
+    this.logger.info("Disposing PhotoManager, cancelling pending photo requests for this session.");
+    // Timeout handling removed - CameraModule manages timeouts
     this.pendingPhotoRequests.clear();
   }
 }

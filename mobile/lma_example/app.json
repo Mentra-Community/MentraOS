@@ -1,0 +1,8 @@
+{
+    "name": "lma_example_captions",
+    "version": "1.0.0",
+    "main": "index.html",
+    "type": "standard",
+    "hardwareRequirements": [{"type": "DISPLAY", "level": "REQUIRED"}, {"type": "MICROPHONE", "level": "REQUIRED"}],
+    "subscriptions": ["online_trancription"]
+}

@@ -1,8 +1,8 @@
-package com.augmentos.otaupdater.helper;
+package com.mentra.otaupdater.helper;
 
-import static com.augmentos.otaupdater.helper.Constants.APK_FILENAME;
-import static com.augmentos.otaupdater.helper.Constants.BASE_DIR;
-import static com.augmentos.otaupdater.helper.Constants.METADATA_JSON;
+import static com.mentra.otaupdater.helper.Constants.APK_FILENAME;
+import static com.mentra.otaupdater.helper.Constants.BASE_DIR;
+import static com.mentra.otaupdater.helper.Constants.METADATA_JSON;
 
 import android.content.Context;
 import android.content.pm.PackageInfo;
@@ -23,9 +23,9 @@ import org.json.JSONObject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
-import com.augmentos.otaupdater.events.BatteryStatusEvent;
-import com.augmentos.otaupdater.events.DownloadProgressEvent;
-import com.augmentos.otaupdater.events.InstallationProgressEvent;
+import com.mentra.otaupdater.events.BatteryStatusEvent;
+import com.mentra.otaupdater.events.DownloadProgressEvent;
+import com.mentra.otaupdater.events.InstallationProgressEvent;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -247,7 +247,7 @@ public class OtaHelper {
                 } else {
                     // Legacy format - only ASG client
                     Log.d(TAG, "Using legacy version.json format");
-                    checkAndUpdateApp("com.augmentos.asg_client", json, context);
+                    checkAndUpdateApp("com.mentra.asg_client", json, context);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Exception during OTA check", e);
@@ -269,8 +269,8 @@ public class OtaHelper {
     private void processAppsSequentially(JSONObject apps, Context context) throws Exception {
         // Process apps in order - important for sequential updates
         String[] orderedPackages = {
-            "com.augmentos.asg_client",     // Update ASG client first
-            "com.augmentos.otaupdater"      // Then OTA updater
+            "com.mentra.asg_client",     // Update ASG client first
+            // "com.augmentos.otaupdater"      // Then OTA updater
         };
         
         for (String packageName : orderedPackages) {
@@ -366,7 +366,7 @@ public class OtaHelper {
     
     private void createAppBackup(String packageName, Context context) {
         // Only backup ASG client - OTA updater can be restored from ASG client assets
-        if (!packageName.equals("com.augmentos.asg_client")) {
+        if (!packageName.equals("com.mentra.asg_client")) {
             Log.d(TAG, "Skipping backup for " + packageName + " (can be restored from assets)");
             return;
         }
@@ -503,13 +503,13 @@ public class OtaHelper {
 
         Log.d(TAG, "APK downloaded to: " + apkFile.getAbsolutePath());
         
-        // Emit download finished event
-        EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
-        
-        // Immediately check hash after download
+        // IMPORTANT: Verify hash BEFORE declaring download complete
         boolean hashOk = verifyApkFile(apkFile.getAbsolutePath(), json);
         Log.d(TAG, "SHA256 verification result: " + hashOk);
+        
         if (hashOk) {
+            // Hash verified - NOW we can declare download finished
+            EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
             createMetaDataJson(json, context);
             return true;
         } else {
@@ -560,7 +560,7 @@ public class OtaHelper {
         long currentVersionCode;
         try {
             PackageManager pm = context.getPackageManager();
-            PackageInfo info = pm.getPackageInfo("com.augmentos.asg_client", 0);
+            PackageInfo info = pm.getPackageInfo("com.mentra.asg_client", 0);
             currentVersionCode = info.getLongVersionCode();
         } catch (PackageManager.NameNotFoundException e) {
             currentVersionCode = 0;
@@ -654,7 +654,7 @@ public class OtaHelper {
         PackageManager pm = context.getPackageManager();
         PackageInfo info = null;
         try {
-            info = pm.getPackageInfo("com.augmentos.asg_client", 0);
+            info = pm.getPackageInfo("com.mentra.asg_client", 0);
         } catch (PackageManager.NameNotFoundException e) {
             throw new RuntimeException(e);
         }

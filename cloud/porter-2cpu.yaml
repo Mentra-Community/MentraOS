@@ -1,0 +1,37 @@
+version: v2
+namespace: ${PORTER_NAMESPACE}
+
+build:
+  method: docker
+  context: ./cloud/.
+  dockerfile: ./cloud/docker/Dockerfile.livekit
+
+services:
+  - name: cloud
+    type: web
+    run: ./start.sh
+    port: 80 # Main Cloud API port
+    cpuCores: 1.5
+    ramMegabytes: 4096
+    env:
+      HOST: "0.0.0.0"
+      SERVICE_NAME: "cloud"
+      RTMP_RELAY_URLS: "rtmp-relay-uscentral.mentra.glass:1935"
+      LIVEKIT_GRPC_SOCKET: "/tmp/livekit-bridge.sock"
+      LIVEKIT_PCM_ENDIAN: "off"
+      LOG_LEVEL: "info"
+      BETTERSTACK_SOURCE_TOKEN: "${BETTERSTACK_SOURCE_TOKEN}"
+      BETTERSTACK_INGESTING_HOST: "s1311181.eu-nbg-2.betterstackdata.com"
+    # Extended timeouts for WebSocket connections (/glasses-ws, /app-ws).
+    # Porter sets proxy-send-timeout: 60s by default, which kills idle WS
+    # connections because no client→server traffic flows after audio moved to UDP.
+    # 3600s prevents nginx from killing healthy WS connections.
+    # See: cloud/issues/035-nginx-ws-timeout/spike.md
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio
