@@ -101,14 +101,6 @@ export class SonioxSdkStream implements StreamInstance {
   // Track last emitted interim text to avoid duplicate callbacks.
   private lastEmittedInterimText = "";
 
-  // ── Post-endpoint suppression ─────────────────────────────────────
-  // After an endpoint/finalized event, the Soniox SDK may still deliver
-  // residual `result` events from its rolling window. These contain
-  // text that is a substring of the already-finalized utterance, causing
-  // the captions to "pop" (show old text as a new interim, then vanish).
-  // We suppress interims that are substrings of the last finalized text.
-  private lastFinalizedText = "";
-
   // ── Stable-prefix accumulation ──────────────────────────────────────
   // The SDK's rolling window compacts (prunes) finalized tokens mid-
   // utterance, causing result.tokens to lose earlier text. To prevent
@@ -310,8 +302,6 @@ export class SonioxSdkStream implements StreamInstance {
     this.utteranceBuffer.reset();
     this.currentUtteranceId = null;
     this.lastEmittedInterimText = "";
-    this.lastFinalizedText = "";
-
     this.state = StreamState.CLOSED;
     this.metrics.totalDuration = Date.now() - this.startTime;
 
@@ -418,21 +408,26 @@ export class SonioxSdkStream implements StreamInstance {
 
     if (!fullText || fullText === this.lastEmittedInterimText) return;
 
-    // ── Suppress residual interims after endpoint/finalize ──────────
-    // After an endpoint fires, the SDK may deliver lingering result
-    // events whose text is a subset of the already-finalized utterance.
-    // Emitting these as new interims causes "text popping" on glasses.
-    if (this.lastFinalizedText && this.lastFinalizedText.includes(fullText)) {
+    // ── Guard against compaction-induced text shrinkage ──────────────
+    // During the Soniox SDK's rolling window compaction, finalized tokens
+    // get pruned. stablePrefixText preserves them, but the non-final
+    // tail can temporarily disappear (e.g., tokens shift from non-final
+    // to final and then get pruned before the next result adds new ones).
+    // This causes fullText to shrink, making captions "pop" — the last
+    // few words vanish and reappear on the next result.
+    //
+    // Fix: never emit an interim shorter than the previous one within the
+    // same utterance. The next result will bring back the full text.
+    if (this.lastEmittedInterimText && fullText.length < this.lastEmittedInterimText.length) {
       this.logger.debug(
-        { streamId: this.id, text: fullText.substring(0, 60) },
-        "🎙️ SONIOX SDK: suppressing residual interim (substring of last final)",
+        {
+          streamId: this.id,
+          newLen: fullText.length,
+          prevLen: this.lastEmittedInterimText.length,
+        },
+        "🎙️ SONIOX SDK: skipping shorter interim (compaction artifact)",
       );
       return;
-    }
-
-    // Once we see genuinely new content, clear the suppression guard
-    if (this.lastFinalizedText) {
-      this.lastFinalizedText = "";
     }
 
     // Use the last token for speaker/language — it's the most recent
@@ -621,9 +616,6 @@ export class SonioxSdkStream implements StreamInstance {
    */
   private emitFinal(text: string, speaker?: string, language?: string, tokens?: ReadonlyArray<RealtimeToken>): void {
     this.ensureUtterance(speaker, language);
-
-    // Save finalized text to suppress residual interims from the rolling window
-    this.lastFinalizedText = text.trim();
 
     const finalData: TranscriptionData = {
       type: StreamType.TRANSCRIPTION,
