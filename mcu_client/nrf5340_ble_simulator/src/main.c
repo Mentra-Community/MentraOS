@@ -39,6 +39,7 @@
 #include "mos_button_app.h"  // Button application logic
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
+#include "mos_hinge_fold.h"
 #include "mos_jlink_usb_switch_app.h"  // J-Link/USB switch application logic
 #include "mos_lsm6dsv16x.h"  // LSM6DSV16X 6-axis IMU sensor
 #include "mos_npm1300_ldsw.h"  // NPM1300 LDSW (load switch) control
@@ -605,6 +606,12 @@ int main(void)
     opt3006_initialize();
 
     lsm6dsv16x_init();
+
+    err = mos_hinge_fold_service_start(NULL);
+    if (err)
+    {
+        LOG_ERR("Failed to start hinge fold service (err: %d)", err);
+    }
 
     usb_detect_init();
 

@@ -13,6 +13,8 @@
 #define MOS_LSM6DSV16X_H_
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/sensor.h>
 
@@ -29,6 +31,7 @@ int lsm6dsv16x_init(void);
  * @return true if ready, false otherwise | 就绪返回true，否则返回false
  */
 bool lsm6dsv16x_is_ready(void);
+
 
 /**
  * @brief Read accelerometer data | 读取加速度计数据
@@ -95,6 +98,39 @@ int lsm6dsv16x_set_gyro_range(uint16_t range_dps);
  * @note Expected value for LSM6DSV16X is 0x70 | LSM6DSV16X的期望值是0x70
  */
 int lsm6dsv16x_read_device_id(uint8_t* device_id);
+
+/**
+ * @brief Write one sensor register | 写单个寄存器
+ * @param reg Register address | 寄存器地址
+ * @param value Register value | 寄存器值
+ * @return 0 on success, negative error code on failure
+ */
+int lsm6dsv16x_write_register(uint8_t reg, uint8_t value);
+
+/**
+ * @brief Read one sensor register | 读单个寄存器
+ * @param reg Register address | 寄存器地址
+ * @param value Output register value pointer | 输出寄存器值指针
+ * @return 0 on success, negative error code on failure
+ */
+int lsm6dsv16x_read_register(uint8_t reg, uint8_t* value);
+
+/**
+ * @brief Load ST UCF data (reg/value pairs) | 加载 ST UCF 配置（寄存器/值二元组）
+ * @param ucf_data UCF byte stream, format: {reg0,val0,reg1,val1,...}
+ * @param ucf_size Size of UCF byte stream (must be even)
+ * @return 0 on success, negative error code on failure
+ */
+int lsm6dsv16x_load_ucf(const uint8_t* ucf_data, size_t ucf_size);
+
+/**
+ * @brief Read continuous MLC output bytes | 连续读取 MLC 输出字节
+ * @param start_reg Start register address of MLC output | MLC 输出起始寄存器
+ * @param out Output buffer | 输出缓冲区
+ * @param out_len Output byte count | 输出字节数
+ * @return 0 on success, negative error code on failure
+ */
+int lsm6dsv16x_read_mlc_outputs(uint8_t start_reg, uint8_t* out, size_t out_len);
 
 /**
  * @brief Get sensor device pointer | 获取传感器设备指针
