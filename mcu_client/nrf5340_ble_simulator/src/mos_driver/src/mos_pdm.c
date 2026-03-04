@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-07-31 10:40:40
- * @LastEditTime : 2026-01-29 15:58:52
+ * @LastEditTime : 2026-03-04 16:57:28
  * @FilePath     : mos_pdm.c
  * @Description  :
  *
@@ -98,7 +98,7 @@ static void  pcm_buffer_req_evt_handle(const nrfx_pdm_evt_t *evt)
 
 void pdm_init(void)
 {
-    uint32_t          err_code;
+    uint32_t err_code;
     pdm_config         = pdm_config_default;
     pdm_config.clk_pin = PDM_CLK;
     pdm_config.din_pin = PDM_DIN;

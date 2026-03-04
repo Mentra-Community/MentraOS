@@ -690,7 +690,7 @@ static lv_font_t s_binfont_lvgl = {
     .underline_position = -2,
     .underline_thickness = 1,
     .dsc = NULL,
-    .fallback = &lv_font_montserrat_14,
+    .fallback = &lv_font_montserrat_18,
     .user_data = NULL,
 };
 

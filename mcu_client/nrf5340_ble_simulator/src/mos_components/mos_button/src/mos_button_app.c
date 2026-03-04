@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-24 11:14:00
- * @LastEditTime : 2026-02-05 14:21:41
+ * @LastEditTime : 2026-03-04 16:24:36
  * @FilePath     : mos_button_app.c
  * @Description  :
  *
@@ -19,6 +19,7 @@
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/poweroff.h>
 
+#include "mos_gx8002.h"
 #include "interrupt_handler.h"
 #include "mos_button.h"
 #include "mos_lsm6dsv16x.h"
@@ -28,7 +29,6 @@
 
 /* External function from main.c | 来自main.c的外部函数 */
 extern void configure_default_low_pins(void);
-extern void vad_power_control(bool enable);
 extern void ear_en_control(bool enable);
 
 LOG_MODULE_REGISTER(mos_button_app, LOG_LEVEL_INF);
@@ -67,7 +67,7 @@ static bool button_was_released_before_press = false;  // 按键在当前按下�
  *   - 如果外设已关闭（>=2.5s按下）：进入休眠
  *   - 如果外设未关闭（<2.5s按下）：短按，取消定时器，重新使能中断
  */
-static void button_poll_handler(struct k_work* work)
+static void button_poll_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
 
@@ -102,8 +102,9 @@ static void button_poll_handler(struct k_work* work)
             /* Short press detected (released before 2.5s) - cancel polling, re-enable interrupt |
              * 检测到短按（在2.5s前释放）- 取消轮询，重新使能中断 */
             int64_t press_duration = k_uptime_get() - button_press_start_time;
-            LOG_INF("Button short press detected (duration: %lld ms, < 2.5s) - cancelling polling, re-enabling interrupt", press_duration);
-            
+            LOG_INF("Button short press detected (duration: %lld ms, < 2.5s) - cancelling polling, re-enabling interrupt",
+                press_duration);
+
             /* Cancel polling timer | 取消轮询定时器 */
             k_work_cancel_delayable(&button_poll_work);
 
@@ -141,7 +142,7 @@ static void button_poll_handler(struct k_work* work)
     if (press_duration >= BUTTON_LONG_PRESS_MS && !peripherals_turned_off)
     {
         LOG_INF("✅ Button long press (2.5s) detected - turning off peripherals");
-        vad_power_control(false);  // Disable VAD power control | 禁用VAD电源控制
+        (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control | 禁用GX8002(VAD)电源控制
         ear_en_control(false);
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);  // Shutdown OPT3006 | 关闭 OPT3006
         mos_npm1300_ldsw1_disable();
@@ -186,7 +187,7 @@ static void button_default_event_handler(mos_button_press_type_t press_type)
  *
  * This is called from the interrupt processing thread context | 从中断处理线程上下文调用
  */
-static void button_interrupt_callback(interrupt_event_t* event)
+static void button_interrupt_callback(interrupt_event_t *event)
 {
     if (event == NULL)
     {
@@ -370,10 +371,10 @@ static int prepare_for_sleep(bool turn_off_peripherals)
     {
         LOG_INF("Turning off peripherals before sleep...");
 
-        vad_power_control(false);
+        (void)mos_gx8002_power_control(false);
         ear_en_control(false);
         /* Disable LDSW1 | 禁用LDSW1 */
-        
+
         /* Put OPT3006 into shutdown mode | 关闭 OPT3006 */
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
         opt3006_prepare_for_sleep();
@@ -388,7 +389,7 @@ static int prepare_for_sleep(bool turn_off_peripherals)
     }
     else
     {
-        vad_power_control(false);  // Disable VAD power control | 禁用VAD电源控制
+        (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control | 禁用GX8002(VAD)电源控制
     }
 
     /* Ensure all default LOW pins are LOW before sleep | 睡眠前确保所有默认拉低的引脚为低电平 */

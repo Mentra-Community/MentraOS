@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-11-19 20:05:11
- * @LastEditTime : 2026-02-28 15:09:05
+ * @LastEditTime : 2026-03-03 17:36:46
  * @FilePath     : mos_lsm6dsv16x.c
  * @Description  : LSM6DSV16X 6-axis IMU sensor driver wrapper
  *
@@ -68,11 +68,13 @@ static int lsm6dsv16x_ensure_i2c_ready(void)
     return 0;
 }
 
-/* Shared user node for IMU GPIOs | IMU GPIO 统一使用的 user 节点 */
-#define USER_NODE DT_PATH(zephyr_user)
-
-/* IMU INT1 GPIO (interrupt input, e.g. P1.15) | IMU中断GPIO（如P1.15） */
-static const struct gpio_dt_spec imu_int1_gpio = GPIO_DT_SPEC_GET(USER_NODE, imu_int1_gpios);
+/* IMU INT1 GPIO from sensor node (interrupt input, e.g. P1.15) */
+#if DT_NODE_EXISTS(LSM6DSV16X_NODE) && DT_NODE_HAS_PROP(LSM6DSV16X_NODE, int1_gpios)
+#define LSM6DSV16X_INT1_GPIO_AVAILABLE 1
+static const struct gpio_dt_spec imu_int1_gpio = GPIO_DT_SPEC_GET(LSM6DSV16X_NODE, int1_gpios);
+#else
+#define LSM6DSV16X_INT1_GPIO_AVAILABLE 0
+#endif
 static bool imu_int1_gpio_initialized = false;
 
 int lsm6dsv16x_init(void)
@@ -91,7 +93,6 @@ int lsm6dsv16x_init(void)
         LOG_ERR("❌ LSM6DSV16X sensor device not available or not ready");
         return -ENODEV;
     }
-
     i2c_bus = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
     if (i2c_bus == NULL || !device_is_ready(i2c_bus))
     {
@@ -102,12 +103,12 @@ int lsm6dsv16x_init(void)
     ret = i2c_configure(i2c_bus, I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER);
     if (ret != 0)
     {
-        LOG_ERR("❌ Failed to configure I2C bus: %d", ret);
+        LOG_ERR("❌ Failed to configure I2C bus: %d", ret); 
         return ret;
     }
 
     /* Initialize INT1 GPIO | 初始化 INT1 中断引脚 */
-    if (!imu_int1_gpio_initialized)
+    if (LSM6DSV16X_INT1_GPIO_AVAILABLE && !imu_int1_gpio_initialized)
     {
         ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
         if (ret != 0)
@@ -158,7 +159,6 @@ bool lsm6dsv16x_is_ready(void)
     }
     return device_is_ready(lsm6dsv16x_dev);
 }
-
 
 /**
  * @brief Read accelerometer data | 读取加速度计数据
@@ -769,10 +769,13 @@ int lsm6dsv16x_sleep(void)
         return ret;
     }
 
-    ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
-    if (ret != 0)
+    if (LSM6DSV16X_INT1_GPIO_AVAILABLE)
     {
-        LOG_WRN("Failed to pull down IMU INT1 during sleep: %d", ret);
+        ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
+        if (ret != 0)
+        {
+            LOG_WRN("Failed to pull down IMU INT1 during sleep: %d", ret);
+        }
     }
 
     nrf_gpio_cfg_input(I2C2_SCL_PIN, NRF_GPIO_PIN_PULLDOWN);
@@ -814,10 +817,13 @@ int lsm6dsv16x_wake(void)
         return ret;
     }
 
-    ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
-    if (ret != 0)
+    if (LSM6DSV16X_INT1_GPIO_AVAILABLE)
     {
-        LOG_WRN("Failed to restore IMU INT1 pull-down: %d", ret);
+        ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
+        if (ret != 0)
+        {
+            LOG_WRN("Failed to restore IMU INT1 pull-down: %d", ret);
+        }
     }
     if (i2c_bus != NULL)
     {

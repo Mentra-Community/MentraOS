@@ -52,21 +52,11 @@ LOG_MODULE_REGISTER(shell_display, LOG_LEVEL_INF);
 #endif
 #define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE_ADDRESS)
 
-// Helper function to map font sizes to available fonts - Updated with all sizes
+// Helper function to map font sizes to available fonts - project uses 18pt only
 static const lv_font_t *get_font_by_size(int size)
 {
-    switch (size)
-    {
-        case 12:
-            return &lv_font_montserrat_12;
-        case 14:
-            return &lv_font_montserrat_14;
-        // case 30: return &lv_font_montserrat_30;  // 30pt font commented out
-        case 48:
-            return &lv_font_montserrat_18;
-        default:
-            return &lv_font_montserrat_14;  // Default to 14pt (safe fallback)
-    }
+    (void)size;
+    return &lv_font_montserrat_18;
 }
 
 /**

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-02-26 18:05:26
+ * @LastEditTime : 2026-03-04 17:40:37
  * @FilePath     : mos_lvgl_display.c
  * @Description  :
  *
@@ -95,7 +95,7 @@ void lv_example_scroll_text(void)
     lv_label_set_text(label, "!!!!!nRF5340 + NCS 3.0.0 + LVGL!!!!");
 
     lv_obj_set_style_text_color(label, display_get_text_color(), 0); /* 自适应文字颜色 / Use adaptive text color */
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_12,
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_18,
                                0); /* 小字体适配 SSD1306（原 48）/ Smaller font for SSD1306 (was 48) */
     lv_obj_set_style_bg_color(lv_screen_active(), display_get_background_color(), 0);
 }
@@ -309,7 +309,7 @@ void lvgl_display_text(void)
     /* lv_obj_align(hello_world_label, LV_ALIGN_BOTTOM_MID, 0, 0); 底部居中对齐 / Bottom center */
     lv_obj_set_style_text_color(hello_world_label, display_get_text_color(),
                                 0); /* 自适应文字颜色 / Use adaptive text color */
-    lv_obj_set_style_text_font(hello_world_label, &lv_font_montserrat_14,
+    lv_obj_set_style_text_font(hello_world_label, &lv_font_montserrat_18,
                                0); /* 原 48，现 14 省内存 / Was 48, using 14 for memory */
     lv_obj_set_style_bg_color(lv_screen_active(), display_get_background_color(), 0);
 }
@@ -346,10 +346,10 @@ void ui_create(void)
 
     /* lv_obj_align(counter_label, LV_TEXT_ALIGN_LEFT, 50, 320); 左对齐 / Left align */
     lv_obj_set_style_text_color(acc_label, display_get_text_color(), 0); /* 自适应文字颜色 / Use adaptive text color */
-    lv_obj_set_style_text_font(acc_label, &lv_font_montserrat_14,
+    lv_obj_set_style_text_font(acc_label, &lv_font_montserrat_18,
                                0); /* 原 30，现 14 省内存 / Was 30, using 14 for memory */
     lv_obj_set_style_text_color(gyr_label, display_get_text_color(), 0); /* 自适应文字颜色 / Use adaptive text color */
-    lv_obj_set_style_text_font(gyr_label, &lv_font_montserrat_14,
+    lv_obj_set_style_text_font(gyr_label, &lv_font_montserrat_18,
                                0); /* 原 30，现 14 省内存 / Was 30, using 14 for memory */
     lv_obj_set_style_bg_color(lv_screen_active(), display_get_background_color(), 0);
     /* 创建 100ms 周期定时器，count 指针经 user_data 传入 / Create 100ms period timer, pass count via user_data */
@@ -591,7 +591,7 @@ static void create_center_rectangle_pattern(lv_obj_t* screen)
     lv_obj_set_style_text_color(scrolling_welcome_label, display_get_text_color(),
                                 0); /* 自适应文字颜色 / Use adaptive text color */
     lv_obj_set_style_text_font(scrolling_welcome_label,
-                               &lv_font_montserrat_14, /* 原 48，现 14 省内存 / Was 48, using 14 for memory */
+                               &lv_font_montserrat_18, /* 原 48，现 14 省内存 / Was 48, using 14 for memory */
                                0);
 
     /* 使用普通模式，无内置滚动 / Use normal mode, no built-in scrolling */
@@ -634,7 +634,7 @@ static void anim_set_x_cb(void* obj, int32_t v)
 static void create_center_rectangle_pattern_ssd1306(lv_obj_t* screen)
 {
     const char* text = "Welcome to MentraOS NExFirmware!";
-    const lv_font_t* font = &lv_font_montserrat_12;
+    const lv_font_t* font = &lv_font_montserrat_18;
     const uint32_t ms_per_px = 25;
     const lv_coord_t sw = lv_obj_get_width(screen);
     const lv_coord_t sh = lv_obj_get_height(screen);
@@ -1838,7 +1838,7 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
                     /* 配置 Bank0 寄存器 50%=127/255 / Configure Bank0 registers (50% = 127/255) */
                     /* a6n_set_brightness(0x7f); */
                     /* 初始亮度 30% / Set initial brightness to 30% */
-                    protobuf_set_brightness_level(100);
+                    protobuf_set_brightness_level(30); /* 0-100 */
                     mos_delay_us(6);
 
                     /* 设置显示格式为 GRAY16 (4-bit) / Set display format to GRAY16 (4-bit) */
@@ -2014,7 +2014,7 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
                     lv_label_set_text(lbl, cmd.p.text.text);
                     // lv_label_set_text(lbl, "Hello, world lvgl!"); //test
                     lv_obj_set_style_text_color(lbl, lv_color_white(), LV_PART_MAIN);
-                    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14,
+                    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_18,
                                                LV_PART_MAIN); /* 原 30，现 14 省内存 / Was 30, using 14 for memory */
                     lv_obj_set_pos(lbl, cmd.p.text.x, cmd.p.text.y);
                 }

@@ -42,9 +42,9 @@ static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
                     .border_width = 1,
                     .usable_width = 124,
                     .usable_height = 60},
-        .fonts = {.primary = &lv_font_montserrat_12,
-                .secondary = &lv_font_montserrat_12,  // Use 12 instead of 10 (not available)
-                .large = &lv_font_montserrat_14,
+        .fonts = {.primary = &lv_font_montserrat_18,
+                .secondary = &lv_font_montserrat_18,
+                .large = &lv_font_montserrat_18,
                 .cjk = &lv_font_montserrat_18,
                 .line_spacing = 1},
         .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
@@ -67,9 +67,9 @@ static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
                     .border_width = 2,
                     .usable_width = 440,
                     .usable_height = 200},
-         .fonts = {.primary = &lv_font_montserrat_14,  // Use 14 instead of 24 (not available)
-                   .secondary = &lv_font_montserrat_12,  // Use 12 instead of 18 (not available)
-                   .large = &lv_font_montserrat_14,  // Use 14 instead of 48 (not available)
+         .fonts = {.primary = &lv_font_montserrat_18,
+                   .secondary = &lv_font_montserrat_18,
+                   .large = &lv_font_montserrat_18,
                    .cjk = &lv_font_montserrat_18,
                    .line_spacing = 3},
          .patterns = {.chess_square_size = 40, .bar_thickness = 20, .scroll_speed = 5},
@@ -92,9 +92,9 @@ static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
                     .border_width = 1,
                     .usable_width = 124,
                     .usable_height = 60},
-         .fonts = {.primary = &lv_font_montserrat_12,
-                   .secondary = &lv_font_montserrat_12,  // Use 12 instead of 10 (not available)
-                   .large = &lv_font_montserrat_14,
+         .fonts = {.primary = &lv_font_montserrat_18,
+                   .secondary = &lv_font_montserrat_18,
+                   .large = &lv_font_montserrat_18,
                    .cjk = &lv_font_montserrat_18,
                    .line_spacing = 1},
          .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
@@ -117,9 +117,8 @@ static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
                    .border_width = 2,
                    .usable_width = 480,
                    .usable_height = 320},
-        .fonts = {.primary = &lv_font_montserrat_14,  // Use 14 instead of 30 (not available)
-                  .secondary = &lv_font_montserrat_18,  // Use 18 for secondary text
-                  // .secondary = &lv_font_simsun_16_cjk,  // Use 18 for secondary text
+        .fonts = {.primary = &lv_font_montserrat_18,
+                  .secondary = &lv_font_montserrat_18,
                   .large = &lv_font_montserrat_18,
                   .cjk = &lv_font_montserrat_18,
                   .line_spacing = 4},

@@ -50,12 +50,16 @@
 #include <zephyr/logging/log.h>
 
 #include "../../custom_driver_module/drivers/display/lcd/a6n.h"
+#include "mos_gx8002.h"
+#include "mos_i2s_slave.h"
+#include "main.h"
 #include "mos_ble_service.h"
 #include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
-#include "pdm_audio_stream.h"  // **NEW: For microphone audio streaming**
 #include "proto/mentraos_ble.pb.h"
+#include "vad_interrupt_handler.h"
 
 LOG_MODULE_REGISTER(protobuf_handler, LOG_LEVEL_DBG);
+
 
 // Global battery level state (0-100%)
 static uint32_t current_battery_level = 85;
@@ -762,21 +766,28 @@ void protobuf_send_battery_notification(void)
                 notification.payload.battery_status.level, notification.payload.battery_status.charging ? "Y" : "N",
                 bytes_written);
 
-        // Send via BLE (to all connected clients)
+        // Send via BLE (to all connected clients that have enabled TX notifications)
         LOG_INF("BLE Transmission:");
-        int ret = custom_nus_send(NULL, buffer, bytes_written + 1);
-        if (ret == 0)
+        if (!get_ble_connected_status())
         {
-            LOG_INF("  - Status: SUCCESS");
-            LOG_INF("  - Sent: %zu bytes via BLE", bytes_written + 1);
-            LOG_INF("  - Target: All connected phones");
-            LOG_INF("Battery notification sent successfully");
+            LOG_DBG("  - Skipped: no BLE connection");
         }
         else
         {
-            LOG_ERR("  - Status: FAILED");
-            LOG_ERR("  - Error code: %d", ret);
-            LOG_ERR("Failed to send battery notification");
+            int ret = custom_nus_send(NULL, buffer, bytes_written + 1);
+            if (ret == 0)
+            {
+                LOG_INF("  - Status: SUCCESS");
+                LOG_INF("  - Sent: %zu bytes via BLE", bytes_written + 1);
+                LOG_INF("  - Target: All connected phones");
+                LOG_INF("Battery notification sent successfully");
+            }
+            else
+            {
+                /* -128 etc.: no peer has enabled CCC for TX, or link down; avoid ERR spam */
+                LOG_WRN("  - Status: NOT_SENT (err=%d) - app may not have enabled TX notifications (CCC) or link down",
+                        ret);
+            }
         }
 
         LOG_INF("=== END BLE DATA TRANSMISSION ===");
@@ -1043,9 +1054,8 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
 
     // Print to UART with comprehensive details
     LOG_INF("[Phone->Glasses TEXT] Display Text: \"%s\"", display_text->text);
-    LOG_INF("len:%zu, pos:(%u,%u), color:0x%04X, font:%u, size:%u",
-            text_length, display_text->x, display_text->y, color_rgb565, display_text->font_code,
-            display_text->size);
+    LOG_INF("len:%zu, pos:(%u,%u), color:0x%04X, font:%u, size:%u", text_length, display_text->x, display_text->y,
+            color_rgb565, display_text->font_code, display_text->size);
 
     // *** LVGL INTEGRATION: Display text based on current pattern ***
     // **NEW: Check current pattern to determine display mode**
@@ -1231,16 +1241,16 @@ void protobuf_parse_text_brightness(const char *text)
     }
 }
 
-void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig* config)
+void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig *config)
 {
     LOG_INF("=== DISPLAY HEIGHT CONFIGURATION (Tag 45) ===");
-    
+
     LOG_INF("Display Height Configuration:");
     LOG_INF("  - Message Type: PhoneToGlasses::DisplayHeightConfig");
     LOG_INF("  - Protocol: MentraOS BLE Protobuf v3 (EXTENDED)");
     LOG_INF("  - Payload Tag: 45 (display_height)");
     LOG_INF("  - Direction: Phone → Glasses");
-    
+
     LOG_INF("Configuration Details:");
     LOG_INF("  - Height: %d pixels", config->height);
 
@@ -1412,51 +1422,55 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
     LOG_INF("  - Tag Number: 20\n");
     LOG_INF("  - Field 1 (enabled): %s\n", mic_state->enabled ? "ENABLE_MICROPHONE" : "DISABLE_MICROPHONE");
     LOG_INF("  - Expected Action: %s\n",
-            mic_state->enabled ? "Start PDM capture + LC3 encoding + BLE streaming" : "Stop all audio processing");
+            mic_state->enabled ? "Enable VAD-triggered I2S capture" : "Stop I2S capture and keep microphone idle");
 
     bool enabled = mic_state->enabled;
 
-    pdm_audio_state_t current_state = pdm_audio_stream_get_state();
-    bool was_streaming = (current_state == PDM_AUDIO_STATE_STREAMING);
+    bool was_enabled = vad_interrupt_handler_is_enabled();
+    bool was_streaming = vad_interrupt_handler_is_i2s_active();
 
     LOG_INF("Microphone Configuration:");
     LOG_INF("  - Field 1 (bool enabled): %s", enabled ? "true" : "false");
-    LOG_INF("  - Previous State: %s", was_streaming ? "STREAMING" : "DISABLED");
-    LOG_INF("  - Requested State: %s", enabled ? "STREAMING" : "DISABLED");
-    LOG_INF("  - State Change Required: %s", (was_streaming != enabled) ? "YES" : "NO");
+    LOG_INF("  - Previous State: %s", was_enabled ? "ENABLED" : "DISABLED");
+    LOG_INF("  - Requested State: %s", enabled ? "ENABLED" : "DISABLED");
+    LOG_INF("  - State Change Required: %s", (was_enabled != enabled) ? "YES" : "NO");
+    LOG_INF("  - Current I2S Activity: %s", was_streaming ? "ACTIVE" : "INACTIVE");
 
     // Hardware configuration details
     LOG_INF("Hardware Configuration:");
-    LOG_INF("  - PDM Clock Pin: P0.20 (PDM_CLK)");
-    LOG_INF("  - PDM Data Pin: P0.21 (PDM_DIN)");
-    LOG_INF("  - Sample Rate: %d Hz", PDM_SAMPLE_RATE);
-    LOG_INF("  - Bit Depth: 16-bit PCM");
-    LOG_INF("  - Channels: %d (Mono)", PDM_CHANNELS);
-    // LOG_INF("  - Frame Size: %d samples (%d ms)",
-    //         PDM_FRAME_SIZE_SAMPLES, LC3_FRAME_DURATION_MS);
+    LOG_INF("  - Audio source: GX8002 VAD (I2S slave)");
 
-    // LC3 encoding configuration
-    LOG_INF("Audio Streaming Configuration:");
-    LOG_INF("  - Codec: LC3 (Low Complexity Communication Codec)");
-    // LOG_INF("  - Frame Duration: %d ms", LC3_FRAME_DURATION_MS);
-    // LOG_INF("  - Bitrate: %d bps", LC3_BITRATE_DEFAULT);
-    LOG_INF("  - Transport: BLE via 0xA0 audio chunk messages");
-    LOG_INF("  - Stream ID: 0x01 (microphone audio)");
+    int ret = 0;
+    vad_interrupt_handler_set_enabled(enabled);
+    if (enabled)
+    {
+        ret = mos_gx8002_vad_int_re_enable();
+    }
+    else
+    {
+        int vad_disable_ret = mos_gx8002_vad_int_disable();
+        int stop_ret = gx8002_i2s_stop();
+        (void)mos_gx8002_disable_i2s(); /* best-effort: GX8002 I2C disable may fail if I2S was never started */
+        if (vad_disable_ret != 0)
+        {
+            ret = vad_disable_ret;
+        }
+        else if (stop_ret != 0)
+        {
+            ret = stop_ret;
+        }
+        /* Do not treat GX8002 I2C disable failure as fatal: local pipeline is already stopped */
+    }
 
-    // Apply the configuration
-    int ret = pdm_audio_stream_set_enabled(enabled);
-
-    // Get updated statistics
-    uint32_t frames_captured, frames_encoded, frames_transmitted, errors;
-    pdm_audio_stream_get_stats(&frames_captured, &frames_encoded, &frames_transmitted, &errors);
+    uint32_t frames_captured = 0, frames_encoded = 0, frames_transmitted = 0, errors = 0;
 
     LOG_INF("Configuration Result:");
-    if (ret == 0)
+    if (ret == 0 || ret == -EALREADY)
     {
         LOG_INF("  - Status: SUCCESS");
         LOG_INF("  - Microphone: %s", enabled ? "STREAMING ACTIVE" : "STREAMING STOPPED");
-        LOG_INF("  - Audio Processing: %s", enabled ? "ACTIVE" : "INACTIVE");
-        LOG_INF("  - BLE Transmission: %s", enabled ? "ACTIVE" : "INACTIVE");
+        LOG_INF("  - Audio Processing: %s", enabled ? "VAD-ARMED" : "INACTIVE");
+        LOG_INF("  - BLE Transmission: %s", enabled ? "DEPENDENT ON I2S/PIPELINE" : "INACTIVE");
     }
     else
     {
@@ -1477,11 +1491,11 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
     LOG_INF("  - Message Type: PhoneToGlasses::MicStateConfig");
     LOG_INF("  - Field 1 present: YES");
     LOG_INF("  - Value type: bool");
-    LOG_INF("  - Implementation: PDM microphone + LC3 encoding + BLE streaming");
+    LOG_INF("  - Implementation: GX8002 VAD + I2S capture pipeline");
 
     // Print concise status to UART
     LOG_INF("\n[Phone->Glasses MIC_STATE] Microphone: %s->%s (frames: %u/%u/%u, errors: %u)\n",
-            was_streaming ? "ON" : "OFF", enabled ? "ON" : "OFF", frames_captured, frames_encoded, frames_transmitted,
+            was_enabled ? "ON" : "OFF", enabled ? "ON" : "OFF", frames_captured, frames_encoded, frames_transmitted,
             errors);
 
     LOG_INF("=== END MICROPHONE STATE CONFIG MESSAGE ===");
@@ -1563,11 +1577,7 @@ static void protobuf_send_ping_request(void)
         {
             LOG_DBG("[PING] Sending ping #%u (%zu bytes)", ping_sequence_number, message_length);
         }
-
-        // TODO: Get current BLE connection handle and send
-        // int result = custom_nus_send(conn, buffer, message_length);
-
-        // Start timeout timer
+        /* Start timeout timer only after successful send */
         k_timer_start(&ping_timeout_timer, K_MSEC(PING_TIMEOUT_MS), K_NO_WAIT);
 
         if (ping_logging_enabled)
