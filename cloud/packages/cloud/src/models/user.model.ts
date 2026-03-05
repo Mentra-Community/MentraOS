@@ -1,5 +1,6 @@
 // cloud/src/models/user.model.ts
 import mongoose, { Schema, Document, Model, Types } from "mongoose";
+import { randomUUID } from "crypto";
 import { type AppSetting } from "@mentra/sdk";
 import { MongoSanitizer } from "../utils/mongoSanitizer";
 import { logger } from "../services/logging/pino-logger";
@@ -19,6 +20,12 @@ interface InstalledApp {
 
 // Extend Document for TypeScript support
 export interface UserI extends Document {
+  /**
+   * Canonical, opaque user identifier (UUID)
+   * Used as the primary identifier instead of email.
+   */
+  userId: string;
+
   email: string;
   runningApps: string[];
   appSettings: Map<string, AppSetting[]>;
@@ -131,6 +138,13 @@ const AppSettingUpdateSchema = new Schema(
 // --- User Schema ---
 const UserSchema = new Schema<UserI>(
   {
+    userId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      default: () => randomUUID(),
+    },
     email: {
       type: String,
       required: true,
@@ -266,7 +280,8 @@ const UserSchema = new Schema<UserI>(
     toJSON: {
       transform: (doc, ret) => {
         delete ret.__v;
-        ret.id = ret._id;
+        // Prefer userId as the public identifier, fall back to Mongo _id
+        ret.id = ret.userId || ret._id;
         delete ret._id;
         // Safely handle appSettings transformation
         if (ret.appSettings && ret.appSettings instanceof Map) {
@@ -567,6 +582,10 @@ UserSchema.statics.findByEmail = async function (email: string): Promise<UserI |
   return this.findOne({ email: email.toLowerCase() });
 };
 
+UserSchema.statics.findByUserId = async function (userId: string): Promise<UserI | null> {
+  return this.findOne({ userId });
+};
+
 UserSchema.statics.findOrCreateUser = async function (email: string): Promise<UserI> {
   email = email.toLowerCase();
   let user = await this.findOne({ email });
@@ -844,6 +863,7 @@ UserSchema.statics.ensurePersonalOrg = async function (user: UserI): Promise<Typ
 // --- Interface for Static Methods ---
 interface UserModel extends Model<UserI> {
   findByEmail(email: string): Promise<UserI | null>;
+  findByUserId(userId: string): Promise<UserI | null>;
   findOrCreateUser(email: string): Promise<UserI>;
   findUserInstalledApps(email: string): Promise<any[]>;
   ensurePersonalOrg(user: UserI): Promise<Types.ObjectId>;
