@@ -62,18 +62,18 @@ export const ThemedSlider: React.FC<ThemedSliderProps> = ({
 
   const panResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
-    onPanResponderGrant: evt => {
+    onPanResponderGrant: (evt) => {
       isDraggingRef.current = true
       const newValue = computeValueFromPageX(evt.nativeEvent.pageX)
       setInternalValue(newValue)
       onValueChangeRef.current(newValue)
     },
-    onPanResponderMove: evt => {
+    onPanResponderMove: (evt) => {
       const newValue = computeValueFromPageX(evt.nativeEvent.pageX)
       setInternalValue(newValue)
       onValueChangeRef.current(newValue)
     },
-    onPanResponderRelease: evt => {
+    onPanResponderRelease: (evt) => {
       const newValue = computeValueFromPageX(evt.nativeEvent.pageX)
       setInternalValue(newValue)
       onSlidingCompleteRef.current(newValue)

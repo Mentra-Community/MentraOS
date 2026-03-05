@@ -23,6 +23,7 @@
     "typescript-eslint": "^8.44.1"
   },
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "generate-licenses": "bun docs/generate-licenses.ts"
   }
 }

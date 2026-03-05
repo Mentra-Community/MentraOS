@@ -55,7 +55,7 @@ export function FloatingImageLayer({
   const dismissGesture = Gesture.Pan()
     .activeOffsetY([-10, 10])
     .failOffsetX([-30, 30])
-    .onUpdate(e => {
+    .onUpdate((e) => {
       "worklet"
       // Only vertical drag
       if (Math.abs(e.velocityX) > Math.abs(e.velocityY)) return
@@ -67,7 +67,7 @@ export function FloatingImageLayer({
       dragScale.value = interpolate(progress, [0, 1], [1, 0.85], Extrapolate.CLAMP)
       backgroundOpacity.value = interpolate(progress, [0, 1], [1, 0], Extrapolate.CLAMP)
     })
-    .onEnd(e => {
+    .onEnd((e) => {
       "worklet"
       const shouldDismiss = Math.abs(e.translationY) > DISMISS_THRESHOLD || Math.abs(e.velocityY) > VELOCITY_THRESHOLD
 

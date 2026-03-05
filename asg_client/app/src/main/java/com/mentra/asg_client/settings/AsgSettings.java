@@ -216,6 +216,7 @@ public class AsgSettings {
     /**
      * Get the MCU firmware version (cached from hs_syvr command)
      * @return MCU firmware version string, or empty string if not yet received
+     * @deprecated Use getBesFirmwareVersion() for clarity - MCU refers to BES firmware
      */
     public String getMcuFirmwareVersion() {
         String version = prefs.getString(KEY_MCU_FIRMWARE_VERSION, "");
@@ -224,8 +225,18 @@ public class AsgSettings {
     }
 
     /**
+     * Get the BES firmware version (cached from hs_syvr command)
+     * This is an alias for getMcuFirmwareVersion() with clearer naming.
+     * @return BES firmware version string (e.g., "17.26.1.14"), or empty string if not yet received
+     */
+    public String getBesFirmwareVersion() {
+        return getMcuFirmwareVersion();
+    }
+
+    /**
      * Set the MCU firmware version (called when hs_syvr is received from MCU)
      * @param version MCU firmware version string
+     * @deprecated Use setBesFirmwareVersion() for clarity - MCU refers to BES firmware
      */
     public void setMcuFirmwareVersion(String version) {
         if (version == null || version.isEmpty()) {
@@ -235,5 +246,14 @@ public class AsgSettings {
         Log.i(TAG, "📋 Setting MCU firmware version to: " + version);
         // Using commit() for immediate persistence
         prefs.edit().putString(KEY_MCU_FIRMWARE_VERSION, version).commit();
+    }
+
+    /**
+     * Set the BES firmware version (called when hs_syvr is received from BES chipset)
+     * This is an alias for setMcuFirmwareVersion() with clearer naming.
+     * @param version BES firmware version string (e.g., "17.26.1.14")
+     */
+    public void setBesFirmwareVersion(String version) {
+        setMcuFirmwareVersion(version);
     }
 }

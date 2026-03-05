@@ -1,9 +1,9 @@
-import { useEvent } from 'expo';
-import Crust, { CrustView } from 'crust';
-import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import {useEvent} from "expo"
+import Crust, {CrustView} from "crust"
+import {Button, SafeAreaView, ScrollView, Text, View} from "react-native"
 
 export default function App() {
-  const onChangePayload = useEvent(Crust, 'onChange');
+  const onChangePayload = useEvent(Crust, "onChange")
 
   return (
     <SafeAreaView style={styles.container}>
@@ -19,7 +19,7 @@ export default function App() {
           <Button
             title="Set value"
             onPress={async () => {
-              await Crust.setValueAsync('Hello from JS!');
+              await Crust.setValueAsync("Hello from JS!")
             }}
           />
         </Group>
@@ -29,22 +29,22 @@ export default function App() {
         <Group name="Views">
           <CrustView
             url="https://www.example.com"
-            onLoad={({ nativeEvent: { url } }) => console.log(`Loaded: ${url}`)}
+            onLoad={({nativeEvent: {url}}) => console.log(`Loaded: ${url}`)}
             style={styles.view}
           />
         </Group>
       </ScrollView>
     </SafeAreaView>
-  );
+  )
 }
 
-function Group(props: { name: string; children: React.ReactNode }) {
+function Group(props: {name: string; children: React.ReactNode}) {
   return (
     <View style={styles.group}>
       <Text style={styles.groupHeader}>{props.name}</Text>
       {props.children}
     </View>
-  );
+  )
 }
 
 const styles = {
@@ -58,16 +58,16 @@ const styles = {
   },
   group: {
     margin: 20,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 10,
     padding: 20,
   },
   container: {
     flex: 1,
-    backgroundColor: '#eee',
+    backgroundColor: "#eee",
   },
   view: {
     flex: 1,
     height: 200,
   },
-};
+}

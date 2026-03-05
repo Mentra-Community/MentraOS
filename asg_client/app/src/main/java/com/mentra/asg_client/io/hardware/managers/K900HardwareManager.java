@@ -66,6 +66,10 @@ public class K900HardwareManager extends BaseHardwareManager {
 
         audioController = new I2SAudioController(context);
 
+        // Note: BES system version query will be requested when BluetoothManager is set
+        // via setBluetoothManager() -> requestSystemVersion() call
+        // Response (~50ms) will be cached via K900CommandHandler.handleSystemVersionReport()
+
         Log.d(TAG, "🔧 ✅ K900 Hardware Manager initialized");
     }
     
@@ -194,6 +198,9 @@ public class K900HardwareManager extends BaseHardwareManager {
                 Log.e(TAG, "🔧 ❌ Failed to initialize K900 RGB LED controller", e);
                 rgbLedController = null;
             }
+
+            // Note: BES system version query is handled by K900CommandHandler.requestSystemVersion()
+            // which will be called when K900CommandHandler is available and BluetoothManager is ready
         } else {
             Log.w(TAG, "Invalid BluetoothManager provided (expected K900BluetoothManager)");
         }
@@ -246,11 +253,32 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public void setRgbLedBrightness(int brightness) {
+        if (rgbLedController != null) {
+            rgbLedController.setBrightness(brightness);
+            Log.d(TAG, String.format("🚨 RGB LED brightness set to %d", brightness));
+        } else {
+            Log.w(TAG, "RGB LED controller not available - call setBluetoothManager() first");
+        }
+    }
+
+    @Override
     public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count) {
         if (rgbLedController != null) {
             rgbLedController.setLedOn(ledIndex, ontime, offtime, count);
             Log.d(TAG, String.format("🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d",
                     ledIndex, ontime, offtime, count));
+        } else {
+            Log.w(TAG, "RGB LED controller not available - call setBluetoothManager() first");
+        }
+    }
+
+    @Override
+    public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count, int brightness) {
+        if (rgbLedController != null) {
+            rgbLedController.setLedOn(ledIndex, ontime, offtime, count, brightness);
+            Log.d(TAG, String.format("🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d, Brightness: %d",
+                    ledIndex, ontime, offtime, count, brightness));
         } else {
             Log.w(TAG, "RGB LED controller not available - call setBluetoothManager() first");
         }
@@ -277,7 +305,18 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public void flashRgbLedWhite(int durationMs, int brightness) {
+        if (rgbLedController != null) {
+            rgbLedController.flashWhite(durationMs, brightness);
+            Log.d(TAG, String.format("📸 RGB LED white flash for %dms at brightness %d", durationMs, brightness));
+        } else {
+            Log.w(TAG, "RGB LED controller not available");
+        }
+    }
+
+    @Override
     public void setRgbLedSolidWhite(int durationMs) {
+        Log.d(TAG, "setRgbLedSolidWhite(" + durationMs + ") called");
         if (rgbLedController != null) {
             rgbLedController.setSolidWhite(durationMs);
             Log.d(TAG, String.format("🎥 RGB LED solid white for %dms", durationMs));
@@ -402,6 +441,17 @@ public class K900HardwareManager extends BaseHardwareManager {
             if (batteryResponseLatch != null) {
                 batteryResponseLatch.countDown();
             }
+        }
+    }
+
+    @Override
+    public void setRgbLedSolidWhite(int durationMs, int brightness) {
+        Log.d(TAG, "setRgbLedSolidWhite(" + durationMs + ", " + brightness + ") called");
+        if (rgbLedController != null) {
+            rgbLedController.setSolidWhite(durationMs, brightness);
+            Log.d(TAG, String.format("🎥 RGB LED solid white for %dms at brightness %d", durationMs, brightness));
+        } else {
+            Log.w(TAG, "RGB LED controller not available");
         }
     }
 

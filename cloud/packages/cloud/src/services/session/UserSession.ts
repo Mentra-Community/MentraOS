@@ -31,8 +31,6 @@ import CalendarManager from "./CalendarManager";
 import { DashboardManager } from "./dashboard";
 import DeviceManager from "./DeviceManager";
 import { handleAppMessage as appMessageHandler, handleGlassesMessage as glassesMessageHandler } from "./handlers";
-import LiveKitManager from "./livekit/LiveKitManager";
-import SpeakerManager from "./livekit/SpeakerManager";
 import LocationManager from "./LocationManager";
 import MicrophoneManager from "./MicrophoneManager";
 import PhotoManager from "./PhotoManager";
@@ -113,8 +111,7 @@ export class UserSession {
   public transcriptionManager: TranscriptionManager;
   public translationManager: TranslationManager;
   public subscriptionManager: SubscriptionManager;
-  public liveKitManager: LiveKitManager;
-  public speakerManager: SpeakerManager;
+
   public calendarManager: CalendarManager;
   public locationManager: LocationManager;
   public userSettingsManager: UserSettingsManager;
@@ -132,13 +129,20 @@ export class UserSession {
 
   // Heartbeat for glasses connection
   private glassesHeartbeatInterval?: NodeJS.Timeout;
+  private appLevelPingInterval?: NodeJS.Timeout;
   private pongHandler?: () => void; // Stored for cleanup
   private lastPongTime?: number;
   private pongTimeoutTimer?: NodeJS.Timeout;
   private readonly PONG_TIMEOUT_MS = 30000; // 30 seconds - 3x heartbeat interval
 
-  // SAFETY FLAG: Set to false to disable pong timeout behavior entirely
-  private static readonly PONG_TIMEOUT_ENABLED = true; // Enabled to track phone connection reliability in production
+  // DISABLED: Cloudflare absorbs protocol-level ping/pong at the edge, so pongs from
+  // the mobile client never reach Bun — they terminate at Cloudflare's edge. This causes
+  // the timeout to fire on every idle connection after 30s, killing healthy connections.
+  // Clients then take 3-7 minutes to detect the dead connection and reconnect, making
+  // the cure worse than the disease. The server still sends pings and tracks lastPongTime
+  // for observability — it just doesn't kill connections based on missing pongs.
+  // See: cloud/issues/035-nginx-ws-timeout/spike.md
+  private static readonly PONG_TIMEOUT_ENABLED = false;
 
   // Audio play request tracking - maps requestId to packageName
   public audioPlayRequestMapping: Map<string, string> = new Map();
@@ -146,11 +150,8 @@ export class UserSession {
   // App health status cache (for client apps API)
   public appHealthCache: Map<string, boolean> = new Map();
 
-  // Other state
-  public userDatetime?: string;
-
-  // LiveKit transport preference
-  public livekitRequested?: boolean;
+  // User's timezone (IANA name like "America/New_York")
+  public userTimezone?: string;
 
   // Capability Discovery
 
@@ -179,9 +180,7 @@ export class UserSession {
     this.streamRegistry = new StreamRegistry(this.logger);
     this.unmanagedStreamingExtension = new UnmanagedStreamingExtension(this);
     this.managedStreamingExtension = new ManagedStreamingExtension(this.logger, this.streamRegistry);
-    this.liveKitManager = new LiveKitManager(this);
     this.userSettingsManager = new UserSettingsManager(this);
-    this.speakerManager = new SpeakerManager(this);
     this.deviceManager = new DeviceManager(this);
     this.udpAudioManager = new UdpAudioManager(this);
 
@@ -201,11 +200,12 @@ export class UserSession {
    */
   private setupGlassesHeartbeat(): void {
     const HEARTBEAT_INTERVAL = 10000; // 10 seconds
+    const APP_LEVEL_PING_INTERVAL = 2000; // 2 seconds
 
     // Clear any existing heartbeat
     this.clearGlassesHeartbeat();
 
-    // Set up new heartbeat interval
+    // Set up new heartbeat interval (protocol-level pings for server-side detection)
     this.glassesHeartbeatInterval = setInterval(() => {
       if (this.disposed) return; // Guard against stale callback
       if (this.websocket && this.websocket.readyState === WebSocketReadyState.OPEN) {
@@ -221,6 +221,23 @@ export class UserSession {
         this.clearGlassesHeartbeat();
       }
     }, HEARTBEAT_INTERVAL);
+
+    // Application-level pings — visible to the client's onmessage handler.
+    // Protocol-level pings are invisible to React Native's WebSocket API,
+    // so the client can't use them for liveness detection. These app-level
+    // pings give the client guaranteed periodic messages to track against.
+    this.appLevelPingInterval = setInterval(() => {
+      if (this.disposed) return;
+      if (this.websocket && this.websocket.readyState === WebSocketReadyState.OPEN) {
+        try {
+          this.websocket.send(JSON.stringify({ type: "ping" }));
+        } catch (_e) {
+          // Send failure will be caught by the connection close handler
+        }
+      }
+    }, APP_LEVEL_PING_INTERVAL);
+
+    this.resources.trackInterval(this.appLevelPingInterval);
 
     // Track interval for automatic cleanup
     this.resources.trackInterval(this.glassesHeartbeatInterval);
@@ -276,6 +293,12 @@ export class UserSession {
       clearInterval(this.glassesHeartbeatInterval);
       this.glassesHeartbeatInterval = undefined;
       this.logger.debug(`[UserSession:clearGlassesHeartbeat] Heartbeat cleared for glasses connection`);
+    }
+
+    // Clear app-level ping interval
+    if (this.appLevelPingInterval) {
+      clearInterval(this.appLevelPingInterval);
+      this.appLevelPingInterval = undefined;
     }
 
     // Clear pong timeout as well
@@ -428,6 +451,14 @@ export class UserSession {
 
     // Create a fresh session
     const userSession = new UserSession(userId, ws);
+
+    // Wait for user settings to load before proceeding
+    // This ensures CONNECTION_ACK sent to apps has correct settings, not defaults
+    try {
+      await userSession.userSettingsManager.waitForLoad();
+    } catch (error) {
+      userSession.logger.error({ error }, "Error waiting for user settings to load");
+    }
 
     // Bootstrap installed apps
     try {
@@ -683,7 +714,7 @@ export class UserSession {
     // Clean up all resources
     if (this.appManager) this.appManager.dispose();
     if (this.audioManager) this.audioManager.dispose();
-    if (this.liveKitManager) this.liveKitManager.dispose();
+
     if (this.microphoneManager) this.microphoneManager.dispose();
     if (this.displayManager) this.displayManager.dispose();
     if (this.dashboardManager) this.dashboardManager.dispose();

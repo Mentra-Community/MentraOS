@@ -75,6 +75,44 @@ export const clientAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 /**
+ * Optional JWT auth middleware - populates email if valid token present, continues without if not.
+ * Does NOT reject requests without auth - just continues without setting email.
+ * Use this for public endpoints that can optionally enrich response for authenticated users.
+ */
+export const optionalClientAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const authHeader = c.req.header("authorization");
+
+  // No auth header - continue without setting email
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    await next();
+    return;
+  }
+
+  const token = authHeader.substring(7);
+
+  // Invalid token value - continue without setting email
+  if (!token || token === "null" || token === "undefined") {
+    await next();
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, AUGMENTOS_AUTH_JWT_SECRET) as jwt.JwtPayload;
+
+    if (decoded && decoded.email) {
+      const email = decoded.email.toLowerCase();
+      c.set("email", email);
+      c.set("logger", logger.child({ userId: email, reqId: c.get("reqId") }));
+    }
+  } catch (error) {
+    // Token invalid/expired - continue without setting email (don't fail)
+    logger.debug("optionalClientAuth: Token verification failed, continuing without auth");
+  }
+
+  await next();
+};
+
+/**
  * Middleware that fetches and populates the user object.
  * Must be used after clientAuth.
  * Sets c.get("user") on success.
@@ -124,7 +162,13 @@ export const requireUserSession: MiddlewareHandler<AppEnv> = async (c, next) => 
 
     if (!userSession) {
       reqLogger.warn(`requireUserSession: No active session found for user: ${email}`);
-      return c.json({ error: "No active session found" }, 401);
+      return c.json(
+        {
+          error: "no_active_session",
+          message: "No active cloud session. Please ensure your app is connected.",
+        },
+        503,
+      );
     }
 
     c.set("userSession", userSession);

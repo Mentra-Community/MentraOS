@@ -19,8 +19,9 @@ export const getGlassesImage = (glasses: string | null) => {
       return require("../../assets/glasses/tcl_rayneo_x_two.png")
     case "Vuzix_shield":
       return require("../../assets/glasses/vuzix_shield.png")
+    case "Mentra Display":
+      return require("../../assets/glasses/mentra_display.png")
     case "Even Realities G1":
-    case "Mentra Nex":
     case "evenrealities_g1":
     case "g1":
       return require("../../assets/glasses/g1.png")

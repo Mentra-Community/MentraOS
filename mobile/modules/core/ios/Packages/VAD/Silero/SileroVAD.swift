@@ -33,8 +33,8 @@ public class SileroVAD: NSObject {
         init(size: Int) {
             self.size = size
             // Pre-allocate capacity to minimize reallocations
-            self.buffer = ContiguousArray<Bool>()
-            self.buffer.reserveCapacity(size + 1)
+            buffer = ContiguousArray<Bool>()
+            buffer.reserveCapacity(size + 1)
         }
 
         func append(_ isSpeech: Bool) {

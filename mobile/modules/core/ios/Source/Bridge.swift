@@ -31,19 +31,13 @@ class Bridge {
     }
 
     static func log(_ message: String) {
-        let msg = "CORE:\(message)"
-        let data: [String: Any] = ["body": msg]
-        dispatchEvent("CoreMessageEvent", data)
+        let data = ["message": message]
+        Bridge.sendTypedMessage("log", body: data)
     }
 
     static func sendEvent(withName: String, body: String) {
         let data: [String: Any] = ["body": body]
         dispatchEvent(withName, data)
-    }
-
-    static func showBanner(type: String, message: String) {
-        let data = ["type": type, "message": message] as [String: Any]
-        Bridge.sendTypedMessage("show_banner", body: data)
     }
 
     static func sendHeadUp(_ isUp: Bool) {
@@ -88,7 +82,7 @@ class Bridge {
             "level": level,
             "charging": charging,
             "timestamp": Date().timeIntervalSince1970 * 1000,
-            // TODO: time remaining
+                // TODO: time remaining
         ]
 
         let jsonData = try! JSONSerialization.data(withJSONObject: vadMsg)
@@ -97,12 +91,24 @@ class Bridge {
         }
     }
 
-    static func sendDiscoveredDevice(_ modelName: String, _ deviceName: String) {
-        let eventBody: [String: Any] = [
-            "model_name": modelName,
-            "device_name": deviceName,
-        ]
-        sendTypedMessage("compatible_glasses_search_result", body: eventBody)
+    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
+        Task {
+            await MainActor.run {
+                let searchResults =
+                    GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
+                let newResult: [String: Any] = [
+                    "deviceModel": deviceModel,
+                    "deviceName": deviceName,
+                ]
+                let allResults = searchResults + [newResult]
+                var seen = Set<String>()
+                let uniqueResults = allResults.reversed().filter {
+                    guard let name = $0["deviceName"] as? String else { return false }
+                    return seen.insert(name).inserted
+                }.reversed()
+                GlassesStore.shared.set("core", "searchResults", Array(uniqueResults))
+            }
+        }
     }
 
     static func updateAsrConfig(languages: [[String: Any]]) {
@@ -173,21 +179,31 @@ class Bridge {
     }
 
     static func sendPhotoResponse(requestId: String, photoUrl: String) {
-        do {
-            let event: [String: Any] = [
-                "type": "photo_response",
-                "requestId": requestId,
-                "photoUrl": photoUrl,
-                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-            ]
+        let event: [String: Any] = [
+            "type": "photo_response",
+            "requestId": requestId,
+            "success": true,
+            "photoUrl": photoUrl,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        Bridge.sendTypedMessage("photo_response", body: event)
+    }
 
-            let jsonData = try JSONSerialization.data(withJSONObject: event)
-            if let jsonString = String(data: jsonData, encoding: .utf8) {
-                Bridge.sendWSText(jsonString)
-            }
-        } catch {
-            Bridge.log("ServerComms: Error building photo_response JSON: \(error)")
+    static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+        var event: [String: Any] = [
+            "type": "photo_response",
+            "requestId": requestId,
+            "success": false,
+            "photoUrl": "",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        if !errorCode.isEmpty {
+            event["errorCode"] = errorCode
         }
+        if !errorMessage.isEmpty {
+            event["errorMessage"] = errorMessage
+        }
+        Bridge.sendTypedMessage("photo_response", body: event)
     }
 
     static func sendVideoStreamResponse(appId: String, streamUrl: String) {
@@ -246,13 +262,13 @@ class Bridge {
         Bridge.sendTypedMessage("core_status_update", body: body)
     }
 
-    static func sendGlassesSerialNumber(_ serialNumber: String, style: String, color: String) {
+    static func sendserialNumber(_ serialNumber: String, style: String, color: String) {
         let body = [
             "glasses_serial_number": [
                 "serial_number": serialNumber,
                 "style": style,
                 "color": color,
-            ],
+            ]
         ]
         Bridge.sendTypedMessage("glasses_serial_number", body: body)
     }
@@ -266,11 +282,22 @@ class Bridge {
         Bridge.sendTypedMessage("wifi_status_change", body: event)
     }
 
-    static func sendWifiScanResults(_ networks: [[String: Any]]) {
-        let eventBody: [String: Any] = [
-            "networks": networks,
-        ]
-        Bridge.sendTypedMessage("wifi_scan_results", body: eventBody)
+    static func updateWifiScanResults(_ networks: [[String: Any]]) {
+        Task {
+            await MainActor.run {
+                var storedNetworks: [[String: Any]] =
+                    GlassesStore.shared.get("core", "wifiScanResults") as? [[String: Any]] ?? []
+                // add the networks to the storedNetworks array, removing duplicates by ssid
+                for network in networks {
+                    if !storedNetworks.contains(where: {
+                        $0["ssid"] as? String == network["ssid"] as? String
+                    }) {
+                        storedNetworks.append(network)
+                    }
+                }
+                GlassesStore.shared.apply("core", "wifiScanResults", storedNetworks)
+            }
+        }
     }
 
     static func sendMtkUpdateComplete(message: String, timestamp: Int64) {
@@ -338,9 +365,7 @@ class Bridge {
     static func sendTypedMessage(_ type: String, body: [String: Any]) {
         var body = body
         body["type"] = type
-        let jsonData = try! JSONSerialization.data(withJSONObject: body)
-        let jsonString = String(data: jsonData, encoding: .utf8)
-        let data: [String: Any] = ["body": jsonString!]
-        dispatchEvent("CoreMessageEvent", data)
+        // Send directly using type as event name - no JSON serialization
+        dispatchEvent(type, body)
     }
 }

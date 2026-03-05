@@ -275,47 +275,9 @@ class G1: NSObject, SGCManager {
 
     func sendButtonMaxRecordingTime() {}
 
-    var glassesAppVersion: String = ""
-
-    var glassesBuildNumber: String = ""
-
-    var glassesDeviceModel: String = ""
-
-    var glassesAndroidVersion: String = ""
-
-    var glassesOtaVersionUrl: String = ""
-
-    var glassesFirmwareVersion: String = ""
-
-    var glassesBtMacAddress: String = ""
-
-    var glassesSerialNumber: String = ""
-
-    var glassesStyle: String = ""
-
-    var glassesColor: String = ""
-
-    var caseBatteryLevel: Int = -1
-
-    var wifiSsid: String = ""
-
-    var wifiConnected: Bool = false
-
-    var wifiLocalIp: String = ""
-
-    var isHotspotEnabled: Bool = false
-
-    var micEnabled: Bool = false
-
-    var hotspotSsid: String = ""
-
-    var hotspotPassword: String = ""
-
-    var hotspotGatewayIp: String = ""
-
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, silent _: Bool
+        compress _: String?, flash _: Bool, sound _: Bool
     ) {}
 
     func startRtmpStream(_: [String: Any]) {}
@@ -330,7 +292,7 @@ class G1: NSObject, SGCManager {
 
     func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, silent _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -360,12 +322,20 @@ class G1: NSObject, SGCManager {
 
     func queryGalleryStatus() {}
 
+    func sendOtaStart() {}
+
+    func ping() {}
+
+    func requestVersionInfo() {
+        Bridge.log("G1: requestVersionInfo - not supported on G1")
+    }
+
     var connectionState: String = ConnTypes.DISCONNECTED
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
 
     var type = DeviceTypes.G1
-    let hasMic = true
+    var hasMic = true
 
     // TODO: we probably don't need this
     @objc static func requiresMainQueueSetup() -> Bool { return true }
@@ -394,15 +364,12 @@ class G1: NSObject, SGCManager {
     )
     private var writeCompletionCount = 0
 
-    private var _ready: Bool = false
-    var ready: Bool {
-        get { return _ready }
+    private var _fullyBooted: Bool = false
+    var fullyBooted: Bool {
+        get { GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }
         set {
-            let oldValue = _ready
-            _ready = newValue
-            if oldValue != newValue {
-                CoreManager.shared.handleConnectionStateChanged()
-            }
+            let oldValue = GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
+            GlassesStore.shared.apply("glasses", "fullyBooted", newValue)
             if !newValue {
                 // Reset battery levels when disconnected
                 batteryLevel = -1
@@ -412,18 +379,39 @@ class G1: NSObject, SGCManager {
         }
     }
 
+    private var connected: Bool {
+        get { GlassesStore.shared.get("glasses", "connected") as? Bool ?? false }
+        set { GlassesStore.shared.apply("glasses", "connected", newValue) }
+    }
+
     var leftReady: Bool = false
     var rightReady: Bool = false
 
     @Published var compressedVoiceData: Data = .init()
     @Published var aiListening: Bool = false
     @Published var quickNotes: [QuickNote] = []
-    var batteryLevel: Int = -1
     @Published var leftBatteryLevel: Int = -1
     @Published var rightBatteryLevel: Int = -1
-    @Published var caseCharging = false
-    @Published var caseOpen = false
-    @Published var caseRemoved = true
+
+    private var batteryLevel: Int {
+        get { GlassesStore.shared.get("glasses", "batteryLevel") as? Int ?? -1 }
+        set { GlassesStore.shared.apply("glasses", "batteryLevel", newValue) }
+    }
+
+    private var caseCharging: Bool {
+        get { GlassesStore.shared.get("glasses", "caseCharging") as? Bool ?? false }
+        set { GlassesStore.shared.apply("glasses", "caseCharging", newValue) }
+    }
+
+    private var caseOpen: Bool {
+        get { GlassesStore.shared.get("glasses", "caseOpen") as? Bool ?? true }
+        set { GlassesStore.shared.apply("glasses", "caseOpen", newValue) }
+    }
+
+    private var caseRemoved: Bool {
+        get { GlassesStore.shared.get("glasses", "caseRemoved") as? Bool ?? true }
+        set { GlassesStore.shared.apply("glasses", "caseRemoved", newValue) }
+    }
 
     var isDisconnecting = false
 
@@ -465,13 +453,13 @@ class G1: NSObject, SGCManager {
     }
 
     private var centralManager: CBCentralManager?
+
     private var leftPeripheral: CBPeripheral?
     private var rightPeripheral: CBPeripheral?
     private var connectedDevices: [String: (CBPeripheral?, CBPeripheral?)] = [:]
     var lastConnectionTimestamp: Date = .distantPast
     private var leftInitialized: Bool = false
     private var rightInitialized: Bool = false
-    @Published var isHeadUp = false
 
     private var leftGlassUUID: UUID? {
         get {
@@ -642,7 +630,6 @@ class G1: NSObject, SGCManager {
     /// Emits serial number information to React Native
     private func emitSerialNumberInfo(serialNumber: String, style: String, color: String) {
         let eventBody: [String: Any] = [
-            "type": "glasses_serial_number",
             "serialNumber": serialNumber,
             "style": style,
             "color": color,
@@ -652,15 +639,11 @@ class G1: NSObject, SGCManager {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: eventBody, options: [])
             if let jsonString = String(data: jsonData, encoding: .utf8) {
-                Bridge.sendEvent(withName: "CoreMessageEvent", body: jsonString)
+                // Bridge.sendTypedMessage("glasses_serial_number", body: eventBody)
+
                 Bridge.log(
                     "G1: 📱 Emitted serial number info: \(serialNumber), Style: \(style), Color: \(color)"
                 )
-
-                // Trigger status update to include serial number in status JSON
-                DispatchQueue.main.async {
-                    CoreManager.shared.getStatus()
-                }
             }
         } catch {
             Bridge.log("G1: Error creating serial number JSON: \(error)")
@@ -802,6 +785,24 @@ class G1: NSObject, SGCManager {
     }
 
     func sendTextWall(_ text: String) {
+        // // clear the screen with the exit command after 3 seconds if the text is empty or a space:
+        // let powerSavingMode = GlassesStore.shared.get("core", "power_saving_mode") as! Bool
+        // if powerSavingMode && (text.isEmpty || text == " ") {
+        //     CoreManager.shared.sendStateWorkItem?.cancel()
+        //     Bridge.log("Mentra: Clearing display after 3 seconds")
+        //     // if we're clearing the display, after a delay, send a clear command if not cancelled with another
+        //     let workItem = DispatchWorkItem { [weak self] in
+        //         guard let self = self else { return }
+        //         let isHeadUp = GlassesStore.shared.get("core", "is_head_up") as! Bool
+        //         if isHeadUp {
+        //             return
+        //         }
+        //         self.exit()
+        //     }
+        //     CoreManager.shared.sendStateWorkItem = workItem
+        //     CoreManager.shared.sendStateQueue.asyncAfter(deadline: .now() + 3, execute: workItem)
+        // }
+
         let chunks = textHelper.createTextWallChunks(text)
         queueChunks(chunks, sleepAfterMs: 10)
     }
@@ -946,8 +947,9 @@ class G1: NSObject, SGCManager {
         }
 
         //         CoreCommsService.log("g1Ready set to \(leftReady) \(rightReady) \(leftReady && rightReady) left: \(left), right: \(right)")
-        ready = leftReady && rightReady
-        if ready {
+        fullyBooted = leftReady && rightReady
+        connected = leftReady && rightReady
+        if fullyBooted {
             stopReconnectionTimer()
         }
     }
@@ -959,9 +961,9 @@ class G1: NSObject, SGCManager {
 
     func getSerialNumberInfo() -> [String: Any] {
         return [
-            "serialNumber": glassesSerialNumber ?? "",
-            "style": glassesStyle ?? "",
-            "color": glassesColor ?? "",
+            "serialNumber": serialNumber ?? "",
+            "style": style ?? "",
+            "color": color ?? "",
         ]
     }
 
@@ -1252,20 +1254,16 @@ class G1: NSObject, SGCManager {
             switch DeviceOrders(rawValue: order) {
             case .HEAD_UP:
                 Bridge.log("G1: HEAD_UP")
-                isHeadUp = true
-                CoreManager.shared.updateHeadUp(isHeadUp)
+                GlassesStore.shared.apply("glasses", "headUp", true)
             case .HEAD_UP2:
                 Bridge.log("G1: HEAD_UP2")
-                isHeadUp = true
-                CoreManager.shared.updateHeadUp(isHeadUp)
+                GlassesStore.shared.apply("glasses", "headUp", true)
             // case .HEAD_DOWN:
             //   CoreCommsService.log("HEAD_DOWN")
-            //   isHeadUp = false
             //   break
             case .HEAD_DOWN2:
                 Bridge.log("G1: HEAD_DOWN2")
-                isHeadUp = false
-                CoreManager.shared.updateHeadUp(isHeadUp)
+                GlassesStore.shared.apply("glasses", "headUp", false)
             case .ACTIVATED:
                 Bridge.log("G1: ACTIVATED")
             case .SILENCED:
@@ -1282,21 +1280,17 @@ class G1: NSObject, SGCManager {
             case .CASE_REMOVED:
                 Bridge.log("G1: REMOVED FROM CASE")
                 caseRemoved = true
-                CoreManager.shared.getStatus()
             case .CASE_REMOVED2:
                 Bridge.log("G1: REMOVED FROM CASE2")
                 caseRemoved = true
-                CoreManager.shared.getStatus()
             case .CASE_OPEN:
                 caseOpen = true
                 caseRemoved = false
                 Bridge.log("G1: CASE OPEN")
-                CoreManager.shared.getStatus()
             case .CASE_CLOSED:
                 caseOpen = false
                 caseRemoved = false
                 Bridge.log("G1: CASE CLOSED")
-                CoreManager.shared.getStatus()
             case .CASE_CHARGING_STATUS:
                 guard data.count >= 3 else { break }
                 let status = data[2]
@@ -1311,8 +1305,9 @@ class G1: NSObject, SGCManager {
                 Bridge.log("G1: CASE CHARGE INFO")
                 guard data.count >= 3 else { break }
                 if Int(data[2]) != -1 {
-                    caseBatteryLevel = Int(data[2])
-                    Bridge.log("G1: Case battery level: \(caseBatteryLevel)%")
+                    let newCaseBatteryLevel = Int(data[2])
+                    GlassesStore.shared.apply("glasses", "caseBatteryLevel", newCaseBatteryLevel)
+                    Bridge.log("G1: Case battery level: \(newCaseBatteryLevel)%")
                 } else {
                     Bridge.log("G1: Case battery level was -1")
                 }
@@ -1457,6 +1452,14 @@ extension G1 {
         queueChunks([exitDataArray])
     }
 
+    func sendShutdown() {
+        Bridge.log("sendShutdown - not supported on G1")
+    }
+
+    func sendReboot() {
+        Bridge.log("sendReboot - not supported on G1")
+    }
+
     func sendRgbLedControl(
         requestId: String, packageName _: String?, action _: String, color _: String?,
         ontime _: Int, offtime _: Int, count _: Int
@@ -1496,7 +1499,7 @@ extension G1 {
 
         var heartbeatArray = heartbeatData.map { UInt8($0) }
 
-        if ready {
+        if fullyBooted {
             queueChunks([heartbeatArray])
         }
 
@@ -1762,7 +1765,7 @@ extension G1 {
 
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("G1: setMicEnabled() \(enabled)")
-        micEnabled = enabled
+        GlassesStore.shared.apply("glasses", "micEnabled", enabled)
         var micOnData = Data()
         micOnData.append(Commands.BLE_REQ_MIC_ON.rawValue)
         if enabled {
@@ -2119,9 +2122,9 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
                 Bridge.log("Failed to extract ID number from device name: \(name)")
                 return
             }
-            let modelName = "Even Realities G1"
+            let deviceModel = "Even Realities G1"
             let dName = "\(deviceName)"
-            Bridge.sendDiscoveredDevice(modelName, dName)
+            Bridge.sendDiscoveredDevice(deviceModel, dName)
         } else {
             Bridge.log("Unknown device type: \(name)")
         }
@@ -2150,16 +2153,13 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
                     Bridge.log("G1: 📱 Decoded serial number: \(decodedSerial)")
 
                     // Decode style and color from serial number
-                    let (style, color) = G1.decodeEvenG1SerialNumber(decodedSerial)
+                    let (decodedStyle, decodedColor) = G1.decodeEvenG1SerialNumber(decodedSerial)
                     Bridge.log("G1: 📱 Style: \(style), Color: \(color)")
 
                     // Store the information
-                    glassesSerialNumber = decodedSerial
-                    glassesStyle = style
-                    glassesColor = color
-
-                    // Emit the serial number information
-                    emitSerialNumberInfo(serialNumber: decodedSerial, style: style, color: color)
+                    GlassesStore.shared.apply("glasses", "serialNumber", decodedSerial)
+                    GlassesStore.shared.apply("glasses", "style", decodedStyle)
+                    GlassesStore.shared.apply("glasses", "color", decodedColor)
                 } else {
                     Bridge.log("G1: 📱 Could not decode serial number from manufacturer data")
                 }
@@ -2237,7 +2237,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
                 guard let self else { return false }
 
                 // Check if already connected
-                if await MainActor.run(body: { self.ready }) {
+                if await MainActor.run(body: { self.fullyBooted }) {
                     Bridge.log("G1: Already connected, stopping reconnection")
                     return true // Returning true stops the reconnection loop
                 }

@@ -29,7 +29,7 @@ const current_version = migrations.length
 
 const runMigrations = (fromVersion: number): AsyncResult<void, Error> => {
   return Res.try_async(async () => {
-    const pendingMigrations = migrations.filter(m => m.version > fromVersion).sort((a, b) => a.version - b.version)
+    const pendingMigrations = migrations.filter((m) => m.version > fromVersion).sort((a, b) => a.version - b.version)
 
     for (const migration of pendingMigrations) {
       const res = await Res.try_async(migration.run)

@@ -146,16 +146,16 @@ function prettyPrintDiff(obj1: any, obj2: any, options: PrintOptions = {}): void
 
   // Group differences by type
   const grouped = {
-    added: differences.filter(d => d.type === "added"),
-    removed: differences.filter(d => d.type === "removed"),
-    changed: differences.filter(d => d.type === "changed"),
-    type_changed: differences.filter(d => d.type === "type_changed"),
+    added: differences.filter((d) => d.type === "added"),
+    removed: differences.filter((d) => d.type === "removed"),
+    changed: differences.filter((d) => d.type === "changed"),
+    type_changed: differences.filter((d) => d.type === "type_changed"),
   }
 
   // Print additions
   if (grouped.added.length > 0) {
     console.log(colorize ? "\x1b[32m+ Added Properties:\x1b[0m" : "+ Added Properties:")
-    grouped.added.forEach(diff => {
+    grouped.added.forEach((diff) => {
       if (compact) {
         console.log(`  ${diff.path}: ${JSON.stringify(diff.newValue)}`)
       } else {
@@ -169,7 +169,7 @@ function prettyPrintDiff(obj1: any, obj2: any, options: PrintOptions = {}): void
   // Print removals
   if (grouped.removed.length > 0) {
     console.log(colorize ? "\x1b[31m- Removed Properties:\x1b[0m" : "- Removed Properties:")
-    grouped.removed.forEach(diff => {
+    grouped.removed.forEach((diff) => {
       if (compact) {
         console.log(`  ${diff.path}: ${JSON.stringify(diff.oldValue)}`)
       } else {
@@ -183,7 +183,7 @@ function prettyPrintDiff(obj1: any, obj2: any, options: PrintOptions = {}): void
   // Print changes
   if (grouped.changed.length > 0) {
     console.log(colorize ? "\x1b[36m~ Changed Properties:\x1b[0m" : "~ Changed Properties:")
-    grouped.changed.forEach(diff => {
+    grouped.changed.forEach((diff) => {
       if (compact) {
         console.log(`  ${diff.path}: ${JSON.stringify(diff.oldValue)} → ${JSON.stringify(diff.newValue)}`)
       } else {
@@ -198,7 +198,7 @@ function prettyPrintDiff(obj1: any, obj2: any, options: PrintOptions = {}): void
   // Print type changes
   if (grouped.type_changed.length > 0) {
     console.log(colorize ? "\x1b[35m⚠ Type Changes:\x1b[0m" : "⚠ Type Changes:")
-    grouped.type_changed.forEach(diff => {
+    grouped.type_changed.forEach((diff) => {
       const oldType = Array.isArray(diff.oldValue) ? "array" : typeof diff.oldValue
       const newType = Array.isArray(diff.newValue) ? "array" : typeof diff.newValue
 
@@ -229,15 +229,15 @@ function getDiffString(obj1: any, obj2: any, _options: PrintOptions = {}): strin
   output += `Found ${differences.length} difference(s)\n\n`
 
   const grouped = {
-    added: differences.filter(d => d.type === "added"),
-    removed: differences.filter(d => d.type === "removed"),
-    changed: differences.filter(d => d.type === "changed"),
-    type_changed: differences.filter(d => d.type === "type_changed"),
+    added: differences.filter((d) => d.type === "added"),
+    removed: differences.filter((d) => d.type === "removed"),
+    changed: differences.filter((d) => d.type === "changed"),
+    type_changed: differences.filter((d) => d.type === "type_changed"),
   }
 
   if (grouped.added.length > 0) {
     output += "+ Added Properties:\n"
-    grouped.added.forEach(diff => {
+    grouped.added.forEach((diff) => {
       output += `  ${diff.path}: ${JSON.stringify(diff.newValue)}\n`
     })
     output += "\n"
@@ -245,7 +245,7 @@ function getDiffString(obj1: any, obj2: any, _options: PrintOptions = {}): strin
 
   if (grouped.removed.length > 0) {
     output += "- Removed Properties:\n"
-    grouped.removed.forEach(diff => {
+    grouped.removed.forEach((diff) => {
       output += `  ${diff.path}: ${JSON.stringify(diff.oldValue)}\n`
     })
     output += "\n"
@@ -253,7 +253,7 @@ function getDiffString(obj1: any, obj2: any, _options: PrintOptions = {}): strin
 
   if (grouped.changed.length > 0) {
     output += "~ Changed Properties:\n"
-    grouped.changed.forEach(diff => {
+    grouped.changed.forEach((diff) => {
       output += `  ${diff.path}: ${JSON.stringify(diff.oldValue)} → ${JSON.stringify(diff.newValue)}\n`
     })
     output += "\n"
@@ -261,7 +261,7 @@ function getDiffString(obj1: any, obj2: any, _options: PrintOptions = {}): strin
 
   if (grouped.type_changed.length > 0) {
     output += "⚠ Type Changes:\n"
-    grouped.type_changed.forEach(diff => {
+    grouped.type_changed.forEach((diff) => {
       const oldType = Array.isArray(diff.oldValue) ? "array" : typeof diff.oldValue
       const newType = Array.isArray(diff.newValue) ? "array" : typeof diff.newValue
       output += `  ${diff.path}: ${oldType} → ${newType}\n`
@@ -340,9 +340,11 @@ export const ConsoleLogger = () => {
     const originalError = console.error
 
     const addLog = (type: string, args: any[]) => {
-      const message = args.map(arg => (typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg))).join(" ")
+      const message = args
+        .map((arg) => (typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)))
+        .join(" ")
 
-      setLogs(prev => {
+      setLogs((prev) => {
         const newLogs = [
           ...prev,
           {

@@ -1,20 +1,20 @@
 // src/index.ts
 
-export * from "./token"
+export * from "./token";
 
 // Message type enums
-export * from "./message-types"
+export * from "./message-types";
 
 // Base message type
-export * from "./messages/base"
+export * from "./messages/base";
 
 // Messages by direction - export everything except the conflicting type guards
-export * from "./messages/glasses-to-cloud"
-export * from "./messages/cloud-to-glasses"
+export * from "./messages/glasses-to-cloud";
+export * from "./messages/cloud-to-glasses";
 
 // Export from app-to-cloud excluding isPhotoRequest which conflicts with cloud-to-glasses
-export {
-  // Types
+// Interfaces / type aliases (erased at runtime — must use `export type`)
+export type {
   SubscriptionRequest,
   AppConnectionInit,
   AppSubscriptionUpdate,
@@ -37,7 +37,12 @@ export {
   AppRoomLeave,
   RequestWifiSetup,
   OwnershipReleaseMessage,
-  // Type guards - all except isPhotoRequest
+  TelemetryLogEntry,
+  TelemetryResponse,
+} from "./messages/app-to-cloud";
+
+// Runtime type guards — these are functions and need a value export
+export {
   isAppConnectionInit,
   isAppSubscriptionUpdate,
   isDisplayRequest,
@@ -52,13 +57,13 @@ export {
   isRtmpStreamRequest,
   isRtmpStreamStopRequest,
   isOwnershipRelease,
+  isTelemetryResponse,
   // Export with alias to avoid conflict
   isPhotoRequest as isPhotoRequestFromApp,
-} from "./messages/app-to-cloud"
+} from "./messages/app-to-cloud";
 
-// Export cloud-to-app but exclude the conflicting type guards
-export {
-  // Types
+// Export cloud-to-app interfaces / type aliases (erased at runtime — must use `export type`)
+export type {
   AppConnectionAck,
   AppConnectionError,
   AppStopped,
@@ -81,7 +86,11 @@ export {
   AudioChunk,
   PermissionError,
   PermissionErrorDetail,
-  // Type guards (excluding isPhotoResponse and isRtmpStreamStatus which conflict)
+  RequestTelemetry,
+} from "./messages/cloud-to-app";
+
+// Runtime type guards from cloud-to-app (excluding isPhotoResponse and isRtmpStreamStatus which conflict)
+export {
   isAppConnectionAck,
   isAppConnectionError,
   isAppStopped,
@@ -99,48 +108,48 @@ export {
   isPhotoResponse as isPhotoResponseFromCloud,
   isRtmpStreamStatus as isRtmpStreamStatusFromCloud,
   isRgbLedControlResponse as isRgbLedControlResponseFromCloud,
-} from "./messages/cloud-to-app"
+} from "./messages/cloud-to-app";
 
 // Stream types
-export * from "./streams"
+export * from "./streams";
 
 // Layout types
-export * from "./layouts"
+export * from "./layouts";
 
 // Dashboard types
-export * from "./dashboard"
+export * from "./dashboard";
 
 // RTMP streaming types
-export * from "./rtmp-stream"
+export * from "./rtmp-stream";
 
 // Other system enums
-export * from "./enums"
+export * from "./enums";
 
 // Core model interfaces
-export * from "./models"
+export * from "./models";
 
 // Webhook interfaces
-export * from "./webhooks"
+export * from "./webhooks";
 
 // Capability Discovery types
-export * from "./capabilities"
+export * from "./capabilities";
 
 // Photo data types
-export * from "./photo-data"
+export * from "./photo-data";
 
 /**
  * WebSocket error information
  */
 export interface WebSocketError {
-  code: string
-  message: string
-  details?: unknown
+  code: string;
+  message: string;
+  details?: unknown;
 }
 
-import type {Request} from "express"
-import type {AppSession} from "../app/session"
+import type { Request } from "express";
+import type { AppSession } from "../app/session";
 
 export interface AuthenticatedRequest extends Request {
-  authUserId?: string
-  activeSession: AppSession | null
+  authUserId?: string;
+  activeSession: AppSession | null;
 }

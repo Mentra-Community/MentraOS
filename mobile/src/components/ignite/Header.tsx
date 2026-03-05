@@ -79,6 +79,7 @@ interface HeaderProps {
    * Overrides `leftIcon`, `leftTx` and `leftText`.
    */
   LeftActionComponent?: ReactElement
+  MiddleActionComponent?: ReactElement
   /**
    * Optional options to pass to i18n. Useful for interpolation
    * as well as explicitly setting locale or translation fallbacks.
@@ -152,6 +153,7 @@ export function Header(props: HeaderProps) {
   const {
     backgroundColor = "transparent",
     LeftActionComponent,
+    MiddleActionComponent,
     leftIcon,
     leftIconColor,
     leftText,
@@ -196,6 +198,19 @@ export function Header(props: HeaderProps) {
         backgroundColor={backgroundColor}
         ActionComponent={LeftActionComponent}
       />
+
+      {!!MiddleActionComponent && (
+        <HeaderAction
+          // tx={leftTx}
+          // text={leftText}
+          // icon={leftIcon}
+          // iconColor={leftIconColor}
+          // onPress={onLeftPress}
+          // txOptions={leftTxOptions}
+          backgroundColor={backgroundColor}
+          ActionComponent={MiddleActionComponent}
+        />
+      )}
 
       {!!titleContent && (
         <View
@@ -264,6 +279,7 @@ function HeaderAction(props: HeaderActionProps) {
     )
   }
 
+  // return null
   return <View style={[$actionFillerContainer, {backgroundColor}]} />
 }
 
@@ -271,7 +287,8 @@ const $wrapper: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   alignItems: "center",
   justifyContent: "space-between",
-  paddingBottom: spacing.s3,
+  minHeight: 48,
+  // paddingBottom: spacing.s3,
 })
 
 const $title: TextStyle = {

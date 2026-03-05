@@ -18,7 +18,7 @@ export function StarRating({value, onValueChange, max = 5, style}: StarRatingPro
 
   return (
     <View style={[themed($container), style]}>
-      {stars.map(star => (
+      {stars.map((star) => (
         <TouchableOpacity key={star} onPress={() => onValueChange(star)} activeOpacity={0.7}>
           <MaterialCommunityIcons
             name={value && star <= value ? "star" : "star-outline"}

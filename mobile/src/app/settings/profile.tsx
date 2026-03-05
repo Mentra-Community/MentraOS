@@ -252,7 +252,7 @@ export default function ProfileSettingsPage() {
       <Header title={translate("profileSettings:title")} leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView>
         {loading ? (
-          <ActivityIndicator size="large" color={theme.colors.secondary_foreground} />
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
         ) : userData ? (
           <>
             <View style={themed($profileSection)}>
@@ -319,7 +319,7 @@ export default function ProfileSettingsPage() {
               alignItems: "center",
               minWidth: 200,
             }}>
-            <ActivityIndicator size="large" color={theme.colors.secondary_foreground} style={{marginBottom: theme.spacing.s4}} />
+            <ActivityIndicator size="large" color={theme.colors.foreground} style={{marginBottom: theme.spacing.s4}} />
             <Text preset="bold" style={{color: theme.colors.text}}>
               {translate("settings:loggingOutMessage")}
             </Text>

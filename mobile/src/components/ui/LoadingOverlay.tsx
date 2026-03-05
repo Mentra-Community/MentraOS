@@ -18,7 +18,7 @@ const LoadingOverlay = ({message = "Loading..."}: LoadingOverlayProps) => {
   return (
     <View style={themed($container)}>
       <View style={themed($contentContainer)}>
-        <ActivityIndicator size="large" color={theme.colors.tint} style={themed($spinner)} />
+        <ActivityIndicator size="large" color={theme.colors.foreground} style={themed($spinner)} />
         <Text text={message} style={themed($message)} />
       </View>
     </View>

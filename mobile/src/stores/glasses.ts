@@ -1,73 +1,9 @@
+import {GlassesStatus, OtaProgress, OtaUpdateInfo} from "core"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
-export type GlassesConnectionState = "disconnected" | "connected" | "connecting"
-
-// OTA update status types
-export type OtaStage = "download" | "install"
-export type OtaStatus = "STARTED" | "PROGRESS" | "FINISHED" | "FAILED"
-
-export interface OtaUpdateInfo {
-  available: boolean
-  versionCode: number
-  versionName: string
-  updates: string[] // ["apk", "mtk", "bes"]
-  totalSize: number
-}
-
-export interface OtaProgress {
-  stage: OtaStage
-  status: OtaStatus
-  progress: number
-  bytesDownloaded: number
-  totalBytes: number
-  currentUpdate: string
-  errorMessage?: string
-}
-
-export interface GlassesInfo {
-  // state:
-  connected: boolean
-  micEnabled: boolean
-  connectionState: GlassesConnectionState
-  btcConnected: boolean
-  // device info
-  modelName: string
-  androidVersion: string
-  fwVersion: string
-  btMacAddress: string
-  buildNumber: string
-  otaVersionUrl: string
-  appVersion: string
-  bluetoothName: string
-  serialNumber: string
-  style: string
-  color: string
-  // wifi info
-  wifiConnected: boolean
-  wifiSsid: string
-  wifiLocalIp: string
-  // battery info
-  batteryLevel: number
-  charging: boolean
-  caseBatteryLevel: number
-  caseCharging: boolean
-  caseOpen: boolean
-  caseRemoved: boolean
-  // hotspot info
-  hotspotEnabled: boolean
-  hotspotSsid: string
-  hotspotPassword: string
-  hotspotGatewayIp: string
-  // OTA update info
-  otaUpdateAvailable: OtaUpdateInfo | null
-  otaProgress: OtaProgress | null
-  otaInProgress: boolean
-}
-
-interface GlassesState extends GlassesInfo {
-  setGlassesInfo: (info: Partial<GlassesInfo>) => void
-  setConnected: (connected: boolean) => void
+interface GlassesState extends GlassesStatus {
+  setGlassesInfo: (info: Partial<GlassesStatus>) => void
   setBatteryInfo: (batteryLevel: number, charging: boolean, caseBatteryLevel: number, caseCharging: boolean) => void
   setWifiInfo: (connected: boolean, ssid: string) => void
   setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) => void
@@ -75,18 +11,38 @@ interface GlassesState extends GlassesInfo {
   setOtaUpdateAvailable: (info: OtaUpdateInfo | null) => void
   setOtaProgress: (progress: OtaProgress | null) => void
   setOtaInProgress: (inProgress: boolean) => void
+  setMtkUpdatedThisSession: (updated: boolean) => void
   clearOtaState: () => void
   reset: () => void
+  mtkUpdatedThisSession: boolean
 }
 
-const initialState: GlassesInfo = {
+export const getGlasesInfoPartial = (state: GlassesStatus) => {
+  return {
+    batteryLevel: state.batteryLevel,
+    charging: state.charging,
+    caseBatteryLevel: state.caseBatteryLevel,
+    caseCharging: state.caseCharging,
+    connected: state.connected,
+    wifiConnected: state.wifiConnected,
+    wifiSsid: state.wifiSsid,
+    deviceModel: state.deviceModel,
+  }
+}
+
+interface GlassesStore extends GlassesStatus {
+  mtkUpdatedThisSession: boolean
+}
+
+const initialState: GlassesStore = {
   // state:
+  fullyBooted: false,
   connected: false,
   micEnabled: false,
   connectionState: "disconnected",
   btcConnected: false,
   // device info
-  modelName: "",
+  deviceModel: "",
   androidVersion: "",
   fwVersion: "",
   btMacAddress: "",
@@ -97,6 +53,8 @@ const initialState: GlassesInfo = {
   serialNumber: "",
   style: "",
   color: "",
+  mtkFwVersion: "",
+  besFwVersion: "",
   // wifi info
   wifiConnected: false,
   wifiSsid: "",
@@ -117,28 +75,24 @@ const initialState: GlassesInfo = {
   otaUpdateAvailable: null,
   otaProgress: null,
   otaInProgress: false,
-}
-
-export const getGlasesInfoPartial = (state: GlassesInfo) => {
-  return {
-    batteryLevel: state.batteryLevel,
-    charging: state.charging,
-    caseBatteryLevel: state.caseBatteryLevel,
-    caseCharging: state.caseCharging,
-    connected: state.connected,
-    wifiConnected: state.wifiConnected,
-    wifiSsid: state.wifiSsid,
-    modelName: state.modelName,
-  }
+  mtkUpdatedThisSession: false,
 }
 
 export const useGlassesStore = create<GlassesState>()(
-  subscribeWithSelector(set => ({
+  subscribeWithSelector((set) => ({
     ...initialState,
 
-    setGlassesInfo: info => set(state => ({...state, ...info})),
-
-    setConnected: connected => set({connected}),
+    setGlassesInfo: (info) =>
+      set((state) => {
+        const next = {...state, ...info}
+        // When glasses disconnect, reset all glasses state to initial values
+        // This prevents stale device info, firmware versions, battery, wifi, etc. from persisting
+        // console.log("GLASSES: setGlassesInfo called with: next.connected =", next.connected)
+        // if (next.connected === false) {
+        //   return {...initialState, ...info}
+        // }
+        return next
+      }),
 
     setBatteryInfo: (batteryLevel, charging, caseBatteryLevel, caseCharging) =>
       set({
@@ -166,31 +120,36 @@ export const useGlassesStore = create<GlassesState>()(
     setOtaUpdateAvailable: (info: OtaUpdateInfo | null) => set({otaUpdateAvailable: info}),
 
     setOtaProgress: (progress: OtaProgress | null) =>
-      set(_state => {
+      set((_state) => {
         // Auto-detect otaInProgress from status
         const otaInProgress = progress !== null && progress.status !== "FINISHED" && progress.status !== "FAILED"
+        console.log("🔍 GLASSES STORE: setOtaProgress called with:", JSON.stringify(progress))
+        console.log("🔍 GLASSES STORE: otaInProgress =", otaInProgress)
         return {otaProgress: progress, otaInProgress}
       }),
 
     setOtaInProgress: (inProgress: boolean) => set({otaInProgress: inProgress}),
+
+    setMtkUpdatedThisSession: (updated: boolean) => set({mtkUpdatedThisSession: updated}),
 
     clearOtaState: () =>
       set({
         otaUpdateAvailable: null,
         otaProgress: null,
         otaInProgress: false,
+        // Note: mtkUpdatedThisSession is NOT cleared here - it stays true until glasses disconnect/reboot
       }),
 
     reset: () => set(initialState),
   })),
 )
 
-export const waitForGlassesState = <K extends keyof GlassesInfo>(
+export const waitForGlassesState = <K extends keyof GlassesStatus>(
   key: K,
-  predicate: (value: GlassesInfo[K]) => boolean,
+  predicate: (value: GlassesStatus[K]) => boolean,
   timeoutMs = 1000,
 ): Promise<boolean> => {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const state = useGlassesStore.getState()
     if (predicate(state[key])) {
       resolve(true)
@@ -198,8 +157,8 @@ export const waitForGlassesState = <K extends keyof GlassesInfo>(
     }
 
     const unsubscribe = useGlassesStore.subscribe(
-      s => s[key],
-      value => {
+      (s) => s[key],
+      (value) => {
         if (predicate(value)) {
           unsubscribe()
           resolve(true)

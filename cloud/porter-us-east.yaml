@@ -1,0 +1,39 @@
+version: v2
+namespace: ${PORTER_NAMESPACE}
+
+build:
+  method: docker
+  context: ./cloud/.
+  dockerfile: ./cloud/docker/Dockerfile.stress
+
+services:
+  - name: cloud
+    type: web
+    run: doppler run -- bun run start
+    port: 80
+    cpuCores: 1.5
+    ramMegabytes: 2048
+    env:
+      HOST: 0.0.0.0
+      SERVICE_NAME: cloud
+      REGION: us-east
+      NODE_ENV: ${NODE_ENV}
+      PORTER_APP_NAME: ${PORTER_APP_NAME}
+      DOPPLER_TOKEN: ${DOPPLER_TOKEN}
+      DOPPLER_PROJECT: mentraos-cloud
+      DOPPLER_CONFIG: prod_us-east
+    domains:
+      - name: useastapi.mentraglass.com
+    # Extended timeouts for WebSocket connections (/glasses-ws, /app-ws).
+    # Porter sets proxy-send-timeout: 60s by default, which kills idle WS
+    # connections because no client→server traffic flows after audio moved to UDP.
+    # 3600s prevents nginx from killing healthy WS connections.
+    # See: cloud/issues/035-nginx-ws-timeout/spike.md
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio

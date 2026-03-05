@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.server.services;
 
+import android.media.MediaMetadataRetriever;
 import android.os.Build;
 
 import com.mentra.asg_client.io.server.core.AsgServer;
@@ -36,8 +37,19 @@ public class AsgCameraServer extends AsgServer {
     private static final String TAG = AsgCameraServer.class.getName();
     private static final int DEFAULT_PORT = 8089;
 
+    /**
+     * Provider that returns the file name of an actively recording video, or null if idle.
+     * Used to exclude in-progress recordings from sync and download responses.
+     */
+    public interface ActiveRecordingProvider {
+        String getActiveRecordingFileName();
+    }
+
     // File management system
     private final FileManager fileManager;
+
+    // Optional provider for currently recording file name
+    private ActiveRecordingProvider activeRecordingProvider;
 
     // Cache for latest photo metadata
     private FileMetadata latestPhotoMetadata;
@@ -623,6 +635,12 @@ public class AsgCameraServer extends AsgServer {
             return createErrorResponse(Response.Status.BAD_REQUEST, "File parameter required");
         }
 
+        // Block downloads of files that are actively being recorded
+        if (isActiveRecording(filename)) {
+            logger.warn(TAG, "⬇️ ❌ Blocked download of in-progress recording: " + filename);
+            return createErrorResponse(Response.Status.FORBIDDEN, "File is currently being recorded");
+        }
+
         try {
             // Get file using FileManager (security validation is handled automatically)
             File photoFile = fileManager.getFile(fileManager.getDefaultPackageName(), filename);
@@ -1005,6 +1023,19 @@ public class AsgCameraServer extends AsgServer {
         return fileManager;
     }
 
+    public void setActiveRecordingProvider(ActiveRecordingProvider provider) {
+        this.activeRecordingProvider = provider;
+    }
+
+    /**
+     * @return true if the given file name is the one currently being recorded
+     */
+    private boolean isActiveRecording(String fileName) {
+        if (activeRecordingProvider == null || fileName == null) return false;
+        String active = activeRecordingProvider.getActiveRecordingFileName();
+        return active != null && active.equals(fileName);
+    }
+
     /**
      * Get the camera package name.
      */
@@ -1059,6 +1090,12 @@ public class AsgCameraServer extends AsgServer {
             // In a more sophisticated implementation, you'd track deletions separately
             for (FileMetadata fileMetadata : allFiles) {
                 if (fileMetadata.getLastModified() > lastSyncTime) {
+                    // Skip files that are actively being recorded (incomplete / corrupted)
+                    if (isActiveRecording(fileMetadata.getFileName())) {
+                        logger.debug(TAG, "🔄 Skipping active recording: " + fileMetadata.getFileName());
+                        continue;
+                    }
+
                     // Skip and delete AVIF transfer artifacts - these should not be synced to mobile
                     if (isAvifTransferArtifact(fileMetadata.getFileName())) {
                         logger.debug(TAG, "🔄 Found AVIF transfer artifact, deleting: " + fileMetadata.getFileName());
@@ -1085,7 +1122,7 @@ public class AsgCameraServer extends AsgServer {
                     fileInfo.put("url", "/api/photo?file=" + fileMetadata.getFileName());
                     fileInfo.put("download", "/api/download?file=" + fileMetadata.getFileName());
 
-                    // Add media type and thumbnail information
+                    // Add media type, thumbnail, and duration information
                     if (isVideoFile(fileMetadata.getFileName())) {
                         fileInfo.put("is_video", true);
                         if (includeThumbnailsFlag) {
@@ -1107,6 +1144,19 @@ public class AsgCameraServer extends AsgServer {
                                             fileInfo.put("thumbnail_data", thumbnailBase64);
                                         }
                                     }
+
+                                    // Extract video duration
+                                    try {
+                                        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+                                        retriever.setDataSource(videoFile.getAbsolutePath());
+                                        String durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                                        retriever.release();
+                                        if (durationStr != null) {
+                                            fileInfo.put("duration", Long.parseLong(durationStr));
+                                        }
+                                    } catch (Exception e) {
+                                        logger.warn(TAG, "Failed to extract duration for " + fileMetadata.getFileName() + ": " + e.getMessage());
+                                    }
                                 }
                             } catch (Exception e) {
                                 logger.warn(TAG, "Failed to include thumbnail for " + fileMetadata.getFileName() + ": " + e.getMessage());
@@ -1115,6 +1165,30 @@ public class AsgCameraServer extends AsgServer {
                         }
                     } else {
                         fileInfo.put("is_video", false);
+                        if (includeThumbnailsFlag) {
+                            // Include base64 thumbnail data for photos too
+                            try {
+                                File imageFile = fileManager.getFile(fileManager.getDefaultPackageName(), fileMetadata.getFileName());
+                                if (imageFile != null && imageFile.exists()) {
+                                    File thumbnailFile = fileManager.getThumbnailManager().getOrCreateImageThumbnail(imageFile);
+                                    if (thumbnailFile != null && thumbnailFile.exists()) {
+                                        try (FileInputStream fis = new FileInputStream(thumbnailFile)) {
+                                            byte[] thumbnailData;
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                                thumbnailData = fis.readAllBytes();
+                                            } else {
+                                                thumbnailData = new byte[(int) thumbnailFile.length()];
+                                                fis.read(thumbnailData);
+                                            }
+                                            String thumbnailBase64 = android.util.Base64.encodeToString(thumbnailData, android.util.Base64.DEFAULT);
+                                            fileInfo.put("thumbnail_data", thumbnailBase64);
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                logger.warn(TAG, "Failed to include photo thumbnail for " + fileMetadata.getFileName() + ": " + e.getMessage());
+                            }
+                        }
                     }
 
                     changedFiles.add(fileInfo);

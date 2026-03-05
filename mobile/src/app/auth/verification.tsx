@@ -1,12 +1,6 @@
 import {useLocalSearchParams} from "expo-router"
 import {useState} from "react"
-import {
-  ActivityIndicator,
-  TextStyle,
-  TouchableOpacity,
-  View,
-  ViewStyle,
-} from "react-native"
+import {ActivityIndicator, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
@@ -36,9 +30,7 @@ export default function VerificationScreen() {
 
     if (res.is_error()) {
       console.error("Error resending verification email:", res.error)
-      showAlert(translate("common:error"), translate("login:errors.genericError"), [
-        {text: translate("common:ok")},
-      ])
+      showAlert(translate("common:error"), translate("login:errors.genericError"), [{text: translate("common:ok")}])
     } else {
       showAlert(translate("login:success"), translate("login:verification.resentSuccess"), [
         {text: translate("common:ok")},
@@ -54,19 +46,13 @@ export default function VerificationScreen() {
 
   return (
     <Screen preset="fixed" style={themed($container)}>
-      <Header
-        title={translate("login:verification.title")}
-        leftIcon="chevron-left"
-        onLeftPress={handleBack}
-      />
+      <Header title={translate("login:verification.title")} leftIcon="chevron-left" onLeftPress={handleBack} />
       <View style={themed($content)}>
         <Text preset="heading" style={themed($heading)}>
           {translate("login:verification.heading")}
         </Text>
 
-        <Text style={themed($subtitle)}>
-          {translate("login:verification.subtitle")}
-        </Text>
+        <Text style={themed($subtitle)}>{translate("login:verification.subtitle")}</Text>
 
         <Spacer height={spacing.s6} />
 
@@ -83,7 +69,7 @@ export default function VerificationScreen() {
         <TouchableOpacity onPress={handleResendEmail} disabled={isResending}>
           {isResending ? (
             <View style={themed($resendContainer)}>
-              <ActivityIndicator size="small" color={theme.colors.tint} />
+              <ActivityIndicator size="small" color={theme.colors.foreground} />
               <Text style={themed($resendingText)}>{translate("login:verification.resending")}</Text>
             </View>
           ) : (

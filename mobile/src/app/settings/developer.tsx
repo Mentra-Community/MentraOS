@@ -1,5 +1,5 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import {ScrollView, View, ViewStyle, TextStyle} from "react-native"
+import {ScrollView, View} from "react-native"
 
 import BackendUrl from "@/components/dev/BackendUrl"
 import StoreUrl from "@/components/dev/StoreUrl"
@@ -13,7 +13,6 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
 import ws from "@/services/WebSocketManager"
 import socketComms from "@/services/SocketComms"
 
@@ -26,15 +25,15 @@ const LC3_FRAME_SIZE_OPTIONS = [
 ]
 
 export default function DeveloperSettingsScreen() {
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationHistory()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
+  const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
-  const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(SETTINGS.debug_navigation_history.key)
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
   const [lc3FrameSize, setLc3FrameSize] = useSetting(SETTINGS.lc3_frame_size.key)
@@ -43,19 +42,14 @@ export default function DeveloperSettingsScreen() {
     <Screen preset="fixed">
       <Header title="Developer Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
-      <ScrollView
-        style={{
-          flex: 1,
-          marginHorizontal: -theme.spacing.s4,
-          paddingHorizontal: theme.spacing.s4,
-        }}>
+      <ScrollView className="flex px-4 -mx-4">
         <View className="flex gap-6">
-          <View style={themed($warningContainer)}>
-            <View style={themed($warningContent)}>
-              <Icon name="alert" size={16} color={theme.colors.text} />
-              <Text tx="warning:warning" style={themed($warningTitle)} />
+          <View className="mt-6 border-destructive border-2 bg-destructive/10 rounded-lg px-4 py-3">
+            <View className="flex flex-row items-center gap-2">
+              <Icon name="alert-triangle" size={16} color={theme.colors.destructive} />
+              <Text tx="warning:warning" className="text-lg font-bold" />
             </View>
-            <Text tx="warning:developerSettingsWarning" style={themed($warningSubtitle)} />
+            <Text tx="warning:developerSettingsWarning" className="text-sm font-medium" />
           </View>
 
           <Group title="Settings">
@@ -84,11 +78,6 @@ export default function DeveloperSettingsScreen() {
               subtitle="Use iOS-style squircle app icons instead of circles"
               value={enableSquircles}
               onValueChange={(value) => setEnableSquircles(value)}
-            />
-            <ToggleSetting
-              label="Debug Navigation History"
-              value={debugNavigationHistoryEnabled}
-              onValueChange={(value) => setDebugNavigationHistoryEnabled(value)}
             />
           </Group>
 
@@ -139,6 +128,14 @@ export default function DeveloperSettingsScreen() {
                 push("/onboarding/os")
               }}
             />
+
+            <RouteButton
+              label="Test switcher"
+              onPress={() => {
+                clearHistoryAndGoHome()
+                push("/test/switcher")
+              }}
+            />
           </Group>
 
           <Group title="Misc">
@@ -156,10 +153,8 @@ export default function DeveloperSettingsScreen() {
               onPress={async () => {
                 ws.cleanup()
                 socketComms.cleanup()
-                console.log("SOCKET: CLEANED")
                 await new Promise((resolve) => setTimeout(resolve, 3000))
                 socketComms.restartConnection()
-                console.log("SOCKET: RESTARTED")
               }}
             />
           </Group>
@@ -199,7 +194,7 @@ export default function DeveloperSettingsScreen() {
           <Group title="Audio Settings">
             <SelectSetting
               label="LC3 Bitrate"
-              value={String(lc3FrameSize || 20)}
+              value={String(lc3FrameSize)}
               options={LC3_FRAME_SIZE_OPTIONS}
               defaultValue="20"
               onValueChange={async (value) => {
@@ -207,7 +202,7 @@ export default function DeveloperSettingsScreen() {
                 setLc3FrameSize(frameSize)
                 // Apply immediately to native encoder and cloud
                 try {
-                  await socketComms.reconfigureAudioFormat()
+                  await socketComms.configureAudioFormat()
                 } catch (err) {
                   console.error("Failed to apply LC3 frame size:", err)
                 }
@@ -220,37 +215,11 @@ export default function DeveloperSettingsScreen() {
 
           <StoreUrl />
 
+          {superMode && <RouteButton label="Super Settings" onPress={() => push("/settings/super")} />}
+
           <Spacer height={theme.spacing.s12} />
         </View>
       </ScrollView>
     </Screen>
   )
 }
-
-const $warningContainer: ThemedStyle<ViewStyle> = ({colors, spacing, isDark}) => ({
-  borderRadius: spacing.s3,
-  paddingHorizontal: spacing.s4,
-  paddingVertical: spacing.s3,
-  borderWidth: spacing.s0_5,
-  borderColor: colors.destructive,
-  backgroundColor: isDark ? "#2B1E1A" : "#FEEBE7",
-})
-
-const $warningContent: ThemedStyle<ViewStyle> = () => ({
-  alignItems: "center",
-  flexDirection: "row",
-  marginBottom: 4,
-})
-
-const $warningTitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 16,
-  fontWeight: "bold",
-  marginLeft: 6,
-  color: colors.text,
-})
-
-const $warningSubtitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 14,
-  marginLeft: 22,
-  color: colors.text,
-})

@@ -168,7 +168,17 @@ public class StandardHardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public void setRgbLedBrightness(int brightness) {
+        Log.w(TAG, "RGB LED not supported on this device");
+    }
+
+    @Override
     public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count) {
+        Log.w(TAG, "RGB LED not supported on this device");
+    }
+
+    @Override
+    public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count, int brightness) {
         Log.w(TAG, "RGB LED not supported on this device");
     }
 
@@ -179,6 +189,11 @@ public class StandardHardwareManager extends BaseHardwareManager {
 
     @Override
     public void flashRgbLedWhite(int durationMs) {
+        Log.w(TAG, "RGB LED not supported on this device");
+    }
+
+    @Override
+    public void flashRgbLedWhite(int durationMs, int brightness) {
         Log.w(TAG, "RGB LED not supported on this device");
     }
 
@@ -216,6 +231,11 @@ public class StandardHardwareManager extends BaseHardwareManager {
         }
         Log.w(TAG, "🔋 Battery status not available");
         return false;
+    }
+
+    @Override
+    public void setRgbLedSolidWhite(int durationMs, int brightness) {
+        Log.w(TAG, "RGB LED not supported on this device");
     }
 
     @Override

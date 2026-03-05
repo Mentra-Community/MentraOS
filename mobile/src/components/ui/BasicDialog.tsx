@@ -41,7 +41,7 @@ const BasicDialog = ({
         <View style={themed($actions1)}>
           {leftButtonText && (
             <Button
-              style={{minWidth: 48}}
+              style={{minWidth: 96}}
               compact
               flexContainer={false}
               flex={false}
@@ -51,7 +51,7 @@ const BasicDialog = ({
             />
           )}
           <Button
-            style={{minWidth: 48}}
+            style={{minWidth: 96}}
             compact
             flexContainer={false}
             flex={false}

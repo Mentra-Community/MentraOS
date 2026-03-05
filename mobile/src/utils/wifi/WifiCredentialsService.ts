@@ -22,7 +22,7 @@ class WifiCredentialsService {
    */
   static async saveCredentials(ssid: string, password: string, autoConnect: boolean = true): Promise<boolean> {
     const existingData = this.loadCredentialsData()
-    const existingIndex = existingData.credentials.findIndex(cred => cred.ssid === ssid)
+    const existingIndex = existingData.credentials.findIndex((cred) => cred.ssid === ssid)
 
     const newCredential: WifiCredential = {
       ssid,
@@ -59,7 +59,7 @@ class WifiCredentialsService {
   static getPassword(ssid: string): string | null {
     try {
       const data = this.loadCredentialsData()
-      const credential = data.credentials.find(cred => cred.ssid === ssid)
+      const credential = data.credentials.find((cred) => cred.ssid === ssid)
       return credential?.password || null
     } catch (error) {
       console.error("Error getting WiFi password:", error)
@@ -93,7 +93,7 @@ class WifiCredentialsService {
   static removeCredentials(ssid: string): boolean {
     console.log("343243243$%^&*21321 removeCredentials", ssid)
     const data = this.loadCredentialsData()
-    data.credentials = data.credentials.filter(cred => cred.ssid !== ssid)
+    data.credentials = data.credentials.filter((cred) => cred.ssid !== ssid)
     console.log("321321 removed credentials", data)
     const res = storage.save(this.STORAGE_KEY, data)
     if (res.is_error()) {
@@ -120,7 +120,7 @@ class WifiCredentialsService {
    */
   static updateLastConnected(ssid: string): boolean {
     const data = this.loadCredentialsData()
-    const credential = data.credentials.find(cred => cred.ssid === ssid)
+    const credential = data.credentials.find((cred) => cred.ssid === ssid)
     if (credential) {
       credential.lastConnected = Date.now()
       // Re-sort by last connected
@@ -142,7 +142,7 @@ class WifiCredentialsService {
     try {
       const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
       const data = this.loadCredentialsData()
-      return data.credentials.filter(cred => (cred.lastConnected || 0) > thirtyDaysAgo)
+      return data.credentials.filter((cred) => (cred.lastConnected || 0) > thirtyDaysAgo)
     } catch (error) {
       console.error("Error getting recent networks:", error)
       return []

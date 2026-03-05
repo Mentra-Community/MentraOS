@@ -1,19 +1,22 @@
-import {useLocalSearchParams, useFocusEffect} from "expo-router"
-import {useRef, useState, useEffect, useCallback} from "react"
-import {View, BackHandler} from "react-native"
+import {useLocalSearchParams} from "expo-router"
+import {useRef, useState, useEffect} from "react"
+import {View} from "react-native"
 import {WebView} from "react-native-webview"
+import Animated, {useSharedValue, useAnimatedStyle, withTiming} from "react-native-reanimated"
 
 import {Header, Screen, Text} from "@/components/ignite"
 import InternetConnectionFallbackComponent from "@/components/ui/InternetConnectionFallbackComponent"
 import LoadingOverlay from "@/components/ui/LoadingOverlay"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/contexts/ThemeContext"
 import restComms from "@/services/RestComms"
-import {useSettingsStore} from "@/stores/settings"
+import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
+import {useAppletStatusStore} from "@/stores/applets"
+import {MiniAppDualButtonHeader} from "@/components/miniapps/DualButton"
+import {Image} from "expo-image"
+import AppIcon from "@/components/home/AppIcon"
 
 export default function AppWebView() {
-  const {theme, themed} = useAppTheme()
   const {webviewURL, appName, packageName} = useLocalSearchParams()
   const [hasError, setHasError] = useState(false)
   const webViewRef = useRef<WebView>(null)
@@ -21,69 +24,28 @@ export default function AppWebView() {
   const [finalUrl, setFinalUrl] = useState<string | null>(null)
   const [isLoadingToken, setIsLoadingToken] = useState(true)
   const [tokenError, setTokenError] = useState<string | null>(null)
-  const [retryTrigger, setRetryTrigger] = useState(0) // Trigger for retrying token generation
+  const [retryTrigger, setRetryTrigger] = useState(0)
   const {goBack, push} = useNavigationHistory()
+  const viewShotRef = useRef(null)
+  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
+
+  // WebView loading state
+  const [isWebViewReady, setIsWebViewReady] = useState(false)
+  const webViewOpacity = useSharedValue(0)
+  const loadingOpacity = useSharedValue(1)
+
+  const webViewAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: webViewOpacity.value,
+  }))
+
+  const loadingAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: loadingOpacity.value,
+  }))
 
   if (typeof webviewURL !== "string" || typeof appName !== "string" || typeof packageName !== "string") {
     return <Text>Missing required parameters</Text>
   }
 
-  // Handle Android back button
-  useFocusEffect(
-    useCallback(() => {
-      const onBackPress = () => {
-        // Go back to previous screen
-        goBack()
-        return true
-      }
-
-      const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress)
-
-      return () => subscription.remove()
-    }, [goBack]),
-  )
-
-  // Set up the header with settings button if we came from app settings
-  //   useEffect(() => {
-  //     if (fromSettings && packageName) {
-  //       navigation.setOptions({
-  //         headerRight: () => (
-  //           <View style={{ marginRight: 8 }}>
-  //             <FontAwesome.Button
-  //               name="cog"
-  //               size={22}
-  //               color={isDarkTheme ? '#FFFFFF' : '#000000'}
-  //               backgroundColor="transparent"
-  //               underlayColor="transparent"
-  //               onPress={() => {
-  //                 navigation.replace('AppSettings', {
-  //                   packageName,
-  //                   appName,
-  //                   fromWebView: true
-  //                 });
-  //               }}
-  //               style={{ padding: 0, margin: 0 }}
-  //               iconStyle={{ marginRight: 0 }}
-  //             />
-  //           </View>
-  //         )
-  //       });
-  //     }
-  //   }, [fromSettings, packageName, appName]);
-
-  // Theme colors
-  const theme2 = {
-    backgroundColor: theme.isDark ? "#1c1c1c" : "#f9f9f9",
-    headerBg: theme.isDark ? "#333333" : "#fff",
-    textColor: theme.isDark ? "#FFFFFF" : "#333333",
-    secondaryTextColor: theme.isDark ? "#aaaaaa" : "#777777",
-    borderColor: theme.isDark ? "#444444" : "#e0e0e0",
-    buttonBg: theme.isDark ? "#444444" : "#eeeeee",
-    buttonTextColor: theme.isDark ? "#ffffff" : "#333333",
-    primaryColor: theme.colors.palette.primary300,
-  }
-
-  // Fetch temporary token on mount
   useEffect(() => {
     const generateTokenAndSetUrl = async () => {
       console.log("WEBVIEW: generateTokenAndSetUrl()")
@@ -122,7 +84,6 @@ export default function AppWebView() {
 
       const cloudApiUrl = useSettingsStore.getState().getRestUrl()
 
-      // Construct final URL
       const url = new URL(webviewURL)
       url.searchParams.set("aos_temp_token", tempToken)
       if (signedUserToken) {
@@ -147,23 +108,34 @@ export default function AppWebView() {
     }
 
     generateTokenAndSetUrl()
-  }, [packageName, webviewURL, appName, retryTrigger]) // Dependencies
+  }, [packageName, webviewURL, appName, retryTrigger])
 
-  // Handle WebView loading events
   const handleLoadStart = () => {
-    // Called when the WebView starts loading
+    // android tries to load the webview twice for some reason, and this does nothning so it's safe to disable:
+    console.log("WEBVIEW: handleLoadStart()")
+    // Reset states when starting to load
+    // setIsWebViewReady(false)
+    // webViewOpacity.value = 0
+    // loadingOpacity.value = 1
   }
 
   const handleLoadEnd = () => {
+    console.log("WEBVIEW: handleLoadEnd()")
     setHasError(false)
+    setIsWebViewReady(true)
+    setIsLoadingToken(false)
+
+    // Fade in WebView, fade out loading
+    webViewOpacity.value = withTiming(1, {duration: 200})
+    loadingOpacity.value = withTiming(0, {duration: 800})
   }
+
   const handleError = (syntheticEvent: any) => {
-    // Use any for syntheticEvent
+    console.log("WEBVIEW: handleError()")
     const {nativeEvent} = syntheticEvent
     console.warn("WebView error: ", nativeEvent)
     setHasError(true)
 
-    // Parse error message to show user-friendly text
     const errorDesc = nativeEvent.description || ""
     let friendlyMessage = `Unable to load ${appName}`
 
@@ -181,31 +153,69 @@ export default function AppWebView() {
     } else if (errorDesc.includes("ERR_SSL") || errorDesc.includes("ERR_CERT")) {
       friendlyMessage = "Security error. Please check your device's date and time settings."
     } else if (errorDesc) {
-      // For any other errors, just show a generic message without the technical error
       friendlyMessage = `Unable to load ${appName}. Please try again.`
     }
 
     setTokenError(friendlyMessage)
   }
 
-  // Render loading state while fetching token
-  if (isLoadingToken) {
+  const screenshotComponent = () => {
+    const screenshot = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
+    if (screenshot) {
+      return <Image source={{uri: screenshot}} style={{flex: 1, resizeMode: "cover"}} blurRadius={10} />
+    }
+    return null
+  }
+
+  const renderLoadingOverlay = () => {
+    const app = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)
+
+    const screenshot = screenshotComponent()
+    if (screenshot) {
+      return (
+        <Animated.View
+          className="absolute top-0 left-0 right-0 bottom-0 z-10"
+          style={[loadingAnimatedStyle]}
+          pointerEvents={isWebViewReady ? "none" : "auto"}>
+          {screenshot}
+        </Animated.View>
+      )
+    }
+
+    if (!app) {
+      return (
+        <Animated.View
+          className="absolute top-0 left-0 right-0 bottom-0 z-10"
+          style={[loadingAnimatedStyle]}
+          pointerEvents={isWebViewReady ? "none" : "auto"}>
+          <LoadingOverlay message={`Loading ${appName}...`} />
+        </Animated.View>
+      )
+    }
+
     return (
-      <View style={{flex: 1, backgroundColor: theme2.backgroundColor}}>
-        <LoadingOverlay message={`Preparing secure access to ${appName}...`} />
-      </View>
+      <Animated.View
+        className="absolute top-0 left-0 right-0 bottom-0 z-10"
+        style={[loadingAnimatedStyle]}
+        pointerEvents={isWebViewReady ? "none" : "auto"}>
+        {/* show the app icon and app name */}
+        <View className="flex-1 flex-row items-center justify-center">
+          <View className="flex-col">
+            <AppIcon app={app} className="w-32 h-32" />
+            {/* <Text text={appName} className="text-foreground text-2xl font-medium text-center" numberOfLines={1} /> */}
+          </View>
+        </View>
+      </Animated.View>
     )
   }
 
-  // Render error state if token generation failed
   if (tokenError && !isLoadingToken) {
     return (
-      <View style={{flex: 1, backgroundColor: theme2.backgroundColor}}>
+      <View className="flex-1 bg-background">
         <InternetConnectionFallbackComponent
           retry={() => {
-            // Reset state and retry token generation
             setTokenError(null)
-            setRetryTrigger(prev => prev + 1) // Trigger useEffect to retry
+            setRetryTrigger((prev) => prev + 1)
           }}
           message={tokenError}
         />
@@ -213,10 +223,9 @@ export default function AppWebView() {
     )
   }
 
-  // Render error state if WebView loading failed after token success
   if (hasError) {
     return (
-      <View style={{flex: 1, backgroundColor: theme2.backgroundColor}}>
+      <View className="flex-1 bg-background">
         <InternetConnectionFallbackComponent
           retry={() => {
             setHasError(false)
@@ -231,70 +240,59 @@ export default function AppWebView() {
     )
   }
 
-  // Render WebView only when finalUrl is ready
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
-      <Header
-        title={appName}
-        titleMode="center"
-        leftIcon="chevron-left"
-        onLeftPress={() => goBack()}
-        rightIcon="settings"
-        rightIconColor={theme.colors.icon}
-        onRightPress={() => {
-          push("/applet/settings", {
-            packageName: packageName as string,
-            appName: appName as string,
-            fromWebView: "true",
-          })
-        }}
-        // style={{height: 44}}
-        // containerStyle={{paddingTop: 0}}
-      />
-      <View style={{flex: 1, marginHorizontal: -theme.spacing.s6}}>
-        {finalUrl ? (
-          <WebView
-            ref={webViewRef}
-            source={{uri: finalUrl}} // Use the final URL with the token
-            style={{flex: 1}}
-            onLoadStart={handleLoadStart}
-            onLoadEnd={handleLoadEnd}
-            onError={handleError}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            startInLoadingState={true} // Keep this true for WebView's own loading indicator
-            renderLoading={() => (
-              // Show loading overlay while WebView itself loads
-              <LoadingOverlay message={`Loading ${appName}...`} />
-            )}
-            // allow inline media playback:
-            allowsInlineMediaPlayback={true}
-            mediaPlaybackRequiresUserAction={false}
-            // Disable zooming and scaling
-            scalesPageToFit={false}
-            scrollEnabled={true}
-            bounces={false}
-            // iOS specific props to disable zoom
-            automaticallyAdjustContentInsets={false}
-            contentInsetAdjustmentBehavior="never"
-            // Inject meta viewport tag to prevent zooming
-            injectedJavaScript={`
-              const meta = document.createElement('meta');
-              meta.setAttribute('name', 'viewport');
-              meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-              document.getElementsByTagName('head')[0].appendChild(meta);
-              true;
-            `}
-          />
-        ) : (
-          // This state should ideally not be reached if isLoadingToken handles it,
-          // but added as a fallback.
-          <LoadingOverlay message="Preparing..." />
+    <Screen
+      preset="fixed"
+      safeAreaEdges={[appSwitcherUi && "top"]}
+      KeyboardAvoidingViewProps={{enabled: true}}
+      ref={viewShotRef}>
+      {appSwitcherUi && <MiniAppDualButtonHeader packageName={packageName} viewShotRef={viewShotRef} />}
+      {!appSwitcherUi && (
+        <Header
+          leftIcon="chevron-left"
+          onLeftPress={() => goBack()}
+          title={appName}
+          rightIcon="settings"
+          onRightPress={() => {
+            push("/applet/settings", {
+              packageName: packageName as string,
+              appName: appName as string,
+              fromWebView: "true",
+            })
+          }}
+        />
+      )}
+      <View className="flex-1 -mx-6">
+        {renderLoadingOverlay()}
+        {finalUrl && (
+          <Animated.View className="flex-1" style={[webViewAnimatedStyle]}>
+            <WebView
+              ref={webViewRef}
+              source={{uri: finalUrl}}
+              style={{flex: 1}}
+              onLoadStart={handleLoadStart}
+              onLoadEnd={handleLoadEnd}
+              onError={handleError}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              startInLoadingState={false}
+              allowsInlineMediaPlayback={true}
+              mediaPlaybackRequiresUserAction={false}
+              scalesPageToFit={false}
+              scrollEnabled={true}
+              bounces={false}
+              automaticallyAdjustContentInsets={false}
+              contentInsetAdjustmentBehavior="never"
+              injectedJavaScript={`
+                  const meta = document.createElement('meta');
+                  meta.setAttribute('name', 'viewport');
+                  meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+                  document.getElementsByTagName('head')[0].appendChild(meta);
+                  true;
+                `}
+            />
+          </Animated.View>
         )}
-        {/* Show loading overlay specifically for the WebView loading phase */}
-        {/* {isLoading && finalUrl && (
-           <LoadingOverlay message={`Loading ${appName}...`} isDarkTheme={isDarkTheme} />
-        )} */}
       </View>
     </Screen>
   )

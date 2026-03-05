@@ -25,12 +25,12 @@ export function StatusCard({label, style, iconStart, iconEnd, textStyle, subtitl
   const content = (
     <View style={[themed($settingsGroup), themed($statusCardContainer), restStyle]}>
       <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4}}>
-        {iconStart && <View style={themed($icon)}>{iconStart}</View>}
+        {iconStart && <View className="justify-center items-center">{iconStart}</View>}
         <View
           style={{
             gap: theme.spacing.s1,
           }}>
-          <Text style={[themed($label), textStyle]} weight="semibold" text={label} />
+          <Text style={[themed($label), textStyle]} className="font-semibold" text={label} />
           {subtitle && <Text style={themed($subtitle)} text={subtitle} />}
         </View>
       </View>
@@ -89,35 +89,35 @@ export function RouteButton({
   const labelColor = disabled
     ? theme.colors.textDim
     : isDestructive
-      ? theme.colors.destructive
-      : theme.colors.secondary_foreground
+    ? theme.colors.destructive
+    : theme.colors.secondary_foreground
 
   return (
     <View style={[themed($settingsGroup), {paddingVertical: 0}, disabled && {opacity: 0.5}, style]}>
       <TouchableOpacity onPress={onPress} disabled={disabled || !onPress}>
-        <View style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, alignItems: "center"}}>
+        <View style={{flexDirection: "row", paddingVertical: 8, alignItems: "center"}}>
           <View
             style={{
               flexDirection: "column",
-              justifyContent: "space-between",
               paddingVertical: 8,
-              maxWidth: "90%",
+              flex: 1,
               gap: theme.spacing.s1,
             }}>
-            <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4}}>
-              {icon && <View style={themed($icon)}>{icon}</View>}
+            <View className="flex-row items-center gap-4">
+              {icon && <View className="justify-center items-center">{icon}</View>}
               <Text style={[themed($label), {color: labelColor}]}>{label}</Text>
             </View>
             {subtitle && <Text style={themed($subtitle)}>{subtitle}</Text>}
           </View>
           {onPress && (
-            <View style={themed($iconContainer)}>
+            <View style={[themed($iconContainer), {flexShrink: 0}]} className="ml-3">
               <Icon name="arrow-right" size={24} color={disabled ? theme.colors.textDim : theme.colors.text} />
             </View>
           )}
           {text && (
-            <Text style={themed($text)} weight="light">
+            <Text style={[themed($text), {flexShrink: 0}]} className="font-light ml-3">
               {text}
+              {/* {"testthisisalongtestemailaddress@example.com"} */}
             </Text>
           )}
         </View>
@@ -126,13 +126,8 @@ export function RouteButton({
   )
 }
 
-const $icon: ThemedStyle<ViewStyle> = () => ({
-  justifyContent: "center",
-  alignItems: "center",
-})
-
 const $settingsGroup: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingVertical: spacing.s3,
   paddingHorizontal: spacing.s4,
   borderRadius: spacing.s4,
@@ -141,6 +136,11 @@ const $settingsGroup: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
 const $text: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,
   fontSize: 16,
+  alignItems: "center",
+  justifyContent: "center",
+  lineHeight: 16,
+  maxWidth: "70%",
+  textOverflow: "ellipsis",
 })
 
 const $iconContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
@@ -159,7 +159,7 @@ const $label: ThemedStyle<TextStyle> = ({colors}) => ({
 })
 
 const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.textDim,
+  color: colors.muted_foreground,
   fontSize: 12,
   lineHeight: 14,
 })

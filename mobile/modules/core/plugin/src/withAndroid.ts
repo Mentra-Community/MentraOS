@@ -7,7 +7,7 @@ import {type ConfigPlugin, withSettingsGradle, withGradleProperties} from "expo/
  * Modify settings.gradle to include lc3Lib module
  */
 function withSettingsGradleModifications(config: any) {
-  return withSettingsGradle(config, config => {
+  return withSettingsGradle(config, (config) => {
     let settingsGradle = config.modResults.contents
 
     // Add lc3Lib module if not present
@@ -27,7 +27,7 @@ function withSettingsGradleModifications(config: any) {
  * Modify gradle.properties to add Sentry configuration and node path
  */
 function withGradlePropertiesModifications(config: any) {
-  return withGradleProperties(config, config => {
+  return withGradleProperties(config, (config) => {
     let props = config.modResults
 
     // Get node path and add to org.gradle.jvmargs
@@ -37,7 +37,7 @@ function withGradlePropertiesModifications(config: any) {
       const nodePath = path.dirname(nodeExecutable)
 
       // Find existing org.gradle.jvmargs property
-      const jvmArgsIndex = props.findIndex(p => p.type === "property" && p.key === "org.gradle.jvmargs")
+      const jvmArgsIndex = props.findIndex((p) => p.type === "property" && p.key === "org.gradle.jvmargs")
 
       if (jvmArgsIndex !== -1) {
         // Append nodePath to existing jvmargs if not already present

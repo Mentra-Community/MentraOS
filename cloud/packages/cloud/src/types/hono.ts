@@ -39,6 +39,9 @@ export interface AppVariables {
     email: string;
     orgId?: string;
   };
+
+  // Agent auth (set by incidents API when X-Agent-Key header is valid)
+  isAgent?: boolean;
 }
 
 /**

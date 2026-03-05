@@ -61,16 +61,16 @@ const SelectSetting: React.FC<SelectSettingProps> = ({
 
   // If the current value doesn't match any option, use the defaultValue
   useEffect(() => {
-    if (options.length > 0 && !options.find(option => option.value === value)) {
+    if (options.length > 0 && !options.find((option) => option.value === value)) {
       // Value doesn't match any option
-      if (defaultValue !== undefined && options.find(option => option.value === defaultValue)) {
+      if (defaultValue !== undefined && options.find((option) => option.value === defaultValue)) {
         // Default value exists and is valid, use it
         onValueChange(defaultValue)
       }
     }
   }, [value, options, defaultValue, onValueChange])
 
-  const selectedLabel = options.find(option => option.value === value)?.label || translate("appSettings:select")
+  const selectedLabel = options.find((option) => option.value === value)?.label || translate("appSettings:select")
 
   // Use vertical layout for long labels
   const isVertical = selectedLabel.length > 20
@@ -104,7 +104,7 @@ const SelectSetting: React.FC<SelectSettingProps> = ({
                   </View>
                   <FlatList
                     data={options}
-                    keyExtractor={item => item.value}
+                    keyExtractor={(item) => item.value}
                     keyboardShouldPersistTaps="always"
                     style={themed($optionsList)}
                     renderItem={({item}) => (

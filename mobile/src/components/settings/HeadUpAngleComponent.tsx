@@ -75,11 +75,11 @@ const HeadUpAngleArcModal = ({visible, initialAngle, maxAngle = 60, onCancel, on
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: evt => {
+      onPanResponderGrant: (evt) => {
         const newAngle = computeAngleFromTouch(evt.nativeEvent.locationX, evt.nativeEvent.locationY)
         setAngle(newAngle)
       },
-      onPanResponderMove: evt => {
+      onPanResponderMove: (evt) => {
         const newAngle = computeAngleFromTouch(evt.nativeEvent.locationX, evt.nativeEvent.locationY)
         setAngle(newAngle)
       },

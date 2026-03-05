@@ -178,7 +178,7 @@ object NexProtobufUtils {
         val clearDisplay = ClearDisplay.newBuilder()
             .build()
         val phoneToGlasses = PhoneToGlasses.newBuilder()
-            .setMsgId("clear_disp_001")
+            // .setMsgId("clear_disp_001")
             .setClearDisplay(clearDisplay)
             .build();
         return generateProtobufCommandBytes(phoneToGlasses);
@@ -238,10 +238,15 @@ object NexProtobufUtils {
 
         // Replace all m-dashes with normal dash
         val textWithNormalDash = text.replace("—", "-")
+        
+        val sanitizedText = textWithNormalDash.replace(
+            Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]"""),
+            ""
+        )
 
         val textNewBuilder = DisplayText.newBuilder()
             .setColor(10000)
-            .setText(textWithNormalDash)
+            .setText(sanitizedText)
             .setSize(48)
             .setX(20)
             .setY(260)

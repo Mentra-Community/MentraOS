@@ -18,6 +18,32 @@ public class SysProp {
     public static final String KEY_BES_BT_MAC = "persist.mentra.live.mac";
 
     /**
+     * Get a system property value using reflection
+     * @param context Application context
+     * @param key System property key (e.g., "ro.custom.ota.version")
+     * @return Property value or empty string if not available
+     * @throws IllegalArgumentException if key is null
+     */
+    public static String getProperty(Context context, String key) throws IllegalArgumentException {
+        String ret = "";
+        try {
+            ClassLoader cl = context.getClassLoader();
+            Class SystemProperties = cl.loadClass("android.os.SystemProperties");
+            Class[] paramTypes = new Class[1];
+            paramTypes[0] = String.class;
+            Method get = SystemProperties.getMethod("get", paramTypes);
+            Object[] params = new Object[1];
+            params[0] = new String(key);
+            ret = (String) get.invoke(SystemProperties, params);
+        } catch (IllegalArgumentException iAE) {
+            throw iAE;
+        } catch (Exception e) {
+            ret = ""; // TODO
+        }
+        return ret;
+    }
+
+    /**
      * Get a system property value
      * @param context Application context
      * @param key System property key (e.g., "ro.custom.ota.version")

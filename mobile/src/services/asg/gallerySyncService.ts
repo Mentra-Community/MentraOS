@@ -17,11 +17,13 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
+import {translate} from "@/i18n"
 import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
 import {localStorageService} from "./localStorageService"
 import {
+  checkConnectivityRequirementsUI,
   checkFeaturePermissions,
   requestFeaturePermissions,
   PermissionFeatures,
@@ -270,6 +272,14 @@ class GallerySyncService {
       this.hotspotRequestTimeout = null
     }
 
+    // Pre-flight: do not start the wait if already disconnected (e.g. BT dropped right after hotspot enabled)
+    if (!useGlassesStore.getState().connected) {
+      console.log("[GallerySyncService] ❌ Glasses disconnected on hotspot_status_change - aborting (no wait)")
+      store.setSyncError("Glasses disconnected")
+      gallerySyncNotifications.showSyncError("Glasses disconnected")
+      return
+    }
+
     const hotspotInfo: HotspotInfo = {
       ssid: eventData.ssid,
       password: eventData.password,
@@ -289,9 +299,18 @@ class GallerySyncService {
     }
 
     this.hotspotConnectionTimeout = setTimeout(() => {
+      this.hotspotConnectionTimeout = null
+      // Pre-flight: abort if Bluetooth disconnected during the wait
+      const stillConnected = useGlassesStore.getState().connected
+      if (!stillConnected) {
+        console.log("[GallerySyncService] ❌ Glasses disconnected during hotspot wait - skipping WiFi connection")
+        const currentStore = useGallerySyncStore.getState()
+        currentStore.setSyncError("Glasses disconnected")
+        gallerySyncNotifications.showSyncError("Glasses disconnected")
+        return
+      }
       console.log("[GallerySyncService] ✅ Hotspot broadcast window complete - attempting connection")
       this.connectToHotspotWifi(hotspotInfo)
-      this.hotspotConnectionTimeout = null
     }, TIMING.HOTSPOT_CONNECT_DELAY_MS)
   }
 
@@ -329,14 +348,23 @@ class GallerySyncService {
       return
     }
 
-    // Check if glasses are connected
-    if (!glassesStore.connected) {
-      console.error("[GallerySyncService] ❌ Sync aborted - Glasses not connected")
-      store.setSyncError("Glasses not connected")
+    // Reuse shared connectivity gate (BT + Android location); shows the right alert if not ready
+    const connectivityOk = await checkConnectivityRequirementsUI()
+    if (!connectivityOk) {
+      console.warn("[GallerySyncService] Sync aborted - connectivity requirements not met")
+      store.setSyncError("Connectivity requirements not met")
       return
     }
 
-    console.log("[GallerySyncService] ✅ Pre-flight check passed - Glasses connected")
+    // Check if glasses are connected (store-based, secondary check)
+    if (!glassesStore.connected) {
+      console.warn("[GallerySyncService] Sync aborted - Glasses not connected")
+      store.setSyncError("Glasses not connected")
+      showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
+      return
+    }
+
+    console.log("[GallerySyncService] ✅ Pre-flight check passed - BT enabled, Glasses connected")
     console.log("[GallerySyncService] 📊 Glasses info:", {
       connected: glassesStore.connected,
       hotspotEnabled: glassesStore.hotspotEnabled,
@@ -610,6 +638,41 @@ class GallerySyncService {
   }
 
   /**
+   * Show explanation dialog before WiFi connection (first time only)
+   * Returns true if user wants to proceed, false if cancelled
+   */
+  private async showWifiJoinExplanation(ssid: string): Promise<boolean> {
+    const settingsStore = useSettingsStore.getState()
+    const hasSeenExplanation = settingsStore.getSetting(SETTINGS.gallery_sync_explained.key)
+
+    if (hasSeenExplanation) {
+      console.log("[GallerySyncService] User has seen WiFi explanation before - skipping")
+      return true
+    }
+
+    console.log("[GallerySyncService] First sync - showing WiFi join explanation")
+
+    return new Promise((resolve) => {
+      const message =
+        Platform.OS === "ios"
+          ? translate("glasses:wifiJoinExplanationIos", {ssid})
+          : translate("glasses:wifiJoinExplanationAndroid", {ssid})
+
+      showAlert(translate("glasses:connectToGlassesTitle"), message, [
+        {
+          text: translate("common:ok"),
+          onPress: () => {
+            console.log("[GallerySyncService] User acknowledged WiFi explanation")
+            // Mark as explained so we don't show again
+            settingsStore.setSetting(SETTINGS.gallery_sync_explained.key, true, false)
+            resolve(true)
+          },
+        },
+      ])
+    })
+  }
+
+  /**
    * Connect to hotspot WiFi with retry logic (unified for both platforms)
    * Both iOS and Android benefit from retries:
    * - iOS: Library throws "internal error" before user responds to system dialog
@@ -617,6 +680,18 @@ class GallerySyncService {
    */
   private async connectToHotspotWifi(hotspotInfo: HotspotInfo): Promise<void> {
     const store = useGallerySyncStore.getState()
+
+    // Pre-flight: do not attempt WiFi connection if Bluetooth already disconnected
+    if (!useGlassesStore.getState().connected) {
+      console.log("[GallerySyncService] ❌ Glasses not connected - aborting WiFi connection")
+      store.setSyncError("Glasses disconnected")
+      gallerySyncNotifications.showSyncError("Glasses disconnected")
+      return
+    }
+
+    // Show explanation dialog on first sync (user must acknowledge before proceeding)
+    await this.showWifiJoinExplanation(hotspotInfo.ssid)
+
     let lastError: any = null
     const wifiConnectStartTime = Date.now()
 
@@ -1525,6 +1600,12 @@ class GallerySyncService {
     } else {
       console.log("[GallerySyncService]   ℹ️ Hotspot was not opened by service - leaving it enabled")
     }
+
+    // Clear glasses gallery count immediately after successful sync
+    // This ensures UI shows 0 items remaining right away
+    // The subsequent query will update this if new photos were taken during sync
+    console.log("[GallerySyncService]   🔄 Clearing glasses gallery count (synced all items)")
+    store.clearGlassesGalleryStatus()
 
     // Auto-reset to idle after 3 seconds to clear "Sync complete!" message
     console.log("[GallerySyncService]   ⏲️ Scheduling auto-reset to idle in 4 seconds...")

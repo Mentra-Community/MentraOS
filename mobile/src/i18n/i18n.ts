@@ -26,7 +26,7 @@ const systemTagMatchesSupportedTags = (deviceTag: string) => {
 }
 
 const pickSupportedLocale: () => Localization.Locale | undefined = () => {
-  return systemLocales.find(locale => systemTagMatchesSupportedTags(locale.languageTag))
+  return systemLocales.find((locale) => systemTagMatchesSupportedTags(locale.languageTag))
 }
 
 const locale = pickSupportedLocale()

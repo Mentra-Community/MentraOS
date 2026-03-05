@@ -503,13 +503,13 @@ public class OtaHelper {
 
         Log.d(TAG, "APK downloaded to: " + apkFile.getAbsolutePath());
         
-        // Emit download finished event
-        EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
-        
-        // Immediately check hash after download
+        // IMPORTANT: Verify hash BEFORE declaring download complete
         boolean hashOk = verifyApkFile(apkFile.getAbsolutePath(), json);
         Log.d(TAG, "SHA256 verification result: " + hashOk);
+        
         if (hashOk) {
+            // Hash verified - NOW we can declare download finished
+            EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
             createMetaDataJson(json, context);
             return true;
         } else {

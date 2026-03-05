@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import api, { Organization } from '../services/api.service';
-import { useAuth } from '@mentra/shared'
-import { toast } from 'sonner';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
+import api, { Organization } from "../services/api.service";
+import { useAuth } from "@mentra/shared";
+import { toast } from "sonner";
 
 /**
  * Organization context type definition
@@ -27,147 +27,175 @@ interface OrganizationContextType {
 const OrganizationContext = createContext<OrganizationContextType | undefined>(undefined);
 
 // Local storage key for persisting the current organization
-const CURRENT_ORG_STORAGE_KEY = 'mentraos_current_org';
+const CURRENT_ORG_STORAGE_KEY = "mentraos_current_org";
+
+/** Small helper — wait `ms` milliseconds (for retry backoff). */
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
- * Provider component that wraps the app and makes organization data available
+ * Provider component that wraps the app and makes organization data available.
  */
 export function OrganizationProvider({ children }: { children: React.ReactNode }) {
-  // State for storing organizations and current selection
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [currentOrg, setCurrentOrgState] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  // Use isLoading from Auth context; alias to authLoading for clarity
-  const { user, isLoading: authLoading, refreshUser, tokenReady } = useAuth();
+  const { user, isLoading: authLoading, tokenReady } = useAuth();
 
-  /**
-   * Creates a personal organization for the user if none exists
-   * @returns Promise that resolves when the personal organization is created
-   */
-  const ensurePersonalOrg = async (): Promise<void> => {
+  // Ref-based mutex to prevent concurrent ensurePersonalOrg calls.
+  // Using a ref instead of state so that concurrent callers see the
+  // same value immediately without waiting for a re-render cycle.
+  const creatingOrgRef = useRef(false);
+
+  // -----------------------------------------------------------------------
+  // Helper: given a list of orgs, update React state + localStorage.
+  // -----------------------------------------------------------------------
+  const applyOrgs = useCallback(
+    (organizations: Organization[]) => {
+      setOrgs(organizations);
+
+      if (organizations.length === 0) return;
+
+      // Restore previously-selected org from localStorage, or pick the first.
+      const storedOrgId = localStorage.getItem(CURRENT_ORG_STORAGE_KEY);
+      const storedOrg = storedOrgId ? organizations.find((o) => o.id === storedOrgId) : null;
+
+      const selected = storedOrg ?? organizations[0];
+      setCurrentOrgState(selected);
+      localStorage.setItem(CURRENT_ORG_STORAGE_KEY, selected.id);
+    },
+    [], // no deps — uses only setters (stable) and localStorage
+  );
+
+  // -----------------------------------------------------------------------
+  // ensurePersonalOrg
+  //
+  // The frontend does NOT create organisations itself. The backend creates
+  // a personal org automatically inside `getConsoleAccount` (triggered by
+  // `GET /api/console/account`) and inside the console list endpoint
+  // (triggered by `GET /api/console/orgs` → `findOrCreateUser`).
+  //
+  // This function:
+  //   1. Calls `GET /api/console/account` to trigger backend bootstrap.
+  //   2. Lists orgs via the console endpoint (which also bootstraps).
+  //   3. If still empty, retries the list a few times with backoff to
+  //      allow the backend's async org creation to commit.
+  // -----------------------------------------------------------------------
+  const ensurePersonalOrg = useCallback(async (): Promise<void> => {
     if (!user || !user.email) return;
+
+    // Mutex: if another call is already in-flight, bail out.
+    if (creatingOrgRef.current) return;
+    creatingOrgRef.current = true;
 
     try {
       setLoading(true);
 
-      // First check if the user already has any organizations
-      const organizations = await api.orgs.list();
+      // 1) Trigger the backend bootstrap. getConsoleAccount creates a
+      //    personal org if the user has none. We don't need the response
+      //    value — we just need the side-effect.
+      try {
+        await api.console.account.get();
+      } catch {
+        // Non-fatal — the list endpoint also bootstraps via findOrCreateUser.
+      }
 
-      if (organizations.length > 0) {
-        // User already has at least one organization
-        setOrgs(organizations);
+      // 2) List via the console endpoint (goes through findOrCreateUser,
+      //    which also bootstraps orgs for new users as a side-effect).
+      //    Retry a few times with backoff in case the backend's org
+      //    creation hasn't committed yet when the list query runs.
+      const MAX_RETRIES = 3;
+      const BACKOFF_MS = 1000;
 
-        // Set the first org as current if none selected
-        if (!currentOrg) {
-          setCurrentOrgState(organizations[0]);
-          localStorage.setItem(CURRENT_ORG_STORAGE_KEY, organizations[0].id);
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const organizations = await api.console.orgs.list();
+
+        if (organizations.length > 0) {
+          applyOrgs(organizations);
+          return;
         }
 
-        setLoading(false);
-        return;
+        // Not found yet — wait before retrying (skip delay on last attempt).
+        if (attempt < MAX_RETRIES) {
+          await delay(BACKOFF_MS);
+        }
       }
 
-      // Only create a new organization if the user has none
-      const emailLocalPart = user.email.split('@')[0] || 'User';
-      const personalOrgName = `${emailLocalPart}'s Organization`;
-      const newOrg = await api.orgs.create(personalOrgName);
-
-      // Update the organizations list
-      setOrgs([newOrg]);
-
-      // Set as current organization
-      setCurrentOrgState(newOrg);
-      localStorage.setItem(CURRENT_ORG_STORAGE_KEY, newOrg.id);
-
-      // Refresh user to update organizations in user data
-      if (refreshUser) {
-        await refreshUser();
-      }
+      // All retries exhausted — surface the error.
+      setError(new Error("No organizations found after retries"));
+      toast.error("Failed to load organizations. Please try refreshing the page.");
     } catch (err) {
-      console.error('Error creating personal organization:', err);
-      setError(err instanceof Error ? err : new Error('Failed to create personal organization'));
-      toast.error('Failed to create organization');
+      console.error("Error ensuring personal organization:", err);
+      setError(err instanceof Error ? err : new Error("Failed to ensure personal organization"));
+      toast.error("Failed to create organization");
     } finally {
       setLoading(false);
+      creatingOrgRef.current = false;
     }
-  };
+  }, [user?.email, user?.id, applyOrgs]);
 
-  /**
-   * Loads the list of organizations from the API
-   */
-  const loadOrganizations = async () => {
+  // -----------------------------------------------------------------------
+  // loadOrganizations
+  //
+  // Uses the console list endpoint (`GET /api/console/orgs`) which goes
+  // through `getOrCreateUserByEmail` → `findOrCreateUser`, so it also
+  // bootstraps a personal org for new users as a side-effect. If the list
+  // still comes back empty (bootstrap in flight), falls through to
+  // `ensurePersonalOrg` which retries with backoff.
+  // -----------------------------------------------------------------------
+  const loadOrganizations = useCallback(async () => {
     if (!user) return;
 
     try {
       setLoading(true);
       setError(null);
 
-      // Fetch organizations from API
-      const organizations = await api.orgs.list();
+      const organizations = await api.console.orgs.list();
       setOrgs(organizations);
 
-      // If user has no organizations, create a personal one
       if (organizations.length === 0) {
+        // Backend hasn't finished bootstrapping yet, or this is a brand-new
+        // user. `ensurePersonalOrg` will trigger the account endpoint and
+        // retry the list with backoff.
         await ensurePersonalOrg();
-        return; // ensurePersonalOrg already handles setting currentOrg
+        return; // ensurePersonalOrg already sets state
       }
 
-      // Restore current org from localStorage or set to first available
-      const storedOrgId = localStorage.getItem(CURRENT_ORG_STORAGE_KEY);
-
-      if (storedOrgId && organizations.length > 0) {
-        const storedOrg = organizations.find(org => org.id === storedOrgId);
-        if (storedOrg) {
-          setCurrentOrgState(storedOrg);
-        } else {
-          // If stored org is not in the list, use the first one
-          setCurrentOrgState(organizations[0]);
-          localStorage.setItem(CURRENT_ORG_STORAGE_KEY, organizations[0].id);
-        }
-      } else if (organizations.length > 0) {
-        // No stored org or empty list, use the first one
-        setCurrentOrgState(organizations[0]);
-        localStorage.setItem(CURRENT_ORG_STORAGE_KEY, organizations[0].id);
-      }
-
-      // (Removed) refreshUser() call here caused a feedback loop because it
-      // sets a new `user` object on every call, which retriggers this
-      // effect. Organization data is already available, and AuthProvider
-      // will refresh user info periodically, so this extra call is not
-      // necessary and leads to infinite re-renders.
+      applyOrgs(organizations);
     } catch (err) {
-      console.error('Error loading organizations:', err);
-      setError(err instanceof Error ? err : new Error('Failed to load organizations'));
+      console.error("Error loading organizations:", err);
+      setError(err instanceof Error ? err : new Error("Failed to load organizations"));
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, ensurePersonalOrg, applyOrgs]);
 
   /**
-   * Updates the current organization and persists to localStorage
+   * Updates the current organization and persists to localStorage.
    */
-  const setCurrentOrg = (org: Organization) => {
+  const setCurrentOrg = useCallback((org: Organization) => {
     setCurrentOrgState(org);
     localStorage.setItem(CURRENT_ORG_STORAGE_KEY, org.id);
-  };
+  }, []);
 
   /**
-   * Refreshes the list of organizations
+   * Refreshes the list of organizations.
    */
-  const refreshOrgs = async () => {
+  const refreshOrgs = useCallback(async () => {
     await loadOrganizations();
-  };
+  }, [loadOrganizations]);
 
-  // Load organizations when the user changes or auth loading completes
+  // Load organizations when the user changes or auth loading completes.
   useEffect(() => {
     if (!authLoading && tokenReady && user) {
       loadOrganizations();
     }
-  }, [user?.id, authLoading, tokenReady]);
+    // loadOrganizations intentionally excluded to avoid re-triggering
+    // on every callback recreation. The effect should only fire when
+    // auth state changes.
+  }, [user?.id, authLoading, tokenReady]);  
 
-  // Context value that will be provided to consumers
   const contextValue: OrganizationContextType = {
     orgs,
     currentOrg,
@@ -175,18 +203,14 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
     refreshOrgs,
     loading,
     error,
-    ensurePersonalOrg
+    ensurePersonalOrg,
   };
 
-  return (
-    <OrganizationContext.Provider value={contextValue}>
-      {children}
-    </OrganizationContext.Provider>
-  );
+  return <OrganizationContext.Provider value={contextValue}>{children}</OrganizationContext.Provider>;
 }
 
 /**
- * Hook that provides access to the organization context
+ * Hook that provides access to the organization context.
  * @returns Organization context values
  * @throws Error if used outside of OrganizationProvider
  */
@@ -194,7 +218,7 @@ export function useOrganization() {
   const context = useContext(OrganizationContext);
 
   if (context === undefined) {
-    throw new Error('useOrganization must be used within an OrganizationProvider');
+    throw new Error("useOrganization must be used within an OrganizationProvider");
   }
 
   return context;

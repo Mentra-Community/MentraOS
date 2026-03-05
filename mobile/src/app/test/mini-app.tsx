@@ -12,11 +12,11 @@ export default function MiniApp() {
 
   useEffect(() => {
     const loadHtml = async () => {
-      const asset = Asset.fromModule(require("../../../lma_example/index.html"))
-      await asset.downloadAsync()
-      const response = await fetch(asset.localUri!)
-      const html = await response.text()
-      setHtmlContent(html)
+      // const asset = Asset.fromModule(require("../../../lma_example/index.html"))
+      // await asset.downloadAsync()
+      // const response = await fetch(asset.localUri!)
+      // const html = await response.text()
+      // setHtmlContent(html)
     }
     loadHtml()
   }, [])
@@ -30,9 +30,7 @@ export default function MiniApp() {
         onLeftPress={() => goBack()}
         style={{height: 44}}
       />
-      <View className="flex-1">
-        {htmlContent && <LocalMiniApp html={htmlContent} />}
-      </View>
+      <View className="flex-1">{htmlContent && <LocalMiniApp html={htmlContent} packageName={"com.mentra.test"} />}</View>
     </Screen>
   )
 }

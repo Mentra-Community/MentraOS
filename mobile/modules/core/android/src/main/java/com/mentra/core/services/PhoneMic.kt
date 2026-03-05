@@ -693,26 +693,31 @@ class PhoneMic private constructor(private val context: Context) {
                             }
                         }
                         AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                            Bridge.log("MIC: Transient audio focus loss - mode: $currentMicMode")
+                            Bridge.log("MIC: Transient audio focus loss - mode: $currentMicMode, isExternalAudioActive: $isExternalAudioActive")
                             hasAudioFocus = false
 
-                            // Check phone internal mic FIRST (before device-specific logic)
+                            // For phone internal mic, only stop if we know an external app is actually recording
+                            // AUDIOFOCUS_LOSS_TRANSIENT fires for many reasons (app switching, system UI, etc)
+                            // AudioRecordingCallback is more reliable for detecting actual mic conflicts
                             if (currentMicMode == MicTypes.PHONE_INTERNAL && isRecording.get()) {
-                                // Phone internal mic - assume AUDIOFOCUS_LOSS_TRANSIENT means recording app (Chrome)
-                                // Chrome uses WebRTC which doesn't always trigger AudioRecordingCallback
-                                Bridge.log("MIC: AUDIOFOCUS_LOSS_TRANSIENT for phone internal - stopping for recording app (Chrome)")
-                                notifyCoreManager("external_app_recording", emptyList())
-                                // Delay for Samsung to allow glasses mic switch, immediate for Pixel (AudioRecordingCallback handles it)
-                                if (isSamsungDevice()) {
-                                    mainHandler.postDelayed({ stopRecording() }, 200)
+                                if (isExternalAudioActive) {
+                                    // External app is already recording (detected by AudioRecordingCallback)
+                                    Bridge.log("MIC: AUDIOFOCUS_LOSS_TRANSIENT with external app recording - stopping")
+                                    notifyCoreManager("external_app_recording", emptyList())
+                                    stopRecording()
                                 } else {
-                                    // Pixel: let AudioRecordingCallback handle if it fires, otherwise stop after delay
+                                    // AudioRecordingCallback might fire shortly after AUDIOFOCUS_LOSS_TRANSIENT
+                                    // Wait briefly to see if an external app actually starts recording
+                                    Bridge.log("MIC: AUDIOFOCUS_LOSS_TRANSIENT - waiting 150ms to check for external app")
                                     mainHandler.postDelayed({
-                                        if (isRecording.get()) {
-                                            Bridge.log("MIC: Stopping for AUDIOFOCUS (Chrome didn't trigger AudioRecordingCallback)")
+                                        if (isRecording.get() && isExternalAudioActive) {
+                                            Bridge.log("MIC: External app detected after delay - stopping")
+                                            notifyCoreManager("external_app_recording", emptyList())
                                             stopRecording()
+                                        } else if (isRecording.get()) {
+                                            Bridge.log("MIC: No external app after delay - continuing recording")
                                         }
-                                    }, 100)
+                                    }, 150)
                                 }
                             } else if (isSamsungDevice() && isRecording.get()) {
                                 // Samsung non-phone modes need special handling

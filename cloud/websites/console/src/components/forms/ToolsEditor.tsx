@@ -1,25 +1,17 @@
 import React from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
+  Button,
+  Checkbox,
+  Input,
+  Label,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Plus,
-  Trash2,
-  Brain,
-  ChevronDown,
-  ChevronRight,
-  Settings,
-  GripVertical,
-} from "lucide-react";
+  Textarea,
+} from "@mentra/shared";
+import { Plus, Trash2, Brain, ChevronDown, ChevronRight, Settings, GripVertical } from "lucide-react";
 import { Tool } from "@/types/app";
 
 interface ToolsEditorProps {
@@ -116,11 +108,7 @@ interface ToolItemProps {
   parseActivationPhrases: (index: number, value: string) => void;
   addParameter: (toolIndex: number) => void;
   removeParameter: (toolIndex: number, paramId: string) => void;
-  updateParameter: (
-    toolIndex: number,
-    paramId: string,
-    updates: Partial<InternalParameter>,
-  ) => void;
+  updateParameter: (toolIndex: number, paramId: string, updates: Partial<InternalParameter>) => void;
 }
 
 const ToolItem: React.FC<ToolItemProps> = ({
@@ -165,32 +153,23 @@ const ToolItem: React.FC<ToolItemProps> = ({
   };
 
   return (
-    <div className="border rounded-lg bg-white shadow-sm">
+    <div className="border rounded-lg bg-card shadow-sm">
       {!isEditing ? (
         // Collapsed view - just show the essential info
-        <div
-          className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-          onClick={() => onEditToggle(index)}
-        >
+        <div className="p-4 cursor-pointer hover:bg-secondary transition-colors" onClick={() => onEditToggle(index)}>
           <div className="flex items-center gap-3">
             {/* Content preview */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <Brain className="h-4 w-4 text-blue-600 flex-shrink-0" />
-                <span className="font-medium text-sm text-gray-900 truncate">
-                  {getDisplayText()}
-                </span>
-                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                <Brain className="h-4 w-4 text-link flex-shrink-0" />
+                <span className="font-medium text-sm text-foreground truncate">{getDisplayText()}</span>
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-secondary text-secondary-foreground">
                   {getParameterCount()} params
                 </span>
               </div>
-              <div className="flex flex-col gap-1 text-xs text-gray-500">
-                <span className="truncate">
-                  {tool.description || "No description"}
-                </span>
-                <span className="truncate">
-                  Phrases: {getActivationPhrasesPreview()}
-                </span>
+              <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                <span className="truncate">{tool.description || "No description"}</span>
+                <span className="truncate">Phrases: {getActivationPhrasesPreview()}</span>
               </div>
             </div>
 
@@ -203,8 +182,7 @@ const ToolItem: React.FC<ToolItemProps> = ({
               variant="ghost"
               size="sm"
               type="button"
-              className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
-            >
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
@@ -224,8 +202,7 @@ const ToolItem: React.FC<ToolItemProps> = ({
                 variant="outline"
                 size="sm"
                 type="button"
-                className="h-8 px-3 text-xs"
-              >
+                className="h-8 px-3 text-xs">
                 Done
               </Button>
               <Button
@@ -233,8 +210,7 @@ const ToolItem: React.FC<ToolItemProps> = ({
                 variant="ghost"
                 size="sm"
                 type="button"
-                className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
-              >
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -247,15 +223,11 @@ const ToolItem: React.FC<ToolItemProps> = ({
               <Label className="text-sm font-medium">Tool ID</Label>
               <Input
                 value={tool.id || ""}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  updateTool(index, { id: e.target.value })
-                }
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateTool(index, { id: e.target.value })}
                 placeholder="e.g., search_notes"
                 className="mt-1 font-mono"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Unique identifier (alphanumeric, no spaces)
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Unique identifier (alphanumeric, no spaces)</p>
             </div>
 
             {/* Description */}
@@ -270,9 +242,7 @@ const ToolItem: React.FC<ToolItemProps> = ({
                 rows={3}
                 className="mt-1"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Clear description for the AI to understand
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Clear description for the AI to understand</p>
             </div>
 
             {/* Activation Phrases */}
@@ -280,59 +250,41 @@ const ToolItem: React.FC<ToolItemProps> = ({
               <Label className="text-sm font-medium">Activation Phrases</Label>
               <Input
                 value={getActivationPhrasesString()}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  updateActivationPhrasesRaw(index, e.target.value)
-                }
-                onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
-                  parseActivationPhrases(index, e.target.value)
-                }
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateActivationPhrasesRaw(index, e.target.value)}
+                onBlur={(e: React.FocusEvent<HTMLInputElement>) => parseActivationPhrases(index, e.target.value)}
                 placeholder="search my notes, find information, look up"
                 className="mt-1"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Comma-separated phrases that trigger this tool
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Comma-separated phrases that trigger this tool</p>
             </div>
 
             {/* Parameters */}
             <div>
               <div className="flex items-center justify-between mb-3">
                 <Label className="text-sm font-medium">Parameters</Label>
-                <Button
-                  onClick={() => addParameter(index)}
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                >
+                <Button onClick={() => addParameter(index)} variant="outline" size="sm" type="button">
                   <Plus className="h-4 w-4 mr-1" />
                   Add Parameter
                 </Button>
               </div>
 
               {tool.parameters.length === 0 ? (
-                <div className="text-center py-6 text-gray-500 text-sm border-2 border-dashed rounded">
-                  No parameters defined. Parameters allow the tool to receive
-                  additional data.
+                <div className="text-center py-6 text-muted-foreground text-sm border-2 border-dashed rounded">
+                  No parameters defined. Parameters allow the tool to receive additional data.
                 </div>
               ) : (
                 <div className="space-y-3">
                   {tool.parameters.map((param) => (
-                    <div
-                      key={param.id}
-                      className="bg-gray-50 rounded-lg p-4 border"
-                    >
+                    <div key={param.id} className="bg-secondary rounded-lg p-4 border">
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <h5 className="font-medium text-sm">
-                            Parameter: {param.key}
-                          </h5>
+                          <h5 className="font-medium text-sm">Parameter: {param.key}</h5>
                           <Button
                             onClick={() => removeParameter(index, param.id)}
                             variant="ghost"
                             size="sm"
                             type="button"
-                            className="text-red-600"
-                          >
+                            className="text-muted-foreground hover:text-foreground">
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -342,9 +294,7 @@ const ToolItem: React.FC<ToolItemProps> = ({
                             <Label className="text-xs">Parameter Name</Label>
                             <Input
                               value={param.key}
-                              onChange={(
-                                e: React.ChangeEvent<HTMLInputElement>,
-                              ) =>
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                                 updateParameter(index, param.id, {
                                   key: e.target.value,
                                 })
@@ -357,12 +307,11 @@ const ToolItem: React.FC<ToolItemProps> = ({
                             <Label className="text-xs">Type</Label>
                             <Select
                               value={param.type || "string"}
-                              onValueChange={(value) =>
+                              onValueChange={(value: string) =>
                                 updateParameter(index, param.id, {
                                   type: value,
                                 })
-                              }
-                            >
+                              }>
                               <SelectTrigger className="mt-1">
                                 <SelectValue />
                               </SelectTrigger>
@@ -379,9 +328,7 @@ const ToolItem: React.FC<ToolItemProps> = ({
                           <Label className="text-xs">Description</Label>
                           <Textarea
                             value={param.description || ""}
-                            onChange={(
-                              e: React.ChangeEvent<HTMLTextAreaElement>,
-                            ) =>
+                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
                               updateParameter(index, param.id, {
                                 description: e.target.value,
                               })
@@ -398,45 +345,30 @@ const ToolItem: React.FC<ToolItemProps> = ({
                               checked={param.required || false}
                               onCheckedChange={(checked) =>
                                 updateParameter(index, param.id, {
-                                  required: checked as boolean,
+                                  required: checked === true,
                                 })
                               }
                             />
-                            <Label className="text-xs">
-                              Required parameter
-                            </Label>
+                            <Label className="text-xs">Required parameter</Label>
                           </div>
 
                           {param.type === "string" && (
                             <div className="flex-1">
-                              <Label className="text-xs">
-                                Enum Values (optional)
-                              </Label>
+                              <Label className="text-xs">Enum Values (optional)</Label>
                               <Input
-                                value={
-                                  param.enumRaw !== undefined
-                                    ? param.enumRaw
-                                    : (param.enum || []).join(", ")
-                                }
-                                onChange={(
-                                  e: React.ChangeEvent<HTMLInputElement>,
-                                ) => {
+                                value={param.enumRaw !== undefined ? param.enumRaw : (param.enum || []).join(", ")}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                   updateParameter(index, param.id, {
                                     enumRaw: e.target.value,
                                   });
                                 }}
-                                onBlur={(
-                                  e: React.FocusEvent<HTMLInputElement>,
-                                ) => {
+                                onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
                                   const enumValues = e.target.value
                                     .split(",")
                                     .map((v: string) => v.trim())
                                     .filter((v: string) => v.length > 0);
                                   updateParameter(index, param.id, {
-                                    enum:
-                                      enumValues.length > 0
-                                        ? enumValues
-                                        : undefined,
+                                    enum: enumValues.length > 0 ? enumValues : undefined,
                                     enumRaw: undefined,
                                   });
                                 }}
@@ -462,17 +394,11 @@ const ToolItem: React.FC<ToolItemProps> = ({
 /**
  * Compact tools editor component with mobile-friendly design
  */
-const ToolsEditor: React.FC<ToolsEditorProps> = ({
-  tools,
-  onChange,
-  className,
-}) => {
+const ToolsEditor: React.FC<ToolsEditorProps> = ({ tools, onChange, className }) => {
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
 
   // Convert tools to internal format for editing
-  const [internalTools, setInternalTools] = React.useState<InternalTool[]>(() =>
-    tools.map(convertToolToInternal),
-  );
+  const [internalTools, setInternalTools] = React.useState<InternalTool[]>(() => tools.map(convertToolToInternal));
 
   // Track if changes are coming from internal editing vs external (like imports)
   const isInternalUpdate = React.useRef(false);
@@ -573,37 +499,20 @@ const ToolsEditor: React.FC<ToolsEditorProps> = ({
   // Remove parameter from a tool
   const removeParameter = (toolIndex: number, paramId: string) => {
     const tool = internalTools[toolIndex];
-    const newParameters = tool.parameters.filter(
-      (param) => param.id !== paramId,
-    );
+    const newParameters = tool.parameters.filter((param) => param.id !== paramId);
     updateTool(toolIndex, { parameters: newParameters });
   };
 
   // Update parameter
-  const updateParameter = (
-    toolIndex: number,
-    paramId: string,
-    updates: Partial<InternalParameter>,
-  ) => {
+  const updateParameter = (toolIndex: number, paramId: string, updates: Partial<InternalParameter>) => {
     const tool = internalTools[toolIndex];
-    const newParameters = tool.parameters.map((param) =>
-      param.id === paramId ? { ...param, ...updates } : param,
-    );
+    const newParameters = tool.parameters.map((param) => (param.id === paramId ? { ...param, ...updates } : param));
     updateTool(toolIndex, { parameters: newParameters });
   };
 
   return (
     <div className={className}>
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="text-lg font-medium flex items-center gap-2">
-            <Brain className="h-5 w-5" />
-            AI Tools
-          </h3>
-          <p className="text-sm text-gray-600">
-            Define AI tools for voice interactions
-          </p>
-        </div>
+      <div className="flex items-center justify-end mb-3">
         <Button onClick={addTool} size="sm" type="button" className="h-8 px-3">
           <Plus className="h-4 w-4 mr-1" />
           Add Tool
@@ -611,9 +520,7 @@ const ToolsEditor: React.FC<ToolsEditorProps> = ({
       </div>
 
       {internalTools.length === 0 ? (
-        <div className="text-center py-4 text-gray-500">
-          <p>No AI tools defined yet.</p>
-        </div>
+        <div></div>
       ) : (
         <div className="space-y-2">
           {internalTools.map((tool, index) => (

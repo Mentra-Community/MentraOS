@@ -19,7 +19,7 @@ export function RatingButtons({value, onValueChange, min = 1, max = 5, style}: R
 
   return (
     <View style={[themed($container), style]}>
-      {ratings.map(rating => (
+      {ratings.map((rating) => (
         <TouchableOpacity
           key={rating}
           style={themed($button(value === rating))}
@@ -39,7 +39,7 @@ const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
 })
 
 const $button: (selected: boolean) => ThemedStyle<ViewStyle> =
-  selected =>
+  (selected) =>
   ({colors}) => ({
     flex: 1,
     aspectRatio: 1,
@@ -53,7 +53,7 @@ const $button: (selected: boolean) => ThemedStyle<ViewStyle> =
   })
 
 const $buttonText: (selected: boolean) => ThemedStyle<TextStyle> =
-  selected =>
+  (selected) =>
   ({colors}) => ({
     fontSize: 16,
     color: selected ? colors.background : colors.text,

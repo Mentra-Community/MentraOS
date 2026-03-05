@@ -125,7 +125,8 @@ public class RgbLedCommandHandler implements ICommandHandler {
      *   "led": 0-4,           // RGB LED index (0=red, 1=green, 2=blue, 3=orange, 4=white)
      *   "ontime": 1000,       // RGB LED on duration in milliseconds
      *   "offtime": 1000,      // RGB LED off duration in milliseconds
-     *   "count": 5            // Number of on/off cycles
+     *   "count": 5,           // Number of on/off cycles
+     *   "brightness": 100     // Brightness level (0-255, optional, default DEFAULT_RGB_LED_BRIGHTNESS)
      * }
      */
     private boolean handleRgbLedOn(JSONObject data) {
@@ -137,6 +138,7 @@ public class RgbLedCommandHandler implements ICommandHandler {
             int ontime = data.optInt("ontime", 1000);
             int offtime = data.optInt("offtime", 1000);
             int count = data.optInt("count", 1);
+            int brightness = data.optInt("brightness", K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
 
             // Validate parameters
             if (led < K900RgbLedController.RGB_LED_RED || led > K900RgbLedController.RGB_LED_WHITE) {
@@ -152,11 +154,17 @@ public class RgbLedCommandHandler implements ICommandHandler {
                 return false;
             }
 
-            Log.i(TAG, String.format("🚨 💡 RGB LED ON - LED: %d, OnTime: %dms, OffTime: %dms, Cycles: %d",
-                    led, ontime, offtime, count));
+            if (brightness < 0 || brightness > 255) {
+                Log.e(TAG, "❌ Invalid brightness value: " + brightness + " (must be 0-255)");
+                sendErrorResponse("Invalid brightness value: " + brightness);
+                return false;
+            }
+
+            Log.i(TAG, String.format("🚨 💡 RGB LED ON - LED: %d, OnTime: %dms, OffTime: %dms, Cycles: %d, Brightness: %d",
+                    led, ontime, offtime, count, brightness));
 
             // Route to hardware manager
-            hardwareManager.setRgbLedOn(led, ontime, offtime, count);
+            hardwareManager.setRgbLedOn(led, ontime, offtime, count, brightness);
 
             Log.i(TAG, "✅ RGB LED ON command sent via hardware manager");
             sendSuccessResponse(CMD_RGB_LED_CONTROL_ON);
@@ -198,20 +206,29 @@ public class RgbLedCommandHandler implements ICommandHandler {
      *
      * Expected data format:
      * {
-     *   "duration": 5000  // Flash duration in milliseconds (optional, default 5000ms)
+     *   "duration": 5000,     // Flash duration in milliseconds (optional, default 5000ms)
+     *   "brightness": 100     // Brightness level (0-255, optional, default DEFAULT_RGB_LED_BRIGHTNESS)
      * }
      */
     private boolean handlePhotoFlash(JSONObject data) {
         Log.d(TAG, "📸 Processing photo flash LED command");
 
         try {
-            // Extract flash duration with default
+            // Extract flash duration and brightness with defaults
             int duration = data.optInt("duration", 5000); // Default 5 sec flash
+            int brightness = data.optInt("brightness", K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
 
-            Log.i(TAG, String.format("📸 ⚪ Photo flash LED (WHITE) - Duration: %dms", duration));
+            // Validate brightness
+            if (brightness < 0 || brightness > 255) {
+                Log.e(TAG, "❌ Invalid brightness value: " + brightness + " (must be 0-255)");
+                sendErrorResponse("Invalid brightness value: " + brightness);
+                return false;
+            }
+
+            Log.i(TAG, String.format("📸 ⚪ Photo flash LED (WHITE) - Duration: %dms, Brightness: %d", duration, brightness));
 
             // Route to hardware manager
-            hardwareManager.flashRgbLedWhite(duration);
+            hardwareManager.flashRgbLedWhite(duration, brightness);
 
             Log.i(TAG, "✅ Photo flash LED command sent via hardware manager");
             sendSuccessResponse(CMD_RGB_LED_PHOTO_FLASH);
@@ -226,15 +243,30 @@ public class RgbLedCommandHandler implements ICommandHandler {
 
     /**
      * Handle video solid LED command - solid white LED for video recording.
+     *
+     * Expected data format:
+     * {
+     *   "brightness": 100     // Brightness level (0-255, optional, default DEFAULT_RGB_LED_BRIGHTNESS)
+     * }
      */
     private boolean handleVideoSolid(JSONObject data) {
         Log.d(TAG, "🎥 Processing video recording LED command");
 
         try {
-            Log.i(TAG, "🎥 ⚪ Video recording LED - Solid WHITE");
+            // Extract brightness with default
+            int brightness = data.optInt("brightness", K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+
+            // Validate brightness
+            if (brightness < 0 || brightness > 255) {
+                Log.e(TAG, "❌ Invalid brightness value: " + brightness + " (must be 0-255)");
+                sendErrorResponse("Invalid brightness value: " + brightness);
+                return false;
+            }
+
+            Log.i(TAG, String.format("🎥 ⚪ Video recording LED - Solid WHITE, Brightness: %d", brightness));
 
             // Route to hardware manager (30 minute duration, manually turned off when recording stops)
-            hardwareManager.setRgbLedSolidWhite(1800000);
+            hardwareManager.setRgbLedSolidWhite(1800000, brightness);
 
             Log.i(TAG, "✅ Video recording LED command sent via hardware manager");
             sendSuccessResponse(CMD_RGB_LED_VIDEO_SOLID);

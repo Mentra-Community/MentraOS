@@ -104,7 +104,7 @@ export const ActiveBackgroundApps: React.FC = () => {
             </View>
             {!applet.loading && (
               <TouchableOpacity
-                onPress={e => handleStopApp(applet, e)}
+                onPress={(e) => handleStopApp(applet, e)}
                 style={themed($closeButton)}
                 activeOpacity={0.7}>
                 <Icon name="x" size={24} color={theme.colors.textDim} />
@@ -126,7 +126,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   // borderWidth: 2,
   // borderColor: colors.border,
   borderRadius: spacing.s4,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingHorizontal: spacing.s2,
 })
 

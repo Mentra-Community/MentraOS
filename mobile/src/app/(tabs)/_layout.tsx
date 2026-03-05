@@ -1,11 +1,11 @@
 import {TabList, Tabs, TabSlot, TabTrigger, TabTriggerSlotProps} from "expo-router/ui"
-import {Pressable, TextStyle, View, ViewStyle} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {Pressable, View} from "react-native"
 
 import {Icon, IconTypes, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {ThemedStyle} from "@/theme"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 type TabButtonProps = TabTriggerSlotProps & {
   iconName: IconTypes
@@ -14,8 +14,9 @@ type TabButtonProps = TabTriggerSlotProps & {
 }
 
 export default function Layout() {
-  const {theme, themed} = useAppTheme()
-  const {bottom} = useSafeAreaInsets()
+  const {theme} = useAppTheme()
+  const {bottom} = useSaferAreaInsets()
+  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
 
   function TabButton({iconName, iconNameFilled, isFocused, label, ...props}: TabButtonProps) {
     let iconColor = isFocused ? theme.colors.primary_foreground : theme.colors.muted_foreground
@@ -35,71 +36,47 @@ export default function Layout() {
     const backgroundColor = isFocused ? theme.colors.primary : bottomBarColor
     const displayIcon = isFocused ? iconNameFilled : iconName
     return (
-      <Pressable {...props} style={[themed($tabButton), {marginBottom: bottom}]}>
-        <View style={[themed($icon), {backgroundColor: backgroundColor}]}>
+      <Pressable
+        {...props}
+        className="flex-col flex-1 gap-1 justify-between items-center"
+        style={{marginBottom: bottom}}>
+        <View className="px-3 py-1 rounded-2xl" style={{backgroundColor: backgroundColor}}>
           <Icon name={displayIcon} size={24} color={iconColor} backgroundColor={iconBgColor} />
         </View>
-        <Text text={label} style={[themed($tabLabel), {color: textColor}]} />
+        <Text text={label} className="text-sm font-medium" style={{color: textColor}} />
       </Pressable>
+    )
+  }
+
+  if (appSwitcherUi) {
+    return (
+      <Tabs>
+        <TabSlot />
+        <TabList className="h-0">
+          <TabTrigger name="home" href="/home" asChild></TabTrigger>
+        </TabList>
+      </Tabs>
     )
   }
 
   return (
     <Tabs>
       <TabSlot />
-      <TabList style={themed($tabList)}>
-        <TabTrigger name="home" href="/home" style={themed($tabTrigger)} asChild>
+      <TabList className="w-full pt-3 px-4 bg-primary-foreground">
+        <TabTrigger name="home" href="/home" asChild>
           <TabButton iconName="house" iconNameFilled="house-filled" label={translate("navigation:home")} />
         </TabTrigger>
-        <TabTrigger name="store" href="/store" style={themed($tabTrigger)} asChild>
+        <TabTrigger name="store" href="/store" asChild>
           <TabButton
             iconName="shopping-bag"
             iconNameFilled="shopping-bag-filled"
             label={translate("navigation:store")}
           />
         </TabTrigger>
-        <TabTrigger name="account" href="/account" style={themed($tabTrigger)} asChild>
+        <TabTrigger name="account" href="/account" className="justify-center items-center" asChild>
           <TabButton iconName="user" iconNameFilled="user-filled" label={translate("navigation:account")} />
         </TabTrigger>
       </TabList>
     </Tabs>
   )
 }
-
-const $icon: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.s3,
-  paddingVertical: spacing.s1,
-  borderRadius: spacing.s4,
-})
-
-const $tabList: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  flexDirection: "row",
-  borderTopColor: colors.separator,
-  paddingVertical: spacing.s2,
-  paddingHorizontal: spacing.s3,
-  // transparent nav bar:
-  backgroundColor: colors.primary_foreground + "fb",
-  // position: "absolute",
-  // bottom: 0,
-})
-
-const $tabTrigger: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  alignItems: "center",
-  justifyContent: "center",
-  paddingVertical: spacing.s2,
-})
-
-const $tabLabel: ThemedStyle<TextStyle> = ({typography}) => ({
-  fontSize: 12,
-  fontFamily: typography.primary.medium,
-})
-
-const $tabButton: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  flexDirection: "column",
-  gap: spacing.s1,
-  flex: 1,
-})

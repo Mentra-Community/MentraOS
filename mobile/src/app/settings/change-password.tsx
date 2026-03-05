@@ -121,7 +121,7 @@ export default function ChangePasswordScreen() {
               disabled={!isFormValid || isLoading}
               {...(isLoading && {
                 LeftAccessory: () => (
-                  <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
+                  <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: 8}} />
                 ),
               })}
             />

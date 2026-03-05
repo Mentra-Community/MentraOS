@@ -16,6 +16,10 @@ export function goBack() {
   navigationRef.current?.goBack()
 }
 
+export function getCurrentRoute() {
+  return navigationRef.current?.getCurrentRoute()
+}
+
 export function navigate(path: string, params?: any) {
   navigationRef.current?.navigate(path, params)
 }

@@ -18,6 +18,7 @@ export default function AccountPage() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationHistory()
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
+  const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   return (
@@ -52,14 +53,14 @@ export default function AccountPage() {
           )}
 
           <Group title={translate("account:appSettings")}>
-            {devMode && (
+            {superMode && (
               <RouteButton
                 icon={<Icon name="sun" size={24} color={theme.colors.secondary_foreground} />}
                 label={translate("settings:appAppearance")}
                 onPress={() => push("/settings/theme")}
               />
             )}
-            {(Platform.OS === "android" || devMode) && (
+            {(Platform.OS === "android" || superMode) && (
               <RouteButton
                 icon={<Icon name="bell" size={24} color={theme.colors.secondary_foreground} />}
                 label={translate("settings:notificationsSettings")}

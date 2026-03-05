@@ -38,9 +38,12 @@ class AudioSessionMonitor {
 
         // Check if category supports Bluetooth
         let category = session.category
-        let supportsBluetooth = category == .playAndRecord || category == .record || category == .multiRoute
+        let supportsBluetooth =
+            category == .playAndRecord || category == .record || category == .multiRoute
 
-        Bridge.log("AudioMonitor: Audio session category: \(category.rawValue), supports BT: \(supportsBluetooth)")
+        Bridge.log(
+            "AudioMonitor: Audio session category: \(category.rawValue), supports BT: \(supportsBluetooth)"
+        )
         return supportsBluetooth
     }
 
@@ -62,6 +65,24 @@ class AudioSessionMonitor {
         }
 
         Bridge.log("AudioMonitor: No active audio device matching '\(devicePattern)'")
+        return false
+    }
+
+    static func isOtherAudioDeviceConnected(devicePattern: String) -> Bool {
+        let connected = isAudioDeviceConnected(devicePattern: devicePattern)
+        if connected {
+            return false
+        }
+
+        // do we have multiple devices connected?
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs
+
+        Bridge.log("AudioMonitor: Checking active route, output count: \(outputs.count)")
+        if outputs.count > 1 {
+            return true
+        }
+
         return false
     }
 
@@ -89,22 +110,27 @@ class AudioSessionMonitor {
         }
 
         let bluetoothInput = availableInputs.first { input in
-            input.portType == .bluetoothHFP &&
-                input.portName.localizedCaseInsensitiveContains(devicePattern)
+            input.portType == .bluetoothHFP
+                && input.portName.localizedCaseInsensitiveContains(devicePattern)
         }
 
         if let btInput = bluetoothInput {
-            Bridge.log("AudioMonitor: ✅ Found paired device '\(btInput.portName)' (not activating to preserve A2DP)")
+            Bridge.log(
+                "AudioMonitor: ✅ Found paired device '\(btInput.portName)' (not activating to preserve A2DP)"
+            )
             return true
         } else {
-            Bridge.log("AudioMonitor: ❌ Bluetooth HFP device '\(devicePattern)' not found in availableInputs")
+            Bridge.log(
+                "AudioMonitor: ❌ Bluetooth HFP device '\(devicePattern)' not found in availableInputs"
+            )
             return false
         }
     }
 
     /// Start monitoring for audio route changes
     /// Callback will be called when device matching pattern connects/disconnects
-    static func startMonitoring(devicePattern: String, callback: @escaping (Bool, String?) -> Void) {
+    static func startMonitoring(devicePattern: String, callback: @escaping (Bool, String?) -> Void)
+    {
         guard !isMonitoring else {
             Bridge.log("AudioMonitor: Already monitoring")
             return
@@ -162,9 +188,9 @@ class AudioSessionMonitor {
 
     @objc private func handleRouteChange(notification: Notification) {
         guard let userInfo = notification.userInfo,
-              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
-              let pattern = AudioSessionMonitor.devicePattern
+            let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+            let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
+            let pattern = AudioSessionMonitor.devicePattern
         else {
             return
         }
@@ -184,7 +210,8 @@ class AudioSessionMonitor {
                     let deviceName = session.availableInputs?.first(where: {
                         $0.portName.localizedCaseInsensitiveContains(pattern)
                     })?.portName
-                    Bridge.log("AudioMonitor: ✅ Successfully detected newly paired device '\(pattern)'")
+                    Bridge.log(
+                        "AudioMonitor: ✅ Successfully detected newly paired device '\(pattern)'")
                     AudioSessionMonitor.callback?(true, deviceName)
                 } else {
                     Bridge.log("AudioMonitor: New device available but not matching '\(pattern)'")
@@ -203,7 +230,7 @@ class AudioSessionMonitor {
         }
     }
 
-    @objc private func handleAppBecameActive() {
+    @objc private static func handleAppBecameActive() {
         guard let pattern = AudioSessionMonitor.devicePattern else { return }
 
         Bridge.log("AudioMonitor: App became active, checking for paired device '\(pattern)'")
@@ -222,14 +249,17 @@ class AudioSessionMonitor {
         let delays: [TimeInterval] = [0.1, 0.4, 0.5]
 
         if attempt >= maxAttempts {
-            Bridge.log("AudioMonitor: ❌ Failed to find paired device '\(pattern)' after \(maxAttempts) attempts")
+            Bridge.log(
+                "AudioMonitor: ❌ Failed to find paired device '\(pattern)' after \(maxAttempts) attempts"
+            )
             return
         }
 
         let delay = attempt < delays.count ? delays[attempt] : 0.5
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            Bridge.log("AudioMonitor: Attempt \(attempt + 1)/\(maxAttempts) to detect '\(pattern)'...")
+            Bridge.log(
+                "AudioMonitor: Attempt \(attempt + 1)/\(maxAttempts) to detect '\(pattern)'...")
 
             if AudioSessionMonitor.isDevicePaired(devicePattern: pattern) {
                 let session = AVAudioSession.sharedInstance()
@@ -240,8 +270,11 @@ class AudioSessionMonitor {
                 Bridge.log("AudioMonitor: ✅ Found paired device on attempt \(attempt + 1)")
                 AudioSessionMonitor.callback?(true, deviceName)
             } else {
-                Bridge.log("AudioMonitor: Attempt \(attempt + 1) failed, retrying in \(delays[min(attempt + 1, delays.count - 1)])s...")
-                AudioSessionMonitor.attemptActivateDevice(pattern: pattern, attempt: attempt + 1, maxAttempts: maxAttempts)
+                Bridge.log(
+                    "AudioMonitor: Attempt \(attempt + 1) failed, retrying in \(delays[min(attempt + 1, delays.count - 1)])s..."
+                )
+                AudioSessionMonitor.attemptActivateDevice(
+                    pattern: pattern, attempt: attempt + 1, maxAttempts: maxAttempts)
             }
         }
     }

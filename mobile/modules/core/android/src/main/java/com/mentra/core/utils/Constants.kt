@@ -3,7 +3,7 @@ package com.mentra.core.utils
 object DeviceTypes {
     const val SIMULATED = "Simulated Glasses"
     const val G1 = "Even Realities G1"
-    const val NEX = "Mentra Nex"
+    const val NEX = "Mentra Display"
     const val MACH1 = "Mentra Mach1"
     const val LIVE = "Mentra Live"
     const val Z100 = "Vuzix Z100"

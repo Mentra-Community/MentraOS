@@ -37,14 +37,40 @@ This example app will send traffic through the Mentra Relay Server, which connec
 
 Ensure you have [Node.js v18 or later](https://nodejs.org/en/download/) and [Bun](https://bun.sh/docs/installation) installed.
 
-1. Choose an example app template based on your smart glasses type from our [Example Apps](./example-apps.md) page. For this quickstart, we'll use the Display Example App. Go to this link and click *Use this Template* and *Create a new repository*.
-   <center>
-   <img src="https://github.com/user-attachments/assets/c10e14e8-2dc5-4dfa-adac-dd334c1b73a5" alt="Create repo from template" />
-   </center>
-2. Clone your new repo locally:
-   ```bash
-   git clone <your-repo-url>
-   ```
+1. Pick the example app template that matches your smart glasses:
+
+   <Tabs>
+     <Tab title="Camera Glasses">
+       **Compatible glasses:** Mentra Live
+
+       Use the **Camera Example App** — it captures photos using the glasses' camera and shows them on the user's phone.
+
+       **Repository:** [MentraOS-Camera-Example-App](https://github.com/Mentra-Community/MentraOS-Camera-Example-App)
+
+       Go to the link above and click *Use this Template* then *Create a new repository*.
+
+       <center>
+       <img src="https://github.com/user-attachments/assets/c10e14e8-2dc5-4dfa-adac-dd334c1b73a5" alt="Create repo from template" />
+       </center>
+
+       Clone your new repo locally using the URL from your newly created repository.
+     </Tab>
+     <Tab title="Display Glasses">
+       **Compatible glasses:** Even Realities G1, Mentra Mach1, Vuzix Z100
+
+       Use the **Display Example App** — it displays spoken words as live captions on the glasses' HUD.
+
+       **Repository:** [MentraOS-Display-Example-App](https://github.com/Mentra-Community/MentraOS-Display-Example-App)
+
+       Go to the link above and click *Use this Template* then *Create a new repository*.
+
+       <center>
+       <img src="https://github.com/user-attachments/assets/c10e14e8-2dc5-4dfa-adac-dd334c1b73a5" alt="Create repo from template" />
+       </center>
+
+       Clone your new repo locally using the URL from your newly created repository.
+     </Tab>
+   </Tabs>
 3. Navigate to your repo directory and install dependencies:
    ```bash
    cd <your-repo-name>
@@ -76,3 +102,6 @@ Congratulations, you just built your first smart glasses app!
 
 - Check out our [Example Apps](./example-apps) page for more templates and advanced examples
 - Join our [Discord community](https://discord.gg/5ukNvkEAqT) for help and support
+
+
+

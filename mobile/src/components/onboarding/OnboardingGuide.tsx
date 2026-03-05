@@ -1,32 +1,42 @@
 import {Image, ImageSource} from "expo-image"
 import {useVideoPlayer, VideoView, VideoSource, VideoPlayer} from "expo-video"
-import {useState, useCallback, useEffect, useMemo} from "react"
-import {View, ViewStyle, ActivityIndicator, Platform} from "react-native"
+import {useState, useCallback, useEffect, useMemo, useRef} from "react"
+import {View, ViewStyle, ActivityIndicator, Platform, Animated} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Text, Button, Header, Icon} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {translate} from "@/i18n/translate"
+import {BackgroundTimer} from "@/utils/timers"
 
 interface BaseStep {
   name: string
   transition: boolean
   title?: string
+  titleCentered?: boolean
   subtitle?: string
+  subtitleCentered?: boolean
   subtitle2?: string
+  subtitleSmall?: string
   info?: string
   bullets?: string[]
+  numberedBullets?: string[]
+  fadeOut?: boolean // if true, the step will fade out after the duration
+  waitFn?: () => Promise<void>
 }
 
 interface VideoStep extends BaseStep {
   type: "video"
   source: VideoSource
-  /** Optional poster/thumbnail image shown while video loads */
   poster?: ImageSource
   playCount: number
   containerStyle?: ViewStyle
   containerClassName?: string
+  replayable?: boolean
+  showButtonImmediately?: boolean // Show the continue/end button immediately without waiting for video to finish
+  buttonTimeoutMs?: number // Fallback timeout to show button if video doesn't finish (ms)
 }
 
 interface ImageStep extends BaseStep {
@@ -34,7 +44,6 @@ interface ImageStep extends BaseStep {
   source: ImageSource
   containerStyle?: ViewStyle
   containerClassName?: string
-  //   imageComponent: React.ComponentType
   duration?: number // ms before showing next button, undefined = immediate
 }
 
@@ -44,14 +53,15 @@ interface OnboardingGuideProps {
   steps: OnboardingStep[]
   showSkipButton?: boolean
   autoStart?: boolean
-  mainTitle?: string
-  mainSubtitle?: string
   startButtonText?: string
   endButtonText?: string
   endButtonFn?: () => void
-  exitFn?: () => void
+  skipFn?: () => void
   showCloseButton?: boolean
   showHeader?: boolean
+  preventBack?: boolean
+  androidBackFn?: () => void
+  requiresGlassesConnection?: boolean
 }
 
 // Find next video step's source for preloading
@@ -70,16 +80,16 @@ export function OnboardingGuide({
   showCloseButton = true,
   autoStart = false,
   showHeader = true,
-  mainTitle,
-  mainSubtitle,
   startButtonText = "Start",
   endButtonText = "Done",
   endButtonFn,
-  exitFn,
+  skipFn,
+  preventBack = false,
+  requiresGlassesConnection: _requiresGlassesConnection = false,
 }: OnboardingGuideProps) {
   const {clearHistoryAndGoHome} = useNavigationHistory()
   const {theme} = useAppTheme()
-  const [devMode] = useSetting(SETTINGS.dev_mode.key)
+  const [superMode] = useSetting(SETTINGS.super_mode.key)
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [showNextButton, setShowNextButton] = useState(false)
@@ -94,7 +104,16 @@ export function OnboardingGuide({
   const [player1Loading, setPlayer1Loading] = useState(true)
   const [player2Loading, setPlayer2Loading] = useState(true)
   const [showPoster, setShowPoster] = useState(false)
-  // focusEffectPreventBack()
+  const [waitState, setWaitState] = useState(true)
+  const resettingRef = useRef(false)
+  const navigatingRef = useRef(false)
+  const [exitRequested, setExitRequested] = useState(false)
+  const [showStepSkipButton, setShowStepSkipButton] = useState(false)
+  const stepSkipTimeoutRef = useRef<number | null>(null)
+  const buttonFallbackTimeoutRef = useRef<number | null>(null)
+
+  // Fade animation state
+  const fadeOpacity = useRef(new Animated.Value(1)).current
 
   // Initialize players with first video sources found
   const initialSource1 = useMemo(() => findNextVideoSource(steps, 0), [steps])
@@ -112,7 +131,7 @@ export function OnboardingGuide({
   const currentPlayer = activePlayer === 1 ? player1 : player2
 
   const nonTransitionVideoFiles = steps.filter((step) => !step.transition)
-  const counter = `${uiIndex} / ${nonTransitionVideoFiles.length}`
+  const counter = translate("onboarding:stepCounter", {index: uiIndex, total: nonTransitionVideoFiles.length})
   const step = steps[currentIndex]
   const isCurrentStepImage = step.type === "image"
   const isCurrentStepVideo = step.type === "video"
@@ -123,51 +142,62 @@ export function OnboardingGuide({
 
     if (step.transition) {
       // Auto-advance transition images
-      const timer = setTimeout(() => {
+      const timer = BackgroundTimer.setTimeout(() => {
         handleNext(false)
       }, step.duration ?? 500)
       return () => clearTimeout(timer)
     }
 
     if (step.duration) {
-      const timer = setTimeout(() => {
+      const timer = BackgroundTimer.setTimeout(() => {
         setShowNextButton(true)
       }, step.duration)
-      return () => clearTimeout(timer)
+      return () => BackgroundTimer.clearTimeout(timer)
     } else {
       setShowNextButton(true)
     }
     return () => {}
   }, [currentIndex, hasStarted, isCurrentStepImage])
 
-  const handleExit = useCallback(() => {
-    if (exitFn) {
-      exitFn()
+  const handleClose = useCallback(() => {
+    // setExitRequested(true)
+    if (skipFn) {
+      skipFn()
     } else {
       clearHistoryAndGoHome()
     }
-  }, [exitFn, clearHistoryAndGoHome])
+  }, [skipFn, clearHistoryAndGoHome])
 
+  // Only show poster if video takes longer than 2 seconds to load (fallback for slow connections)
   useEffect(() => {
-    if (player1Loading && activePlayer === 1) {
-      setShowPoster(true)
-    } else if (player2Loading && activePlayer === 2) {
-      setShowPoster(true)
-    } else {
+    const isLoading = (player1Loading && activePlayer === 1) || (player2Loading && activePlayer === 2)
+
+    if (!isLoading) {
       setShowPoster(false)
+      return
     }
+
+    const timer = BackgroundTimer.setTimeout(() => {
+      setShowPoster(true)
+    }, 2000)
+    return () => BackgroundTimer.clearTimeout(timer)
   }, [player1Loading, player2Loading, activePlayer])
 
-  const handleNext = useCallback(
+  // Function to perform the actual navigation
+  const performNavigation = useCallback(
     (manual: boolean = false) => {
-      console.log(`ONBOARD: handleNext(${manual})`)
+      console.log(`ONBOARD: performNavigation(${manual})`)
 
       if (currentIndex === steps.length - 1) {
-        handleExit()
+        navigatingRef.current = false
+        // handleExit()
         return
       }
 
-      if (manual) {
+      console.log("ONBOARD: step", step)
+      console.log("ONBOARD: manual", manual)
+
+      if (manual && !step.transition) {
         setUiIndex(uiIndex + 1)
       }
 
@@ -176,10 +206,20 @@ export function OnboardingGuide({
 
       console.log(`ONBOARD: current: ${currentIndex} next: ${nextIndex}`)
 
+      resettingRef.current = true
+      BackgroundTimer.setTimeout(() => {
+        resettingRef.current = false
+      }, 100)
+
       setShowNextButton(false)
       setShowReplayButton(false)
       setCurrentIndex(nextIndex)
       setPlayCount(0)
+      setShowStepSkipButton(false)
+      if (stepSkipTimeoutRef.current) {
+        BackgroundTimer.clearTimeout(stepSkipTimeoutRef.current)
+        stepSkipTimeoutRef.current = null
+      }
 
       if (nextStep.transition) {
         setTransitionCount(transitionCount + 1)
@@ -201,44 +241,126 @@ export function OnboardingGuide({
             setPlayer1Loading(true)
           }
         }
+        // Allow next navigation after a short delay
+        setTimeout(() => {
+          navigatingRef.current = false
+        }, 100)
         return
       }
 
       // Next step is a video - handle player swapping
       const nextNextVideoSource = findNextVideoSource(steps, nextIndex + 1)
 
-      if (activePlayer === 1) {
-        setActivePlayer(2)
-        player2.replaceAsync(nextStep.source)
-        player2.play()
-        if (nextNextVideoSource) {
-          player1.replaceAsync(nextNextVideoSource)
-          setPlayer1Loading(true)
+      try {
+        if (activePlayer === 1) {
+          setActivePlayer(2)
+          player2.replaceAsync(nextStep.source)
+          player2.play()
+          if (nextNextVideoSource) {
+            player1.replaceAsync(nextNextVideoSource)
+            setPlayer1Loading(true)
+          }
+          setTimeout(() => {
+            player1.pause()
+          }, 100)
+        } else {
+          setActivePlayer(1)
+          player1.replaceAsync(nextStep.source)
+          player1.play()
+          if (nextNextVideoSource) {
+            player2.replaceAsync(nextNextVideoSource)
+            setPlayer2Loading(true)
+          }
+          setTimeout(() => {
+            player2.pause()
+          }, 100)
         }
-        player1.pause()
-      } else {
-        setActivePlayer(1)
-        player1.replaceAsync(nextStep.source)
-        player1.play()
-        if (nextNextVideoSource) {
-          player2.replaceAsync(nextNextVideoSource)
-          setPlayer2Loading(true)
-        }
-        player2.pause()
+      } catch (error) {
+        console.log("ONBOARD: error swapping players", error)
       }
 
+      // Allow next navigation after a short delay
+      setTimeout(() => {
+        navigatingRef.current = false
+      }, 100)
       console.log(`ONBOARD: current is now ${nextIndex}`)
     },
-    [currentIndex, activePlayer, uiIndex, steps, transitionCount, clearHistoryAndGoHome],
+    [
+      currentIndex,
+      activePlayer,
+      uiIndex,
+      steps,
+      transitionCount,
+      clearHistoryAndGoHome,
+      fadeOpacity,
+      handleClose,
+      player1,
+      player2,
+      step.transition,
+    ],
   )
+
+  const handleNext = useCallback(
+    async (manual: boolean = false) => {
+      console.log(`ONBOARD: handleNext(${manual})`)
+
+      // Prevent multiple rapid calls from corrupting player state
+      if (navigatingRef.current) {
+        console.log("ONBOARD: handleNext blocked - navigation in progress or fading")
+        return
+      }
+      navigatingRef.current = true
+
+      setShowNextButton(false)
+
+      // Check if current step should fade out
+      if (step.fadeOut) {
+        console.log("ONBOARD: Starting fade out transition")
+
+        // Fade out, swap, fade in
+        Animated.timing(fadeOpacity, {
+          toValue: 0,
+          duration: 450,
+          useNativeDriver: true,
+        }).start(async () => {
+          await performNavigation(manual)
+          Animated.timing(fadeOpacity, {
+            toValue: 1,
+            duration: 450,
+            useNativeDriver: true,
+          }).start(() => {
+            navigatingRef.current = false
+          })
+        })
+        return
+      }
+
+      performNavigation(manual)
+    },
+    [step, fadeOpacity, performNavigation],
+  )
+
+  const handleEndButton = useCallback(() => {
+    if (endButtonFn) {
+      // Don't set exitRequested when using custom endButtonFn - let the function handle navigation
+      // Setting exitRequested causes the component to render null immediately, causing a blank screen
+      endButtonFn()
+    } else {
+      setExitRequested(true)
+      clearHistoryAndGoHome()
+    }
+  }, [endButtonFn, clearHistoryAndGoHome])
 
   const handleBack = useCallback(() => {
     setUiIndex(uiIndex - 1)
     setPlayCount(0)
 
+    fadeOpacity.setValue(1)
+
     // The start is a special case
     if (currentIndex === 0 || currentIndex === 1) {
-      setHasStarted(false)
+      resettingRef.current = true
+      setHasStarted(autoStart) // if autoStart is true, we don't want to reset the hasStarted state (because it's already started)
       setCurrentIndex(0)
       setActivePlayer(1)
       setShowReplayButton(false)
@@ -258,6 +380,9 @@ export function OnboardingGuide({
         player2.currentTime = 0
         player2.pause()
       }
+      BackgroundTimer.setTimeout(() => {
+        resettingRef.current = false
+      }, 0)
       return
     }
 
@@ -275,8 +400,8 @@ export function OnboardingGuide({
 
     const prevStep = steps[prevIndex]
     setCurrentIndex(prevIndex)
-    setShowReplayButton(prevStep.type === "video")
-    setShowNextButton(true)
+    setShowReplayButton(prevStep.type === "video" && (prevStep.replayable ?? true))
+    setShowNextButton(false)
 
     // If going back to an image, just pause players
     if (prevStep.type === "image") {
@@ -312,25 +437,42 @@ export function OnboardingGuide({
       if (nextVideoSource) player2.replaceAsync(nextVideoSource)
       player1.pause()
     }
-  }, [currentIndex, uiIndex, activePlayer, steps])
+  }, [currentIndex, uiIndex, activePlayer, steps, autoStart, fadeOpacity, player1, player2])
+
+  if (preventBack) {
+    focusEffectPreventBack(() => {
+      console.log("ONBOARD: preventBack back handler called")
+      if (hasStarted && !isFirstStep) {
+        handleBack()
+      }
+    })
+  }
 
   // Video status change listener
   useEffect(() => {
     if (isCurrentStepImage) return
 
     const subscription = currentPlayer.addListener("statusChange", (status: any) => {
-      console.log("ONBOARD: statusChange", status)
+      // console.log("ONBOARD: statusChange", status)
 
       if (currentIndex === 0 && !autoStart) {
         return
       }
+
       if (status.status === "readyToPlay") {
         currentPlayer.play()
+        // Show button immediately if the step has showButtonImmediately flag
+        if (step.type === "video" && step.showButtonImmediately) {
+          setShowNextButton(true)
+        }
+      }
+      if (status.error) {
+        setShowNextButton(true)
       }
     })
 
     return () => subscription.remove()
-  }, [currentPlayer, currentIndex, autoStart, isCurrentStepImage])
+  }, [currentPlayer, currentIndex, autoStart, isCurrentStepImage, step])
 
   useEffect(() => {
     const sub1 = player1.addListener("sourceLoad", (_status: any) => {
@@ -354,19 +496,29 @@ export function OnboardingGuide({
     if (isCurrentStepImage) return
 
     const subscription = currentPlayer.addListener("playingChange", (status: any) => {
+      // console.log("ONBOARD: playingChange", status.isPlaying, resettingRef.current, playCount)
+      if (resettingRef.current) return // ignore playingChange listener while resetting
       if (!status.isPlaying && currentPlayer.currentTime >= currentPlayer.duration - 0.1) {
         if (step.transition) {
           handleNext(false)
           return
         }
-        if (step.type === "video" && playCount < step.playCount - 1) {
-          setShowNextButton(true)
+        setShowNextButton(true)
+        // -1 means play forever
+        if (step.playCount === -1) {
           setPlayCount((prev) => prev + 1)
           currentPlayer.currentTime = 0
           currentPlayer.play()
-        } else {
+          return
+        }
+        if (step.type === "video" && playCount < step.playCount - 1) {
+          setPlayCount((prev) => prev + 1)
+          currentPlayer.currentTime = 0
+          currentPlayer.play()
+          return
+        }
+        if (step.replayable) {
           setShowReplayButton(true)
-          setShowNextButton(true)
         }
       }
     })
@@ -391,62 +543,80 @@ export function OnboardingGuide({
   }, [currentPlayer, isCurrentStepVideo])
 
   const handleSkip = useCallback(() => {
-    if (exitFn) {
-      exitFn()
+    if (skipFn) {
+      skipFn()
     } else {
       clearHistoryAndGoHome()
     }
-  }, [exitFn, clearHistoryAndGoHome])
+  }, [skipFn, clearHistoryAndGoHome])
 
-  const renderBullets = useCallback((bullets: string[]) => {
+  const renderNumberedBullets = useCallback(() => {
+    if (!step.numberedBullets) {
+      return null
+    }
     return (
-      <View className="flex flex-col gap-2 flex-1 px-2 mt-6">
-        <Text className="text-center text-xl self-start font-semibold" text={bullets[0]} />
-        {bullets.slice(1).map((bullet, index) => (
-          <View key={index} className="flex-row items-start gap-2 px-4">
-            <Text className="text-sm font-medium">•</Text>
-            <Text className="flex-1 text-sm font-medium" text={bullet} />
+      <View className={`flex flex-col flex-grow justify-center gap-2 flex-1 px-2`}>
+        {step.numberedBullets.map((bullet, index) => (
+          <View key={index} className="flex-row items-start gap-2">
+            <Text className="text-md font-semibold" text={`${index + 1}.`} />
+            <Text className="text-md font-semibold" text={bullet} />
           </View>
         ))}
       </View>
     )
-  }, [])
+  }, [step])
+
+  const renderBullets = useCallback(() => {
+    // console.log("ONBOARD: renderBullets", step.bullets)
+    // console.log("ONBOARD: currentIndex", currentIndex)
+    // console.log("ONBOARD: steps.bullets2", steps[currentIndex].bullets)
+    // console.log("ONBOARD: bullets", bullets)
+    if (!step.bullets) {
+      return null
+    }
+
+    return (
+      <View className={`flex gap-4 flex-grow`}>
+        <Text className="text-xl font-semibold" text={step.bullets[0]} />
+        {step.bullets.slice(1).map((bullet, index) => (
+          <View key={index} className="flex-row items-start gap-2 pl-4">
+            <Text className="text-[15px] font-medium">•</Text>
+            <Text className="flex-1 text-[15px] font-medium" text={bullet} />
+          </View>
+        ))}
+      </View>
+    )
+  }, [step])
 
   const isLastStep = currentIndex === steps.length - 1
   const isFirstStep = currentIndex === 0
 
   const renderComposedVideo = () => {
     let s = step as VideoStep
+    let showPlayer1 = activePlayer === 1 && !showPoster && !exitRequested
+    let showPlayer2 = activePlayer === 2 && !showPoster && !exitRequested
     return (
       <>
-        <View
-          className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}
-          style={{
-            zIndex: activePlayer === 1 ? 1 : 0,
-          }}>
+        <View className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}>
           <VideoView
             player={player1}
             style={{
               width: "100%",
               height: "100%",
-              marginLeft: activePlayer === 1 ? 0 : "100%",
+              marginLeft: showPlayer1 ? 0 : "100%",
             }}
             nativeControls={false}
             allowsVideoFrameAnalysis={false}
             onFirstFrameRender={() => {}}
           />
         </View>
-        <View
-          className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}
-          style={{
-            zIndex: activePlayer === 2 ? 1 : 0,
-          }}>
+        <View className={`absolute top-0 left-0 right-0 bottom-0 ${s.containerClassName}`}>
           <VideoView
             player={player2}
             style={{
               width: "100%",
               height: "100%",
-              marginLeft: activePlayer === 2 ? 0 : "100%",
+              marginLeft: showPlayer2 ? 0 : "100%",
             }}
             nativeControls={false}
             allowsVideoFrameAnalysis={false}
@@ -454,19 +624,19 @@ export function OnboardingGuide({
           />
         </View>
         {/* Poster image overlay - shown until a video is loaded on a slow connection: */}
-        {s.poster && showPoster && (
+        {showPoster && s.poster && (
           <View className="absolute top-0 left-0 right-0 bottom-0 z-10">
             <Image source={s.poster} style={{width: "100%", height: "100%"}} contentFit="contain" />
           </View>
         )}
         {showPoster && !s.poster && (
           <View className="absolute top-0 left-0 right-0 bottom-0 z-10 items-center justify-center bg-background">
-            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <ActivityIndicator size="large" color={theme.colors.foreground} />
           </View>
         )}
         {/* {showPoster && (
           <View className="absolute top-0 left-0 right-0 bottom-0 z-10 items-center justify-center bg-background">
-            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <ActivityIndicator size="large" color={theme.colors.foreground} />
           </View>
         )} */}
       </>
@@ -484,7 +654,10 @@ export function OnboardingGuide({
     return (
       <>
         <View className="relative flex-col w-full">
-          <View className="absolute flex flex-row w-full z-100 px-20 bg-primary/20 rounded-lg">
+          <View
+            className={`flex flex-row w-full z-100 px-20 bg-chart-4/20 rounded-lg ${
+              Platform.OS === "ios" ? "absolute" : ""
+            }`}>
             <View style={{width: s.poster ? "33%" : "50%"}}>
               {!player1Loading && (
                 <VideoView
@@ -504,7 +677,7 @@ export function OnboardingGuide({
               )}
               {player1Loading && (
                 <View className="absolute top-0 left-0 right-0 bottom-0 z-10 items-center justify-center">
-                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                  <ActivityIndicator size="large" color={theme.colors.foreground} />
                 </View>
               )}
             </View>
@@ -527,7 +700,7 @@ export function OnboardingGuide({
               )}
               {player2Loading && (
                 <View className="absolute top-0 left-0 right-0 bottom-0 z-10 items-center justify-center">
-                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                  <ActivityIndicator size="large" color={theme.colors.foreground} />
                 </View>
               )}
             </View>
@@ -545,7 +718,7 @@ export function OnboardingGuide({
             )}
             {!s.poster && (
               <View className="w-1/3 items-center justify-center bg-background">
-                <ActivityIndicator size="large" color={theme.colors.primary} />
+                <ActivityIndicator size="large" color={theme.colors.foreground} />
               </View>
             )}
           </View>
@@ -571,105 +744,277 @@ export function OnboardingGuide({
       )
     }
 
-    if (devMode && Platform.OS === "ios") {
+    if (superMode) {
       return renderDebugVideos()
     }
 
     return renderComposedVideo()
   }
 
-  const wouldShowContinue = hasStarted && (showNextButton || showPoster)
-  const actuallyShowContinue = hasStarted && (showNextButton || showPoster || devMode)
+  // when a step has a waitFn, set the wait state to true, and when it resolves, set it to false
+  useEffect(() => {
+    if (!step.waitFn) return
+
+    let cancelled = false
+    setWaitState(true)
+
+    step.waitFn().then(() => {
+      if (cancelled) return
+      setWaitState(false)
+      BackgroundTimer.setTimeout(() => {
+        if (cancelled) return
+        handleNext(true)
+      }, 1500)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [step.waitFn])
+
+  // const wouldShowContinue = hasStarted && (showNextButton || showPoster) && !waitState
+  // const actuallyShowContinue = hasStarted && (showNextButton || showPoster)
+  // let showContinue = hasStarted && (showNextButton || showPoster)
+  // if (waitState) {
+  //   showContinue = false
+  // }
+  // if (devMode) {
+  //   showContinue = true
+  // }
+
+  useEffect(() => {
+    if (step.waitFn) {
+      stepSkipTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+        setShowStepSkipButton(true)
+      }, 10000)
+    } else {
+      setShowStepSkipButton(false)
+      if (stepSkipTimeoutRef.current) {
+        BackgroundTimer.clearTimeout(stepSkipTimeoutRef.current)
+      }
+    }
+  }, [step.waitFn])
+
+  // Fallback timeout to show button if video doesn't finish
+  useEffect(() => {
+    if (buttonFallbackTimeoutRef.current) {
+      BackgroundTimer.clearTimeout(buttonFallbackTimeoutRef.current)
+      buttonFallbackTimeoutRef.current = null
+    }
+
+    if (!hasStarted || step.transition || step.waitFn || showNextButton) {
+      return
+    }
+
+    const timeoutMs = step.type === "video" ? step.buttonTimeoutMs : undefined
+    if (timeoutMs) {
+      buttonFallbackTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+        console.log("ONBOARD: button fallback timeout triggered")
+        setShowNextButton(true)
+      }, timeoutMs)
+    }
+
+    return () => {
+      if (buttonFallbackTimeoutRef.current) {
+        BackgroundTimer.clearTimeout(buttonFallbackTimeoutRef.current)
+        buttonFallbackTimeoutRef.current = null
+      }
+    }
+  }, [currentIndex, hasStarted, step, showNextButton])
+
+  const renderContinueButton = () => {
+    // let showLoader = (waitState && step.waitFn) || !showNextButton
+    // the wait state should take precedence over the show next flag:
+    // if (showLoader && step.waitFn && !waitState) {
+    //   showLoader = false
+    // }
+
+    // if (showLoader && !step.waitFn) {
+    //   showLoader = false
+    // }
+
+    if (showStepSkipButton) {
+      return (
+        <Button
+          flex
+          tx="common:skip"
+          preset="secondary"
+          onPress={() => {
+            handleNext(true)
+          }}
+        />
+      )
+    }
+
+    if (step.waitFn) {
+      return null
+    }
+
+    if (!showNextButton) {
+      return null
+    }
+
+    if (isLastStep) {
+      return <Button flex text={endButtonText} onPress={handleEndButton} />
+    }
+
+    return (
+      <Button
+        flex
+        // highlight when the button would actually show:
+        // style={!wouldShowContinue && {backgroundColor: theme.colors.warning}}
+        tx="common:continue"
+        preset="primary"
+        onPress={() => {
+          handleNext(true)
+        }}
+      />
+    )
+  }
+
+  const renderStepContent = () => {
+    // if (!step.subtitle && !step.subtitle2 && !step.subtitleSmall && !step.info) {
+    //   return null
+    // }
+
+    // if (!step.info) {
+    //   return (
+    //     <View id="step-content" className="flex mb-4 h-26 gap-3 bg-blue-500 w-full justify-center">
+    //       {step.title && <Text className="text-center text-2xl font-semibold" text={step.title} />}
+    //       {step.subtitle && <Text className="text-center text-[18px]" text={step.subtitle} />}
+    //     </View>
+    //   )
+    // }
+
+    return (
+      <View id="step-content" className="flex mb-4 h-34 gap-3 w-full justify-start">
+        {step.title && (
+          <Text
+            className={`${
+              (step.titleCentered ?? false) ? "text-center" : "text-start"
+            } text-2xl font-semibold text-foreground`}
+            text={step.title}
+          />
+        )}
+        {step.subtitle && (
+          <Text
+            className={`${(step.subtitleCentered ?? false) ? "text-center" : "text-start"} text-[18px] text-foreground`}
+            text={step.subtitle}
+          />
+        )}
+        {step.info && (
+          <View className="flex flex-row gap-2 justify-start">
+            <Icon name="info" size={20} color={theme.colors.muted_foreground} />
+            {/* TODO: why is this text escaping it's container?? */}
+            <Text
+              className="text-start text-sm font-medium text-muted-foreground mr-5"
+              text={step.info}
+              numberOfLines={2}
+              style={{lineHeight: 16}}
+            />
+          </View>
+        )}
+      </View>
+    )
+  }
+
+  const renderStepCheck = () => {
+    const showCheck = step.waitFn && !waitState
+
+    const showDebug = superMode && waitState && step.waitFn
+    if (!showCheck && !showDebug) {
+      // still show a small height if there is a waitFn so the text doesn't move around:
+      // if (step.waitFn) {
+      return <View className="h-12" />
+      // }
+    }
+    return (
+      <View id="bottom" className={`flex justify-end h-12 ${superMode ? "bg-chart-4" : ""}`}>
+        {showCheck && (
+          <View className="flex-1 justify-center">
+            <View className="flex flex-row justify-center items-center">
+              <View className="bg-primary rounded-full p-1.5">
+                <Icon name="check" size={24} color={theme.colors.background} />
+              </View>
+            </View>
+          </View>
+        )}
+        {/* if waitState is true, show a primary indicator with a height of 12px that overlays the content */}
+        {showDebug && (
+          <View className="flex-1 justify-center">
+            <View className="flex flex-row justify-center items-center gap-2">
+              <Text className="text-center text-sm font-bold" text="waiting for step to complete" />
+              <ActivityIndicator size="small" color={theme.colors.background} />
+            </View>
+          </View>
+        )}
+      </View>
+    )
+  }
+
+  // don't show the counter on the last step:
+  const showCounter = hasStarted && steps.length > 1 && uiIndex != nonTransitionVideoFiles.length
+  const showContent = step.title || step.subtitle || step.info
+
+  if (exitRequested) {
+    return null
+  }
 
   return (
     <>
-      {showHeader && (
-        <Header
-          leftIcon={showCloseButton ? "x" : undefined}
-          RightActionComponent={
-            <View className="flex flex-row gap-2">
-              {hasStarted && <Text className="text-center text-sm font-medium" text={counter} />}
-              <MentraLogoStandalone />
-            </View>
-          }
-          onLeftPress={handleExit}
-        />
-      )}
-      <View id="main" className="flex flex-1">
-        <View id="top" className="flex mt-10">
-          {step.title && <Text className="text-center text-2xl font-semibold" text={step.title} />}
-
+      <View id="main" className="flex-1">
+        {showHeader && (
+          <Header
+            leftIcon={showCloseButton && hasStarted ? "x" : undefined}
+            MiddleActionComponent={!hasStarted ? <MentraLogoStandalone /> : undefined}
+            RightActionComponent={
+              hasStarted ? (
+                <View className={`flex flex-row gap-2 items-center justify-center`}>
+                  {showCounter && <Text className="text-center text-sm font-medium" text={counter} />}
+                  <MentraLogoStandalone />
+                </View>
+              ) : undefined
+            }
+            onLeftPress={handleClose}
+          />
+        )}
+        <View id="top">
+          {showContent && renderStepContent()}
           <View className="-mx-6">
-            <View className="relative" style={{width: "100%", aspectRatio: 1}}>
+            <Animated.View
+              className="relative"
+              style={{
+                width: "100%",
+                aspectRatio: 1,
+                opacity: fadeOpacity,
+              }}>
               {renderContent()}
-            </View>
-
+            </Animated.View>
             {showReplayButton && isCurrentStepVideo && (
-              <View className="absolute bottom-0 left-0 right-0 items-center z-10">
+              <View className="absolute bottom-1 left-0 right-0 items-center z-10">
                 <Button preset="secondary" className="min-w-24" tx="onboarding:replay" onPress={handleReplay} />
               </View>
             )}
           </View>
-
-          {/* <View className="flex flex-row justify-center items-center">
-            <View className="bg-primary rounded-full p-1">
-              <Icon name="check" size={20} color={theme.colors.background} />
-            </View>
-          </View> */}
+          <View className="flex-shrink">{renderStepCheck()}</View>
+          {renderBullets()}
+          {renderNumberedBullets()}
         </View>
 
-        <View id="bottom" className="flex justify-end flex-grow">
-          {hasStarted && (
-            <View className="flex flex-col gap-2 mb-10">
-              {step.subtitle && <Text className="text-center text-xl font-semibold" text={step.subtitle} />}
-              {step.subtitle2 && (
-                <Text className="text-center text-lg text-foreground font-medium" text={step.subtitle2} />
-              )}
-              {step.info && (
-                <View className="flex flex-row gap-2 justify-center items-center px-12">
-                  <Icon name="info" size={20} color={theme.colors.muted_foreground} />
-                  <Text
-                    className="text-center text-sm font-medium text-muted-foreground"
-                    text={step.info}
-                    numberOfLines={2}
-                  />
-                </View>
-              )}
-            </View>
-          )}
-
-          {!hasStarted && (mainTitle || mainSubtitle) && (
-            <View className="flex flex-col gap-2">
-              {mainTitle && <Text className="text-center text-xl font-semibold" text={mainTitle} />}
-              {mainSubtitle && <Text className="text-center text-sm font-medium" text={mainSubtitle} />}
-            </View>
-          )}
-
-          {step.bullets && renderBullets(step.bullets)}
-
+        <View id="bottom" className={`absolute bottom-0 left-0 right-0 flex justify-end min-h-12`}>
           {!hasStarted && (
-            <View className="flex flex-col gap-4 mt-8">
-              <Button flexContainer text={startButtonText} onPress={handleStart} />
-              {showSkipButton && <Button flexContainer preset="secondary" tx="common:skip" onPress={handleSkip} />}
+            <View className="flex-col">
+              <View className="absolute w-full bottom-15 z-10">
+                <Button flexContainer text={startButtonText} onPress={handleStart} />
+              </View>
+              {showSkipButton && <Button preset="secondary" tx="common:skip" onPress={handleSkip} />}
             </View>
           )}
 
-          {actuallyShowContinue && (
-            <View className="flex flex-col gap-4">
-              {!isLastStep ? (
-                <Button
-                  flexContainer
-                  // highlight when the button would actually show:
-                  style={!wouldShowContinue && {backgroundColor: theme.colors.warning}}
-                  tx="common:continue"
-                  onPress={() => {
-                    handleNext(true)
-                  }}
-                />
-              ) : (
-                <Button flexContainer text={endButtonText} onPress={endButtonFn} />
-              )}
-              {!isFirstStep && <Button flexContainer preset="secondary" text="Back" onPress={handleBack} />}
+          {hasStarted && (
+            <View className="flex-row gap-4">
+              {superMode && !isFirstStep && <Button flex preset="secondary" tx="common:back" onPress={handleBack} />}
+              {renderContinueButton()}
             </View>
           )}
         </View>

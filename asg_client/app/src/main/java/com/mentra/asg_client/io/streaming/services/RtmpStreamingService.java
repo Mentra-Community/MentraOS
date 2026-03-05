@@ -130,9 +130,10 @@ public class RtmpStreamingService extends Service {
     // Reconnection sequence tracking to prevent stale handlers
     private int mReconnectionSequence = 0;
 
-    // LED control
+    // LED and sound control
     private IHardwareManager mHardwareManager;
     private boolean mLedEnabled = false;
+    private boolean mSoundEnabled = false;
 
     // Battery monitoring for RTMP streaming
     private IStateManager mStateManager;
@@ -199,6 +200,7 @@ public class RtmpStreamingService extends Service {
             String rtmpUrl = intent.getStringExtra("rtmp_url");
             String streamId = intent.getStringExtra("stream_id");
             mLedEnabled = intent.getBooleanExtra("enable_led", true); // Default true for livestreams
+            mSoundEnabled = intent.getBooleanExtra("enable_sound", true); // Default true for livestreams
 
             if (rtmpUrl != null && !rtmpUrl.isEmpty()) {
                 setRtmpUrl(rtmpUrl);
@@ -471,6 +473,12 @@ public class RtmpStreamingService extends Service {
                                 if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
                                     mHardwareManager.setRecordingLedOn();
                                     Log.d(TAG, "📹 Recording LED turned ON for livestream");
+                                }
+
+                                // Play stream start sound
+                                if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
+                                    mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
+                                    Log.d(TAG, "🔊 Stream start sound played");
                                 }
 
                                 // Start battery monitoring
@@ -1089,6 +1097,12 @@ public class RtmpStreamingService extends Service {
             }
         }
 
+        // Play stream stop sound (only on actual stop, not reconnection)
+        if (!preserveSession && mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
+            mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_STOP);
+            Log.d(TAG, "🔊 Stream stop sound played");
+        }
+
         if (preserveSession) {
             Log.d(TAG, "Stream resources released for reconnection");
         } else {
@@ -1396,9 +1410,10 @@ public class RtmpStreamingService extends Service {
      * @param rtmpUrl RTMP URL to stream to
      * @param streamId Stream ID for tracking (can be null)
      * @param enableLed Whether to enable recording LED during stream
+     * @param enableSound Whether to enable start/stop sounds during stream
      * @param config Stream configuration (video/audio settings). Pass null for defaults.
      */
-    public static void startStreaming(Context context, String rtmpUrl, String streamId, boolean enableLed, RtmpStreamConfig config) {
+    public static void startStreaming(Context context, String rtmpUrl, String streamId, boolean enableLed, boolean enableSound, RtmpStreamConfig config) {
         // Set config first (before service starts or before streaming begins)
         setStreamConfig(config);
 
@@ -1416,28 +1431,31 @@ public class RtmpStreamingService extends Service {
             sInstance.setRtmpUrl(rtmpUrl);
             sInstance.mCurrentStreamId = streamId; // Set the stream ID
             sInstance.mLedEnabled = enableLed; // Set LED state
+            sInstance.mSoundEnabled = enableSound; // Set sound state
             sInstance.startStreaming();
         } else {
-            // Start the service with the provided URL, stream ID, and LED setting
+            // Start the service with the provided URL, stream ID, and LED/sound settings
             Intent intent = new Intent(context, RtmpStreamingService.class);
             intent.putExtra("rtmp_url", rtmpUrl);
             if (streamId != null && !streamId.isEmpty()) {
                 intent.putExtra("stream_id", streamId);
             }
             intent.putExtra("enable_led", enableLed);
+            intent.putExtra("enable_sound", enableSound);
             context.startService(intent);
         }
     }
 
     /**
-     * Start streaming to the specified RTMP URL with LED control
+     * Start streaming to the specified RTMP URL with LED and sound control
      * @param context Context to use for starting the service
      * @param rtmpUrl RTMP URL to stream to
      * @param streamId Stream ID for tracking (can be null)
      * @param enableLed Whether to enable recording LED during stream
+     * @param enableSound Whether to enable start/stop sounds during stream
      */
-    public static void startStreaming(Context context, String rtmpUrl, String streamId, boolean enableLed) {
-        startStreaming(context, rtmpUrl, streamId, enableLed, null); // Use default config
+    public static void startStreaming(Context context, String rtmpUrl, String streamId, boolean enableLed, boolean enableSound) {
+        startStreaming(context, rtmpUrl, streamId, enableLed, enableSound, null); // Use default config
     }
 
     /**
@@ -1447,7 +1465,7 @@ public class RtmpStreamingService extends Service {
      * @param streamId Stream ID for tracking (can be null)
      */
     public static void startStreaming(Context context, String rtmpUrl, String streamId) {
-        startStreaming(context, rtmpUrl, streamId, true); // Default LED on
+        startStreaming(context, rtmpUrl, streamId, true, true); // Default LED and sound on
     }
 
     /**
@@ -1456,7 +1474,7 @@ public class RtmpStreamingService extends Service {
      * @param rtmpUrl RTMP URL to stream to
      */
     public static void startStreaming(Context context, String rtmpUrl) {
-        startStreaming(context, rtmpUrl, null, true); // Default LED on
+        startStreaming(context, rtmpUrl, null, true, true); // Default LED and sound on
     }
 
     /**

@@ -1,5 +1,5 @@
 import {useCameraPermissions} from "expo-camera"
-import {Linking, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {Linking, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Button, Icon, Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
@@ -70,38 +70,21 @@ export default function ConnectedSimulatedGlassesInfo({
   }
 
   return (
-    <View style={[themed($connectedContent), style]}>
+    <View className="bg-primary-foreground py-2 px-3" style={style}>
       {showHeader && (
-        <View style={themed($header)}>
-          <Text style={themed($title)} tx="home:simulatedGlasses" />
+        <View className="flex-row justify-between items-center mb-4">
+          <Text className="font-semibold text-secondary-foreground text-lg" tx="home:simulatedGlasses" />
           <Button flex={false} flexContainer={false} preset="alternate" onPress={() => push("/settings/glasses")}>
-            <Icon name="settings" size={18} color={theme.colors.secondary_foreground} />
+            <Icon name="settings" size={24} color={theme.colors.secondary_foreground} />
           </Button>
         </View>
       )}
       <View>
         <GlassesDisplayMirror fallbackMessage="Glasses Mirror" style={mirrorStyle} />
         <TouchableOpacity style={{position: "absolute", bottom: 10, right: 10}} onPress={navigateToFullScreen}>
-          <Icon name="fullscreen" size={24} color={theme.colors.text} />
+          <Icon name="fullscreen" size={24} color={theme.colors.secondary_foreground} />
         </TouchableOpacity>
       </View>
     </View>
   )
 }
-
-const $connectedContent: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary_foreground,
-  paddingVertical: spacing.s2,
-  paddingHorizontal: spacing.s3,
-})
-
-const $header: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: spacing.s4,
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.secondary_foreground,
-})

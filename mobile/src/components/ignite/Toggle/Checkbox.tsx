@@ -62,18 +62,20 @@ function CheckboxInput(props: CheckboxInputProps) {
   return (
     <View
       className="rounded-md"
-      style={[{
-        width: 24,
-        height: 24,
-        borderWidth: 2,
-        borderColor: on ? colors.primary : colors.border,
-        backgroundColor: on ? colors.primary : colors.background,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 6,
-      }, $outerStyleOverride]}>
-      <Animated.View
-        style={[{opacity: opacity.current}]}>
+      style={[
+        {
+          width: 24,
+          height: 24,
+          borderWidth: 2,
+          borderColor: on ? colors.primary : colors.border,
+          backgroundColor: on ? colors.primary : colors.background,
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: 6,
+        },
+        $outerStyleOverride,
+      ]}>
+      <Animated.View style={[{opacity: opacity.current}]}>
         <Icon name="check" size={16} color={colors.background} />
       </Animated.View>
     </View>

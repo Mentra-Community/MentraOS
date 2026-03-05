@@ -1,10 +1,10 @@
-import {router, useFocusEffect, useNavigationContainerRef, usePathname, useSegments} from "expo-router"
+import {router, useFocusEffect, usePathname, useSegments, useNavigation} from "expo-router"
 import {createContext, useContext, useEffect, useRef, useCallback, useState} from "react"
-import {BackHandler} from "react-native"
-import {useNavigation} from "expo-router"
+import {BackHandler, Platform} from "react-native"
 import {CommonActions} from "@react-navigation/native"
 
 import {navigationRef} from "@/contexts/NavigationRef"
+import {StackAnimationTypes} from "react-native-screens"
 
 export type NavigationHistoryPush = (path: string, params?: any) => void
 export type NavigationHistoryReplace = (path: string, params?: any) => void
@@ -20,14 +20,20 @@ export type NavObject = {
   getPendingRoute: () => string | null
   navigate: (path: string, params?: any) => void
   preventBack: boolean
+  setAnimation: (animation: StackAnimationTypes) => void
+  getCurrentRoute: () => string | null
+  getCurrentParams: () => any | null
 }
 
+type PushParams = {
+  transition?: StackAnimationTypes
+}
 interface NavigationHistoryContextType {
   goBack: () => void
   getHistory: () => string[]
   getPreviousRoute: (index?: number) => string | null
   clearHistory: () => void
-  push: (path: string, params?: any) => void
+  push: (path: string, params?: any | PushParams) => void
   replace: (path: string, params?: any) => void
   setPendingRoute: (route: string | null) => void
   getPendingRoute: () => string | null
@@ -42,6 +48,10 @@ interface NavigationHistoryContextType {
   incPreventBack: () => void
   decPreventBack: () => void
   setAndroidBackFn: (fn: () => void) => void
+  setAnimation: (animation: StackAnimationTypes) => void
+  animation: StackAnimationTypes
+  getCurrentParams: () => any | null
+  getCurrentRoute: () => string | null
 }
 
 const NavigationHistoryContext = createContext<NavigationHistoryContextType | undefined>(undefined)
@@ -61,7 +71,8 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
   const setAndroidBackFn = (fn: () => void) => {
     androidBackFnRef.current = fn
   }
-  const rootNavigation = useNavigationContainerRef()
+  const [animation, setAnimation] = useState<StackAnimationTypes>("simple_push")
+  // const rootNavigation = useNavigationContainerRef()
 
   useEffect(() => {
     const newPath = pathname
@@ -203,7 +214,18 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     historyParamsRef.current.push(params)
     setDebugHistory([...historyRef.current])
 
+    if (params?.transition) {
+      setAnimation(params.transition)
+    }
+
     router.push({pathname: path as any, params: params as any})
+
+    // reset the animation to simple_push after a short delay:
+    if (params?.transition) {
+      setTimeout(() => {
+        setAnimation("simple_push")
+      }, 100)
+    }
   }
 
   const replace = (path: string, params?: any): void => {
@@ -220,8 +242,16 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     return history
   }
 
+  const getCurrentRoute = () => {
+    return historyRef.current[historyRef.current.length - 1]
+  }
+
+  const getCurrentParams = () => {
+    return historyParamsRef.current[historyParamsRef.current.length - 1]
+  }
+
   const getPreviousRoute = (index: number = 0) => {
-    if (historyRef.current.length < (2 + index)) {
+    if (historyRef.current.length < 2 + index) {
       return null
     }
     return historyRef.current[historyRef.current.length - (2 + index)]
@@ -375,7 +405,7 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     const n = index + 2
     let updatedRoutes = historyRef.current.slice(0, -n)
     let updatedRoutesParams = historyParamsRef.current.slice(0, -n)
-    
+
     // re-add the last (soon to be new current) route:
     updatedRoutes.push(lastRoute)
     updatedRoutesParams.push(lastRouteParams)
@@ -432,6 +462,9 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     getPendingRoute,
     navigate,
     preventBack,
+    setAnimation,
+    getCurrentRoute,
+    getCurrentParams,
   }
 
   // Set the ref so we can use it from outside the context:
@@ -461,6 +494,10 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
         incPreventBack,
         decPreventBack,
         setAndroidBackFn,
+        setAnimation,
+        animation,
+        getCurrentRoute,
+        getCurrentParams,
       }}>
       {children}
     </NavigationHistoryContext.Provider>
@@ -476,18 +513,41 @@ export function useNavigationHistory() {
 }
 
 // screens that call this function will prevent the back button from being pressed:
-export const focusEffectPreventBack = (androidBackFn?: () => void) => {
+export const focusEffectPreventBack = (backFn?: () => void, iosDontPreventBack?: boolean) => {
   const {incPreventBack, decPreventBack, setAndroidBackFn} = useNavigationHistory()
+  const navigation = useNavigation()
+
+
+  // hook into the back button on ios:
+  if (Platform.OS === "ios") {
+    useFocusEffect(
+      useCallback(() => {
+        const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+          // Fires when back gesture starts or back button is pressed
+          console.log("navigating back")
+          backFn?.()
+        })
+        return () => {
+          unsubscribe()
+        }
+      }, [backFn]),
+    )
+  }
+
+  // don't prevent back on ios if iosDontPreventBack is true:
+  if (iosDontPreventBack && Platform.OS === "ios") {
+    return
+  }
 
   useFocusEffect(
     useCallback(() => {
       incPreventBack()
-      if (androidBackFn) {
-        setAndroidBackFn(androidBackFn)
+      if (backFn) {
+        setAndroidBackFn(backFn)
       }
       return () => {
         decPreventBack()
       }
-    }, [incPreventBack, decPreventBack]),
+    }, [incPreventBack, decPreventBack, backFn]),
   )
 }

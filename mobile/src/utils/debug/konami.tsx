@@ -1,4 +1,4 @@
-import {useEffect, useState, useRef} from "react"
+import {createContext, useContext, useEffect, useState, useRef} from "react"
 import {Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 
@@ -9,30 +9,49 @@ type Direction = "up" | "down" | "left" | "right"
 
 const KONAMI_CODE: Direction[] = ["up", "up", "down", "down", "left", "right", "left", "right"]
 const MINI_CODE: Direction[] = ["up", "up", "down", "down", "left", "left", "right", "right", "up", "up"]
-const MAX_CODE_LENGTH = Math.max(KONAMI_CODE.length, MINI_CODE.length)
+const SUPER_CODE: Direction[] = ["up", "down", "up", "down", "left", "left"]
+const MAX_CODE_LENGTH = Math.max(KONAMI_CODE.length, MINI_CODE.length, SUPER_CODE.length)
+
+type KonamiContextType = {
+  enabled: boolean
+  setEnabled: (enabled: boolean) => void
+}
+
+const KonamiContext = createContext<KonamiContextType | null>(null)
+
+export function useKonamiCode() {
+  const context = useContext(KonamiContext)
+  if (!context) {
+    throw new Error("useKonamiCode must be used within a KonamiCodeProvider")
+  }
+  return context
+}
 
 export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
+  const [enabled, setEnabled] = useState(true)
   const [sequence, setSequence] = useState<Direction[]>([])
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const {goHomeAndPush} = useNavigationHistory()
 
   useEffect(() => {
-    if (sequence.length === KONAMI_CODE.length) {
-      const matches = sequence.every((dir, i) => dir === KONAMI_CODE[i])
-      if (matches) {
-        console.log("KONAMI: Konami code activated!")
-        goHomeAndPush("/settings/developer")
-        setSequence([])
-      }
+    if (!enabled) return
+
+    const matchesCode = (code: Direction[]) =>
+      sequence.length >= code.length && code.every((dir, i) => dir === sequence[sequence.length - code.length + i])
+
+    if (matchesCode(KONAMI_CODE)) {
+      console.log("KONAMI: Konami code activated!")
+      goHomeAndPush("/settings/developer")
+      setSequence([])
+    } else if (matchesCode(MINI_CODE)) {
+      console.log("KONAMI: Mini code activated!")
+      setSequence([])
+    } else if (matchesCode(SUPER_CODE)) {
+      console.log("KONAMI: Super code activated!")
+      goHomeAndPush("/settings/super")
+      setSequence([])
     }
-    if (sequence.length === MINI_CODE.length) {
-      const matches = sequence.every((dir, i) => dir === MINI_CODE[i])
-      if (matches) {
-        console.log("KONAMI: Mini code activated!")
-        setSequence([])
-      }
-    }
-  }, [sequence, goHomeAndPush])
+  }, [sequence, goHomeAndPush, enabled])
 
   useEffect(() => {
     return () => {
@@ -56,7 +75,7 @@ export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
 
     resetTimeoutRef.current = BackgroundTimer.setTimeout(() => {
       setSequence([])
-    }, 3000)
+    }, 8000)
   }
 
   let flingUp, flingDown, flingLeft, flingRight
@@ -110,8 +129,14 @@ export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
   const composedGesture = Gesture.Simultaneous(Gesture.Race(flingUp, flingDown, flingLeft, flingRight))
 
   return (
-    <GestureDetector gesture={composedGesture}>
-      <View style={{flex: 1}}>{children}</View>
-    </GestureDetector>
+    <KonamiContext.Provider value={{enabled, setEnabled}}>
+      {enabled ? (
+        <GestureDetector gesture={composedGesture}>
+          <View style={{flex: 1}}>{children}</View>
+        </GestureDetector>
+      ) : (
+        children
+      )}
+    </KonamiContext.Provider>
   )
 }

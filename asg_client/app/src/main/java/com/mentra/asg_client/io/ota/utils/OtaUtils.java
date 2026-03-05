@@ -151,7 +151,7 @@ public class OtaUtils {
     }
     
     /**
-     * Calculate download progress percentage
+     * Calculate download progress percentage.
      * @param bytesDownloaded Bytes downloaded so far
      * @param totalBytes Total bytes to download
      * @return Progress percentage (0-100)
@@ -160,7 +160,7 @@ public class OtaUtils {
         if (totalBytes <= 0) {
             return 0;
         }
-        
+
         int progress = (int) ((bytesDownloaded * 100) / totalBytes);
         return Math.min(progress, 100); // Ensure progress doesn't exceed 100%
     }

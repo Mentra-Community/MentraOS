@@ -214,7 +214,7 @@ function ScreenWithScrolling(props: ScreenProps) {
       bottomOffset={keyboardBottomOffset}
       {...{keyboardShouldPersistTaps, scrollEnabled, ref}}
       {...ScrollViewProps}
-      onLayout={e => {
+      onLayout={(e) => {
         onLayout(e)
         ScrollViewProps?.onLayout?.(e)
       }}
@@ -237,7 +237,7 @@ function ScreenWithScrolling(props: ScreenProps) {
  * @param {ScreenProps} props - The props for the `Screen` component.
  * @returns {JSX.Element} The rendered `Screen` component.
  */
-export function Screen(props: ScreenProps) {
+export function Screen(props: ScreenProps & {ref?: any}) {
   const {
     theme: {colors},
     themeContext,
@@ -249,20 +249,21 @@ export function Screen(props: ScreenProps) {
     safeAreaEdges,
     StatusBarProps,
     statusBarStyle,
+    ref,
   } = props
 
-  const $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
-  const {theme} = useAppTheme()
-  
+  let $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges, "padding")
+  // const [debugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
+
   return (
-    <View
-      style={[
-        {paddingHorizontal: theme.spacing.s6},
-        $containerStyle,
-        {backgroundColor: backgroundColor || colors.background} /*, $containerInsets*/,
-      ]}>
-      {/*<BackgroundGradient colors={props.gradientColors}>*/}
-      <View style={[$containerInsets, {flex: 1}]}>
+    // separate view for screenshots:
+    <View className="flex-1" style={[{...$containerInsets}, {backgroundColor: backgroundColor || colors.background}]}>
+      <View
+        ref={ref}
+        className="flex-1 px-6"
+        style={{backgroundColor: backgroundColor || colors.background}}
+        collapsable={false}
+        collapsableChildren={false}>
         <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />
         <KeyboardAvoidingView
           behavior={isIos ? "padding" : "height"}
@@ -271,16 +272,10 @@ export function Screen(props: ScreenProps) {
           style={[$styles.flex1, KeyboardAvoidingViewProps?.style]}>
           {isNonScrolling(props.preset) ? <ScreenWithoutScrolling {...props} /> : <ScreenWithScrolling {...props} />}
         </KeyboardAvoidingView>
+        {/* {debugCoreStatusBarEnabled && <CoreStatusBar />} */}
       </View>
-      {/*</BackgroundGradient>*/}
     </View>
   )
-}
-
-const $containerStyle: ViewStyle = {
-  flex: 1,
-  height: "100%",
-  width: "100%",
 }
 
 const $outerStyle: ViewStyle = {

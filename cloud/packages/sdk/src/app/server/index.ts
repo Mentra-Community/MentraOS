@@ -9,7 +9,6 @@ import path from "path";
 import fs from "fs";
 import { AppSession } from "../session/index";
 import { createAuthMiddleware } from "../webview";
-import { newSDKUpdate } from "../../constants/log-messages/updates";
 
 import {
   WebhookRequest,
@@ -18,12 +17,15 @@ import {
   StopWebhookRequest,
   ToolCall,
   WebhookRequestType,
+  TelemetryLogEntry,
 } from "../../types";
 
 import { Logger } from "pino";
-import { logger as rootLogger } from "../../logging/logger";
+import { createLogger } from "../../logging/logger";
+import type { MentraLogLevel } from "../../logging/logger";
 import axios from "axios";
 import { PhotoData } from "../../types/photo-data";
+import { getDistTag } from "../../constants/log-messages/updates";
 
 export const GIVE_APP_CONTROL_OF_TOOL_RESPONSE: string = "GIVE_APP_CONTROL_OF_TOOL_RESPONSE";
 
@@ -84,6 +86,39 @@ export interface AppServerConfig {
   cookieSecret?: string;
   /** App instructions string shown to the user */
   appInstructions?: string;
+
+  /**
+   * 📊 Enable telemetry collection for incident debugging.
+   * When enabled, the SDK captures internal logs in a ring buffer.
+   * Cloud can request these logs when processing bug reports.
+   * Default: true (opt-out)
+   */
+  enableTelemetry?: boolean;
+  /**
+   * 📊 Maximum number of log entries to keep per user in the telemetry buffer.
+   * Default: 1000
+   */
+  telemetryBufferSize?: number;
+
+  /**
+   * SDK console log level. Default: 'warn'.
+   * - 'none':  Suppress all SDK console output
+   * - 'error': Only errors
+   * - 'warn':  Errors + warnings (default)
+   * - 'info':  Errors + warnings + lifecycle events
+   * - 'debug': Everything (verbose structured output)
+   *
+   * Can be overridden with MENTRA_LOG_LEVEL env var.
+   */
+  logLevel?: MentraLogLevel;
+
+  /**
+   * Enable verbose internal logging (full structured output).
+   * Useful when debugging SDK issues — Mentra support may ask you to enable this.
+   * Can also be enabled with MENTRA_VERBOSE=true env var.
+   * Default: false
+   */
+  verbose?: boolean;
 }
 
 /**
@@ -137,6 +172,16 @@ export class AppServer {
    * See: cloud/issues/019-sdk-photo-request-architecture
    */
   private pendingPhotoRequests = new Map<string, PendingPhotoRequest>();
+  /**
+   * 📊 Telemetry buffer for incident debugging.
+   * Maps userId to a ring buffer of log entries.
+   * Used to provide recent logs when bug reports are filed.
+   */
+  private telemetryBuffer = new Map<string, TelemetryLogEntry[]>();
+  /** Maximum entries to keep per user in telemetry buffer */
+  private telemetryBufferSize: number = 1000;
+  /** Whether telemetry collection is enabled */
+  private telemetryEnabled: boolean = true;
 
   public readonly logger: Logger;
 
@@ -150,6 +195,10 @@ export class AppServer {
       ...config,
     };
 
+    const rootLogger = createLogger({
+      logLevel: this.config.logLevel,
+      verbose: this.config.verbose,
+    });
     this.logger = rootLogger.child({
       app: this.config.packageName,
       packageName: this.config.packageName,
@@ -180,6 +229,10 @@ export class AppServer {
 
     this.appInstructions = (config as any).appInstructions || null;
 
+    // Setup telemetry configuration
+    this.telemetryEnabled = config.enableTelemetry !== false; // Default: true (opt-out)
+    this.telemetryBufferSize = config.telemetryBufferSize || 1000;
+
     // Setup server features
     this.setupWebhook();
     this.setupSettingsEndpoint();
@@ -207,9 +260,9 @@ export class AppServer {
    * @param userId - User's identifier
    */
   protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
-    this.logger.info(`🚀 Starting new session handling for session ${sessionId} and user ${userId}`);
+    this.logger.debug(`Starting new session handling for session ${sessionId} and user ${userId}`);
     // Core session handling logic (onboarding removed)
-    this.logger.info(`✅ Session handling completed for session ${sessionId} and user ${userId}`);
+    this.logger.debug(`Session handling completed for session ${sessionId} and user ${userId}`);
   }
 
   /**
@@ -256,9 +309,9 @@ export class AppServer {
   public start(): Promise<void> {
     return new Promise((resolve) => {
       this.app.listen(this.config.port, async () => {
-        this.logger.info(`🎯 App server running at http://localhost:${this.config.port}`);
+        this.logger.info(`App server running on port ${this.config.port}`);
         if (this.config.publicDir) {
-          this.logger.info(`📂 Serving static files from ${this.config.publicDir}`);
+          this.logger.debug(`Serving static files from ${this.config.publicDir}`);
         }
 
         // 🔑 Grab SDK version
@@ -279,14 +332,17 @@ export class AppServer {
 
           // this.logger.debug(`Developer is using SDK version: ${currentVersion}`);
 
-          // Fetch latest SDK version from the API endpoint
+          // Determine which dist-tag (release track) the dev is on
+          const distTag = getDistTag(currentVersion);
+
+          // Fetch latest SDK version for this track from the API endpoint
           let latest: string | null = null;
           try {
             const cloudHost = "api.mentra.glass";
-            const response = await axios.get(
-              `https://${cloudHost}/api/sdk/version`,
-              { timeout: 3000 }, // 3 second timeout
-            );
+            const response = await axios.get(`https://${cloudHost}/api/sdk/version`, {
+              params: { tag: distTag },
+              timeout: 3000, // 3 second timeout
+            });
             if (response.data && response.data.success && response.data.data) {
               latest = response.data.data.latest;
             }
@@ -298,13 +354,15 @@ export class AppServer {
 
           if (currentVersion === "not-found") {
             this.logger.warn(
-              `⚠️ @mentra/sdk not found in your project dependencies. Please install it with: npm install @mentra/sdk`,
+              `@mentra/sdk not found in your project dependencies. Install it with: bun install @mentra/sdk`,
             );
           } else if (latest && latest !== currentVersion) {
-            this.logger.warn(newSDKUpdate(latest));
+            this.logger.warn(
+              `SDK update available: ${currentVersion} → ${latest} — bun install @mentra/sdk@${distTag}`,
+            );
           }
         } catch (err) {
-          this.logger.error(err, "Version check failed");
+          this.logger.debug(err, "Version check failed");
         }
 
         resolve();
@@ -317,7 +375,7 @@ export class AppServer {
    * Gracefully shuts down the server and cleans up all sessions.
    */
   public async stop(): Promise<void> {
-    this.logger.info("\n🛑 Shutting down...");
+    this.logger.info("Shutting down...");
     await this.cleanup();
     process.exit(0);
   }
@@ -359,7 +417,7 @@ export class AppServer {
    */
   private setupWebhook(): void {
     if (!this.config.webhookPath) {
-      this.logger.error("❌ Webhook path not set");
+      this.logger.error("Webhook path not set");
       throw new Error("Webhook path not set");
     }
 
@@ -377,14 +435,14 @@ export class AppServer {
         }
         // Unknown webhook type
         else {
-          this.logger.error("❌ Unknown webhook request type");
+          this.logger.error("Unknown webhook request type");
           res.status(400).json({
             status: "error",
             message: "Unknown webhook request type",
           } as WebhookResponse);
         }
       } catch (error) {
-        this.logger.error(error, "❌ Error handling webhook: " + (error as Error).message);
+        this.logger.error(error, "Error handling webhook: " + (error as Error).message);
         res.status(500).json({
           status: "error",
           message: "Error handling webhook: " + (error as Error).message,
@@ -406,7 +464,7 @@ export class AppServer {
         } else {
           toolCall.activeSession = null;
         }
-        this.logger.info({ body: req.body }, `🔧 Received tool call: ${toolCall.toolId}`);
+        this.logger.debug({ body: req.body }, `Received tool call: ${toolCall.toolId}`);
         // Call the onToolCall handler and get the response
         const response = await this.onToolCall(toolCall);
 
@@ -417,7 +475,7 @@ export class AppServer {
           res.json({ status: "success", reply: null });
         }
       } catch (error) {
-        this.logger.error(error, "❌ Error handling tool call:");
+        this.logger.error(error, "Error handling tool call");
         res.status(500).json({
           status: "error",
           message: error instanceof Error ? error.message : "Unknown error occurred calling tool",
@@ -434,7 +492,7 @@ export class AppServer {
    */
   private async handleSessionRequest(request: SessionWebhookRequest, res: express.Response): Promise<void> {
     const { sessionId, userId, mentraOSWebsocketUrl, augmentOSWebsocketUrl } = request;
-    this.logger.info({ userId }, `🗣️ Received session request for user ${userId}, session ${sessionId}\n\n`);
+    this.logger.debug({ userId, sessionId }, `Session request for user ${userId}`);
 
     // Check for existing session (user might be switching clouds)
     // If an existing session exists, we need to clean it up properly to avoid:
@@ -443,34 +501,28 @@ export class AppServer {
     // See: cloud/issues/018-app-disconnect-resurrection
     const existingSession = this.activeSessions.get(sessionId);
     if (existingSession) {
-      this.logger.info(
-        { sessionId, userId },
-        `🔄 Existing session found for ${sessionId} - sending OWNERSHIP_RELEASE and disconnecting before new connection`,
-      );
+      this.logger.debug({ sessionId, userId }, `Existing session found — releasing ownership before new connection`);
 
       try {
         // Send OWNERSHIP_RELEASE to tell the old cloud not to resurrect this app
         // The old cloud will mark the app as DORMANT instead of trying to restart it
         await existingSession.releaseOwnership("switching_clouds");
       } catch (error) {
-        this.logger.warn(
-          { error, sessionId },
-          `⚠️ Failed to send OWNERSHIP_RELEASE to old session - continuing anyway`,
-        );
+        this.logger.debug({ error, sessionId }, `Failed to send OWNERSHIP_RELEASE to old session — continuing`);
       }
 
       try {
         // Disconnect the old session explicitly
         existingSession.disconnect();
       } catch (error) {
-        this.logger.warn({ error, sessionId }, `⚠️ Failed to disconnect old session - continuing anyway`);
+        this.logger.debug({ error, sessionId }, `Failed to disconnect old session — continuing`);
       }
 
       // Remove from maps immediately (don't wait for cleanup handler)
       this.activeSessions.delete(sessionId);
       this.activeSessionsByUserId.delete(userId);
 
-      this.logger.info({ sessionId, userId }, `✅ Old session cleaned up, proceeding with new connection`);
+      this.logger.debug({ sessionId, userId }, `Old session cleaned up`);
     }
 
     // Create new App session
@@ -496,37 +548,35 @@ export class AppServer {
 
       // Handle different disconnect info formats (string or object)
       if (typeof info === "string") {
-        this.logger.info(`👋 Session ${sessionId} disconnected: ${info}`);
+        this.logger.debug(`Session ${sessionId} disconnected: ${info}`);
         reason = info;
         // String-only disconnects are typically temporary (e.g., "WebSocket closed")
         isPermanent = false;
       } else {
         // It's an object with detailed disconnect information
-        this.logger.info(
-          `👋 Session ${sessionId} disconnected: ${info.message} (code: ${info.code}, reason: ${info.reason})`,
-        );
+        this.logger.debug(`Session ${sessionId} disconnected: ${info.message} (code: ${info.code})`);
         reason = info.reason || info.message;
 
         // Check if this is a user session end event
         // This happens when the UserSession is disposed after 1 minute grace period
         if (info.sessionEnded === true) {
-          this.logger.info(`🛑 User session ended for session ${sessionId}, calling onStop`);
+          this.logger.debug(`User session ended for ${sessionId}`);
           isPermanent = true;
 
           // Call onStop with session end reason
           // This allows apps to clean up resources when the user's session ends
           this.onStop(sessionId, userId, "User session ended").catch((error) => {
-            this.logger.error(error, `❌ Error in onStop handler for session end:`);
+            this.logger.error(`Error in onStop handler: ${error instanceof Error ? error.message : error}`);
           });
         }
         // Check if this is a permanent disconnection after exhausted reconnection attempts
         else if (info.permanent === true) {
-          this.logger.info(`🛑 Permanent disconnection detected for session ${sessionId}, calling onStop`);
+          this.logger.debug(`Permanent disconnection for session ${sessionId}`);
           isPermanent = true;
 
           // Call onStop with a reconnection failure reason
           this.onStop(sessionId, userId, `Connection permanently lost: ${info.reason}`).catch((error) => {
-            this.logger.error(error, `❌ Error in onStop handler for permanent disconnection:`);
+            this.logger.error(`Error in onStop handler: ${error instanceof Error ? error.message : error}`);
           });
         }
         // Check if this is a clean WebSocket closure (1000/1001) that won't trigger reconnection
@@ -534,14 +584,12 @@ export class AppServer {
         // AppSession skips reconnection for these codes, so we must treat them as permanent
         // to avoid zombie sessions in activeSessions map
         else if (info.wasClean === true || info.code === 1000 || info.code === 1001) {
-          this.logger.info(
-            `🛑 Clean WebSocket closure for session ${sessionId} (code: ${info.code}), treating as permanent`,
-          );
+          this.logger.debug(`Clean WebSocket closure for session ${sessionId} (code: ${info.code})`);
           isPermanent = true;
 
           // Call onStop for clean disconnects too
           this.onStop(sessionId, userId, `Clean disconnect: ${reason}`).catch((error) => {
-            this.logger.error(error, `❌ Error in onStop handler for clean disconnect:`);
+            this.logger.error(`Error in onStop handler: ${error instanceof Error ? error.message : error}`);
           });
         }
       }
@@ -563,7 +611,7 @@ export class AppServer {
         if (this.activeSessions.get(sessionId) === session) {
           this.activeSessions.delete(sessionId);
         } else {
-          this.logger.debug({ sessionId }, `🔄 Session ${sessionId} cleanup skipped - a newer session has taken over`);
+          this.logger.debug({ sessionId }, `Session ${sessionId} cleanup skipped — newer session has taken over`);
         }
         if (this.activeSessionsByUserId.get(userId) === session) {
           this.activeSessionsByUserId.delete(userId);
@@ -571,19 +619,21 @@ export class AppServer {
 
         // Clean up any pending photo requests for this session
         this.cleanupPhotoRequestsForSession(sessionId);
+
+        // Clean up telemetry buffer to prevent memory leak
+        this.clearTelemetryBuffer(userId);
       } else {
         // Temporary disconnect - session stays in maps for reconnection
         // Photo requests remain pending and can still be fulfilled
         this.logger.debug(
           { sessionId, reason },
-          `🔄 Temporary disconnect for session ${sessionId}, keeping in maps for reconnection`,
+          `Temporary disconnect for session ${sessionId} — keeping for reconnection`,
         );
       }
     });
 
-    const cleanupError = session.events.onError((error) => {
-      this.logger.error(error, `❌ [Session ${sessionId}] Error:`);
-    });
+    // Error logging is now handled by EventManager's fallback (logs if no onError handler).
+    // No internal cleanupError handler needed — avoids double-logging.
 
     // Start the session
     try {
@@ -593,9 +643,8 @@ export class AppServer {
       await this.onSession(session, sessionId, userId);
       res.status(200).json({ status: "success" } as WebhookResponse);
     } catch (error) {
-      this.logger.error(error, "❌ Failed to connect:");
+      this.logger.error(`Failed to connect: ${error instanceof Error ? error.message : error}`);
       cleanupDisconnect();
-      cleanupError();
       res.status(500).json({
         status: "error",
         message: "Failed to connect",
@@ -608,13 +657,13 @@ export class AppServer {
    */
   private async handleStopRequest(request: StopWebhookRequest, res: express.Response): Promise<void> {
     const { sessionId, userId, reason } = request;
-    this.logger.info(`\n\n🛑 Received stop request for user ${userId}, session ${sessionId}, reason: ${reason}\n\n`);
+    this.logger.debug(`Stop request for user ${userId}, session ${sessionId}: ${reason}`);
 
     try {
       await this.onStop(sessionId, userId, reason);
       res.status(200).json({ status: "success" } as WebhookResponse);
     } catch (error) {
-      this.logger.error(error, "❌ Error handling stop request:");
+      this.logger.error(`Error handling stop request: ${error instanceof Error ? error.message : error}`);
       res.status(500).json({
         status: "error",
         message: "Failed to process stop request",
@@ -654,7 +703,7 @@ export class AppServer {
           });
         }
 
-        this.logger.info(`⚙️ Received settings update for user ${userIdForSettings}`);
+        this.logger.debug(`Settings update for user ${userIdForSettings}`);
 
         // Find all active sessions for this user
         const userSessions: AppSession[] = [];
@@ -669,9 +718,9 @@ export class AppServer {
         });
 
         if (userSessions.length === 0) {
-          this.logger.warn(`⚠️ No active sessions found for user ${userIdForSettings}`);
+          this.logger.debug(`No active sessions found for user ${userIdForSettings}`);
         } else {
-          this.logger.info(`🔄 Updating settings for ${userSessions.length} active sessions`);
+          this.logger.debug(`Updating settings for ${userSessions.length} active sessions`);
         }
 
         // Update settings for all of the user's sessions
@@ -690,7 +739,7 @@ export class AppServer {
           sessionsUpdated: userSessions.length,
         });
       } catch (error) {
-        this.logger.error(error, "❌ Error handling settings update:");
+        this.logger.error(`Error handling settings update: ${error instanceof Error ? error.message : error}`);
         res.status(500).json({
           status: "error",
           message: "Internal server error processing settings update",
@@ -707,7 +756,7 @@ export class AppServer {
     if (this.config.publicDir) {
       const publicPath = path.resolve(this.config.publicDir);
       this.app.use(express.static(publicPath));
-      this.logger.info(`📂 Serving static files from ${publicPath}`);
+      this.logger.debug(`Serving static files from ${publicPath}`);
     }
   }
 
@@ -737,11 +786,11 @@ export class AppServer {
    * See: cloud/issues/023-disposed-appsession-resurrection-bug
    */
   private async cleanup(): Promise<void> {
-    this.logger.info(`🔧 [LOCAL SDK] cleanup() called - NOT sending OWNERSHIP_RELEASE`);
+    this.logger.debug(`Cleanup called — not sending OWNERSHIP_RELEASE`);
     // Close all active sessions WITHOUT releasing ownership
     // This allows the cloud to resurrect apps when we come back up
     for (const [sessionId, session] of this.activeSessions) {
-      this.logger.info(`👋 Closing session ${sessionId} (no ownership release - cloud will resurrect)`);
+      this.logger.debug(`Closing session ${sessionId} (cloud will resurrect)`);
       try {
         // Just disconnect, don't release ownership
         // The cloud will enter grace period and then resurrect via webhook
@@ -749,7 +798,9 @@ export class AppServer {
           releaseOwnership: false,
         });
       } catch (error) {
-        this.logger.error(error, `Error during cleanup of session ${sessionId}`);
+        this.logger.error(
+          `Error during cleanup of session ${sessionId}: ${error instanceof Error ? error.message : error}`,
+        );
         // Still try to disconnect even if release fails
         try {
           await session.disconnect();
@@ -793,13 +844,10 @@ export class AppServer {
         const { requestId, type, success, errorCode, errorMessage } = req.body;
         const photoFile = req.file;
 
-        this.logger.info(
-          { requestId, type, success, errorCode },
-          `📸 Received photo response: ${requestId} (type: ${type})`,
-        );
+        this.logger.debug({ requestId, type, success, errorCode }, `Photo response: ${requestId} (type: ${type})`);
 
         if (!requestId) {
-          this.logger.error("No requestId in photo response");
+          this.logger.warn("No requestId in photo response");
           return res.status(400).json({
             success: false,
             error: "No requestId provided",
@@ -811,9 +859,9 @@ export class AppServer {
         // See: cloud/issues/019-sdk-photo-request-architecture
         const pending = this.completePhotoRequest(requestId);
         if (!pending) {
-          this.logger.warn(
+          this.logger.debug(
             { requestId, pendingCount: this.pendingPhotoRequests.size },
-            "📸 No pending request found for photo (may have timed out or session ended)",
+            "No pending request found for photo (may have timed out or session ended)",
           );
           return res.status(404).json({
             success: false,
@@ -824,7 +872,7 @@ export class AppServer {
         // Handle error response (no photo file, but has error info)
         if (type === "photo_error" || success === false) {
           const errorMsg = errorMessage || "Unknown error occurred";
-          this.logger.info({ requestId, errorCode, errorMessage: errorMsg }, "📸 Photo error received");
+          this.logger.debug({ requestId, errorCode, errorMessage: errorMsg }, "Photo error received");
           pending.reject(new Error(`Photo capture failed: ${errorMsg} (code: ${errorCode || "UNKNOWN_ERROR"})`));
 
           // Respond to ASG client
@@ -837,7 +885,7 @@ export class AppServer {
 
         // Handle successful photo upload
         if (!photoFile) {
-          this.logger.error({ requestId }, "No photo file in successful upload");
+          this.logger.warn({ requestId }, "No photo file in successful upload");
           pending.reject(new Error("No photo file provided for successful upload"));
           return res.status(400).json({
             success: false,
@@ -855,9 +903,9 @@ export class AppServer {
           timestamp: new Date(),
         };
 
-        this.logger.info(
+        this.logger.debug(
           { requestId, size: photoFile.size, mimeType: photoFile.mimetype },
-          "📸 Photo received successfully, resolving promise",
+          "Photo received, resolving promise",
         );
         pending.resolve(photoData);
 
@@ -868,7 +916,7 @@ export class AppServer {
           message: "Photo received successfully",
         });
       } catch (error) {
-        this.logger.error(error, "❌ Error handling photo response");
+        this.logger.error(`Error handling photo response: ${error instanceof Error ? error.message : error}`);
         res.status(500).json({
           success: false,
           error: "Internal server error processing photo response",
@@ -897,7 +945,7 @@ export class AppServer {
       if (pending) {
         pending.reject(new Error("Photo request timed out"));
         this.pendingPhotoRequests.delete(requestId);
-        this.logger.warn({ requestId }, "📸 Photo request timed out");
+        this.logger.warn({ requestId }, "Photo request timed out");
       }
     }, timeoutMs);
 
@@ -906,10 +954,7 @@ export class AppServer {
       timeoutId,
     });
 
-    this.logger.debug(
-      { requestId, userId: request.userId, sessionId: request.sessionId },
-      "📸 Photo request registered at AppServer level",
-    );
+    this.logger.debug({ requestId, userId: request.userId, sessionId: request.sessionId }, "Photo request registered");
   }
 
   /**
@@ -936,7 +981,7 @@ export class AppServer {
         clearTimeout(pending.timeoutId);
       }
       this.pendingPhotoRequests.delete(requestId);
-      this.logger.debug({ requestId }, "📸 Photo request completed");
+      this.logger.debug({ requestId }, "Photo request completed");
     }
     return pending;
   }
@@ -957,12 +1002,85 @@ export class AppServer {
         pending.reject(new Error("Session ended"));
         this.pendingPhotoRequests.delete(requestId);
         cleanedCount++;
-        this.logger.debug({ requestId, sessionId }, "📸 Photo request cleaned up (session ended)");
+        this.logger.debug({ requestId, sessionId }, "Photo request cleaned up (session ended)");
       }
     }
     if (cleanedCount > 0) {
-      this.logger.info({ sessionId, cleanedCount }, "📸 Cleaned up photo requests for ended session");
+      this.logger.debug({ sessionId, cleanedCount }, "Cleaned up photo requests for ended session");
     }
+  }
+
+  // =====================================
+  // 📊 Telemetry Methods
+  // =====================================
+
+  /**
+   * 📊 Log a telemetry entry for a user.
+   * This method is called internally by the SDK to capture logs.
+   * Apps can also call this to add custom telemetry.
+   *
+   * @param userId - User ID to associate the log with
+   * @param level - Log level
+   * @param message - Log message
+   * @param source - Source of the log (e.g., "session", "camera", "display")
+   * @param data - Optional additional data
+   */
+  public logTelemetry(
+    userId: string,
+    level: TelemetryLogEntry["level"],
+    message: string,
+    source?: string,
+    data?: unknown,
+  ): void {
+    if (!this.telemetryEnabled) return;
+
+    const entry: TelemetryLogEntry = {
+      timestamp: Date.now(),
+      level,
+      message,
+      source,
+      data,
+    };
+
+    let buffer = this.telemetryBuffer.get(userId);
+    if (!buffer) {
+      buffer = [];
+      this.telemetryBuffer.set(userId, buffer);
+    }
+
+    buffer.push(entry);
+
+    // Ring buffer: remove oldest if over limit
+    while (buffer.length > this.telemetryBufferSize) {
+      buffer.shift();
+    }
+  }
+
+  /**
+   * 📊 Get telemetry logs for a user within a time window.
+   *
+   * @param userId - User ID to get logs for
+   * @param windowMs - Time window in milliseconds (logs newer than now - windowMs)
+   * @returns Array of telemetry log entries within the time window
+   */
+  public getTelemetryLogs(userId: string, windowMs: number): TelemetryLogEntry[] {
+    const buffer = this.telemetryBuffer.get(userId);
+    if (!buffer || buffer.length === 0) {
+      return [];
+    }
+
+    const cutoff = Date.now() - windowMs;
+    return buffer.filter((entry) => entry.timestamp >= cutoff);
+  }
+
+  /**
+   * 📊 Clear telemetry buffer for a user.
+   * Called when a session permanently disconnects.
+   *
+   * @param userId - User ID to clear telemetry for
+   */
+  private clearTelemetryBuffer(userId: string): void {
+    this.telemetryBuffer.delete(userId);
   }
 
   /**
@@ -974,7 +1092,7 @@ export class AppServer {
       // Redirect to the account.mentra.glass OAuth flow with the app's package name
       const authUrl = `https://account.mentra.glass/auth?packagename=${encodeURIComponent(this.config.packageName)}`;
 
-      this.logger.info(`🔐 Redirecting to MentraOS OAuth flow: ${authUrl}`);
+      this.logger.debug(`Redirecting to MentraOS OAuth flow: ${authUrl}`);
 
       res.redirect(302, authUrl);
     });

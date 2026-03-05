@@ -4,22 +4,24 @@ import {MtkUpdateAlert} from "@/effects/MtkUpdateAlert"
 import {NetworkMonitoring} from "@/effects/NetworkMonitoring"
 import {Reconnect} from "@/effects/Reconnect"
 import {ConsoleLogger} from "@/utils/debug/console"
+import {FirebaseAnalyticsSetup} from "@/effects/FirebaseAnalyticsSetup"
 import {OtaUpdateChecker} from "@/effects/OtaUpdateChecker"
 import {BtClassicPairing} from "@/effects/BtClassicPairing"
-import {LocalMiniApps} from "@/effects/LocalMiniApps"
+import Compositor from "@/effects/Compositor"
 
 export const AllEffects = () => {
   return (
     <>
       <Reconnect />
       <BtClassicPairing />
-      <LocalMiniApps />
+      <Compositor />
       <MtkUpdateAlert />
       <OtaUpdateChecker />
       <NetworkMonitoring />
       <ButtonActions />
       <GalleryModeSync />
       <ConsoleLogger />
+      <FirebaseAnalyticsSetup />
     </>
   )
 }

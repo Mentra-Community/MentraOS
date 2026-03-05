@@ -1,0 +1,315 @@
+diff --git a/node_modules/react-native-draggable-masonry/.bun-tag-7c969070d5843338 b/.bun-tag-7c969070d5843338
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/src/DraggableMasonryList.tsx b/src/DraggableMasonryList.tsx
+index b1d22c66381324f52352690793a370b13bdc20a5..cacb84dbd769c001852547c720696ff2772cbdca 100644
+--- a/src/DraggableMasonryList.tsx
++++ b/src/DraggableMasonryList.tsx
+@@ -67,6 +67,44 @@ function calculateLayout<T extends MasonryItemType>(
+     return { positions, totalHeight };
+ }
+ 
++function findSwapTarget<T extends MasonryItemType>(
++    dragCenterX: number,
++    dragCenterY: number,
++    data: T[],
++    positions: Record<string, ItemPosition>,
++    keyExtractor: (item: T) => string,
++    dragId: string,
++): number {
++    let closestIndex = -1;
++    let closestDist = Infinity;
++
++    for (let i = 0; i < data.length; i++) {
++        const item = data[i];
++        const id = keyExtractor(item);
++        if (id === dragId) continue;
++
++        const pos = positions[id];
++        if (!pos) continue;
++
++        const centerX = pos.x + pos.width / 2;
++        const centerY = pos.y + pos.height / 2;
++        const dist = Math.sqrt((dragCenterX - centerX) ** 2 + (dragCenterY - centerY) ** 2);
++
++        const isOverlapping =
++            dragCenterX >= pos.x &&
++            dragCenterX <= pos.x + pos.width &&
++            dragCenterY >= pos.y &&
++            dragCenterY <= pos.y + pos.height;
++
++        if (isOverlapping && dist < closestDist) {
++            closestDist = dist;
++            closestIndex = i;
++        }
++    }
++
++    return closestIndex;
++}
++
+ /**
+  * ドラッグ位置から挿入インデックスを計算（直感的なMasonryレイアウト対応）
+  * 
+@@ -220,6 +258,7 @@ function DraggableMasonryList<T extends MasonryItemType>({
+     renderItem,
+     keyExtractor = (item) => item.id,
+     sortEnabled = DEFAULT_PROPS.sortEnabled,
++    swapMode = DEFAULT_PROPS.swapMode,
+     columns: numColumns = DEFAULT_PROPS.columns,
+     rowGap = DEFAULT_PROPS.rowGap,
+     columnGap = DEFAULT_PROPS.columnGap,
+@@ -250,6 +289,7 @@ function DraggableMasonryList<T extends MasonryItemType>({
+     onDragStart,
+     onDragEnd,
+     onOrderChange,
++    onDragChange,
+     contentContainerStyle,
+ }: DraggableMasonryListProps<T>) {
+     const [containerWidth, setContainerWidth] = useState(0);
+@@ -326,19 +366,16 @@ function DraggableMasonryList<T extends MasonryItemType>({
+ 
+     // 表示用データ
+     const displayData = useMemo(() => {
+-        if (!activeDragId || targetInsertIndex < 0) {
+-            return orderedData;
+-        }
+-
++        if (swapMode) return orderedData;
++    
++        if (!activeDragId || targetInsertIndex < 0) return orderedData;
+         const draggedItem = orderedData.find(item => keyExtractor(item) === activeDragId);
+         if (!draggedItem) return orderedData;
+-
+         const withoutDragged = orderedData.filter(item => keyExtractor(item) !== activeDragId);
+         const result = [...withoutDragged];
+         result.splice(targetInsertIndex, 0, draggedItem);
+-
+         return result;
+-    }, [orderedData, activeDragId, targetInsertIndex, keyExtractor]);
++    }, [orderedData, activeDragId, targetInsertIndex, keyExtractor, swapMode]);
+ 
+     const layout = useMemo(() => {
+         if (containerWidth === 0) {
+@@ -616,83 +653,116 @@ function DraggableMasonryList<T extends MasonryItemType>({
+ 
+     const handleDragEnd = useCallback((id: string) => {
+         if (!sortEnabled) return;
+-
++    
+         const fromIndex = dragStartIndexRef.current;
+-        let toIndex = targetInsertIndex;
+-
+-        if (activeDragId && targetInsertIndex >= 0) {
++    
++        if (!swapMode && activeDragId && targetInsertIndex >= 0) {
+             const draggedItem = orderedDataRef.current.find(item => keyExtractor(item) === activeDragId);
+             if (draggedItem) {
+                 const withoutDragged = orderedDataRef.current.filter(item => keyExtractor(item) !== activeDragId);
+                 const newData = [...withoutDragged];
+                 newData.splice(targetInsertIndex, 0, draggedItem);
+-
+-                // toIndexを元の配列でのインデックスに変換
+-                toIndex = newData.findIndex(item => keyExtractor(item) === activeDragId);
+-
++    
+                 orderedDataRef.current = newData;
+                 setOrderedData(newData);
+-
+-                // コールバック
+-                if (onDragEnd) {
+-                    onDragEnd({
+-                        key: id,
+-                        fromIndex,
+-                        toIndex,
+-                        data: newData,
+-                    });
+-                }
+-
+-                if (onOrderChange && fromIndex !== toIndex) {
+-                    onOrderChange({
+-                        key: id,
+-                        fromIndex,
+-                        toIndex,
+-                    });
+-                }
+             }
+         }
+-
++    
++        const toIndex = orderedDataRef.current.findIndex(item => keyExtractor(item) === id);
++    
++        if (onDragEnd) {
++            onDragEnd({
++                key: id,
++                fromIndex,
++                toIndex,
++                data: orderedDataRef.current,
++            });
++        }
++    
++        if (onOrderChange && fromIndex !== toIndex) {
++            onOrderChange({
++                key: id,
++                fromIndex,
++                toIndex,
++            });
++        }
++    
+         setActiveDragId(null);
+         isDraggingShared.value = false;
+         setTargetInsertIndex(-1);
+-        // ドロップ後に仮想化が再開されるので、現在のスクロール位置を同期
+         setCurrentScrollY(scrollOffset.value);
+-        // ドロップアニメーション中は仮想化を停止し続ける（フラッシュ防止）
+         setIsDropAnimating(true);
+         setTimeout(() => {
+             setIsDropAnimating(false);
+-        }, dropAnimationDuration + 50); // 余裕を持たせる
+-        // ドロップインジケーターは遅延してフェードアウト（useEffect内で処理）
++        }, dropAnimationDuration + 50);
+         layoutWithoutDraggedRef.current = null;
+         dragStartIndexRef.current = -1;
+-    }, [activeDragId, targetInsertIndex, keyExtractor, sortEnabled, onDragEnd, onOrderChange, scrollOffset, dropAnimationDuration]);
++    }, [activeDragId, targetInsertIndex, keyExtractor, sortEnabled, swapMode, onDragEnd, onOrderChange, scrollOffset, dropAnimationDuration]);
+ 
+     const handleDragChange = useCallback((id: string, x: number, y: number, screenY: number) => {
+-        if (!sortEnabled || !layoutWithoutDraggedRef.current) return;
+-
++        if (!sortEnabled) return;
++    
+         const draggedItem = orderedDataRef.current.find(item => keyExtractor(item) === id);
+         if (!draggedItem) return;
+-
++    
+         const columnWidth = (containerWidth - (numColumns - 1) * columnGap) / numColumns;
+-        const withoutDragged = orderedDataRef.current.filter(item => keyExtractor(item) !== id);
+-
+-        const newTargetIndex = findInsertIndex(
+-            x, y, columnWidth, draggedItem.height,
+-            withoutDragged,
+-            layoutWithoutDraggedRef.current.positions,
+-            keyExtractor,
+-            id,
+-            targetInsertIndex,
+-            numColumns,
+-            columnGap
+-        );
+-
+-        if (newTargetIndex !== targetInsertIndex) {
+-            setTargetInsertIndex(newTargetIndex);
+-            // ドロップインジケータの位置更新はuseEffect内で行う（他のアイテムと同じタイミングで）
++    
++        if (swapMode) {
++            const dragCenterX = x + columnWidth / 2;
++            const dragCenterY = y + draggedItem.height / 2;
++    
++            const currentLayout = calculateLayout(
++                orderedDataRef.current, numColumns, containerWidth, rowGap, columnGap, keyExtractor
++            );
++    
++            const swapTargetIndex = findSwapTarget(
++                dragCenterX, dragCenterY,
++                orderedDataRef.current,
++                currentLayout.positions,
++                keyExtractor,
++                id,
++            );
++    
++            if (swapTargetIndex >= 0) {
++                const dragIndex = orderedDataRef.current.findIndex(item => keyExtractor(item) === id);
++                if (dragIndex !== swapTargetIndex) {
++                    const newData = [...orderedDataRef.current];
++                    [newData[dragIndex], newData[swapTargetIndex]] = [newData[swapTargetIndex], newData[dragIndex]];
++                    orderedDataRef.current = newData;
++                    setOrderedData(newData);
++                    setTargetInsertIndex(swapTargetIndex);
++                }
++            }
++    
++            if (onDragChange) {
++                onDragChange({ key: id, x, y, index: swapTargetIndex });
++            }
++        } else {
++            // Existing insert-based logic
++            if (!layoutWithoutDraggedRef.current) return;
++    
++            const withoutDragged = orderedDataRef.current.filter(item => keyExtractor(item) !== id);
++    
++            const newTargetIndex = findInsertIndex(
++                x, y, columnWidth, draggedItem.height,
++                withoutDragged,
++                layoutWithoutDraggedRef.current.positions,
++                keyExtractor,
++                id,
++                targetInsertIndex,
++                numColumns,
++                columnGap
++            );
++    
++            if (newTargetIndex !== targetInsertIndex) {
++                setTargetInsertIndex(newTargetIndex);
++            }
++    
++            if (onDragChange) {
++                onDragChange({ key: id, x, y, index: newTargetIndex });
++            }
+         }
+-    }, [containerWidth, numColumns, rowGap, columnGap, keyExtractor, targetInsertIndex, sortEnabled]);
++    }, [containerWidth, numColumns, rowGap, columnGap, keyExtractor, targetInsertIndex, sortEnabled, swapMode, onDragChange]);
+ 
+     return (
+         <View onLayout={handleLayout} style={{ flex: 1 }}>
+@@ -740,6 +810,7 @@ function DraggableMasonryList<T extends MasonryItemType>({
+                                 dragY={dragY}
+                                 dragStartScrollY={dragStartScrollY}
+                                 sortEnabled={sortEnabled}
++                                swapMode={swapMode}
+                                 dragActivationDelay={dragActivationDelay}
+                                 activationAnimationDuration={activationAnimationDuration}
+                                 dropAnimationDuration={dropAnimationDuration}
+diff --git a/src/types.ts b/src/types.ts
+index 336567fcafd15d11b6efbbfab667eb63c0a45935..cf232cea7545904e89a544f56c8c4ed5e48b03b2 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -48,9 +48,17 @@ export interface OrderChangeParams {
+     toIndex: number;
+ }
+ 
++export interface DragChangeParams {
++    key: string;
++    x: number;
++    y: number;
++    index: number;
++}
++
+ export type DragStartCallback = (params: DragStartParams) => void;
+ export type DragEndCallback<T extends MasonryItem> = (params: DragEndParams<T>) => void;
+ export type OrderChangeCallback = (params: OrderChangeParams) => void;
++export type DragChangeCallback = (params: DragChangeParams) => void;
+ 
+ // ============================================================================
+ // Component Props
+@@ -66,6 +74,8 @@ export interface DraggableMasonryListProps<T extends MasonryItem> {
+     keyExtractor?: (item: T) => string;
+     /** Whether sorting/dragging is enabled. Defaults to true */
+     sortEnabled?: boolean;
++    /** Whether swap mode is enabled. Defaults to false */
++    swapMode?: boolean;
+ 
+     // ========== Layout ==========
+     /** Number of columns. Defaults to 2 */
+@@ -142,6 +152,8 @@ export interface DraggableMasonryListProps<T extends MasonryItem> {
+     onDragEnd?: DragEndCallback<T>;
+     /** Called when order changes during drag */
+     onOrderChange?: OrderChangeCallback;
++    /** Called when drag changes */
++    onDragChange?: DragChangeCallback;
+ 
+     // ========== Style ==========
+     /** Style for the scroll view content container */
+@@ -198,4 +210,5 @@ export const DEFAULT_PROPS = {
+     overscanCount: 1,
+     dragOverscanCount: 3,
+     showDropIndicator: true,
++    swapMode: false,
+ } as const;

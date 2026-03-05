@@ -88,11 +88,11 @@ function _SwitchInput(props: SwitchInputProps) {
   const knobSizeFallback = 2
 
   const knobWidth = [$detailStyleOverride?.width, $switchDetail?.width, knobSizeFallback].find(
-    v => typeof v === "number",
+    (v) => typeof v === "number",
   )
 
   const knobHeight = [$detailStyleOverride?.height, $switchDetail?.height, knobSizeFallback].find(
-    v => typeof v === "number",
+    (v) => typeof v === "number",
   )
 
   const offBackgroundColor = [status === "error" && colors.errorBackground, colors.switchTrackOff].filter(Boolean)[0]

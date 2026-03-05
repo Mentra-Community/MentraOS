@@ -1,24 +1,26 @@
-import {useEffect, useState} from "react"
-import {Header, Screen} from "@/components/ignite"
-import {OnboardingStep} from "@/components/onboarding/OnboardingGuide"
+import {useEffect} from "react"
+import {Button, Screen} from "@/components/ignite"
+import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {translate} from "@/i18n"
 import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
 import CoreModule from "core"
-import {AudioPairingPrompt} from "@/components/pairing/AudioPairingPrompt"
-import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {SETTINGS, useSetting} from "@/stores/settings"
-
-const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
+import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
+import {useCoreStore} from "@/stores/core"
+import {View} from "react-native"
+import {ExpoAvRoutePickerView} from "@douglowder/expo-av-route-picker-view"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import CrustModule from "crust"
 
 export default function BtClassicPairingScreen() {
   const {pushPrevious, goBack} = useNavigationHistory()
   const btcConnected = useGlassesStore((state) => state.btcConnected)
+  const otherBtConnected = useCoreStore((state) => state.otherBtConnected)
   const [deviceName] = useSetting(SETTINGS.device_name.key)
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  
-  // focusEffectPreventBack()
+  const {theme} = useAppTheme()
+
+  focusEffectPreventBack()
 
   const handleSuccess = () => {
     // we should have a device name saved in the core:
@@ -28,7 +30,13 @@ export default function BtClassicPairingScreen() {
 
   const handleBack = () => {
     goBack()
-    // pushPrevious()
+  }
+
+  const handleOpenSettings = async () => {
+    const success = await SettingsNavigationUtils.openBluetoothSettings()
+    if (!success) {
+      console.error("Failed to open Bluetooth settings")
+    }
   }
 
   useEffect(() => {
@@ -49,74 +57,50 @@ export default function BtClassicPairingScreen() {
 
   let steps: OnboardingStep[] = [
     {
-      type: "video",
-      source: `${CDN_BASE}/ONB0_start_onboarding.mp4`,
-      poster: require("@assets/onboarding/live/thumbnails/ONB0_start_onboarding.jpg"),
+      type: "image",
+      source: require("@assets/onboarding/os/thumbnails/btclassic.png"),
       name: "Start Onboarding",
-      playCount: 1,
-      transition: true,
-      title: " ", // for spacing so it's consistent with the other steps
-      // title: "Welcome to Mentra Live",
-      // info: "Learn the basics",
-    },
-    {
-      type: "video",
-      source: `${CDN_BASE}/ONB4_action_button_click.mp4`,
-      poster: require("@assets/onboarding/live/thumbnails/ONB4_action_button_click.jpg"),
-      name: "Action Button Click",
-      playCount: 2,
       transition: false,
-      title: translate("onboarding:liveTakeAPhoto"),
-      subtitle: translate("onboarding:livePressActionButton"),
-      info: translate("onboarding:liveLedFlashWarning"),
-    },
-    {
-      type: "video",
-      source: `${CDN_BASE}/ONB5_action_button_record.mp4`,
-      poster: require("@assets/onboarding/live/thumbnails/ONB5_action_button_record.jpg"),
-      name: "Action Button Record",
-      playCount: 2,
-      transition: false,
-      title: translate("onboarding:liveStartRecording"),
-      subtitle: translate("onboarding:livePressAndHold"),
-      info: translate("onboarding:liveLedFlashWarning"),
+      title: translate("onboarding:btClassicTitle"),
+      subtitle: translate("onboarding:btClassicSubtitle", {name: deviceName}),
+      numberedBullets: [
+        translate("onboarding:btClassicStep1"),
+        translate("onboarding:btClassicStep2"),
+        translate("onboarding:btClassicStep3", {name: deviceName}),
+        translate("onboarding:btClassicStep4"),
+      ],
     },
   ]
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]}>
-      <Header leftIcon="chevron-left" onLeftPress={handleBack} />
-      {/* <OnboardingGuide
+      {/* <Header leftIcon="chevron-left" onLeftPress={handleBack} /> */}
+      <OnboardingGuide
         steps={steps}
-        autoStart={false}
-        mainTitle={translate("onboarding:liveWelcomeTitle")}
-        mainSubtitle={translate("onboarding:liveWelcomeSubtitle")}
+        autoStart={true}
         showCloseButton={false}
-        // exitFn={() => {
-        //   pushPrevious()
-        // }}
-        endButtonText={translate("common:continue")}
-        endButtonFn={() => {
-          console.log("BT_CLASSIC: endButtonFn()")
-          // pushPrevious()
-        }}
+        endButtonText={translate("onboarding:openSettings")}
+        endButtonFn={handleOpenSettings}
         showSkipButton={false}
-        // endButtonText={
-        //   onboardingOsCompleted ? translate("onboarding:liveEndTitle") : translate("onboarding:learnAboutOs")
-        // }
+      />
+
+      {otherBtConnected && (
+        <View className="absolute bottom-16 w-full">
+          <Button
+            text={translate("onboarding:showDevicePicker")}
+            preset="secondary"
+            onPress={() => {
+              CrustModule.showAVRoutePicker(theme.colors.text)
+            }}
+          />
+        </View>
+      )}
+      {/* <ExpoAvRoutePickerView className="w-12 h-12 absolute bottom-16 z-10" activeTintColor={theme.colors.text}/> */}
+      {/* <ExpoAvRoutePickerView
+        style={{height: "100%"}}
+        className="absolute bottom-16 z-10 w-full h-[10px]"
+        activeTintColor={theme.colors.text}
       /> */}
-      <AudioPairingPrompt
-        deviceName={deviceName}
-        // onSkip={() => {
-        //   // Navigate first - don't update state which could cause race conditions
-        //   // replace("/pairing/success", {modelName: modelName})
-        // }}
-      />
-      <GlassesTroubleshootingModal
-        isVisible={showTroubleshootingModal}
-        onClose={() => setShowTroubleshootingModal(false)}
-        modelName={defaultWearable}
-      />
     </Screen>
   )
 }

@@ -1,7 +1,6 @@
 import {getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {View, ScrollView, TouchableOpacity, Platform, ViewStyle, TextStyle} from "react-native"
+import {View, ScrollView, TouchableOpacity, ViewStyle, TextStyle} from "react-native"
 
-import bridge from "@/bridge/MantleBridge"
 import {Icon, Text, Screen, Header} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -9,6 +8,7 @@ import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
+import CoreModule from "core"
 
 type PhotoSize = "small" | "medium" | "large"
 type VideoResolution = "720p" | "1080p" // | "1440p" | "4K"
@@ -44,7 +44,7 @@ export default function CameraSettingsScreen() {
   const [videoSettings, setVideoSettings] = useSetting(SETTINGS.button_video_settings.key)
   const [maxRecordingTime, setMaxRecordingTime] = useSetting(SETTINGS.button_max_recording_time.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore(state => state.connected)
+  const glassesConnected = useGlassesStore((state) => state.connected)
 
   // Derive video resolution from settings
   const videoResolution: VideoResolution = (() => {
@@ -63,7 +63,7 @@ export default function CameraSettingsScreen() {
 
     try {
       setPhotoSize(size)
-      await bridge.updateButtonPhotoSize(size)
+      await CoreModule.updateButtonPhotoSize(size)
     } catch (error) {
       console.error("Failed to update photo size:", error)
     }
@@ -82,7 +82,6 @@ export default function CameraSettingsScreen() {
       const fps = resolution === "4K" ? 15 : 30
 
       setVideoSettings({width, height, fps})
-      await bridge.updateButtonVideoSettings(width, height, fps)
     } catch (error) {
       console.error("Failed to update video resolution:", error)
     }
@@ -196,46 +195,44 @@ export default function CameraSettingsScreen() {
           })}
         </View>
 
-        {Platform.OS === "ios" && (
-          <View style={themed($settingsGroup)}>
-            <Text style={themed($settingLabel)}>Maximum Recording Time</Text>
-            <Text style={themed($settingSubtitle)}>Maximum duration for button-triggered video recording</Text>
+        <View style={themed($settingsGroup)}>
+          <Text style={themed($settingLabel)}>Maximum Recording Time</Text>
+          <Text style={themed($settingSubtitle)}>Maximum duration for button-triggered video recording</Text>
 
-            {Object.entries(MAX_RECORDING_TIME_LABELS).map(([value, label], index, arr) => {
-              const isFirst = index === 0
-              const isLast = index === arr.length - 1
-              return (
-                <TouchableOpacity
-                  key={value}
-                  style={[
-                    themed($optionItem),
-                    {
-                      borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
-                      borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
-                      borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
-                      borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
-                      borderWidth: maxRecordingTime === parseInt(value.replace("m", "")) ? 1 : undefined,
-                      borderColor:
-                        maxRecordingTime === parseInt(value.replace("m", "")) ? theme.colors.primary : undefined,
-                    },
-                  ]}
-                  onPress={() => handleMaxRecordingTimeChange(value as MaxRecordingTime)}>
-                  <Text style={themed($optionText)}>{label}</Text>
-                  {maxRecordingTime === parseInt(value.replace("m", "")) && (
-                    <Icon name="check" size={24} color={theme.colors.primary} />
-                  )}
-                </TouchableOpacity>
-              )
-            })}
-          </View>
-        )}
+          {Object.entries(MAX_RECORDING_TIME_LABELS).map(([value, label], index, arr) => {
+            const isFirst = index === 0
+            const isLast = index === arr.length - 1
+            return (
+              <TouchableOpacity
+                key={value}
+                style={[
+                  themed($optionItem),
+                  {
+                    borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+                    borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
+                    borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+                    borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
+                    borderWidth: maxRecordingTime === parseInt(value.replace("m", "")) ? 1 : undefined,
+                    borderColor:
+                      maxRecordingTime === parseInt(value.replace("m", "")) ? theme.colors.primary : undefined,
+                  },
+                ]}
+                onPress={() => handleMaxRecordingTimeChange(value as MaxRecordingTime)}>
+                <Text style={themed($optionText)}>{label}</Text>
+                {maxRecordingTime === parseInt(value.replace("m", "")) && (
+                  <Icon name="check" size={24} color={theme.colors.primary} />
+                )}
+              </TouchableOpacity>
+            )
+          })}
+        </View>
       </ScrollView>
     </Screen>
   )
 }
 
 const $settingsGroup: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingVertical: 14,
   paddingHorizontal: 16,
   borderRadius: spacing.s4,

@@ -27,6 +27,7 @@ import { User } from "../../models/user.model";
 import appService from "../core/app.service";
 import * as developerService from "../core/developer.service";
 import { logger as rootLogger } from "../logging/pino-logger";
+import { metricsService } from "../metrics";
 import { PosthogService } from "../logging/posthog.service";
 import { IWebSocket, WebSocketReadyState } from "../websocket/types";
 
@@ -1210,33 +1211,22 @@ export class AppManager {
       const user = await User.findOrCreateUser(this.userSession.userId);
       const userSettings = user.getAppSettings(packageName) || app?.settings || [];
 
-      // Get user's AugmentOS system settings with fallback to defaults
-      // NOTE: user.augmentosSettings is legacy - new settings go through UserSettings model
-      // This fallback is kept for backward compatibility with apps expecting augmentosSettings in CONNECTION_ACK
-      const userAugmentosSettings = user.augmentosSettings || {
-        useOnboardMic: false,
-        contextualDashboard: true,
-        headUpAngle: 20,
-        brightness: 50,
-        autoBrightness: false,
-        sensingEnabled: true,
-        alwaysOnStatusBar: false,
-        bypassVad: false,
-        bypassAudioEncoding: false,
-        metricSystemEnabled: false,
-      };
+      // Load MentraOS system settings from UserSettingsManager (single source of truth)
+      // Maps from REST keys (snake_case) to SDK keys (camelCase) for backward compatibility
+      const mentraosSettings = this.userSession.userSettingsManager.buildMentraosSettings();
 
       // Send connection acknowledgment with capabilities
       const ackMessage = {
         type: CloudToAppMessageType.CONNECTION_ACK,
         sessionId: sessionId,
         settings: userSettings,
-        augmentosSettings: userAugmentosSettings,
+        mentraosSettings: mentraosSettings,
         capabilities: this.userSession.getCapabilities(),
         timestamp: new Date(),
       };
 
       ws.send(JSON.stringify(ackMessage));
+      metricsService.incrementMiniappMessagesOut();
 
       // Send full device state snapshot immediately after CONNECTION_ACK
       this.userSession.deviceManager.sendFullStateSnapshot(ws);
@@ -1663,6 +1653,7 @@ export class AppManager {
         try {
           // Send message successfully
           websocket.send(JSON.stringify(message));
+          metricsService.incrementMiniappMessagesOut();
           this.logger.debug(
             {
               packageName,

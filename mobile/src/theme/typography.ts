@@ -102,7 +102,7 @@ export const typography = {
   /**
    * The primary font. Used in most places.
    */
-  primary: fonts.redHatDisplay,
+  primary: Platform.select({ios: fonts.sfProRounded, android: fonts.redHatDisplay}),
   /**
    * An alternate font used for perhaps titles and stuff.
    */

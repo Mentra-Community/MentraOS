@@ -118,11 +118,7 @@ export default function SignupScreen() {
 
   return (
     <Screen preset="fixed" style={themed($container)}>
-      <Header
-        title={translate("login:signup.title")}
-        leftIcon="chevron-left"
-        onLeftPress={handleBack}
-      />
+      <Header title={translate("login:signup.title")} leftIcon="chevron-left" onLeftPress={handleBack} />
       <ScrollView
         contentContainerStyle={themed($scrollContent)}
         showsVerticalScrollIndicator={false}
@@ -131,7 +127,9 @@ export default function SignupScreen() {
           {step === 1 ? (
             // Step 1: Email input
             <>
-              <Text preset="heading" style={themed($heading)}>{translate("login:signup.subtitle")}</Text>
+              <Text preset="heading" style={themed($heading)}>
+                {translate("login:signup.subtitle")}
+              </Text>
 
               <View style={themed($form)}>
                 <View style={themed($inputGroup)}>
@@ -173,7 +171,9 @@ export default function SignupScreen() {
           ) : (
             // Step 2: Password + Confirm password
             <>
-              <Text preset="heading" style={themed($heading)}>{translate("login:signup.createPasswordSubtitle")}</Text>
+              <Text preset="heading" style={themed($heading)}>
+                {translate("login:signup.createPasswordSubtitle")}
+              </Text>
 
               <View style={themed($emailRow)}>
                 <Text style={themed($emailText)}>{email}</Text>
@@ -249,7 +249,7 @@ export default function SignupScreen() {
                   disabled={!isStep2Valid || isLoading}
                   {...(isLoading && {
                     LeftAccessory: () => (
-                      <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
+                      <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: 8}} />
                     ),
                   })}
                 />
@@ -263,7 +263,7 @@ export default function SignupScreen() {
       <Modal visible={isLoading} transparent={true} animationType="fade">
         <View style={themed($modalOverlay)}>
           <View style={themed($modalContent)}>
-            <ActivityIndicator size="large" color={theme.colors.tint} style={{marginBottom: theme.spacing.s4}} />
+            <ActivityIndicator size="large" color={theme.colors.foreground} style={{marginBottom: theme.spacing.s4}} />
             <Text preset="bold" style={{color: theme.colors.text}}>
               {translate("login:signup.creatingAccount")}
             </Text>

@@ -9,7 +9,7 @@ import {useState, useRef, useEffect, useCallback, useMemo, memo, type ElementRef
 // eslint-disable-next-line no-restricted-imports
 import {View, TouchableOpacity, Modal, StatusBar, Text, Dimensions} from "react-native"
 import Gallery, {GalleryRef} from "react-native-awesome-gallery"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 import Video from "react-native-video"
 
@@ -35,6 +35,7 @@ interface VideoPlayerItemProps {
 interface ImageItemProps {
   photo: PhotoInfo
   setImageDimensions: (dimensions: {width: number; height: number}) => void
+  isActive: boolean // Whether this is the currently visible image
 }
 
 /**
@@ -287,9 +288,8 @@ const VideoPlayerItem = memo(function VideoPlayerItem({photo, isActive}: VideoPl
 /**
  * Image component for gallery items
  */
-const ImageItem = memo(function ImageItem({photo, setImageDimensions}: ImageItemProps) {
+const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive: _isActive}: ImageItemProps) {
   const {themed} = useAppTheme()
-  const [isLoading, setIsLoading] = useState(true)
   const hasReportedDimensions = useRef(false)
 
   const imageUri = photo.filePath
@@ -300,40 +300,26 @@ const ImageItem = memo(function ImageItem({photo, setImageDimensions}: ImageItem
 
   // Memoize styles to prevent expo-image from restarting loads on iOS
   const imageStyle = useMemo(() => themed($image), [themed])
-  const imageLoadingStyle = useMemo(() => [themed($image), themed($imageLoading)], [themed])
 
   return (
     <View style={themed($imageContainer)}>
-      {/* Show thumbnail immediately while full image loads */}
-      {isLoading && photo.thumbnailPath && (
-        <Image source={{uri: photo.thumbnailPath}} style={imageStyle} contentFit="contain" transition={0} />
-      )}
-
       <Image
         source={{uri: imageUri}}
-        style={isLoading ? imageLoadingStyle : imageStyle}
+        style={imageStyle}
         contentFit="contain"
         priority="high"
         cachePolicy="memory-disk"
-        transition={200}
+        transition={100}
+        allowDownscaling={false}
         onLoad={(e) => {
           // Report dimensions back to Gallery for proper scaling - only once
           if (e.source?.width && e.source?.height && !hasReportedDimensions.current) {
             hasReportedDimensions.current = true
-            console.log("📸 [ImageItem] Image loaded:", photo.name, "dimensions:", e.source.width, "x", e.source.height)
             setImageDimensions({
               width: e.source.width,
               height: e.source.height,
             })
-            setIsLoading(false)
           }
-        }}
-        onLoadStart={() => {
-          console.log("📸 [ImageItem] Image loading started:", photo.name)
-        }}
-        onError={(error) => {
-          console.warn("📸 [ImageItem] Image load warning:", photo.name, error.error)
-          setIsLoading(false)
         }}
       />
     </View>
@@ -351,7 +337,7 @@ interface CustomOverlayProps {
 }
 
 function CustomOverlay({onClose, currentIndex, total, onShare}: CustomOverlayProps) {
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const {themed} = useAppTheme()
 
   return (
@@ -402,7 +388,7 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
   }, [visible, initialIndex])
 
   // Memoized renderItem to prevent unnecessary re-renders of gallery items
-  // Only videos need currentIndex (for play/pause), images don't care
+  // Pass isActive to both videos and images for optimal loading
   const renderItem = useCallback(
     ({
       item,
@@ -431,7 +417,7 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         return <VideoPlayerItem photo={item} isActive={isActiveItem} />
       }
 
-      return <ImageItem photo={item} setImageDimensions={setImageDimensions} />
+      return <ImageItem photo={item} setImageDimensions={setImageDimensions} isActive={isActiveItem} />
     },
     [currentIndex],
   )
@@ -460,10 +446,10 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         }}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        numToRender={5}
-        emptySpaceWidth={24}
-        maxScale={4}
-        doubleTapScale={2.5}
+        numToRender={3}
+        emptySpaceWidth={16}
+        maxScale={3}
+        doubleTapScale={2}
         pinchEnabled={true}
         swipeEnabled={true}
         doubleTapEnabled={true}
@@ -639,10 +625,6 @@ const $imageContainer: ThemedStyle<any> = () => ({
 const $image: ThemedStyle<any> = () => ({
   width: SCREEN_WIDTH,
   height: SCREEN_HEIGHT,
-})
-
-const $imageLoading: ThemedStyle<any> = () => ({
-  opacity: 0,
 })
 
 const $thumbnailOverlay: ThemedStyle<any> = () => ({

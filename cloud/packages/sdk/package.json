@@ -36,7 +36,7 @@
     "build:js-only": "bun run clean && bun run build:js",
     "build:full": "bun run clean && bun run build:js && bun run build:types",
     "clean": "rm -rf dist",
-    "build:js": "bun build src/index.ts src/display-utils.ts --outdir dist --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external boxen --external chalk --external cookie-parser --external dotenv --external express --external jimp --external jsonwebtoken --external jsrsasign --external multer --external pino --external pino-pretty --external strip-ansi --external ws",
+    "build:js": "bun build src/index.ts src/display-utils.ts --outdir dist --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external chalk --external cookie-parser --external dotenv --external express --external jimp --external jsonwebtoken --external jsrsasign --external multer --external pino --external pino-pretty --external strip-ansi --external ws",
     "build:types": "bun x tsc --build --force",
     "dev": "echo 'No build needed in dev mode - using source files directly'",
     "prepare": "bun run build",
@@ -47,7 +47,6 @@
     "@mentra/display-utils": "^1.0.0",
     "@mentra/types": "^1.0.0-beta.1",
     "axios": "^1.8.1",
-    "boxen": "^8.0.1",
     "chalk": "^5.6.2",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.0",
@@ -57,9 +56,11 @@
     "jsrsasign": "^11.1.0",
     "multer": "^2.0.1",
     "pino": "^9.6.0",
-    "pino-pretty": "^13.0.0",
     "strip-ansi": "^7.1.2",
     "ws": "^8.18.2"
+  },
+  "optionalDependencies": {
+    "pino-pretty": "^13.0.0"
   },
   "bundledDependencies": [
     "@mentra/display-utils",

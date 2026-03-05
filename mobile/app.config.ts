@@ -24,12 +24,14 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     jsEngine: "hermes",
     assetBundlePatterns: ["**/*"],
     android: {
-      icon: "./assets/app-icons/ic_launcher.png",
+      // icon: "./assets/app-icons/ic_launcher.png",
       package: "com.mentra.mentra",
-      versionCode: 77,
+      googleServicesFile: "./google-services.json",
+      versionCode: 92,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
-        backgroundImage: "./assets/app-icons/ic_launcher.png",
+        // backgroundImage: "./assets/app-icons/ic_launcher.png",
+        backgroundColor: "#fff",
       },
       allowBackup: false,
       permissions: [
@@ -59,6 +61,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       supportsTablet: false,
       requireFullScreen: true,
       bundleIdentifier: "com.mentra.mentra",
+      googleServicesFile: "./GoogleService-Info.plist",
       associatedDomains: ["applinks:apps.mentra.glass"],
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
@@ -130,17 +133,22 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         {
           photosPermission: "Allow MentraOS to save photos from your glasses.",
           savePhotosPermission: "Allow MentraOS to save photos from your glasses.",
-          isAccessMediaLocationEnabled: true,
+          // Disabled - we save photos from glasses, we don't need to read EXIF location from user's library
+          // Google Play rejects ACCESS_MEDIA_LOCATION for apps without core photo gallery functionality
+          isAccessMediaLocationEnabled: false,
         },
       ],
       [
         "expo-splash-screen",
         {
-          image: "./assets/splash/splash.png",
-          resizeMode: "contain",
-          backgroundColor: "#fffaf0",
+          image: "./assets/logo/logo_light.png",
+          resizeMode: "cover",
+          imageWidth: 100,
+          backgroundColor: "#fff",
           dark: {
-            backgroundColor: "#2D2C2F",
+            backgroundColor: "#fff",
+            // backgroundColor: "#171717",
+            // image: "./assets/logo/logo_dark.png",
           },
         },
       ],
@@ -179,6 +187,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             compileSdkVersion: 36,
           },
           ios: {
+            deploymentTarget: "15.5", // for react-native-zip-archive
             extraPods: [
               {
                 name: "SDWebImage",
@@ -218,6 +227,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           locationAlwaysAndWhenInUsePermission: "Allow MentraOS to use your location.",
         },
       ],
+      "@react-native-firebase/app",
       "expo-audio",
       [
         "expo-video",

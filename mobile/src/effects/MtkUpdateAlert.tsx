@@ -1,23 +1,20 @@
 import {useEffect} from "react"
 
-import showAlert from "@/utils/AlertUtils"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 /**
- * Effect that listens for MTK firmware update completion
- * and shows an alert to the user instructing them to restart their glasses
+ * Effect that listens for MTK firmware update completion.
+ *
+ * Note: The OTA progress screen now handles the mtk_update_complete event
+ * and transitions from "installing" to "completed" state.
+ * This effect is kept for logging purposes but no longer shows an alert
+ * to avoid duplicate notifications when the OTA screen is active.
  */
 export function MtkUpdateAlert() {
   useEffect(() => {
     const handleMtkUpdateComplete = (data: {message: string; timestamp: number}) => {
       console.log("MTK firmware update complete:", data.message)
-
-      showAlert("Firmware Update Complete", data.message, [
-        {
-          text: "OK",
-          style: "default",
-        },
-      ])
+      // Alert removed - OTA progress screen handles the UI transition
     }
 
     // Subscribe to MTK update complete events

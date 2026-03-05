@@ -11,15 +11,18 @@ import LandingPage from "./pages/LandingPage"
 import DashboardHome from "./pages/DashboardHome"
 
 import LoginOrSignup from "./pages/AuthPage"
-import AppList from "./pages/AppList"
-import CreateApp from "./pages/CreateApp"
-import EditApp from "./pages/EditApp"
+import MiniAppList from "./pages/MiniAppList"
+import CreateMiniApp from "./pages/CreateMiniApp"
+import EditMiniApp from "./pages/EditMiniApp"
 import OrganizationSettings from "./pages/OrganizationSettings"
 import Members from "./pages/Members"
 import AdminPanel from "./pages/AdminPanel"
 import NotFound from "./pages/NotFound"
 import CLIKeys from "./pages/CLIKeys"
-import {AuthProvider, useAuth, ForgotPasswordPage, ResetPasswordPage} from "@mentra/shared"
+import StoreGuidelines from "./pages/StoreGuidelines"
+import IncidentsList from "./pages/IncidentsList"
+import IncidentDetail from "./pages/IncidentDetail"
+import {AuthProvider, useAuth, ForgotPasswordPage, ResetPasswordPage, Spinner} from "@mentra/shared"
 import {OrganizationProvider} from "./context/OrganizationContext"
 import {useAccountStore} from "./stores/account.store"
 import {useOrgStore} from "./stores/orgs.store"
@@ -71,7 +74,7 @@ function ProtectedRoute({
   if (isLoading) {
     return (
       <div className="h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        <Spinner size="lg" />
       </div>
     )
   }
@@ -164,7 +167,7 @@ const AppShell: React.FC = () => {
           path="/apps"
           element={
             <ProtectedRoute>
-              <AppList />
+              <MiniAppList />
             </ProtectedRoute>
           }
         />
@@ -172,7 +175,7 @@ const AppShell: React.FC = () => {
           path="/apps/create"
           element={
             <ProtectedRoute>
-              <CreateApp />
+              <CreateMiniApp />
             </ProtectedRoute>
           }
         />
@@ -180,7 +183,7 @@ const AppShell: React.FC = () => {
           path="/apps/:packageName/edit"
           element={
             <ProtectedRoute>
-              <EditApp />
+              <EditMiniApp />
             </ProtectedRoute>
           }
         />
@@ -213,10 +216,37 @@ const AppShell: React.FC = () => {
         />
 
         <Route
+          path="/store-guidelines"
+          element={
+            <ProtectedRoute>
+              <StoreGuidelines />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
           path="/admin"
           element={
             <ProtectedRoute requireAdmin={true}>
               <AdminPanel />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin/incidents"
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <IncidentsList />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin/incidents/:incidentId"
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <IncidentDetail />
             </ProtectedRoute>
           }
         />

@@ -1,5 +1,5 @@
 import {useState, useEffect, useRef} from "react"
-import {ScrollView, View, ViewStyle, TextStyle, NativeScrollEvent, NativeSyntheticEvent} from "react-native"
+import {ScrollView, View, ViewStyle, TextStyle, NativeScrollEvent, NativeSyntheticEvent, Dimensions} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {useSharedValue, useAnimatedStyle, withSpring} from "react-native-reanimated"
 
@@ -8,9 +8,12 @@ import {Text} from "@/components/ignite/Text"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
-const MIN_Y = 60
-const MIN_X = 0
+const TOGGLE_MIN_X = -54
+const TOGGLE_MAX_X = 70
+const OPEN_MIN_X = 0
+const OPEN_PADDING = 80
 
 export const ConsoleLogger = () => {
   const {themed} = useAppTheme()
@@ -21,15 +24,22 @@ export const ConsoleLogger = () => {
   const consoleOverrideSetup = useRef(false)
   const isAtBottom = useRef(true)
 
+  const {width, height} = Dimensions.get("window")
+  const insets = useSaferAreaInsets()
+  const openRightEdge = width - (insets.right + OPEN_PADDING)
+  const openBottomEdge = height - (insets.bottom + OPEN_PADDING)
+  const toggleRightEdge = width - TOGGLE_MAX_X
+  const toggleBottomEdge = height - (insets.bottom + 80)
+
   // Console window position
-  const panX = useSharedValue(MIN_X)
-  const panY = useSharedValue(MIN_Y)
+  const panX = useSharedValue(OPEN_MIN_X)
+  const panY = useSharedValue(insets.top)
   const panStartX = useSharedValue(0)
   const panStartY = useSharedValue(0)
 
   // Toggle button position
-  const toggleX = useSharedValue(0)
-  const toggleY = useSharedValue(0)
+  const toggleX = useSharedValue(toggleRightEdge - 70)
+  const toggleY = useSharedValue(insets.top)
   const toggleStartX = useSharedValue(0)
   const toggleStartY = useSharedValue(0)
 
@@ -43,11 +53,17 @@ export const ConsoleLogger = () => {
       panY.value = panStartY.value + event.translationY
     })
     .onEnd(() => {
-      if (panY.value < MIN_Y) {
-        panY.value = withSpring(MIN_Y)
+      if (panY.value < insets.top) {
+        panY.value = withSpring(insets.top)
       }
-      if (panX.value < MIN_X) {
-        panX.value = withSpring(MIN_X)
+      if (panX.value < OPEN_MIN_X) {
+        panX.value = withSpring(OPEN_MIN_X)
+      }
+      if (panX.value > openRightEdge) {
+        panX.value = withSpring(openRightEdge)
+      }
+      if (panY.value > openBottomEdge) {
+        panY.value = withSpring(openBottomEdge)
       }
     })
 
@@ -59,6 +75,20 @@ export const ConsoleLogger = () => {
     .onUpdate((event) => {
       toggleX.value = toggleStartX.value + event.translationX
       toggleY.value = toggleStartY.value + event.translationY
+    })
+    .onEnd(() => {
+      if (toggleY.value < insets.top) {
+        toggleY.value = withSpring(insets.top)
+      }
+      if (toggleX.value < TOGGLE_MIN_X) {
+        toggleX.value = withSpring(TOGGLE_MIN_X)
+      }
+      if (toggleX.value > toggleRightEdge) {
+        toggleX.value = withSpring(toggleRightEdge)
+      }
+      if (toggleY.value > toggleBottomEdge) {
+        toggleY.value = withSpring(toggleBottomEdge)
+      }
     })
 
   const panAnimatedStyle = useAnimatedStyle(() => ({
@@ -143,8 +173,8 @@ export const ConsoleLogger = () => {
   if (!isVisible) {
     return (
       <GestureDetector gesture={toggleGesture}>
-        <Animated.View className="absolute bottom-28 right-2 z-1" style={toggleAnimatedStyle}>
-          <Button text="Show Console" preset="primary" compact onPress={() => setIsVisible(true)} />
+        <Animated.View className="absolute top-0 left-0 z-1" style={toggleAnimatedStyle}>
+          <Button text="Show Console" preset="primary" compact onPress={() => setIsVisible(true)} hitSlop={10} />
         </Animated.View>
       </GestureDetector>
     )

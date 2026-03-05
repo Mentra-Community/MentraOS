@@ -1,4 +1,5 @@
 import Svg, {Rect, Path, SvgProps} from "react-native-svg"
+import {useAppTheme} from "@/contexts/ThemeContext"
 
 interface LogoProps extends SvgProps {
   width?: number
@@ -6,10 +7,14 @@ interface LogoProps extends SvgProps {
   fill?: string
 }
 
-export const MentraLogoStandalone: React.FC<LogoProps> = ({width = 33, height = 16, fill = "#00B869", ...props}) => (
-  <Svg width={width} height={height} viewBox="0 0 33 16" fill="none" {...props}>
-    <Rect y={8.88867} width={7.81818} height={7.11111} fill={fill} />
-    <Path d="M6.18182 0L20.2727 8.88889V16L6.18182 7.11111V0Z" fill={fill} />
-    <Path d="M18.9091 0L33 8.88889V16L18.9091 7.11111V0Z" fill={fill} />
+export const MentraLogoStandalone: React.FC<LogoProps> = ({width = 33, height = 16}) => {
+  const {theme} = useAppTheme()
+  const isDark = theme.isDark
+  const color = isDark ? "#36DD89" : "#00B869"
+  return (
+  <Svg width={width} height={height} viewBox="0 0 50 27" fill="none">
+    <Rect y={14.8072} width={11.8457} height={11.8457} fill={color} />
+    <Path d="M9.36639 0L30.7163 14.8072V26.6529L9.36639 11.8457V0Z" fill={color} />
+    <Path d="M28.6501 0L50 14.8072V26.6529L28.6501 11.8457V0Z" fill={color} />
   </Svg>
-)
+)}

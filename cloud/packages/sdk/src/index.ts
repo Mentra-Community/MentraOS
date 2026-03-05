@@ -90,6 +90,16 @@ export * from "./app/index";
 // Logging exports
 export * from "./logging/logger";
 
+// Error classes
+export {
+  MentraError,
+  MentraAuthError,
+  MentraConnectionError,
+  MentraTimeoutError,
+  MentraValidationError,
+  MentraPermissionError,
+} from "./logging/errors";
+
 // Re-export common types for convenience
 // This allows developers to import commonly used types directly from the package root
 // without having to know exactly which file they come from

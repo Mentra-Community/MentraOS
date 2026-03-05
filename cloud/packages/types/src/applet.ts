@@ -2,7 +2,7 @@
  * @mentra/types - App/Applet types for client interfaces
  */
 
-import {HardwareRequirement} from "./hardware"
+import { HardwareRequirement } from "./hardware";
 
 /**
  * App execution model types
@@ -33,7 +33,7 @@ export interface AppletPermission {
 
 /**
  * Minimal app interface for client home screen display
- * Optimized for fast rendering - only essential fields (9 fields)
+ * Optimized for fast rendering - only essential fields
  *
  * This is the client-facing interface used by mobile apps.
  * Internal cloud services use AppI from models (more fields).
@@ -48,4 +48,8 @@ export interface AppletInterface {
   running: boolean;
   healthy: boolean;
   hardwareRequirements: HardwareRequirement[];
+  /** ISO date string when the app was installed */
+  installedDate?: string;
+  /** ISO date string when the app was last run. Undefined if never run (app is "new") */
+  lastActiveAt?: string;
 }

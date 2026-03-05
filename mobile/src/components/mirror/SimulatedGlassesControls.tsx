@@ -1,7 +1,7 @@
 import {useFocusEffect} from "@react-navigation/native"
 import {useCallback, useState} from "react"
 import {TouchableOpacity, ViewStyle} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import Icon from "react-native-vector-icons/MaterialIcons"
 
 import {Text} from "@/components/ignite"
@@ -14,7 +14,7 @@ interface SimulatedGlassesControlsProps {}
 
 export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> = () => {
   const {themed, theme} = useAppTheme()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const [showDashboard, setShowDashboard] = useState(false)
   const {setView} = useDisplayStore()
 

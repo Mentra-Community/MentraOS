@@ -55,7 +55,7 @@ class MMKVStorage {
       // return the key value pair of any keys that start with the given key and contain a colon:
       const keys = this.store.getAllKeys()
 
-      const subKeys = keys.filter(k => k.startsWith(key) && k.includes(":"))
+      const subKeys = keys.filter((k) => k.startsWith(key) && k.includes(":"))
 
       if (subKeys.length === 0) {
         throw new Error(`No subkeys found for ${key}`)

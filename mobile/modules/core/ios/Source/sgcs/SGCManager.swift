@@ -1,46 +1,11 @@
+import Foundation
+
 @MainActor
 protocol SGCManager {
-    // MARK: - Device Information
+    // MARK: - hard coded device properties:
 
     var type: String { get set }
-    var ready: Bool { get }
-    var connectionState: String { get }
-
-    // info:
-    var glassesAppVersion: String { get }
-    var glassesBuildNumber: String { get }
-    var glassesDeviceModel: String { get }
-    var glassesAndroidVersion: String { get }
-    var glassesOtaVersionUrl: String { get }
-    var glassesFirmwareVersion: String { get }
-    var glassesBtMacAddress: String { get }
-    var glassesSerialNumber: String { get }
-    var glassesStyle: String { get }
-    var glassesColor: String { get }
-
-    // MARK: - Hardware Status
-
     var hasMic: Bool { get }
-    var micEnabled: Bool { get }
-    var batteryLevel: Int { get }
-    var isHeadUp: Bool { get }
-
-    // MARK: - Case Status
-
-    var caseOpen: Bool { get }
-    var caseRemoved: Bool { get }
-    var caseCharging: Bool { get }
-    var caseBatteryLevel: Int { get }
-
-    // MARK: - Network Status
-
-    var wifiSsid: String { get }
-    var wifiConnected: Bool { get }
-    var wifiLocalIp: String { get }
-    var isHotspotEnabled: Bool { get }
-    var hotspotSsid: String { get }
-    var hotspotPassword: String { get }
-    var hotspotGatewayIp: String { get }
 
     // MARK: - Audio Control
 
@@ -55,7 +20,7 @@ protocol SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, silent: Bool
+        compress: String?, flash: Bool, sound: Bool
     )
     func startRtmpStream(_ message: [String: Any])
     func stopRtmpStream()
@@ -63,7 +28,7 @@ protocol SGCManager {
     func startBufferRecording()
     func stopBufferRecording()
     func saveBufferVideo(requestId: String, durationSeconds: Int)
-    func startVideoRecording(requestId: String, save: Bool, silent: Bool)
+    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
     func stopVideoRecording(requestId: String)
 
     // MARK: - Button Settings
@@ -90,6 +55,8 @@ protocol SGCManager {
     func getBatteryStatus()
     func setSilentMode(_ enabled: Bool)
     func exit()
+    func sendShutdown()
+    func sendReboot()
     func sendRgbLedControl(
         requestId: String, packageName: String?, action: String, color: String?, ontime: Int,
         offtime: Int, count: Int
@@ -103,6 +70,7 @@ protocol SGCManager {
     func connectById(_ id: String)
     func getConnectedBluetoothName() -> String?
     func cleanup()
+    func ping()
 
     // MARK: - Network Management
 
@@ -110,41 +78,57 @@ protocol SGCManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
+    func sendOtaStart()
 
     // MARK: - User Context (for crash reporting)
 
     func sendUserEmailToGlasses(_ email: String)
 
+    // MARK: - Incident Reporting
+
+    func sendIncidentId(_ incidentId: String)
+
     // MARK: - Gallery
 
     func queryGalleryStatus()
     func sendGalleryMode()
+
+    // MARK: - Version Info
+
+    func requestVersionInfo()
 }
 
+// doesn't seem to work for concurrency reasons :(
+// we can make read-only getters for convienence though:
 extension SGCManager {
-    func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool) {
-        sendJson(jsonOriginal, wakeUp: wakeUp, requireAck: true)
-    }
-}
+    // MARK: - Default GlassesStore-backed property implementations
 
-//// template:
-// var glassesBuildNumber = ""
-// var glassesDeviceModel = ""
-// var glassesAndroidVersion = ""
-// var glassesOtaVersionUrl = ""
-// var glassesSerialNumber = ""
-// var glassesStyle = ""
-// var glassesColor = ""
-// var caseBatteryLevel = 0
-// var glassesAppVersion = ""
-//
-//// Data Properties
-// @Published var batteryLevel: Int = -1
-// @Published var isCharging: Bool = false
-// @Published var wifiConnected: Bool = false
-// @Published var wifiSsid: String = ""
-// @Published var wifiLocalIp: String = ""
-// @Published var isHotspotEnabled: Bool = false
-// @Published var hotspotSsid: String = ""
-// @Published var hotspotPassword: String = ""
-// @Published var hotspotGatewayIp: String = "" // The gateway IP to connect to when on hotspot
+    var fullyBooted: Bool { GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }
+    var connected: Bool { GlassesStore.shared.get("glasses", "connected") as? Bool ?? false }
+    var appVersion: String { GlassesStore.shared.get("glasses", "appVersion") as? String ?? "" }
+    var buildNumber: String { GlassesStore.shared.get("glasses", "buildNumber") as? String ?? "" }
+    var deviceModel: String { GlassesStore.shared.get("glasses", "deviceModel") as? String ?? "" }
+    var androidVersion: String { GlassesStore.shared.get("glasses", "androidVersion") as? String ?? "" }
+    var otaVersionUrl: String { GlassesStore.shared.get("glasses", "otaVersionUrl") as? String ?? "" }
+    var firmwareVersion: String { GlassesStore.shared.get("glasses", "fwVersion") as? String ?? "" }
+    var btMacAddress: String { GlassesStore.shared.get("glasses", "btMacAddress") as? String ?? "" }
+    var serialNumber: String { GlassesStore.shared.get("glasses", "serialNumber") as? String ?? "" }
+    var style: String { GlassesStore.shared.get("glasses", "style") as? String ?? "" }
+    var color: String { GlassesStore.shared.get("glasses", "color") as? String ?? "" }
+    var micEnabled: Bool { GlassesStore.shared.get("glasses", "micEnabled") as? Bool ?? false }
+    var vadEnabled: Bool { GlassesStore.shared.get("glasses", "vadEnabled") as? Bool ?? false }
+    var batteryLevel: Int { GlassesStore.shared.get("glasses", "batteryLevel") as? Int ?? -1 }
+    var headUp: Bool { GlassesStore.shared.get("glasses", "headUp") as? Bool ?? false }
+    var charging: Bool { GlassesStore.shared.get("glasses", "charging") as? Bool ?? false }
+    var caseOpen: Bool { GlassesStore.shared.get("glasses", "caseOpen") as? Bool ?? true }
+    var caseRemoved: Bool { GlassesStore.shared.get("glasses", "caseRemoved") as? Bool ?? true }
+    var caseCharging: Bool { GlassesStore.shared.get("glasses", "caseCharging") as? Bool ?? false }
+    var caseBatteryLevel: Int { GlassesStore.shared.get("glasses", "caseBatteryLevel") as? Int ?? -1 }
+    var wifiSsid: String { GlassesStore.shared.get("glasses", "wifiSsid") as? String ?? "" }
+    var wifiConnected: Bool { GlassesStore.shared.get("glasses", "wifiConnected") as? Bool ?? false }
+    var wifiLocalIp: String { GlassesStore.shared.get("glasses", "wifiLocalIp") as? String ?? "" }
+    var hotspotEnabled: Bool { GlassesStore.shared.get("glasses", "hotspotEnabled") as? Bool ?? false }
+    var hotspotSsid: String { GlassesStore.shared.get("glasses", "hotspotSsid") as? String ?? "" }
+    var hotspotPassword: String { GlassesStore.shared.get("glasses", "hotspotPassword") as? String ?? "" }
+    var hotspotGatewayIp: String { GlassesStore.shared.get("glasses", "hotspotGatewayIp") as? String ?? "" }
+}

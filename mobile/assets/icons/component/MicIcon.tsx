@@ -14,8 +14,8 @@ interface MicIconProps {
 
 const MicIcon = ({color, width = 17, height = 16, withBackground = false}: MicIconProps) => {
   const {theme} = useAppTheme()
-  const glassesConnected = useGlassesStore(state => state.connected)
-  const glassesMicEnabled = useGlassesStore(state => state.micEnabled)
+  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesMicEnabled = useGlassesStore((state) => state.micEnabled)
 
   const iconColor = color || theme.colors.icon
 

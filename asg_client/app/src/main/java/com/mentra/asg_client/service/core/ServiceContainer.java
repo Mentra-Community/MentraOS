@@ -176,6 +176,11 @@ public class ServiceContainer {
     private void wireUpPhoneControlledOta() {
         Log.d("ServiceContainer", "Wiring up phone-controlled OTA...");
 
+        // Always set CommunicationManager on OtaCommandHandler for error reporting
+        // This is needed even if OtaHelper isn't ready yet
+        OtaCommandHandler.setCommunicationManager(communicationManager);
+        Log.i("ServiceContainer", "✅ CommunicationManager set on OtaCommandHandler");
+
         OtaHelper otaHelper = OtaHelper.getInstance();
         if (otaHelper != null) {
             // Set CommunicationManager as the PhoneConnectionProvider

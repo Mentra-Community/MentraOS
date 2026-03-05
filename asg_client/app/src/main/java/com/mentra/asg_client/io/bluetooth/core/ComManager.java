@@ -198,7 +198,6 @@ public class ComManager {
     public boolean sendOta(byte[] data) {
         if (mbStart && mOS != null && mbOtaUpdating) {
             try {
-                Log.d(TAG, ">>> OTA sending " + data.length + " bytes");
                 mOS.write(data);
                 mOS.flush();
                 return true;
@@ -206,7 +205,7 @@ public class ComManager {
                 Log.e(TAG, "Error writing OTA data to serial port: " + e.getMessage());
             }
         } else {
-            Log.d(TAG, "Cannot send OTA data - mbStart=" + mbStart + ", mOS=" + mOS + ", mbOtaUpdating=" + mbOtaUpdating);
+            Log.e(TAG, "Cannot send OTA data - mbStart=" + mbStart + ", mOS=" + mOS + ", mbOtaUpdating=" + mbOtaUpdating);
         }
         return false;
     }
@@ -234,9 +233,6 @@ public class ComManager {
                     try {
                         readSize = mIS.read(mReadBuf);
                         if (readSize > 0) {
-                            // Simple log with byte count only
-                            Log.d(TAG, "UART read: " + readSize + " bytes");
-
                             // Route data based on OTA state
                             if (mbOtaUpdating) {
                                 if (mOtaListener != null) {

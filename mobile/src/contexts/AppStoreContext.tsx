@@ -107,7 +107,7 @@ export const AppStoreProvider: React.FC<{children: React.ReactNode}> = ({childre
     // IMPORTANT: Register listener BEFORE checking token to prevent race condition
     // where CORE_TOKEN_SET fires between our check and listener registration
     const handleCoreTokenSet = () => {
-      prefetchWebview().catch(error => {
+      prefetchWebview().catch((error) => {
         console.error("AppStoreProvider: Error during core token prefetch:", error)
       })
     }
@@ -116,7 +116,7 @@ export const AppStoreProvider: React.FC<{children: React.ReactNode}> = ({childre
 
     // THEN check if we already have a core token
     if (restComms.getCoreToken()) {
-      prefetchWebview().catch(error => {
+      prefetchWebview().catch((error) => {
         console.error("AppStoreProvider: Error during initial prefetch:", error)
       })
     }
@@ -151,7 +151,7 @@ export const AppStoreProvider: React.FC<{children: React.ReactNode}> = ({childre
 
   // Expose a reload method (e.g., for logout/login)
   const reloadWebview = () => {
-    prefetchWebview().catch(error => {
+    prefetchWebview().catch((error) => {
       console.error("AppStoreProvider: Error during reload webview:", error)
     })
   }

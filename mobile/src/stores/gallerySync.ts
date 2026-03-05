@@ -212,7 +212,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
 
     updateFileInQueue: (fileName: string, updatedFile: PhotoInfo) => {
       const state = get()
-      const updatedQueue = state.queue.map(file => (file.name === fileName ? updatedFile : file))
+      const updatedQueue = state.queue.map((file) => (file.name === fileName ? updatedFile : file))
       set({queue: updatedQueue})
     },
 

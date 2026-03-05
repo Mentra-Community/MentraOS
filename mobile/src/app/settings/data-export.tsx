@@ -16,7 +16,6 @@ import {Divider} from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAuth} from "@/contexts/AuthContext"
-import {useCoreStatus} from "@/contexts/CoreStatusProvider"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
@@ -24,6 +23,7 @@ import {useApplets} from "@/stores/applets"
 import {useSettingsStore} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
+import {useCoreStore} from "@/stores/core"
 
 export interface UserDataExport {
   metadata: {
@@ -151,7 +151,7 @@ class DataExportService {
   private static sanitizeAppData(appStatus: any[]): any[] {
     if (!appStatus || !Array.isArray(appStatus)) return []
 
-    return appStatus.map(app => {
+    return appStatus.map((app) => {
       const sanitized = {...app}
 
       // Remove sensitive app data
@@ -201,10 +201,10 @@ export default function DataExportPage() {
   const [previewExpanded, setPreviewExpanded] = useState(false)
 
   const {user, session} = useAuth()
-  const {status} = useCoreStatus()
   const appStatus = useApplets()
   const {goBack} = useNavigationHistory()
   const {theme, themed} = useAppTheme()
+  const coreStatus = useCoreStore()
 
   useEffect(() => {
     collectData()
@@ -215,7 +215,7 @@ export default function DataExportPage() {
     setLoading(true)
 
     try {
-      const data = await DataExportService.collectUserData(user, session, status, appStatus)
+      const data = await DataExportService.collectUserData(user, session, coreStatus, appStatus)
       const formatted = DataExportService.formatAsJson(data)
 
       setExportData(data)
@@ -288,7 +288,7 @@ export default function DataExportPage() {
 
       {loading ? (
         <View style={themed($loadingContainer)}>
-          <ActivityIndicator size="large" color={theme.colors.palette.primary500} />
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
           <Spacer height={theme.spacing.s4} />
           <Text text="Collecting your data..." style={themed($loadingText)} />
         </View>

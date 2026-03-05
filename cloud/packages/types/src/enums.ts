@@ -26,11 +26,13 @@ export enum HardwareRequirementLevel {
 }
 
 export enum DeviceTypes {
+  NONE = "None",
   SIMULATED = "Simulated Glasses",
   G1 = "Even Realities G1",
+  G2 = "Even Realities G2",
   LIVE = "Mentra Live",
   MACH1 = "Mentra Mach1",
   Z100 = "Vuzix Z100",
-  NEX = "Mentra Nex",
+  NEX = "Mentra Display",
   FRAME = "Brilliant Frame",
 }

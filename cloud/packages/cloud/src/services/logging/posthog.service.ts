@@ -6,7 +6,7 @@ import { logger } from "./pino-logger";
 // Environment constants (mirroring pino-logger for consistency)
 const NODE_ENV = process.env.NODE_ENV || "development";
 const PORTER_APP_NAME = process.env.PORTER_APP_NAME || "cloud-local";
-const REGION = process.env.REGION || process.env.AZURE_SPEECH_REGION || "";
+const REGION = process.env.REGION || process.env.DEPLOYMENT_REGION || "";
 const DEPLOYMENT_REGION = process.env.DEPLOYMENT_REGION;
 
 // Beta flag - true only when connected to staging environment
@@ -54,11 +54,7 @@ const baseProperties = {
  * @param userId - User ID or distinct session ID (if available).
  * @param properties - Additional metadata to attach to the event.
  */
-async function trackEvent(
-  eventName: string,
-  userId?: string,
-  properties: EventProperties = {},
-): Promise<void> {
+async function trackEvent(eventName: string, userId?: string, properties: EventProperties = {}): Promise<void> {
   // Only proceed if PostHog is initialized
   if (!posthog) return;
   try {
@@ -82,10 +78,7 @@ async function trackEvent(
  * @param userId - User ID to set properties for.
  * @param properties - Properties to set on the user profile.
  */
-async function setPersonProperties(
-  userId: string,
-  properties: EventProperties = {},
-): Promise<void> {
+async function setPersonProperties(userId: string, properties: EventProperties = {}): Promise<void> {
   // Only proceed if PostHog is initialized
   if (!posthog) return;
   try {

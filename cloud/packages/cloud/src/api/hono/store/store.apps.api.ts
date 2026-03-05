@@ -9,8 +9,10 @@ import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import type { AppEnv, AppContext } from "../../../types/hono";
 import { User } from "../../../models/user.model";
 import UserSession from "../../../services/session/UserSession";
-import { clientAuth, requireUser } from "../middleware/client.middleware";
+import { clientAuth, requireUser, optionalClientAuth } from "../middleware/client.middleware";
 import storeService from "../../../services/core/store.service";
+import { batchEnrichAppsWithProfiles } from "../../../services/core/app-enrichment.service";
+import { HardwareCompatibilityService } from "../../../services/session/HardwareCompatibilityService";
 
 const logger = rootLogger.child({ service: "store.apps.api" });
 
@@ -23,9 +25,9 @@ const app = new Hono<AppEnv>();
 // IMPORTANT: Specific routes must come before dynamic routes (/:packageName)
 // Otherwise /:packageName will match everything
 
-// Public endpoints (no auth required)
+// Public endpoints (no auth required, but optionally enriched with compatibility if authenticated)
 app.get("/published-apps", getPublicApps);
-app.get("/search", searchApps);
+app.get("/search", optionalClientAuth, searchApps);
 
 // Authenticated endpoints (require user auth)
 app.get("/published-apps-loggedin", clientAuth, requireUser, getPublishedAppsForUser);
@@ -37,7 +39,8 @@ app.post("/uninstall/:packageName", clientAuth, requireUser, uninstallApp);
 // app.post("/:packageName/stop", clientAuth, requireUser, stopApp);
 
 // Dynamic route must come LAST (catches everything else)
-app.get("/:packageName", getAppDetails);
+// Uses optionalClientAuth to enrich with compatibility info if authenticated
+app.get("/:packageName", optionalClientAuth, getAppDetails);
 
 // ============================================================================
 // Handlers
@@ -51,7 +54,8 @@ app.get("/:packageName", getAppDetails);
 async function getPublicApps(c: AppContext) {
   try {
     const apps = await storeService.getPublishedApps();
-    return c.json({ success: true, data: apps });
+    const enrichedApps = await batchEnrichAppsWithProfiles(apps);
+    return c.json({ success: true, data: enrichedApps });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get public apps");
@@ -66,7 +70,7 @@ async function getPublicApps(c: AppContext) {
 
 /**
  * GET /api/store/published-apps-loggedin
- * Get available apps for authenticated user with installation status.
+ * Get available apps for authenticated user with installation status and compatibility info.
  * Requires authentication.
  */
 async function getPublishedAppsForUser(c: AppContext) {
@@ -82,8 +86,28 @@ async function getPublishedAppsForUser(c: AppContext) {
     }
 
     const appsWithStatus = await storeService.getPublishedAppsForUser(user);
+    const enrichedApps = await batchEnrichAppsWithProfiles(appsWithStatus);
 
-    return c.json({ success: true, data: appsWithStatus });
+    // Get device capabilities from user session (if connected)
+    const userSession = UserSession.getById(email);
+    const capabilities = userSession?.getCapabilities() ?? null;
+    const deviceName = userSession?.deviceManager.getModel() ?? null;
+    const isConnected = userSession?.deviceManager.isGlassesConnected ?? false;
+
+    // Add compatibility info to each app
+    const appsWithCompatibility = enrichedApps.map((app) => ({
+      ...app,
+      compatibility: HardwareCompatibilityService.checkCompatibility(app, capabilities),
+    }));
+
+    return c.json({
+      success: true,
+      data: appsWithCompatibility,
+      deviceInfo: {
+        connected: isConnected,
+        modelName: deviceName,
+      },
+    });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get available apps");
@@ -114,8 +138,9 @@ async function getInstalledApps(c: AppContext) {
     }
 
     const installedApps = await storeService.getInstalledAppsForUser(user);
+    const enrichedApps = await batchEnrichAppsWithProfiles(installedApps);
 
-    return c.json({ success: true, data: installedApps });
+    return c.json({ success: true, data: enrichedApps });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get installed apps");
@@ -131,7 +156,7 @@ async function getInstalledApps(c: AppContext) {
 /**
  * GET /api/store/:packageName
  * Get app details by package name.
- * No authentication required.
+ * No authentication required, but optionally enriched with compatibility if authenticated.
  */
 async function getAppDetails(c: AppContext) {
   try {
@@ -147,7 +172,34 @@ async function getAppDetails(c: AppContext) {
       return c.json({ error: "App not found" }, 404);
     }
 
-    return c.json({ success: true, data: app });
+    const enrichedApps = await batchEnrichAppsWithProfiles([app]);
+    const enrichedApp = enrichedApps[0] || app;
+
+    // Try to get auth context for compatibility check (optionalClientAuth may have set email)
+    let compatibility = null;
+    let deviceInfo = null;
+
+    const email = c.get("email");
+    if (email) {
+      const userSession = UserSession.getById(email);
+      if (userSession) {
+        const capabilities = userSession.getCapabilities();
+        compatibility = HardwareCompatibilityService.checkCompatibility(enrichedApp, capabilities);
+        deviceInfo = {
+          connected: userSession.deviceManager.isGlassesConnected,
+          modelName: userSession.deviceManager.getModel(),
+        };
+      }
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        ...enrichedApp,
+        compatibility,
+      },
+      deviceInfo,
+    });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get app details");
@@ -163,7 +215,7 @@ async function getAppDetails(c: AppContext) {
 /**
  * GET /api/store/search
  * Search for apps by query string.
- * No authentication required.
+ * No authentication required, but optionally enriched with compatibility if authenticated.
  */
 async function searchApps(c: AppContext) {
   try {
@@ -174,8 +226,34 @@ async function searchApps(c: AppContext) {
     }
 
     const filteredApps = await storeService.searchApps(query);
+    const enrichedApps = await batchEnrichAppsWithProfiles(filteredApps);
 
-    return c.json({ success: true, data: filteredApps });
+    // Try to get auth context for compatibility check (optionalClientAuth may have set email)
+    let appsWithCompatibility = enrichedApps;
+    let deviceInfo = null;
+
+    const email = c.get("email");
+    if (email) {
+      const userSession = UserSession.getById(email);
+      if (userSession) {
+        const capabilities = userSession.getCapabilities();
+        const deviceName = userSession.deviceManager.getModel();
+        const isConnected = userSession.deviceManager.isGlassesConnected;
+
+        appsWithCompatibility = enrichedApps.map((app) => ({
+          ...app,
+          compatibility: HardwareCompatibilityService.checkCompatibility(app, capabilities),
+        }));
+
+        deviceInfo = { connected: isConnected, modelName: deviceName };
+      }
+    }
+
+    return c.json({
+      success: true,
+      data: appsWithCompatibility,
+      deviceInfo,
+    });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to search apps");

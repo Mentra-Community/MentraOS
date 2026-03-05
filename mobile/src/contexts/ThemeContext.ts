@@ -104,7 +104,7 @@ export const useThemeProvider = (initialTheme: ThemeContexts = undefined) => {
     }
 
     updateNavigationBarColor()
-  }, [savedTheme,])
+  }, [savedTheme])
 
   return {
     themeScheme,

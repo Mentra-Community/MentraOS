@@ -71,7 +71,7 @@ export default function PrivacySettingsScreen() {
 
     if (Platform.OS === "ios") {
       console.log("Adding delay before checking iOS calendar permissions")
-      await new Promise(resolve => setTimeout(resolve, 1500)) // 1.5 second delay
+      await new Promise((resolve) => setTimeout(resolve, 1500)) // 1.5 second delay
     }
 
     // Also recheck calendar permissions
@@ -107,7 +107,7 @@ export default function PrivacySettingsScreen() {
 
   // Monitor app state to detect when user returns from settings
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", nextAppState => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
       if (appState.match(/inactive|background/) && nextAppState === "active") {
         // App has come to the foreground - recheck permissions
         console.log("App returned to foreground, rechecking notification permissions")

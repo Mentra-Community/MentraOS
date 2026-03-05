@@ -109,13 +109,13 @@ export class HardwareCompatibility {
   static getCompatibilityMessage(result: CompatibilityResult): string {
     if (result.isCompatible) {
       if (result.missingOptional.length > 0) {
-        const optionalHardware = result.missingOptional.map(req => req.type.toLowerCase()).join(", ")
+        const optionalHardware = result.missingOptional.map((req) => req.type.toLowerCase()).join(", ")
         return `This app works with your glasses but has optional features that require: ${optionalHardware}`
       }
       return "This app is fully compatible with your glasses"
     }
 
-    const requiredHardware = result.missingRequired.map(req => req.type.toLowerCase()).join(", ")
+    const requiredHardware = result.missingRequired.map((req) => req.type.toLowerCase()).join(", ")
 
     if (result.missingRequired.length === 1) {
       return `This app requires a ${requiredHardware} which is not available on your connected glasses`

@@ -15,6 +15,7 @@ import { Organization } from "../../../models/organization.model";
 import { memoryTelemetryService } from "../../../services/debug/MemoryTelemetryService";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import type { AppEnv, AppContext } from "../../../types/hono";
+import { isMentraAdmin } from "../../../services/core/admin.utils";
 import { LeanDocument, Types } from "mongoose";
 
 const logger = rootLogger.child({ service: "admin.routes" });
@@ -22,7 +23,6 @@ const logger = rootLogger.child({ service: "admin.routes" });
 const app = new Hono<AppEnv>();
 
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase());
 
 interface EnhancedApp extends LeanDocument<AppI & { _id: Types.ObjectId }> {
   organizationName?: string;
@@ -63,7 +63,8 @@ app.post("/memory/heap-snapshot", validateAdminEmail, takeHeapSnapshotHandler);
 
 /**
  * Middleware to validate admin email.
- * Checks JWT token and verifies email is in ADMIN_EMAILS list.
+ * Checks JWT token and verifies email belongs to a Mentra admin
+ * (@mentra.glass, @mentraglass.com, or in ADMIN_EMAILS env var).
  */
 async function validateAdminEmail(c: AppContext, next: () => Promise<void>) {
   const authHeader = c.req.header("authorization");
@@ -83,7 +84,7 @@ async function validateAdminEmail(c: AppContext, next: () => Promise<void>) {
 
     const email = decoded.email.toLowerCase();
 
-    if (!ADMIN_EMAILS.includes(email)) {
+    if (!isMentraAdmin(email)) {
       logger.warn({ email }, "Non-admin user attempted admin access");
       return c.json({ error: "Unauthorized - Admin access required" }, 403);
     }

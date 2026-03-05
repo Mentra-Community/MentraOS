@@ -37,8 +37,12 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.stream.Collectors;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.settings.AsgSettings;
+import com.mentra.asg_client.service.utils.SysProp;
+import com.mentra.asg_client.utils.WakeLockManager;
 
 import org.json.JSONArray;
 
@@ -72,10 +76,11 @@ public class OtaHelper {
     private static final String TAG = OtaConstants.TAG;
     private static ConnectivityManager.NetworkCallback networkCallback;
     private static ConnectivityManager connectivityManager;
-    private static volatile boolean isCheckingVersion = false;
+    private static final ReentrantLock versionCheckLock = new ReentrantLock();
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
     private static volatile boolean isMtkOtaInProgress = false;  // Tracks MTK firmware update in progress
-    private static final Object versionCheckLock = new Object();
+    private static volatile long lastVersionCheckTime = 0;  // Track last check time to prevent duplicate network callback triggers
+    private static final long NETWORK_CALLBACK_IGNORE_WINDOW_MS = 2000;  // Ignore network callback if check happened within last 2 seconds
     private Handler handler;
     private Context context;
     private Runnable periodicCheckRunnable;
@@ -83,7 +88,7 @@ public class OtaHelper {
     
     // Retry logic constants
     private static final int MAX_DOWNLOAD_RETRIES = 3;
-    private static final long[] RETRY_DELAYS = {30000, 60000, 120000}; // 30s, 1m, 2m
+    private static final long RETRY_DELAY_MS = 10000; // 10 seconds between attempts
     
     // Update order configuration - can be easily modified to change update sequence
     // Order: APK updates → MTK firmware → BES firmware
@@ -127,6 +132,15 @@ public class OtaHelper {
     private String currentUpdateStage = "download"; // "download" or "install"
     private String currentUpdateType = "apk"; // "apk", "mtk", or "bes"
 
+    // Pending BES update - saved when MTK update is in progress
+    // BES will be started after MTK completes (to avoid concurrent firmware updates)
+    private JSONObject pendingBesUpdate = null;
+
+    // Track if MTK was updated this session (to prevent re-updating before reboot)
+    // MTK A/B updates don't change ro.custom.ota.version until reboot, so without this
+    // flag the system would try to re-download and re-install the same MTK update
+    private static volatile boolean mtkUpdatedThisSession = false;
+
     // ========== Singleton Pattern ==========
 
     private static volatile OtaHelper instance;
@@ -162,10 +176,10 @@ public class OtaHelper {
         EventBus.getDefault().register(this);
 
         if (AUTONOMOUS_OTA_ENABLED) {
-            // Delay all autonomous checks by 30 seconds to ensure PhoneConnectionProvider
+            // Delay all autonomous checks by 5 seconds to ensure PhoneConnectionProvider
             // is set up (happens at ~6s) so isPhoneConnected() works correctly
             handler.postDelayed(() -> {
-                Log.d(TAG, "Starting autonomous OTA checks after 30 second delay");
+                Log.d(TAG, "Starting autonomous OTA checks after 5 second delay");
 
                 // Perform initial check
                 startVersionCheck(this.context);
@@ -174,8 +188,10 @@ public class OtaHelper {
                 startPeriodicChecks();
 
                 // Register network callback to check for updates when WiFi becomes available
+                // Note: If WiFi is already available, callback may fire immediately, but timestamp
+                // tracking prevents duplicate checks within 2 seconds
                 registerNetworkCallback(this.context);
-            }, 30000);
+            }, 5000);
 
             Log.i(TAG, "Autonomous OTA mode ENABLED - checks will start in 30 seconds");
         } else {
@@ -227,12 +243,26 @@ public class OtaHelper {
         Log.d(TAG, "Phone disconnected - reset OTA notification flag");
     }
 
+    // Wakelock timeout for OTA process (10 minutes)
+    private static final long OTA_WAKELOCK_TIMEOUT_MS = 600000;
+
     /**
      * Start OTA update from phone command (onboarding or background approval).
      * Called by OtaCommandHandler when phone sends ota_start command.
      */
     public void startOtaFromPhone() {
         Log.i(TAG, "📱 Starting OTA from phone request");
+
+        // If OTA already in progress, acknowledge but don't restart
+        if (versionCheckLock.isLocked()) {
+            Log.i(TAG, "📱 OTA check already in progress, ignoring duplicate ota_start");
+            return;
+        }
+
+        // Acquire wakelock to prevent CPU sleep during OTA download/install
+        WakeLockManager.acquireCpuWakeLock(context, OTA_WAKELOCK_TIMEOUT_MS);
+        Log.i(TAG, "📱 OTA wakelock acquired for " + (OTA_WAKELOCK_TIMEOUT_MS / 1000) + " seconds");
+
         isPhoneInitiatedOta = true;
         hasNotifiedPhoneOfUpdate = false; // Reset for next check cycle
 
@@ -300,6 +330,12 @@ public class OtaHelper {
                 super.onAvailable(network);
                 NetworkCapabilities capabilities = connectivityManager.getNetworkCapabilities(network);
                 if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                    // Ignore if a version check happened very recently (prevents duplicate from initial check)
+                    long timeSinceLastCheck = System.currentTimeMillis() - lastVersionCheckTime;
+                    if (timeSinceLastCheck < NETWORK_CALLBACK_IGNORE_WINDOW_MS) {
+                        Log.d(TAG, "WiFi network available, but version check happened " + timeSinceLastCheck + "ms ago - ignoring to prevent duplicate");
+                        return;
+                    }
                     Log.d(TAG, "WiFi network became available, triggering version check");
                     startVersionCheck(context);
                 }
@@ -374,62 +410,53 @@ public class OtaHelper {
         //     return;
         // }
 
-        // Check if version check is already in progress
-        if (isCheckingVersion) {
-            Log.d(TAG, "Version check already in progress, skipping this request");
-            return;
-        }
-
         new Thread(() -> {
-            // Use synchronized block to ensure thread safety
-            synchronized (versionCheckLock) {
-                if (isCheckingVersion || isUpdating) {
-                    Log.d(TAG, "Version check or update already in progress, skipping");
-                    return;
-                }
-                isCheckingVersion = true;
+            // Try to acquire lock - if already held, another check is in progress
+            if (!versionCheckLock.tryLock()) {
+                Log.d(TAG, "Version check already in progress, skipping this request");
+                return;
             }
+            
+            // Check if update is in progress (separate from version check)
+            if (isUpdating) {
+                Log.d(TAG, "Update already in progress, skipping version check");
+                versionCheckLock.unlock();
+                return;
+            }
+            
+            // Record timestamp to prevent duplicate network callback triggers
+            lastVersionCheckTime = System.currentTimeMillis();
 
             try {
-                // ⚠️ DEBUG: Mock JSON to skip APK checks and trigger firmware install
-                String versionInfo;
-                if (DEBUG_FORCE_MTK_INSTALL || DEBUG_FORCE_BES_INSTALL) {
-                    Log.w(TAG, "DEBUG: Using mock version.json (APK versions set to 0 to skip updates)");
-                    versionInfo = "{"
-                        + "\"apps\": {"
-                        + "  \"com.mentra.asg_client\": {"
-                        + "    \"versionCode\": 0,"
-                        + "    \"versionName\": \"0.0.0\","
-                        + "    \"apkUrl\": \"https://mock.url/app.apk\","
-                        + "    \"sha256\": \"mock\""
-                        + "  },"
-                        + "  \"com.augmentos.otaupdater\": {"
-                        + "    \"versionCode\": 0,"
-                        + "    \"versionName\": \"0.0.0\","
-                        + "    \"apkUrl\": \"https://mock.url/updater.apk\","
-                        + "    \"sha256\": \"mock\""
-                        + "  }"
-                        + "}"
-                        + "}";
-                } else {
-                    // Fetch version info normally
-                    versionInfo = fetchVersionInfo(OtaConstants.VERSION_JSON_URL);
-                }
+                // Fetch version info from URL
+                String versionInfo = fetchVersionInfo(OtaConstants.VERSION_JSON_URL);
                 JSONObject json = new JSONObject(versionInfo);
 
-                // ========== Phone-Controlled OTA Logic ==========
+                Log.d(TAG, "versionInfo: " + versionInfo);
+
+                // ========== Phone-Initiated OTA Check ==========
+                // When AUTONOMOUS_OTA_ENABLED = false, this method should ONLY be called via
+                // startOtaFromPhone() which sets isPhoneInitiatedOta = true.
+                // 
+                // Safety check: If not phone-initiated and autonomous mode is disabled, abort.
+                if (!isPhoneInitiatedOta && !AUTONOMOUS_OTA_ENABLED) {
+                    Log.w(TAG, "📱 Autonomous OTA disabled and not phone-initiated - aborting version check");
+                    return;
+                }
+
+                // ========== Legacy Autonomous OTA Logic (only when AUTONOMOUS_OTA_ENABLED = true) ==========
                 // If phone is connected AND this is NOT phone-initiated AND we haven't notified yet:
                 // - Check for available updates
                 // - Notify phone (background mode)
                 // - Wait for phone to send ota_start before proceeding
                 boolean phoneConnected = isPhoneConnected();
 
-                if (phoneConnected && !isPhoneInitiatedOta && !hasNotifiedPhoneOfUpdate) {
+                if (AUTONOMOUS_OTA_ENABLED && phoneConnected && !isPhoneInitiatedOta && !hasNotifiedPhoneOfUpdate) {
                     Log.i(TAG, "📱 Phone connected, checking for available updates (background mode)");
                     JSONObject updateInfo = checkForAvailableUpdates(json);
 
                     if (updateInfo != null && updateInfo.optBoolean("available", false)) {
-                        // Notify phone and wait for approval
+                        // Notify phone and wait for approval (all updates require phone confirmation)
                         notifyPhoneUpdateAvailable(updateInfo);
                         hasNotifiedPhoneOfUpdate = true;
                         Log.i(TAG, "📱 Notified phone of update - waiting for ota_start command");
@@ -439,11 +466,10 @@ public class OtaHelper {
                     }
                 }
 
-                // ========== Proceed with OTA (Autonomous or Phone-Initiated) ==========
-                // Either:
-                // 1. Phone not connected (autonomous mode)
-                // 2. Phone initiated OTA (isPhoneInitiatedOta = true)
-                // 3. Already notified phone and no updates available
+                // ========== Proceed with OTA ==========
+                // Reaches here when:
+                // 1. Phone initiated OTA (isPhoneInitiatedOta = true) - PRIMARY FLOW
+                // 2. Autonomous mode enabled AND (phone not connected OR already notified)
 
                 // Check if new format (multiple apps) or legacy format
                 if (json.has("apps")) {
@@ -461,15 +487,22 @@ public class OtaHelper {
                     sendProgressToPhone(currentUpdateStage, 0, 0, 0, "FAILED", e.getMessage());
                 }
             } finally {
-                // Always reset the flags when done
-                isCheckingVersion = false;
+                // Always release lock and reset flags when done
                 isPhoneInitiatedOta = false;
+                versionCheckLock.unlock();
                 Log.d(TAG, "Version check completed, ready for next check");
             }
         }).start();
     }
 
+    /**
+     * Fetch version info from URL.
+     * @param url URL (http://, https://)
+     * @return JSON string content
+     * @throws Exception if fetch fails
+     */
     private String fetchVersionInfo(String url) throws Exception {
+        Log.d(TAG, "Fetching version info from URL: " + url);
         BufferedReader reader = new BufferedReader(
             new InputStreamReader(new URL(url).openStream())
         );
@@ -522,55 +555,139 @@ public class OtaHelper {
         
         Log.d(TAG, "apkUpdateNeeded: " + apkUpdateNeeded);
         
-        // PHASE 2: Update MTK firmware (only if no APK update)
-        boolean mtkUpdateStarted = false;
-        
-        // ⚠️ DEBUG MODE: Force install MTK firmware from local file
-        if (DEBUG_FORCE_MTK_INSTALL && !apkUpdateNeeded) {
-            Log.w(TAG, "========================================");
-            Log.w(TAG, "⚠️⚠️⚠️ DEBUG MODE ACTIVE ⚠️⚠️⚠️");
-            Log.w(TAG, "Force installing MTK firmware from local file");
-            Log.w(TAG, "Skipping version check and download");
-            Log.w(TAG, "========================================");
-            mtkUpdateStarted = debugInstallMtkFirmware(context);
-            if (mtkUpdateStarted) {
-                Log.i(TAG, "DEBUG: MTK firmware install triggered");
-            } else {
-                Log.e(TAG, "DEBUG: MTK firmware install failed - check if file exists");
+        // PHASE 2 & 3: Firmware updates (MTK first, then BES) - only if no APK update
+        if (!apkUpdateNeeded) {
+            JSONObject mtkPatch = null;
+            boolean besUpdateAvailable = false;
+
+            // ⚠️ DEBUG MODE: Force install MTK firmware from local file
+            if (DEBUG_FORCE_MTK_INSTALL) {
+                Log.w(TAG, "========================================");
+                Log.w(TAG, "⚠️⚠️⚠️ DEBUG MODE ACTIVE ⚠️⚠️⚠️");
+                Log.w(TAG, "Force installing MTK firmware from local file");
+                Log.w(TAG, "Skipping version check and download");
+                Log.w(TAG, "========================================");
+                boolean mtkUpdateStarted = debugInstallMtkFirmware(context);
+                if (mtkUpdateStarted) {
+                    Log.i(TAG, "DEBUG: MTK firmware install triggered");
+                } else {
+                    Log.e(TAG, "DEBUG: MTK firmware install failed - check if file exists");
+                }
             }
-        }
-        // Normal MTK update flow
-        else if (!apkUpdateNeeded && rootJson.has("mtk_firmware")) {
-            Log.i(TAG, "No APK updates needed - checking MTK firmware");
-            mtkUpdateStarted = checkAndUpdateMtkFirmware(rootJson.getJSONObject("mtk_firmware"), context);
-            if (mtkUpdateStarted) {
-                Log.i(TAG, "MTK firmware update started - BES firmware check will happen after restart");
+            // ⚠️ DEBUG MODE: Force install BES firmware from local file
+            else if (DEBUG_FORCE_BES_INSTALL) {
+                Log.w(TAG, "========================================");
+                Log.w(TAG, "⚠️⚠️⚠️ DEBUG MODE ACTIVE ⚠️⚠️⚠️");
+                Log.w(TAG, "Force installing BES firmware from local file");
+                Log.w(TAG, "Skipping version check and download");
+                Log.w(TAG, "========================================");
+                boolean besUpdateStarted = debugInstallBesFirmware(context);
+                if (besUpdateStarted) {
+                    Log.i(TAG, "DEBUG: BES firmware install triggered");
+                } else {
+                    Log.e(TAG, "DEBUG: BES firmware install failed - check if file exists and BesOtaManager is available");
+                }
             }
-        } else if (apkUpdateNeeded) {
-            Log.i(TAG, "APK update performed - MTK firmware check will happen after restart");
-        }
-        
-        // PHASE 3: Update BES firmware (only if no APK update and no MTK update)
-        // ⚠️ DEBUG MODE: Force install BES firmware from local file
-        if (DEBUG_FORCE_BES_INSTALL && !apkUpdateNeeded && !mtkUpdateStarted) {
-            Log.w(TAG, "========================================");
-            Log.w(TAG, "⚠️⚠️⚠️ DEBUG MODE ACTIVE ⚠️⚠️⚠️");
-            Log.w(TAG, "Force installing BES firmware from local file");
-            Log.w(TAG, "Skipping version check and download");
-            Log.w(TAG, "========================================");
-            boolean besUpdateStarted = debugInstallBesFirmware(context);
-            if (besUpdateStarted) {
-                Log.i(TAG, "DEBUG: BES firmware install triggered");
-            } else {
-                Log.e(TAG, "DEBUG: BES firmware install failed - check if file exists and BesOtaManager is available");
+            // Normal firmware update flow with new patch matching logic
+            else {
+                Log.d(TAG, "Finding matching MTK patch");
+                // Find matching MTK patch (MTK requires sequential updates)
+                // Skip if MTK was already updated this session (A/B updates don't change version until reboot)
+                // OR if MTK update is currently in progress
+                if (wasMtkUpdatedThisSession()) {
+                    Log.i(TAG, "📱 MTK already updated this session - skipping MTK check (reboot required to apply)");
+                    mtkPatch = null;
+                } else if (isMtkOtaInProgress()) {
+                    Log.i(TAG, "📱 MTK update currently in progress - skipping MTK check");
+                    mtkPatch = null;
+                } else if (rootJson.has("mtk_patches")) {
+                    String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
+                    Log.d(TAG, "Current MTK version: " + currentMtkVersion);
+                    mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion);
+                    if (mtkPatch != null) {
+                        Log.i(TAG, "MTK patch found for current version: " + currentMtkVersion);
+                    }
+                }
+
+                // Check BES firmware (BES does not require sequential updates)
+                // BES version comes from hs_syvr at boot, cached in AsgSettings
+                if (rootJson.has("bes_firmware")) {
+                    // Get BES version from AsgSettings (cached from hs_syvr response)
+                    // AsgSettings uses SharedPreferences, so we can create a new instance to read the cached version
+                    String currentBesVersion = "";
+                    try {
+                        AsgSettings asgSettings = new AsgSettings(context);
+                        currentBesVersion = asgSettings.getBesFirmwareVersion();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
+                    }
+                    besUpdateAvailable = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion);
+                }
+
+                // Apply updates in correct order
+                if (mtkPatch != null && besUpdateAvailable) {
+                    // Both available - MTK first, then BES after MTK completes
+                    // BES update power-cycles the system, which also applies MTK A/B slot switch
+                    Log.i(TAG, "Both MTK and BES updates available - applying MTK first, BES will follow");
+                    
+                    // Queue BES update to run after MTK completes
+                    setPendingBesUpdate(rootJson.getJSONObject("bes_firmware"));
+                    
+                    // Start MTK update - OtaService will trigger BES after MTK SUCCESS
+                    boolean mtkStarted = checkAndUpdateMtkFirmware(mtkPatch, context);
+                    if (mtkStarted) {
+                        Log.i(TAG, "MTK firmware update started - BES queued for after completion");
+                    } else {
+                        Log.e(TAG, "MTK firmware update failed to start - clearing pending BES");
+                        clearPendingBesUpdate();
+                    }
+                } else if (mtkPatch != null) {
+                    // Only MTK - apply normally (stages, needs manual reboot)
+                    Log.i(TAG, "MTK update available - applying");
+                    checkAndUpdateMtkFirmware(mtkPatch, context);
+                } else if (besUpdateAvailable) {
+                    // Only BES - check if MTK is in progress first
+                    if (isMtkOtaInProgress()) {
+                        // MTK system is still processing - can't start BES yet
+                        if (wasMtkUpdatedThisSession()) {
+                            // MTK update was initiated but system is still processing
+                            // Tell phone MTK is still in progress (don't send FINISHED prematurely)
+                            Log.i(TAG, "BES update available but MTK system still processing - MTK in progress");
+                            if (isPhoneInitiatedOta) {
+                                sendProgressToPhone("install", -1, 0, 0, "IN_PROGRESS", "mtk");
+                            }
+                        } else {
+                            // MTK is actively being installed - queue BES for after
+                            Log.i(TAG, "BES update available but MTK in progress - BES will start after MTK completes");
+                            if (!hasPendingBesUpdate()) {
+                                setPendingBesUpdate(rootJson.getJSONObject("bes_firmware"));
+                            }
+                            if (isPhoneInitiatedOta) {
+                                sendProgressToPhone("install", -1, 0, 0, "IN_PROGRESS", "mtk");
+                            }
+                        }
+                    } else {
+                        // Only BES - apply normally (triggers power-cycle)
+                        Log.i(TAG, "BES update available - applying");
+                        checkAndUpdateBesFirmware(rootJson.getJSONObject("bes_firmware"), context);
+                    }
+                } else if (isMtkOtaInProgress()) {
+                    // MTK is in progress (either actively installing or system processing after download)
+                    // Don't send FINISHED - tell phone update is still in progress
+                    Log.i(TAG, "MTK update currently in progress - system processing");
+                    if (isPhoneInitiatedOta) {
+                        sendProgressToPhone("install", -1, 0, 0, "IN_PROGRESS", "mtk");
+                    }
+                } else {
+                    Log.i(TAG, "No firmware updates available");
+                    // Send FINISHED to phone since no more updates
+                    if (isPhoneInitiatedOta) {
+                        sendProgressToPhone("install", 100, 0, 0, "FINISHED", null);
+                    }
+                }
             }
-        }
-        // Normal BES update flow
-        else if (!apkUpdateNeeded && !mtkUpdateStarted && rootJson.has("bes_firmware")) {
-            Log.i(TAG, "No APK or MTK updates needed - checking BES firmware");
-            checkAndUpdateBesFirmware(rootJson.getJSONObject("bes_firmware"), context);
-        } else if (apkUpdateNeeded || mtkUpdateStarted) {
-            Log.i(TAG, "APK or MTK update performed - BES firmware check will happen after next check cycle");
+        } else {
+            Log.i(TAG, "APK update performed - firmware checks will happen after restart");
         }
         
         Log.d(TAG, "Sequential updates completed (APK → MTK → BES)");
@@ -632,7 +749,11 @@ public class OtaHelper {
                     currentUpdateStage = "install";
                     sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
 
-                    // Install
+                    // Send FINISHED before install - app will be killed during installation
+                    // Phone will delay showing completion for 10 seconds
+                    sendProgressToPhone("install", 100, 0, 0, "FINISHED", null);
+
+                    // Install - this triggers system install and kills the app
                     installApk(context, apkFile.getAbsolutePath());
                     
                     // Clean up update file after 30 seconds
@@ -645,10 +766,14 @@ public class OtaHelper {
                     
                     return true;
                 }
+                // Download failed (e.g. after retries) - clear flag so next ota_start can run
+                isUpdating = false;
+                Log.d(TAG, "Download failed, cleared isUpdating for next OTA attempt");
             }
             return false;
         } catch (Exception e) {
             Log.e(TAG, "Failed to update " + packageName, e);
+            isUpdating = false;
             return false;
         }
     }
@@ -697,9 +822,14 @@ public class OtaHelper {
         while (retryCount < MAX_DOWNLOAD_RETRIES) {
             try {
                 // Attempt download
-                if (downloadApkInternal(urlStr, json, context, filename)) {
+                boolean success = downloadApkInternal(urlStr, json, context, filename);
+                if (success) {
                     return true; // Success!
                 }
+                // If download succeeded but verification failed, don't retry
+                // (downloadApkInternal already logged the error and deleted the file)
+                Log.e(TAG, "Download succeeded but verification failed - not retrying");
+                return false;
             } catch (Exception e) {
                 lastException = e;
                 Log.e(TAG, "Download attempt " + (retryCount + 1) + " failed", e);
@@ -713,17 +843,16 @@ public class OtaHelper {
                 
                 retryCount++;
                 if (retryCount < MAX_DOWNLOAD_RETRIES) {
-                    long delay = RETRY_DELAYS[Math.min(retryCount - 1, RETRY_DELAYS.length - 1)];
-                    Log.i(TAG, "Retrying download in " + (delay / 1000) + " seconds...");
+                    Log.i(TAG, "Retrying download in " + (RETRY_DELAY_MS / 1000) + " seconds...");
                     
                     // Emit retry event
                     EventBus.getDefault().post(new DownloadProgressEvent(
                         DownloadProgressEvent.DownloadStatus.FAILED, 
-                        "Retrying in " + (delay / 1000) + " seconds..."
+                        "Retrying in " + (RETRY_DELAY_MS / 1000) + " seconds..."
                     ));
                     
                     try {
-                        Thread.sleep(delay);
+                        Thread.sleep(RETRY_DELAY_MS);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                         break;
@@ -755,6 +884,8 @@ public class OtaHelper {
         // Download new APK file
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
+        conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
         conn.connect();
 
         InputStream in = conn.getInputStream();
@@ -799,14 +930,15 @@ public class OtaHelper {
 
         Log.d(TAG, "APK downloaded to: " + apkFile.getAbsolutePath());
 
-        // Emit download finished event
-        EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
-        sendProgressToPhone("download", 100, fileSize, fileSize, "FINISHED", null);
-        
-        // Immediately check hash after download
+        // IMPORTANT: Verify hash BEFORE declaring download complete to phone
+        // This prevents the phone from thinking download succeeded when it actually failed
         boolean hashOk = verifyApkFile(apkFile.getAbsolutePath(), json);
         Log.d(TAG, "SHA256 verification result: " + hashOk);
+        
         if (hashOk) {
+            // Hash verified - NOW we can declare download finished
+            EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
+            sendProgressToPhone("download", 100, fileSize, fileSize, "FINISHED", null);
             createMetaDataJson(json, context);
             return true;
         } else {
@@ -815,8 +947,10 @@ public class OtaHelper {
                 boolean deleted = apkFile.delete();
                 Log.d(TAG, "SHA256 mismatch – APK deleted: " + deleted);
             }
-            // Emit download failed event due to hash mismatch
+            // Emit local EventBus event for notification updates
             EventBus.getDefault().post(new DownloadProgressEvent(DownloadProgressEvent.DownloadStatus.FAILED, "SHA256 hash verification failed"));
+            // CRITICAL: Send FAILED status to phone so frontend knows to handle retry
+            sendProgressToPhone("download", 0, 0, 0, "FAILED", "SHA256 hash verification failed - please retry");
             return false;
         }
     }
@@ -824,6 +958,13 @@ public class OtaHelper {
     private boolean verifyApkFile(String apkPath, JSONObject jsonObject) {
         try {
             String expectedHash = jsonObject.getString("sha256");
+            
+            // Fail immediately if hash is a placeholder - prevents wasted downloads
+            if (expectedHash == null || expectedHash.equals("example_sha256_hash_here") || 
+                expectedHash.startsWith("example_")) {
+                Log.e(TAG, "SHA256 hash is a placeholder - verification failed. Please provide a valid SHA256 hash.");
+                return false;
+            }
 
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             InputStream is = new FileInputStream(apkPath);
@@ -917,15 +1058,8 @@ public class OtaHelper {
             Log.d(TAG, "Sending install broadcast to system UI...");
             context.sendBroadcast(intent);
             Log.i(TAG, "Install broadcast sent successfully. System will handle installation.");
-
-            // Set a timer to send the completion broadcast after a reasonable amount of time
-            // This is necessary because the system doesn't notify us when installation is complete
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                Log.i(TAG, "Installation timer elapsed - sending completion broadcast");
-                // Emit installation finished event
-                EventBus.getDefault().post(new InstallationProgressEvent(InstallationProgressEvent.InstallationStatus.FINISHED, apkPath));
-                sendUpdateCompletedBroadcast(context);
-            }, 10000); // Wait 60 seconds for installation to complete
+            // Note: FINISHED message is sent before installApk() is called in checkAndUpdateApp()
+            // The app will be killed during installation, so no timer is needed here
         } catch (SecurityException e) {
             Log.e(TAG, "Security exception while sending install broadcast", e);
             // Emit installation failed event
@@ -1182,7 +1316,99 @@ public class OtaHelper {
     }
     
     // ========== BES Firmware Update Methods ==========
-    
+    /**
+     * Find MTK firmware patch matching the current version.
+     * MTK requires sequential updates - must find patch starting from current version.
+     * @param patches Array of patch objects with start_firmware, end_firmware, url
+     * @param currentVersion Current MTK firmware version string (e.g., "20241130")
+     * @return Matching patch object, or null if no match or version unknown
+     */
+    private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
+        if (currentVersion == null || currentVersion.isEmpty()) {
+            Log.w(TAG, "Cannot match MTK patch - current version unknown");
+            return null;
+        }
+
+        try {
+            for (int i = 0; i < patches.length(); i++) {
+                JSONObject patch = patches.getJSONObject(i);
+                String startFirmware = patch.getString("start_firmware");
+                if (startFirmware.equals(currentVersion)) {
+                    Log.i(TAG, "Found matching MTK patch: " + startFirmware + " -> " + patch.getString("end_firmware"));
+                    return patch;
+                }
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error parsing MTK patches", e);
+            return null;
+        }
+
+        Log.i(TAG, "No MTK patch available for current version: " + currentVersion);
+        return null;
+    }
+
+    /**
+     * Check if BES firmware update is available.
+     * BES does not require sequential updates - can install any newer version directly.
+     * If current version is unknown, assume update is needed.
+     * @param besFirmware Object with version and url
+     * @param currentVersion Current BES version string (e.g., "17.26.1.14")
+     * @return true if server version > current version, or if current version is unknown
+     */
+    private boolean checkBesUpdate(JSONObject besFirmware, String currentVersion) {
+        try {
+            String serverVersion = besFirmware.getString("version");
+            
+            // If current version is unknown, assume we need to update
+            if (currentVersion == null || currentVersion.isEmpty()) {
+                Log.i(TAG, "BES current version unknown - will update to server version: " + serverVersion);
+                return true;
+            }
+
+            // Simple version string comparison - if server > current, update available
+            int comparison = compareVersions(serverVersion, currentVersion);
+            if (comparison > 0) {
+                Log.i(TAG, "BES update available: " + currentVersion + " -> " + serverVersion);
+                return true;
+            } else {
+                Log.i(TAG, "BES firmware is up to date (current: " + currentVersion + ", server: " + serverVersion + ")");
+                return false;
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error parsing BES firmware info", e);
+            return false;
+        }
+    }
+
+    /**
+     * Compare two version strings.
+     * Supports formats like "17.26.1.14" (BES) or "20241130" (MTK date format).
+     * @param version1 First version string
+     * @param version2 Second version string
+     * @return positive if version1 > version2, negative if version1 < version2, 0 if equal
+     */
+    private int compareVersions(String version1, String version2) {
+        // Simple lexicographic comparison works for both date format (YYYYMMDD) and dotted format
+        // For dotted versions like "17.26.1.14", split and compare each component
+        if (version1.contains(".") && version2.contains(".")) {
+            String[] parts1 = version1.split("\\.");
+            String[] parts2 = version2.split("\\.");
+            int maxLen = Math.max(parts1.length, parts2.length);
+
+            for (int i = 0; i < maxLen; i++) {
+                int v1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
+                int v2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
+                if (v1 != v2) {
+                    return Integer.compare(v1, v2);
+                }
+            }
+            return 0;
+        } else {
+            // For date format or simple strings, use lexicographic comparison
+            return version1.compareTo(version2);
+        }
+    }
+
     /**
      * Check and update BES firmware if newer version available
      * @param firmwareInfo JSON object with firmware metadata
@@ -1236,12 +1462,22 @@ public class OtaHelper {
                 Log.w(TAG, "Current firmware version not available - proceeding with update anyway");
             }
             
-            // Download firmware file
-            String firmwareUrl = firmwareInfo.getString("firmwareUrl");
+            // Set current update type for progress reporting
+            currentUpdateType = "bes";
+
+            // Download firmware file (support both "url" and legacy "firmwareUrl")
+            String firmwareUrl = firmwareInfo.optString("url", firmwareInfo.optString("firmwareUrl", ""));
+            if (firmwareUrl.isEmpty()) {
+                Log.e(TAG, "BES firmware URL missing in JSON (expected 'url' or 'firmwareUrl')");
+                return false;
+            }
             boolean downloaded = downloadBesFirmware(firmwareUrl, firmwareInfo, context);
-            
+
             if (downloaded) {
+                Log.i(TAG, "BES firmware download complete - starting install phase");
+                
                 // Start firmware update via BesOtaManager singleton
+                // Install progress will be sent to phone via sr_adota from BES chip (via BLE)
                 BesOtaManager manager = BesOtaManager.getInstance();
                 if (manager != null) {
                     Log.i(TAG, "Starting BES firmware update from: " + OtaConstants.BES_FIRMWARE_PATH);
@@ -1253,7 +1489,7 @@ public class OtaHelper {
                         Log.e(TAG, "Failed to start BES firmware update");
                     }
                 } else {
-                    Log.e(TAG, "BesOtaManager not available - is this a K900 device?");
+                    Log.e(TAG, "BesOtaManager not available");
                 }
             } else {
                 Log.e(TAG, "Failed to download BES firmware");
@@ -1288,17 +1524,19 @@ public class OtaHelper {
             }
             
             Log.d(TAG, "Downloading BES firmware from: " + firmwareUrl);
-            
+
             // Download firmware file
             URL url = new URL(firmwareUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
             conn.connect();
             
             long fileSize = conn.getContentLength();
             
-            // Check file size doesn't exceed 1100KB
-            if (fileSize > 1100 * 1024) {
-                Log.e(TAG, "Firmware file too large: " + fileSize + " bytes (max 1100KB)");
+            // Check file size doesn't exceed 2MB (BES firmware can be larger than 1MB)
+            if (fileSize > 2 * 1024 * 1024) {
+                Log.e(TAG, "Firmware file too large: " + fileSize + " bytes (max 2MB)");
                 conn.disconnect();
                 return false;
             }
@@ -1311,7 +1549,13 @@ public class OtaHelper {
             long total = 0;
             int lastProgress = 0;
             
-            Log.d(TAG, "Downloading firmware, size: " + fileSize + " bytes");
+            Log.d(TAG, "Downloading BES firmware, size: " + fileSize + " bytes");
+            
+            // Set update type for progress reporting
+            currentUpdateType = "bes";
+            
+            // Send download started to phone
+            sendProgressToPhone("download", 0, 0, fileSize, "STARTED", null);
             
             while ((len = in.read(buffer)) > 0) {
                 out.write(buffer, 0, len);
@@ -1320,16 +1564,23 @@ public class OtaHelper {
                 // Log progress at 10% intervals
                 int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
                 if (progress >= lastProgress + 10 || progress == 100) {
-                    Log.d(TAG, "Firmware download progress: " + progress + "%");
+                    Log.d(TAG, "BES firmware download progress: " + progress + "%");
+                    
+                    // Send progress to phone
+                    sendProgressToPhone("download", progress, total, fileSize, "PROGRESS", null);
+                    
                     lastProgress = progress;
                 }
             }
+            
+            // Send download finished to phone
+            sendProgressToPhone("download", 100, fileSize, fileSize, "FINISHED", null);
             
             out.close();
             in.close();
             conn.disconnect();
             
-            Log.d(TAG, "Firmware downloaded to: " + firmwareFile.getAbsolutePath());
+            Log.d(TAG, "BES firmware downloaded to: " + firmwareFile.getAbsolutePath());
             
             // Verify SHA256 hash
             boolean verified = verifyFirmwareFile(firmwareFile.getAbsolutePath(), firmwareInfo);
@@ -1356,7 +1607,7 @@ public class OtaHelper {
     private boolean verifyFirmwareFile(String filePath, JSONObject firmwareInfo) {
         try {
             String expectedHash = firmwareInfo.getString("sha256");
-            
+
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             InputStream is = new FileInputStream(filePath);
             byte[] buffer = new byte[4096];
@@ -1376,8 +1627,7 @@ public class OtaHelper {
             Log.d(TAG, "Expected firmware SHA256: " + expectedHash);
             Log.d(TAG, "Calculated firmware SHA256: " + calculatedHash);
             
-            // boolean match = calculatedHash.equalsIgnoreCase(expectedHash);
-            boolean match = true;
+            boolean match = calculatedHash.equalsIgnoreCase(expectedHash);
             Log.d(TAG, "Firmware SHA256 check " + (match ? "passed" : "failed"));
             return match;
         } catch (Exception e) {
@@ -1390,7 +1640,7 @@ public class OtaHelper {
     
     /**
      * Check and update MTK firmware if newer version available
-     * @param firmwareInfo JSON object with firmware metadata
+     * @param firmwareInfo JSON object with firmware metadata (either patch object or legacy firmware info)
      * @param context Application context
      * @return true if update started successfully
      */
@@ -1413,49 +1663,76 @@ public class OtaHelper {
                 return false;
             }
             
-            // Get version info from server
-            long serverVersion = firmwareInfo.optLong("versionCode", 0);
-            String versionName = firmwareInfo.optString("versionName", "unknown");
+            // Detect if this is a patch object (from findMatchingMtkPatch) or legacy firmware info
+            // Patch objects have start_firmware/end_firmware fields and are already version-matched
+            boolean isPatchObject = firmwareInfo.has("start_firmware");
             
-            Log.i(TAG, "MTK firmware available - Version: " + versionName + " (code: " + serverVersion + ")");
-            
-            // Get current MTK firmware version from system property
-            String currentVersionStr = com.mentra.asg_client.SysControl.getSystemCurrentVersion(context);
-            long currentVersion = 0;
-            
-            try {
-                currentVersion = Long.parseLong(currentVersionStr);
-            } catch (NumberFormatException e) {
-                Log.w(TAG, "Could not parse current MTK version: " + currentVersionStr);
+            if (isPatchObject) {
+                // Patch object - version matching already done by findMatchingMtkPatch()
+                String startFirmware = firmwareInfo.optString("start_firmware", "unknown");
+                String endFirmware = firmwareInfo.optString("end_firmware", "unknown");
+                Log.i(TAG, "MTK patch update: " + startFirmware + " -> " + endFirmware);
+            } else {
+                // Legacy firmware info with versionCode - do numeric comparison
+                long serverVersion = firmwareInfo.optLong("versionCode", 0);
+                String versionName = firmwareInfo.optString("versionName", "unknown");
+                
+                Log.i(TAG, "MTK firmware available - Version: " + versionName + " (code: " + serverVersion + ")");
+                
+                // Get current MTK firmware version from system property
+                String currentVersionStr = SysProp.getProperty(context, "ro.custom.ota.version");
+                long currentVersion = 0;
+                
+                try {
+                    currentVersion = Long.parseLong(currentVersionStr);
+                } catch (NumberFormatException e) {
+                    Log.w(TAG, "Could not parse current MTK version: " + currentVersionStr);
+                }
+                
+                Log.d(TAG, "Current MTK firmware version: " + currentVersionStr + " (parsed: " + currentVersion + ")");
+                Log.d(TAG, "Server MTK firmware version: " + serverVersion);
+                
+                // Compare versions
+                if (serverVersion > currentVersion) {
+                    Log.i(TAG, "Server MTK firmware version is newer - proceeding with update");
+                } else {
+                    Log.i(TAG, "MTK firmware is up to date - skipping update");
+                    return false;
+                }
             }
             
-            Log.d(TAG, "Current MTK firmware version: " + currentVersionStr + " (parsed: " + currentVersion + ")");
-            Log.d(TAG, "Server MTK firmware version: " + serverVersion);
-            
-            // Compare versions
-            if (serverVersion > currentVersion) {
-                Log.i(TAG, "Server MTK firmware version is newer - proceeding with update");
-            } else {
-                Log.i(TAG, "MTK firmware is up to date - skipping update");
+            // Set current update type for progress reporting
+            currentUpdateType = "mtk";
+
+            // Download firmware file (support both "url" and legacy "firmwareUrl")
+            String firmwareUrl = firmwareInfo.optString("url", firmwareInfo.optString("firmwareUrl", ""));
+            if (firmwareUrl.isEmpty()) {
+                Log.e(TAG, "MTK firmware URL missing in JSON (expected 'url' or 'firmwareUrl')");
                 return false;
             }
-            
-            // Download firmware file
-            String firmwareUrl = firmwareInfo.getString("firmwareUrl");
             boolean downloaded = downloadMtkFirmware(firmwareUrl, firmwareInfo, context);
             
             if (downloaded) {
+                Log.i(TAG, "✅ MTK firmware download complete");
+                
                 // Set flag before starting update
                 isMtkOtaInProgress = true;
                 
-                // Post started event
-                EventBus.getDefault().post(com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent.createStarted());
+                // Mark MTK as updated this session (install will happen in background)
+                setMtkUpdatedThisSession();
                 
-                // Trigger MTK OTA installation via system broadcast
-                Log.i(TAG, "Starting MTK firmware update from: " + OtaConstants.MTK_FIRMWARE_PATH);
-                com.mentra.asg_client.SysControl.installOTA(context, OtaConstants.MTK_FIRMWARE_PATH);
+                // Send install STARTED to phone - progress updates will follow during install
+                sendMtkInstallProgressToPhone("STARTED", 0, null);
+                Log.i(TAG, "📱 Sent MTK install STARTED to phone - waiting 1s before starting install");
                 
-                Log.i(TAG, "MTK firmware update initiated - system will handle installation");
+                // Wait 1 second for phone to process FINISHED, then start install
+                final Context ctx = context;
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.i(TAG, "Starting MTK firmware update from: " + OtaConstants.MTK_FIRMWARE_PATH);
+                    com.mentra.asg_client.SysControl.installOTA(ctx, OtaConstants.MTK_FIRMWARE_PATH);
+                    Log.i(TAG, "MTK firmware update initiated - system will handle in background");
+                }, 1000); // 1 second delay
+                
                 return true;
             } else {
                 Log.e(TAG, "Failed to download MTK firmware");
@@ -1495,10 +1772,12 @@ public class OtaHelper {
             }
             
             Log.d(TAG, "Downloading MTK firmware from: " + firmwareUrl);
-            
+
             // Download firmware file
             URL url = new URL(firmwareUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
             conn.connect();
             
             long fileSize = conn.getContentLength();
@@ -1520,6 +1799,12 @@ public class OtaHelper {
             
             Log.d(TAG, "Downloading MTK firmware, size: " + fileSize + " bytes");
             
+            // Set update type for progress reporting
+            currentUpdateType = "mtk";
+            
+            // Send download started to phone
+            sendProgressToPhone("download", 0, 0, fileSize, "STARTED", null);
+            
             while ((len = in.read(buffer)) > 0) {
                 out.write(buffer, 0, len);
                 total += len;
@@ -1537,9 +1822,15 @@ public class OtaHelper {
                         fileSize
                     ));
                     
+                    // Send progress to phone
+                    sendProgressToPhone("download", progress, total, fileSize, "PROGRESS", null);
+                    
                     lastProgress = progress;
                 }
             }
+            
+            // Send download finished to phone
+            sendProgressToPhone("download", 100, fileSize, fileSize, "FINISHED", null);
             
             out.close();
             in.close();
@@ -1671,36 +1962,34 @@ public class OtaHelper {
                 }
             }
 
-            // Check MTK firmware
-            if (rootJson.has("mtk_firmware")) {
-                JSONObject mtkFirmware = rootJson.getJSONObject("mtk_firmware");
-                String currentVersionStr = com.mentra.asg_client.SysControl.getSystemCurrentVersion(context);
-                long currentVersion = 0;
-                try {
-                    currentVersion = Long.parseLong(currentVersionStr);
-                } catch (NumberFormatException e) {
-                    // Ignore parse errors
-                }
-
-                long serverVersion = mtkFirmware.optLong("versionCode", 0);
-                if (serverVersion > currentVersion) {
+            // Check MTK firmware patches (sequential updates)
+            if (rootJson.has("mtk_patches")) {
+                JSONArray mtkPatches = rootJson.getJSONArray("mtk_patches");
+                String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
+                JSONObject matchingPatch = findMatchingMtkPatch(mtkPatches, currentMtkVersion);
+                if (matchingPatch != null) {
                     updatesArray.put("mtk");
-                    totalSize += mtkFirmware.optLong("fileSize", 0);
+                    // Note: Patch file size not available in new schema
+                    // Could add fileSize field to patch objects if needed for totalSize calculation
                 }
             }
 
-            // Check BES firmware
+            // Check BES firmware (does not require sequential updates)
             if (rootJson.has("bes_firmware")) {
                 JSONObject besFirmware = rootJson.getJSONObject("bes_firmware");
-                byte[] currentVersion = BesOtaManager.getCurrentFirmwareVersion();
-                long serverVersion = besFirmware.optLong("versionCode", 0);
-                byte[] serverVersionBytes = BesOtaManager.parseServerVersionCode(serverVersion);
-
-                if (currentVersion != null && serverVersionBytes != null) {
-                    if (BesOtaManager.isNewerVersion(serverVersionBytes, currentVersion)) {
+                // Get BES version from AsgSettings (cached from hs_syvr response)
+                // AsgSettings uses SharedPreferences, so we can create a new instance to read the cached version
+                String currentBesVersion = "";
+                try {
+                    AsgSettings asgSettings = new AsgSettings(context);
+                    currentBesVersion = asgSettings.getBesFirmwareVersion();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
+                }
+                
+                if (checkBesUpdate(besFirmware, currentBesVersion)) {
                         updatesArray.put("bes");
-                        totalSize += besFirmware.optLong("fileSize", 0);
-                    }
+                    // Note: File size not available in new schema
                 }
             }
 
@@ -1753,7 +2042,9 @@ public class OtaHelper {
      */
     private void sendProgressToPhone(String stage, int progress, long bytesDownloaded,
                                      long totalBytes, String status, String errorMessage) {
-        if (phoneConnectionProvider == null || !isPhoneConnected()) return;
+        if (phoneConnectionProvider == null || !isPhoneConnected()) {
+            return;
+        }
 
         long now = System.currentTimeMillis();
         boolean shouldSend = false;
@@ -1769,7 +2060,9 @@ public class OtaHelper {
             shouldSend = timeElapsed || percentChanged || progress == 100;
         }
 
-        if (!shouldSend) return;
+        if (!shouldSend) {
+            return;
+        }
 
         try {
             JSONObject progressInfo = new JSONObject();
@@ -1793,6 +2086,148 @@ public class OtaHelper {
         } catch (JSONException e) {
             Log.e(TAG, "Failed to send OTA progress", e);
         }
+    }
+
+    /**
+     * Send MTK installation progress to phone.
+     * Called by OtaService when receiving MTK OTA progress events.
+     * 
+     * @param status Status: "STARTED", "PROGRESS", "FINISHED", "FAILED"
+     * @param progress Progress percentage (0-100)
+     * @param message Optional message
+     */
+    public void sendMtkInstallProgressToPhone(String status, int progress, String message) {
+        currentUpdateType = "mtk";
+        sendProgressToPhone("install", progress, 0, 0, status, 
+            "FAILED".equals(status) ? message : null);
+    }
+
+    /**
+     * Send BES installation progress to phone.
+     * Note: During BES OTA, UART is busy so this will likely fail for PROGRESS messages.
+     * BES install progress is sent via sr_adota from BES chip directly via BLE.
+     * This method is mainly used for FAILED status when we need to notify phone of errors.
+     * 
+     * @param status Status: "STARTED", "PROGRESS", "FINISHED", "FAILED"
+     * @param progress Progress percentage (0-100)
+     * @param message Optional message
+     */
+    public void sendBesInstallProgressToPhone(String status, int progress, String message) {
+        currentUpdateType = "bes";
+        sendProgressToPhone("install", progress, 0, 0, status, 
+            "FAILED".equals(status) ? message : null);
+    }
+
+    /**
+     * Static method to send MTK installation progress to phone.
+     * Used by MtkOtaReceiver which doesn't have access to OtaHelper instance.
+     * 
+     * @param provider Phone connection provider
+     * @param status Status: "STARTED", "PROGRESS", "FINISHED", "FAILED"  
+     * @param progress Progress percentage (0-100)
+     * @param message Optional message
+     */
+    public static void sendMtkInstallProgress(PhoneConnectionProvider provider, 
+                                               String status, int progress, String message) {
+        if (provider == null || !provider.isPhoneConnected()) {
+            Log.d(TAG, "📱 Cannot send MTK install progress - phone not connected");
+            return;
+        }
+        
+        try {
+            JSONObject progressInfo = new JSONObject();
+            progressInfo.put("type", "ota_progress");
+            progressInfo.put("stage", "install");
+            progressInfo.put("status", status);
+            progressInfo.put("progress", progress);
+            progressInfo.put("current_update", "mtk");
+            if (message != null && "FAILED".equals(status)) {
+                progressInfo.put("error_message", message);
+            }
+
+            provider.sendOtaProgress(progressInfo);
+            Log.d(TAG, "📱 Sent MTK install progress: " + status + " " + progress + "%");
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to send MTK install progress", e);
+        }
+    }
+
+    // ========== Pending BES Update Methods ==========
+
+    /**
+     * Check if there's a pending BES update waiting to be installed.
+     * Used after MTK update completes to chain BES update.
+     * @return true if BES update is pending
+     */
+    public boolean hasPendingBesUpdate() {
+        return pendingBesUpdate != null;
+    }
+
+    /**
+     * Start the pending BES update.
+     * Called by OtaService after MTK update completes successfully.
+     * BES update will power-cycle the system, which also applies the MTK A/B slot switch.
+     */
+    public void startPendingBesUpdate() {
+        if (pendingBesUpdate == null) {
+            Log.w(TAG, "📱 startPendingBesUpdate called but no pending BES update");
+            return;
+        }
+
+        Log.i(TAG, "📱 Starting pending BES update after MTK completion");
+        JSONObject besInfo = pendingBesUpdate;
+        pendingBesUpdate = null; // Clear pending to prevent re-trigger
+
+        // Start BES update on background thread
+        new Thread(() -> {
+            checkAndUpdateBesFirmware(besInfo, context);
+        }).start();
+    }
+
+    /**
+     * Set pending BES update to be executed after MTK completes.
+     * @param besFirmwareInfo BES firmware JSON object
+     */
+    private void setPendingBesUpdate(JSONObject besFirmwareInfo) {
+        this.pendingBesUpdate = besFirmwareInfo;
+        Log.i(TAG, "📱 BES update queued - will start after MTK completes");
+    }
+
+    /**
+     * Clear any pending BES update (e.g., on error or cleanup)
+     */
+    public void clearPendingBesUpdate() {
+        this.pendingBesUpdate = null;
+    }
+
+    // ========== MTK Session Tracking ==========
+
+    /**
+     * Mark that MTK was updated this session.
+     * Called by OtaService when MTK update succeeds.
+     * Prevents re-downloading the same MTK update before reboot.
+     */
+    public static void setMtkUpdatedThisSession() {
+        mtkUpdatedThisSession = true;
+        Log.i(TAG, "📱 MTK updated this session - will skip MTK checks until reboot");
+    }
+
+    /**
+     * Check if MTK was already updated this session.
+     * @return true if MTK was updated and glasses haven't rebooted yet
+     */
+    public static boolean wasMtkUpdatedThisSession() {
+        return mtkUpdatedThisSession;
+    }
+
+    /**
+     * Clear the MTK session flag.
+     * This is called automatically on app restart (static variable resets).
+     * Can also be called manually if needed.
+     */
+    public static void clearMtkSessionFlag() {
+        mtkUpdatedThisSession = false;
+        Log.d(TAG, "📱 MTK session flag cleared");
     }
 
     // ========== DEBUG METHODS ==========

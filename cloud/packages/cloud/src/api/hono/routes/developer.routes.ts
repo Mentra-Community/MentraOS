@@ -11,6 +11,7 @@ import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import appService from "../../../services/core/app.service";
 import { User, UserI } from "../../../models/user.model";
 import { OrganizationService } from "../../../services/core/organization.service";
+import { isMentraAdmin } from "../../../services/core/admin.utils";
 import App from "../../../models/app.model";
 import type { AppEnv, AppContext } from "../../../types/hono";
 
@@ -483,16 +484,48 @@ async function publishApp(c: AppContext) {
       return c.json({ error: "Package name is required" }, 400);
     }
 
-    // Update the app status to SUBMITTED
+    if (!email) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    // Look up the app first to verify ownership
+    const appDoc = await App.findOne({ packageName });
+    if (!appDoc) {
+      return c.json({ error: "App not found" }, 404);
+    }
+
+    // Verify the caller has admin access to the app's owning org
+    if (appDoc.organizationId) {
+      const user = await User.findOne({ email });
+      if (!user) {
+        return c.json({ error: "User not found" }, 404);
+      }
+      const isAdmin = await OrganizationService.isOrgAdmin(user, appDoc.organizationId);
+      if (!isAdmin) {
+        return c.json({ error: "You do not have permission to publish this app" }, 403);
+      }
+    } else if (appDoc.developerId) {
+      // Legacy: check developer ownership
+      if (appDoc.developerId.toString() !== email) {
+        return c.json({ error: "You do not have permission to publish this app" }, 403);
+      }
+    } else {
+      return c.json({ error: "App has no owner" }, 409);
+    }
+
+    // Mentra admins can publish directly; everyone else submits for review
+    const newStatus = isMentraAdmin(email) ? "PUBLISHED" : "SUBMITTED";
+
     const updatedApp = await App.findOneAndUpdate(
       { packageName },
-      { $set: { appStoreStatus: "SUBMITTED", updatedAt: new Date() } },
+      { $set: { appStoreStatus: newStatus, updatedAt: new Date() } },
       { new: true },
     );
 
-    if (!updatedApp) {
-      return c.json({ error: "App not found" }, 404);
-    }
+    logger.info(
+      { email, packageName, status: newStatus },
+      isMentraAdmin(email) ? "Mentra admin directly published app" : "App submitted for review",
+    );
 
     return c.json(updatedApp);
   } catch (error) {
@@ -657,7 +690,9 @@ async function uploadImage(c: AppContext) {
     if (file.size > MAX_SIZE) {
       return c.json(
         {
-          error: `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB. Please compress your image or use a smaller file.`,
+          error: `File too large (${(file.size / 1024 / 1024).toFixed(
+            1,
+          )}MB). Maximum size is 10MB. Please compress your image or use a smaller file.`,
         },
         400,
       );

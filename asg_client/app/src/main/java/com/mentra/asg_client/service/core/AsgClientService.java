@@ -553,7 +553,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                       ", StreamingManager: " + (streamingManager != null ? "valid" : "null") +
                       ", CommandProcessor: " + (commandProcessor != null ? "valid" : "null"));
 
-
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing service container", e);
             try {
@@ -879,19 +878,23 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             String androidVersion = android.os.Build.VERSION.RELEASE;
             String otaVersionUrl = OtaConstants.VERSION_JSON_URL;
 
-            // Include MCU firmware version if available (cached from hs_syvr command)
-            String mcuFirmwareVersion = "";
+            // Include BES firmware version (cached from hs_syvr command)
+            String besFirmwareVersion = "";
             if (serviceContainer.getServiceManager() != null &&
                 serviceContainer.getServiceManager().getAsgSettings() != null) {
-                mcuFirmwareVersion = serviceContainer.getServiceManager().getAsgSettings().getMcuFirmwareVersion();
+                besFirmwareVersion = serviceContainer.getServiceManager().getAsgSettings().getBesFirmwareVersion();
             }
+
+            // Include MTK firmware version (from system property)
+            String mtkFirmwareVersion = SysControl.getSystemCurrentVersion(this);
 
             // Include BES BT MAC address as unique device identifier (stored in system properties)
             String besBtMac = SysProp.getBesBtMac(this);
 
             Log.d(TAG, "📋 Version info prepared - Device: " + deviceModel +
                       ", Android: " + androidVersion +
-                      ", MCU Firmware: " + mcuFirmwareVersion +
+                      ", BES Firmware: " + besFirmwareVersion +
+                      ", MTK Firmware: " + mtkFirmwareVersion +
                       ", BT MAC: " + besBtMac +
                       ", OTA URL: " + otaVersionUrl);
 
@@ -916,15 +919,30 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     Thread.currentThread().interrupt();
                 }
 
-                // Chunk 2: Extended info (URLs and identifiers)
+                // Chunk 2: OTA URL only (isolated due to length)
                 JSONObject chunk2 = new JSONObject();
                 chunk2.put("type", "version_info_2");
                 chunk2.put("ota_version_url", otaVersionUrl);
-                chunk2.put("firmware_version", mcuFirmwareVersion);
-                chunk2.put("bt_mac_address", besBtMac);
 
                 Log.d(TAG, "📤 Sending version_info_2: " + chunk2.toString());
                 serviceContainer.getServiceManager().getBluetoothManager().sendData(chunk2.toString().getBytes(StandardCharsets.UTF_8));
+
+                // Small delay between chunks to ensure proper ordering
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+
+                // Chunk 3: Firmware info (BES version, MTK version, BT MAC)
+                JSONObject chunk3 = new JSONObject();
+                chunk3.put("type", "version_info_3");
+                chunk3.put("bes_fw_version", besFirmwareVersion);
+                chunk3.put("mtk_fw_version", mtkFirmwareVersion);
+                chunk3.put("bt_mac_address", besBtMac);
+
+                Log.d(TAG, "📤 Sending version_info_3: " + chunk3.toString());
+                serviceContainer.getServiceManager().getBluetoothManager().sendData(chunk3.toString().getBytes(StandardCharsets.UTF_8));
 
                 Log.i(TAG, "✅ Sent version info chunks to phone successfully");
             } else {
@@ -1005,6 +1023,14 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 Log.e(TAG, "❌ " + mediaTypeName + " error - ID: " + requestId + ", Error: " + error);
             }
         };
+    }
+
+    /**
+     * Get the CommandProcessor instance
+     * @return CommandProcessor or null if not yet initialized
+     */
+    public CommandProcessor getCommandProcessor() {
+        return commandProcessor;
     }
 
     public ServiceCallbackInterface getServiceCallback() {

@@ -1,19 +1,21 @@
 {
   "name": "@mentra/cli",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Mentra CLI - Command-line tool for managing Mentra apps and organizations",
   "type": "module",
   "bin": {
-    "mentra": "./dist/index.js"
+    "mentra": "./src/index.ts"
   },
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "files": [
+    "src",
+    "package.json"
+  ],
   "scripts": {
-    "build": "tsc && cp src/config/clouds.yaml dist/config/ && chmod +x dist/index.js",
     "dev": "bun run src/index.ts",
-    "start": "bun run dist/index.js",
-    "test": "bun test",
-    "prepublishOnly": "bun run build"
+    "start": "bun run src/index.ts",
+    "test": "bun test"
   },
   "keywords": [
     "mentra",
@@ -24,7 +26,7 @@
   "author": "Mentra",
   "license": "MIT",
   "dependencies": {
-    "@mentra/types": "workspace:*",
+    "@mentra/types": "1.0.0-beta.2",
     "commander": "^11.1.0",
     "axios": "^1.6.5",
     "jsonwebtoken": "^9.0.2",

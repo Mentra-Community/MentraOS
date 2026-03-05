@@ -12,6 +12,8 @@ export interface PhotoInfo {
   is_video?: boolean
   thumbnail_data?: string
   downloaded_at?: number
+  // Video duration in milliseconds (from glasses sync response)
+  duration?: number
   // New fields for filesystem storage
   filePath?: string
   thumbnailPath?: string

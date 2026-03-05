@@ -80,4 +80,10 @@ public interface ICommunicationManager {
      * @return true if sent successfully, false otherwise
      */
     boolean sendBluetoothResponse(JSONObject response);
+    
+    /**
+     * Send OTA progress update to phone
+     * @param progress JSON with stage, status, progress, bytes_downloaded, total_bytes, error_message, etc.
+     */
+    void sendOtaProgress(JSONObject progress);
 } 

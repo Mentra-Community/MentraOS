@@ -241,7 +241,7 @@ export function Card(props: CardProps) {
   )
 }
 
-const $containerBase: ThemedStyle<ViewStyle> = theme => ({
+const $containerBase: ThemedStyle<ViewStyle> = (theme) => ({
   borderRadius: theme.spacing.s4,
   padding: theme.spacing.s2,
   borderWidth: 1,
@@ -269,7 +269,7 @@ const $containerPresets: Record<Presets, ThemedStyleArray<ViewStyle>> = {
   default: [
     $styles.row,
     $containerBase,
-    theme => ({
+    (theme) => ({
       backgroundColor: theme.colors.palette.neutral100,
       borderColor: theme.colors.palette.neutral300,
     }),
@@ -277,7 +277,7 @@ const $containerPresets: Record<Presets, ThemedStyleArray<ViewStyle>> = {
   reversed: [
     $styles.row,
     $containerBase,
-    theme => ({
+    (theme) => ({
       backgroundColor: theme.colors.palette.neutral800,
       borderColor: theme.colors.palette.neutral500,
     }),
@@ -286,15 +286,15 @@ const $containerPresets: Record<Presets, ThemedStyleArray<ViewStyle>> = {
 
 const $headingPresets: Record<Presets, ThemedStyleArray<TextStyle>> = {
   default: [],
-  reversed: [theme => ({color: theme.colors.palette.neutral100})],
+  reversed: [(theme) => ({color: theme.colors.palette.neutral100})],
 }
 
 const $contentPresets: Record<Presets, ThemedStyleArray<TextStyle>> = {
   default: [],
-  reversed: [theme => ({color: theme.colors.palette.neutral100})],
+  reversed: [(theme) => ({color: theme.colors.palette.neutral100})],
 }
 
 const $footerPresets: Record<Presets, ThemedStyleArray<TextStyle>> = {
   default: [],
-  reversed: [theme => ({color: theme.colors.palette.neutral100})],
+  reversed: [(theme) => ({color: theme.colors.palette.neutral100})],
 }

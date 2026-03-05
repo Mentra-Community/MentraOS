@@ -1,5 +1,3 @@
-// SensingDisabledWarning.tsx
-import {MaterialCommunityIcons} from "@expo/vector-icons"
 import {useEffect, useState} from "react"
 import {TouchableOpacity, ViewStyle, Platform, Linking} from "react-native"
 
@@ -9,6 +7,7 @@ import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
+import {Icon} from "@/components/ignite/Icon"
 
 export default function NonProdWarning() {
   const {theme, themed} = useAppTheme()
@@ -116,7 +115,7 @@ export default function NonProdWarning() {
 
   return (
     <TouchableOpacity style={themed($settingsButton)} onPress={nonProdWarning}>
-      <MaterialCommunityIcons name="alert" size={theme.spacing.s6} color={theme.colors.text} />
+      <Icon name="alert-triangle" size={theme.spacing.s6} color={theme.colors.text} />
     </TouchableOpacity>
   )
 }

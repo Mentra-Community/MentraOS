@@ -159,7 +159,7 @@ const $fontWeightStyles = Object.entries(typography.primary).reduce((acc, [weigh
   return {...acc, [weight]: {fontFamily}}
 }, {}) as Record<Weights, TextStyle>
 
-const $baseStyle: ThemedStyle<TextStyle> = theme => ({
+const $baseStyle: ThemedStyle<TextStyle> = (theme) => ({
   ...$sizeStyles.sm,
   ...$fontWeightStyles.normal,
   color: theme.colors.secondary_foreground,

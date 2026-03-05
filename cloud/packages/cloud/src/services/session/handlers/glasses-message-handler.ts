@@ -23,7 +23,6 @@ import {
   CalendarEvent,
   RtmpStreamStatus,
   KeepAliveAck,
-  PhotoResponse,
   TouchEvent,
   StreamType,
   CloudToAppMessageType,
@@ -33,6 +32,7 @@ import {
 
 import { PosthogService } from "../../logging/posthog.service";
 import { WebSocketReadyState } from "../../websocket/types";
+import { metricsService } from "../../metrics/MetricsService";
 import type UserSession from "../UserSession";
 
 const SERVICE_NAME = "GlassesMessageHandler";
@@ -114,10 +114,8 @@ export async function handleGlassesMessage(userSession: UserSession, message: Gl
         break;
       }
 
-      // Photo
-      case GlassesToCloudMessageType.PHOTO_RESPONSE:
-        userSession.photoManager.handlePhotoResponse(message as PhotoResponse);
-        break;
+      // Photo — PHOTO_RESPONSE is handled via REST at POST /api/client/photo/response
+      // See: cloud/issues/038-photo-error-rest-endpoint/spec.md
 
       // Audio playback
       case GlassesToCloudMessageType.AUDIO_PLAY_RESPONSE:
@@ -311,6 +309,7 @@ async function handleTouchEvent(userSession: UserSession, touchEvent: TouchEvent
 
       try {
         connection.send(JSON.stringify(dataStream));
+        metricsService.incrementMiniappMessagesOut();
       } catch (sendError) {
         logger.error({ error: sendError, packageName }, "Error sending touch event to app");
       }

@@ -116,6 +116,7 @@
     --neutral-500: #737373;
     --neutral-600: #525252;
     --neutral-700: #404040;
+    --neutral-750: #2e2e2e;
     --neutral-800: #262626;
     --neutral-825: #222222;
     --neutral-900: #171717;
@@ -314,7 +315,7 @@
       --color-popover: var(--neutral-950);
       --color-popover-foreground: var(--neutral-50);
       --color-primary: var(--mentra-green-9);
-      --color-primary-foreground: var(--neutral-825);
+      --color-primary-foreground: var(--neutral-750);
       --color-ring: var(--mentra-green-9);
       --color-secondary: var(--mentra-green-5);
       --color-secondary-foreground: var(--neutral-50);

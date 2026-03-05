@@ -7,22 +7,16 @@ const DEPLOYMENT_REGION = process.env.DEPLOYMENT_REGION;
 const isChina = DEPLOYMENT_REGION === "china";
 
 const BETTERSTACK_SOURCE_TOKEN = process.env.BETTERSTACK_SOURCE_TOKEN;
-const BETTERSTACK_ENDPOINT =
-  process.env.BETTERSTACK_ENDPOINT ||
-  "https://s1311181.eu-nbg-2.betterstackdata.com";
+const BETTERSTACK_ENDPOINT = process.env.BETTERSTACK_ENDPOINT || "https://s1311181.eu-nbg-2.betterstackdata.com";
 const NODE_ENV = process.env.NODE_ENV || "development";
-const REGION = process.env.REGION || process.env.AZURE_SPEECH_REGION || "";
+const REGION = process.env.REGION || process.env.DEPLOYMENT_REGION || "";
 const PORTER_APP_NAME = process.env.PORTER_APP_NAME || "cloud-local";
 
 // Log filtering configuration
-const LOG_FEATURES =
-  process.env.LOG_FEATURES?.split(",").map((f) => f.trim()) || [];
-const LOG_EXCLUDE_FEATURES =
-  process.env.LOG_EXCLUDE_FEATURES?.split(",").map((f) => f.trim()) || [];
-const LOG_SERVICES =
-  process.env.LOG_SERVICES?.split(",").map((s) => s.trim()) || [];
-const LOG_EXCLUDE_SERVICES =
-  process.env.LOG_EXCLUDE_SERVICES?.split(",").map((s) => s.trim()) || [];
+const LOG_FEATURES = process.env.LOG_FEATURES?.split(",").map((f) => f.trim()) || [];
+const LOG_EXCLUDE_FEATURES = process.env.LOG_EXCLUDE_FEATURES?.split(",").map((f) => f.trim()) || [];
+const LOG_SERVICES = process.env.LOG_SERVICES?.split(",").map((s) => s.trim()) || [];
+const LOG_EXCLUDE_SERVICES = process.env.LOG_EXCLUDE_SERVICES?.split(",").map((s) => s.trim()) || [];
 
 // Determine log level based on environment
 // Use 'info' in development to reduce noise from debug logs
@@ -44,34 +38,20 @@ const shouldLogMessage = (logObj: any): boolean => {
   const service = logObj.service;
 
   // Check feature filters
-  if (
-    LOG_FEATURES.length > 0 &&
-    (!feature || !LOG_FEATURES.includes(feature))
-  ) {
+  if (LOG_FEATURES.length > 0 && (!feature || !LOG_FEATURES.includes(feature))) {
     return false;
   }
 
-  if (
-    LOG_EXCLUDE_FEATURES.length > 0 &&
-    feature &&
-    LOG_EXCLUDE_FEATURES.includes(feature)
-  ) {
+  if (LOG_EXCLUDE_FEATURES.length > 0 && feature && LOG_EXCLUDE_FEATURES.includes(feature)) {
     return false;
   }
 
   // Check service filters
-  if (
-    LOG_SERVICES.length > 0 &&
-    (!service || !LOG_SERVICES.includes(service))
-  ) {
+  if (LOG_SERVICES.length > 0 && (!service || !LOG_SERVICES.includes(service))) {
     return false;
   }
 
-  if (
-    LOG_EXCLUDE_SERVICES.length > 0 &&
-    service &&
-    LOG_EXCLUDE_SERVICES.includes(service)
-  ) {
+  if (LOG_EXCLUDE_SERVICES.length > 0 && service && LOG_EXCLUDE_SERVICES.includes(service)) {
     return false;
   }
 
@@ -126,10 +106,7 @@ if (BETTERSTACK_SOURCE_TOKEN && !isChina) {
     },
   });
 
-  const filteredBetterStackStream = createFilteredStream(
-    betterStackTransport,
-    LOG_LEVEL,
-  );
+  const filteredBetterStackStream = createFilteredStream(betterStackTransport, LOG_LEVEL);
 
   streams.push({
     stream: filteredBetterStackStream,
@@ -168,11 +145,9 @@ if (
   logger.info(
     {
       LOG_FEATURES: LOG_FEATURES.length > 0 ? LOG_FEATURES : undefined,
-      LOG_EXCLUDE_FEATURES:
-        LOG_EXCLUDE_FEATURES.length > 0 ? LOG_EXCLUDE_FEATURES : undefined,
+      LOG_EXCLUDE_FEATURES: LOG_EXCLUDE_FEATURES.length > 0 ? LOG_EXCLUDE_FEATURES : undefined,
       LOG_SERVICES: LOG_SERVICES.length > 0 ? LOG_SERVICES : undefined,
-      LOG_EXCLUDE_SERVICES:
-        LOG_EXCLUDE_SERVICES.length > 0 ? LOG_EXCLUDE_SERVICES : undefined,
+      LOG_EXCLUDE_SERVICES: LOG_EXCLUDE_SERVICES.length > 0 ? LOG_EXCLUDE_SERVICES : undefined,
     },
     "Log filtering enabled",
   );

@@ -35,21 +35,21 @@
 // @objc(FrameManager) class FrameManager: NSObject, SGCManager {
 //     func sendButtonMaxRecordingTime() {}
 
-//     var glassesAppVersion: String = ""
+//     var appVersion: String = ""
 
-//     var glassesBuildNumber: String = ""
+//     var buildNumber: String = ""
 
-//     var glassesDeviceModel: String = ""
+//     var deviceModel: String = ""
 
-//     var glassesAndroidVersion: String = ""
+//     var androidVersion: String = ""
 
-//     var glassesOtaVersionUrl: String = ""
+//     var otaVersionUrl: String = ""
 
-//     var glassesSerialNumber: String = ""
+//     var serialNumber: String = ""
 
-//     var glassesStyle: String = ""
+//     var style: String = ""
 
-//     var glassesColor: String = ""
+//     var color: String = ""
 
 //     var caseBatteryLevel: Int = -1
 

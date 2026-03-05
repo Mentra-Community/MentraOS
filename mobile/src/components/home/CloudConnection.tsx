@@ -13,7 +13,7 @@ import {ThemedStyle} from "@/theme"
 import {BackgroundTimer} from "@/utils/timers"
 
 export default function CloudConnection() {
-  const connectionStatus = useConnectionStore(state => state.status)
+  const connectionStatus = useConnectionStore((state) => state.status)
   const {themed} = useAppTheme()
   const cloudConnectionStatusAnim = useSharedValue(1)
   const [hideCloudConnection, setHideCloudConnection] = useState(true)

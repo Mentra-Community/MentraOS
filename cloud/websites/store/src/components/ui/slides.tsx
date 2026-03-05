@@ -58,13 +58,13 @@ export const CaptionsSlideMobile: React.FC = () => {
   useEffect(() => {
     const fetchAppData = async () => {
       try {
-        const data = await api.app.getAppByPackageName("com.mentra.captions");
-        if (data) {
+        const result = await api.app.getAppByPackageName("com.mentra.captions");
+        if (result.app) {
           setAppData({
-            name: data.name || "Live Captions",
-            description: data.description || "Real-time speech-to-text captions",
-            logoURL: data.logoURL || "",
-            packageName: data.packageName,
+            name: result.app.name || "Live Captions",
+            description: result.app.description || "Real-time speech-to-text captions",
+            logoURL: result.app.logoURL || "",
+            packageName: result.app.packageName,
           });
         }
       } catch (error) {
@@ -215,13 +215,13 @@ export const MergeSlideMobile: React.FC = () => {
   useEffect(() => {
     const fetchAppData = async () => {
       try {
-        const data = await api.app.getAppByPackageName("com.mentra.merge");
-        if (data) {
+        const result = await api.app.getAppByPackageName("com.mentra.merge");
+        if (result.app) {
           setAppData({
-            name: data.name || "Merge",
-            description: data.description || "Unified messaging platform",
-            logoURL: data.logoURL || "",
-            packageName: data.packageName,
+            name: result.app.name || "Merge",
+            description: result.app.description || "Unified messaging platform",
+            logoURL: result.app.logoURL || "",
+            packageName: result.app.packageName,
           });
         }
       } catch (error) {
@@ -362,13 +362,13 @@ export const StreamSlideMobile: React.FC = () => {
   useEffect(() => {
     const fetchAppData = async () => {
       try {
-        const data = await api.app.getAppByPackageName("com.mentra.streamer");
-        if (data) {
+        const result = await api.app.getAppByPackageName("com.mentra.streamer");
+        if (result.app) {
           setAppData({
-            name: data.name || "Stream",
-            description: data.description || "Live stream from your smart glasses",
-            logoURL: data.logoURL || "",
-            packageName: data.packageName,
+            name: result.app.name || "Stream",
+            description: result.app.description || "Live stream from your smart glasses",
+            logoURL: result.app.logoURL || "",
+            packageName: result.app.packageName,
           });
         }
       } catch (error) {
@@ -509,14 +509,14 @@ export const XSlideMobile: React.FC = () => {
   useEffect(() => {
     const fetchAppData = async () => {
       try {
-        const data = await api.app.getAppByPackageName("com.augmentos.xstats");
-        console.log("Fetched app data for X:", data);
-        if (data) {
+        const result = await api.app.getAppByPackageName("com.augmentos.xstats");
+        console.log("Fetched app data for X:", result);
+        if (result.app) {
           setAppData({
-            name: data.name || "X",
-            description: data.description || "Stay connected with what's happening on X",
-            logoURL: data.logoURL || "",
-            packageName: data.packageName,
+            name: result.app.name || "X",
+            description: result.app.description || "Stay connected with what's happening on X",
+            logoURL: result.app.logoURL || "",
+            packageName: result.app.packageName,
           });
         }
       } catch (error) {

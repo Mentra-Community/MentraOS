@@ -181,7 +181,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({
                   scrollEventThrottle={16}
                   contentContainerStyle={{paddingTop: ITEM_HEIGHT, paddingBottom: ITEM_HEIGHT}}
                   onLayout={handleScrollViewLayout(hoursScrollRef, localHours, 100)}
-                  onMomentumScrollEnd={event => {
+                  onMomentumScrollEnd={(event) => {
                     const offsetY = event.nativeEvent.contentOffset.y
                     const index = Math.round(offsetY / ITEM_HEIGHT)
                     const actualHour = index % 100
@@ -220,7 +220,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({
                   scrollEventThrottle={16}
                   contentContainerStyle={{paddingTop: ITEM_HEIGHT, paddingBottom: ITEM_HEIGHT}}
                   onLayout={handleScrollViewLayout(minutesScrollRef, localMinutes, 60)}
-                  onMomentumScrollEnd={event => {
+                  onMomentumScrollEnd={(event) => {
                     const offsetY = event.nativeEvent.contentOffset.y
                     const index = Math.round(offsetY / ITEM_HEIGHT)
                     const actualMinute = index % 60
@@ -260,7 +260,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({
                     scrollEventThrottle={16}
                     contentContainerStyle={{paddingTop: ITEM_HEIGHT, paddingBottom: ITEM_HEIGHT}}
                     onLayout={handleScrollViewLayout(secondsScrollRef, localSeconds, 60)}
-                    onMomentumScrollEnd={event => {
+                    onMomentumScrollEnd={(event) => {
                       const offsetY = event.nativeEvent.contentOffset.y
                       const index = Math.round(offsetY / ITEM_HEIGHT)
                       const actualSecond = index % 60
@@ -321,7 +321,7 @@ const $timeButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
   alignItems: "center",
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
@@ -350,7 +350,7 @@ const $modalOverlay: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $modalContent: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderRadius: 12,
   padding: spacing.s6,
   width: "90%",
@@ -420,7 +420,7 @@ const $modalFooter: ThemedStyle<ViewStyle> = ({spacing}) => ({
 
 const $cancelButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flex: 1,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,

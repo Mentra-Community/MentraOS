@@ -77,7 +77,7 @@ export const AppPicker: FC<AppPickerProps> = ({
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase()
       result = result.filter(
-        app => app.name.toLowerCase().includes(query) || app.packageName.toLowerCase().includes(query),
+        (app) => app.name.toLowerCase().includes(query) || app.packageName.toLowerCase().includes(query),
       )
     }
 
@@ -156,7 +156,7 @@ export const AppPicker: FC<AppPickerProps> = ({
                   />
                 </View>
               ) : (
-                filteredApps.map(app => {
+                filteredApps.map((app) => {
                   const isSelected = app.packageName === selectedPackageName
                   const isCompatible = app.compatibility?.isCompatible !== false
                   const compatibilityMessage = app.compatibility?.message || ""
@@ -331,7 +331,7 @@ const $warningContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   alignItems: "flex-start",
   marginTop: spacing.s2,
   gap: spacing.s2,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   padding: spacing.s2,
   borderRadius: spacing.s2,
 })

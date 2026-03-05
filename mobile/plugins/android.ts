@@ -14,7 +14,7 @@ import {
  * Expo Config Plugin to apply android-working modifications
  * This ensures that after running expo prebuild, all custom Android configurations are preserved
  */
-const withAndroidWorkingConfig: ConfigPlugin = config => {
+const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
   config = withAppBuildGradleModifications(config)
   config = withAndroidManifestModifications(config)
@@ -29,7 +29,7 @@ const withAndroidWorkingConfig: ConfigPlugin = config => {
  * Modify app/build.gradle to add custom configurations
  */
 function withAppBuildGradleModifications(config: any) {
-  return withAppBuildGradle(config, config => {
+  return withAppBuildGradle(config, (config) => {
     let buildGradle = config.modResults.contents
 
     // 1. Add release credentials and conditional Sentry script (after jscFlavor)
@@ -83,12 +83,12 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
 
       buildGradle = buildGradle.replace(
         /def jscFlavor = ['"]io\.github\.react-native-community:jsc-android:[^'"]*['"]/,
-        match => `${match}\n${credentialsAndSentry}`,
+        (match) => `${match}\n${credentialsAndSentry}`,
       )
     }
 
-    // 2. Update versionName to 2.2.14
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.3.0"')
+    // 2. Update versionName to 2.6.0
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.6.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -165,8 +165,27 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
  * Modify AndroidManifest.xml to add additional permissions and configurations
  */
 function withAndroidManifestModifications(config: any) {
-  return withAndroidManifest(config, config => {
+  return withAndroidManifest(config, (config) => {
     const manifest: any = config.modResults.manifest
+
+    // Remove permissions that Google Play doesn't allow for our use case
+    // We only SAVE photos from glasses - we don't need to READ the user's photo library
+    // expo-media-library adds these automatically, but we must remove them for Play Store compliance
+    // Google's Photo and Video Permissions policy requires apps to use Photo Picker for one-time access
+    // Android 10+ (API 29+) doesn't need any permission to save to MediaStore via ContentResolver
+    const permissionsToRemove = [
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VIDEO",
+      "android.permission.WRITE_MEDIA_VIDEO", // Not needed - MediaStore API works without it on API 29+
+      "android.permission.ACCESS_MEDIA_LOCATION", // Not needed - we save photos, don't read EXIF from user's library
+    ]
+
+    // Filter out permissions we want to remove
+    if (manifest["uses-permission"]) {
+      manifest["uses-permission"] = manifest["uses-permission"].filter(
+        (p: any) => !permissionsToRemove.includes(p.$["android:name"]),
+      )
+    }
 
     // Add permissions that need to be added
     const permissionsToAdd = [
@@ -186,7 +205,6 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.QUERY_ALL_PACKAGES"},
       {name: "android.permission.READ_PHONE_STATE"},
       {name: "android.permission.RECEIVE_BOOT_COMPLETED"},
-      {name: "android.permission.WRITE_MEDIA_VIDEO"},
       {name: "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"},
     ]
 
@@ -196,7 +214,7 @@ function withAndroidManifestModifications(config: any) {
     }
 
     // Add each permission if it doesn't exist
-    permissionsToAdd.forEach(perm => {
+    permissionsToAdd.forEach((perm) => {
       const existingPerm = manifest["uses-permission"].find((p: any) => p.$["android:name"] === perm.name)
 
       if (!existingPerm) {
@@ -279,7 +297,7 @@ function withAndroidManifestModifications(config: any) {
  * Uses dangerous mod to directly write files to the filesystem
  */
 function withXmlResourceFiles(config: any) {
-  return withAndroidManifest(config, config => {
+  return withAndroidManifest(config, (config) => {
     const projectRoot = config.modRequest.projectRoot
     const androidResPath = path.join(projectRoot, "android", "app", "src", "main", "res", "xml")
 
@@ -351,11 +369,11 @@ function withXmlResourceFiles(config: any) {
  * Modify gradle.properties to add Sentry configuration and node path
  */
 function withGradlePropertiesModifications(config: any) {
-  return withGradleProperties(config, config => {
+  return withGradleProperties(config, (config) => {
     let props = config.modResults
 
     // Add Sentry configuration if not present
-    if (!props.find(p => p.type === "property" && p.key === "sentryUploadEnabled")) {
+    if (!props.find((p) => p.type === "property" && p.key === "sentryUploadEnabled")) {
       props.push({
         type: "comment",
         value: " Sentry configuration",
@@ -378,7 +396,7 @@ function withGradlePropertiesModifications(config: any) {
       const nodePath = path.dirname(nodeExecutable)
 
       // Find existing org.gradle.jvmargs property
-      const jvmArgsIndex = props.findIndex(p => p.type === "property" && p.key === "org.gradle.jvmargs")
+      const jvmArgsIndex = props.findIndex((p) => p.type === "property" && p.key === "org.gradle.jvmargs")
 
       if (jvmArgsIndex !== -1) {
         // Append nodePath to existing jvmargs if not already present

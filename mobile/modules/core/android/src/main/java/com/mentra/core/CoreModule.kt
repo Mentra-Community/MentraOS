@@ -12,7 +12,44 @@ class CoreModule : Module() {
         Name("Core")
 
         // Define events that can be sent to JavaScript
-        Events("CoreMessageEvent", "onChange")
+        Events(
+            "glasses_status",
+            "core_status",
+            "log",
+            // Individual event handlers
+            "glasses_not_ready",
+            "button_press",
+            "touch_event",
+            "head_up",
+            "battery_status",
+            "local_transcription",
+            "wifi_status_change",
+            "hotspot_status_change",
+            "hotspot_error",
+            "photo_response",
+            "gallery_status",
+            "compatible_glasses_search_stop",
+            "heartbeat_sent",
+            "heartbeat_received",
+            "swipe_volume_status",
+            "switch_status",
+            "rgb_led_control_response",
+            "pair_failure",
+            "audio_pairing_needed",
+            "audio_connected",
+            "audio_disconnected",
+            "save_setting",
+            "phone_notification",
+            "phone_notification_dismissed",
+            "ws_text",
+            "ws_bin",
+            "mic_data",
+            "rtmp_stream_status",
+            "keep_alive_ack",
+            "mtk_update_complete",
+            "ota_update_available",
+            "ota_progress",
+        )
 
         OnCreate {
             // Initialize Bridge with Android context and event callback
@@ -24,6 +61,46 @@ class CoreModule : Module() {
 
             // initialize CoreManager after Bridge is ready
             coreManager = CoreManager.getInstance()
+
+            // Configure observable store event emission
+            GlassesStore.store.configure { category, changes ->
+                when (category) {
+                    "glasses" -> sendEvent("glasses_status", changes)
+                    "core" -> sendEvent("core_status", changes)
+                }
+            }
+        }
+
+        // MARK: - Observable Store Functions
+
+        Function("getGlassesStatus") { GlassesStore.store.getCategory("glasses") }
+
+        Function("getCoreStatus") { GlassesStore.store.getCategory("core") }
+
+        Function("set") { category: String, key: String, value: Any ->
+            GlassesStore.apply(category, key, value)
+        }
+
+        Function("update") { category: String, values: Map<String, Any> ->
+            values.forEach { (key, value) -> GlassesStore.apply(category, key, value) }
+            // Persist auth_token to SharedPreferences so MentraLive.getCoreToken() finds it
+            // (bridge may run this after glasses_ready; prefs survive retries and next connection)
+            if (category == "core") {
+                values["auth_token"]?.let { token ->
+                    val len = (token as? String)?.length ?: 0
+                    android.util.Log.d("CoreModule", "update(core) auth_token received, len=$len")
+                    if (token is String && token.isNotEmpty()) {
+                        val ctx = appContext.reactContext ?: appContext.currentActivity
+                        ctx?.let {
+                            it.getSharedPreferences("augmentos_auth_prefs", android.content.Context.MODE_PRIVATE)
+                                .edit()
+                                .putString("core_token", token)
+                                .apply()
+                            android.util.Log.d("CoreModule", "Persisted core_token to SharedPreferences, len=${token.length}")
+                        }
+                    }
+                }
+            }
         }
 
         // MARK: - Display Commands
@@ -40,8 +117,6 @@ class CoreModule : Module() {
 
         // MARK: - Connection Commands
 
-        AsyncFunction("getStatus") { coreManager?.getStatus() }
-
         AsyncFunction("connectDefault") { coreManager?.connectDefault() }
 
         AsyncFunction("connectByName") { deviceName: String ->
@@ -54,11 +129,19 @@ class CoreModule : Module() {
 
         AsyncFunction("forget") { coreManager?.forget() }
 
-        AsyncFunction("findCompatibleDevices") { modelName: String ->
-            coreManager?.findCompatibleDevices(modelName)
+        AsyncFunction("findCompatibleDevices") { deviceModel: String ->
+            coreManager?.findCompatibleDevices(deviceModel)
         }
 
         AsyncFunction("showDashboard") { coreManager?.showDashboard() }
+
+        AsyncFunction("ping") { coreManager?.ping() }
+
+        // MARK: - Incident Reporting
+
+        AsyncFunction("sendIncidentId") { incidentId: String ->
+            coreManager?.sendIncidentId(incidentId)
+        }
 
         // MARK: - WiFi Commands
 
@@ -68,18 +151,10 @@ class CoreModule : Module() {
             coreManager?.sendWifiCredentials(ssid, password)
         }
 
-        AsyncFunction("forgetWifiNetwork") { ssid: String ->
-            coreManager?.forgetWifiNetwork(ssid)
-        }
+        AsyncFunction("forgetWifiNetwork") { ssid: String -> coreManager?.forgetWifiNetwork(ssid) }
 
         AsyncFunction("setHotspotState") { enabled: Boolean ->
             coreManager?.setHotspotState(enabled)
-        }
-
-        // MARK: - User Context Commands
-
-        AsyncFunction("setUserEmail") { email: String ->
-            coreManager?.setUserEmail(email)
         }
 
         // MARK: - Gallery Commands
@@ -93,13 +168,33 @@ class CoreModule : Module() {
                 webhookUrl: String,
                 authToken: String,
                 compress: String,
-                silent: Boolean ->
-            coreManager?.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, silent)
+                flash: Boolean,
+                sound: Boolean ->
+            coreManager?.photoRequest(
+                    requestId,
+                    appId,
+                    size,
+                    webhookUrl,
+                    authToken,
+                    compress,
+                    flash,
+                    sound
+            )
         }
 
         // MARK: - OTA Commands
 
         AsyncFunction("sendOtaStart") { coreManager?.sendOtaStart() }
+
+        // MARK: - Version Info Commands
+
+        AsyncFunction("requestVersionInfo") { coreManager?.requestVersionInfo() }
+
+        // MARK: - Power Control Commands
+
+        AsyncFunction("sendShutdown") { coreManager?.sendShutdown() }
+
+        AsyncFunction("sendReboot") { coreManager?.sendReboot() }
 
         // MARK: - Video Recording Commands
 
@@ -111,8 +206,8 @@ class CoreModule : Module() {
             coreManager?.saveBufferVideo(requestId, durationSeconds)
         }
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, silent: Boolean ->
-            coreManager?.startVideoRecording(requestId, save, silent)
+        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, flash: Boolean, sound: Boolean ->
+            coreManager?.startVideoRecording(requestId, save, flash, sound)
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
@@ -142,10 +237,13 @@ class CoreModule : Module() {
 
         AsyncFunction("restartTranscriber") { coreManager?.restartTranscriber() }
 
-        // MARK: - Audio Encoding Commands
+        // MARK: - Audio Playback Monitoring
 
-        AsyncFunction("setLC3FrameSize") { frameSize: Int ->
-            coreManager?.setLC3FrameSize(frameSize)
+        AsyncFunction("setOwnAppAudioPlaying") { playing: Boolean ->
+            // Notify PhoneAudioMonitor that our app started/stopped playing audio
+            // This is used to suspend LC3 mic during audio playback to avoid MCU overload
+            val context = appContext.reactContext ?: return@AsyncFunction
+            com.mentra.core.utils.PhoneAudioMonitor.getInstance(context).setOwnAppAudioPlaying(playing)
         }
 
         // MARK: - RGB LED Control
@@ -167,12 +265,6 @@ class CoreModule : Module() {
                     offtime,
                     count
             )
-        }
-
-        // MARK: - Settings Commands
-
-        AsyncFunction("updateSettings") { params: Map<String, Any> ->
-            coreManager?.updateSettings(params)
         }
 
         // MARK: - STT Commands
@@ -254,10 +346,31 @@ class CoreModule : Module() {
                     appContext.reactContext
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
-            val locationManager = context.getSystemService(android.content.Context.LOCATION_SERVICE) as android.location.LocationManager
+            val locationManager =
+                    context.getSystemService(android.content.Context.LOCATION_SERVICE) as
+                            android.location.LocationManager
             // Check if either GPS or Network location provider is enabled
-            locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
-                    locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+            val providerEnabled = locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+                    locationManager.isProviderEnabled(
+                            android.location.LocationManager.NETWORK_PROVIDER
+                    )
+            if (!providerEnabled) {
+                // Fallback: check the system-level location toggle directly.
+                // GPS_PROVIDER/NETWORK_PROVIDER can report disabled on devices without
+                // Google Play Services or without a GPS chip, even when location is toggled on.
+                // isLocationEnabled requires API 28+; on older devices just trust the provider check.
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    val systemEnabled = locationManager.isLocationEnabled
+                    if (systemEnabled) {
+                        android.util.Log.w("CoreModule", "Location providers (GPS/Network) report disabled but system location toggle is ON. Device may lack GMS or GPS hardware.")
+                    }
+                    systemEnabled
+                } else {
+                    false
+                }
+            } else {
+                true
+            }
         }
 
         AsyncFunction("openLocationSettings") {

@@ -38,7 +38,6 @@ MentraOS Manager is a React Native app built with Expo and expo-router for file-
 
 ```bash
 bun install
-bun expo prebuild  # NEVER use --clean or --clear flags! We use custom native code
 bun android
 ```
 
@@ -46,29 +45,7 @@ bun android
 
 ```bash
 bun install
-bun expo prebuild  # NEVER use --clean or --clear flags! We use custom native code
-cd ios && pod install && cd ..
-open ios/MentraOS.xcworkspace
-# Install dev build on device using Xcode
-bun start
-```
-
-### IMPORTANT: Never Use --clean or --clear with prebuild
-
-**DO NOT** use `bun expo prebuild --clean` or `bun expo prebuild --clear` as these commands will delete custom native code modifications. This project makes heavy use of native Android and iOS code that must be preserved.
-
-### Cache Issues Fix
-
-If experiencing build issues after UI refresh:
-
-```bash
-bun install
-bun expo prebuild  # NEVER use --clean or --clear flags!
-rm -rf android/build android/.gradle node_modules .expo .bundle android/app/build android/app/src/main/assets
-bun install
-./scripts/old/fix-react-native-symlinks.sh
-bun android
-bun start
+bun ios
 ```
 
 ## Architecture Changes (Expo Migration)
@@ -98,7 +75,7 @@ bun start
 - Naming: PascalCase for components, camelCase for functions/variables
 - Navigation: File-based routing with expo-router (React Navigation under the hood)
 - State management: Context API for app-wide state
-- Error handling: Try/catch blocks with meaningful error messages
+- Error handling: use typesafe-ts (see RestComms.ts for examples)
 
 ## Working with MentraOS
 

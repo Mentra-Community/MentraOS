@@ -4,7 +4,7 @@ public class Constants {
     public static final String TAG = "OTAUpdater";
 
     // URLs
-    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/live_version.json"; // TODO: change with real server ip address
+    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json"; // TODO: change with real server ip address
 
     // Heartbeat actions
     public static final String ACTION_HEARTBEAT = "com.augmentos.otaupdater.ACTION_HEARTBEAT";

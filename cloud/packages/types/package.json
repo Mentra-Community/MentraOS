@@ -1,6 +1,6 @@
 {
   "name": "@mentra/types",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "description": "Shared TypeScript types for MentraOS client and cloud",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,7 +17,7 @@
     }
   },
   "scripts": {
-    "build": "rm -rf dist && bun x tsc -p tsconfig.json",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && bun x tsc -p tsconfig.json",
     "dev": "bun x tsc --watch",
     "typecheck": "bun x tsc --noEmit",
     "prepare": "bun run build"

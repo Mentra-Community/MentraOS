@@ -1,29 +1,26 @@
 import {useEffect, useRef, useState} from "react"
-import {View, Animated, Easing, ViewStyle, TextStyle, Image, ImageStyle} from "react-native"
+import {View, Animated, Easing, Image} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {ThemedStyle} from "@/theme"
 import {getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
 
 import {getModelSpecificTips} from "@/components/glasses/GlassesTroubleshootingModal"
 
 interface GlassesPairingLoaderProps {
-  modelName: string
+  deviceModel: string
   deviceName?: string
   onCancel?: () => void
+  isBooting?: boolean
 }
 
-const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({modelName, deviceName, onCancel}) => {
-  const {theme, themed} = useAppTheme()
-
-  // Animation values
+const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel, deviceName, onCancel, isBooting}) => {
+  const {theme} = useAppTheme()
   const progressAnim = useRef(new Animated.Value(0)).current
-
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const tips = getModelSpecificTips(modelName)
+  const tips = getModelSpecificTips(deviceModel)
 
   // Set up animations
   useEffect(() => {
@@ -58,110 +55,62 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({modelName, d
   })
 
   // Use dynamic image for Even Realities G1 based on style and color
-  let glassesImage = getGlassesImage(modelName)
-  if (modelName && (modelName === "Even Realities G1" || modelName === "evenrealities_g1" || modelName === "g1")) {
+  let glassesImage = getGlassesImage(deviceModel)
+  if (
+    deviceModel &&
+    (deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1")
+  ) {
     // For pairing, we don't have style/color info yet, so use defaults
     // If battery level is available in props or context, pass it; otherwise, pass undefined
     glassesImage = getEvenRealitiesG1Image("Round", "Grey", "folded", "l", theme.isDark, undefined)
   }
 
   return (
-    <View style={themed($outerContainer)}>
-      <View style={themed($container)}>
+    <View className="flex-1 justify-center">
+      <View className="bg-primary-foreground rounded-lg p-6 gap-4">
         {/* Title */}
-        <Text style={themed($title)}>
-          {modelName}
+        <Text tx="pairing:pairing" className="text-xl font-semibold text-center" />
+        <Text className="text-xl text-center">
+          {deviceModel}
           {deviceName && deviceName !== "NOTREQUIREDSKIP" ? ` - ${deviceName}` : ""}
         </Text>
 
         {/* Glasses image */}
-        <View style={themed($imageContainer)}>
-          <Image source={glassesImage} style={themed($glassesImageNew)} resizeMode="contain" />
+        <View className="items-center justify-center py-4 h-[150px]">
+          <Image source={glassesImage} className="w-full h-[150px]" resizeMode="contain" />
         </View>
 
         {/* Progress bar */}
-        <View style={themed($progressBarContainer)}>
-          <Animated.View style={[themed($progressBar), {width: progressWidth}]} />
+        <View className="bg-border rounded-md h-3 w-full overflow-hidden">
+          <Animated.View className="bg-primary h-full rounded-md" style={{width: progressWidth}} />
+          <Animated.View
+            style={{
+              width: progressWidth,
+              backgroundColor: theme.colors.primary,
+              borderRadius: theme.spacing.s2,
+              height: "100%",
+            }}
+          />
         </View>
 
+        {isBooting && (
+          <View className="bg-background rounded-lg py-2 px-4">
+            <Text className="text-sm font-medium text-primary text-center" tx="pairing:glassesBooting" />
+          </View>
+        )}
+
         {/* Instruction text */}
-        <Text style={themed($instructionText)}>{tips[currentTipIndex].body}</Text>
+        <Text className="text-sm text-muted-foreground text-center px-4">{tips[currentTipIndex].body}</Text>
 
         {/* Cancel button */}
         {onCancel && (
-          <View style={themed($buttonContainer)}>
-            <Button preset="alternate" compact tx="common:cancel" onPress={onCancel} style={themed($cancelButton)} />
+          <View className="flex-row justify-end">
+            <Button preset="alternate" compact tx="common:cancel" onPress={onCancel} className="min-w-24" />
           </View>
         )}
       </View>
     </View>
   )
 }
-
-const $outerContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  justifyContent: "center",
-  gap: spacing.s4,
-})
-
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary_foreground,
-  borderRadius: spacing.s6,
-  padding: spacing.s6,
-  gap: spacing.s4,
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 20,
-  fontWeight: "600",
-  color: colors.text,
-  textAlign: "center",
-  lineHeight: 28,
-})
-
-const $imageContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  alignItems: "center",
-  justifyContent: "center",
-  paddingVertical: spacing.s4,
-  minHeight: 150,
-})
-
-const $glassesImageNew: ThemedStyle<ImageStyle> = () => ({
-  width: "100%",
-  height: 140,
-  resizeMode: "contain",
-})
-
-const $progressBarContainer: ThemedStyle<ViewStyle> = ({colors}) => ({
-  width: "100%",
-  height: 12,
-  borderRadius: 6,
-  backgroundColor: colors.separator,
-  overflow: "hidden",
-})
-
-const $progressBar: ThemedStyle<ViewStyle> = () => ({
-  height: "100%",
-  borderRadius: 6,
-  backgroundColor: "#10b981", // Green color for progress
-})
-
-const $instructionText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 14,
-  fontWeight: "400",
-  color: colors.textDim,
-  textAlign: "center",
-  paddingHorizontal: spacing.s4,
-  lineHeight: 20,
-})
-
-const $buttonContainer: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  justifyContent: "flex-end",
-})
-
-const $cancelButton: ThemedStyle<ViewStyle> = () => ({
-  minWidth: 100,
-})
 
 export default GlassesPairingLoader

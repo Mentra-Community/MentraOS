@@ -54,7 +54,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         scheduleOtaServiceStart();
         
         // Clean up system packages
-        cleanupSystemPackages();
+        // cleanupSystemPackages(); Not needed anymore
         
         isInitialized = true;
         Log.d(TAG, "Service lifecycle initialized successfully");

@@ -64,9 +64,9 @@ const SelectWithSearchSetting = ({
 
   // If the current value doesn't match any option, use the defaultValue
   useEffect(() => {
-    if (options.length > 0 && !options.find(option => option.value === value)) {
+    if (options.length > 0 && !options.find((option) => option.value === value)) {
       // Value doesn't match any option
-      if (defaultValue !== undefined && options.find(option => option.value === defaultValue)) {
+      if (defaultValue !== undefined && options.find((option) => option.value === defaultValue)) {
         // Default value exists and is valid, use it
         onValueChange(defaultValue)
       }
@@ -76,10 +76,10 @@ const SelectWithSearchSetting = ({
   // Filter options based on search
   const filteredOptions = useMemo(() => {
     if (!search) return options
-    return options.filter(option => option.label.toLowerCase().includes(search.toLowerCase()))
+    return options.filter((option) => option.label.toLowerCase().includes(search.toLowerCase()))
   }, [search, options])
 
-  const selectedLabel = options.find(option => option.value === value)?.label || translate("appSettings:select")
+  const selectedLabel = options.find((option) => option.value === value)?.label || translate("appSettings:select")
 
   return (
     <View style={themed($container)}>
@@ -127,7 +127,7 @@ const SelectWithSearchSetting = ({
                   </View>
                   <FlatList
                     data={filteredOptions}
-                    keyExtractor={item => item.value}
+                    keyExtractor={(item) => item.value}
                     keyboardShouldPersistTaps="always"
                     style={themed($optionsList)}
                     renderItem={({item}) => (

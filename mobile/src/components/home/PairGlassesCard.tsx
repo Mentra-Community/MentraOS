@@ -26,7 +26,7 @@ export const PairGlassesCard = ({style}: {style?: ViewStyle}) => {
           tx="home:setupWithoutGlasses"
           preset="secondary"
           style={{backgroundColor: theme.colors.background}}
-          onPress={() => push("/pairing/prep", {modelName: DeviceTypes.SIMULATED})}
+          onPress={() => push("/pairing/prep", {deviceModel: DeviceTypes.SIMULATED})}
         />
       </View>
     </View>

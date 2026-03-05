@@ -51,10 +51,10 @@ export const SentrySetup = () => {
     integrations: [Sentry.feedbackIntegration({})],
 
     // Reduce breadcrumb count to prevent memory issues during high-frequency BLE logging
-    maxBreadcrumbs: 50,
+    maxBreadcrumbs: 100,
 
     // Truncate noisy BLE breadcrumbs to prevent Sentry crashes (see MENTRA-OS-13Z, 13K, 13N, 13P)
-    beforeBreadcrumb: breadcrumb => {
+    beforeBreadcrumb: (breadcrumb) => {
       if (breadcrumb.category === "console" && breadcrumb.message) {
         const msg = breadcrumb.message
         // Truncate high-frequency BLE reconnection logs
@@ -63,6 +63,10 @@ export const SentrySetup = () => {
         } else if (msg.includes("peripheral")) {
           breadcrumb.message = `[BLE peripheral] ${msg.substring(0, 50)}...`
         }
+      }
+      // Ignore touch breadcrumbs
+      if (breadcrumb.category === "touch") {
+        return null
       }
       return breadcrumb
     },

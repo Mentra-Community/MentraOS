@@ -1,7 +1,7 @@
 import {useFocusEffect, useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {Animated, BackHandler, TextStyle, View, ViewStyle} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 import {Header, Icon, PillButton, Screen, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
@@ -20,22 +20,23 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import Divider from "@/components/ui/Divider"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
-import {useApplets, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
+import {useApplets, useAppletStatusStore, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage"
+import {captureRef} from "react-native-view-shot"
 
 export default function AppSettings() {
   const {packageName, appName: appNameParam} = useLocalSearchParams()
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
   const {goBack, replaceAll} = useNavigationHistory()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const hasLoadedData = useRef(false)
 
   // Use appName from params or default to empty string
@@ -60,12 +61,32 @@ export default function AppSettings() {
   const stopApp = useStopApplet()
 
   const appInfo = useMemo(() => {
-    return applets.find(app => app.packageName === packageName) || null
+    return applets.find((app) => app.packageName === packageName) || null
   }, [applets, packageName])
 
   const SETTINGS_CACHE_KEY = (packageName: string) => `app_settings_cache_${packageName}`
   const [settingsLoading, setSettingsLoading] = useState(true)
   const [hasCachedSettings, setHasCachedSettings] = useState(false)
+
+  const viewShotRef = useRef(null)
+  const handleExit = async () => {
+    // take a screenshot of the webview and save it to the applet zustand store:
+    try {
+      const uri = await captureRef(viewShotRef, {
+        format: "jpg",
+        quality: 0.5,
+      })
+      // save uri to zustand stoare
+      console.log("saving screenshot for", packageName)
+      await useAppletStatusStore.getState().saveScreenshot(packageName as string, uri)
+    } catch (e) {
+      console.warn("screenshot failed:", e)
+    }
+    goBack()
+  }
+  focusEffectPreventBack(() => {
+    handleExit()
+  }, true)
 
   // Handle app start/stop actions with debouncing
   const handleStartStopApp = async () => {
@@ -87,7 +108,7 @@ export default function AppSettings() {
             "") +
           " "
         ).replace("  ", " ")
-        const proceed = await new Promise<boolean>(resolve => {
+        const proceed = await new Promise<boolean>((resolve) => {
           // Use the shared alert utility
           showAlert(
             translate("appSettings:appDownForMaintenance"),
@@ -263,7 +284,7 @@ export default function AppSettings() {
 
   // When a setting changes, update local state and send the full updated settings payload.
   const handleSettingChange = (key: string, value: any) => {
-    setSettingsState(prevState => ({
+    setSettingsState((prevState) => ({
       ...prevState,
       [key]: value,
     }))
@@ -271,10 +292,10 @@ export default function AppSettings() {
     // Build an array of settings to send.
     restComms
       .updateAppSetting(packageName, {key, value})
-      .then(data => {
+      .then((data) => {
         console.log("Server update response:", data)
       })
-      .catch(error => {
+      .catch((error) => {
         console.error("Error updating setting on server:", error)
       })
   }
@@ -308,7 +329,7 @@ export default function AppSettings() {
         // Check if this is the first setting after a group title or at the start
         const isFirstInGroup =
           currentGroupStart === result.length ||
-          (currentGroupStart === -1 && result.filter(r => r.isGrouped).length === 0)
+          (currentGroupStart === -1 && result.filter((r) => r.isGrouped).length === 0)
 
         // Check if next is a group or end
         const nextSetting = settings[i + 1]
@@ -337,7 +358,7 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -348,7 +369,7 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onChangeText={text => handleSettingChange(setting.key, text)}
+            onChangeText={(text) => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
             isFirst={isFirst}
             isLast={isLast}
@@ -360,7 +381,7 @@ export default function AppSettings() {
             key={index}
             label={setting.label}
             value={settingsState[setting.key]}
-            onChangeText={text => handleSettingChange(setting.key, text)}
+            onChangeText={(text) => handleSettingChange(setting.key, text)}
             settingKey={setting.key}
             isFirst={isFirst}
             isLast={isLast}
@@ -374,13 +395,13 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             min={setting.min}
             max={setting.max}
-            onValueChange={val =>
-              setSettingsState(prevState => ({
+            onValueChange={(val) =>
+              setSettingsState((prevState) => ({
                 ...prevState,
                 [setting.key]: val,
               }))
             }
-            onValueSet={val => handleSettingChange(setting.key, val)}
+            onValueSet={(val) => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -393,7 +414,7 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             options={setting.options}
             defaultValue={setting.defaultValue}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -406,7 +427,7 @@ export default function AppSettings() {
             value={settingsState[setting.key]}
             options={setting.options}
             defaultValue={setting.defaultValue}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -421,7 +442,7 @@ export default function AppSettings() {
             max={setting.max}
             step={setting.step}
             placeholder={setting.placeholder}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -433,7 +454,7 @@ export default function AppSettings() {
             label={setting.label}
             value={settingsState[setting.key] || 0}
             showSeconds={setting.showSeconds !== false}
-            onValueChange={val => handleSettingChange(setting.key, val)}
+            onValueChange={(val) => handleSettingChange(setting.key, val)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -445,7 +466,7 @@ export default function AppSettings() {
             label={setting.label}
             values={settingsState[setting.key]}
             options={setting.options}
-            onValueChange={vals => handleSettingChange(setting.key, vals)}
+            onValueChange={(vals) => handleSettingChange(setting.key, vals)}
             isFirst={isFirst}
             isLast={isLast}
           />
@@ -464,19 +485,6 @@ export default function AppSettings() {
         return null
     }
   }
-
-  useFocusEffect(
-    useCallback(() => {
-      const onBackPress = () => {
-        goBack()
-        return true
-      }
-      const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress)
-      return () => {
-        subscription.remove()
-      }
-    }, [goBack]),
-  )
 
   // Reset hasLoadedData when packageName changes
   useEffect(() => {
@@ -552,11 +560,11 @@ export default function AppSettings() {
   }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={[]}>
+    <Screen preset="fixed" ref={viewShotRef}>
       {isUninstalling && <LoadingOverlay message={`Uninstalling ${appInfo?.name || appName}...`} />}
 
       <View>
-        <Header title="" leftIcon="chevron-left" onLeftPress={() => goBack()} />
+        <Header title="" leftIcon="chevron-left" onLeftPress={handleExit} />
         <Animated.View
           style={{
             opacity: headerOpacity,
@@ -687,8 +695,8 @@ export default function AppSettings() {
                     appInfo?.type === "standard"
                       ? translate("appSettings:foreground")
                       : appInfo?.type === "background"
-                        ? translate("appSettings:background")
-                        : "—",
+                      ? translate("appSettings:background")
+                      : "—",
                 },
                 {
                   label: translate("appSettings:packageName"),

@@ -21,7 +21,7 @@ export function RadioGroup({options, value, onValueChange, style}: RadioGroupPro
 
   return (
     <View style={[themed($container), style]}>
-      {options.map(option => (
+      {options.map((option) => (
         <TouchableOpacity
           key={option.value}
           style={themed($option(value === option.value))}
@@ -42,7 +42,7 @@ const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
 })
 
 const $option: (selected: boolean) => ThemedStyle<ViewStyle> =
-  selected =>
+  (selected) =>
   ({colors, spacing}) => ({
     flexDirection: "row",
     alignItems: "center",
@@ -55,7 +55,7 @@ const $option: (selected: boolean) => ThemedStyle<ViewStyle> =
   })
 
 const $radioOuter: (selected: boolean) => ThemedStyle<ViewStyle> =
-  selected =>
+  (selected) =>
   ({colors}) => ({
     width: 20,
     height: 20,

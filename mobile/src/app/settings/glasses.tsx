@@ -1,5 +1,4 @@
-import {ScrollView} from "react-native"
-import {Image} from "react-native"
+import {ScrollView, Image} from "react-native"
 
 import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
 import DeviceSettings from "@/components/glasses/DeviceSettings"

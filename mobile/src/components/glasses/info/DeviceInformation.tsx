@@ -4,9 +4,9 @@ import InfoSection from "@/components/ui/InfoSection"
 import {useGlassesStore} from "@/stores/glasses"
 
 export function DeviceInformation({style}: {style?: ViewStyle}) {
-  const bluetoothName = useGlassesStore(state => state.bluetoothName)
-  const buildNumber = useGlassesStore(state => state.buildNumber)
-  const localIpAddress = useGlassesStore(state => state.wifiLocalIp)
+  const bluetoothName = useGlassesStore((state) => state.bluetoothName)
+  const buildNumber = useGlassesStore((state) => state.buildNumber)
+  const localIpAddress = useGlassesStore((state) => state.wifiLocalIp)
 
   return (
     <InfoSection

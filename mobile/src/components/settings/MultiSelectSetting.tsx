@@ -42,7 +42,7 @@ const MultiSelectSetting: React.FC<MultiSelectSettingProps> = ({
 
   const toggleValue = (value: string) => {
     if (values.includes(value)) {
-      onValueChange(values.filter(v => v !== value))
+      onValueChange(values.filter((v) => v !== value))
     } else {
       onValueChange([...values, value])
     }
@@ -51,7 +51,7 @@ const MultiSelectSetting: React.FC<MultiSelectSettingProps> = ({
   return (
     <View style={[themed($container), groupedStyle]}>
       <Text style={themed($label)}>{label}</Text>
-      {options.map(opt => (
+      {options.map((opt) => (
         <TouchableOpacity key={opt.value} style={themed($option)} onPress={() => toggleValue(opt.value)}>
           <CheckBox checked={values.includes(opt.value)} onChange={() => toggleValue(opt.value)} />
           <Text style={themed($optionLabel)}>{opt.label}</Text>

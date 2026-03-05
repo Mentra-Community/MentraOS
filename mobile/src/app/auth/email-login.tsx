@@ -208,7 +208,7 @@ export default function EmailLoginScreen() {
       <Modal visible={isLoading || isAuthLoading} transparent={true} animationType="fade">
         <View className="flex-1 bg-black/70 justify-center items-center">
           <View className="bg-background p-8 rounded-2xl items-center min-w-[200px]">
-            <ActivityIndicator size="large" color={theme.colors.tint} className="mb-4" />
+            <ActivityIndicator size="large" color={theme.colors.foreground} className="mb-4" />
             <Text preset="bold" className="text-foreground">
               {translate("login:connectingToServer")}
             </Text>

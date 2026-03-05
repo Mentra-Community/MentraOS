@@ -45,7 +45,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const {theme, themed} = useAppTheme()
   const [modalVisible, setModalVisible] = useState(false)
 
-  const selectedModel = models.find(m => m.modelId === selectedModelId)
+  const selectedModel = models.find((m) => m.modelId === selectedModelId)
   const isDownloaded = selectedModel?.downloaded || false
 
   const getStatusIcon = () => {
@@ -158,7 +158,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
                   </View>
                   <FlatList
                     data={models}
-                    keyExtractor={item => item.modelId}
+                    keyExtractor={(item) => item.modelId}
                     renderItem={renderModelOption}
                     style={themed($optionsList)}
                     contentContainerStyle={{paddingBottom: theme.spacing.s4}}

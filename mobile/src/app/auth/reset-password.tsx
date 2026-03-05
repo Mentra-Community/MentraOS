@@ -104,7 +104,7 @@ export default function ResetPasswordScreen() {
     return (
       <Screen preset="fixed">
         <View style={{flex: 1, justifyContent: "center", alignItems: "center"}}>
-          <ActivityIndicator size="large" color={theme.colors.tint} />
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
           <Spacer height={spacing.s4} />
           <Text tx="login:verifyingResetLink" />
         </View>
@@ -203,7 +203,7 @@ export default function ResetPasswordScreen() {
               disabled={!isFormValid || isLoading}
               {...(isLoading && {
                 LeftAccessory: () => (
-                  <ActivityIndicator size="small" color={theme.colors.textAlt} style={{marginRight: 8}} />
+                  <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: 8}} />
                 ),
               })}
             />

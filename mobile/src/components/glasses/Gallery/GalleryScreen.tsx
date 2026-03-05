@@ -21,7 +21,6 @@ import {
   ViewStyle,
 } from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 import {useShallow} from "zustand/react/shallow"
 
@@ -43,6 +42,7 @@ import showAlert from "@/utils/AlertUtils"
 // import {shareFile} from "@/utils/FileUtils"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 // @ts-ignore
 const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)
@@ -52,6 +52,14 @@ const TIMING = {
   PROGRESS_RING_DISPLAY_MS: 3000, // How long to show completed/failed progress rings
   ALERT_DELAY_MS: 100, // Delay before showing alerts to allow UI to settle
 } as const
+
+/** Format video duration in milliseconds to m:ss display string */
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`
+}
 
 interface GalleryItem {
   id: string
@@ -64,7 +72,7 @@ interface GalleryItem {
 export function GalleryScreen() {
   const {goBack, push} = useNavigationHistory()
   const {theme, themed} = useAppTheme()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
 
   // Column calculation - 3 per row like Google Photos / Apple Photos
   const screenWidth = Dimensions.get("window").width
@@ -466,6 +474,13 @@ export function GalleryScreen() {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
+
+    // Check if glasses are connected before starting sync
+    if (!glassesConnected) {
+      showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
+      return
+    }
+
     gallerySyncService.startSync()
   }
 
@@ -794,7 +809,8 @@ export function GalleryScreen() {
     syncState === "requesting_hotspot" ||
     syncState === "connecting_wifi" ||
     syncState === "syncing" ||
-    syncState === "complete"
+    syncState === "complete" ||
+    syncState === "error"
 
   const renderStatusBar = () => {
     if (!shouldShowSyncButton) return null
@@ -833,7 +849,7 @@ export function GalleryScreen() {
         case "requesting_hotspot":
           return (
             <View style={themed($syncButtonRow)}>
-              <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
+              <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
               <Text style={themed($syncButtonText)}>Starting connection...</Text>
             </View>
           )
@@ -841,7 +857,7 @@ export function GalleryScreen() {
         case "connecting_wifi":
           return (
             <View style={themed($syncButtonRow)}>
-              <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
+              <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
               <Text style={themed($syncButtonText)}>Connecting...</Text>
             </View>
           )
@@ -850,7 +866,7 @@ export function GalleryScreen() {
           if (totalFiles === 0) {
             return (
               <View style={themed($syncButtonRow)}>
-                <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
+                <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
                 <Text style={themed($syncButtonText)}>Preparing sync...</Text>
               </View>
             )
@@ -878,7 +894,7 @@ export function GalleryScreen() {
           if (isValidating && validatingCount > 0) {
             return (
               <View style={themed($syncButtonRow)}>
-                <ActivityIndicator size="small" color={theme.colors.text} style={{marginRight: spacing.s2}} />
+                <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
                 <Text style={themed($syncButtonText)}>
                   Validating {validatingCount} {validatingCount === 1 ? "picture" : "pictures"}...
                 </Text>
@@ -964,7 +980,11 @@ export function GalleryScreen() {
           )}
           {item.photo.is_video && !isSelectionMode && (
             <View style={themed($videoIndicator)}>
-              <Icon name="video" size={14} color="white" />
+              {item.photo.duration ? (
+                <Text style={$videoDurationText}>{formatDuration(item.photo.duration)}</Text>
+              ) : (
+                <Icon name="video" size={14} color="white" />
+              )}
             </View>
           )}
           {isSelectionMode &&
@@ -1074,7 +1094,7 @@ export function GalleryScreen() {
             if (showSpinner) {
               return (
                 <View style={themed($loadingSpinnerContainer)}>
-                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                  <ActivityIndicator size="large" color={theme.colors.foreground} />
                   <Text style={themed($loadingSpinnerText)}>Loading gallery...</Text>
                 </View>
               )
@@ -1242,6 +1262,13 @@ const $videoIndicator: ThemedStyle<ViewStyle> = ({spacing}) => ({
   shadowRadius: 2,
   elevation: 3,
 })
+
+const $videoDurationText: TextStyle = {
+  color: "white",
+  fontSize: 11,
+  fontWeight: "600",
+  fontVariant: ["tabular-nums"],
+}
 
 const $progressRingOverlay: ThemedStyle<ViewStyle> = () => ({
   position: "absolute",

@@ -4,18 +4,18 @@ Command-line tool for managing Mentra apps and organizations.
 
 ## Installation
 
+**Requires [Bun](https://bun.sh) 1.3.0 or higher.**
+
 ```bash
-# Install globally with npm
-npm install -g @mentra/cli
+# Install Bun (if not already installed)
+curl -fsSL https://bun.sh/install | bash
 
-# Or with bun
+# Install globally
 bun install -g @mentra/cli
+
+# Or run directly without installing
+bunx @mentra/cli --help
 ```
-
-**Requirements:**
-
-- Bun 1.3+ (for secure credential storage via OS keychain)
-- Node.js 18+ (if using npm)
 
 ## Quick Start
 
@@ -165,17 +165,24 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.3"
 
-      - name: Install Mentra CLI
-        run: bun install -g @mentra/cli
-
-      - name: Deploy to Staging
+      - name: List Apps
         env:
           MENTRA_CLI_TOKEN: ${{ secrets.MENTRA_CLI_TOKEN }}
-        run: |
-          mentra cloud use staging
-          mentra app list
+        run: bunx @mentra/cli app list
+```
+
+Or if you prefer to install globally:
+
+```yaml
+- name: Install Mentra CLI
+  run: bun install -g @mentra/cli
+
+- name: List Apps
+  env:
+    MENTRA_CLI_TOKEN: ${{ secrets.MENTRA_CLI_TOKEN }}
+  run: mentra app list
 ```
 
 ## Examples
@@ -359,11 +366,8 @@ bun install
 # Run in development mode
 bun run dev
 
-# Build
-bun run build
-
-# Test locally
-bun run start
+# Run tests
+bun test
 ```
 
 ## Security

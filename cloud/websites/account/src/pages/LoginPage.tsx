@@ -36,7 +36,7 @@ const LoginPage: React.FC = () => {
 
   return (
     <LoginUI
-      siteName="Account"
+      siteName="Account Portal"
       message={message}
       redirectTo={`${window.location.origin}/login`}
       emailRedirectPath="/"

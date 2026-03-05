@@ -88,7 +88,7 @@ const BrightnessSetting: React.FC<BrightnessSettingProps> = ({
 
 const $outerContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   width: "100%",
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s4,
   overflow: "hidden",
 })
@@ -118,7 +118,6 @@ const $textContainer: ThemedStyle<ViewStyle> = () => ({
 
 const $label: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
-  fontWeight: 600,
   color: colors.text,
 })
 

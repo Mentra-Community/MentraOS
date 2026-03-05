@@ -48,6 +48,11 @@ export enum StreamType {
 
   // New stream type
   MENTRAOS_SETTINGS_UPDATE_REQUEST = "settings_update_request",
+  /**
+   * @deprecated Use the settings system (mentraosSettings) instead.
+   * This stream type was used for datetime updates but is no longer needed.
+   * Will be removed in a future version.
+   */
   CUSTOM_MESSAGE = "custom_message",
   PHOTO_TAKEN = "photo_taken",
 }

@@ -10,6 +10,12 @@ console.log('Building core module...');
 await $({ stdio: 'inherit', cwd: 'modules/core' })`bun install --ignore-scripts`;
 // Now run prepare (expo-module will be available in node_modules/.bin)
 await $({ stdio: 'inherit', cwd: 'modules/core' })`bun run prepare`;
+
+// install crust module dependencies
+await $({ stdio: 'inherit', cwd: 'modules/crust' })`bun install --ignore-scripts`;
+// now run prepare (expo-module will be available in node_modules/.bin)
+await $({ stdio: 'inherit', cwd: 'modules/crust' })`bun run prepare`;
+
 // ignore scripts to avoid infinite loop:
 await $({ stdio: 'inherit' })`bun install --ignore-scripts`;
 

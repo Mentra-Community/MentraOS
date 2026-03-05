@@ -16,7 +16,6 @@
 //   //   }
 //   //   return true // Prevent default back behavior
 //   // }, [returnTo])
-  
 
 //   // // Handle Android back button
 //   // useFocusEffect(

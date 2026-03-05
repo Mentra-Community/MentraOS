@@ -6,10 +6,11 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
-import { Label } from "../components/ui/label";
+  Button,
+  RadioGroup,
+  RadioGroupItem,
+  Label,
+} from "@mentra/shared";
 
 const ExportDataPage: React.FC = () => {
   const [exportFormat, setExportFormat] = useState<"json" | "csv">("json");
@@ -65,32 +66,6 @@ const ExportDataPage: React.FC = () => {
                     <li>Account activity</li>
                     <li>Device settings and preferences</li>
                   </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium mb-2">
-                    Select export format
-                  </h3>
-                  <RadioGroup
-                    value={exportFormat}
-                    onValueChange={(value) =>
-                      setExportFormat(value as "json" | "csv")
-                    }
-                    className="space-y-2"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="json" id="json" />
-                      <Label htmlFor="json" className="font-normal">
-                        JSON (recommended for developers)
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="csv" id="csv" />
-                      <Label htmlFor="csv" className="font-normal">
-                        CSV (recommended for spreadsheet software)
-                      </Label>
-                    </div>
-                  </RadioGroup>
                 </div>
 
                 <div className="border-t pt-4">

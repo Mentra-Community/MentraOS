@@ -1,29 +1,21 @@
+import CoreModule from "core"
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
+import * as ImagePicker from "expo-image-picker"
 import * as Location from "expo-location"
 import {useState, useEffect} from "react"
-import {
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  TextInput,
-  TextStyle,
-  View,
-  ViewStyle,
-  Linking,
-  ActivityIndicator,
-} from "react-native"
+import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import {logBuffer} from "@/services/LogRingBuffer"
 import restComms from "@/services/RestComms"
 import {useAppletStatusStore} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 
@@ -36,21 +28,24 @@ export default function FeedbackPage() {
   const [feedbackText, setFeedbackText] = useState("")
   const [experienceRating, setExperienceRating] = useState<number | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [screenshots, setScreenshots] = useState<ImagePicker.ImagePickerAsset[]>([])
+
+  const MAX_SCREENSHOTS = 5
 
   const {goBack} = useNavigationHistory()
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const apps = useAppletStatusStore((state) => state.apps)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   // Glasses info for bug reports
   const glassesConnected = useGlassesStore((state) => state.connected)
-  const glassesModelName = useGlassesStore((state) => state.modelName)
+  const deviceModel = useGlassesStore((state) => state.deviceModel)
   const glassesBluetoothName = useGlassesStore((state) => state.bluetoothName)
-  const glassesBuildNumber = useGlassesStore((state) => state.buildNumber)
+  const buildNumber = useGlassesStore((state) => state.buildNumber)
   const glassesFwVersion = useGlassesStore((state) => state.fwVersion)
-  const glassesAppVersion = useGlassesStore((state) => state.appVersion)
-  const glassesSerialNumber = useGlassesStore((state) => state.serialNumber)
-  const glassesAndroidVersion = useGlassesStore((state) => state.androidVersion)
+  const appVersion = useGlassesStore((state) => state.appVersion)
+  const serialNumber = useGlassesStore((state) => state.serialNumber)
+  const androidVersion = useGlassesStore((state) => state.androidVersion)
   const glassesWifiConnected = useGlassesStore((state) => state.wifiConnected)
   const glassesWifiSsid = useGlassesStore((state) => state.wifiSsid)
   const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
@@ -75,6 +70,33 @@ export default function FeedbackPage() {
 
   const isApplePrivateRelay = userEmail.includes("@privaterelay.appleid.com") || userEmail.includes("@icloud.com")
 
+  const pickScreenshots = async () => {
+    // Request permission
+    const {status} = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (status !== "granted") {
+      showAlert(translate("common:error"), translate("feedback:photoPermissionRequired"), [
+        {text: translate("common:ok")},
+      ])
+      return
+    }
+
+    // Launch image picker
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      selectionLimit: MAX_SCREENSHOTS - screenshots.length,
+      quality: 0.8,
+    })
+
+    if (!result.canceled && result.assets.length > 0) {
+      setScreenshots((prev) => [...prev, ...result.assets].slice(0, MAX_SCREENSHOTS))
+    }
+  }
+
+  const removeScreenshot = (index: number) => {
+    setScreenshots((prev) => prev.filter((_, i) => i !== index))
+  }
+
   const handleSubmitFeedback = async () => {
     setIsSubmitting(true)
 
@@ -86,7 +108,7 @@ export default function FeedbackPage() {
     const isBetaBuild = !!customBackendUrl
     const osVersion = `${Platform.OS} ${Platform.Version}`
     const deviceName = Constants.deviceName || "deviceName"
-    const appVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version"
+    const mobileAppVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version"
     const buildCommit = process.env.EXPO_PUBLIC_BUILD_COMMIT || "commit"
     const buildBranch = process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch"
     const buildTime = process.env.EXPO_PUBLIC_BUILD_TIME || "time"
@@ -162,7 +184,7 @@ export default function FeedbackPage() {
       ...(isApplePrivateRelay && email && {contactEmail: email}),
       // System information
       systemInfo: {
-        appVersion,
+        appVersion: mobileAppVersion,
         deviceName,
         osVersion,
         platform: Platform.OS,
@@ -185,13 +207,13 @@ export default function FeedbackPage() {
       // Glasses information (only if connected)
       ...(glassesConnected && {
         glassesInfo: {
-          modelName: glassesModelName || undefined,
+          deviceModel: deviceModel || undefined,
           bluetoothId: glassesBluetoothId || undefined,
-          serialNumber: glassesSerialNumber || undefined,
-          buildNumber: glassesBuildNumber || undefined,
+          serialNumber: serialNumber || undefined,
+          buildNumber: buildNumber || undefined,
           fwVersion: glassesFwVersion || undefined,
-          appVersion: glassesAppVersion || undefined,
-          androidVersion: glassesAndroidVersion || undefined,
+          appVersion: appVersion || undefined,
+          androidVersion: androidVersion || undefined,
           wifiConnected: glassesWifiConnected,
           ...(glassesWifiConnected && glassesWifiSsid && {wifiSsid: glassesWifiSsid}),
           ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
@@ -200,21 +222,93 @@ export default function FeedbackPage() {
     }
 
     console.log("Feedback submitted:", JSON.stringify(feedbackData, null, 2))
-    const res = await restComms.sendFeedback(feedbackData)
-    setIsSubmitting(false)
 
-    if (res.is_error()) {
-      console.error("Error sending feedback:", res.error)
-      showAlert(translate("common:error"), translate("feedback:errorSendingFeedback"), [
-        {
-          text: translate("common:ok"),
-          onPress: () => {
-            goBack()
+    // Bug reports use the incidents endpoint, feature requests use feedback endpoint
+    if (feedbackType === "bug") {
+      // Collect phone state snapshot from stores
+      // Only send installed package names for applets (not full details - that's public info we can query)
+      const appletState = useAppletStatusStore.getState()
+
+      // Get settings but filter out sensitive keys (tokens, credentials)
+      const settingsState = useSettingsStore.getState()
+      const SENSITIVE_KEYS = ["core_token", "auth_token", "auth_email"]
+      const filteredSettings = Object.fromEntries(
+        Object.entries(settingsState.settings || {}).filter(([key]) => !SENSITIVE_KEYS.includes(key)),
+      )
+
+      const phoneState = {
+        glasses: useGlassesStore.getState(),
+        installedApplets: appletState.apps.map((app) => app.packageName),
+        settings: filteredSettings,
+      }
+
+      const phoneBackendUrl = useSettingsStore.getState().getRestUrl()
+      console.log("Phone backend URL (incident creation):", phoneBackendUrl)
+
+      // Create incident for bug report
+      const res = await restComms.createIncident(feedbackData, phoneState)
+
+      if (res.is_error()) {
+        setIsSubmitting(false)
+        console.error("Error creating incident:", res.error)
+        showAlert(translate("common:error"), translate("feedback:errorSendingFeedback"), [
+          {
+            text: translate("common:ok"),
+            onPress: () => {
+              goBack()
+            },
           },
-        },
-      ])
-      return
+        ])
+        return
+      }
+
+      const {incidentId} = res.value
+
+      // Upload phone logs from ring buffer
+      const phoneLogs = logBuffer.getRecentLogs()
+      if (phoneLogs.length > 0) {
+        console.log(`Uploading ${phoneLogs.length} phone logs to incident ${incidentId}`)
+        const logsRes = await restComms.uploadIncidentLogs(incidentId, phoneLogs)
+        if (logsRes.is_error()) {
+          console.error("Error uploading phone logs:", logsRes.error)
+          // Don't block - incident already created successfully
+        }
+      }
+
+      // Trigger glasses to upload their own logs directly over WiFi (fire-and-forget)
+      if (glassesConnected) {
+        CoreModule.sendIncidentId(incidentId).catch(() => {})
+      }
+
+      // Upload screenshots if any
+      if (screenshots.length > 0) {
+        console.log(`Uploading ${screenshots.length} screenshots to incident ${incidentId}`)
+        const uploadRes = await restComms.uploadIncidentAttachments(incidentId, screenshots)
+        if (uploadRes.is_error()) {
+          console.error("Error uploading screenshots:", uploadRes.error)
+          // Don't block - incident already created successfully
+        }
+      }
+    } else {
+      // Feature request - use feedback endpoint
+      const res = await restComms.sendFeedback(feedbackData)
+
+      if (res.is_error()) {
+        setIsSubmitting(false)
+        console.error("Error sending feedback:", res.error)
+        showAlert(translate("common:error"), translate("feedback:errorSendingFeedback"), [
+          {
+            text: translate("common:ok"),
+            onPress: () => {
+              goBack()
+            },
+          },
+        ])
+        return
+      }
     }
+
+    setIsSubmitting(false)
 
     // Clear form
     setFeedbackText("")
@@ -222,6 +316,7 @@ export default function FeedbackPage() {
     setActualBehavior("")
     setSeverityRating(null)
     setExperienceRating(null)
+    setScreenshots([])
 
     // Show thank you message
     showAlert(translate("feedback:thankYou"), translate("feedback:feedbackReceived"), [
@@ -255,7 +350,7 @@ export default function FeedbackPage() {
 
   const isFormValid = (): boolean => {
     if (feedbackType === "bug") {
-      return !!(expectedBehavior.trim() && actualBehavior.trim() && severityRating !== null)
+      return !!((expectedBehavior.trim() || actualBehavior.trim()) && severityRating !== null)
     } else {
       return !!(feedbackText.trim() && experienceRating !== null)
     }
@@ -264,157 +359,155 @@ export default function FeedbackPage() {
   return (
     <Screen preset="fixed">
       <Header title={translate("feedback:giveFeedback")} leftIcon="chevron-left" onLeftPress={goBack} />
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex: 1}}>
-        <ScrollView
-          className="pt-6 -mx-6 px-6"
-          contentContainerStyle={themed($scrollContainer)}
-          keyboardShouldPersistTaps="handled">
-          <View style={themed($container)}>
-            {isApplePrivateRelay && (
-              <View>
-                <Text style={themed($label)}>{translate("feedback:emailOptional")}</Text>
-                <TextInput
-                  style={themed($emailInput)}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder={translate("feedback:email")}
-                  placeholderTextColor={theme.colors.textDim}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-              </View>
-            )}
-
+      <ScrollView
+        className="pt-6 -mx-6 px-6"
+        contentContainerClassName="flex-grow pb-12"
+        keyboardShouldPersistTaps="handled">
+        <View className="gap-6">
+          {isApplePrivateRelay && (
             <View>
-              <Text style={themed($label)}>{translate("feedback:type")}</Text>
-              <RadioGroup
-                options={[
-                  {value: "bug", label: translate("feedback:bugReport")},
-                  {value: "feature", label: translate("feedback:featureRequest")},
-                ]}
-                value={feedbackType}
-                onValueChange={(value) => setFeedbackType(value as "bug" | "feature")}
+              <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:emailOptional")}</Text>
+              <TextInput
+                className="bg-background border border-border rounded-xl p-4 text-base text-foreground"
+                value={email}
+                onChangeText={setEmail}
+                placeholder={translate("feedback:email")}
+                placeholderTextColor={theme.colors.muted_foreground}
+                keyboardType="email-address"
+                autoCapitalize="none"
               />
             </View>
+          )}
 
-            {feedbackType === "bug" ? (
-              <>
-                <View>
-                  <Text style={themed($label)}>{translate("feedback:expectedBehavior")}</Text>
-                  <TextInput
-                    style={themed($textInput)}
-                    multiline
-                    numberOfLines={4}
-                    placeholder={translate("feedback:share")}
-                    placeholderTextColor={theme.colors.textDim}
-                    value={expectedBehavior}
-                    onChangeText={setExpectedBehavior}
-                    textAlignVertical="top"
-                  />
-                </View>
-
-                <View>
-                  <Text style={themed($label)}>{translate("feedback:actualBehavior")}</Text>
-                  <TextInput
-                    style={themed($textInput)}
-                    multiline
-                    numberOfLines={4}
-                    placeholder={translate("feedback:actualShare")}
-                    placeholderTextColor={theme.colors.textDim}
-                    value={actualBehavior}
-                    onChangeText={setActualBehavior}
-                    textAlignVertical="top"
-                  />
-                </View>
-
-                <View>
-                  <Text style={themed($label)}>{translate("feedback:severityRating")}</Text>
-                  <Text style={themed($subLabel)}>{translate("feedback:ratingScale")}</Text>
-                  <RatingButtons value={severityRating} onValueChange={setSeverityRating} />
-                </View>
-              </>
-            ) : (
-              <>
-                <View>
-                  <Text style={themed($label)}>{translate("feedback:feedbackLabel")}</Text>
-                  <TextInput
-                    style={themed($textInput)}
-                    multiline
-                    numberOfLines={6}
-                    placeholder={translate("feedback:shareThoughts")}
-                    placeholderTextColor={theme.colors.textDim}
-                    value={feedbackText}
-                    onChangeText={setFeedbackText}
-                    textAlignVertical="top"
-                  />
-                </View>
-
-                <View>
-                  <Text style={themed($label)}>{translate("feedback:experienceRating")}</Text>
-                  <Text style={themed($subLabel)}>{translate("feedback:ratingScale")}</Text>
-                  <StarRating value={experienceRating} onValueChange={setExperienceRating} />
-                </View>
-              </>
-            )}
-
-            <Button
-              text={
-                isSubmitting
-                  ? ""
-                  : feedbackType === "bug"
-                    ? translate("feedback:continue")
-                    : translate("feedback:submit")
-              }
-              onPress={handleSubmitFeedback}
-              disabled={!isFormValid() || isSubmitting}
-              preset="primary">
-              {isSubmitting && <ActivityIndicator color={theme.colors.background} />}
-            </Button>
+          <View>
+            <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:type")}</Text>
+            <RadioGroup
+              options={[
+                {value: "bug", label: translate("feedback:bugReport")},
+                {value: "feature", label: translate("feedback:featureRequest")},
+              ]}
+              value={feedbackType}
+              onValueChange={(value) => setFeedbackType(value as "bug" | "feature")}
+            />
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+
+          {feedbackType === "bug" ? (
+            <>
+              <View>
+                <Text className="text-sm font-semibold text-foreground mb-2">
+                  {translate("feedback:expectedBehavior")}
+                </Text>
+                <TextInput
+                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                  multiline
+                  numberOfLines={4}
+                  placeholder={translate("feedback:share")}
+                  placeholderTextColor={theme.colors.muted_foreground}
+                  value={expectedBehavior}
+                  onChangeText={setExpectedBehavior}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              <View>
+                <Text className="text-sm font-semibold text-foreground mb-2">
+                  {translate("feedback:actualBehavior")}
+                </Text>
+                <TextInput
+                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                  multiline
+                  numberOfLines={4}
+                  placeholder={translate("feedback:actualShare")}
+                  placeholderTextColor={theme.colors.muted_foreground}
+                  value={actualBehavior}
+                  onChangeText={setActualBehavior}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              <View>
+                <Text className="text-sm font-semibold text-foreground mb-2">
+                  {translate("feedback:severityRating")}
+                </Text>
+                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
+                <RatingButtons value={severityRating} onValueChange={setSeverityRating} />
+              </View>
+
+              {/* Screenshots Section */}
+              <View>
+                <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:screenshots")}</Text>
+                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:screenshotsHint")}</Text>
+
+                {/* Screenshot Thumbnails */}
+                {screenshots.length > 0 && (
+                  <View className="flex-row flex-wrap gap-2 mb-3">
+                    {screenshots.map((image, index) => (
+                      <View key={image.uri} className="relative">
+                        <Image source={{uri: image.uri}} className="w-20 h-20 rounded-lg" resizeMode="cover" />
+                        <Pressable
+                          onPress={() => removeScreenshot(index)}
+                          className="absolute -top-2 -right-2 bg-destructive rounded-full w-6 h-6 items-center justify-center">
+                          <Text className="text-white text-xs font-bold">X</Text>
+                        </Pressable>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Add Screenshot Button */}
+                {screenshots.length < MAX_SCREENSHOTS && (
+                  <Pressable
+                    onPress={pickScreenshots}
+                    className="border-2 border-dashed border-border rounded-xl p-4 items-center justify-center">
+                    <Text className="text-muted-foreground">
+                      {screenshots.length === 0 ? translate("feedback:addScreenshots") : translate("feedback:addMore")}
+                    </Text>
+                    <Text className="text-xs text-muted-foreground mt-1">
+                      {screenshots.length}/{MAX_SCREENSHOTS}
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            </>
+          ) : (
+            <>
+              <View>
+                <Text className="text-sm font-semibold text-foreground mb-2">
+                  {translate("feedback:feedbackLabel")}
+                </Text>
+                <TextInput
+                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                  multiline
+                  numberOfLines={6}
+                  placeholder={translate("feedback:shareThoughts")}
+                  placeholderTextColor={theme.colors.muted_foreground}
+                  value={feedbackText}
+                  onChangeText={setFeedbackText}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              <View>
+                <Text className="text-sm font-semibold text-foreground mb-2">
+                  {translate("feedback:experienceRating")}
+                </Text>
+                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
+                <StarRating value={experienceRating} onValueChange={setExperienceRating} />
+              </View>
+            </>
+          )}
+        </View>
+        <View className="flex-1 min-h-6" />
+        <Button
+          text={
+            isSubmitting ? "" : feedbackType === "bug" ? translate("feedback:continue") : translate("feedback:submit")
+          }
+          onPress={handleSubmitFeedback}
+          disabled={!isFormValid() || isSubmitting}
+          preset="primary">
+          {isSubmitting && <ActivityIndicator color={theme.colors.background} />}
+        </Button>
+      </ScrollView>
     </Screen>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  gap: spacing.s6,
-})
-
-const $scrollContainer: ThemedStyle<ViewStyle> = () => ({
-  flexGrow: 1,
-})
-
-const $label: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 14,
-  fontWeight: "600",
-  color: colors.text,
-  marginBottom: spacing.s2,
-})
-
-const $subLabel: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 12,
-  color: colors.textDim,
-  marginBottom: spacing.s3,
-})
-
-const $textInput: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: spacing.s3,
-  padding: spacing.s4,
-  fontSize: 16,
-  color: colors.text,
-  minHeight: 120,
-})
-
-const $emailInput: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  borderWidth: 1,
-  borderColor: colors.border,
-  borderRadius: spacing.s3,
-  padding: spacing.s4,
-  fontSize: 16,
-  color: colors.text,
-})

@@ -1,10 +1,16 @@
 import {NativeModule, requireNativeModule} from "expo"
 
-import {CoreModuleEvents} from "./Core.types"
+import {CoreModuleEvents, GlassesStatus, CoreStatus} from "./Core.types"
+
+type GlassesListener = (changed: Partial<GlassesStatus>) => void
+type CoreListener = (changed: Partial<CoreStatus>) => void
 
 declare class CoreModule extends NativeModule<CoreModuleEvents> {
-  // status:
-  isConnected(): Promise<boolean>
+  // Observable Store Functions (native)
+  getGlassesStatus(): GlassesStatus
+  getCoreStatus(): CoreStatus
+  update(category: string, values: Record<string, any>): Promise<void>
+
   // Display Commands
   displayEvent(params: Record<string, any>): Promise<void>
   displayText(params: Record<string, any>): Promise<void>
@@ -17,17 +23,18 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   connectSimulated(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
-  findCompatibleDevices(modelName: string): Promise<void>
+  findCompatibleDevices(deviceModel: string): Promise<void>
   showDashboard(): Promise<void>
+  ping(): Promise<void>
+
+  // Incident Reporting
+  sendIncidentId(incidentId: string): Promise<void>
 
   // WiFi Commands
   requestWifiScan(): Promise<void>
   sendWifiCredentials(ssid: string, password: string): Promise<void>
   forgetWifiNetwork(ssid: string): Promise<void>
   setHotspotState(enabled: boolean): Promise<void>
-
-  // User Context Commands
-  setUserEmail(email: string): Promise<void>
 
   // Gallery Commands
   queryGalleryStatus(): Promise<void>
@@ -38,17 +45,21 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
     webhookUrl: string | null,
     authToken: string | null,
     compress: string,
-    silent: boolean,
+    flash: boolean,
+    sound: boolean,
   ): Promise<void>
 
   // OTA Commands
   sendOtaStart(): Promise<void>
 
+  // Version Info Commands
+  requestVersionInfo(): Promise<void>
+
   // Video Recording Commands
   startBufferRecording(): Promise<void>
   stopBufferRecording(): Promise<void>
   saveBufferVideo(requestId: string, durationSeconds: number): Promise<void>
-  startVideoRecording(requestId: string, save: boolean, silent: boolean): Promise<void>
+  startVideoRecording(requestId: string, save: boolean, flash: boolean, sound: boolean): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
   // RTMP Stream Commands
@@ -60,8 +71,10 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   setMicState(sendPcmData: boolean, sendTranscript: boolean, bypassVad: boolean): Promise<void>
   restartTranscriber(): Promise<void>
 
-  // Audio Encoding Commands
-  setLC3FrameSize(frameSize: number): Promise<void>
+  // Audio Playback Monitoring
+  // Notify native side when our app starts/stops playing audio
+  // Used to suspend LC3 mic during audio playback to avoid MCU overload
+  setOwnAppAudioPlaying(playing: boolean): Promise<void>
 
   // RGB LED Control
   rgbLedControl(
@@ -73,9 +86,6 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
     offtime: number,
     count: number,
   ): Promise<void>
-
-  // Settings Commands
-  updateSettings(params: Record<string, any>): Promise<void>
 
   // STT Commands
   setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -108,7 +118,25 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
     identifier?: string
     error?: string
   }>
+
+  // Helper methods for type-safe observable store access
+  updateGlasses(values: Partial<GlassesStatus>): Promise<void>
+  updateCore(values: Partial<CoreStatus>): Promise<void>
+  onGlassesStatus(callback: GlassesListener): () => void
+  onCoreStatus(callback: CoreListener): () => void
 }
 
 // This call loads the native module object from the JSI.
-export default requireNativeModule<CoreModule>("Core")
+// NativeModule<CoreModuleEvents> already extends EventEmitter<CoreModuleEvents>
+const NativeCoreModule = requireNativeModule<CoreModule>("Core")
+
+// Add helper methods to the module
+NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
+  return this.update("glasses", values)
+}
+
+NativeCoreModule.updateCore = function (values: Partial<CoreStatus>) {
+  return this.update("core", values)
+}
+
+export default NativeCoreModule

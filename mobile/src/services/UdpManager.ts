@@ -173,7 +173,7 @@ class UdpManager {
       // Wait initial delay on first attempt to let server register user
       if (!isRetry) {
         // console.log(`UDP: Waiting ${UDP_INITIAL_DELAY_MS}ms before first probe...`)
-        await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, UDP_INITIAL_DELAY_MS))
+        await new Promise<void>((resolve) => BackgroundTimer.BackgroundTimer.setTimeout(() => resolve(), UDP_INITIAL_DELAY_MS))
 
         // Re-check WebSocket after delay
         if (!socketComms.isWebSocketConnected()) {
@@ -186,11 +186,7 @@ class UdpManager {
       console.log(`UDP: ${isRetry ? "Retry" : "Initial"} probe for ${this.config?.host}:${this.config?.port}`)
 
       // Send registration to server via WebSocket (so server knows our hash for routing)
-      const msg = {
-        type: "udp_register",
-        userIdHash: this.userIdHash,
-      }
-      socketComms.sendText(JSON.stringify(msg))
+      socketComms.sendUdpRegister(this.userIdHash)
       // console.log(`UDP: Sent registration with hash ${userIdHash}`)
 
       // Probe UDP with multiple retries (UDP is lossy, single ping unreliable)
@@ -347,17 +343,17 @@ class UdpManager {
 
       // Bind to any available port (we're only sending, not receiving)
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
+        const timeout = BackgroundTimer.setTimeout(() => {
           reject(new Error("Socket bind timeout"))
         }, 5000)
 
         this.socket!.bind(0, () => {
-          clearTimeout(timeout)
+          BackgroundTimer.clearTimeout(timeout)
           resolve()
         })
 
         this.socket!.once("error", (err: Error) => {
-          clearTimeout(timeout)
+          BackgroundTimer.clearTimeout(timeout)
           reject(err)
         })
       })
@@ -380,7 +376,7 @@ class UdpManager {
    */
   public stop(): void {
     if (this.pingTimeout) {
-      clearTimeout(this.pingTimeout)
+      BackgroundTimer.clearTimeout(this.pingTimeout)
       this.pingTimeout = null
     }
 
@@ -413,9 +409,8 @@ class UdpManager {
    * This prevents splitting LC3 frames across UDP packets which causes decoder corruption
    */
   private getMaxChunkSize(): number {
-    const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key) || 20
-    const bypassEncoding =
-      useSettingsStore.getState().getSetting(SETTINGS.bypass_audio_encoding_for_debugging.key) || false
+    const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
+    const bypassEncoding = useSettingsStore.getState().getSetting(SETTINGS.bypass_audio_encoding_for_debugging.key)
 
     if (bypassEncoding) {
       // For raw PCM, align to 2 bytes (sample boundary)
@@ -441,7 +436,7 @@ class UdpManager {
       // If encryption enabled, we need to recalculate alignment after accounting for overhead
       let maxChunkSize: number
       if (this.encryptionConfig) {
-        const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key) || 60
+        const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
         const availableForAudio = MAX_AUDIO_CHUNK_SIZE_BASE - ENCRYPTION_OVERHEAD // 1018 - 40 = 978
         const maxFrames = Math.floor(availableForAudio / frameSizeBytes) // 978 / 60 = 16 frames
         maxChunkSize = maxFrames * frameSizeBytes // 16 * 60 = 960 bytes (properly aligned)
@@ -523,7 +518,7 @@ class UdpManager {
       // If encryption enabled, we need to recalculate alignment after accounting for overhead
       let maxChunkSize: number
       if (this.encryptionConfig) {
-        const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key) || 60
+        const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
         const availableForAudio = MAX_AUDIO_CHUNK_SIZE_BASE - ENCRYPTION_OVERHEAD // 1018 - 40 = 978
         const maxFrames = Math.floor(availableForAudio / frameSizeBytes)
         maxChunkSize = maxFrames * frameSizeBytes // Properly aligned to LC3 frames
@@ -647,7 +642,7 @@ class UdpManager {
       this.pingRetryCount = 0
 
       // Set overall timeout
-      this.pingTimeout = setTimeout(() => {
+      this.pingTimeout = BackgroundTimer.setTimeout(() => {
         console.log("UDP: Probe timed out after all retries")
         this.pingResolve = null
         this.pingTimeout = null
@@ -675,7 +670,7 @@ class UdpManager {
 
         // Schedule next retry if we haven't received ack yet
         if (this.pingResolve && this.pingRetryCount < PING_RETRY_COUNT) {
-          setTimeout(() => {
+          BackgroundTimer.setTimeout(() => {
             if (this.pingResolve) {
               this.sendPingWithRetry()
             }
@@ -692,10 +687,10 @@ class UdpManager {
    * This confirms UDP connectivity is working
    */
   public onPingAckReceived(): void {
-    console.log("UDP: Ping ack received - UDP is working")
+    // console.log("UDP: Ping ack received - UDP is working")
 
     if (this.pingTimeout) {
-      clearTimeout(this.pingTimeout)
+      BackgroundTimer.clearTimeout(this.pingTimeout)
       this.pingTimeout = null
     }
 

@@ -21,27 +21,17 @@ export function BtClassicPairing() {
 
   // iOS only
   useEffect(() => {
-    if (Platform.OS !== "ios") {
-      return
-    }
+    if (Platform.OS !== "ios") return
+    if (ignoreRef.current) return
+    if (pathname !== "/home") return // only run on the home screen
+    if (defaultWearable !== DeviceTypes.LIVE) return
+    if (!glassesConnected || btcConnected) return
 
-    if (ignoreRef.current) {
-      return
-    }
+    const timeout = setTimeout(() => {
+      // re-check the glasses state after 2 seconds to see if it's still in this state:
+      const {connected, btcConnected: btc} = useGlassesStore.getState()
+      if (ignoreRef.current || !connected || btc) return
 
-    if (pathname !== "/home") {
-      return
-    }
-
-    if (defaultWearable !== DeviceTypes.LIVE) {
-      return
-    }
-
-    if (glassesConnected && btcConnected) {
-      return
-    }
-
-    if (glassesConnected && !btcConnected) {
       showAlert(translate("pairing:btClassicDisconnected"), translate("pairing:btClassicDisconnectedMessage"), [
         {
           text: translate("common:ignore"),
@@ -56,8 +46,10 @@ export function BtClassicPairing() {
           },
         },
       ])
-    }
-  }, [ignoreRef.current, pathname, defaultWearable, glassesConnected, btcConnected])
+    }, 2000)
+
+    return () => clearTimeout(timeout)
+  }, [pathname, defaultWearable, glassesConnected, btcConnected])
 
   return null
 }

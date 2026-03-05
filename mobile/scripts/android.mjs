@@ -5,5 +5,32 @@ await setBuildEnv()
 // prebuild android:
 await $({stdio: "inherit"})`bun expo prebuild --platform android`
 
-// Run expo Android command with stdin enabled for interactive prompts
-await $({stdio: "inherit"})`bun expo run:android --device`
+// Get connected devices with details
+const adbOutput = await $`adb devices -l`
+const lines = adbOutput.stdout.trim().split('\n').slice(1)
+
+// Filter to physical devices that don't contain "live"
+const validDevices = lines.filter(line => 
+  line.trim() && 
+  !line.includes('emulator') && 
+  !line.toLowerCase().includes('live') &&
+  !line.startsWith('emulator')
+)
+
+if (validDevices.length === 0) {
+  console.error('No suitable physical device found')
+  process.exit(1)
+}
+
+// build only for real devices new arch:
+process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a'
+
+if (validDevices.length > 1) {
+  console.log('Multiple devices found, launching interactive picker')
+  await $({stdio: "inherit"})`bun expo run:android --device`
+} else {
+  const modelMatch = validDevices[0].match(/model:(\S+)/)
+  const deviceName = modelMatch ? modelMatch[1] : validDevices[0].split(/\s+/)[0]
+  console.log(`Using device: ${deviceName}`)
+  await $({stdio: "inherit"})`bun expo run:android --device ${deviceName}`
+}

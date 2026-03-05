@@ -251,6 +251,12 @@
       "mode 1": "#404040"
     }
   },
+  "neutral_750": {
+    "type": "color",
+    "modes": {
+      "mode 1": "#2e2e2e"
+    }
+  },
   "neutral_800": {
     "type": "color",
     "modes": {
@@ -1486,7 +1492,7 @@
     "type": "color",
     "modes": {
       "light mode": "neutral100",
-      "dark mode": "neutral825"
+      "dark mode": "neutral750"
     }
   },
   "ring": {

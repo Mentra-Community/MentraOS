@@ -1,9 +1,6 @@
 // components/forms/HardwareRequirementsForm.tsx
 import React from "react"
-import {Label} from "@/components/ui/label"
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select"
-import {Button} from "@/components/ui/button"
-import {Textarea} from "@/components/ui/textarea"
+import {Button, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea} from "@mentra/shared"
 import {Plus, Trash2, Cpu, Camera, Mic, Speaker, Wifi, RotateCw, CircleDot, Lightbulb} from "lucide-react"
 import {HardwareType, HardwareRequirementLevel} from "../../types/enums"
 import {HardwareRequirement} from "@mentra/sdk"
@@ -68,28 +65,23 @@ const HardwareRequirementItem: React.FC<HardwareRequirementItemProps> = ({
   }
 
   return (
-    <div className="border rounded-lg bg-white shadow-sm">
+    <div className="border rounded-lg bg-card shadow-sm">
       {!isEditing ? (
         // Collapsed view - just show the essential info
-        <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => onEditToggle(index)}>
+        <div className="p-4 cursor-pointer hover:bg-secondary transition-colors" onClick={() => onEditToggle(index)}>
           <div className="flex items-center gap-3">
             {/* Content preview */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 {hardwareTypeIcons[requirement.type as HardwareType]}
-                <span className="font-medium text-sm text-gray-900">
+                <span className="font-medium text-sm text-foreground">
                   {hardwareTypeLabels[requirement.type as HardwareType]}
                 </span>
-                <span
-                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    requirement.level === HardwareRequirementLevel.REQUIRED
-                      ? "bg-gray-100 text-gray-800"
-                      : "bg-gray-100 text-gray-800"
-                  }`}>
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-secondary text-secondary-foreground">
                   {requirement.level === HardwareRequirementLevel.REQUIRED ? "Required" : "Optional"}
                 </span>
               </div>
-              <div className="text-xs text-gray-500 truncate">{getDescriptionPreview()}</div>
+              <div className="text-xs text-muted-foreground truncate">{getDescriptionPreview()}</div>
             </div>
 
             {/* Delete button */}
@@ -101,7 +93,7 @@ const HardwareRequirementItem: React.FC<HardwareRequirementItemProps> = ({
               variant="ghost"
               size="sm"
               type="button"
-              className="h-8 w-8 p-0 text-red-600 hover:text-red-700">
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
@@ -129,7 +121,7 @@ const HardwareRequirementItem: React.FC<HardwareRequirementItemProps> = ({
                 variant="ghost"
                 size="sm"
                 type="button"
-                className="h-8 w-8 p-0 text-red-600 hover:text-red-700">
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -140,7 +132,7 @@ const HardwareRequirementItem: React.FC<HardwareRequirementItemProps> = ({
             {/* Hardware Type */}
             <div>
               <Label className="text-sm font-medium">Hardware Type</Label>
-              <Select value={requirement.type} onValueChange={(value) => updateRequirement(index, "type", value)}>
+              <Select value={requirement.type} onValueChange={(value: string) => updateRequirement(index, "type", value)}>
                 <SelectTrigger className="mt-1">
                   <SelectValue placeholder="Select hardware type" />
                 </SelectTrigger>
@@ -171,20 +163,20 @@ const HardwareRequirementItem: React.FC<HardwareRequirementItemProps> = ({
             {/* Requirement Level */}
             <div>
               <Label className="text-sm font-medium">Requirement Level</Label>
-              <Select value={requirement.level} onValueChange={(value) => updateRequirement(index, "level", value)}>
+              <Select value={requirement.level} onValueChange={(value: string) => updateRequirement(index, "level", value)}>
                 <SelectTrigger className="mt-1">
                   <SelectValue placeholder="Select requirement level" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={HardwareRequirementLevel.REQUIRED}>
-                    <span className="text-gray-900">Required</span>
+                    <span className="text-foreground">Required</span>
                   </SelectItem>
                   <SelectItem value={HardwareRequirementLevel.OPTIONAL}>
-                    <span className="text-gray-900">Optional</span>
+                    <span className="text-foreground">Optional</span>
                   </SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Required hardware will prevent app installation if not available
               </p>
             </div>
@@ -201,7 +193,7 @@ const HardwareRequirementItem: React.FC<HardwareRequirementItemProps> = ({
                 rows={3}
                 className="mt-1"
               />
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 A clear explanation helps users understand why this hardware is necessary.
               </p>
             </div>
@@ -274,14 +266,7 @@ const HardwareRequirementsForm: React.FC<HardwareRequirementsFormProps> = ({requ
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="text-lg font-medium flex items-center gap-2">
-            <Cpu className="h-5 w-5" />
-            Hardware Requirements
-          </h3>
-          <p className="text-sm text-gray-600">Specify hardware components your app needs to function properly.</p>
-        </div>
+      <div className="flex items-center justify-end mb-3">
         <Button
           onClick={addRequirement}
           size="sm"
@@ -289,15 +274,12 @@ const HardwareRequirementsForm: React.FC<HardwareRequirementsFormProps> = ({requ
           className="h-8 px-3"
           disabled={getAvailableHardwareTypes().length === 0}>
           <Plus className="h-4 w-4 mr-1" />
-          {getAvailableHardwareTypes().length === 0 ? "All Added" : "Add Hardware"}
+          {getAvailableHardwareTypes().length === 0 ? "All Added" : "Add Requirement"}
         </Button>
       </div>
 
       {requirements.length === 0 ? (
-        <div className="text-center py-4 text-gray-500">
-          <p>No hardware requirements specified.</p>
-          <p className="text-xs mt-1">The app will be assumed to work with any hardware.</p>
-        </div>
+        <div></div>
       ) : (
         <div className="space-y-2">
           {requirements.map((requirement, index) => (

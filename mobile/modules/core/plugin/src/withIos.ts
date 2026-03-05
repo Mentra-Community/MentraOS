@@ -38,6 +38,14 @@ function addPodDependencies(podfileContent: string): string {
     # Add SWCompression for TarBz2Extractor functionality
     pod 'onnxruntime-objc', '1.18.0', :modular_headers => true
     pod 'SWCompression', '~> 4.8.0'
+
+    # Firebase dependencies need modular headers for static library linking
+    pod 'GoogleUtilities', :modular_headers => true
+    pod 'FirebaseCore', :modular_headers => true
+    pod 'FirebaseCoreInternal', :modular_headers => true
+    pod 'FirebaseInstallations', :modular_headers => true
+    pod 'GoogleAppMeasurement', :modular_headers => true
+    pod 'nanopb', :modular_headers => true
   `
     return podfileContent.replace(nativeModulesRegex, `$1${podDependencies}\n`)
   }
@@ -68,8 +76,8 @@ function addPostInstallConfiguration(podfileContent: string): string {
   return podfileContent
 }
 
-const modifyPodfile: ConfigPlugin = config => {
-  return withPodfile(config, config => {
+const modifyPodfile: ConfigPlugin = (config) => {
+  return withPodfile(config, (config) => {
     const podfileContent = config.modResults.contents
     // Apply all Podfile modifications
     let modifiedContent = podfileContent
@@ -84,10 +92,10 @@ const modifyPodfile: ConfigPlugin = config => {
   })
 }
 
-const withXcodeEnvLocal: ConfigPlugin = config => {
+const withXcodeEnvLocal: ConfigPlugin = (config) => {
   return withDangerousMod(config, [
     "ios",
-    async config => {
+    async (config) => {
       try {
         // Get node executable path
         const nodeExecutable = execSync("which node", {encoding: "utf-8"}).trim()

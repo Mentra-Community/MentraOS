@@ -1,6 +1,6 @@
 import {useRootNavigationState} from "expo-router"
 import {useState, useEffect} from "react"
-import {View, ActivityIndicator, Platform, Linking, TextStyle, ViewStyle} from "react-native"
+import {View, ActivityIndicator, Platform, Linking} from "react-native"
 import semver from "semver"
 
 import {Button, Icon, Screen, Text} from "@/components/ignite"
@@ -13,7 +13,8 @@ import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
+import {SplashVideo} from "@/components/splash/SplashVideo"
+import {BackgroundTimer} from "@/utils/timers"
 
 // Types
 type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"
@@ -28,14 +29,15 @@ interface StatusConfig {
 // Constants
 const APP_STORE_URL = "https://mentra.glass/os"
 const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.mentra.mentra"
-const NAVIGATION_DELAY = 100
+const NAVIGATION_DELAY = 300
 const DEEPLINK_DELAY = 1000
 
 export default function InitScreen() {
   // Hooks
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const {user, session, loading: authLoading} = useAuth()
-  const {replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome} = useNavigationHistory()
+  const {replace, replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome, setAnimation} =
+    useNavigationHistory()
   const {processUrl} = useDeeplink()
   const rootNavigationState = useRootNavigationState()
   const isNavigationReady = rootNavigationState?.key != null
@@ -47,7 +49,6 @@ export default function InitScreen() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [isUsingCustomUrl, setIsUsingCustomUrl] = useState(false)
   const [canSkipUpdate, setCanSkipUpdate] = useState(false)
-  const [loadingStatus, setLoadingStatus] = useState<string>(translate("versionCheck:checkingForUpdates"))
   const [isRetrying, setIsRetrying] = useState(false)
   // Zustand store hooks
   const [backendUrl, setBackendUrl] = useSetting(SETTINGS.backend_url.key)
@@ -71,15 +72,25 @@ export default function InitScreen() {
     return isCustom
   }
 
+  const setAnimationDelayed = () => {
+    BackgroundTimer.setTimeout(() => {
+      setAnimation("simple_push")
+    }, 500)
+  }
+
   const navigateToDestination = async () => {
     if (!user?.email) {
-      replaceAll("/auth/start")
+      await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
+      replace("/auth/start")
+      setAnimationDelayed()
       return
     }
 
     // Check onboarding status
     if (!onboardingCompleted && !defaultWearable) {
-      replaceAll("/onboarding/welcome")
+      await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
+      replace("/onboarding/welcome")
+      setAnimationDelayed()
       return
     }
 
@@ -90,9 +101,9 @@ export default function InitScreen() {
       return
     }
 
-    setTimeout(() => {
-      clearHistoryAndGoHome()
-    }, NAVIGATION_DELAY)
+    await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
+    setAnimationDelayed()
+    clearHistoryAndGoHome()
   }
 
   const checkLoggedIn = async (): Promise<void> => {
@@ -104,9 +115,6 @@ export default function InitScreen() {
   }
 
   const handleTokenExchange = async (): Promise<void> => {
-    setState("loading")
-    setLoadingStatus(translate("versionCheck:connectingToServer"))
-
     const token = session?.token
     if (!token) {
       setState("auth")
@@ -136,13 +144,11 @@ export default function InitScreen() {
     // Only show loading screen on initial load, not on retry
     if (!isRetry) {
       setState("loading")
-      setLoadingStatus(translate("versionCheck:checkingForUpdates"))
     } else {
       setIsRetrying(true)
     }
 
     const localVer = getLocalVersion()
-    setLocalVersion(localVer)
     console.log("INIT: Local version:", localVer)
 
     if (!localVer) {
@@ -161,11 +167,12 @@ export default function InitScreen() {
     }
 
     const {required, recommended} = res.value
-    setCloudVersion(recommended)
     console.log(`INIT: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
     if (semver.lt(localVer, recommended)) {
-      setState("outdated")
+      setLocalVersion(localVer)
+      setCloudVersion(recommended)
       setCanSkipUpdate(!semver.lt(localVer, required))
+      setState("outdated")
       setIsRetrying(false)
       return
     }
@@ -250,14 +257,15 @@ export default function InitScreen() {
     }
   }, [authLoading, isNavigationReady])
 
+  useEffect(() => {
+    setAnimation("fade")
+  }, [])
+
   // Render
   if (state === "loading") {
     return (
-      <Screen preset="fixed" safeAreaEdges={["bottom"]}>
-        <View style={themed($centerContainer)}>
-          <ActivityIndicator size="large" color={theme.colors.foreground} />
-          <Text style={themed($loadingText)}>{loadingStatus}</Text>
-        </View>
+      <Screen preset="fixed">
+        <SplashVideo />
       </Screen>
     )
   }
@@ -266,33 +274,39 @@ export default function InitScreen() {
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]}>
-      <View style={themed($mainContainer)}>
-        <View style={themed($infoContainer)}>
-          <View style={themed($iconContainer)}>
+      <View className="flex-1 p-6">
+        <View className="flex-1 items-center justify-center pt-8">
+          <View className="mb-8">
             <Icon name={statusConfig.icon} size={80} color={statusConfig.iconColor} />
           </View>
 
-          <Text style={themed($title)}>{statusConfig.title}</Text>
-          <Text style={themed($description)}>{statusConfig.description}</Text>
+          <Text className="text-2xl font-bold text-center mb-4">{statusConfig.title}</Text>
+          <Text className="text-sm text-center mb-4 line-height-6 px-6 text-muted-foreground">
+            {statusConfig.description}
+          </Text>
 
           {state === "outdated" && (
             <>
-              {localVersion && <Text style={themed($versionText)}>Local: v{localVersion}</Text>}
-              {cloudVersion && <Text style={themed($versionText)}>Latest: v{cloudVersion}</Text>}
+              {localVersion && (
+                <Text className="text-sm text-center mb-2 text-muted-foreground">Local: v{localVersion}</Text>
+              )}
+              {cloudVersion && (
+                <Text className="text-sm text-center mb-2 text-muted-foreground">Latest: v{cloudVersion}</Text>
+              )}
             </>
           )}
 
-          <View style={themed($buttonContainer)}>
+          <View className="w-full items-center pb-8 gap-8">
             {state === "connection" ||
               (state === "auth" && (
                 <Button
                   flexContainer
                   onPress={() => checkCloudVersion(true)}
-                  style={themed($primaryButton)}
+                  className="w-full"
                   text={isRetrying ? translate("versionCheck:retrying") : translate("versionCheck:retryConnection")}
                   disabled={isRetrying}
                   LeftAccessory={
-                    isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.textAlt} /> : undefined
+                    isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.foreground} /> : undefined
                   }
                 />
               ))}
@@ -311,12 +325,12 @@ export default function InitScreen() {
               <Button
                 flexContainer
                 onPress={handleResetUrl}
-                style={themed($secondaryButton)}
+                className="w-full"
                 tx={isRetrying ? "versionCheck:resetting" : "versionCheck:resetUrl"}
                 preset="secondary"
                 disabled={isRetrying}
                 LeftAccessory={
-                  isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.text} /> : undefined
+                  isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.foreground} /> : undefined
                 }
               />
             )}
@@ -337,71 +351,3 @@ export default function InitScreen() {
     </Screen>
   )
 }
-
-// Styles
-const $centerContainer: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-  justifyContent: "center",
-  alignItems: "center",
-})
-
-const $loadingText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  marginTop: spacing.s4,
-  fontSize: 16,
-  color: colors.text,
-})
-
-const $mainContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  padding: spacing.s6,
-})
-
-const $infoContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  justifyContent: "center",
-  alignItems: "center",
-  paddingTop: spacing.s8,
-})
-
-const $iconContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  marginBottom: spacing.s8,
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 28,
-  fontWeight: "bold",
-  textAlign: "center",
-  marginBottom: spacing.s4,
-  color: colors.text,
-})
-
-const $description: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 16,
-  textAlign: "center",
-  marginBottom: spacing.s8,
-  lineHeight: 24,
-  paddingHorizontal: spacing.s6,
-  color: colors.textDim,
-})
-
-const $versionText: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 14,
-  textAlign: "center",
-  marginBottom: spacing.s2,
-  color: colors.textDim,
-})
-
-const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  width: "100%",
-  alignItems: "center",
-  paddingBottom: spacing.s8,
-  gap: spacing.s8,
-})
-
-const $primaryButton: ThemedStyle<ViewStyle> = () => ({
-  width: "100%",
-})
-
-const $secondaryButton: ThemedStyle<ViewStyle> = () => ({
-  width: "100%",
-})

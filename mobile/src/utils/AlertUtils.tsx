@@ -434,7 +434,7 @@ const showLocationAlert = (title: string, message: string, options?: Connectivit
  */
 const showLocationServicesAlert = (title: string, message: string, options?: ConnectivityAlertOptions) => {
   // Show the location services dialog directly for better UX
-  SettingsNavigationUtils.showLocationServicesDialog().catch(error => {
+  SettingsNavigationUtils.showLocationServicesDialog().catch((error) => {
     console.error("Error showing location services dialog:", error)
     // Fallback to regular alert if dialog fails
     showConnectivityAlert(title, message, "locationServices", {

@@ -67,6 +67,7 @@ import static com.mentra.core.utils.BitmapJavaUtils.convertBitmapTo1BitBmpBytes;
 import com.mentra.core.utils.G1Text;
 import com.mentra.core.utils.SmartGlassesConnectionState;
 import com.mentra.lc3Lib.Lc3Cpp;
+import com.mentra.core.GlassesStore;
 
 public class G1 extends SGCManager {
     private static final String TAG = "WearableAi_EvenRealitiesG1SGC";
@@ -197,9 +198,9 @@ public class G1 extends SGCManager {
     private boolean lastThingDisplayedWasAnImage = false;
 
     // Serial number and style/color information
-    public String glassesSerialNumber = "";
-    public String glassesStyle = "";
-    public String glassesColor = "";
+    public String serialNumber = "";
+    public String style = "";
+    public String color = "";
 
     // lock writing until the last write is successful
     // fonts in G1
@@ -213,13 +214,13 @@ public class G1 extends SGCManager {
         super();
         this.type = DeviceTypes.G1;
         this.hasMic = true;  // G1 has a built-in microphone
-        this.micEnabled = false;
+        GlassesStore.INSTANCE.apply("glasses", "micEnabled", false);
         Bridge.log("G1: G1 constructor");
         this.context = Bridge.getContext();
         loadPairedDeviceNames();
         // goHomeHandler = new Handler();
         // this.smartGlassesDevice = smartGlassesDevice;
-        preferredG1DeviceId = CoreManager.getInstance().getDeviceName();
+        preferredG1DeviceId = (String) GlassesStore.INSTANCE.get("core", "device_name");
         this.bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         this.shouldUseGlassesMic = false;
 
@@ -235,7 +236,7 @@ public class G1 extends SGCManager {
 
         // setup fonts
         g1Text = new G1Text();
-        caseRemoved = true;
+        GlassesStore.INSTANCE.apply("glasses", "caseRemoved", true);
     }
 
     private final BluetoothGattCallback leftGattCallback = createGattCallback("Left");
@@ -531,7 +532,7 @@ public class G1 extends SGCManager {
                             if (deviceName.contains("R_")) {
                                 // Check for head down movement - initial F5 02 signal
                                 Bridge.log("G1: HEAD UP MOVEMENT DETECTED");
-                                CoreManager.getInstance().updateHeadUp(true);
+                                GlassesStore.INSTANCE.apply("glasses", "headUp", true);
                             }
                         }
                         // HEAD DOWN MOVEMENTS
@@ -539,7 +540,7 @@ public class G1 extends SGCManager {
                             if (deviceName.contains("R_")) {
                             Bridge.log("G1: HEAD DOWN MOVEMENT DETECTED");
                                 // clearBmpDisplay();
-                                CoreManager.getInstance().updateHeadUp(false);
+                                GlassesStore.INSTANCE.apply("glasses", "headUp", false);
                             }
                         }
                         // DOUBLE TAP
@@ -566,46 +567,41 @@ public class G1 extends SGCManager {
                                 int minBatt = Math.min(batteryLeft, batteryRight);
                                 // Bridge.log("G1: Minimum Battery Level: " + minBatt);
                                 // EventBus.getDefault().post(new BatteryLevelEvent(minBatt, false));
-                                batteryLevel = minBatt;
-                                CoreManager.getInstance().getStatus();
+                                GlassesStore.INSTANCE.apply("glasses", "batteryLevel", minBatt);
                             }
                         }
                         // CASE REMOVED
                         else if (data.length > 1 && (data[0] & 0xFF) == 0xF5
                                 && ((data[1] & 0xFF) == 0x07 || (data[1] & 0xFF) == 0x06)) {
-                            caseRemoved = true;
+                            GlassesStore.INSTANCE.apply("glasses", "caseRemoved", true);
                             Bridge.log("G1: CASE REMOVED");
-                            CoreManager.getInstance().getStatus();
                         }
                         // CASE OPEN
                         else if (data.length > 1 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x08) {
-                            caseOpen = true;
-                            caseRemoved = false;
+                            GlassesStore.INSTANCE.apply("glasses", "caseOpen", true);
+                            GlassesStore.INSTANCE.apply("glasses", "caseRemoved", false);
                             // EventBus.getDefault()
                                     // .post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
-                            CoreManager.getInstance().getStatus();
                         }
                         // CASE CLOSED
                         else if (data.length > 1 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x0B) {
-                            caseOpen = false;
-                            caseRemoved = false;
+                            GlassesStore.INSTANCE.apply("glasses", "caseOpen", false);
+                            GlassesStore.INSTANCE.apply("glasses", "caseRemoved", false);
                             // EventBus.getDefault()
                                     // .post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
-                            CoreManager.getInstance().getStatus();
                         }
                         // CASE CHARGING STATUS
                         else if (data.length > 3 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x0E) {
-                            caseCharging = (data[2] & 0xFF) == 0x01;// TODO: verify this is correct
+                            GlassesStore.INSTANCE.apply("glasses", "caseCharging", (data[2] & 0xFF) == 0x01);// TODO: verify this is correct
                             // EventBus.getDefault()
                                     // .post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
-                            CoreManager.getInstance().getStatus();
                         }
                         // CASE CHARGING INFO
                         else if (data.length > 3 && (data[0] & 0xFF) == 0xF5 && (data[1] & 0xFF) == 0x0F) {
-                            caseBatteryLevel = (data[2] & 0xFF);// TODO: verify this is correct
+                            int newCaseBatteryLevel = (data[2] & 0xFF);// TODO: verify this is correct
+                            GlassesStore.INSTANCE.apply("glasses", "caseBatteryLevel", newCaseBatteryLevel);
                             // EventBus.getDefault()
                                     // .post(new CaseEvent(caseBatteryLevel, caseCharging, caseOpen, caseRemoved));
-                            CoreManager.getInstance().getStatus();
                         }
                         // HEARTBEAT RESPONSE
                         else if (data.length > 0 && data[0] == 0x25) {
@@ -704,8 +700,8 @@ public class G1 extends SGCManager {
                 queryBatteryStatusHandler.postDelayed(() -> queryBatteryStatus(), 10);
 
                 // setup brightness
-                int brightnessValue = CoreManager.getInstance().getBrightness();
-                Boolean shouldUseAutoBrightness = CoreManager.getInstance().getAutoBrightness();
+                int brightnessValue = ((Number) GlassesStore.INSTANCE.get("core", "brightness")).intValue();
+                Boolean shouldUseAutoBrightness = (Boolean) GlassesStore.INSTANCE.get("core", "auto_brightness");
                 sendBrightnessCommandHandler
                         .postDelayed(() -> sendBrightnessCommand(brightnessValue, shouldUseAutoBrightness), 10);
 
@@ -768,25 +764,23 @@ public class G1 extends SGCManager {
     }
 
     private void updateConnectionState() {
-        Boolean previousReady = ready;
         SmartGlassesConnectionState previousConnectionState = connectionState;
         if (isLeftConnected && isRightConnected) {
             connectionState = SmartGlassesConnectionState.CONNECTED;
             Bridge.log("G1: Both glasses connected");
             lastConnectionTimestamp = System.currentTimeMillis();
-            ready = true;
+            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+            GlassesStore.INSTANCE.apply("glasses", "connected", true);
         } else if (isLeftConnected || isRightConnected) {
             connectionState = SmartGlassesConnectionState.CONNECTING;
             Bridge.log("G1: One glass connected");
-            ready = false;
+            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
+            GlassesStore.INSTANCE.apply("glasses", "connected", false);
         } else {
             connectionState = SmartGlassesConnectionState.DISCONNECTED;
             Bridge.log("G1: No glasses connected");
-            ready = false;
-        }
-        // Notify if either ready state or connection state changed
-        if (previousReady != ready || !previousConnectionState.equals(connectionState)) {
-            CoreManager.getInstance().handleConnectionStateChanged();
+            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
+            GlassesStore.INSTANCE.apply("glasses", "connected", false);
         }
     }
 
@@ -1132,9 +1126,9 @@ public class G1 extends SGCManager {
 
                         if (preferredG1DeviceId != null && preferredG1DeviceId.equals(parsedDeviceName)) {
                             // Store the information (matching iOS implementation)
-                            glassesSerialNumber = decodedSerial;
-                            glassesStyle = decoded[0];
-                            glassesColor = decoded[1];
+                            GlassesStore.INSTANCE.apply("glasses", "serialNumber", decodedSerial);
+                            GlassesStore.INSTANCE.apply("glasses", "style", decoded[0]);
+                            GlassesStore.INSTANCE.apply("glasses", "color", decoded[1]);
 
                             // Emit the serial number information to React Native
                             emitSerialNumberInfo(decodedSerial, decoded[0], decoded[1]);
@@ -1331,7 +1325,7 @@ public class G1 extends SGCManager {
         context.registerReceiver(bondingReceiver, filter);
         isBondingReceiverRegistered = true;
 
-        preferredG1DeviceId = CoreManager.getInstance().getDeviceName();
+        preferredG1DeviceId = (String) GlassesStore.INSTANCE.get("core", "device_name");
 
         if (!bluetoothAdapter.isEnabled()) {
             return;
@@ -1521,7 +1515,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean silent) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound) {
 
     }
 
@@ -1556,7 +1550,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void startVideoRecording(String requestId, boolean save, boolean silent) {
+    public void startVideoRecording(String requestId, boolean save, boolean flash, boolean sound) {
 
     }
 
@@ -1640,6 +1634,11 @@ public class G1 extends SGCManager {
     }
 
     @Override
+    public void ping() {
+        Bridge.log("G1: ping()");
+    }
+
+    @Override
     public void setDashboardPosition(int height, int depth) {
         Bridge.log("G1: setDashboardPosition() - height: " + height + ", depth: " + depth);
         sendDashboardPositionCommand(height, depth);
@@ -1668,6 +1667,16 @@ public class G1 extends SGCManager {
     }
 
     @Override
+    public void sendShutdown() {
+        Bridge.log("sendShutdown - not supported on G1");
+    }
+
+    @Override
+    public void sendReboot() {
+        Bridge.log("sendReboot - not supported on G1");
+    }
+
+    @Override
     public void sendRgbLedControl(String requestId, String packageName, String action, String color, int ontime, int offtime, int count) {
         Bridge.log("sendRgbLedControl - not supported on G1");
         Bridge.sendRgbLedControlResponse(requestId, false, "device_not_supported");
@@ -1675,17 +1684,14 @@ public class G1 extends SGCManager {
 
     @Override
     public void disconnect() {
-        ready = false;
-        ready = false;
+        GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
         destroy();
-        // CoreManager.getInstance().handleConnectionStateChanged();
     }
 
     @Override
     public void forget() {
-        ready = false;
+        GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
         destroy();
-        CoreManager.getInstance().handleConnectionStateChanged();
     }
 
     @Override
@@ -1731,6 +1737,11 @@ public class G1 extends SGCManager {
     }
 
     @Override
+    public void sendIncidentId(String incidentId) {
+        // G1 doesn't support incident reporting (no ASG client)
+    }
+
+    @Override
     public void queryGalleryStatus() {
 
     }
@@ -1739,6 +1750,12 @@ public class G1 extends SGCManager {
     public void sendGalleryMode() {
         // G1 doesn't have a built-in camera/gallery system
         Bridge.log("G1: sendGalleryModeActive - not supported on G1");
+    }
+
+    @Override
+    public void requestVersionInfo() {
+        // G1 doesn't support version info requests
+        Bridge.log("G1: requestVersionInfo - not supported on G1");
     }
 
     // private void sendDataSequentially(byte[] data, boolean onlyLeft) {
@@ -2119,12 +2136,12 @@ public class G1 extends SGCManager {
         Bridge.log("G1: EvenRealitiesG1SGC ONDESTROY");
         showHomeScreen();
         isKilled = true;
-        ready = false;
+        GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
 
         // Reset battery levels
         batteryLeft = -1;
         batteryRight = -1;
-        batteryLevel = -1;
+        GlassesStore.INSTANCE.apply("glasses", "batteryLevel", -1);
 
         // stop BLE scanning
         stopScan();
@@ -2657,7 +2674,7 @@ public class G1 extends SGCManager {
         Bridge.log("G1: sendSetMicEnabled(): " + enable);
 
         isMicrophoneEnabled = enable; // Update the state tracker
-        micEnabled = enable;
+        GlassesStore.INSTANCE.apply("glasses", "micEnabled", enable);
         micEnableHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -3809,15 +3826,6 @@ public class G1 extends SGCManager {
     }
 
     /**
-     * Returns whether the microphone is currently enabled
-     *
-     * @return true if microphone is enabled, false otherwise
-     */
-    public boolean isMicrophoneEnabled() {
-        return micEnabled;
-    }
-
-    /**
      * Decodes Even G1 serial number to extract style and color information
      *
      * @param serialNumber The full serial number (e.g., "S110LABD020021")
@@ -3868,17 +3876,16 @@ public class G1 extends SGCManager {
     private void emitSerialNumberInfo(String serialNumber, String style, String color) {
         try {
             JSONObject eventBody = new JSONObject();
-            eventBody.put("type", "glasses_serial_number");
             eventBody.put("serialNumber", serialNumber);
             eventBody.put("style", style);
             eventBody.put("color", color);
 
-            String jsonString = eventBody.toString();
-            Bridge.sendEvent("CoreMessageEvent", jsonString);
+            // Bridge.sendTypedMessage("glasses_serial_number", eventBody);
             Bridge.log("G1: 📱 Emitted serial number info: " + serialNumber + ", Style: " + style + ", Color: " + color);
+            GlassesStore.INSTANCE.apply("glasses", "serialNumber", serialNumber);
+            GlassesStore.INSTANCE.apply("glasses", "style", style);
+            GlassesStore.INSTANCE.apply("glasses", "color", color);
 
-            // Trigger status update to include serial number in status JSON
-            CoreManager.getInstance().getStatus();
         } catch (Exception e) {
             Bridge.log("G1: Error emitting serial number info: " + e.getMessage());
         }

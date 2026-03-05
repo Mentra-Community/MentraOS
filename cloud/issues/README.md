@@ -5,184 +5,188 @@ How we write technical design docs for cloud features.
 ## Philosophy
 
 - **Information dense, not corporate fluff**
-- **Easy to read, easy to find things**
-- **Written for engineers by engineers**
+- **Written for engineers, but readable by anyone on the team** — don't assume cloud knowledge
 - **No bullshit, no filler**
+- **The overview section is the most important part** — if someone skims only that, they should understand what the doc is and why it exists
+
+## Document Flow
+
+Every issue follows a three-stage progression:
+
+```
+spike.md → spec.md → design.md
+(understand)  (decide)   (build)
+```
+
+**spike.md** — Investigation. What's the problem, what did we find, what are the options. Written after research, before committing to a solution.
+
+**spec.md** — Specification. What are we going to do, what are the exact behaviors, what are the tradeoffs. Written after the spike, before implementation.
+
+**design.md** — Implementation plan. Which files change, what the changes look like, rollout order, testing. Written after the spec is agreed on.
+
+Not every issue needs all three. A small bug fix might just need a spec. A complex investigation might produce a spike that concludes "do nothing." Use judgment — but when in doubt, write more rather than less.
+
+Each feature gets a folder: `cloud/issues/{number}-{feature-name}/`
+
+Example: `cloud/issues/034-ws-liveness/` (matches branch `cloud/ws-liveness-detection`)
 
 ## Document Structure
 
-Each feature gets a folder: `cloud/issues/{feature-name}/`
+Every doc starts with the same two sections:
 
-Example: `cloud/issues/livekit-grpc/` (matches branch `cloud/livekit-grpc`)
+### Overview (required, every doc)
 
-### Required Files
+3–5 sentences max. Answers three questions:
 
-1. **README.md** - Quick navigation, 1-paragraph context, status checklist
-2. **{feature}-spec.md** - Problem, goals, constraints (PM perspective but technical)
-3. **{feature}-architecture.md** - Current system, proposed design, implementation details
-4. **{protocol}.proto** or similar - Actual implementation artifacts
+1. **What does this doc cover?** — one sentence
+2. **Why does this doc exist?** — one sentence on the problem or context
+3. **Who should read this?** — so people can self-select
 
-### Optional Files
+This is the section people actually read. If someone reads only this and walks away with the right mental model, you've done your job.
 
-- **{feature}-usage.md** - Code examples, patterns
-- Historical reference docs (mark clearly as historical)
+### Background (required if non-obvious)
 
-## What to CUT
+Just enough context that someone who doesn't work on this part of the system can follow the rest of the doc. No assumptions about what the reader knows. If a mobile engineer needs to understand a cloud concept to follow along, explain it here — briefly.
 
-❌ Corporate speak ("Dear stakeholders", "executive summary", "synergy")
-❌ Emoji spam (one or two OK for visual scanning, not dozens)
-❌ Obvious statements ("gRPC is a remote procedure call protocol")
-❌ Tutorial content ("What is REST?")
-❌ Fake status tracking that won't be updated
-❌ Redundant summaries
-❌ Box drawings and ASCII art decorations
-❌ Motivational fluff
+### Everything else
 
-## What to KEEP
+Depends on the doc type. See templates below.
 
-✅ **Diagrams showing actual data flow** (concise ASCII art)
-✅ **Real code snippets** from the codebase
-✅ **Specific numbers** (buffer sizes, timeouts, memory targets)
-✅ **Decision rationale** ("Why X over Y")
-✅ **Edge cases and gotchas**
-✅ **Links to actual code files**
-✅ **Open questions** that need answers
-✅ **Constraints** we're working with
+## Templates
 
-## Document Templates
-
-### README.md Format
-
-````markdown
-# Feature Name
-
-One-sentence description.
-
-## Documents
-
-- **{feature}-spec.md** - Problem, goals, constraints
-- **{feature}-architecture.md** - Technical design
-
-## Quick Context
-
-**Current**: How it works now (problems)
-**Proposed**: How we'll fix it
-
-## Key Context
-
-One paragraph explaining the critical constraint or insight.
-
-## Status
-
-- [x] Done thing
-- [ ] TODO thing
-
-### Spec Format
+### spike.md
 
 ```markdown
-# Feature Spec
+# Spike: {Title}
 
 ## Overview
 
-What we're building in 2-3 sentences.
+**What this doc covers:** ...
+**Why this doc exists:** ...
+**Who should read this:** ...
 
-## Problem
+## Background
 
-Technical problems we're solving:
+Context needed to understand the findings.
 
-1. Specific issue (with evidence)
-2. Another issue (with numbers)
+## Findings
 
-### Constraints
+### 1. First thing we found
 
-- Technical constraint (why it exists)
-- Business constraint
+### 2. Second thing we found
 
-## Goals
+## Conclusions
 
-Scoping out what we are trying to achieve:
+Summary table or list: what's fixable, what's not, what we recommend.
 
-## Non-Goals
+## Next Steps
 
-What we're explicitly NOT doing.
-
-## Open Questions
-
-1. Thing we need to decide
-2. Another thing
+Links to spec.md / design.md if proceeding.
 ```
-````
 
-### Architecture Format
+### spec.md
 
 ```markdown
-# Feature Architecture
+# Spec: {Title}
 
-## Current System
+## Overview
 
-Diagram showing how it works now.
+**What this doc covers:** ...
+**Why this doc exists:** ...
+**What you need to know first:** Link to spike if there is one.
+**Who should read this:** ...
 
-### Key Code Paths
+## The Problem in 30 Seconds
 
-Actual code snippets with line numbers.
+The shortest possible explanation of what's broken. Assume the reader has 30 seconds of attention.
 
-### Problems
+## Spec
 
-Specific issues with evidence.
+The actual specification — behaviors, parameters, message formats, timing.
 
-## Proposed System
+## Decision Log
 
-Diagram showing new design.
+| Decision | Alternatives considered | Why we chose this |
+| -------- | ----------------------- | ----------------- |
 
-### Key Changes
+Every non-obvious decision gets a row. This prevents re-litigation in Slack.
+```
 
-1. What's different
-2. Why it's better
+### design.md
 
-### Implementation Details
+```markdown
+# Design: {Title}
 
-Code examples for Go/TS/whatever.
+## Overview
 
-## Migration Strategy
+**What this doc covers:** ...
+**Why this doc exists:** ...
+**What you need to know first:** Links to spike and spec.
+**Who should read this:** ...
 
-How we roll this out.
+## Changes Summary
 
-## Open Questions
+Table of all changes: component, file, what changes.
 
-Decisions needed.
+## {Component} Changes
+
+### Change N: {Description}
+
+What changes, why, code snippets showing before/after.
+
+## Testing
+
+How to verify it works. Edge cases to check.
+
+## Rollout
+
+Deployment order, backward compatibility notes.
 ```
 
 ## Writing Style
 
-### Good Example
+### Good
 
 ```markdown
-## Audio Flow
+## Audio Path
 
-Client→Cloud: DataChannel (LiveKit TS SDK can't publish custom PCM)
-Cloud→Client: WebRTC Track (works fine)
+Client → Cloudflare → nginx Ingress → Pod :80 (HTTP/WS)
+Client → LoadBalancer IP:8000 → Pod :8000 (UDP audio)
 
-Problem: Go bridge uses WebSocket for IPC (wrong tool, causes goroutine leaks)
-Solution: gRPC bidirectional stream with automatic backpressure
-
-Memory: Current 25MB/session → Target <5MB/session
+Problem: WS only carries control messages now — can go idle 60+ seconds.
+nginx default proxy-read-timeout is 60s → kills the connection → 1006.
 ```
 
-### Bad Example
+### Bad
 
 ```markdown
-## Audio Flow Architecture
+## Audio Path Architecture
 
 ### Overview
 
-In this section, we will comprehensively explore the audio flow architecture
+In this section, we will comprehensively explore the audio path architecture
 that enables real-time communication between our client devices and the cloud
 infrastructure. This is a critical component of our system...
-
-### Background
-
-Audio streaming has been a cornerstone of modern communication systems since...
 ```
+
+## What to CUT
+
+❌ Corporate speak ("Dear stakeholders", "executive summary", "synergy")
+❌ Obvious statements ("gRPC is a remote procedure call protocol")
+❌ Tutorial content ("What is REST?")
+❌ Fake status tracking that won't be updated
+❌ Redundant summaries across sections
+❌ Motivational fluff
+
+## What to KEEP
+
+✅ **The overview section** — most important part of every doc
+✅ **Diagrams showing actual data flow** (concise ASCII art)
+✅ **Real code snippets** from the codebase with file paths
+✅ **Specific numbers** (buffer sizes, timeouts, memory targets)
+✅ **Decision rationale** ("Why X over Y") — prevents re-litigation
+✅ **Edge cases and gotchas**
+✅ **Background context** for readers outside the immediate team
 
 ## Diagrams
 
@@ -197,12 +201,10 @@ Not:
 
 ```
 ╔════════════════════════════════════════════╗
-║                                            ║
 ║  ┌──────────┐      ┌──────────┐          ║
 ║  │  Client  │─────▶│   Go     │          ║
 ║  │          │      │  Bridge  │          ║
 ║  └──────────┘      └──────────┘          ║
-║                                            ║
 ╚════════════════════════════════════════════╝
 ```
 
@@ -212,110 +214,56 @@ Always include:
 
 - File path: `packages/cloud/src/services/AudioManager.ts`
 - Line numbers if referencing existing code
-- Language in code fence: ` ```typescript `
 - Context: "This causes X" or "This fixes Y"
 
 ## Numbers
 
-Always include specific numbers:
+Always specific:
 
 - "Memory grows 500MB/hour" not "Memory grows a lot"
 - "100ms chunks (1600 bytes)" not "Small chunks"
-- "gRPC port 9090" not "a port"
-
-## Open Questions
-
-Always include "Open Questions" section for:
-
-- Technical decisions not yet made
-- Things we need to measure/benchmark
-- Edge cases we're unsure about
-
-Format:
-
-```markdown
-## Open Questions
-
-1. **Unix socket vs TCP?**
-   - Unix socket: 20-30% lower latency
-   - TCP: easier debugging
-   - **Decision**: Start with TCP, measure later
-
-2. **Chunk size?**
-   - Current: 100ms (1600 bytes)
-   - Alternative: 50ms (800 bytes)
-   - **Need to benchmark**
-```
+- "60s default timeout" not "a timeout"
 
 ## File Naming
 
-- Lowercase with hyphens: `livekit-grpc-spec.md`
-- Not: `LiveKitGRPCSpec.md` or `livekit_grpc_spec.md`
-- Match feature name: folder `livekit-grpc/`, files `livekit-grpc-*.md`
-- Proto/code files: whatever their convention is (`.proto`, `.ts`, etc.)
+- Lowercase with hyphens: `spike.md`, `spec.md`, `design.md`
+- Feature folder matches issue number: `034-ws-liveness/`
+- Additional files if needed: `{topic}.md` (e.g. `migration-plan.md`)
 
 ## Document Length
 
-- README: 1-2 pages max
-- Spec: 3-5 pages
-- Architecture: 10-15 pages is fine if information-dense
-- Usage guide: As long as needed for examples
+- spike.md: 2–5 pages
+- spec.md: 3–5 pages
+- design.md: 5–15 pages is fine if information-dense
 
 **Dense and useful > short and useless**
 
 But also: **Dense and useful > long and fluffy**
 
-## When to Update
-
-Update docs when:
-
-- Making architectural decisions
-- Discovering new constraints
-- Answering open questions
-- Changing implementation approach
-
-Don't update:
-
-- Status checkboxes (too much churn)
-- "Last updated" timestamps (git has this)
-- Version numbers (git has this)
-
-## Review Process
+## When to Write Docs
 
 Before implementation:
 
-1. Write all docs
-2. Review together (PM/engineer)
-3. Answer open questions
-4. Approve architecture
+1. Investigate (spike)
+2. Specify (spec)
+3. Design (design)
+4. Review together
 5. **Then** start coding
 
 Docs are **planning artifacts**, not post-implementation documentation.
 
 ## Examples
 
-Good design doc folders:
-
-- `cloud/issues/livekit-grpc/` - This guide's example
-- (Add more as we create them)
+- `cloud/issues/034-ws-liveness/` — spike → spec → design for WebSocket liveness detection
 
 ## Anti-Patterns
 
-❌ **"Living document"** - Docs that get stale immediately
-❌ **"RFC"** numbered system - We're not that formal
-❌ **"ADR"** (Architecture Decision Records) - Too heavyweight
-❌ **Confluence/Notion** - Keep it in git with code
-❌ **Google Docs** - Not version controlled
-❌ **Miro boards** - Can't grep ASCII art
-
-## Tools
-
-- Editor: Whatever you want
-- Diagrams: ASCII art (can be copied/pasted)
-- Code examples: Copy from actual code
-- Tables: Markdown tables
-- No special tools needed
+❌ **Skipping the overview** — if readers don't know why the doc exists, they won't read it
+❌ **Assuming cloud knowledge** — mobile engineers read these docs too
+❌ **"Living document"** — docs that get stale immediately
+❌ **Confluence/Notion/Google Docs** — keep it in git with code
+❌ **No decision log** — leads to the same debates in Slack every week
 
 ---
 
-**Remember**: These docs are for us (engineers). Write what you'd want to read when joining the project or debugging at 2am.
+**Remember**: These docs are for the whole team. Write what you'd want to read when joining the project, debugging at 2am, or trying to understand why something was built a certain way.
