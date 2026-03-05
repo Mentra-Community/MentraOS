@@ -11,7 +11,6 @@ export {
   deviceStateApi,
   feedbackApi,
   incidentLogsApi,
-  livekitApi,
   locationApi,
   minVersionApi,
   notificationsApi,

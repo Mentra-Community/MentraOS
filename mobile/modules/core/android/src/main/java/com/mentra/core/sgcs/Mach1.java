@@ -370,6 +370,11 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
+    public void sendIncidentId(String incidentId) {
+        // Mach1 doesn't support incident reporting (no ASG client)
+    }
+
+    @Override
     public void queryGalleryStatus() {
 
     }

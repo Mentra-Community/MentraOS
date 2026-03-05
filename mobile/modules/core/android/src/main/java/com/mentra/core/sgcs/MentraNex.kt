@@ -307,6 +307,8 @@ class MentraNex : SGCManager() {
 
     override fun sendUserEmailToGlasses(email: String) {  Bridge.log("Nex: sendUserEmailToGlasses operation not supported") }
 
+    override fun sendIncidentId(incidentId: String) { Bridge.log("Nex: sendIncidentId operation not supported") }
+
     // Connection
     override fun findCompatibleDevices() {
         if (isScanningForCompatibleDevices) {

@@ -27,11 +27,14 @@ RUN bun install && \
     rm -rf node_modules/@types/bun && \
     bun add -d bun-types@1.0.17
 
-# Build packages in sequence
+# Build packages in sequence (types → display-utils → sdk → utils → cloud)
 RUN echo "🚀 Starting build process..." && \
     echo "⚙️ Building packages/types..." && \
     cd packages/types && bun run build && \
     echo "✅ Built packages/types..." && \
+    echo "⚙️ Building packages/display-utils..." && \
+    cd ../display-utils && bun run build && \
+    echo "✅ Built packages/display-utils..." && \
     echo "⚙️ Building packages/sdk..." && \
     cd ../sdk && bun run build && \
     echo "✅ Built packages/sdk..." && \

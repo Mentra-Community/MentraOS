@@ -1737,6 +1737,11 @@ public class G1 extends SGCManager {
     }
 
     @Override
+    public void sendIncidentId(String incidentId) {
+        // G1 doesn't support incident reporting (no ASG client)
+    }
+
+    @Override
     public void queryGalleryStatus() {
 
     }

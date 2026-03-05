@@ -1,18 +1,10 @@
+import CoreModule from "core"
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
 import * as ImagePicker from "expo-image-picker"
 import * as Location from "expo-location"
 import {useState, useEffect} from "react"
-import {
-  Image,
-  Platform,
-  Pressable,
-  ScrollView,
-  TextInput,
-  View,
-  Linking,
-  ActivityIndicator,
-} from "react-native"
+import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
@@ -82,11 +74,9 @@ export default function FeedbackPage() {
     // Request permission
     const {status} = await ImagePicker.requestMediaLibraryPermissionsAsync()
     if (status !== "granted") {
-      showAlert(
-        translate("common:error"),
-        translate("feedback:photoPermissionRequired"),
-        [{text: translate("common:ok")}],
-      )
+      showAlert(translate("common:error"), translate("feedback:photoPermissionRequired"), [
+        {text: translate("common:ok")},
+      ])
       return
     }
 
@@ -118,7 +108,7 @@ export default function FeedbackPage() {
     const isBetaBuild = !!customBackendUrl
     const osVersion = `${Platform.OS} ${Platform.Version}`
     const deviceName = Constants.deviceName || "deviceName"
-    const appVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version"
+    const mobileAppVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version"
     const buildCommit = process.env.EXPO_PUBLIC_BUILD_COMMIT || "commit"
     const buildBranch = process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch"
     const buildTime = process.env.EXPO_PUBLIC_BUILD_TIME || "time"
@@ -194,7 +184,7 @@ export default function FeedbackPage() {
       ...(isApplePrivateRelay && email && {contactEmail: email}),
       // System information
       systemInfo: {
-        appVersion,
+        appVersion: mobileAppVersion,
         deviceName,
         osVersion,
         platform: Platform.OS,
@@ -252,6 +242,9 @@ export default function FeedbackPage() {
         settings: filteredSettings,
       }
 
+      const phoneBackendUrl = useSettingsStore.getState().getRestUrl()
+      console.log("Phone backend URL (incident creation):", phoneBackendUrl)
+
       // Create incident for bug report
       const res = await restComms.createIncident(feedbackData, phoneState)
 
@@ -280,6 +273,11 @@ export default function FeedbackPage() {
           console.error("Error uploading phone logs:", logsRes.error)
           // Don't block - incident already created successfully
         }
+      }
+
+      // Trigger glasses to upload their own logs directly over WiFi (fire-and-forget)
+      if (glassesConnected) {
+        CoreModule.sendIncidentId(incidentId).catch(() => {})
       }
 
       // Upload screenshots if any
@@ -361,7 +359,10 @@ export default function FeedbackPage() {
   return (
     <Screen preset="fixed">
       <Header title={translate("feedback:giveFeedback")} leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView className="pt-6 -mx-6 px-6" contentContainerClassName="flex-grow pb-12" keyboardShouldPersistTaps="handled">
+      <ScrollView
+        className="pt-6 -mx-6 px-6"
+        contentContainerClassName="flex-grow pb-12"
+        keyboardShouldPersistTaps="handled">
         <View className="gap-6">
           {isApplePrivateRelay && (
             <View>
@@ -434,23 +435,15 @@ export default function FeedbackPage() {
 
               {/* Screenshots Section */}
               <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:screenshots")}
-                </Text>
-                <Text className="text-xs text-muted-foreground mb-3">
-                  {translate("feedback:screenshotsHint")}
-                </Text>
+                <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:screenshots")}</Text>
+                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:screenshotsHint")}</Text>
 
                 {/* Screenshot Thumbnails */}
                 {screenshots.length > 0 && (
                   <View className="flex-row flex-wrap gap-2 mb-3">
                     {screenshots.map((image, index) => (
                       <View key={image.uri} className="relative">
-                        <Image
-                          source={{uri: image.uri}}
-                          className="w-20 h-20 rounded-lg"
-                          resizeMode="cover"
-                        />
+                        <Image source={{uri: image.uri}} className="w-20 h-20 rounded-lg" resizeMode="cover" />
                         <Pressable
                           onPress={() => removeScreenshot(index)}
                           className="absolute -top-2 -right-2 bg-destructive rounded-full w-6 h-6 items-center justify-center">
@@ -467,9 +460,7 @@ export default function FeedbackPage() {
                     onPress={pickScreenshots}
                     className="border-2 border-dashed border-border rounded-xl p-4 items-center justify-center">
                     <Text className="text-muted-foreground">
-                      {screenshots.length === 0
-                        ? translate("feedback:addScreenshots")
-                        : translate("feedback:addMore")}
+                      {screenshots.length === 0 ? translate("feedback:addScreenshots") : translate("feedback:addMore")}
                     </Text>
                     <Text className="text-xs text-muted-foreground mt-1">
                       {screenshots.length}/{MAX_SCREENSHOTS}

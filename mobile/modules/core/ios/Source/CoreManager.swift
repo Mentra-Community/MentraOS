@@ -1049,6 +1049,11 @@ struct ViewState {
         sgc?.requestWifiScan()
     }
 
+    func sendIncidentId(_ incidentId: String) {
+        Bridge.log("MAN: Sending incidentId to glasses for log upload: \(incidentId)")
+        sgc?.sendIncidentId(incidentId)
+    }
+
     func sendWifiCredentials(_ ssid: String, _ password: String) {
         Bridge.log("MAN: Sending wifi credentials: \(ssid) \(password)")
         sgc?.sendWifiCredentials(ssid, password)

@@ -209,6 +209,10 @@ class Simulated : SGCManager() {
         Bridge.log("sendUserEmailToGlasses: $email")
     }
 
+    override fun sendIncidentId(incidentId: String) {
+        Bridge.log("sendIncidentId: $incidentId")
+    }
+
     // Gallery
     override fun queryGalleryStatus() {
         Bridge.log("queryGalleryStatus")

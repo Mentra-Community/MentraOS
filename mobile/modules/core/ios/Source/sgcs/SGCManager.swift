@@ -84,6 +84,10 @@ protocol SGCManager {
 
     func sendUserEmailToGlasses(_ email: String)
 
+    // MARK: - Incident Reporting
+
+    func sendIncidentId(_ incidentId: String)
+
     // MARK: - Gallery
 
     func queryGalleryStatus()

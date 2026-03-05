@@ -22,7 +22,6 @@ import type { AppEnv } from "./types/hono";
 import {
   // Client APIs (mobile app and glasses client)
   audioConfigApi,
-  livekitApi,
   minVersionApi,
   clientAppsApi,
   userSettingsApi,
@@ -74,7 +73,6 @@ import organizationRoutes from "./api/hono/routes/organization.routes";
 import audioRoutes, { textToSpeech } from "./api/hono/routes/audio.routes";
 import errorReportRoutes from "./api/hono/routes/error-report.routes";
 import transcriptsRoutes from "./api/hono/routes/transcripts.routes";
-import appCommunicationRoutes from "./api/hono/routes/app-communication.routes";
 
 // Hono middleware
 import { authenticateConsole, authenticateCLI, transformCLIToConsole } from "./api/hono/middleware";
@@ -117,7 +115,7 @@ app.use(async (c, next) => {
   c.set("reqId", reqId);
 
   // Skip detailed logging for noisy endpoints (but still process them)
-  const isNoisyEndpoint = reqPath === "/health" || reqPath.startsWith("/api/livekit/token");
+  const isNoisyEndpoint = reqPath === "/health";
 
   // Capture request details before processing
   const userAgent = c.req.header("user-agent") || "unknown";
@@ -260,7 +258,6 @@ app.get("/metrics", (c) => {
 // Client API Routes (Hono native)
 // ============================================================================
 
-app.route("/api/client/livekit", livekitApi);
 app.route("/api/client/min-version", minVersionApi);
 app.route("/api/client/apps", clientAppsApi);
 app.route("/api/client/user/settings", userSettingsApi);
@@ -396,9 +393,6 @@ app.route("/", errorReportRoutes);
 
 // Transcripts routes
 app.route("/api/transcripts", transcriptsRoutes);
-
-// App communication routes
-app.route("/api/app-communication", appCommunicationRoutes);
 
 // ============================================================================
 // Static Files

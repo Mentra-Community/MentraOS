@@ -83,6 +83,24 @@ class CoreModule : Module() {
 
         Function("update") { category: String, values: Map<String, Any> ->
             values.forEach { (key, value) -> GlassesStore.apply(category, key, value) }
+            // Persist auth_token to SharedPreferences so MentraLive.getCoreToken() finds it
+            // (bridge may run this after glasses_ready; prefs survive retries and next connection)
+            if (category == "core") {
+                values["auth_token"]?.let { token ->
+                    val len = (token as? String)?.length ?: 0
+                    android.util.Log.d("CoreModule", "update(core) auth_token received, len=$len")
+                    if (token is String && token.isNotEmpty()) {
+                        val ctx = appContext.reactContext ?: appContext.currentActivity
+                        ctx?.let {
+                            it.getSharedPreferences("augmentos_auth_prefs", android.content.Context.MODE_PRIVATE)
+                                .edit()
+                                .putString("core_token", token)
+                                .apply()
+                            android.util.Log.d("CoreModule", "Persisted core_token to SharedPreferences, len=${token.length}")
+                        }
+                    }
+                }
+            }
         }
 
         // MARK: - Display Commands
@@ -118,6 +136,12 @@ class CoreModule : Module() {
         AsyncFunction("showDashboard") { coreManager?.showDashboard() }
 
         AsyncFunction("ping") { coreManager?.ping() }
+
+        // MARK: - Incident Reporting
+
+        AsyncFunction("sendIncidentId") { incidentId: String ->
+            coreManager?.sendIncidentId(incidentId)
+        }
 
         // MARK: - WiFi Commands
 

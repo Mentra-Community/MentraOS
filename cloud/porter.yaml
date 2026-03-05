@@ -1,58 +1,23 @@
-# version: v2
-# # Omit a hard-coded name here. Use environment variables to supply dynamic values.
-# namespace: ${PORTER_NAMESPACE}
-
-# # envGroups:
-# # - dev
-
-# build:
-#   method: docker
-#   context: ./cloud/.
-#   dockerfile: ./cloud/docker/Dockerfile.porter
-
-# services:
-# - name: cloud
-#   type: web
-#   run: node packages/cloud/dist/index.js
-#   port: 80
-#   cpuCores: 5
-#   ramMegabytes: 4096
-#   env:
-#     HOST: "0.0.0.0"
-#     SERVICE_NAME: "cloud"
-#     RTMP_RELAY_URLS: "rtmp-relay-uscentral.mentra.glass:1935"
-
 version: v2
 namespace: ${PORTER_NAMESPACE}
 
 build:
   method: docker
   context: ./cloud/.
-  dockerfile: ./cloud/docker/Dockerfile.livekit
+  dockerfile: ./cloud/docker/Dockerfile.porter
 
 services:
   - name: cloud
     type: web
-    run: ./start.sh
-    port: 80 # Main Cloud API port
+    run: cd packages/cloud && PORT=80 bun run start
+    port: 80
     cpuCores: 5
     ramMegabytes: 4096
     env:
       HOST: "0.0.0.0"
       SERVICE_NAME: "cloud"
       RTMP_RELAY_URLS: "rtmp-relay-uscentral.mentra.glass:1935"
-      LIVEKIT_GRPC_SOCKET: "/tmp/livekit-bridge.sock"
-      LIVEKIT_PCM_ENDIAN: "off"
-      # Add any Go service environment variables here
       LOG_LEVEL: "info"
-      # Better Stack logging for Go bridge
-      BETTERSTACK_SOURCE_TOKEN: "${BETTERSTACK_SOURCE_TOKEN}"
-      BETTERSTACK_INGESTING_HOST: "s1311181.eu-nbg-2.betterstackdata.com"
-    # Optional: Configure health checks
-    # healthCheck:
-    #   enabled: true
-    #   path: "/health" # Assuming your Bun service has a health endpoint
-    #   port: 80
     # Extended timeouts for WebSocket connections (/glasses-ws, /app-ws).
     # Porter sets proxy-send-timeout: 60s by default, which kills idle WS
     # connections because no client→server traffic flows after audio moved to UDP.

@@ -2203,6 +2203,11 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendIncidentId(_ incidentId: String) {
+        Bridge.log("LIVE: Sending incidentId to glasses for log upload: \(incidentId)")
+        sendJson(["type": "upload_incident_logs", "incidentId": incidentId], wakeUp: true)
+    }
+
     func forgetWifiNetwork(_ ssid: String) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)")
 

@@ -152,6 +152,14 @@ public class CoreModule: Module {
             }
         }
 
+        // MARK: - Incident Reporting
+
+        AsyncFunction("sendIncidentId") { (incidentId: String) in
+            await MainActor.run {
+                CoreManager.shared.sendIncidentId(incidentId)
+            }
+        }
+
         // MARK: - WiFi Commands
 
         AsyncFunction("requestWifiScan") {

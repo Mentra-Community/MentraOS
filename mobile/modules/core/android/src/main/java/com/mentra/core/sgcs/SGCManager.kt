@@ -83,6 +83,9 @@ abstract class SGCManager {
     // User Context (for crash reporting)
     abstract fun sendUserEmailToGlasses(email: String)
 
+    // Incident Reporting
+    abstract fun sendIncidentId(incidentId: String)
+
     // Gallery
     abstract fun queryGalleryStatus()
     abstract fun sendGalleryMode()

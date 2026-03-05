@@ -31,8 +31,6 @@ import CalendarManager from "./CalendarManager";
 import { DashboardManager } from "./dashboard";
 import DeviceManager from "./DeviceManager";
 import { handleAppMessage as appMessageHandler, handleGlassesMessage as glassesMessageHandler } from "./handlers";
-import LiveKitManager from "./livekit/LiveKitManager";
-import SpeakerManager from "./livekit/SpeakerManager";
 import LocationManager from "./LocationManager";
 import MicrophoneManager from "./MicrophoneManager";
 import PhotoManager from "./PhotoManager";
@@ -113,8 +111,7 @@ export class UserSession {
   public transcriptionManager: TranscriptionManager;
   public translationManager: TranslationManager;
   public subscriptionManager: SubscriptionManager;
-  public liveKitManager: LiveKitManager;
-  public speakerManager: SpeakerManager;
+
   public calendarManager: CalendarManager;
   public locationManager: LocationManager;
   public userSettingsManager: UserSettingsManager;
@@ -156,9 +153,6 @@ export class UserSession {
   // User's timezone (IANA name like "America/New_York")
   public userTimezone?: string;
 
-  // LiveKit transport preference
-  public livekitRequested?: boolean;
-
   // Capability Discovery
 
   // Current connected glasses model
@@ -186,9 +180,7 @@ export class UserSession {
     this.streamRegistry = new StreamRegistry(this.logger);
     this.unmanagedStreamingExtension = new UnmanagedStreamingExtension(this);
     this.managedStreamingExtension = new ManagedStreamingExtension(this.logger, this.streamRegistry);
-    this.liveKitManager = new LiveKitManager(this);
     this.userSettingsManager = new UserSettingsManager(this);
-    this.speakerManager = new SpeakerManager(this);
     this.deviceManager = new DeviceManager(this);
     this.udpAudioManager = new UdpAudioManager(this);
 
@@ -722,7 +714,7 @@ export class UserSession {
     // Clean up all resources
     if (this.appManager) this.appManager.dispose();
     if (this.audioManager) this.audioManager.dispose();
-    if (this.liveKitManager) this.liveKitManager.dispose();
+
     if (this.microphoneManager) this.microphoneManager.dispose();
     if (this.displayManager) this.displayManager.dispose();
     if (this.dashboardManager) this.dashboardManager.dispose();

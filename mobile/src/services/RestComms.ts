@@ -2,6 +2,7 @@ import {AppletInterface} from "@/../../cloud/packages/types/src"
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
+import CoreModule from "core"
 import {GlassesInfo} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -39,11 +40,19 @@ class RestComms {
   // Token Management
   public setCoreToken(token: string | null): void {
     this.coreToken = token
+    const tokenLen = token?.length ?? 0
     console.log(
-      `${this.TAG}: Core token ${token ? "set" : "cleared"} - Length: ${token?.length || 0} - First 20 chars: ${
+      `${this.TAG}: Core token ${token ? "set" : "cleared"} - Length: ${tokenLen} - First 20 chars: ${
         token?.substring(0, 20) || "null"
       }`,
     )
+
+    // Sync to native GlassesStore (and persist to SharedPreferences in CoreModule when bridge runs)
+    const value = token ?? ""
+    const updateResult = CoreModule.update("core", {auth_token: value})
+    if (updateResult != null && typeof (updateResult as Promise<void>).then === "function") {
+      ;(updateResult as Promise<void>).catch(() => {})
+    }
 
     if (token) {
       console.log(`${this.TAG}: Core token set, emitting CORE_TOKEN_SET event`)
@@ -444,17 +453,13 @@ class RestComms {
           } as unknown as Blob)
         }
 
-        const response = await axios.post(
-          `${baseUrl}/api/incidents/${incidentId}/attachments`,
-          formData,
-          {
-            headers: {
-              Authorization: `Bearer ${coreToken}`,
-              "Content-Type": "multipart/form-data",
-            },
-            timeout: 60000, // 60 second timeout for uploads
+        const response = await axios.post(`${baseUrl}/api/incidents/${incidentId}/attachments`, formData, {
+          headers: {
+            "Authorization": `Bearer ${coreToken}`,
+            "Content-Type": "multipart/form-data",
           },
-        )
+          timeout: 60000, // 60 second timeout for uploads
+        })
 
         const data = response.data as {
           success: boolean

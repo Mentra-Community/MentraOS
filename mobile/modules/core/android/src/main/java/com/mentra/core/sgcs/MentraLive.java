@@ -189,6 +189,9 @@ public class MentraLive extends SGCManager {
     private Runnable connectionTimeoutRunnable;
     private Handler connectionTimeoutHandler = new Handler(Looper.getMainLooper());
     private Runnable processSendQueueRunnable;
+    private int coreTokenRetryCount = 0;
+    private static final int CORE_TOKEN_MAX_RETRIES = 3;
+    private static final long CORE_TOKEN_RETRY_DELAY_MS = 250;
     // Current MTU size
     private int currentMtu = 23; // Default BLE MTU
 
@@ -2986,28 +2989,34 @@ public class MentraLive extends SGCManager {
     }
 
     /**
-     * Send the coreToken to the ASG client for direct backend authentication
+     * Send the coreToken to the ASG client for direct backend authentication.
+     * Retries a few times with delay if token is empty (bridge may not have applied
+     * CoreModule.update yet when glasses_ready runs).
      */
     private void sendCoreTokenToAsgClient() {
         Bridge.log("LIVE: Preparing to send coreToken to ASG client");
 
-        // Get the coreToken from SharedPreferences
-        SharedPreferences prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE);
-        String coreToken = prefs.getString(KEY_CORE_TOKEN, null);
+        String coreToken = getCoreToken();
 
         if (coreToken == null || coreToken.isEmpty()) {
-            Log.e(TAG, "No coreToken available to send to ASG client");
+            if (coreTokenRetryCount < CORE_TOKEN_MAX_RETRIES - 1) {
+                coreTokenRetryCount++;
+                Log.d(TAG, "getCoreToken empty, retrying in " + CORE_TOKEN_RETRY_DELAY_MS + "ms (attempt " + (coreTokenRetryCount + 1) + "/" + CORE_TOKEN_MAX_RETRIES + ")");
+                handler.postDelayed(this::sendCoreTokenToAsgClient, CORE_TOKEN_RETRY_DELAY_MS);
+                return;
+            }
+            Log.e(TAG, "No coreToken available to send to ASG client after " + CORE_TOKEN_MAX_RETRIES + " attempts");
+            coreTokenRetryCount = 0;
             return;
         }
 
+        coreTokenRetryCount = 0;
         try {
-            // Create a JSON object with the token
             JSONObject tokenMsg = new JSONObject();
             tokenMsg.put("type", "auth_token");
             tokenMsg.put("coreToken", coreToken);
             tokenMsg.put("timestamp", System.currentTimeMillis());
 
-            // Send the JSON object
             Bridge.log("LIVE: Sending coreToken to ASG client");
             sendJson(tokenMsg);
 
@@ -3158,6 +3167,19 @@ public class MentraLive extends SGCManager {
             Bridge.log("LIVE: Sending WiFi scan request to glasses");
         } catch (JSONException e) {
             Log.e(TAG, "Error creating WiFi scan request", e);
+        }
+    }
+
+    @Override
+    public void sendIncidentId(String incidentId) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "upload_incident_logs");
+            json.put("incidentId", incidentId);
+            sendJson(json, true);
+            Bridge.log("LIVE: Sent incidentId to glasses for log upload: " + incidentId);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating upload_incident_logs command", e);
         }
     }
 
@@ -5566,11 +5588,21 @@ public class MentraLive extends SGCManager {
     }
 
     /**
-     * Get the core authentication token
+     * Get the core authentication token.
+     * Reads from GlassesStore first (synced from JS via CoreModule.update), then falls back to
+     * SharedPreferences for backward compatibility.
      */
     private String getCoreToken() {
+        Object fromStore = GlassesStore.INSTANCE.get("core", "auth_token");
+        if (fromStore instanceof String) {
+            String token = (String) fromStore;
+            if (token != null && !token.isEmpty()) {
+                return token;
+            }
+        }
         SharedPreferences prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE);
-        return prefs.getString(KEY_CORE_TOKEN, "");
+        String fromPrefs = prefs.getString(KEY_CORE_TOKEN, "");
+        return fromPrefs != null ? fromPrefs : "";
     }
 
     /**

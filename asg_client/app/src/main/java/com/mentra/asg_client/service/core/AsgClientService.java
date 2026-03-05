@@ -553,7 +553,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                       ", StreamingManager: " + (streamingManager != null ? "valid" : "null") +
                       ", CommandProcessor: " + (commandProcessor != null ? "valid" : "null"));
 
-
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing service container", e);
             try {

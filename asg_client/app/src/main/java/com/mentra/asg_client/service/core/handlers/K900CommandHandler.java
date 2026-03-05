@@ -9,6 +9,7 @@ import android.util.Log;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.bes.BesOtaManager;
+import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -17,6 +18,7 @@ import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
+import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.utils.SysProp;
@@ -38,6 +40,8 @@ public class K900CommandHandler {
     private final ICommunicationManager communicationManager;
     private final IHardwareManager hardwareManager;
     private final Handler mainHandler;
+
+    private BesLogManager mBesLogSession;
 
     public K900CommandHandler(AsgClientServiceManager serviceManager,
                               IStateManager stateManager,
@@ -130,6 +134,11 @@ public class K900CommandHandler {
                 case "sr_keyevt":
                     // Power button short press - announce battery level
                     handleKeyEventReport(bData);
+                    break;
+
+                case "sr_log":
+                    // BES log stream packet (response to mh_logs request)
+                    handleBesLogPacket(bData);
                     break;
 
                 case "cs_shut":
@@ -384,6 +393,82 @@ public class K900CommandHandler {
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating shutdown acknowledgment", e);
+        }
+    }
+
+    /**
+     * Handle a streamed sr_log packet from BES (response to our mh_logs request).
+     * Delegates reassembly to the active BesLogManager session.
+     */
+    private void handleBesLogPacket(JSONObject bData) {
+        if (mBesLogSession == null) {
+            Log.w(TAG, "📥 sr_log received but no active BES log session — ignoring");
+            return;
+        }
+
+        if (bData == null) {
+            Log.w(TAG, "📥 sr_log received but B field is null — ignoring");
+            return;
+        }
+
+        int cur = bData.optInt("cur", -1);
+        String body = bData.optString("body", null);
+
+        if (cur == -1) {
+            Log.w(TAG, "📥 sr_log packet missing cur field — ignoring");
+            return;
+        }
+
+        mBesLogSession.onLogPacketReceived(cur, body);
+    }
+
+    /**
+     * Send mh_logs to BES and collect the streamed sr_log response, then upload
+     * the assembled BES trace buffer to the incident backend as "glasses_firmware".
+     *
+     * @param incidentId      incident record to attach logs to
+     * @param context         application context
+     * @param configManager   provides coreToken for backend auth
+     */
+    public void requestBesLogs(String incidentId, Context context,
+                               IConfigurationManager configManager) {
+        Log.i(TAG, "📋 Requesting BES logs (mh_logs) for incident: " + incidentId);
+
+        if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
+            Log.w(TAG, "⚠️ BluetoothManager unavailable — cannot request BES logs");
+            return;
+        }
+
+        if (!serviceManager.getBluetoothManager().isConnected()) {
+            Log.w(TAG, "⚠️ UART not connected — cannot request BES logs");
+            return;
+        }
+
+        // Replace any stale session from a previous request
+        mBesLogSession = new BesLogManager(incidentId, context, configManager);
+
+        try {
+            JSONObject k900Command = new JSONObject();
+            k900Command.put("C", "mh_logs");
+            k900Command.put("V", 1);
+            k900Command.put("B", "");
+
+            String commandStr = k900Command.toString();
+            Log.d(TAG, "📤 Sending mh_logs: " + commandStr);
+
+            boolean sent = serviceManager.getBluetoothManager().sendData(
+                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            if (sent) {
+                Log.i(TAG, "✅ mh_logs sent — starting BES log collection timeouts");
+                mBesLogSession.startTimeouts();
+            } else {
+                Log.e(TAG, "❌ Failed to send mh_logs");
+                mBesLogSession = null;
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error building mh_logs command", e);
+            mBesLogSession = null;
         }
     }
 

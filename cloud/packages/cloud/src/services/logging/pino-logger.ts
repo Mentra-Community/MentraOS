@@ -9,7 +9,7 @@ const isChina = DEPLOYMENT_REGION === "china";
 const BETTERSTACK_SOURCE_TOKEN = process.env.BETTERSTACK_SOURCE_TOKEN;
 const BETTERSTACK_ENDPOINT = process.env.BETTERSTACK_ENDPOINT || "https://s1311181.eu-nbg-2.betterstackdata.com";
 const NODE_ENV = process.env.NODE_ENV || "development";
-const REGION = process.env.REGION || process.env.DEPLOYMENT_REGION || process.env.AZURE_SPEECH_REGION || "";
+const REGION = process.env.REGION || process.env.DEPLOYMENT_REGION || "";
 const PORTER_APP_NAME = process.env.PORTER_APP_NAME || "cloud-local";
 
 // Log filtering configuration
