@@ -5,6 +5,7 @@
 The Mentra Stream Muxer is a self-hosted replacement for Cloudflare Live that handles:
 
 - **WHIP ingest** from smart glasses (WebRTC/UDP)
+- **WHEP playback** for low-latency preview (WebRTC, sub-second)
 - **Re-encoding** to normalize streams
 - **Fallback frame injection** when input drops
 - **RTMP output** to Twitch, YouTube, etc.
@@ -30,9 +31,10 @@ This service is designed to be:
 │  │   │  Orchestrator   │          │        MediaMTX             │      │  │
 │  │   │  (Node.js)      │          │                             │      │  │
 │  │   │                 │          │  WHIP signaling: HTTP 8080  │      │  │
-│  │   │  /live_inputs   │          │  WebRTC media: UDP 8889     │      │  │
-│  │   │  /outputs       │          │  (UDP mux - many streams    │      │  │
-│  │   │  /health        │          │   on single port)           │      │  │
+│  │   │  /live_inputs   │          │  WHEP signaling: HTTP 8080  │      │  │
+│  │   │  /outputs       │          │  WebRTC media: UDP 8889     │      │  │
+│  │   │  /health        │          │  (UDP mux - many streams    │      │  │
+│  │   │                 │          │   on single port)           │      │  │
 │  │   │                 │          │  RTSP internal: 8554        │      │  │
 │  │   │  Spawns/kills   │          │                             │      │  │
 │  │   │  worker pods ───┼──────────┼──► k8s API                  │      │  │
@@ -87,8 +89,12 @@ Smart Glasses
      │ WebRTC/WHIP (UDP)
      ▼
 ┌─────────────┐
-│  MediaMTX   │  ◄── Accepts WHIP, outputs RTSP internally
-└─────┬───────┘
+│  MediaMTX   │  ◄── Accepts WHIP, outputs RTSP + WHEP
+└─────┬───┬───┘
+      │   │
+      │   └─────► WHEP ──► Miniapp webview (preview, <1s latency)
+      │                  ► Miniapp server (frame processing, <1s latency)
+      │
       │ RTSP (local)
       ▼
 ┌─────────────┐
@@ -97,15 +103,16 @@ Smart Glasses
       │
       ├─────► RTMP ────► Twitch / YouTube / etc.
       │
-      └─────► HLS ─────► CDN/Direct ────► Browser embed (hlsUrl)
+      └─────► HLS ─────► CDN/Direct ────► Browser embed (hlsUrl, 5-15s latency)
 ```
 
 ### Output Types
 
 1. **RTMP outputs** (restreaming): Push to Twitch, YouTube, Kick, etc.
-2. **HLS output** (viewing): Generate `.m3u8` + `.ts` segments for browser playback
+2. **HLS output** (viewing): Generate `.m3u8` + `.ts` segments for browser playback (5-15s latency)
+3. **WHEP output** (low-latency preview): WebRTC playback direct from MediaMTX (<1s latency)
 
-Both run simultaneously. HLS is always generated; RTMP outputs are optional per-stream.
+RTMP and HLS run through FFmpeg workers. WHEP is served directly by MediaMTX with zero additional encoding cost — consumers connect directly to MediaMTX, bypassing the worker pipeline entirely. HLS is always generated; RTMP outputs are optional per-stream; WHEP is always available when a stream is connected.
 
 ---
 
@@ -148,6 +155,9 @@ Response:
   "whip": {
     "url": "https://muxer.mentra.glass/whip/abc123def456"
   },
+  "whep": {
+    "url": "https://muxer.mentra.glass/whep/abc123def456"
+  },
   "rtmps": {
     "url": "rtmps://muxer.mentra.glass/live/abc123def456",
     "streamKey": "abc123def456"
@@ -165,6 +175,7 @@ Response:
 | `meta` | ✅ | ✅ |
 | `status` | ✅ | ✅ |
 | `whip.url` | ✅ | ✅ |
+| `whep.url` | ❌ | ✅ (new — low-latency playback) |
 | `rtmps.url` | ✅ | ✅ |
 | `hls.url` | ✅ | ✅ |
 
@@ -285,8 +296,7 @@ async createLiveInput(userId: string, options: CreateLiveInputOptions): Promise<
 **Option A: Environment-based switching**
 
 ```typescript
-const streamService =
-  process.env.STREAM_PROVIDER === "muxer" ? new MuxerStreamService() : new CloudflareStreamService();
+const streamService = process.env.STREAM_PROVIDER === "muxer" ? new MuxerStreamService() : new CloudflareStreamService()
 ```
 
 **Option B: Replace CloudflareStreamService entirely**
@@ -653,6 +663,134 @@ For China: Alibaba OSS + CDN instead of R2. Same pattern, different bucket.
 
 ---
 
+## WHEP Playback (Low-Latency Preview)
+
+WHEP (WebRTC-HTTP Egress Protocol) provides sub-second latency playback directly from MediaMTX. This complements HLS (which has 5-15s latency) for use cases that need real-time preview.
+
+### How WHEP Works
+
+WHEP is the playback counterpart to WHIP. The consumer sends an HTTP POST to the WHEP endpoint with an SDP offer, gets back an SDP answer, and establishes a WebRTC PeerConnection to receive the stream.
+
+```
+Consumer                          MediaMTX
+   │                                │
+   │  POST /whep/{streamId}         │
+   │  Body: SDP offer               │
+   │  ─────────────────────────►    │
+   │                                │
+   │  201 Created                   │
+   │  Body: SDP answer              │
+   │  ◄─────────────────────────    │
+   │                                │
+   │  WebRTC media (UDP 8889)       │
+   │  ◄════════════════════════►    │
+   │                                │
+```
+
+### Use Cases
+
+| Consumer                           | Method                                        | Latency |
+| ---------------------------------- | --------------------------------------------- | ------- |
+| **Miniapp webview** (phone)        | WHEP via JS `RTCPeerConnection`               | <1s     |
+| **Miniapp server** (cloud)         | WHEP via WebRTC library (werift, node-webrtc) | <1s     |
+| **Public viewers** (browser embed) | HLS via R2 CDN                                | 5-15s   |
+
+### Miniapp Webview Integration
+
+The miniapp server receives `whepUrl` from the cloud (in `ManagedStreamResult`, alongside `hlsUrl`) and forwards it to its webview frontend. The webview then plays the stream using a standard WebRTC connection. A minimal WHEP player is ~50 lines of JS:
+
+```javascript
+// In miniapp webview
+async function playWhepStream(whepUrl, videoElement) {
+  const pc = new RTCPeerConnection()
+  pc.addTransceiver("video", {direction: "recvonly"})
+  pc.addTransceiver("audio", {direction: "recvonly"})
+
+  pc.ontrack = (event) => {
+    videoElement.srcObject = event.streams[0]
+  }
+
+  const offer = await pc.createOffer()
+  await pc.setLocalDescription(offer)
+
+  const response = await fetch(whepUrl, {
+    method: "POST",
+    headers: {"Content-Type": "application/sdp"},
+    body: pc.localDescription.sdp,
+  })
+
+  const answer = await response.text()
+  await pc.setRemoteDescription({type: "answer", sdp: answer})
+}
+```
+
+The React Native WebView already has `allowsInlineMediaPlayback={true}` and WebRTC is supported. A future SDK helper (e.g., `MentraSDK.playStream(whepUrl, videoElement)`) could wrap this for miniapp developers.
+
+### Miniapp Server Integration
+
+Miniapp servers receive `whepUrl` in the `ManagedStreamResult` alongside `hlsUrl`. For servers that need low-latency frame access (computer vision, AI processing), they can consume the WHEP stream using a WebRTC library:
+
+- **Node.js**: `werift` (pure JS) or `node-webrtc` (native bindings)
+- **Python**: `aiortc`
+- **Go**: `pion/webrtc`
+
+This is a power-user path. A future SDK enhancement could provide frame-extraction helpers, but for MVP the raw `whepUrl` is sufficient.
+
+### Networking
+
+WHEP signaling is HTTP — it flows through the same Porter ingress as WHIP signaling and the REST API. The WebRTC media for WHEP playback uses the same UDP port 8889 that WHIP ingest uses (MediaMTX multiplexes both on the same port via ICE credentials). **No additional LoadBalancer or port exposure is needed.**
+
+### MediaMTX Configuration
+
+WHEP is natively supported by MediaMTX. Enable it in `mediamtx.yml`:
+
+```yaml
+# mediamtx.yml
+webrtc: true
+webrtcAddress: :8889
+# WHEP is served on the same HTTP port as WHIP
+# WHIP: POST /whip/{streamId}
+# WHEP: POST /whep/{streamId}
+```
+
+### Latency Comparison
+
+| Method          | End-to-End Latency | Best For                         |
+| --------------- | ------------------ | -------------------------------- |
+| WHEP (WebRTC)   | 200ms - 500ms      | In-app preview, frame processing |
+| HLS (R2 CDN)    | 5s - 15s           | Public embed, scalable viewing   |
+| RTMP (restream) | 3s - 10s           | Twitch/YouTube live              |
+
+### Cloud Backend Flow
+
+The `whepUrl` flows through the same path as `hlsUrl`:
+
+```
+1. Cloud calls POST /live_inputs → muxer returns { whep: { url }, hls: { url }, ... }
+2. Cloud stores whepUrl in ManagedStreamResult
+3. Cloud sends MANAGED_STREAM_STATUS to miniapp server (over WebSocket) with whepUrl + hlsUrl
+4. Miniapp server decides what to do with the URLs:
+   a. Forward whepUrl to its webview frontend for low-latency preview
+   b. Consume whepUrl directly via WebRTC library for frame processing
+   c. Forward hlsUrl to its webview for higher-latency but simpler playback
+```
+
+In the SDK, `ManagedStreamResult` gains a `whepUrl` field:
+
+```typescript
+interface ManagedStreamResult {
+  streamId: string
+  hlsUrl: string
+  dashUrl?: string
+  whepUrl: string // NEW — low-latency WebRTC playback
+  webrtcUrl?: string // deprecated Cloudflare field, use whepUrl instead
+  previewUrl?: string
+  thumbnailUrl?: string
+}
+```
+
+---
+
 ## Deployment
 
 ### Self-Hosting (docker-compose)
@@ -727,7 +865,8 @@ This creates a Kubernetes LoadBalancer service that routes UDP 8889 to the muxer
 
 - HTTP API: `https://muxer.mentra.glass/live_inputs` (via Porter ingress)
 - WHIP signaling: `https://muxer.mentra.glass/whip/{streamId}` (via Porter ingress)
-- WebRTC media: `udp://<loadbalancer-ip>:8889` (via manual LoadBalancer)
+- WHEP signaling: `https://muxer.mentra.glass/whep/{streamId}` (via Porter ingress)
+- WebRTC media (ingest + playback): `udp://<loadbalancer-ip>:8889` (via manual LoadBalancer)
 
 ### Alibaba (China)
 
@@ -755,10 +894,18 @@ Same images, deployed to Alibaba ACK cluster:
 - Stream ID is random UUID (unguessable)
 - Optional: Add token query param `/whip/:streamId?token=xxx`
 
+### WHEP Authentication
+
+- WHEP URLs include stream ID: `/whep/:streamId`
+- Same security model as WHIP — stream ID is random UUID (unguessable)
+- Only consumers who receive the `whepUrl` from the cloud (via `ManagedStreamResult`) can connect
+- Optional: Add token query param `/whep/:streamId?token=xxx` for additional security
+
 ### Network Security
 
 - WHIP signaling (HTTP) exposed via Porter ingress
-- WebRTC media (UDP 8889) exposed via manual LoadBalancer
+- WHEP signaling (HTTP) exposed via same Porter ingress (no additional exposure)
+- WebRTC media (UDP 8889) exposed via manual LoadBalancer (shared by WHIP ingest + WHEP playback)
 - API port (8080) behind auth (Bearer token)
 - Worker-to-Twitch RTMP is outbound only
 - Workers only need internal network access (RTSP from MediaMTX, upload to R2)
@@ -785,6 +932,11 @@ The script creates a LoadBalancer service that routes UDP 8889 to the muxer pod.
 
 - WHIP signaling: `https://muxer.mentra.glass/whip/{streamId}` (Porter ingress)
 - WebRTC media: Discovered via ICE, uses LoadBalancer IP on port 8889
+
+**Miniapp consumers connect to:**
+
+- WHEP signaling: `https://muxer.mentra.glass/whep/{streamId}` (Porter ingress)
+- WebRTC media: Same LoadBalancer IP on port 8889 (shared with WHIP)
 
 ### Secrets Management
 
@@ -875,11 +1027,13 @@ Structured JSON logs:
 ### Phase 1: MVP (Week 1-2)
 
 - [ ] Orchestrator with `local` mode
-- [ ] Basic API: create/delete/get live inputs
+- [ ] Basic API: create/delete/get live inputs (returns `whip`, `whep`, `hls` URLs)
+- [ ] MediaMTX config with WHEP enabled
 - [ ] Single output per stream
 - [ ] FFmpeg pipeline with fallback (Option A)
 - [ ] docker-compose for local testing
 - [ ] Cloud integration (env-based switch)
+- [ ] `whepUrl` in `ManagedStreamResult` and `MANAGED_STREAM_STATUS`
 
 ### Phase 2: Production Ready (Week 3-4)
 
@@ -888,7 +1042,7 @@ Structured JSON logs:
 - [ ] Porter deployment config
 - [ ] Health checks and basic monitoring
 - [ ] Error handling and retries
-- [ ] Documentation
+- [ ] Documentation (including WHEP playback guide for miniapp developers)
 
 ### Phase 3: Scale & Polish (Week 5+)
 
@@ -899,6 +1053,7 @@ Structured JSON logs:
 - [ ] HLS CDN integration (Azure Blob + CDN or Cloudflare R2)
 - [ ] Recording support (save HLS segments to object storage)
 - [ ] GPU encoding option (NVENC) if CPU scaling becomes painful
+- [ ] SDK WHEP helpers: `MentraSDK.playStream()` for webview, frame-extraction utilities for servers
 
 ---
 
@@ -914,7 +1069,7 @@ Structured JSON logs:
 
 5. **Worker modes**: **Two modes only** - `local` (self-hosting/dev) and `kubernetes` (production). No docker-in-docker middle ground.
 
-6. **WebRTC playback**: **Not for MVP.** HLS is sufficient. WebRTC playback (sub-second latency) can be added later - MediaMTX already supports it, just need to expose the port.
+6. **WebRTC playback (WHEP)**: **YES, required from Phase 1.** Miniapp webviews need low-latency preview (<1s) and miniapp servers need low-latency frame access for processing. MediaMTX natively supports WHEP on the same HTTP/UDP ports as WHIP — no additional infrastructure. `whepUrl` returned in API response and forwarded through SDK's `ManagedStreamResult`. HLS remains for public/embed viewers.
 
 7. **Multiple WHIP inputs**: **No.** One connection per live input. No failover/backup device support.
 
@@ -930,12 +1085,17 @@ Structured JSON logs:
 
 2. **Multiple simultaneous inputs**: No. One WHIP connection per live input. Keep it simple.
 
+3. **Low-latency preview for miniapps**: Use WHEP (WebRTC playback) from MediaMTX. Miniapp webviews use `RTCPeerConnection` in JS; miniapp servers can use a WebRTC library (werift, aiortc, pion). `whepUrl` is returned alongside `hlsUrl` in the muxer API and forwarded through `ManagedStreamResult`. No additional infrastructure — WHEP shares the same HTTP ingress and UDP port as WHIP. See "WHEP Playback" section above.
+
+4. **Miniapp server frame processing**: Miniapp servers receive `whepUrl` in `ManagedStreamResult` and can consume the WebRTC stream for low-latency frame access. For MVP, this is a raw URL — SDK frame-extraction helpers are a Phase 3 enhancement.
+
 ---
 
 ## References
 
 - [MediaMTX Documentation](https://github.com/bluenviron/mediamtx)
 - [WHIP Specification](https://datatracker.ietf.org/doc/html/draft-ietf-wish-whip)
+- [WHEP Specification](https://datatracker.ietf.org/doc/html/draft-ietf-wish-whep)
 - [Cloudflare Stream API](https://developers.cloudflare.com/stream/stream-live/)
 - [FFmpeg Streaming Guide](https://trac.ffmpeg.org/wiki/StreamingGuide)
 - [Kubernetes Client for Node.js](https://github.com/kubernetes-client/javascript)
