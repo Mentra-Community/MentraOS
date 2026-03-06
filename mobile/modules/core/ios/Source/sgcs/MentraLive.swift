@@ -2297,7 +2297,7 @@ class MentraLive: NSObject, SGCManager {
         // Start heartbeat
         startHeartbeat()
 
-        // Restore mic state if it was enabled before reconnect
+        // Always re-send mic state after reconnect so glasses are in sync
         if micIntentEnabled {
             if BLOCK_AUDIO_DUPLEX, let monitor = phoneAudioMonitor, monitor.isPlaying() {
                 micSuspendedForAudio = true
@@ -2309,6 +2309,9 @@ class MentraLive: NSObject, SGCManager {
                 Bridge.log("LIVE: 🎤 Restoring mic state after reconnect")
                 startMicBeat()
             }
+        } else {
+            Bridge.log("LIVE: 🎤 Mic was off before reconnect - sending mic-off to glasses")
+            stopMicBeat()
         }
 
         fullyBooted = true

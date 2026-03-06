@@ -2375,7 +2375,7 @@ public class MentraLive extends SGCManager {
                 initializeLc3Logging();
                 Bridge.log("LIVE: ✅ LC3 audio logging initialized for device");
 
-                // Restore mic state if it was enabled before reconnect
+                // Always re-send mic state after reconnect so glasses are in sync
                 if (micIntentEnabled) {
                     if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor.isPlaying()) {
                         micSuspendedForAudio = true;
@@ -2385,6 +2385,9 @@ public class MentraLive extends SGCManager {
                         Bridge.log("LIVE: 🎤 Restoring mic state after reconnect");
                         startMicBeat();
                     }
+                } else {
+                    Bridge.log("LIVE: 🎤 Mic was off before reconnect - sending mic-off to glasses");
+                    stopMicBeat();
                 }
 
                 // Audio Pairing: Only mark as fully connected if audio is also ready
