@@ -219,6 +219,15 @@ public class CameraNeo extends LifecycleService {
     private boolean mAeLockRequested = false;  // Flag to track if AE lock requested (XyCamera2 pattern)
     private long aeStartTimeNs;
     private static final long AE_WAIT_NS = 2_000_000_000L; // 1 second max wait for AE (matching XyCamera2)
+
+
+    /**
+     * Sensor timestamp of the pending still capture frame, recorded in onCaptureStarted().
+     * Used by the ImageReader callback to distinguish the actual capture JPEG from ZSL
+     * preview JPEGs that flow through the same ImageReader surface.
+     * -1 means no capture is pending.
+     */
+    private volatile long mPendingStillTimestamp = -1;
     
     // Feature flag: Toggle between immediate capture on convergence vs waiting for lock confirmation
     // true = capture immediately on AE_CONVERGED (~650ms), false = wait for AE_LOCKED confirmation (~1085ms)
@@ -443,54 +452,51 @@ public class CameraNeo extends LifecycleService {
      */
     public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
-            // Create and queue the request immediately
             PhotoRequest request = new PhotoRequest(filePath, size, enableLed, isFromSdk, callback);
-            globalRequestQueue.offer(request);
-            
-            // Store callback in registry for later retrieval
-            if (callback != null) {
-                callbackRegistry.put(request.requestId, callback);
-            }
-            
-            Log.d(TAG, "📸 Enqueued photo request: " + request.requestId + 
-                      " | Queue size: " + globalRequestQueue.size() + 
-                      " | Service state: " + serviceState);
-            
-            // Check current service state and act accordingly
+
             if (isServiceRunning && isCameraReady && sInstance != null) {
-                // Fast path - camera is ready, check if idle
                 if (sInstance.shotState == ShotState.IDLE) {
-                    Log.d(TAG, "Camera ready and idle - processing request immediately");
-                    // Cancel any pending keep-alive timer to prevent it from closing camera mid-capture
+                    Log.d(TAG, "📸 Camera idle - capturing immediately: " + request.requestId);
                     sInstance.cancelKeepAliveTimer();
-                    // Don't call processNextPhotoRequest as it might try to reopen camera
-                    // Instead, directly process the request we just queued
-                    PhotoRequest queuedRequest = globalRequestQueue.poll();
-                    if (queuedRequest != null) {
-                        sInstance.sPhotoCallback = queuedRequest.callback;
-                        sInstance.pendingPhotoPath = queuedRequest.filePath;
-                        sInstance.pendingRequestedSize = queuedRequest.size;
-                        sInstance.pendingIsFromSdk = queuedRequest.isFromSdk;
-                        sInstance.shotState = ShotState.WAITING_AE;
-                        
-                        if (sInstance.backgroundHandler != null) {
-                            sInstance.backgroundHandler.post(sInstance::startPrecaptureSequence);
-                        } else {
-                            sInstance.startPrecaptureSequence();
-                        }
+                    sInstance.sPhotoCallback = request.callback;
+                    sInstance.pendingPhotoPath = request.filePath;
+                    sInstance.pendingRequestedSize = request.size;
+                    sInstance.pendingIsFromSdk = request.isFromSdk;
+                    sInstance.shotState = ShotState.WAITING_AE;
+
+                    if (sInstance.backgroundHandler != null) {
+                        sInstance.backgroundHandler.post(sInstance::startPrecaptureSequence);
+                    } else {
+                        sInstance.startPrecaptureSequence();
                     }
                 } else {
-                    Log.d(TAG, "Camera ready but busy (state: " + sInstance.shotState + ") - request queued");
+                    Log.d(TAG, "📸 Camera busy (state: " + sInstance.shotState + ") - rejecting request");
+                    if (callback != null) {
+                        callback.onPhotoError("Camera is busy processing another photo");
+                    }
                 }
             } else if (isServiceStarting) {
-                // Service is already starting, request will be processed when ready
-                Log.d(TAG, "Service is starting - request will be processed when camera ready");
+                if (globalRequestQueue.isEmpty()) {
+                    globalRequestQueue.offer(request);
+                    if (callback != null) {
+                        callbackRegistry.put(request.requestId, callback);
+                    }
+                    Log.d(TAG, "📸 Service starting - queued single request: " + request.requestId);
+                } else {
+                    Log.d(TAG, "📸 Service starting, already has pending request - rejecting");
+                    if (callback != null) {
+                        callback.onPhotoError("Camera is still initializing");
+                    }
+                }
             } else {
-                // Need to start the service
-                Log.d(TAG, "Starting service to process photo request");
+                globalRequestQueue.offer(request);
+                if (callback != null) {
+                    callbackRegistry.put(request.requestId, callback);
+                }
+                Log.d(TAG, "📸 Starting service for photo request: " + request.requestId);
                 isServiceStarting = true;
                 serviceState = ServiceState.STARTING;
-                
+
                 Intent intent = new Intent(context, CameraNeo.class);
                 intent.setAction(ACTION_TAKE_PHOTO);
                 intent.putExtra("USE_GLOBAL_QUEUE", true);
@@ -743,50 +749,37 @@ public class CameraNeo extends LifecycleService {
      */
     private void processNextPhotoRequest() {
         synchronized (SERVICE_LOCK) {
-            // Get next request from queue
             PhotoRequest request = globalRequestQueue.poll();
             if (request == null) {
-                Log.d(TAG, "No more photo requests in queue");
-                // Start keep-alive timer for rapid capture
+                Log.d(TAG, "No photo requests in queue");
                 startKeepAliveTimer();
                 return;
             }
-            
-            Log.d(TAG, "Processing photo request: " + request.requestId);
-            
-            // Retrieve callback from registry
+
+            Log.d(TAG, "Processing startup photo request: " + request.requestId);
+
             if (request.callback == null && callbackRegistry.containsKey(request.requestId)) {
                 request.callback = callbackRegistry.get(request.requestId);
             }
-            
-            // Set the current callback
             sPhotoCallback = request.callback;
-            
-            // If camera is already open and ready, just take the photo
-            // Don't try to open it again!
-            if (cameraDevice != null && cameraCaptureSession != null) {
-                Log.d(TAG, "Camera already open, taking next photo from queue");
+
+            if (cameraDevice != null && cameraCaptureSession != null && shotState == ShotState.IDLE) {
                 pendingRequestedSize = request.size;
                 pendingIsFromSdk = request.isFromSdk;
                 pendingPhotoPath = request.filePath;
-                
-                // Check if we're already processing a photo
-                if (shotState == ShotState.IDLE) {
-                    // Start capture sequence
-                    shotState = ShotState.WAITING_AE;
-                    if (backgroundHandler != null) {
-                        backgroundHandler.post(this::startPrecaptureSequence);
-                    } else {
-                        startPrecaptureSequence();
-                    }
+                shotState = ShotState.WAITING_AE;
+                if (backgroundHandler != null) {
+                    backgroundHandler.post(this::startPrecaptureSequence);
                 } else {
-                    // Camera is busy, re-queue the request
-                    Log.d(TAG, "Camera busy (state: " + shotState + "), re-queuing request");
-                    globalRequestQueue.offer(request);
+                    startPrecaptureSequence();
                 }
-            } else {
-                // Camera not ready, need to open it
+            } else if (cameraDevice == null) {
                 setupCameraForPhotoRequest(request);
+            } else {
+                Log.d(TAG, "Camera busy at startup, rejecting startup request");
+                if (request.callback != null) {
+                    request.callback.onPhotoError("Camera busy during initialization");
+                }
             }
         }
     }
@@ -874,12 +867,9 @@ public class CameraNeo extends LifecycleService {
         if (isCameraKeptAlive && cameraDevice != null && !sizeChanged) {
             Log.d(TAG, "Camera is already open (kept alive), processing photo request");
             
-            // Check if camera is currently busy taking a photo
             if (shotState != ShotState.IDLE) {
-                Log.d(TAG, "Camera is busy (state: " + shotState + "), queuing photo request");
-                // Queue this request to be processed after current photo completes
-                // Inherit isFromSdk from current pending request context
-                photoRequestQueue.offer(new PhotoRequest(filePath, pendingRequestedSize, false, pendingIsFromSdk, sPhotoCallback));
+                Log.d(TAG, "Camera is busy (state: " + shotState + "), rejecting photo request");
+                notifyPhotoError("Camera is busy processing another photo");
                 return;
             }
             
@@ -1405,141 +1395,139 @@ public class CameraNeo extends LifecycleService {
                         ImageFormat.JPEG, 12);
 
                 imageReader.setOnImageAvailableListener(reader -> {
-                    // Only process images when we're actually shooting, not during precapture metering
+                    // Gate 1: Not shooting - quickly drain preview frames from the ZSL buffer
                     if (shotState != ShotState.SHOOTING) {
-                        // Suppress logging to prevent logcat overflow
-                        // Only log errors or important state changes
-                        // Consume the image to prevent backing up the queue
                         try (Image image = reader.acquireLatestImage()) {
-                            // Just consume and discard
-                        }
-                        return;
-            }
-
-                // Process the captured JPEG (only when in SHOOTING state)
-                Log.d(TAG, "Processing photo capture...");
-                try (Image image = reader.acquireLatestImage()) {
-                    if (image == null) {
-                        Log.e(TAG, "Acquired image is null");
-                        if (!mHdrBurstActive) {
-                            notifyPhotoError("Failed to acquire image data");
-                            shotState = ShotState.IDLE;
-                            closeCamera();
-                            stopSelf();
+                            // Discard: not in capture state
                         }
                         return;
                     }
 
-                    ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-                    byte[] bytes = new byte[buffer.remaining()];
-                    buffer.get(bytes);
-
-                    // Use pending photo path if available (from queued requests), otherwise use the original path
-                    String targetPath = (pendingPhotoPath != null) ? pendingPhotoPath : filePath;
-
-                    // HDR burst mode: save frames with bracket suffixes
+                    // Gate 2: HDR burst mode - save bracket frames (uses its own counter)
                     if (mHdrBurstActive) {
-                        int frameIdx = mHdrBurstFramesReceived;
-                        mHdrBurstFramesReceived++;
-                        // Save as ev-2.jpg, ev0.jpg, ev2.jpg inside the capture folder
-                        File parentDir = new File(targetPath).getParentFile();
-                        String bracketPath = new File(parentDir, "ev" + HDR_EV_BRACKETS[Math.min(frameIdx, HDR_EV_BRACKETS.length - 1)] + ".jpg").getAbsolutePath();
-                        boolean saved = saveImageDataToFile(bytes, bracketPath);
-                        Log.d(TAG, "HDR: Saved bracket " + (frameIdx + 1) + "/" + HDR_BURST_COUNT
-                                + " -> " + bracketPath + " (success=" + saved + ")");
+                        try (Image image = reader.acquireLatestImage()) {
+                            if (image == null) return;
 
-                        if (mHdrBurstFramesReceived >= HDR_BURST_COUNT) {
-                            // All HDR frames captured — notify with the base path
-                            // The phone side will find the bracket files by convention
-                            mHdrBurstActive = false;
+                            ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+                            byte[] bytes = new byte[buffer.remaining()];
+                            buffer.get(bytes);
+
+                            String targetPath = (pendingPhotoPath != null) ? pendingPhotoPath : filePath;
+                            int frameIdx = mHdrBurstFramesReceived;
+                            mHdrBurstFramesReceived++;
+                            File parentDir = new File(targetPath).getParentFile();
+                            String bracketPath = new File(parentDir, "ev" + HDR_EV_BRACKETS[Math.min(frameIdx, HDR_EV_BRACKETS.length - 1)] + ".jpg").getAbsolutePath();
+                            boolean saved = saveImageDataToFile(bytes, bracketPath);
+                            Log.d(TAG, "HDR: Saved bracket " + (frameIdx + 1) + "/" + HDR_BURST_COUNT
+                                    + " -> " + bracketPath + " (success=" + saved + ")");
+
+                            if (mHdrBurstFramesReceived >= HDR_BURST_COUNT) {
+                                mHdrBurstActive = false;
+                                lastPhotoPath = targetPath;
+
+                                File ev0ParentDir = new File(targetPath).getParentFile();
+                                String ev0Path = new File(ev0ParentDir, "ev0.jpg").getAbsolutePath();
+                                try {
+                                    java.nio.file.Files.copy(
+                                        new File(ev0Path).toPath(),
+                                        new File(targetPath).toPath(),
+                                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                                } catch (Exception copyErr) {
+                                    Log.w(TAG, "HDR: Could not copy EV0 as base file", copyErr);
+                                }
+
+                                if (mImuRecorder != null) {
+                                    String imuPath = mImuRecorder.stopRecordingAndSave(targetPath);
+                                    if (imuPath != null) Log.d(TAG, "IMU sidecar saved: " + imuPath);
+                                }
+
+                                notifyPhotoCaptured(targetPath);
+                                Log.i(TAG, "HDR: Burst complete, base saved: " + targetPath);
+                                pendingPhotoPath = null;
+                                pendingRequestedSize = null;
+
+                                shotState = ShotState.IDLE;
+                                processQueuedPhotoRequests();
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error handling HDR burst frame", e);
+                        }
+                        return;
+                    }
+
+                    // Gate 3: Standard capture - use timestamp matching to distinguish
+                    // the actual capture JPEG from ZSL preview JPEGs.
+                    // The ImageReader surface is a target of both the repeating preview
+                    // request AND the still capture request, so every preview frame
+                    // arrives here as JPEG. Only the frame whose sensor timestamp matches
+                    // the one reported in onCaptureStarted() is the real capture result.
+                    // Use acquireNextImage() + drain loop so we never skip the capture
+                    // frame (acquireLatestImage() would discard it if a newer preview
+                    // frame arrived in the buffer after it).
+                    byte[] capturedBytes = null;
+                    Image frame = null;
+                    try {
+                        while ((frame = reader.acquireNextImage()) != null) {
+                            long imgTs = frame.getTimestamp();
+                            long pendingTs = mPendingStillTimestamp;
+
+                            if (pendingTs > 0 && imgTs == pendingTs) {
+                                mPendingStillTimestamp = -1;
+                                ByteBuffer buffer = frame.getPlanes()[0].getBuffer();
+                                capturedBytes = new byte[buffer.remaining()];
+                                buffer.get(capturedBytes);
+                                frame.close();
+                                frame = null;
+
+                                // Drain any remaining preview frames behind us
+                                try (Image tail = reader.acquireLatestImage()) {}
+                                break;
+                            } else {
+                                frame.close();
+                                frame = null;
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error draining ImageReader queue", e);
+                        if (frame != null) { frame.close(); frame = null; }
+                    }
+
+                    if (capturedBytes == null) {
+                        return;
+                    }
+
+                    // We have the real capture frame bytes -- save the photo
+                    String targetPath = (pendingPhotoPath != null) ? pendingPhotoPath : filePath;
+                    try {
+                        boolean success = saveImageDataToFile(capturedBytes, targetPath);
+
+                        if (success) {
                             lastPhotoPath = targetPath;
 
-                            // Also save the middle exposure (EV=0) as the base file
-                            // so the gallery shows something even without HDR merge
-                            File ev0ParentDir = new File(targetPath).getParentFile();
-                            String ev0Path = new File(ev0ParentDir, "ev0.jpg").getAbsolutePath();
-                            try {
-                                java.nio.file.Files.copy(
-                                    new File(ev0Path).toPath(),
-                                    new File(targetPath).toPath(),
-                                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                            } catch (Exception copyErr) {
-                                Log.w(TAG, "HDR: Could not copy EV0 as base file", copyErr);
-                            }
-
-                            // Stop IMU recording
                             if (mImuRecorder != null) {
                                 String imuPath = mImuRecorder.stopRecordingAndSave(targetPath);
-                                if (imuPath != null) {
-                                    Log.d(TAG, "IMU sidecar saved: " + imuPath);
-                                }
+                                if (imuPath != null) Log.d(TAG, "IMU sidecar saved: " + imuPath);
                             }
 
                             notifyPhotoCaptured(targetPath);
-                            Log.i(TAG, "HDR: Burst complete, base saved: " + targetPath);
+                            Log.d(TAG, "Photo saved successfully: " + targetPath);
                             pendingPhotoPath = null;
                             pendingRequestedSize = null;
-
-                            shotState = ShotState.IDLE;
-                            processQueuedPhotoRequests();
-                        }
-                        return;
-                    }
-
-                    // Standard single-frame path
-                    // Save the image data to the file
-                    boolean success = saveImageDataToFile(bytes, targetPath);
-
-                    if (success) {
-                        lastPhotoPath = targetPath;
-
-                        // Stop IMU recording and save sidecar JSON alongside the photo
-                        if (mImuRecorder != null) {
-                            String imuPath = mImuRecorder.stopRecordingAndSave(targetPath);
-                            if (imuPath != null) {
-                                Log.d(TAG, "IMU sidecar saved: " + imuPath);
-                            }
+                        } else {
+                            if (mImuRecorder != null) mImuRecorder.cancel();
+                            notifyPhotoError("Failed to save image");
                         }
 
-                        notifyPhotoCaptured(targetPath);
-                        Log.d(TAG, "Photo saved successfully: " + targetPath);
-                        // Clear pending photo path and size after successful capture
-                        pendingPhotoPath = null;
-                        pendingRequestedSize = null;
-                    } else {
-                        // Cancel IMU recording on save failure
-                        if (mImuRecorder != null) {
-                            mImuRecorder.cancel();
-                        }
-                        notifyPhotoError("Failed to save image");
-                    }
-
-                    // Reset state
-                    shotState = ShotState.IDLE;
-
-                    // Check if there are queued photo requests
-                    processQueuedPhotoRequests();
-                } catch (Exception e) {
-                    Log.e(TAG, "Error handling image data", e);
-                    notifyPhotoError("Error processing photo: " + e.getMessage());
-                    if (mImuRecorder != null) {
-                        mImuRecorder.cancel();
-                    }
-                    shotState = ShotState.IDLE;
-
-                    // Check if there are queued photo requests even after error
-                    if (!photoRequestQueue.isEmpty()) {
+                        shotState = ShotState.IDLE;
                         processQueuedPhotoRequests();
-                    } else {
-                        // On error with no queued requests, close immediately without keep-alive
-                        cancelKeepAliveTimer();
-                        pendingPhotoPath = null;
-                        pendingRequestedSize = null;
-                        closeCamera();
-                        stopSelf();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error saving image data", e);
+                        notifyPhotoError("Error processing photo: " + e.getMessage());
+                        if (mImuRecorder != null) mImuRecorder.cancel();
+                        shotState = ShotState.IDLE;
+                        processQueuedPhotoRequests();
                     }
-                }
-            }, backgroundHandler);
+                }, backgroundHandler);
             }
 
             // Open the camera
@@ -2324,94 +2312,11 @@ public class CameraNeo extends LifecycleService {
     }
     
     /**
-     * Process any queued photo requests after completing current photo
+     * Called after completing a photo capture. No queue draining -- each request
+     * is either served immediately or rejected at enqueue time.
      */
     private void processQueuedPhotoRequests() {
-        // First check the global queue (primary)
-        synchronized (SERVICE_LOCK) {
-            if (!globalRequestQueue.isEmpty() && shotState == ShotState.IDLE) {
-                PhotoRequest nextRequest = globalRequestQueue.poll();
-                if (nextRequest != null) {
-                    Log.d(TAG, "Processing queued photo from GLOBAL queue: " + nextRequest.filePath);
-                    
-                    // Retrieve callback from registry if needed
-                    if (nextRequest.callback == null && callbackRegistry.containsKey(nextRequest.requestId)) {
-                        nextRequest.callback = callbackRegistry.remove(nextRequest.requestId);
-                    }
-                    
-                    // Update the callback for this request
-                    sPhotoCallback = nextRequest.callback;
-
-                    // Cancel any pending keep-alive timer
-                    cancelKeepAliveTimer();
-
-                    // Record start time for e2e timing
-                    photoRequestStartTimeMs = nextRequest.timestamp;
-                    Log.i(TAG, "📸 PHOTO E2E: Starting queued photo request " + nextRequest.requestId);
-
-                    // Process the queued request
-                    pendingPhotoPath = nextRequest.filePath;
-                    pendingRequestedSize = nextRequest.size;
-                    pendingIsFromSdk = nextRequest.isFromSdk;
-
-                    // Update LED state if this request needs LED
-                    if (nextRequest.enableLed) {
-                        pendingLedEnabled = true;
-                    }
-
-                    // IMPORTANT: Only start capture if camera is ready
-                    // Don't try to open camera again if it's already open
-                    if (cameraDevice != null && cameraCaptureSession != null) {
-                        // Start new capture sequence
-                        shotState = ShotState.WAITING_AE;
-                        if (backgroundHandler != null) {
-                            backgroundHandler.post(() -> startPrecaptureSequence());
-                        } else {
-                            startPrecaptureSequence();
-                        }
-                    } else {
-                        // Camera not ready yet, re-queue the request
-                        Log.d(TAG, "Camera not ready yet, re-queuing request");
-                        globalRequestQueue.offer(nextRequest);
-                    }
-                    return;
-                }
-            }
-        }
-        
-        // Fallback to instance queue for legacy compatibility
-        if (!photoRequestQueue.isEmpty() && shotState == ShotState.IDLE) {
-            PhotoRequest nextRequest = photoRequestQueue.poll();
-            if (nextRequest != null) {
-                Log.d(TAG, "Processing queued photo from INSTANCE queue: " + nextRequest.filePath);
-
-                // Update the callback for this request
-                sPhotoCallback = nextRequest.callback;
-
-                // Cancel any pending keep-alive timer
-                cancelKeepAliveTimer();
-
-                // Record start time for e2e timing
-                photoRequestStartTimeMs = nextRequest.timestamp;
-                Log.i(TAG, "📸 PHOTO E2E: Starting queued photo request (legacy) " + nextRequest.requestId);
-
-                // Process the queued request
-                pendingPhotoPath = nextRequest.filePath;
-                pendingRequestedSize = nextRequest.size;
-                pendingIsFromSdk = nextRequest.isFromSdk;
-
-                // Start new capture sequence
-                shotState = ShotState.WAITING_AE;
-                if (backgroundHandler != null) {
-                    backgroundHandler.post(() -> startPrecaptureSequence());
-                } else {
-                    startPrecaptureSequence();
-                }
-            }
-        } else if (photoRequestQueue.isEmpty() && globalRequestQueue.isEmpty()) {
-            // No more requests in either queue, start keep-alive timer
-            startKeepAliveTimer();
-        }
+        startKeepAliveTimer();
     }
     
     /**
@@ -2688,7 +2593,6 @@ public class CameraNeo extends LifecycleService {
             mWaitingForAeConvergence = true;
             mAeLockRequested = false;
             aeStartTimeNs = System.nanoTime();
-
             // Check if ZSL is enabled
             boolean zslEnabled = (mCameraSettings != null && mCameraSettings.isZslSupported() && 
                                  mCameraSettings.mAsgSettings.isZslEnabled());
@@ -2792,17 +2696,12 @@ public class CameraNeo extends LifecycleService {
 
             if (isAeConverged) {
                 long elapsedMs = (System.nanoTime() - aeStartTimeNs) / 1_000_000;
-                
                 if (USE_IMMEDIATE_CAPTURE_ON_CONVERGENCE) {
-                    // OPTIMIZED PATH: Capture after AE convergence + exposure stabilization delay
-                    Log.i(TAG, "🔍 ✅ AE CONVERGED in " + elapsedMs + "ms! State: " + getAeStateName(aeState) + ", waiting " + EXPOSURE_STABILIZATION_DELAY_MS + "ms for exposure stabilization [FAST MODE]");
                     mWaitingForAeConvergence = false;
                     mAeLockRequested = false;
-                    // NOTE: Don't set shotState = SHOOTING yet - that would cause ImageReader to save frames during the delay
-                    // Add delay to allow exposure to stabilize before capture
+                    Log.i(TAG, "🔍 ✅ AE CONVERGED in " + elapsedMs + "ms! State: " + getAeStateName(aeState) + ", waiting " + EXPOSURE_STABILIZATION_DELAY_MS + "ms for exposure stabilization [FAST MODE]");
                     backgroundHandler.postDelayed(() -> {
                         Log.i(TAG, "🔍 Exposure stabilization complete, capturing photo");
-                        shotState = ShotState.SHOOTING;
                         capturePhoto();
                     }, EXPOSURE_STABILIZATION_DELAY_MS);
                 } else {
@@ -2901,7 +2800,6 @@ public class CameraNeo extends LifecycleService {
             }
             
             Log.d(TAG, "🔍 Restoring preview after capture (unlocking AE)");
-            
             // Unlock AE and restore preview settings
             previewBuilder.set(CaptureRequest.CONTROL_AE_LOCK, false);
             mAeLockRequested = false;
@@ -3008,6 +2906,13 @@ public class CameraNeo extends LifecycleService {
 
             cameraCaptureSession.capture(captureRequest, new CameraCaptureSession.CaptureCallback() {
                 @Override
+                public void onCaptureStarted(@NonNull CameraCaptureSession session,
+                                            @NonNull CaptureRequest request,
+                                            long timestamp, long frameNumber) {
+                    mPendingStillTimestamp = timestamp;
+                }
+
+                @Override
                 public void onCaptureCompleted(@NonNull CameraCaptureSession session,
                                              @NonNull CaptureRequest request,
                                              @NonNull TotalCaptureResult result) {
@@ -3019,7 +2924,6 @@ public class CameraNeo extends LifecycleService {
                         Log.d(TAG, "✓ ZSL confirmed active in capture result");
                     }
 
-                    // MFNR diagnostic: log ISO and exposure to verify MFNR triggers
                     Integer captureIso = result.get(CaptureResult.SENSOR_SENSITIVITY);
                     Long captureExposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
                     Integer captureNrMode = result.get(CaptureResult.NOISE_REDUCTION_MODE);
@@ -3051,6 +2955,7 @@ public class CameraNeo extends LifecycleService {
                     // XyCamera2 pattern: Restore preview even on failure
                     restorePreview(session);
 
+                    mPendingStillTimestamp = -1;
                     shotState = ShotState.IDLE;
                     mWaitingForAeConvergence = false;
                     mAeLockRequested = false;
@@ -3066,6 +2971,7 @@ public class CameraNeo extends LifecycleService {
             if (mImuRecorder != null) {
                 mImuRecorder.cancel();
             }
+            mPendingStillTimestamp = -1;
             shotState = ShotState.IDLE;
             cancelKeepAliveTimer();
             closeCamera();

@@ -34,7 +34,6 @@ public class SysControl {
             value += bUp ? 25 : -25;
             setBrightValue(context, value);
         } catch (Settings.SettingNotFoundException e) {
-            // Fallback to default brightness adjustment
             setBrightValue(context, bUp ? 200 : 100);
         }
     }
