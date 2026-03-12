@@ -123,11 +123,6 @@ export async function installAppForUser(user: UserI, packageName: string) {
     throw new Error("App not found");
   }
 
-  // Only allow installing apps that are published and visible in the store
-  if (app.appStoreStatus !== "PUBLISHED" || !["COMMUNITY", "VERIFIED"].includes(app.verificationStatus ?? "NONE")) {
-    throw new Error("App is not available for installation");
-  }
-
   // Check if already installed
   if (user.isAppInstalled(packageName)) {
     return { alreadyInstalled: true };
