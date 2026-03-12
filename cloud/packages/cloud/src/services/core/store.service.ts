@@ -28,7 +28,7 @@ export interface AppWithInstallStatus {
 export async function getPublishedApps(): Promise<AppI[]> {
   const apps = await App.find({
     appStoreStatus: "PUBLISHED",
-    verificationStatus: { $in: ["COMMUNITY", "VERIFIED"] },
+    verificationStatus: { $ne: "NONE" },
   }).lean();
   return apps as AppI[];
 }
@@ -102,7 +102,7 @@ export async function searchApps(query: string) {
   // Use MongoDB $regex for case-insensitive search across multiple fields
   const apps = await App.find({
     appStoreStatus: "PUBLISHED",
-    verificationStatus: { $in: ["COMMUNITY", "VERIFIED"] },
+    verificationStatus: { $ne: "NONE" },
     $or: [{ name: { $regex: query, $options: "i" } }, { packageName: { $regex: query, $options: "i" } }],
   }).lean();
 
