@@ -26,7 +26,10 @@ export interface AppWithInstallStatus {
  * Uses .lean() to return plain JavaScript objects instead of Mongoose documents.
  */
 export async function getPublishedApps(): Promise<AppI[]> {
-  const apps = await App.find({ appStoreStatus: "PUBLISHED" }).lean();
+  const apps = await App.find({
+    appStoreStatus: "PUBLISHED",
+    verificationStatus: { $in: ["COMMUNITY", "VERIFIED"] },
+  }).lean();
   return apps as AppI[];
 }
 
@@ -99,6 +102,7 @@ export async function searchApps(query: string) {
   // Use MongoDB $regex for case-insensitive search across multiple fields
   const apps = await App.find({
     appStoreStatus: "PUBLISHED",
+    verificationStatus: { $in: ["COMMUNITY", "VERIFIED"] },
     $or: [{ name: { $regex: query, $options: "i" } }, { packageName: { $regex: query, $options: "i" } }],
   }).lean();
 
@@ -113,13 +117,16 @@ export async function searchApps(query: string) {
  * @returns Success status and message
  */
 export async function installAppForUser(user: UserI, packageName: string) {
-  // Verify app exists
+  // Verify app exists and is available in store
   const app = await getAppByPackageName(packageName);
   if (!app) {
     throw new Error("App not found");
   }
 
-  // Install app for user
+  // Only allow installing apps that are published and visible in the store
+  if (app.appStoreStatus !== "PUBLISHED" || !["COMMUNITY", "VERIFIED"].includes(app.verificationStatus ?? "NONE")) {
+    throw new Error("App is not available for installation");
+  }
 
   // Check if already installed
   if (user.isAppInstalled(packageName)) {

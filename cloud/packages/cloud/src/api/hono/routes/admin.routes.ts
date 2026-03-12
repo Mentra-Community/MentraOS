@@ -10,7 +10,7 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 import * as inspector from "node:inspector";
-import App, { AppI } from "../../../models/app.model";
+import App, { AppI, VerificationStatus } from "../../../models/app.model";
 import { Organization } from "../../../models/organization.model";
 import { memoryTelemetryService } from "../../../services/debug/MemoryTelemetryService";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
@@ -49,9 +49,11 @@ app.get("/check", validateAdminEmail, adminCheck);
 // Admin stats and app management
 app.get("/apps/stats", validateAdminEmail, getAdminStats);
 app.get("/apps/submitted", validateAdminEmail, getSubmittedApps);
+app.get("/apps/published", validateAdminEmail, getPublishedApps);
 app.get("/apps/:packageName", validateAdminEmail, getAppDetail);
 app.post("/apps/:packageName/approve", validateAdminEmail, approveApp);
 app.post("/apps/:packageName/reject", validateAdminEmail, rejectApp);
+app.post("/apps/:packageName/set-verification", validateAdminEmail, setVerificationStatus);
 
 // Memory telemetry routes
 app.get("/memory/now", validateAdminEmail, getMemorySnapshot);
@@ -205,12 +207,15 @@ async function createTestSubmission(c: AppContext) {
  */
 async function getAdminStats(c: AppContext) {
   try {
-    const [developmentCount, submittedCount, publishedCount, rejectedCount] = await Promise.all([
-      App.countDocuments({ appStoreStatus: "DEVELOPMENT" }),
-      App.countDocuments({ appStoreStatus: "SUBMITTED" }),
-      App.countDocuments({ appStoreStatus: "PUBLISHED" }),
-      App.countDocuments({ appStoreStatus: "REJECTED" }),
-    ]);
+    const [developmentCount, submittedCount, publishedCount, rejectedCount, verifiedCount, communityCount] =
+      await Promise.all([
+        App.countDocuments({ appStoreStatus: "DEVELOPMENT" }),
+        App.countDocuments({ appStoreStatus: "SUBMITTED" }),
+        App.countDocuments({ appStoreStatus: "PUBLISHED" }),
+        App.countDocuments({ appStoreStatus: "REJECTED" }),
+        App.countDocuments({ appStoreStatus: "PUBLISHED", verificationStatus: "VERIFIED" }),
+        App.countDocuments({ appStoreStatus: "PUBLISHED", verificationStatus: "COMMUNITY" }),
+      ]);
 
     const recentSubmissions = await App.find({ appStoreStatus: "SUBMITTED" }).sort({ updatedAt: -1 }).limit(5).lean();
 
@@ -242,6 +247,8 @@ async function getAdminStats(c: AppContext) {
         submitted: submittedCount,
         published: publishedCount,
         rejected: rejectedCount,
+        verified: verifiedCount,
+        community: communityCount,
         admins: 0,
       },
       recentSubmissions: enhancedSubmissions,
@@ -339,7 +346,12 @@ async function approveApp(c: AppContext) {
     const packageName = c.req.param("packageName");
     const adminEmail = c.get("email");
     const body = await c.req.json().catch(() => ({}));
-    const { notes } = body as { notes?: string };
+    const { notes, verificationStatus } = body as { notes?: string; verificationStatus?: VerificationStatus };
+
+    // Validate verificationStatus if provided — only COMMUNITY or VERIFIED allowed on approve
+    const validStatuses: VerificationStatus[] = ["COMMUNITY", "VERIFIED"];
+    const finalVerification: VerificationStatus =
+      verificationStatus && validStatuses.includes(verificationStatus) ? verificationStatus : "COMMUNITY";
 
     const appDoc = await App.findOne({ packageName });
 
@@ -351,8 +363,9 @@ async function approveApp(c: AppContext) {
       return c.json({ error: "App is not in submitted state" }, 400);
     }
 
-    // Update app status and store approval notes
+    // Update app status, verification tier, and store approval notes
     appDoc.appStoreStatus = "PUBLISHED";
+    appDoc.verificationStatus = finalVerification;
     appDoc.reviewNotes = notes || "";
     appDoc.reviewedBy = adminEmail;
     appDoc.reviewedAt = new Date();
@@ -463,6 +476,87 @@ async function rejectApp(c: AppContext) {
   } catch (error) {
     logger.error(error, "Error rejecting app");
     return c.json({ error: "Failed to reject app" }, 500);
+  }
+}
+
+/**
+ * GET /api/admin/apps/published
+ * Get all published apps with their verification status.
+ */
+async function getPublishedApps(c: AppContext) {
+  try {
+    const publishedApps = await App.find({ appStoreStatus: "PUBLISHED" }).sort({ updatedAt: -1 }).lean();
+
+    // Enhance with organization info
+    const enhancedApps = await Promise.all(
+      publishedApps.map(async (appDoc) => {
+        try {
+          if (appDoc.organizationId) {
+            const org = await Organization.findById(appDoc.organizationId);
+            if (org) {
+              return {
+                ...appDoc,
+                organizationName: org.name,
+                organizationProfile: org.profile,
+              };
+            }
+          }
+          return appDoc;
+        } catch (error) {
+          logger.error(error, `Error enhancing app ${appDoc.packageName} with org info`);
+          return appDoc;
+        }
+      }),
+    );
+
+    return c.json(enhancedApps);
+  } catch (error) {
+    logger.error(error, "Error fetching published apps");
+    return c.json({ error: "Failed to fetch published apps" }, 500);
+  }
+}
+
+/**
+ * POST /api/admin/apps/:packageName/set-verification
+ * Change the verification status of a published app.
+ */
+async function setVerificationStatus(c: AppContext) {
+  try {
+    const packageName = c.req.param("packageName");
+    const adminEmail = c.get("email");
+    const body = await c.req.json().catch(() => ({}));
+    const { verificationStatus } = body as { verificationStatus?: VerificationStatus };
+
+    const validStatuses: VerificationStatus[] = ["NONE", "COMMUNITY", "VERIFIED"];
+    if (!verificationStatus || !validStatuses.includes(verificationStatus)) {
+      return c.json({ error: "Invalid verificationStatus. Must be NONE, COMMUNITY, or VERIFIED" }, 400);
+    }
+
+    const appDoc = await App.findOne({ packageName });
+
+    if (!appDoc) {
+      return c.json({ error: "App not found" }, 404);
+    }
+
+    if (appDoc.appStoreStatus !== "PUBLISHED") {
+      return c.json({ error: "App must be published to change verification status" }, 400);
+    }
+
+    appDoc.verificationStatus = verificationStatus;
+    appDoc.reviewedBy = adminEmail;
+    appDoc.reviewedAt = new Date();
+
+    await appDoc.save();
+
+    logger.info({ packageName, verificationStatus, adminEmail }, "Verification status updated");
+
+    return c.json({
+      message: "Verification status updated",
+      app: appDoc,
+    });
+  } catch (error) {
+    logger.error(error, "Error setting verification status");
+    return c.json({ error: "Failed to set verification status" }, 500);
   }
 }
 

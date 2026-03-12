@@ -220,20 +220,26 @@ const AppStoreDesktop: React.FC = () => {
     return filtered;
   }, [apps, originalApps, searchQuery]);
 
-  // Split apps by compatibility
-  const { compatibleApps, incompatibleApps } = useMemo(() => {
-    const compatible: AppI[] = [];
+  // Split apps by verification status and compatibility
+  const { verifiedApps, communityApps, incompatibleApps } = useMemo(() => {
+    const verified: AppI[] = [];
+    const community: AppI[] = [];
     const incompatible: AppI[] = [];
 
     filteredApps.forEach((app) => {
       if (app.compatibility?.isCompatible === false) {
         incompatible.push(app);
+      } else if (app.verificationStatus === "COMMUNITY") {
+        community.push(app);
+      } else if (app.verificationStatus === "VERIFIED") {
+        verified.push(app);
       } else {
-        compatible.push(app);
+        // Fallback: treat unknown status as community
+        community.push(app);
       }
     });
 
-    return { compatibleApps: compatible, incompatibleApps: incompatible };
+    return { verifiedApps: verified, communityApps: community, incompatibleApps: incompatible };
   }, [filteredApps]);
 
   /**
@@ -573,39 +579,87 @@ const AppStoreDesktop: React.FC = () => {
             </div>
           ) : !error ? (
             <>
-              {/* Compatible Apps */}
-              <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[48px] gap-y-[24px]">
-                {compatibleApps.map((app, index) => {
-                  // Calculate if this card is in the last row
-                  const totalApps = compatibleApps.length;
-                  const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280;
-                  const isXlBreakpoint = window.innerWidth >= 1280;
+              {/* Verified Apps — no section header, badges on cards communicate status */}
+              {verifiedApps.length > 0 && (
+                <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[48px] gap-y-[24px]">
+                  {verifiedApps.map((app, index) => {
+                    const totalApps = verifiedApps.length;
+                    const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280;
+                    const isXlBreakpoint = window.innerWidth >= 1280;
 
-                  let columns = 1;
-                  if (isXlBreakpoint) columns = 3;
-                  else if (isMdBreakpoint) columns = 2;
+                    let columns = 1;
+                    if (isXlBreakpoint) columns = 3;
+                    else if (isMdBreakpoint) columns = 2;
 
-                  const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns;
-                  const isLastRow = index >= lastRowStartIndex;
+                    const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns;
+                    const isLastRow = index >= lastRowStartIndex;
 
-                  return (
-                    <AppCard
-                      key={app.packageName}
-                      app={app}
-                      theme={theme}
-                      isAuthenticated={isAuthenticated}
-                      installingApp={installingApp}
-                      onInstall={handleInstall}
-                      onUninstall={handleUninstall}
-                      onCardClick={handleCardClick}
-                      onLogin={handleLogin}
-                      isLastRow={isLastRow}
-                    />
-                  );
-                })}
-              </div>
+                    return (
+                      <AppCard
+                        key={app.packageName}
+                        app={app}
+                        theme={theme}
+                        isAuthenticated={isAuthenticated}
+                        installingApp={installingApp}
+                        onInstall={handleInstall}
+                        onUninstall={handleUninstall}
+                        onCardClick={handleCardClick}
+                        onLogin={handleLogin}
+                        isLastRow={isLastRow}
+                      />
+                    );
+                  })}
+                </div>
+              )}
 
-              {/* Incompatible Apps Section */}
+              {/* Community Apps Section — only shown if there are community apps */}
+              {communityApps.length > 0 && (
+                <>
+                  <div className="mt-8 mb-2">
+                    <div
+                      className="text-[18px] font-medium"
+                      style={{ color: "var(--text-secondary)" }}>
+                      Community Apps
+                    </div>
+                    <p
+                      className="text-[13px] mt-1"
+                      style={{ color: "var(--text-secondary)", opacity: 0.7 }}>
+                      Community apps are created by third-party developers and have not been fully verified by Mentra.
+                    </p>
+                  </div>
+                  <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[48px] gap-y-[24px]">
+                    {communityApps.map((app, index) => {
+                      const totalApps = communityApps.length;
+                      const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280;
+                      const isXlBreakpoint = window.innerWidth >= 1280;
+
+                      let columns = 1;
+                      if (isXlBreakpoint) columns = 3;
+                      else if (isMdBreakpoint) columns = 2;
+
+                      const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns;
+                      const isLastRow = index >= lastRowStartIndex;
+
+                      return (
+                        <AppCard
+                          key={app.packageName}
+                          app={app}
+                          theme={theme}
+                          isAuthenticated={isAuthenticated}
+                          installingApp={installingApp}
+                          onInstall={handleInstall}
+                          onUninstall={handleUninstall}
+                          onCardClick={handleCardClick}
+                          onLogin={handleLogin}
+                          isLastRow={isLastRow}
+                        />
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* Incompatible Apps Section — all incompatible apps regardless of verification */}
               {incompatibleApps.length > 0 && deviceInfo?.modelName && (
                 <>
                   <div
@@ -655,7 +709,7 @@ const AppStoreDesktop: React.FC = () => {
         )}
 
         {/* Empty state */}
-        {!isLoading && !error && compatibleApps.length === 0 && incompatibleApps.length === 0 && (
+        {!isLoading && !error && verifiedApps.length === 0 && communityApps.length === 0 && incompatibleApps.length === 0 && (
           <div className="flex flex-col min-h-[calc(100vh-200px)] items-center justify-center py-16 px-4">
             {searchQuery ? (
               <>

@@ -99,6 +99,9 @@ export interface AppI {
   createdAt?: string;
   updatedAt?: string;
 
+  // Verification status
+  verificationStatus?: "NONE" | "COMMUNITY" | "VERIFIED";
+
   // Compatibility info (returned when user is authenticated and has connected glasses)
   compatibility?: CompatibilityResult;
 }

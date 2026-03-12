@@ -1,4 +1,4 @@
-import { ChevronLeft, Info, Share2, X, AlertTriangle } from "lucide-react";
+import { ChevronLeft, Info, Share2, X, AlertTriangle, BadgeCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "../components/ui/MuiToast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -14,7 +14,7 @@ import {
   AppDetailsMobileProps,
 } from "./AppDetailsShared";
 import { ProfileDropdown } from "../components/ProfileDropdown";
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 const AppDetailsMobile: React.FC<AppDetailsMobileProps> = ({
   app,
@@ -30,6 +30,8 @@ const AppDetailsMobile: React.FC<AppDetailsMobileProps> = ({
   const { showToast } = useToast();
   const [selectedImage, setSelectedImage] = useState<{ url: string; index: number } | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+  const [showVerifiedTooltip, setShowVerifiedTooltip] = useState(false);
+  const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   return (
     <>
@@ -94,14 +96,57 @@ const AppDetailsMobile: React.FC<AppDetailsMobileProps> = ({
               {/* App Info - Mobile */}
               <div className="flex-1 min-w-0">
                 {/* App Title */}
-                <h1
-                  className="text-[20px]  leading-tight mb-[8px] font-semibold"
-                  style={{
-                    fontFamily: '"Red Hat Display", sans-serif',
-                    color: "var(--text-primary)",
-                  }}>
-                  {app.name}
-                </h1>
+                <div className="flex items-center gap-1.5 mb-[8px]">
+                  <h1
+                    className="text-[20px]  leading-tight font-semibold"
+                    style={{
+                      fontFamily: '"Red Hat Display", sans-serif',
+                      color: "var(--text-primary)",
+                    }}>
+                    {app.name}
+                  </h1>
+                  {app.verificationStatus === "VERIFIED" && (
+                    <div className="relative flex-shrink-0">
+                      <BadgeCheck
+                        className="w-5 h-5 cursor-pointer"
+                        style={{ color: "var(--text-secondary)" }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowVerifiedTooltip(!showVerifiedTooltip);
+                          if (!showVerifiedTooltip) {
+                            if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
+                            tooltipTimeoutRef.current = setTimeout(() => setShowVerifiedTooltip(false), 3000);
+                          }
+                        }}
+                        onMouseEnter={() => {
+                          if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
+                          setShowVerifiedTooltip(true);
+                        }}
+                        onMouseLeave={() => {
+                          tooltipTimeoutRef.current = setTimeout(() => setShowVerifiedTooltip(false), 200);
+                        }}
+                      />
+                      {showVerifiedTooltip && (
+                        <div
+                          className="absolute left-1/2 -translate-x-1/2 top-full mt-1 px-2 py-1 rounded text-xs whitespace-nowrap z-50"
+                          style={{
+                            backgroundColor: "var(--bg-secondary)",
+                            color: "var(--text-secondary)",
+                            border: "1px solid var(--border)",
+                          }}
+                          onMouseEnter={() => {
+                            if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
+                          }}
+                          onMouseLeave={() => {
+                            tooltipTimeoutRef.current = setTimeout(() => setShowVerifiedTooltip(false), 200);
+                          }}
+                        >
+                          This app has been verified by Mentra
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Company Name • App Type */}
                 <div
@@ -221,6 +266,31 @@ const AppDetailsMobile: React.FC<AppDetailsMobileProps> = ({
                       color: "var(--text-primary)",
                     }}>
                     This app is incompatible with {deviceInfo.modelName}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Community App Notice */}
+            {app.verificationStatus === "COMMUNITY" && (
+              <div className="mb-6">
+                <div
+                  className="flex items-center gap-2 p-3 rounded-lg"
+                  style={{
+                    backgroundColor: "var(--bg-secondary)",
+                  }}>
+                  <Info
+                    className="h-5 w-5 flex-shrink-0"
+                    style={{
+                      color: "var(--text-primary)",
+                    }}
+                  />
+                  <span
+                    className="text-[14px] font-medium"
+                    style={{
+                      color: "var(--text-primary)",
+                    }}>
+                    This is a community app. It has been reviewed but is not officially verified by Mentra.
                   </span>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import { Info, Share2, Smartphone, ChevronLeft, X, ChevronRight, AlertTriangle } from "lucide-react";
+import { Info, Share2, Smartphone, ChevronLeft, X, ChevronRight, AlertTriangle, BadgeCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import GetMentraOSButton from "../components/GetMentraOSButton";
 import { HardwareRequirementLevel, HardwareType } from "../types";
@@ -24,6 +24,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
 }) => {
   const [selectedImage, setSelectedImage] = useState<{ url: string; index: number } | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+  const [showVerifiedTooltip, setShowVerifiedTooltip] = useState(false);
 
   return (
     <div className="min-h-screen flex justify-center relative z-0">
@@ -58,14 +59,39 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
             {/* Left Side - App Info (takes more space on desktop) */}
             <div className="flex-1 min-w-0">
               {/* App Title */}
-              <h1
-                className="text-[40px] leading-tight mb-[32px] font-bold"
-                style={{
-                  fontFamily: '"Red Hat Display", sans-serif',
-                  color: "var(--text-primary)",
-                }}>
-                {app.name}
-              </h1>
+              <div className="flex items-center gap-2 mb-[32px]">
+                <h1
+                  className="text-[40px] leading-tight font-bold"
+                  style={{
+                    fontFamily: '"Red Hat Display", sans-serif',
+                    color: "var(--text-primary)",
+                  }}>
+                  {app.name}
+                </h1>
+                {app.verificationStatus === "VERIFIED" && (
+                  <div
+                    className="relative"
+                    onMouseEnter={() => setShowVerifiedTooltip(true)}
+                    onMouseLeave={() => setShowVerifiedTooltip(false)}
+                    onClick={() => setShowVerifiedTooltip((v) => !v)}>
+                    <BadgeCheck
+                      className="w-6 h-6"
+                      style={{ color: "var(--text-secondary)" }}
+                    />
+                    {showVerifiedTooltip && (
+                      <div
+                        className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-2 py-1 rounded text-[12px] whitespace-nowrap z-50"
+                        style={{
+                          backgroundColor: "var(--bg-secondary)",
+                          color: "var(--text-primary)",
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                        }}>
+                        This app has been verified by Mentra
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Company Name • App Type */}
               <div
@@ -193,6 +219,19 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                   <span>This app is compatible with {deviceInfo.modelName || "your device"}</span>
                 </div>
               ) : null}
+
+              {/* Community App Notice */}
+              {app.verificationStatus === "COMMUNITY" && (
+                <div
+                  className="flex items-center gap-2 text-[14px] font-medium mt-[32px]"
+                  style={{
+                    color: "var(--text-primary)",
+                    fontFamily: '"Red Hat Display", sans-serif',
+                  }}>
+                  <Info className="w-[18px] h-[18px] flex-shrink-0" />
+                  <span>This is a community app. It has been reviewed but is not officially verified by Mentra.</span>
+                </div>
+              )}
             </div>
 
             {/* Right Side - App Icon (desktop only, larger) */}

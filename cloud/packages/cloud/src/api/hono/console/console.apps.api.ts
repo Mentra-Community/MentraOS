@@ -18,12 +18,16 @@ const app = new Hono<AppEnv>();
 
 app.get("/", listApps);
 app.post("/", createApp);
-app.get("/:packageName", getApp);
-app.put("/:packageName", updateApp);
-app.delete("/:packageName", deleteApp);
+
+// Sub-routes with specific paths must come before /:packageName
+app.get("/:packageName/analytics", getAppAnalytics);
 app.post("/:packageName/publish", publishApp);
 app.post("/:packageName/api-key", regenerateApiKey);
 app.post("/:packageName/move", moveApp);
+
+app.get("/:packageName", getApp);
+app.put("/:packageName", updateApp);
+app.delete("/:packageName", deleteApp);
 
 // ============================================================================
 // Handlers
@@ -353,6 +357,50 @@ async function moveApp(c: AppContext) {
     return c.json(
       {
         error: e?.message || "Failed to move app",
+      },
+      status,
+    );
+  }
+}
+
+/**
+ * GET /api/console/apps/:packageName/analytics
+ * Get analytics for an app. Requires org membership.
+ */
+async function getAppAnalytics(c: AppContext) {
+  try {
+    const consoleAuth = c.get("console");
+    const email = consoleAuth?.email;
+
+    if (!email) {
+      return c.json(
+        {
+          error: "Unauthorized",
+          message: "Missing console email",
+        },
+        401,
+      );
+    }
+
+    const packageName = c.req.param("packageName");
+    if (!packageName) {
+      return c.json({ error: "Missing packageName" }, 400);
+    }
+
+    // Verify the user is a member of the app's org (same check as getApp)
+    const appsMod = await import("../../../services/console/console.apps.service");
+    await appsMod.getApp(email, packageName); // throws 403 if not a member
+
+    const analyticsMod = await import("../../../services/core/analytics.service");
+    const analytics = await analyticsMod.getAppAnalytics(packageName);
+
+    return c.json({ success: true, data: analytics });
+  } catch (e: any) {
+    const status = e?.statusCode && Number.isInteger(e.statusCode) ? e.statusCode : 500;
+    logger.error(e, "Failed to get app analytics");
+    return c.json(
+      {
+        error: e?.message || "Failed to get app analytics",
       },
       status,
     );

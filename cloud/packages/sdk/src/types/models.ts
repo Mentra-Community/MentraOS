@@ -128,6 +128,7 @@ export interface AppI {
 
   isPublic?: boolean;
   appStoreStatus?: "DEVELOPMENT" | "SUBMITTED" | "REJECTED" | "PUBLISHED";
+  verificationStatus?: "NONE" | "COMMUNITY" | "VERIFIED";
 }
 
 /**

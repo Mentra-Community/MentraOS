@@ -392,6 +392,11 @@ const api = {
         }
       },
 
+      getAnalytics: async (packageName: string) => {
+        const res = await axios.get(`/api/console/apps/${encodeURIComponent(packageName)}/analytics`);
+        return res.data?.data ?? res.data;
+      },
+
       // Permissions are just in the AppResponse, and can be updated via update app...
       // permissions: {
       //   get: async (
@@ -858,15 +863,27 @@ const api = {
       return response.data;
     },
 
+    // Get published apps (for verification management)
+    getPublishedApps: async () => {
+      const response = await axios.get("/api/admin/apps/published");
+      return response.data;
+    },
+
     // Approve an app
-    approveApp: async (packageName: string, notes: string) => {
-      const response = await axios.post(`/api/admin/apps/${packageName}/approve`, { notes });
+    approveApp: async (packageName: string, notes: string, verificationStatus: "COMMUNITY" | "VERIFIED" = "COMMUNITY") => {
+      const response = await axios.post(`/api/admin/apps/${packageName}/approve`, { notes, verificationStatus });
       return response.data;
     },
 
     // Reject an app
     rejectApp: async (packageName: string, notes: string) => {
       const response = await axios.post(`/api/admin/apps/${packageName}/reject`, { notes });
+      return response.data;
+    },
+
+    // Set verification status of a published app
+    setVerification: async (packageName: string, verificationStatus: "NONE" | "COMMUNITY" | "VERIFIED") => {
+      const response = await axios.post(`/api/admin/apps/${packageName}/set-verification`, { verificationStatus });
       return response.data;
     },
 

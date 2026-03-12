@@ -1,6 +1,7 @@
-import { memo, useState } from "react";
+import { memo, useState, useRef } from "react";
 import { Button } from "./ui/button";
 import { AppI } from "../types";
+import { BadgeCheck } from "lucide-react";
 
 // Tag mapping for apps
 const APP_TAGS: Record<string, string[]> = {
@@ -49,6 +50,8 @@ const AppCard: React.FC<AppCardProps> = memo(
   }) => {
     const [imageLoaded, setImageLoaded] = useState(false);
     const [imageError, setImageError] = useState(false);
+    const [showVerifiedTooltip, setShowVerifiedTooltip] = useState(false);
+    const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const handleCardClick = () => {
       onCardClick(app.packageName);
@@ -120,15 +123,48 @@ const AppCard: React.FC<AppCardProps> = memo(
         {/* Content Column */}
         <div className="flex-1 flex flex-col justify-center min-w-0">
           <div>
-            <h3
-              className="leading-tight text-[16px] sm:text-[16px]  truncate font-semibold text-[var(--secondary-foreground)]"
-              style={{
-                fontFamily: '"Red Hat Display", sans-serif',
-                letterSpacing: "0.04em",
-                color: "var(--text-primary)",
-              }}>
-              {app.name}
-            </h3>
+            <div className="flex items-center gap-1">
+              <h3
+                className="leading-tight text-[16px] sm:text-[16px]  truncate font-semibold text-[var(--secondary-foreground)]"
+                style={{
+                  fontFamily: '"Red Hat Display", sans-serif',
+                  letterSpacing: "0.04em",
+                  color: "var(--text-primary)",
+                }}>
+                {app.name}
+              </h3>
+              {app.verificationStatus === "VERIFIED" && (
+                <div
+                  className="relative flex-shrink-0"
+                  onMouseEnter={() => {
+                    if (tooltipTimeoutRef.current) clearTimeout(tooltipTimeoutRef.current);
+                    setShowVerifiedTooltip(true);
+                  }}
+                  onMouseLeave={() => {
+                    tooltipTimeoutRef.current = setTimeout(() => setShowVerifiedTooltip(false), 150);
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowVerifiedTooltip((v) => !v);
+                  }}>
+                  <BadgeCheck
+                    className="w-4 h-4"
+                    style={{ color: "var(--text-secondary)" }}
+                  />
+                  {showVerifiedTooltip && (
+                    <div
+                      className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 px-2 py-1 rounded text-[11px] whitespace-nowrap z-50"
+                      style={{
+                        backgroundColor: "var(--bg-secondary)",
+                        color: "var(--text-primary)",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                      }}>
+                      This app has been verified by Mentra
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Tags */}
             <div className=" mt-[1px] mb-[6px] leading-tight flex gap-1 flex-wrap items-center font-semibold text-[12px] text-[var(--secondary-foreground)]">

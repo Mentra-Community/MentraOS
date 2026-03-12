@@ -34,6 +34,7 @@ import { ServerUrlField } from "../components/forms/ServerUrlField";
 import SettingsEditor from "../components/forms/SettingsEditor";
 import { WebviewUrlToggle } from "../components/forms/WebviewUrlToggle";
 import { FormSection } from "../components/ui/FormSection";
+import AppAnalytics from "../components/AppAnalytics";
 
 // import publicEmailDomains from 'email-providers/all.json';
 import MoveOrgDialog from "../components/dialogs/MoveOrgDialog";
@@ -1161,6 +1162,9 @@ export default function EditMiniApp() {
                     <AlertDescription className="text-success">MiniApp updated successfully!</AlertDescription>
                   </Alert>
                 )}
+
+                {/* Analytics Section */}
+                {packageName && <AppAnalytics packageName={packageName} />}
 
                 {/* MiniApp Distribution Section */}
                 <FormSection

@@ -225,20 +225,26 @@ const AppStoreMobile: React.FC = () => {
     return filtered;
   }, [apps, originalApps, searchQuery]);
 
-  // Split apps by compatibility
-  const { compatibleApps, incompatibleApps } = useMemo(() => {
-    const compatible: AppI[] = [];
+  // Split apps by verification status and compatibility
+  const { verifiedApps, communityApps, incompatibleApps } = useMemo(() => {
+    const verified: AppI[] = [];
+    const community: AppI[] = [];
     const incompatible: AppI[] = [];
 
     filteredApps.forEach((app) => {
       if (app.compatibility?.isCompatible === false) {
         incompatible.push(app);
+      } else if (app.verificationStatus === "COMMUNITY") {
+        community.push(app);
+      } else if (app.verificationStatus === "VERIFIED") {
+        verified.push(app);
       } else {
-        compatible.push(app);
+        // Fallback: treat unknown status as community
+        community.push(app);
       }
     });
 
-    return { compatibleApps: compatible, incompatibleApps: incompatible };
+    return { verifiedApps: verified, communityApps: community, incompatibleApps: incompatible };
   }, [filteredApps]);
 
   /**
@@ -620,23 +626,59 @@ const AppStoreMobile: React.FC = () => {
             </div>
           ) : !error ? (
             <>
-              {/* Compatible Apps */}
-              <div className="mt-2 mb-2 grid grid-cols-1 gap-y-[24px]">
-                {compatibleApps.map((app) => (
-                  <AppCard
-                    key={app.packageName}
-                    app={app}
-                    theme={theme}
-                    isAuthenticated={isAuthenticated}
-                    installingApp={installingApp}
-                    onInstall={handleInstall}
-                    onUninstall={handleUninstall}
-                    onCardClick={handleCardClick}
-                    onLogin={handleLogin}
-                    isLastRow={false}
-                  />
-                ))}
-              </div>
+              {/* Verified Apps — no section header */}
+              {verifiedApps.length > 0 && (
+                <div className="mt-2 mb-2 grid grid-cols-1 gap-y-[24px]">
+                  {verifiedApps.map((app) => (
+                    <AppCard
+                      key={app.packageName}
+                      app={app}
+                      theme={theme}
+                      isAuthenticated={isAuthenticated}
+                      installingApp={installingApp}
+                      onInstall={handleInstall}
+                      onUninstall={handleUninstall}
+                      onCardClick={handleCardClick}
+                      onLogin={handleLogin}
+                      isLastRow={false}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Community Apps Section — only shown if there are community apps */}
+              {communityApps.length > 0 && (
+                <>
+                  <div className="mt-8 mb-2">
+                    <div
+                      className="text-[16px] font-medium"
+                      style={{ color: "var(--text-secondary)" }}>
+                      Community Apps
+                    </div>
+                    <p
+                      className="text-[12px] mt-1"
+                      style={{ color: "var(--text-secondary)", opacity: 0.7 }}>
+                      Community apps are created by third-party developers and have not been fully verified by Mentra.
+                    </p>
+                  </div>
+                  <div className="mt-2 mb-2 grid grid-cols-1 gap-y-[24px]">
+                    {communityApps.map((app) => (
+                      <AppCard
+                        key={app.packageName}
+                        app={app}
+                        theme={theme}
+                        isAuthenticated={isAuthenticated}
+                        installingApp={installingApp}
+                        onInstall={handleInstall}
+                        onUninstall={handleUninstall}
+                        onCardClick={handleCardClick}
+                        onLogin={handleLogin}
+                        isLastRow={false}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
 
               {/* Incompatible Apps Section */}
               {incompatibleApps.length > 0 && deviceInfo?.modelName && (
@@ -669,7 +711,7 @@ const AppStoreMobile: React.FC = () => {
         </div>
 
         {/* Empty state */}
-        {!isLoading && !error && compatibleApps.length === 0 && incompatibleApps.length === 0 && (
+        {!isLoading && !error && verifiedApps.length === 0 && communityApps.length === 0 && incompatibleApps.length === 0 && (
           <div className="flex flex-col min-h-[calc(100vh-200px)] items-center justify-center py-16 px-4">
             {searchQuery ? (
               <>

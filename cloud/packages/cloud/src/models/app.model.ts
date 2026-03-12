@@ -15,6 +15,7 @@ import {
 } from "@mentra/sdk";
 
 export type AppStoreStatus = "DEVELOPMENT" | "SUBMITTED" | "REJECTED" | "PUBLISHED";
+export type VerificationStatus = "NONE" | "COMMUNITY" | "VERIFIED";
 
 // Extend the AppI interface for our MongoDB document
 export interface AppI extends _AppI, Document {
@@ -24,6 +25,7 @@ export interface AppI extends _AppI, Document {
   hashedApiKey: string;
   hashedEndpointSecret?: string;
   appStoreStatus: AppStoreStatus;
+  verificationStatus: VerificationStatus;
   reviewNotes?: string;
   reviewedBy?: string;
   reviewedAt?: Date;
@@ -97,6 +99,11 @@ const AppSchema = new Schema(
       type: String,
       enum: ["DEVELOPMENT", "SUBMITTED", "REJECTED", "PUBLISHED"],
       default: "DEVELOPMENT",
+    },
+    verificationStatus: {
+      type: String,
+      enum: ["NONE", "COMMUNITY", "VERIFIED"],
+      default: "NONE",
     },
     hashedApiKey: String,
     reviewNotes: {

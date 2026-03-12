@@ -288,6 +288,10 @@ const UserSchema = new Schema<UserI>(
 // Create compound index for unique running apps per user
 UserSchema.index({ email: 1, runningApps: 1 }, { unique: true });
 
+// Indexes for analytics queries (install counts, active user counts)
+UserSchema.index({ "installedApps.packageName": 1, "installedApps.lastActiveAt": 1 });
+UserSchema.index({ "installedApps.packageName": 1, "installedApps.installedDate": 1 });
+
 // Instance methods
 
 // Install / uninstall.

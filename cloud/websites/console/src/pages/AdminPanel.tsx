@@ -48,6 +48,8 @@ interface AdminStat {
     submitted: number;
     published: number;
     rejected: number;
+    verified?: number;
+    community?: number;
     admins: number;
   };
   recentSubmissions: any[];
@@ -79,6 +81,7 @@ interface AppDetail {
   };
   logoURL: string;
   appStoreStatus: string;
+  verificationStatus?: "NONE" | "COMMUNITY" | "VERIFIED";
   createdAt: string;
   updatedAt: string;
   reviewNotes?: string;
@@ -150,6 +153,9 @@ const AdminPanel: React.FC = () => {
 
   const [openReviewDialog, setOpenReviewDialog] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [approveVerificationTier, setApproveVerificationTier] = useState<"COMMUNITY" | "VERIFIED">("COMMUNITY");
+  const [publishedApps, setPublishedApps] = useState<any[]>([]);
+  const [publishedAppsLoading, setPublishedAppsLoading] = useState(false);
   // Install/uninstall state for the selected app in the review dialog
   const [isInstalling, setIsInstalling] = useState(false);
   const [isInstalledForUser, setIsInstalledForUser] = useState<boolean | null>(
@@ -479,6 +485,7 @@ const AdminPanel: React.FC = () => {
       const appData = await api.admin.getAppDetail(packageName);
       setSelectedApp(appData);
       setReviewNotes("");
+      setApproveVerificationTier("COMMUNITY");
       setOpenReviewDialog(true);
       // Reset collapsibles to default collapsed state on open
       setShowTools(false);
@@ -506,12 +513,12 @@ const AdminPanel: React.FC = () => {
 
     setActionLoading(true);
     try {
-      await api.admin.approveApp(selectedApp.packageName, reviewNotes);
+      await api.admin.approveApp(selectedApp.packageName, reviewNotes, approveVerificationTier);
 
       // Refresh data
       loadAdminData();
       setOpenReviewDialog(false);
-      alert("App approved successfully!");
+      alert(`App approved as ${approveVerificationTier.toLowerCase()}!`);
     } catch (error) {
       console.error("Error approving app:", error);
       alert("Failed to approve app. Please try again.");
@@ -568,6 +575,30 @@ const AdminPanel: React.FC = () => {
       alert("Operation failed. See console for details.");
     } finally {
       setIsInstalling(false);
+    }
+  };
+
+  const loadPublishedApps = async () => {
+    setPublishedAppsLoading(true);
+    try {
+      const apps = await api.admin.getPublishedApps();
+      setPublishedApps(apps || []);
+    } catch (error) {
+      console.error("Error fetching published apps:", error);
+    } finally {
+      setPublishedAppsLoading(false);
+    }
+  };
+
+  const handleSetVerification = async (packageName: string, verificationStatus: "NONE" | "COMMUNITY" | "VERIFIED") => {
+    try {
+      await api.admin.setVerification(packageName, verificationStatus);
+      // Refresh published apps list
+      loadPublishedApps();
+      loadAdminData();
+    } catch (error) {
+      console.error("Error setting verification status:", error);
+      alert("Failed to update verification status.");
     }
   };
 
@@ -756,10 +787,19 @@ const AdminPanel: React.FC = () => {
                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary mr-2"
                   onClick={() => {
                     setActiveTab("app_status");
-                    // setChosenAppStatus("idle");
                   }}
                 >
                   App Status
+                </Button>
+                <Button
+                  variant={activeTab === "published" ? "default" : "ghost"}
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary mr-2"
+                  onClick={() => {
+                    setActiveTab("published");
+                    loadPublishedApps();
+                  }}
+                >
+                  Published Apps
                 </Button>
               </div>
               <Button //here
@@ -1240,6 +1280,84 @@ const AdminPanel: React.FC = () => {
                 );
               })()}
 
+            {/* Published Apps tab */}
+            {activeTab === "published" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Published Apps - Verification Management</h2>
+                  <Button variant="outline" size="sm" onClick={loadPublishedApps}>
+                    Refresh
+                  </Button>
+                </div>
+                {publishedAppsLoading ? (
+                  <Card>
+                    <CardContent className="p-6 flex justify-center">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                    </CardContent>
+                  </Card>
+                ) : publishedApps.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-6 text-center text-muted-foreground">
+                      No published apps found.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="space-y-2">
+                    {publishedApps.map((app: any) => (
+                      <Card key={app.packageName}>
+                        <CardContent className="p-4 flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <img
+                              src={app.logoURL || "https://placehold.co/40x40?text=App"}
+                              alt={app.name}
+                              className="w-10 h-10 rounded-md"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = "https://placehold.co/40x40?text=App";
+                              }}
+                            />
+                            <div>
+                              <div className="font-medium flex items-center gap-2">
+                                {app.name}
+                                <Badge
+                                  variant={
+                                    app.verificationStatus === "VERIFIED"
+                                      ? "default"
+                                      : app.verificationStatus === "COMMUNITY"
+                                        ? "secondary"
+                                        : "outline"
+                                  }
+                                >
+                                  {app.verificationStatus === "NONE" || !app.verificationStatus ? "Delisted" : app.verificationStatus}
+                                </Badge>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{app.packageName}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Select
+                              value={app.verificationStatus || "NONE"}
+                              onValueChange={(value) =>
+                                handleSetVerification(app.packageName, value as "NONE" | "COMMUNITY" | "VERIFIED")
+                              }
+                            >
+                              <SelectTrigger className="w-[140px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="VERIFIED">Verified</SelectItem>
+                                <SelectItem value="COMMUNITY">Community</SelectItem>
+                                <SelectItem value="NONE">Delisted</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Admin management tab removed */}
           </div>
         )}
@@ -1474,6 +1592,22 @@ const AdminPanel: React.FC = () => {
             )}
 
             <hr className="border-t border-border" />
+
+            <div>
+              <h4 className="font-medium mb-1">Verification Tier (for approval)</h4>
+              <Select
+                value={approveVerificationTier}
+                onValueChange={(value) => setApproveVerificationTier(value as "COMMUNITY" | "VERIFIED")}
+              >
+                <SelectTrigger className="w-full mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="COMMUNITY">Community - Listed in community section</SelectItem>
+                  <SelectItem value="VERIFIED">Verified - Listed with verified badge</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
             <div>
               <h4 className="font-medium mb-1">Review Notes</h4>

@@ -353,7 +353,8 @@ export async function publishApp(email: string, packageName: string): Promise<an
   // submits for review.
   if (isMentraAdmin(email)) {
     appDoc.appStoreStatus = "PUBLISHED";
-    logger.info({ email, packageName }, "Mentra admin directly published app");
+    appDoc.set("verificationStatus", "VERIFIED");
+    logger.info({ email, packageName }, "Mentra admin directly published app as verified");
   } else {
     appDoc.appStoreStatus = "SUBMITTED";
     logger.info({ email, packageName }, "App submitted for review");
