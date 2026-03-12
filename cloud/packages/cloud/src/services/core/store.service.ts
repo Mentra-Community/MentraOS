@@ -117,7 +117,7 @@ export async function searchApps(query: string) {
  * @returns Success status and message
  */
 export async function installAppForUser(user: UserI, packageName: string) {
-  // Verify app exists and is available in store
+  // Verify app exists
   const app = await getAppByPackageName(packageName);
   if (!app) {
     throw new Error("App not found");
