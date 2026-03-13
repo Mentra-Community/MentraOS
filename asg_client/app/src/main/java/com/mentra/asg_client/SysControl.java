@@ -200,7 +200,15 @@ public class SysControl {
         
         Log.d(TAG, "Sent WiFi disable broadcast");
     }
-    
+
+    public static void setWifi5G(Context context, boolean enable) {
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "setInt");
+        nn.putExtra("name", "wifi_scan_5ghz");
+        nn.putExtra("value", enable ? 1 : 0);
+        sendBroadcast(context, nn);
+    }
+
     public static void connectToWifi(Context context, String ssid, String password) {
         if (ssid == null || ssid.isEmpty()) {
             Log.e(TAG, "Cannot connect to WiFi with empty SSID");

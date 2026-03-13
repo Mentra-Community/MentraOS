@@ -218,6 +218,12 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.d(TAG, "📶 Initializing WiFi debouncing");
             initializeWifiDebouncing();
 
+            // Enable 5 GHz WiFi scanning after a short delay so system UI / WiFi stack is ready
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                Log.d(TAG, "📶 Enabling 5 GHz WiFi scan via SysControl");
+                SysControl.setWifi5G(this, true);
+            }, 3000);
+
             // Register receivers
             Log.d(TAG, "📻 Registering broadcast receivers");
             registerReceivers();
