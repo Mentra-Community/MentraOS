@@ -1,4 +1,155 @@
-# Mentra Stream Muxer - Planning Document
+# Mentra Streaming - Planning Document
+
+## Two-Phase Approach
+
+Mentra's video streaming serves two distinct use cases:
+
+1. **Livestreaming to social platforms** (Twitch, YouTube, etc.) — needs reliability, not sub-second latency
+2. **Low-latency streaming from Mentra Live to miniapps** — needs sub-second latency for real-time processing
+
+These are addressed in two phases:
+
+- **Phase 1**: Fix livestreaming reliability (SRT replaces RTMP) + add WebRTC streaming for miniapps. Uses Cloudflare for both. No new infrastructure.
+- **Phase 2**: Self-hosted Mentra Stream Muxer for full control, cloud-agnostic deployment, China support, and advanced features (fallback frames, re-encoding, etc.)
+
+---
+
+## Phase 1: Reliable Livestreaming + WebRTC for Miniapps
+
+### Motivation
+
+The current livestreamer app sends RTMP directly from the Mentra Live glasses to Cloudflare over the glasses' Wi-Fi chip. This is unreliable because:
+
+- **RTMP is TCP-based** — any packet loss causes stalls and buffering
+- **Mentra Live's Wi-Fi chip is garbage** — frequent dropouts
+- **TCP + bad Wi-Fi = unwatchable streams** — the connection dies, Twitch disconnects, stream is over
+
+We don't need to build a whole new self-hosted system to fix this. Cloudflare already supports SRT ingest, which is UDP-based and handles packet loss gracefully. We also don't need China support right now.
+
+### Phase 1 Architecture
+
+Phase 1 has two independent workstreams that can be developed in parallel:
+
+#### Workstream A: SRT for Managed Streams (Livestreaming)
+
+Replace RTMP ingest with SRT ingest for managed streams (the livestreamer app). Keep everything else the same — Cloudflare still handles RTMP rebroadcast to Twitch/YouTube.
+
+```
+Current (broken):
+  Glasses ──RTMP (TCP, bad WiFi)──► Cloudflare ──RTMP──► Twitch/YouTube
+
+Phase 1 (fixed):
+  Glasses ──SRT (UDP, handles drops)──► Cloudflare ──RTMP──► Twitch/YouTube
+```
+
+**Why SRT fixes the problem:**
+
+- SRT is UDP-based — packet loss causes brief quality drops, not connection death
+- SRT has built-in retransmission and FEC (forward error correction)
+- Cloudflare already provides SRT ingest URLs alongside RTMP for every live input
+- The Cloudflare API already returns `srt.url`, `srt.streamId`, and `srt.passphrase` in the live input response (we just ignore them today)
+
+**What changes:**
+
+| Component                      | Change                                                                       | Effort |
+| ------------------------------ | ---------------------------------------------------------------------------- | ------ |
+| `CloudflareStreamService.ts`   | Return `srtUrl` from `createLiveInput()` instead of (or alongside) `rtmpUrl` | Small  |
+| `ManagedStreamingExtension.ts` | Send SRT URL to glasses instead of RTMP URL                                  | Small  |
+| SDK message types              | Add `StartSrtStream` message type (or reuse `StartRtmpStream` with SRT URL)  | Small  |
+| ASG Client (glasses)           | Add SRT streaming support (e.g., FFmpeg with SRT, or native SRT library)     | Medium |
+| `LiveInputResult` interface    | Add `srtUrl` field                                                           | Small  |
+
+**Cloudflare SRT details:**
+
+When a Cloudflare live input is created, the API response already includes SRT connection info:
+
+```typescript
+// Already in our CloudflareLiveInput interface (CloudflareStreamService.ts)
+srt?: {
+  url: string;        // SRT ingest URL
+  streamId: string;   // SRT stream ID
+  passphrase: string; // SRT passphrase
+}
+```
+
+Cloudflare supports SRT in **caller mode** only — the glasses initiate the connection to Cloudflare's SRT endpoint.
+
+**ASG Client implementation:**
+
+StreamPackLite already has full SRT support via `CameraSrtLiveStreamer` (the SRT equivalent of the currently-used `CameraRtmpLiveStreamer`). The SRT extension lives at `asg_client/StreamPackLite/extensions/srt/` and includes bitrate regulation, connection descriptors, and camera/screen/audio streamers. This makes the ASG client change straightforward — swap `CameraRtmpLiveStreamer` for `CameraSrtLiveStreamer` in `RtmpStreamingService.java` (or create a parallel `SrtStreamingService.java`).
+
+#### Workstream B: WebRTC Streaming for Miniapps
+
+Add a WebRTC (WHIP) streamer to Mentra Live so miniapps can receive low-latency video streams. Uses Cloudflare's WebRTC support (WHIP in, WHEP out).
+
+```
+Glasses ──WebRTC/WHIP──► Cloudflare ──WebRTC/WHEP──► Miniapp server/webview
+```
+
+**Important Cloudflare constraint:** WHIP and WHEP must be used together on Cloudflare. You cannot do WebRTC in and RTMP/HLS out, or RTMP/SRT in and WebRTC out. This is why WebRTC streaming is a separate path from managed livestreaming — they use independent Cloudflare live inputs.
+
+**What changes:**
+
+| Component            | Change                                                                       | Effort           |
+| -------------------- | ---------------------------------------------------------------------------- | ---------------- |
+| SDK                  | Add `startWebRTCStream()` method to camera module                            | Medium           |
+| Cloud backend        | Create Cloudflare live input with WebRTC enabled, return WHEP URL to miniapp | Medium           |
+| ASG Client (glasses) | Add WebRTC/WHIP streaming capability                                         | Medium-Large     |
+| SDK types            | Add `WebRTCStreamResult` with `whepUrl`                                      | Small            |
+| Miniapp consumption  | Miniapps receive `whepUrl` and connect via standard WebRTC                   | Small (SDK docs) |
+
+**WebRTC flow:**
+
+```
+1. Miniapp calls session.camera.startWebRTCStream()
+2. Cloud creates Cloudflare live input (WebRTC mode)
+3. Cloudflare returns WHIP URL (for glasses to push) and WHEP URL (for consumers to pull)
+4. Cloud sends WHIP URL to glasses → glasses start WebRTC stream to Cloudflare
+5. Cloud sends WHEP URL to miniapp → miniapp connects via WebRTC to watch
+```
+
+### Phase 1 Summary
+
+| Feature                 | Protocol           | Provider   | Latency | Use Case                                   |
+| ----------------------- | ------------------ | ---------- | ------- | ------------------------------------------ |
+| Managed livestreaming   | SRT in → RTMP out  | Cloudflare | 3-10s   | Twitch, YouTube, social platforms          |
+| Miniapp video streaming | WebRTC (WHIP/WHEP) | Cloudflare | <1s     | AI processing, AR overlays, real-time apps |
+
+**What we DON'T need for Phase 1:**
+
+- No new infrastructure (keep using Cloudflare)
+- No self-hosted media servers
+- No FFmpeg workers or re-encoding pipeline
+- No fallback frame injection
+- No China support (not needed yet)
+- No HLS generation (Cloudflare handles this for managed streams)
+
+### Phase 1 Tasks
+
+#### Workstream A: SRT for Managed Streams
+
+- [ ] Update `CloudflareStreamService.createLiveInput()` to extract and return SRT URL from Cloudflare response
+- [ ] Update `LiveInputResult` to include `srtUrl` field
+- [ ] Update `ManagedStreamingExtension` to send SRT URL to glasses instead of RTMP URL
+- [ ] Add SRT message type to SDK (or extend existing RTMP message to accept SRT URLs)
+- [ ] Add SRT streaming capability to ASG Client (evaluate: FFmpeg-based vs native SRT library vs phone relay)
+- [ ] Test SRT streaming end-to-end: glasses → Cloudflare → Twitch
+- [ ] Verify Cloudflare RTMP rebroadcast works with SRT input
+- [ ] Test reliability under poor Wi-Fi conditions (the whole point)
+
+#### Workstream B: WebRTC for Miniapps
+
+- [ ] Add `startWebRTCStream()` / `stopWebRTCStream()` to SDK camera module
+- [ ] Add WebRTC stream message types to SDK
+- [ ] Add cloud handler for WebRTC stream requests (create Cloudflare live input in WebRTC mode)
+- [ ] Return WHEP URL to miniapp via `ManagedStreamResult` or new `WebRTCStreamResult`
+- [ ] Add WebRTC/WHIP streaming capability to ASG Client
+- [ ] Create example miniapp that consumes WHEP stream
+- [ ] Document WHEP consumption for miniapp developers
+
+---
+
+# Phase 2: Mentra Stream Muxer (Self-Hosted)
 
 ## Overview
 
@@ -296,7 +447,8 @@ async createLiveInput(userId: string, options: CreateLiveInputOptions): Promise<
 **Option A: Environment-based switching**
 
 ```typescript
-const streamService = process.env.STREAM_PROVIDER === "muxer" ? new MuxerStreamService() : new CloudflareStreamService()
+const streamService =
+  process.env.STREAM_PROVIDER === "muxer" ? new MuxerStreamService() : new CloudflareStreamService();
 ```
 
 **Option B: Replace CloudflareStreamService entirely**
@@ -702,25 +854,25 @@ The miniapp server receives `whepUrl` from the cloud (in `ManagedStreamResult`, 
 ```javascript
 // In miniapp webview
 async function playWhepStream(whepUrl, videoElement) {
-  const pc = new RTCPeerConnection()
-  pc.addTransceiver("video", {direction: "recvonly"})
-  pc.addTransceiver("audio", {direction: "recvonly"})
+  const pc = new RTCPeerConnection();
+  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.addTransceiver("audio", { direction: "recvonly" });
 
   pc.ontrack = (event) => {
-    videoElement.srcObject = event.streams[0]
-  }
+    videoElement.srcObject = event.streams[0];
+  };
 
-  const offer = await pc.createOffer()
-  await pc.setLocalDescription(offer)
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
 
   const response = await fetch(whepUrl, {
     method: "POST",
-    headers: {"Content-Type": "application/sdp"},
+    headers: { "Content-Type": "application/sdp" },
     body: pc.localDescription.sdp,
-  })
+  });
 
-  const answer = await response.text()
-  await pc.setRemoteDescription({type: "answer", sdp: answer})
+  const answer = await response.text();
+  await pc.setRemoteDescription({ type: "answer", sdp: answer });
 }
 ```
 
@@ -779,13 +931,13 @@ In the SDK, `ManagedStreamResult` gains a `whepUrl` field:
 
 ```typescript
 interface ManagedStreamResult {
-  streamId: string
-  hlsUrl: string
-  dashUrl?: string
-  whepUrl: string // NEW — low-latency WebRTC playback
-  webrtcUrl?: string // deprecated Cloudflare field, use whepUrl instead
-  previewUrl?: string
-  thumbnailUrl?: string
+  streamId: string;
+  hlsUrl: string;
+  dashUrl?: string;
+  whepUrl: string; // NEW — low-latency WebRTC playback
+  webrtcUrl?: string; // deprecated Cloudflare field, use whepUrl instead
+  previewUrl?: string;
+  thumbnailUrl?: string;
 }
 ```
 
@@ -1022,9 +1174,9 @@ Structured JSON logs:
 
 ---
 
-## Implementation Phases
+## Phase 2 Implementation Phases
 
-### Phase 1: MVP (Week 1-2)
+### Phase 2a: MVP (Week 1-2)
 
 - [ ] Orchestrator with `local` mode
 - [ ] Basic API: create/delete/get live inputs (returns `whip`, `whep`, `hls` URLs)
@@ -1035,7 +1187,7 @@ Structured JSON logs:
 - [ ] Cloud integration (env-based switch)
 - [ ] `whepUrl` in `ManagedStreamResult` and `MANAGED_STREAM_STATUS`
 
-### Phase 2: Production Ready (Week 3-4)
+### Phase 2b: Production Ready (Week 3-4)
 
 - [ ] Kubernetes driver
 - [ ] Multiple outputs per stream
@@ -1044,7 +1196,7 @@ Structured JSON logs:
 - [ ] Error handling and retries
 - [ ] Documentation (including WHEP playback guide for miniapp developers)
 
-### Phase 3: Scale & Polish (Week 5+)
+### Phase 2c: Scale & Polish (Week 5+)
 
 - [ ] Improved fallback switching (GStreamer if FFmpeg isn't clean enough)
 - [ ] Prometheus metrics
@@ -1093,9 +1245,11 @@ Structured JSON logs:
 
 ## References
 
+- [Cloudflare Stream Live](https://developers.cloudflare.com/stream/stream-live/)
+- [Cloudflare Stream SRT Ingest](https://developers.cloudflare.com/stream/stream-live/start-stream-live/)
+- [Cloudflare WebRTC (WHIP/WHEP)](https://developers.cloudflare.com/stream/webrtc-beta/)
 - [MediaMTX Documentation](https://github.com/bluenviron/mediamtx)
 - [WHIP Specification](https://datatracker.ietf.org/doc/html/draft-ietf-wish-whip)
 - [WHEP Specification](https://datatracker.ietf.org/doc/html/draft-ietf-wish-whep)
-- [Cloudflare Stream API](https://developers.cloudflare.com/stream/stream-live/)
 - [FFmpeg Streaming Guide](https://trac.ffmpeg.org/wiki/StreamingGuide)
 - [Kubernetes Client for Node.js](https://github.com/kubernetes-client/javascript)
