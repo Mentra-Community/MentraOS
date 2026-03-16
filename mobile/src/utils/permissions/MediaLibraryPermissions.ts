@@ -18,6 +18,12 @@ interface AndroidGalleryAssetState {
   identifier?: string
 }
 
+export interface DeleteFromLibraryResult {
+  deleted: number
+  failed: number
+  skipped: number
+}
+
 /**
  * MediaLibraryPermissions - Handles save-only permissions for camera roll
  *
@@ -196,6 +202,71 @@ export class MediaLibraryPermissions {
     }
 
     return missing
+  }
+
+  static async deleteFromLibrary(files: DownloadedFile[]): Promise<DeleteFromLibraryResult> {
+    if (files.length === 0) {
+      return {deleted: 0, failed: 0, skipped: 0}
+    }
+
+    if (Platform.OS === "android") {
+      let deleted = 0
+      let failed = 0
+      let skipped = 0
+
+      for (const file of files) {
+        try {
+          let assetId = file.libraryAssetId
+          if (!assetId) {
+            const lookup = (await (CrustModule as any).findGalleryAssetByDisplayName(
+              this.getDisplayNameForLookup(file),
+              file.is_video,
+            )) as AndroidGalleryAssetState
+
+            if (lookup?.exists && lookup?.identifier) {
+              assetId = lookup.identifier
+            } else {
+              skipped++
+              continue
+            }
+          }
+
+          const result = (await (CrustModule as any).deleteGalleryAsset(assetId, file.is_video)) as {
+            success: boolean
+          }
+          if (result?.success) {
+            deleted++
+          } else {
+            failed++
+          }
+        } catch {
+          failed++
+        }
+      }
+
+      return {deleted, failed, skipped}
+    }
+
+    if (Platform.OS === "ios") {
+      const assetIds = files.map((file) => file.libraryAssetId).filter((id): id is string => !!id)
+      const skipped = files.length - assetIds.length
+
+      if (assetIds.length === 0) {
+        return {deleted: 0, failed: 0, skipped}
+      }
+
+      try {
+        const success = await ExpoMediaLibrary.deleteAssetsAsync(assetIds)
+        if (success) {
+          return {deleted: assetIds.length, failed: 0, skipped}
+        }
+        return {deleted: 0, failed: assetIds.length, skipped}
+      } catch {
+        return {deleted: 0, failed: assetIds.length, skipped}
+      }
+    }
+
+    return {deleted: 0, failed: 0, skipped: files.length}
   }
 
   private static getDisplayNameForLookup(file: DownloadedFile): string {

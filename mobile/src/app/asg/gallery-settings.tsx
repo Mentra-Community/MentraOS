@@ -16,6 +16,7 @@ import {useGallerySyncStore} from "@/stores/gallerySync"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
+import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 export default function GallerySettingsScreen() {
   const {goBack, push} = useNavigationHistory()
@@ -92,7 +93,7 @@ export default function GallerySettingsScreen() {
     }
 
     const itemText = totalLocalMedia === 1 ? "item" : "items"
-    const message = `This will permanently delete all ${totalLocalMedia} ${itemText} from your device. Photos saved to your camera roll will not be affected. This action cannot be undone.`
+    const message = `This will permanently delete all ${totalLocalMedia} ${itemText} from this app and also attempt to remove linked items from your phone gallery. This action cannot be undone.`
 
     showAlert("Delete All Photos", message, [
       {text: translate("common:cancel"), style: "cancel"},
@@ -101,6 +102,9 @@ export default function GallerySettingsScreen() {
         style: "destructive",
         onPress: async () => {
           try {
+            const existingFiles = await localStorageService.getDownloadedFiles()
+            const nativeDeleteResult = await MediaLibraryPermissions.deleteFromLibrary(Object.values(existingFiles))
+
             // console.log("[GallerySettings] 🗑️ Clearing all downloaded files and sync queue")
             await localStorageService.clearAllFiles()
 
@@ -111,7 +115,13 @@ export default function GallerySettingsScreen() {
             await gallerySyncService.queryGlassesGalleryStatus()
             // console.log("[GallerySettings] ✅ Cleared sync queue from store")
 
-            showAlert("Success", "All photos deleted from device storage", [{text: translate("common:ok")}])
+            const nativeSummary =
+              nativeDeleteResult.deleted > 0 || nativeDeleteResult.failed > 0 || nativeDeleteResult.skipped > 0
+                ? `\n\nPhone gallery: ${nativeDeleteResult.deleted} deleted, ${nativeDeleteResult.failed} failed, ${nativeDeleteResult.skipped} skipped.`
+                : ""
+            showAlert("Success", `All photos deleted from device storage.${nativeSummary}`, [
+              {text: translate("common:ok")},
+            ])
             loadStats() // Refresh stats
           } catch {
             showAlert("Error", "Failed to delete photos", [{text: translate("common:ok")}])

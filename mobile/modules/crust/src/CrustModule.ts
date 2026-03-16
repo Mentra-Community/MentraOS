@@ -72,6 +72,13 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
     trashed?: boolean
     identifier?: string
   }>
+
+  deleteGalleryAsset(
+    assetId: string,
+    isVideo?: boolean,
+  ): Promise<{
+    success: boolean
+  }>
 }
 
 // This call loads the native module object from the JSI.

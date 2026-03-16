@@ -380,5 +380,63 @@ class CrustModule : Module() {
 
       mapOf("exists" to false, "trashed" to false)
     }
+
+    AsyncFunction("deleteGalleryAsset") { assetId: String, isVideo: Boolean? ->
+      val context =
+        appContext.reactContext
+          ?: appContext.currentActivity
+            ?: throw IllegalStateException("No context available")
+
+      val mediaId = assetId.toLongOrNull()
+      if (mediaId == null) {
+        return@AsyncFunction mapOf("success" to false)
+      }
+
+      val resolver = context.contentResolver
+      val selection = "${MediaStore.MediaColumns._ID}=?"
+      val selectionArgs = arrayOf(mediaId.toString())
+
+      val uris =
+        when (isVideo) {
+          true ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+          false ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+          else ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+              },
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+        }
+
+      for (uri in uris) {
+        val deleted = resolver.delete(uri, selection, selectionArgs)
+        if (deleted > 0) {
+          return@AsyncFunction mapOf("success" to true)
+        }
+      }
+
+      mapOf("success" to false)
+    }
   }
 }
