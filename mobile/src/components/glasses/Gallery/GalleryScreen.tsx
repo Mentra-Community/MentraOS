@@ -9,6 +9,8 @@ import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {
   ActivityIndicator,
+  AppState,
+  AppStateStatus,
   Animated,
   BackHandler,
   Dimensions,
@@ -161,6 +163,21 @@ export function GalleryScreen() {
     try {
       // console.log("[GalleryScreen] 🔍 Loading downloaded photos from storage...")
       const downloadedFiles = await localStorageService.getDownloadedFiles()
+
+      // Mirror system-gallery deletions into Mentra local storage.
+      // If an item was saved to camera roll and that asset was deleted by user,
+      // remove the linked Mentra file/metadata as well.
+      const mirroredDeletes = await MediaLibraryPermissions.getMissingLinkedFileNames(downloadedFiles)
+      if (mirroredDeletes.length > 0) {
+        console.log(
+          `[GalleryScreen] 🗑️ Mirror-delete: found ${mirroredDeletes.length} items removed from system gallery`,
+        )
+        for (const fileName of mirroredDeletes) {
+          await localStorageService.deleteDownloadedFile(fileName)
+          delete downloadedFiles[fileName]
+        }
+      }
+
       const metadataLoadTime = Date.now()
       console.log(
         "[GalleryScreen] ⏱️ METADATA LOADED at",
@@ -619,6 +636,20 @@ export function GalleryScreen() {
       loadDownloadedPhotos()
     }, []),
   )
+
+  // Refresh gallery when app returns to foreground (e.g. user deletes items in system gallery).
+  useEffect(() => {
+    let previousState = AppState.currentState
+    const subscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      if (previousState.match(/inactive|background/) && nextState === "active") {
+        console.log("[GalleryScreen] App foregrounded - reconciling gallery with system library")
+        loadDownloadedPhotos()
+      }
+      previousState = nextState
+    })
+
+    return () => subscription.remove()
+  }, [loadDownloadedPhotos])
 
   // Handle back button
   useFocusEffect(
