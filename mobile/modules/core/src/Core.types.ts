@@ -211,6 +211,11 @@ export type OtaProgressEvent = {
   error_message?: string
 }
 
+export type OtaStartAckEvent = {
+  type: "ota_start_ack"
+  timestamp: number
+}
+
 // Union type of all core events
 export type CoreEvent = Parameters<CoreModuleEvents[keyof CoreModuleEvents]>[0]
 
@@ -250,6 +255,7 @@ export type CoreModuleEvents = {
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
   ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_progress: (event: OtaProgressEvent) => void
+  ota_start_ack: (event: OtaStartAckEvent) => void
 }
 
 export type GlassesConnectionState = "disconnected" | "connected" | "connecting"

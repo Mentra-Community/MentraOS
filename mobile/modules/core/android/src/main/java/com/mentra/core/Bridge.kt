@@ -508,6 +508,14 @@ public class Bridge private constructor() {
             sendTypedMessage("ota_update_available", eventBody as Map<String, Any>)
         }
 
+        /** Send ota_start_ack — glasses confirmed receipt of ota_start command */
+        @JvmStatic
+        fun sendOtaStartAck() {
+            val eventBody = HashMap<String, Any>()
+            eventBody["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("ota_start_ack", eventBody as Map<String, Any>)
+        }
+
         /** Send OTA progress update - glasses are downloading/installing an update */
         @JvmStatic
         fun sendOtaProgress(

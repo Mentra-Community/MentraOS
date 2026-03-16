@@ -201,18 +201,22 @@ function OriginalButton(props: ButtonProps) {
             </View>
           )}
 
-          <Text
-            tx={tx}
-            text={text}
-            txOptions={txOptions}
-            style={[
-              $textStyle(state),
-              {textAlign: props.textAlignment === "left" ? "left" : "center"},
-              !!LeftAccessory && {paddingLeft: 28},
-              !!RightAccessory && {paddingRight: 28},
-            ]}>
-            {children}
-          </Text>
+          {!tx && !text && children ? (
+            children
+          ) : (
+            <Text
+              tx={tx}
+              text={text}
+              txOptions={txOptions}
+              style={[
+                $textStyle(state),
+                {textAlign: props.textAlignment === "left" ? "left" : "center"},
+                !!LeftAccessory && {paddingLeft: 28},
+                !!RightAccessory && {paddingRight: 28},
+              ]}>
+              {children}
+            </Text>
+          )}
 
           {!!RightAccessory && (
             <View style={{position: "absolute", right: 0, alignItems: "center", justifyContent: "center"}}>
@@ -255,8 +259,8 @@ const $compactIconStyle: StyleProp<ViewStyle> = {
 
 const $baseTextStyle: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
-  lineHeight: 20,
   textAlign: "center",
+  textAlignVertical: "center",
   flexShrink: 1,
   flexGrow: 0,
   zIndex: 2,

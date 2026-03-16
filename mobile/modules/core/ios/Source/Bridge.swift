@@ -308,6 +308,14 @@ class Bridge {
         Bridge.sendTypedMessage("mtk_update_complete", body: eventBody)
     }
 
+    /// Send ota_start_ack — glasses confirmed receipt of ota_start command
+    static func sendOtaStartAck() {
+        let eventBody: [String: Any] = [
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+        Bridge.sendTypedMessage("ota_start_ack", body: eventBody)
+    }
+
     /// Send OTA update available notification - glasses have detected an available update (background mode)
     static func sendOtaUpdateAvailable(
         versionCode: Int64,

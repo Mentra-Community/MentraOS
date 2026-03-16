@@ -100,6 +100,7 @@ export const DeviceStatus = ({style}: {style?: ViewStyle}) => {
     if (searching) {
       await CoreModule.disconnect()
       setIsCheckingConnectivity(false)
+      setWasSearching(false)
     } else {
       await connectGlasses()
     }
@@ -123,7 +124,19 @@ export const DeviceStatus = ({style}: {style?: ViewStyle}) => {
     return image
   }
 
-  let isSearching = searching || isCheckingConnectivity
+  // Delay clearing search state to prevent a flash of "Connect" button
+  // when searching ends but connected/fullyBooted haven't updated yet
+  const [wasSearching, setWasSearching] = useState(false)
+  useEffect(() => {
+    if (searching) {
+      setWasSearching(true)
+    } else if (wasSearching) {
+      const timer = setTimeout(() => setWasSearching(false), 500)
+      return () => clearTimeout(timer)
+    }
+  }, [searching])
+
+  let isSearching = searching || isCheckingConnectivity || wasSearching
   let connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
@@ -179,7 +192,7 @@ export const DeviceStatus = ({style}: {style?: ViewStyle}) => {
                   onPress={handleConnectOrDisconnect}>
                   <View className="flex-row items-center gap-2 flex-1">
                     <ActivityIndicator size="small" color={theme.colors.foreground} />
-                    <Text className="text-secondary-foreground text-sm" text={translate("common:cancel")} />
+                    <Text className="text-secondary-foreground" style={{fontSize: 14}} text={translate("common:cancel")} />
                   </View>
                 </Button>
               )}

@@ -101,7 +101,7 @@ struct ViewState {
     // state
     // var lastStatusObj: [String: Any] = [:]
 
-    // settings:
+    /// settings:
     private var defaultWearable: String {
         get { GlassesStore.shared.get("core", "default_wearable") as? String ?? "" }
         set { GlassesStore.shared.apply("core", "default_wearable", newValue) }
@@ -184,7 +184,7 @@ struct ViewState {
         set { GlassesStore.shared.apply("core", "contextual_dashboard", newValue) }
     }
 
-    // state:
+    /// state:
     private var shouldSendPcmData: Bool {
         get { GlassesStore.shared.get("core", "shouldSendPcmData") as? Bool ?? false }
         set { GlassesStore.shared.apply("core", "shouldSendPcmData", newValue) }
@@ -257,14 +257,14 @@ struct ViewState {
         set { GlassesStore.shared.apply("core", "otherBtConnected", newValue) }
     }
 
-    // LC3 Audio Encoding
-    // Audio output format enum
+    /// LC3 Audio Encoding
+    /// Audio output format enum
     enum AudioOutputFormat { case lc3, pcm }
-    // Canonical LC3 config: 16kHz sample rate, 10ms frame duration
-    // Frame size is configurable: 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps)
-    // Persistent LC3 converter for encoding/decoding
+    /// Canonical LC3 config: 16kHz sample rate, 10ms frame duration
+    /// Frame size is configurable: 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps)
+    /// Persistent LC3 converter for encoding/decoding
     var lc3Converter: PcmConverter?
-    // Audio output format - defaults to LC3 for bandwidth savings
+    /// Audio output format - defaults to LC3 for bandwidth savings
     private var audioOutputFormat: AudioOutputFormat = .lc3
 
     // VAD:
@@ -272,7 +272,7 @@ struct ViewState {
     private var vadBuffer = [Data]()
     private var isSpeaking = false
 
-    // STT:
+    /// STT:
     private var transcriber: SherpaOnnxTranscriber?
 
     var viewStates: [ViewState] = [
@@ -437,7 +437,8 @@ struct ViewState {
                 UnsafeBufferPointer(
                     start: pointer.bindMemory(to: Int16.self).baseAddress,
                     count: pointer.count / MemoryLayout<Int16>.stride
-                ))
+                )
+            )
         }
 
         vad.checkVAD(pcm: pcmDataArray) { [weak self] state in
@@ -603,7 +604,7 @@ struct ViewState {
         // Create a dispatch queue for the animation
         let animationQueue = DispatchQueue.global(qos: .userInteractive)
 
-        // Function to display the current animation frame
+        /// Function to display the current animation frame
         func displayFrame() {
             // Check if we've completed all cycles
             if cycles >= totalCycles {
@@ -800,7 +801,8 @@ struct ViewState {
 
         // check if the device disconnected:
         let isConnected = AudioSessionMonitor.isAudioDeviceConnected(
-            devicePattern: audioDevicePattern)
+            devicePattern: audioDevicePattern
+        )
 
         if !isConnected {
             Bridge.log("MAN: Device '\(deviceName)' disconnected")
@@ -1113,13 +1115,15 @@ struct ViewState {
 
     func saveBufferVideo(_ requestId: String, _ durationSeconds: Int) {
         Bridge.log(
-            "MAN: onSaveBufferVideo: requestId=\(requestId), duration=\(durationSeconds)s")
+            "MAN: onSaveBufferVideo: requestId=\(requestId), duration=\(durationSeconds)s"
+        )
         sgc?.saveBufferVideo(requestId: requestId, durationSeconds: durationSeconds)
     }
 
     func startVideoRecording(_ requestId: String, _ save: Bool, _ flash: Bool, _ sound: Bool) {
         Bridge.log(
-            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound)")
+            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound)"
+        )
         sgc?.startVideoRecording(requestId: requestId, save: save, flash: flash, sound: sound)
     }
 
@@ -1129,10 +1133,15 @@ struct ViewState {
     }
 
     func setMicState(_ sendPcm: Bool, _ sendTranscript: Bool, _ bypassVadForPCM: Bool) {
-        Bridge.log("MAN: setMicState(\(sendPcm),\(sendTranscript),\(bypassVadForPCM))")
+        // If offline captions are running locally, always keep transcript on
+        let offlineCaptionsRunning = GlassesStore.shared.get("core", "offline_captions_running") as? Bool ?? false
+        let effectiveSendTranscript = sendTranscript || offlineCaptionsRunning
+
+        let suffix = (offlineCaptionsRunning && !sendTranscript) ? " (offline captions forced transcript on)" : ""
+        Bridge.log("MAN: setMicState(\(sendPcm),\(effectiveSendTranscript),\(bypassVadForPCM))\(suffix)")
 
         shouldSendPcmData = sendPcm
-        shouldSendTranscript = sendTranscript
+        shouldSendTranscript = effectiveSendTranscript
         bypassVad = bypassVadForPCM
 
         micEnabled = shouldSendPcmData || shouldSendTranscript

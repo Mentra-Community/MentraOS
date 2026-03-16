@@ -524,6 +524,13 @@ class MantleManager {
       )
 
       this.subs.push(
+        CoreModule.addListener("ota_start_ack", (event) => {
+          console.log("MANTLE: ota_start_ack received from glasses")
+          GlobalEventEmitter.emit("ota_start_ack", {timestamp: event.timestamp})
+        }),
+      )
+
+      this.subs.push(
         CoreModule.addListener("ota_progress", (event) => {
           console.log("📱 MANTLE: OTA progress:", event.stage, event.status, event.progress + "%")
           useGlassesStore.getState().setOtaProgress({

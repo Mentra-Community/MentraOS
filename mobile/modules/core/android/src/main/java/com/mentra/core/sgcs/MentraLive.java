@@ -2231,6 +2231,12 @@ public class MentraLive extends SGCManager {
                 }
                 break;
 
+            case "ota_start_ack":
+                // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
+                Bridge.log("LIVE: 📱 Received ota_start_ack from glasses");
+                Bridge.sendOtaStartAck();
+                break;
+
             case "ota_progress":
                 // Process OTA progress update from glasses
                 String otaStage = json.optString("stage", "download");

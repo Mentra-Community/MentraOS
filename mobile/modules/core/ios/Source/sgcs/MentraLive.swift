@@ -1885,6 +1885,11 @@ class MentraLive: NSObject, SGCManager {
                 totalSize: totalSize
             )
 
+        case "ota_start_ack":
+            // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
+            Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
+            Bridge.sendOtaStartAck()
+
         case "ota_progress":
             // Process OTA progress update from glasses
             let stage = json["stage"] as? String ?? "download"

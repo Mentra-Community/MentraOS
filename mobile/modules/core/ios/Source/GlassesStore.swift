@@ -202,8 +202,8 @@ class GlassesStore {
             if let mic = value as? String {
                 apply("core", "micRanking", MicMap.map[mic] ?? MicMap.map["auto"]!)
                 CoreManager.shared.setMicState(
-                    store.get("core", "should_send_pcm_data") as? Bool ?? false,
-                    store.get("core", "should_send_transcript") as? Bool ?? false,
+                    store.get("core", "shouldSendPcmData") as? Bool ?? false,
+                    store.get("core", "shouldSendTranscript") as? Bool ?? false,
                     store.get("core", "bypass_vad") as? Bool ?? true
                 )
             }
@@ -213,11 +213,9 @@ class GlassesStore {
                 Bridge.log("GlassesStore: offline_captions_running changed to \(running)")
                 // When offline captions are enabled, start the microphone for local transcription
                 // When disabled, stop the microphone
-                // set should_send_transcript to true if running is true, otherwise false
-                let shouldSendTranscript = running
                 CoreManager.shared.setMicState(
-                    store.get("core", "should_send_pcm_data") as? Bool ?? false,
-                    shouldSendTranscript,
+                    store.get("core", "shouldSendPcmData") as? Bool ?? false,
+                    running,
                     store.get("core", "bypass_vad") as? Bool ?? true
                 )
             }
@@ -225,8 +223,8 @@ class GlassesStore {
         case ("core", "enforce_local_transcription"):
             if let enabled = value as? Bool {
                 CoreManager.shared.setMicState(
-                    store.get("core", "should_send_pcm_data") as? Bool ?? false,
-                    store.get("core", "should_send_transcript") as? Bool ?? false,
+                    store.get("core", "shouldSendPcmData") as? Bool ?? false,
+                    store.get("core", "shouldSendTranscript") as? Bool ?? false,
                     store.get("core", "bypass_vad") as? Bool ?? true
                 )
             }

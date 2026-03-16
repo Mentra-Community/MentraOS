@@ -244,14 +244,15 @@ export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreA
               <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:settings" />
             </View>
 
-            {isUninstallable && (
+            {/* Uninstall removed from 3-dot menu - users can uninstall from miniapp settings page */}
+            {/* {isUninstallable && (
               <View className="flex-col gap-2 items-center w-1/4">
                 <Button compactIcon onPress={handleUninstall} preset="alternate" className="rounded-2xl w-16 h-16">
                   <Icon name="trash" color={theme.colors.destructive} size={size} />
                 </Button>
                 <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:uninstall" />
               </View>
-            )}
+            )} */}
           </View>
 
           <View className="flex-1" />

@@ -24,7 +24,7 @@ import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/Navigatio
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
-import {useApplets, useAppletStatusStore, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
+import {useApplets, useAppletStatusStore, useRefreshApplets, useStartApplet, useStopApplet, SYSTEM_APPS} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
@@ -220,7 +220,7 @@ export default function AppSettings() {
           name: appInfo?.name || appName,
           description: translate("appSettings:noDescription"),
           settings: [],
-          uninstallable: true,
+          uninstallable: !SYSTEM_APPS.includes(packageName),
         })
         setSettingsState({})
         setHasCachedSettings(false)
@@ -711,7 +711,7 @@ export default function AppSettings() {
             label={translate("appSettings:uninstall")}
             preset="destructive"
             onPress={() => {
-              if (serverAppInfo?.uninstallable) {
+              if (serverAppInfo?.uninstallable && !SYSTEM_APPS.includes(packageName)) {
                 handleUninstallApp()
               } else {
                 showAlert(translate("appSettings:cannotUninstall"), translate("appSettings:cannotUninstallMessage"), [
@@ -719,7 +719,7 @@ export default function AppSettings() {
                 ])
               }
             }}
-            disabled={!serverAppInfo?.uninstallable}
+            disabled={!serverAppInfo?.uninstallable || SYSTEM_APPS.includes(packageName)}
           />
 
           {/* Bottom safe area padding */}

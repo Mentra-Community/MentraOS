@@ -1166,10 +1166,15 @@ class CoreManager {
     }
 
     fun setMicState(sendPcm: Boolean, sendTranscript: Boolean, bypassVadForPCM: Boolean) {
-        Bridge.log("MAN: MIC: setMicState($sendPcm, $sendTranscript, $bypassVad)")
+        // If offline captions are running locally, always keep transcript on
+        val offlineCaptionsRunning = GlassesStore.store.get("core", "offline_captions_running") as? Boolean ?: false
+        val effectiveSendTranscript = sendTranscript || offlineCaptionsRunning
+
+        Bridge.log("MAN: MIC: setMicState($sendPcm, $effectiveSendTranscript, $bypassVadForPCM)" +
+            if (offlineCaptionsRunning && !sendTranscript) " (offline captions forced transcript on)" else "")
 
         shouldSendPcmData = sendPcm
-        shouldSendTranscript = sendTranscript
+        shouldSendTranscript = effectiveSendTranscript
         bypassVad = bypassVadForPCM
 
         vadBuffer.clear()
