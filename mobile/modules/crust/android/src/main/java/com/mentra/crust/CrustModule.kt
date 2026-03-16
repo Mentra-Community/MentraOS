@@ -3,6 +3,7 @@ package com.mentra.crust
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.net.URL
+import android.provider.MediaStore
 
 class CrustModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -202,11 +203,22 @@ class CrustModule : Module() {
             resolver.update(uri, values, null, null)
           }
 
+          val mediaId =
+            try {
+              android.content.ContentUris.parseId(uri).toString()
+            } catch (_: Exception) {
+              null
+            }
+
           android.util.Log.d(
             "CrustModule",
-            "Successfully saved to gallery with proper DATE_TAKEN: ${file.name}"
+            "Successfully saved to gallery with proper DATE_TAKEN: ${file.name}, mediaId=$mediaId"
           )
-          mapOf("success" to true, "uri" to uri.toString())
+          mapOf(
+            "success" to true,
+            "uri" to uri.toString(),
+            "identifier" to mediaId
+          )
         } catch (e: Exception) {
           resolver.delete(uri, null, null)
           throw e
@@ -215,6 +227,158 @@ class CrustModule : Module() {
         android.util.Log.e("CrustModule", "Error saving to gallery: ${e.message}", e)
         mapOf("success" to false, "error" to e.message)
       }
+    }
+
+    AsyncFunction("getGalleryAssetState") { assetId: String, isVideo: Boolean? ->
+      val context =
+        appContext.reactContext
+          ?: appContext.currentActivity
+            ?: throw IllegalStateException("No context available")
+
+      val mediaId = assetId.toLongOrNull()
+      if (mediaId == null) {
+        return@AsyncFunction mapOf("exists" to false, "trashed" to false)
+      }
+
+      val resolver = context.contentResolver
+      val projection = arrayOf(
+        MediaStore.MediaColumns._ID,
+        "is_trashed"
+      )
+      val selection = "${MediaStore.MediaColumns._ID}=?"
+      val selectionArgs = arrayOf(mediaId.toString())
+
+      val uris =
+        when (isVideo) {
+          true ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+          false ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+          else ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+              },
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+        }
+
+      for (uri in uris) {
+        resolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
+          if (cursor.moveToFirst()) {
+            val trashedIndex = cursor.getColumnIndex("is_trashed")
+            val trashed = trashedIndex >= 0 && cursor.getInt(trashedIndex) == 1
+            return@AsyncFunction mapOf("exists" to true, "trashed" to trashed)
+          }
+        }
+      }
+
+      mapOf("exists" to false, "trashed" to false)
+    }
+
+    AsyncFunction("findGalleryAssetByDisplayName") { displayName: String, isVideo: Boolean? ->
+      val context =
+        appContext.reactContext
+          ?: appContext.currentActivity
+            ?: throw IllegalStateException("No context available")
+
+      if (displayName.isBlank()) {
+        return@AsyncFunction mapOf("exists" to false, "trashed" to false)
+      }
+
+      val resolver = context.contentResolver
+      val projection = arrayOf(
+        MediaStore.MediaColumns._ID,
+        "is_trashed"
+      )
+
+      val uris =
+        when (isVideo) {
+          true ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+          false ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+          else ->
+            listOf(
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+              },
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+              } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+              }
+            )
+        }
+
+      for (uri in uris) {
+        val (selection, selectionArgs) =
+          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            Pair(
+              "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+              arrayOf(displayName, "DCIM/Camera%")
+            )
+          } else {
+            Pair(
+              "${MediaStore.MediaColumns.DISPLAY_NAME}=?",
+              arrayOf(displayName)
+            )
+          }
+
+        resolver.query(
+          uri,
+          projection,
+          selection,
+          selectionArgs,
+          "${MediaStore.MediaColumns.DATE_ADDED} DESC"
+        )?.use { cursor ->
+          if (cursor.moveToFirst()) {
+            val idIndex = cursor.getColumnIndex(MediaStore.MediaColumns._ID)
+            val id = if (idIndex >= 0) cursor.getLong(idIndex).toString() else null
+            val trashedIndex = cursor.getColumnIndex("is_trashed")
+            val trashed = trashedIndex >= 0 && cursor.getInt(trashedIndex) == 1
+            return@AsyncFunction mapOf(
+              "exists" to true,
+              "trashed" to trashed,
+              "identifier" to id
+            )
+          }
+        }
+      }
+
+      mapOf("exists" to false, "trashed" to false)
     }
   }
 }
