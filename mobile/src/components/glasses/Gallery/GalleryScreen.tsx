@@ -682,10 +682,15 @@ export function GalleryScreen() {
 
     const items: GalleryItem[] = []
 
-    // Show photos from the sync queue in chronological order (newest first for UX)
-    // Files download in chronological order (oldest first), but we re-sort for display
-    // Keep showing queue even when state transitions to idle after sync
-    if (syncQueue.length > 0) {
+    // Show sync queue only while sync is active or finalizing.
+    // In idle state, queue entries can become stale and should not be rendered.
+    const shouldShowSyncQueue =
+      syncState === "requesting_hotspot" ||
+      syncState === "connecting_wifi" ||
+      syncState === "syncing" ||
+      syncState === "complete"
+
+    if (shouldShowSyncQueue && syncQueue.length > 0) {
       console.log(`[GalleryScreen] 📋 syncQueue contains:`)
       syncQueue.forEach((photo, idx) => {
         console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name} (filePath: ${photo.filePath ? "✅" : "❌"})`)
@@ -711,7 +716,7 @@ export function GalleryScreen() {
     }
 
     // Downloaded photos (exclude any that are in the sync queue or are AVIF artifacts)
-    const syncQueueNames = new Set(syncQueue.map((p) => p.name))
+    const syncQueueNames = shouldShowSyncQueue ? new Set(syncQueue.map((p) => p.name)) : new Set<string>()
     // console.log(
     //   `[GalleryScreen] 🚫 Will exclude these names from downloadedPhotos: ${Array.from(syncQueueNames).join(", ")}`,
     // )

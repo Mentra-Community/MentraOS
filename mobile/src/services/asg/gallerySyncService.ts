@@ -1796,6 +1796,7 @@ class GallerySyncService {
       if (currentStore.syncState === "complete") {
         console.log("[GallerySyncService]   🔄 Auto-resetting sync state to idle")
         currentStore.setSyncState("idle")
+        currentStore.clearQueue()
       }
     }, 4000)
 
