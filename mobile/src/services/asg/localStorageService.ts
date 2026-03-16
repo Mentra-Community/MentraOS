@@ -20,6 +20,8 @@ export interface DownloadedFile {
   glassesModel?: string // Model of glasses that captured this media
   duration?: number // Video duration in milliseconds
   capture_id?: string // Capture folder name (when synced via capture-aware pipeline)
+  libraryAssetId?: string // System gallery asset identifier (for mirror-delete reconciliation)
+  libraryAssetUri?: string // System gallery URI (platform-specific fallback/debug)
 }
 
 interface SyncState {
@@ -298,6 +300,7 @@ export class LocalStorageService {
     filePath: string,
     thumbnailPath?: string,
     glassesModel?: string,
+    libraryInfo?: {assetId?: string; assetUri?: string},
   ): DownloadedFile {
     return {
       name: photoInfo.name,
@@ -310,6 +313,8 @@ export class LocalStorageService {
       downloaded_at: Date.now(),
       glassesModel: glassesModel || photoInfo.glassesModel,
       duration: photoInfo.duration,
+      libraryAssetId: libraryInfo?.assetId,
+      libraryAssetUri: libraryInfo?.assetUri,
     }
   }
 

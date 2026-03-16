@@ -193,12 +193,16 @@ class MediaProcessingQueue {
     }
 
     // 5. Save to camera roll
+    let libraryAssetId: string | undefined
+    let libraryAssetUri: string | undefined
     if (item.shouldAutoSave) {
-      const success = await MediaLibraryPermissions.saveToLibrary(filePathToSave, item.timestamp)
-      if (success) {
+      const saveResult = await MediaLibraryPermissions.saveToLibrary(filePathToSave, item.timestamp)
+      if (saveResult.success) {
+        libraryAssetId = saveResult.assetId
+        libraryAssetUri = saveResult.assetUri
         console.log(`${TAG} ✅ Saved to camera roll: ${item.id}`)
       } else {
-        console.warn(`${TAG} ❌ Failed to save to camera roll: ${item.id}`)
+        console.warn(`${TAG} ❌ Failed to save to camera roll: ${item.id} (${saveResult.error || "unknown error"})`)
       }
     }
 
@@ -220,6 +224,7 @@ class MediaProcessingQueue {
       filePathToSave,
       localThumbnailPath,
       item.glassesModel,
+      {assetId: libraryAssetId, assetUri: libraryAssetUri},
     )
     await localStorageService.saveDownloadedFile(downloadedFile)
 

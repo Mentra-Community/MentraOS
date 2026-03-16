@@ -1355,7 +1355,6 @@ class GallerySyncService {
               }
 
               // Enqueue for background processing (non-blocking)
-              const isPhoto = downloadedFile.name?.match(/\.(jpg|jpeg|png)$/i)
               const isVideo = downloadedFile.name?.match(/\.(mp4|mov)$/i)
               const leaf = downloadedFile.name?.includes("/")
                 ? downloadedFile.name.substring(downloadedFile.name.lastIndexOf("/") + 1)
@@ -1707,8 +1706,8 @@ class GallerySyncService {
       }
 
       // Save to camera roll with capture time for logging
-      const success = await MediaLibraryPermissions.saveToLibrary(filePath, captureTime)
-      if (success) {
+      const saveResult = await MediaLibraryPermissions.saveToLibrary(filePath, captureTime)
+      if (saveResult.success) {
         savedCount++
       } else {
         failedCount++

@@ -1,13 +1,28 @@
 import {Platform} from "react-native"
 import {check, request, PERMISSIONS, RESULTS} from "react-native-permissions"
+import * as ExpoMediaLibrary from "expo-media-library"
 
 import CrustModule from "crust"
+import type {DownloadedFile} from "@/services/asg/localStorageService"
+
+export interface SaveToLibraryResult {
+  success: boolean
+  assetId?: string
+  assetUri?: string
+  error?: string
+}
+
+interface AndroidGalleryAssetState {
+  exists: boolean
+  trashed?: boolean
+  identifier?: string
+}
 
 /**
  * MediaLibraryPermissions - Handles save-only permissions for camera roll
  *
  * Platform behavior:
- * - iOS: Uses PHOTO_LIBRARY_ADD_ONLY (no "select photos" prompt, just save access)
+ * - iOS: Uses PHOTO_LIBRARY (read/write) so we can reconcile deletes from the system gallery
  * - Android 10+ (API 29+): No permission needed to save your own files to MediaStore
  * - Android 9-: Uses WRITE_EXTERNAL_STORAGE (legacy)
  */
@@ -19,7 +34,7 @@ export class MediaLibraryPermissions {
   static async checkPermission(): Promise<boolean> {
     try {
       if (Platform.OS === "ios") {
-        const status = await check(PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY)
+        const status = await check(PERMISSIONS.IOS.PHOTO_LIBRARY)
         return status === RESULTS.GRANTED || status === RESULTS.LIMITED
       }
 
@@ -48,7 +63,7 @@ export class MediaLibraryPermissions {
   static async requestPermission(): Promise<boolean> {
     try {
       if (Platform.OS === "ios") {
-        const status = await request(PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY)
+        const status = await request(PERMISSIONS.IOS.PHOTO_LIBRARY)
         return status === RESULTS.GRANTED || status === RESULTS.LIMITED
       }
 
@@ -81,7 +96,7 @@ export class MediaLibraryPermissions {
    * @param filePath - Path to the file to save
    * @param creationTime - Optional creation/capture time in milliseconds (Unix timestamp)
    */
-  static async saveToLibrary(filePath: string, creationTime?: number): Promise<boolean> {
+  static async saveToLibrary(filePath: string, creationTime?: number): Promise<SaveToLibraryResult> {
     try {
       // On Android 10+, we can save without permission
       // On iOS and older Android, check permission first
@@ -92,7 +107,7 @@ export class MediaLibraryPermissions {
           const granted = await this.requestPermission()
           if (!granted) {
             console.warn("[MediaLibrary] No permission to save to library - photos saved to app storage only")
-            return false
+            return {success: false, error: "Permission denied"}
           }
         }
       }
@@ -105,6 +120,10 @@ export class MediaLibraryPermissions {
       const result = await CrustModule.saveToGalleryWithDate(cleanPath, creationTime)
 
       if (result.success) {
+        const assetId =
+          typeof result.identifier === "string" && result.identifier.length > 0 ? result.identifier : undefined
+        const assetUri = typeof result.uri === "string" && result.uri.length > 0 ? result.uri : undefined
+
         if (creationTime) {
           const captureDate = new Date(creationTime)
           console.log(
@@ -113,14 +132,78 @@ export class MediaLibraryPermissions {
         } else {
           console.log(`[MediaLibrary] Saved to camera roll: ${cleanPath}`)
         }
-        return true
+        return {success: true, assetId, assetUri}
       } else {
         console.error(`[MediaLibrary] Failed to save to library: ${result.error}`)
-        return false
+        return {success: false, error: result.error || "Failed to save to library"}
       }
     } catch (error) {
       console.error("[MediaLibrary] Error saving to library:", error)
-      return false
+      return {success: false, error: error instanceof Error ? error.message : "Unknown error"}
     }
+  }
+
+  /**
+   * Returns local file names whose linked phone-gallery assets no longer exist.
+   * Used to mirror user deletes from the system gallery into Mentra local storage.
+   */
+  static async getMissingLinkedFileNames(files: Record<string, DownloadedFile>): Promise<string[]> {
+    const fileEntries = Object.entries(files)
+    if (fileEntries.length === 0) return []
+
+    const canReadLibrary = await this.checkPermission()
+    if (!canReadLibrary) {
+      // No read permission means we cannot safely reconcile; skip without deleting anything.
+      console.log("[MediaLibrary] Skipping mirror-delete reconciliation: no photo library read access")
+      return []
+    }
+
+    const missing: string[] = []
+    for (const [fileName, file] of fileEntries) {
+      try {
+        if (Platform.OS === "android") {
+          const displayName = this.getDisplayNameForLookup(file)
+          const state = file.libraryAssetId
+            ? ((await (CrustModule as any).getGalleryAssetState(
+                file.libraryAssetId,
+                file.is_video,
+              )) as AndroidGalleryAssetState)
+            : ((await (CrustModule as any).findGalleryAssetByDisplayName(
+                displayName,
+                file.is_video,
+              )) as AndroidGalleryAssetState)
+
+          // Treat trashed assets as deleted from user's perspective.
+          if (!state?.exists || state?.trashed) {
+            missing.push(fileName)
+          }
+          continue
+        }
+
+        if (!file.libraryAssetId) {
+          // iOS fallback without a stored asset ID is not deterministic; skip.
+          continue
+        }
+
+        const assetInfo = await ExpoMediaLibrary.getAssetInfoAsync(file.libraryAssetId)
+        if (!assetInfo?.id) {
+          missing.push(fileName)
+        }
+      } catch {
+        // getAssetInfoAsync throws when asset is missing/invalid.
+        missing.push(fileName)
+      }
+    }
+
+    return missing
+  }
+
+  private static getDisplayNameForLookup(file: DownloadedFile): string {
+    const normalizedPath = file.filePath.replace("file://", "")
+    const lastSlash = normalizedPath.lastIndexOf("/")
+    if (lastSlash >= 0 && lastSlash < normalizedPath.length - 1) {
+      return normalizedPath.substring(lastSlash + 1)
+    }
+    return file.name
   }
 }
