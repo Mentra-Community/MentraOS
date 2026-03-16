@@ -918,9 +918,7 @@ public class AsgCameraServer extends AsgServer {
                         if (dirFiles != null) {
                             for (File f : dirFiles) {
                                 dirSize += f.length();
-                                if (isVideoFile(f.getName())) {
-                                    fileManager.getThumbnailManager().deleteThumbnailForVideo(f);
-                                }
+                                fileManager.getThumbnailManager().deleteThumbnailForFile(f);
                                 f.delete();
                             }
                         }
@@ -936,9 +934,7 @@ public class AsgCameraServer extends AsgServer {
                             for (File f : allFiles) {
                                 if (f.isFile() && f.getName().startsWith(fileName)) {
                                     dirSize += f.length();
-                                    if (isVideoFile(f.getName())) {
-                                        fileManager.getThumbnailManager().deleteThumbnailForVideo(f);
-                                    }
+                                    fileManager.getThumbnailManager().deleteThumbnailForFile(f);
                                     if (f.delete()) {
                                         deletedCount++;
                                         logger.debug(TAG, "🗑️ Deleted flat file: " + f.getName());
@@ -970,11 +966,8 @@ public class AsgCameraServer extends AsgServer {
                     FileMetadata metadata = fileManager.getFileMetadata(fileManager.getDefaultPackageName(), fileName);
                     long fileSize = metadata != null ? metadata.getFileSize() : 0;
 
-                    // If it's a video file, get the file reference before deletion for thumbnail cleanup
-                    File videoFile = null;
-                    if (isVideoFile(fileName)) {
-                        videoFile = fileManager.getFile(fileManager.getDefaultPackageName(), fileName);
-                    }
+                    // Get file reference before deletion for thumbnail cleanup
+                    File mediaFile = fileManager.getFile(fileManager.getDefaultPackageName(), fileName);
 
                     // Delete the file
                     FileOperationResult deleteResult = fileManager.deleteFile(fileManager.getDefaultPackageName(), fileName);
@@ -990,14 +983,14 @@ public class AsgCameraServer extends AsgServer {
                         totalDeletedSize += fileSize;
                         logger.debug(TAG, "🗑️ Successfully deleted: " + fileName + " (" + fileSize + " bytes)");
 
-                        // If it's a video file, also delete its thumbnail
-                        if (videoFile != null) {
-                            logger.debug(TAG, "🗑️ Deleting thumbnail for video: " + fileName);
-                            boolean thumbnailDeleted = fileManager.getThumbnailManager().deleteThumbnailForVideo(videoFile);
+                        // Delete thumbnail cache for this media file (video and image thumbnails supported)
+                        if (mediaFile != null) {
+                            logger.debug(TAG, "🗑️ Deleting thumbnail for media: " + fileName);
+                            boolean thumbnailDeleted = fileManager.getThumbnailManager().deleteThumbnailForFile(mediaFile);
                             if (thumbnailDeleted) {
-                                logger.debug(TAG, "🗑️ Thumbnail deleted for video: " + fileName);
+                                logger.debug(TAG, "🗑️ Thumbnail deleted for media: " + fileName);
                             } else {
-                                logger.warn(TAG, "🗑️ Failed to delete thumbnail for video: " + fileName);
+                                logger.warn(TAG, "🗑️ Failed to delete thumbnail for media: " + fileName);
                             }
                         }
                     } else {
