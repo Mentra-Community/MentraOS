@@ -19,11 +19,16 @@ export const getGlassesImage = (glasses: string | null) => {
       return require("../../assets/glasses/tcl_rayneo_x_two.png")
     case "Vuzix_shield":
       return require("../../assets/glasses/vuzix_shield.png")
-    case "Even Realities G1":
     case "Mentra Display":
+      return require("../../assets/glasses/mentra_display.png")
+    case "Even Realities G1":
     case "evenrealities_g1":
     case "g1":
       return require("../../assets/glasses/g1.png")
+    case "Even Realities G2":
+    case "evenrealities_g2":
+    case "g2":
+      return require("../../assets/glasses/even_realities_g2/even_realities_g2.png")
     case "virtual-wearable":
     case "Audio Wearable":
       return require("../../assets/glasses/audio_wearable.png")

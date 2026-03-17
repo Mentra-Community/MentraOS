@@ -1,0 +1,42 @@
+{
+  "name": "sdk-test",
+  "version": "1.0.0",
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "NODE_ENV=development bun --watch src/index.ts",
+    "ngrok": "ngrok http 3000 --url https://isaiah-tpa.ngrok.app",
+    "start": "bun src/index.ts"
+  },
+  "author": "Isaiah Ballah",
+  "license": "ISC",
+  "description": "MentraOS SDK test mini app — exercises SDK features end-to-end",
+  "dependencies": {
+    "@google/genai": "^1.43.0",
+    "@mentra/react": "workspace:*",
+    "@mentra/sdk": "workspace:*",
+    "@radix-ui/react-scroll-area": "^1.2.2",
+    "@radix-ui/react-slot": "^1.1.2",
+    "@radix-ui/react-switch": "^1.1.3",
+    "@radix-ui/react-tabs": "^1.1.2",
+    "bun-plugin-tailwind": "^0.1.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "hono": "^4.11.3",
+    "lamejs": "^1.2.1",
+    "lucide-react": "^0.554.0",
+    "react": "^19",
+    "react-dom": "^19",
+    "tailwind-merge": "^3.2.0",
+    "tw-animate-css": "^1.3.8",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/ws": "^8.18.0",
+    "tailwindcss": "^4.1.17",
+    "typescript": "^5.0.0"
+  }
+}

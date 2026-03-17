@@ -41,24 +41,24 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   {
     pattern: "/settings",
     handler: (url: string, params: Record<string, string>, navObject: NavObject) => {
-      navObject.push("/settings")
+      navObject.push("/miniapps/settings")
     },
     requiresAuth: true,
   },
   {
-    pattern: "/settings/:section",
+    pattern: "/miniapps/settings/:section",
     handler: (url: string, params: Record<string, string>, navObject: NavObject) => {
       const {section} = params
 
       // Map section names to actual routes
       const sectionRoutes: Record<string, string> = {
-        "profile": "/settings/profile",
-        "privacy": "/settings/privacy",
-        "developer": "/settings/developer",
-        "theme": "/settings/theme",
-        "change-password": "/settings/change-password",
-        "data-export": "/settings/data-export",
-        "dashboard": "/settings/dashboard",
+        "profile": "/miniapps/settings/profile",
+        "privacy": "/miniapps/settings/privacy",
+        "developer": "/miniapps/settings/developer",
+        "theme": "/miniapps/settings/theme",
+        "change-password": "/miniapps/settings/change-password",
+        "data-export": "/miniapps/settings/data-export",
+        "dashboard": "/miniapps/settings/dashboard",
       }
 
       const route = sectionRoutes[section]

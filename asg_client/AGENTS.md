@@ -55,7 +55,7 @@ Android application that runs on Android-based smart glasses like Mentra Live. C
 2. **Default Production Configuration**:
 
    ```
-   MENTRAOS_HOST=cloud.mentra.glass
+   MENTRAOS_HOST=api.mentra.glass
    MENTRAOS_PORT=443
    MENTRAOS_SECURE=true
    ```
@@ -69,52 +69,33 @@ Android application that runs on Android-based smart glasses like Mentra Live. C
 
 ## Development on Mentra Live
 
-### Important: Factory App Uninstall Required
+Mentra Live ships with `com.mentra.asg_client` as a **system app** signed with Mentra's release key. To run your own build, you must replace the factory app.
 
-Mentra Live glasses ship with `com.mentra.asg_client` signed with our release key. Since this key is not public, **you must uninstall the factory app** before you can install your own debug build.
+### Connecting via ADB
 
-### Quick Setup Script
+Connect your Mentra Live using the **Infinity Cable** (magnetic USB-C clip-on cable). Run `adb devices` to confirm connection.
 
-After connecting via ADB, run the setup script:
+### Installing Your Custom Build
 
 ```bash
 ./scripts/dev-setup.sh
 ```
 
 This script will:
+1. Build your debug APK
+2. Replace the factory app with your build
+3. Grant all required permissions
 
-1. Uninstall the factory-signed app
-2. Install your debug APK (if built)
-3. Grant all required runtime permissions
+**Warning:** After running this, you will not receive OTA updates from Mentra.
 
-### Manual Setup
+### Restoring Stock Firmware
 
 ```bash
-# 1. Uninstall factory app
-adb uninstall com.mentra.asg_client
-
-# 2. Build and install your debug APK
-./gradlew installDebug
-
-# 3. Grant permissions (run after install)
-adb shell pm grant com.mentra.asg_client android.permission.CAMERA
-adb shell pm grant com.mentra.asg_client android.permission.RECORD_AUDIO
-adb shell pm grant com.mentra.asg_client android.permission.ACCESS_FINE_LOCATION
-adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_CONNECT
-adb shell pm grant com.mentra.asg_client android.permission.BLUETOOTH_SCAN
-adb shell pm grant com.mentra.asg_client android.permission.POST_NOTIFICATIONS
+./scripts/restore-stock.sh
 ```
 
-## ADB Connection (Mentra Live)
+This removes your custom build and restores the factory app.
 
-Connect via the **magnetic USB-C clip-on cable** that comes with your Mentra Live. Just attach the cable and run `adb devices` to confirm connection.
-
-Alternatively, you can use ADB over WiFi:
-
-1. Pair Mentra Live in the MentraOS mobile app
-2. Connect glasses to your local WiFi network (in MentraOS app)
-3. Get the IP address from "Glasses" screen in MentraOS app
-4. Run: `adb connect <IP_ADDRESS>:5555`
 
 ## Project Structure
 

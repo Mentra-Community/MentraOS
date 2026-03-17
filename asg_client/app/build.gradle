@@ -186,8 +186,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 31
-        versionName "31.0"
+        versionCode 34
+        versionName "34.0"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"
@@ -221,11 +221,22 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // Third-party developers (without Mentra's signing key) get a different
+            // package name so their build can coexist with the stock system app.
+            // This is required because Android won't allow installing a differently-signed
+            // APK with the same package name as a system app.
+            if (!useReleaseKey) {
+                applicationIdSuffix ".thirdparty"
+            }
         }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig asgStorePassword ? signingConfigs.release : signingConfigs.debug
+            // Third-party release builds also need the suffix
+            if (!useReleaseKey) {
+                applicationIdSuffix ".thirdparty"
+            }
         }
     }
 }
@@ -269,12 +280,6 @@ dependencies {
 
     //EventBus, greenrobot
     implementation("org.greenrobot:eventbus:3.3.1")
-
-    //implementation project(path: ":augmentos_core")
-    //implementation project(path: ':AugmentOSLib')
-    //implementation project(path: ":SmartGlassesManager")
-
-
 
     //location services
     implementation 'com.google.android.gms:play-services-location:18.0.0'

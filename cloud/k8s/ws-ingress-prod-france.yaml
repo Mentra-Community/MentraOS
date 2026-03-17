@@ -1,0 +1,120 @@
+# WebSocket Ingress for prod environment (france cluster 4696)
+# Separate from Porter-managed ingress to set extended timeouts for WS paths.
+# See cloud/issues/035-nginx-ws-timeout/spec.md for context.
+#
+# Apply: PORTER_CLUSTER=4696 porter kubectl -- apply -f cloud/k8s/ws-ingress-prod-france.yaml
+# Delete: PORTER_CLUSTER=4696 porter kubectl -- delete ingress cloud-prod-cloud-ws
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloud-prod-cloud-ws
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: global.augmentos.cloud
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: france.augmentos.cloud
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: france.api.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: franceapi.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - api.mentra.glass
+      secretName: cloud-prod-cloud-api-mentra-glass
+    - hosts:
+        - global.augmentos.cloud
+      secretName: cloud-prod-cloud-global-augmentos-cloud
+    - hosts:
+        - france.augmentos.cloud
+      secretName: cloud-prod-cloud-france-augmentos-cloud
+    - hosts:
+        - france.api.mentra.glass
+      secretName: cloud-prod-cloud-france-api-mentra-glass
+    - hosts:
+        - franceapi.mentra.glass
+      secretName: cloud-prod-cloud-franceapi-mentra-glass

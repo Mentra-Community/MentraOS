@@ -2,11 +2,12 @@
  * 🔊 Audio Module
  *
  * Audio functionality for App Sessions.
- * Handles audio playback on connected glasses.
+ * Handles audio playback and audio output streaming on connected glasses.
  */
 
 import {AudioPlayRequest, AudioPlayResponse, AudioStopRequest, AppToCloudMessageType} from "../../../types"
 import {Logger} from "pino"
+import {AudioOutputStream, AudioOutputStreamOptions} from "./audio-output-stream"
 
 /**
  * Options for audio playback
@@ -106,6 +107,9 @@ export class AudioManager {
       reject: (reason?: string) => void
     }
   >()
+
+  /** Current active output stream (one at a time) */
+  private activeOutputStream: AudioOutputStream | null = null
 
   /**
    * Create a new AudioManager
@@ -329,7 +333,7 @@ export class AudioManager {
     // Construct the TTS URL
     const ttsUrl = `${baseUrl}/api/tts?${queryParams.toString()}`
 
-    this.logger.info({text, ttsUrl}, `🗣️ Generating speech from text`)
+    this.logger.debug({text, ttsUrl}, "Generating speech from text")
 
     // IMPORTANT: Don't call stopAudio() here - it closes tracks completely!
     // The backend will handle stopping any ongoing playback when it receives
@@ -453,6 +457,76 @@ export class AudioManager {
   }
 
   // =====================================
+  // 🎙️ Audio Output Streaming
+  // =====================================
+
+  /**
+   * Create a real-time audio output stream.
+   *
+   * This opens a streaming relay on the cloud and tells the phone to play it.
+   * You write audio chunks to the returned stream, and they play on the glasses
+   * speaker in real-time — like internet radio.
+   *
+   * **MP3 pass-through** (most common — ElevenLabs, Cartesia, OpenAI TTS, Azure):
+   * ```typescript
+   * const output = await session.audio.createOutputStream({ format: "mp3" })
+   * elevenlabs.on("chunk", (mp3) => output.write(mp3))
+   * elevenlabs.on("end", () => output.end())
+   * ```
+   *
+   * **PCM encoding** (Gemini Live, OpenAI Realtime — requires `lamejs`):
+   * ```typescript
+   * const output = await session.audio.createOutputStream({
+   *   format: "pcm16",
+   *   sampleRate: 24000,
+   *   channels: 1,
+   * })
+   * realtimeApi.on("audio", (pcm) => output.write(pcm))
+   * ```
+   *
+   * @param options - Stream configuration
+   * @returns The AudioOutputStream (already connected and playing)
+   */
+  async createOutputStream(options: AudioOutputStreamOptions = {}): Promise<AudioOutputStream> {
+    // Enforce explicit stream lifecycle: callers must end/flush before creating another stream.
+    if (this.activeOutputStream && this.activeOutputStream.state === "streaming") {
+      const activeStreamId = this.activeOutputStream.streamId
+      const error = new Error(
+        `AUDIO_STREAM_ALREADY_ACTIVE: Stream ${activeStreamId} is still active. Call end() or flush() before creating a new output stream.`,
+      ) as Error & {code?: string}
+      error.code = "AUDIO_STREAM_ALREADY_ACTIVE"
+      this.logger.warn({activeStreamId}, "Refusing to create a second output stream while one is active")
+      throw error
+    }
+
+    // Generate a unique stream ID
+    const streamId = crypto.randomUUID()
+
+    const stream = new AudioOutputStream(streamId, this.session, this.logger, options)
+
+    // Open the stream (sends AUDIO_STREAM_START, waits for relay URL, tells phone to play)
+    await stream.open()
+
+    this.activeOutputStream = stream
+
+    // Clean up reference when the stream ends
+    stream.on("close", () => {
+      if (this.activeOutputStream === stream) {
+        this.activeOutputStream = null
+      }
+    })
+
+    return stream
+  }
+
+  /**
+   * Get the currently active output stream (if any).
+   */
+  getActiveOutputStream(): AudioOutputStream | null {
+    return this.activeOutputStream
+  }
+
+  // =====================================
   // 🔧 Internal Management
   // =====================================
 
@@ -463,7 +537,7 @@ export class AudioManager {
    */
   updateSessionId(newSessionId: string): void {
     this.sessionId = newSessionId
-    this.logger.debug({newSessionId}, `🔄 Audio module session ID updated`)
+    this.logger.debug({newSessionId}, "Audio module session ID updated")
   }
 
   /**
@@ -473,6 +547,13 @@ export class AudioManager {
    */
   cancelAllRequests(): {audioRequests: number} {
     const audioRequests = this.cancelAllAudioRequests()
+
+    // Also end any active output stream
+    if (this.activeOutputStream && this.activeOutputStream.state === "streaming") {
+      this.activeOutputStream.end().catch(() => {})
+      this.activeOutputStream = null
+    }
+
     return {audioRequests}
   }
 }

@@ -6,7 +6,7 @@
 
 import { Hono } from "hono";
 import * as FeedbackService from "../../../services/client/feedback.service";
-import type { FeedbackData } from "../../../services/client/feedback.service";
+import type { FeedbackData, PhoneStateSnapshot } from "../../../services/client/feedback.service";
 import { clientAuth } from "../middleware/client.middleware";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import type { AppEnv, AppContext } from "../../../types/hono";
@@ -27,10 +27,12 @@ app.post("/", clientAuth, submitFeedback);
 
 /**
  * POST /api/client/feedback
- * Submit user feedback.
+ * Submit user feedback (feature requests and legacy bug reports).
  * Accepts either:
  * - Legacy format: { feedback: "string" }
- * - New structured format: { feedback: { type: "bug" | "feature", ... } }
+ * - New structured format: { feedback: { type: "bug" | "feature", ... }, phoneState?: {...} }
+ *
+ * Note: For bug reports with full incident tracking, use POST /api/incidents instead.
  */
 async function submitFeedback(c: AppContext) {
   const email = c.get("email")!;
@@ -38,7 +40,10 @@ async function submitFeedback(c: AppContext) {
 
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { feedback: feedbackContent } = body as { feedback?: string | FeedbackData };
+    const { feedback: feedbackContent, phoneState } = body as {
+      feedback?: string | FeedbackData;
+      phoneState?: PhoneStateSnapshot;
+    };
 
     if (!feedbackContent) {
       return c.json(
@@ -63,11 +68,10 @@ async function submitFeedback(c: AppContext) {
       );
     }
 
-    const feedback = await FeedbackService.submitFeedback(email, feedbackContent);
+    const result = await FeedbackService.submitFeedback(email, feedbackContent, phoneState);
 
     return c.json({
-      success: true,
-      data: { feedback },
+      success: result.success,
       timestamp: new Date(),
     });
   } catch (error) {

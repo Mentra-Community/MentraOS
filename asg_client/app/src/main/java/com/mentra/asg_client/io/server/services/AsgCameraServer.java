@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.server.services;
 
+import android.media.MediaMetadataRetriever;
 import android.os.Build;
 
 import com.mentra.asg_client.io.server.core.AsgServer;
@@ -36,8 +37,19 @@ public class AsgCameraServer extends AsgServer {
     private static final String TAG = AsgCameraServer.class.getName();
     private static final int DEFAULT_PORT = 8089;
 
+    /**
+     * Provider that returns the file name of an actively recording video, or null if idle.
+     * Used to exclude in-progress recordings from sync and download responses.
+     */
+    public interface ActiveRecordingProvider {
+        String getActiveRecordingFileName();
+    }
+
     // File management system
     private final FileManager fileManager;
+
+    // Optional provider for currently recording file name
+    private ActiveRecordingProvider activeRecordingProvider;
 
     // Cache for latest photo metadata
     private FileMetadata latestPhotoMetadata;
@@ -343,6 +355,16 @@ public class AsgCameraServer extends AsgServer {
                     continue;
                 }
 
+                // Skip IMU sidecar files - they are metadata, not displayable media
+                if (isImuSidecar(photoMetadata.getFileName())) {
+                    continue;
+                }
+
+                // Skip HDR bracket files - only the merged base file should appear
+                if (isHdrBracket(photoMetadata.getFileName())) {
+                    continue;
+                }
+
                 Map<String, Object> photoInfo = new HashMap<>();
                 photoInfo.put("name", photoMetadata.getFileName());
                 photoInfo.put("size", photoMetadata.getFileSize());
@@ -509,10 +531,93 @@ public class AsgCameraServer extends AsgServer {
     }
     
     /**
+     * Derive a capture ID from a filename. Groups related files together.
+     * Examples:
+     *   "IMG_xxx/base.jpg"    -> "IMG_xxx"
+     *   "IMG_xxx/ev-2.jpg"    -> "IMG_xxx"
+     *   "IMG_xxx/imu.json"    -> "IMG_xxx"
+     *   "IMG_xxx.jpg"         -> "IMG_xxx" (legacy flat file)
+     *   "IMG_xxx_ev-2.jpg"    -> "IMG_xxx" (legacy bracket)
+     *   "IMG_xxx.imu.json"    -> "IMG_xxx" (legacy sidecar)
+     *   "VID_xxx/base.mp4"    -> "VID_xxx"
+     */
+    private String deriveCaptureId(String name) {
+        if (name == null) return "unknown";
+
+        // Folder-based: take everything before the first '/'
+        if (name.contains("/")) {
+            return name.substring(0, name.indexOf('/'));
+        }
+
+        // Legacy flat file: strip extension and known suffixes
+        String stem = name;
+
+        // Strip .imu.json first (before generic extension strip)
+        if (stem.toLowerCase().endsWith(".imu.json")) {
+            stem = stem.substring(0, stem.length() - ".imu.json".length());
+            return stem;
+        }
+
+        // Strip file extension
+        int dotIdx = stem.lastIndexOf('.');
+        if (dotIdx > 0) {
+            stem = stem.substring(0, dotIdx);
+        }
+
+        // Strip HDR bracket suffix (e.g. _ev-2, _ev0, _ev2)
+        stem = stem.replaceAll("_ev-?\\d+$", "");
+
+        return stem;
+    }
+
+    /**
+     * Assign a role to a file within a capture group.
+     * @param fileName The full relative filename (e.g. "IMG_xxx/base.jpg" or "IMG_xxx.jpg")
+     * @return "primary", "bracket", or "sidecar"
+     */
+    private String assignFileRole(String fileName) {
+        if (fileName == null) return "primary";
+
+        // Get just the leaf filename
+        String leaf = fileName.contains("/") ? fileName.substring(fileName.lastIndexOf('/') + 1) : fileName;
+        String lower = leaf.toLowerCase();
+
+        // Sidecar files
+        if (lower.equals("imu.json")) return "sidecar";
+
+        // Bracket files (ev-2.jpg, ev0.jpg, ev2.jpg)
+        if (lower.matches("ev-?\\d+\\.jpe?g")) return "bracket";
+
+        // Everything else is primary
+        return "primary";
+    }
+
+    /**
      * Check if a file is an AVIF transfer artifact that should be excluded from sync
      * AVIF files are temporary transfer artifacts created during BLE photo transfers
      * and should not be synced to mobile devices.
      */
+    /**
+     * Check if a file is an IMU sidecar (sensor data bundled with media capture).
+     * These are metadata files, not displayable media.
+     */
+    private boolean isImuSidecar(String filename) {
+        if (filename == null) return false;
+        String leaf = filename.contains("/") ? filename.substring(filename.lastIndexOf('/') + 1) : filename;
+        return leaf.equalsIgnoreCase("imu.json");
+    }
+
+    /**
+     * Check if a file is an HDR bracket (individual exposure in a burst set).
+     * Only the merged base file should appear in the gallery, not individual brackets.
+     */
+    private boolean isHdrBracket(String filename) {
+        if (filename == null) return false;
+        String leaf = filename.contains("/") ? filename.substring(filename.lastIndexOf('/') + 1) : filename;
+        // Match folder-based bracket files: ev-2.jpg, ev0.jpg, ev2.jpg
+        return leaf.toLowerCase().matches("ev-?\\d+\\.jpe?g");
+    }
+
     private boolean isAvifTransferArtifact(String filename) {
         if (filename == null || filename.isEmpty()) {
             logger.debug(TAG, "🔄 File is null or empty, returning false");
@@ -621,6 +726,12 @@ public class AsgCameraServer extends AsgServer {
         if (filename == null || filename.isEmpty()) {
             logger.warn(TAG, "⬇️ ❌ File parameter missing or empty");
             return createErrorResponse(Response.Status.BAD_REQUEST, "File parameter required");
+        }
+
+        // Block downloads of files that are actively being recorded
+        if (isActiveRecording(filename)) {
+            logger.warn(TAG, "⬇️ ❌ Blocked download of in-progress recording: " + filename);
+            return createErrorResponse(Response.Status.FORBIDDEN, "File is currently being recorded");
         }
 
         try {
@@ -790,46 +901,112 @@ public class AsgCameraServer extends AsgServer {
 
                 logger.debug(TAG, "🗑️ Deleting file: " + fileName);
 
-                // Get file metadata before deletion for size calculation
-                FileMetadata metadata = fileManager.getFileMetadata(fileManager.getDefaultPackageName(), fileName);
-                long fileSize = metadata != null ? metadata.getFileSize() : 0;
-                
-                // If it's a video file, get the file reference before deletion for thumbnail cleanup
-                File videoFile = null;
-                if (isVideoFile(fileName)) {
-                    videoFile = fileManager.getFile(fileManager.getDefaultPackageName(), fileName);
-                }
+                // Check if this is a capture folder (no extension = folder name)
+                boolean isCaptureFolder = !fileName.contains(".") &&
+                    (fileName.startsWith("IMG_") || fileName.startsWith("VID_") || fileName.startsWith("BUFFER_"));
 
-                // Delete the file
-                FileOperationResult deleteResult = fileManager.deleteFile(fileManager.getDefaultPackageName(), fileName);
+                if (isCaptureFolder) {
+                    // Delete entire capture directory or flat files matching capture ID
+                    File packageDir = fileManager.getPackageDirectory(fileManager.getDefaultPackageName());
+                    File captureDir = new File(packageDir, fileName);
+                    long dirSize = 0;
+                    boolean deleteSuccess = false;
 
-                Map<String, Object> result = new HashMap<>();
-                result.put("file", fileName);
-                result.put("success", deleteResult.isSuccess());
-                result.put("message", deleteResult.getMessage());
-                result.put("size", fileSize);
-
-                if (deleteResult.isSuccess()) {
-                    successCount++;
-                    totalDeletedSize += fileSize;
-                    logger.debug(TAG, "🗑️ Successfully deleted: " + fileName + " (" + fileSize + " bytes)");
-                    
-                    // If it's a video file, also delete its thumbnail
-                    if (videoFile != null) {
-                        logger.debug(TAG, "🗑️ Deleting thumbnail for video: " + fileName);
-                        boolean thumbnailDeleted = fileManager.getThumbnailManager().deleteThumbnailForVideo(videoFile);
-                        if (thumbnailDeleted) {
-                            logger.debug(TAG, "🗑️ Thumbnail deleted for video: " + fileName);
-                        } else {
-                            logger.warn(TAG, "🗑️ Failed to delete thumbnail for video: " + fileName);
+                    if (captureDir.exists() && captureDir.isDirectory()) {
+                        // New folder-based capture: delete entire directory
+                        File[] dirFiles = captureDir.listFiles();
+                        if (dirFiles != null) {
+                            for (File f : dirFiles) {
+                                dirSize += f.length();
+                                if (isVideoFile(f.getName())) {
+                                    fileManager.getThumbnailManager().deleteThumbnailForVideo(f);
+                                }
+                                f.delete();
+                            }
                         }
+                        deleteSuccess = captureDir.delete();
+                        logger.debug(TAG, "🗑️ Deleted capture folder: " + fileName + " (" + dirSize + " bytes)");
+                    } else {
+                        // Legacy flat files: delete all files matching capture ID prefix
+                        // e.g. for "IMG_xxx", delete IMG_xxx.jpg, IMG_xxx_ev0.jpg, IMG_xxx_ev-2.jpg, IMG_xxx.imu.json
+                        logger.debug(TAG, "🗑️ No capture folder found, trying flat file deletion for: " + fileName);
+                        File[] allFiles = packageDir.listFiles();
+                        int deletedCount = 0;
+                        if (allFiles != null) {
+                            for (File f : allFiles) {
+                                if (f.isFile() && f.getName().startsWith(fileName)) {
+                                    dirSize += f.length();
+                                    if (isVideoFile(f.getName())) {
+                                        fileManager.getThumbnailManager().deleteThumbnailForVideo(f);
+                                    }
+                                    if (f.delete()) {
+                                        deletedCount++;
+                                        logger.debug(TAG, "🗑️ Deleted flat file: " + f.getName());
+                                    }
+                                }
+                            }
+                        }
+                        deleteSuccess = deletedCount > 0;
+                        logger.debug(TAG, "🗑️ Deleted " + deletedCount + " flat files for capture: " + fileName);
                     }
-                } else {
-                    failureCount++;
-                    logger.warn(TAG, "🗑️ Failed to delete: " + fileName + " - " + deleteResult.getMessage());
-                }
 
-                results.add(result);
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("file", fileName);
+                    result.put("success", deleteSuccess);
+                    result.put("message", deleteSuccess ? "Capture deleted" : "No files found for capture");
+                    result.put("size", dirSize);
+
+                    if (deleteSuccess) {
+                        successCount++;
+                        totalDeletedSize += dirSize;
+                    } else {
+                        failureCount++;
+                        logger.warn(TAG, "🗑️ No files found to delete for capture: " + fileName);
+                    }
+                    results.add(result);
+                } else {
+                    // Individual file deletion (backwards compat)
+                    // Get file metadata before deletion for size calculation
+                    FileMetadata metadata = fileManager.getFileMetadata(fileManager.getDefaultPackageName(), fileName);
+                    long fileSize = metadata != null ? metadata.getFileSize() : 0;
+
+                    // If it's a video file, get the file reference before deletion for thumbnail cleanup
+                    File videoFile = null;
+                    if (isVideoFile(fileName)) {
+                        videoFile = fileManager.getFile(fileManager.getDefaultPackageName(), fileName);
+                    }
+
+                    // Delete the file
+                    FileOperationResult deleteResult = fileManager.deleteFile(fileManager.getDefaultPackageName(), fileName);
+
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("file", fileName);
+                    result.put("success", deleteResult.isSuccess());
+                    result.put("message", deleteResult.getMessage());
+                    result.put("size", fileSize);
+
+                    if (deleteResult.isSuccess()) {
+                        successCount++;
+                        totalDeletedSize += fileSize;
+                        logger.debug(TAG, "🗑️ Successfully deleted: " + fileName + " (" + fileSize + " bytes)");
+
+                        // If it's a video file, also delete its thumbnail
+                        if (videoFile != null) {
+                            logger.debug(TAG, "🗑️ Deleting thumbnail for video: " + fileName);
+                            boolean thumbnailDeleted = fileManager.getThumbnailManager().deleteThumbnailForVideo(videoFile);
+                            if (thumbnailDeleted) {
+                                logger.debug(TAG, "🗑️ Thumbnail deleted for video: " + fileName);
+                            } else {
+                                logger.warn(TAG, "🗑️ Failed to delete thumbnail for video: " + fileName);
+                            }
+                        }
+                    } else {
+                        failureCount++;
+                        logger.warn(TAG, "🗑️ Failed to delete: " + fileName + " - " + deleteResult.getMessage());
+                    }
+
+                    results.add(result);
+                }
             }
 
             // Prepare response
@@ -1005,6 +1182,19 @@ public class AsgCameraServer extends AsgServer {
         return fileManager;
     }
 
+    public void setActiveRecordingProvider(ActiveRecordingProvider provider) {
+        this.activeRecordingProvider = provider;
+    }
+
+    /**
+     * @return true if the given file name is the one currently being recorded
+     */
+    private boolean isActiveRecording(String fileName) {
+        if (activeRecordingProvider == null || fileName == null) return false;
+        String active = activeRecordingProvider.getActiveRecordingFileName();
+        return active != null && active.equals(fileName);
+    }
+
     /**
      * Get the camera package name.
      */
@@ -1059,6 +1249,12 @@ public class AsgCameraServer extends AsgServer {
             // In a more sophisticated implementation, you'd track deletions separately
             for (FileMetadata fileMetadata : allFiles) {
                 if (fileMetadata.getLastModified() > lastSyncTime) {
+                    // Skip files that are actively being recorded (incomplete / corrupted)
+                    if (isActiveRecording(fileMetadata.getFileName())) {
+                        logger.debug(TAG, "🔄 Skipping active recording: " + fileMetadata.getFileName());
+                        continue;
+                    }
+
                     // Skip and delete AVIF transfer artifacts - these should not be synced to mobile
                     if (isAvifTransferArtifact(fileMetadata.getFileName())) {
                         logger.debug(TAG, "🔄 Found AVIF transfer artifact, deleting: " + fileMetadata.getFileName());
@@ -1085,7 +1281,7 @@ public class AsgCameraServer extends AsgServer {
                     fileInfo.put("url", "/api/photo?file=" + fileMetadata.getFileName());
                     fileInfo.put("download", "/api/download?file=" + fileMetadata.getFileName());
 
-                    // Add media type and thumbnail information
+                    // Add media type, thumbnail, and duration information
                     if (isVideoFile(fileMetadata.getFileName())) {
                         fileInfo.put("is_video", true);
                         if (includeThumbnailsFlag) {
@@ -1107,6 +1303,19 @@ public class AsgCameraServer extends AsgServer {
                                             fileInfo.put("thumbnail_data", thumbnailBase64);
                                         }
                                     }
+
+                                    // Extract video duration
+                                    try {
+                                        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+                                        retriever.setDataSource(videoFile.getAbsolutePath());
+                                        String durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                                        retriever.release();
+                                        if (durationStr != null) {
+                                            fileInfo.put("duration", Long.parseLong(durationStr));
+                                        }
+                                    } catch (Exception e) {
+                                        logger.warn(TAG, "Failed to extract duration for " + fileMetadata.getFileName() + ": " + e.getMessage());
+                                    }
                                 }
                             } catch (Exception e) {
                                 logger.warn(TAG, "Failed to include thumbnail for " + fileMetadata.getFileName() + ": " + e.getMessage());
@@ -1115,6 +1324,30 @@ public class AsgCameraServer extends AsgServer {
                         }
                     } else {
                         fileInfo.put("is_video", false);
+                        if (includeThumbnailsFlag) {
+                            // Include base64 thumbnail data for photos too
+                            try {
+                                File imageFile = fileManager.getFile(fileManager.getDefaultPackageName(), fileMetadata.getFileName());
+                                if (imageFile != null && imageFile.exists()) {
+                                    File thumbnailFile = fileManager.getThumbnailManager().getOrCreateImageThumbnail(imageFile);
+                                    if (thumbnailFile != null && thumbnailFile.exists()) {
+                                        try (FileInputStream fis = new FileInputStream(thumbnailFile)) {
+                                            byte[] thumbnailData;
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                                thumbnailData = fis.readAllBytes();
+                                            } else {
+                                                thumbnailData = new byte[(int) thumbnailFile.length()];
+                                                fis.read(thumbnailData);
+                                            }
+                                            String thumbnailBase64 = android.util.Base64.encodeToString(thumbnailData, android.util.Base64.DEFAULT);
+                                            fileInfo.put("thumbnail_data", thumbnailBase64);
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                logger.warn(TAG, "Failed to include photo thumbnail for " + fileMetadata.getFileName() + ": " + e.getMessage());
+                            }
+                        }
                     }
 
                     changedFiles.add(fileInfo);
@@ -1131,6 +1364,72 @@ public class AsgCameraServer extends AsgServer {
                 return Long.compare(modified1, modified2);  // Oldest first
             });
 
+            // Group files into captures
+            Map<String, List<Map<String, Object>>> captureGroups = new LinkedHashMap<>();
+            for (Map<String, Object> fileInfo : changedFiles) {
+                String name = (String) fileInfo.get("name");
+                String captureId = deriveCaptureId(name);
+                captureGroups.computeIfAbsent(captureId, k -> new ArrayList<>()).add(fileInfo);
+            }
+
+            // Build captures array
+            List<Map<String, Object>> captures = new ArrayList<>();
+            for (Map.Entry<String, List<Map<String, Object>>> entry : captureGroups.entrySet()) {
+                String captureId = entry.getKey();
+                List<Map<String, Object>> captureFiles = entry.getValue();
+
+                Map<String, Object> capture = new HashMap<>();
+                capture.put("capture_id", captureId);
+
+                // Determine type from primary file
+                boolean isVideo = captureId.startsWith("VID_") || captureId.startsWith("BUFFER_");
+                capture.put("type", isVideo ? "video" : "photo");
+
+                // Calculate total size and find timestamp
+                long captureTotalSize = 0;
+                long captureTimestamp = 0;
+                String thumbnailData = null;
+                Long duration = null;
+
+                List<Map<String, Object>> fileList = new ArrayList<>();
+                for (Map<String, Object> file : captureFiles) {
+                    String fileName = (String) file.get("name");
+                    long fileSize = (Long) file.get("size");
+                    captureTotalSize += fileSize;
+
+                    long modified = (Long) file.get("modified");
+                    if (modified > captureTimestamp) captureTimestamp = modified;
+
+                    // Assign role based on filename
+                    String role = assignFileRole(fileName);
+
+                    Map<String, Object> captureFile = new HashMap<>();
+                    captureFile.put("name", fileName);
+                    captureFile.put("size", fileSize);
+                    captureFile.put("role", role);
+                    fileList.add(captureFile);
+
+                    // Grab thumbnail from primary file
+                    if ("primary".equals(role) && file.containsKey("thumbnail_data")) {
+                        thumbnailData = (String) file.get("thumbnail_data");
+                    }
+                    if ("primary".equals(role) && file.containsKey("duration")) {
+                        duration = (Long) file.get("duration");
+                    }
+                }
+
+                capture.put("timestamp", captureTimestamp);
+                capture.put("total_size", captureTotalSize);
+                capture.put("files", fileList);
+                if (thumbnailData != null) {
+                    capture.put("thumbnail_data", thumbnailData);
+                }
+                if (duration != null) {
+                    capture.put("duration", duration);
+                }
+                captures.add(capture);
+            }
+
             // Calculate sync statistics
             long currentTime = System.currentTimeMillis();
             long totalSize = changedFiles.stream()
@@ -1138,17 +1437,20 @@ public class AsgCameraServer extends AsgServer {
                     .sum();
 
             Map<String, Object> syncData = new HashMap<>();
+            syncData.put("api_version", 2);
             syncData.put("client_id", clientId);
             syncData.put("sync_timestamp", currentTime);
             syncData.put("last_sync_time", lastSyncTime);
-            syncData.put("changed_files", changedFiles);
+            syncData.put("captures", captures);
+            syncData.put("changed_files", changedFiles); // Keep for backwards compat
             syncData.put("deleted_files", deletedFiles);
             syncData.put("total_changed", changedFiles.size());
             syncData.put("total_deleted", deletedFiles.size());
             syncData.put("total_size", totalSize);
             syncData.put("server_time", currentTime);
 
-            logger.debug(TAG, "🔄 ✅ Sync completed: " + changedFiles.size() + " changed files, " +
+            logger.debug(TAG, "🔄 ✅ Sync completed: " + captures.size() + " captures, " +
+                           changedFiles.size() + " changed files, " +
                            deletedFiles.size() + " deleted files, " + totalSize + " bytes");
 
             return createSuccessResponse(syncData);
@@ -1357,8 +1659,12 @@ public class AsgCameraServer extends AsgServer {
             status.put("total_files", allFiles.size());
             status.put("total_size", allFiles.stream().mapToLong(FileMetadata::getFileSize).sum());
 
-            // File type breakdown
-            long imageCount = allFiles.stream().filter(f -> !isVideoFile(f.getFileName())).count();
+            // File type breakdown (exclude auxiliary files like HDR brackets and IMU sidecars)
+            long imageCount = allFiles.stream()
+                .filter(f -> !isVideoFile(f.getFileName()))
+                .filter(f -> !isImuSidecar(f.getFileName()))
+                .filter(f -> !isHdrBracket(f.getFileName()))
+                .count();
             long videoCount = allFiles.stream().filter(f -> isVideoFile(f.getFileName())).count();
             status.put("image_count", imageCount);
             status.put("video_count", videoCount);

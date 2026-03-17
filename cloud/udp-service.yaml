@@ -1,3 +1,13 @@
+# UDP LoadBalancer Service for cloud-debug
+#
+# Why: Porter only creates HTTP Ingress. This service exposes UDP port 8000
+#      directly via Azure LoadBalancer for audio streaming from mobile.
+#
+# Applied by: .github/workflows/porter-debug.yml (after Porter deploy)
+# DNS: udp.debug.augmentos.cloud → LoadBalancer IP (Cloudflare DNS-only mode)
+#
+# Note: This is NOT managed by Porter. It's applied separately via kubectl.
+
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,8 +15,13 @@ metadata:
   namespace: default
   labels:
     porter.run/app-name: cloud-debug
+    app.kubernetes.io/managed-by: github-actions
+  annotations:
+    description: "UDP LoadBalancer for audio streaming (not managed by Porter)"
 spec:
   type: LoadBalancer
+  # Selector must match Porter's pod labels
+  # Verify with: porter kubectl -- get pods -l porter.run/app-name=cloud-debug --show-labels
   selector:
     porter.run/app-name: cloud-debug
     porter.run/service-name: cloud

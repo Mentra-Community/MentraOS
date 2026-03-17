@@ -27,12 +27,11 @@ import { IWebSocket, WebSocketReadyState, hasEventEmitter } from "../websocket/t
 
 import AppManager from "./AppManager";
 import AudioManager from "./AudioManager";
+import { AppAudioStreamManager } from "./AppAudioStreamManager";
 import CalendarManager from "./CalendarManager";
 import { DashboardManager } from "./dashboard";
 import DeviceManager from "./DeviceManager";
 import { handleAppMessage as appMessageHandler, handleGlassesMessage as glassesMessageHandler } from "./handlers";
-import LiveKitManager from "./livekit/LiveKitManager";
-import SpeakerManager from "./livekit/SpeakerManager";
 import LocationManager from "./LocationManager";
 import MicrophoneManager from "./MicrophoneManager";
 import PhotoManager from "./PhotoManager";
@@ -113,13 +112,13 @@ export class UserSession {
   public transcriptionManager: TranscriptionManager;
   public translationManager: TranslationManager;
   public subscriptionManager: SubscriptionManager;
-  public liveKitManager: LiveKitManager;
-  public speakerManager: SpeakerManager;
+
   public calendarManager: CalendarManager;
   public locationManager: LocationManager;
   public userSettingsManager: UserSettingsManager;
   public deviceManager: DeviceManager;
   public udpAudioManager: UdpAudioManager;
+  public appAudioStreamManager: AppAudioStreamManager;
 
   public streamRegistry: StreamRegistry;
   public unmanagedStreamingExtension: UnmanagedStreamingExtension;
@@ -133,6 +132,7 @@ export class UserSession {
   // Heartbeat for glasses connection
   private glassesHeartbeatInterval?: NodeJS.Timeout;
   private appLevelPingInterval?: NodeJS.Timeout;
+  private appLevelPingCount = 0; // Counter for targeted debug logging
   private pongHandler?: () => void; // Stored for cleanup
   private lastPongTime?: number;
   private pongTimeoutTimer?: NodeJS.Timeout;
@@ -155,9 +155,6 @@ export class UserSession {
 
   // User's timezone (IANA name like "America/New_York")
   public userTimezone?: string;
-
-  // LiveKit transport preference
-  public livekitRequested?: boolean;
 
   // Capability Discovery
 
@@ -186,11 +183,28 @@ export class UserSession {
     this.streamRegistry = new StreamRegistry(this.logger);
     this.unmanagedStreamingExtension = new UnmanagedStreamingExtension(this);
     this.managedStreamingExtension = new ManagedStreamingExtension(this.logger, this.streamRegistry);
-    this.liveKitManager = new LiveKitManager(this);
     this.userSettingsManager = new UserSettingsManager(this);
-    this.speakerManager = new SpeakerManager(this);
     this.deviceManager = new DeviceManager(this);
     this.udpAudioManager = new UdpAudioManager(this);
+    this.appAudioStreamManager = new AppAudioStreamManager(userId, this.logger, (streamId, streamUrl, packageName) => {
+      if (!this.websocket || this.websocket.readyState !== WebSocketReadyState.OPEN) {
+        return false;
+      }
+      try {
+        const playRequest = {
+          type: CloudToGlassesMessageType.AUDIO_PLAY_REQUEST,
+          sessionId: this.sessionId,
+          requestId: streamId,
+          packageName,
+          audioUrl: streamUrl,
+          timestamp: new Date(),
+        };
+        this.websocket.send(JSON.stringify(playRequest));
+        return true;
+      } catch {
+        return false;
+      }
+    });
 
     // Set up heartbeat for glasses connection
     this.setupGlassesHeartbeat();
@@ -234,14 +248,32 @@ export class UserSession {
     // Protocol-level pings are invisible to React Native's WebSocket API,
     // so the client can't use them for liveness detection. These app-level
     // pings give the client guaranteed periodic messages to track against.
+    this.appLevelPingCount = 0;
     this.appLevelPingInterval = setInterval(() => {
-      if (this.disposed) return;
-      if (this.websocket && this.websocket.readyState === WebSocketReadyState.OPEN) {
-        try {
-          this.websocket.send(JSON.stringify({ type: "ping" }));
-        } catch (_e) {
-          // Send failure will be caught by the connection close handler
+      if (this.disposed) {
+        if (this.appLevelPingCount < 5) {
+          this.logger.info(`[app-ping] skip: session disposed for ${this.userId}`);
         }
+        return;
+      }
+      if (!this.websocket || this.websocket.readyState !== WebSocketReadyState.OPEN) {
+        if (this.appLevelPingCount < 5) {
+          this.logger.info(
+            `[app-ping] skip: ws=${this.websocket ? `readyState=${this.websocket.readyState}` : "null"} for ${
+              this.userId
+            }`,
+          );
+        }
+        return;
+      }
+      try {
+        const result = this.websocket.send(JSON.stringify({ type: "ping" }));
+        this.appLevelPingCount++;
+        if (this.appLevelPingCount <= 3) {
+          this.logger.info(`[app-ping] #${this.appLevelPingCount} sent to ${this.userId}, send() returned: ${result}`);
+        }
+      } catch (e) {
+        this.logger.warn(`[app-ping] send FAILED for ${this.userId}: ${e}`);
       }
     }, APP_LEVEL_PING_INTERVAL);
 
@@ -290,7 +322,7 @@ export class UserSession {
       this.resetPongTimeout();
     }
 
-    this.logger.debug(`[UserSession:setupGlassesHeartbeat] Heartbeat established for glasses connection`);
+    this.logger.info(`[UserSession:setupGlassesHeartbeat] Heartbeat established for glasses connection`);
   }
 
   /**
@@ -300,7 +332,7 @@ export class UserSession {
     if (this.glassesHeartbeatInterval) {
       clearInterval(this.glassesHeartbeatInterval);
       this.glassesHeartbeatInterval = undefined;
-      this.logger.debug(`[UserSession:clearGlassesHeartbeat] Heartbeat cleared for glasses connection`);
+      this.logger.info(`[UserSession:clearGlassesHeartbeat] Heartbeat cleared for glasses connection`);
     }
 
     // Clear app-level ping interval
@@ -722,7 +754,7 @@ export class UserSession {
     // Clean up all resources
     if (this.appManager) this.appManager.dispose();
     if (this.audioManager) this.audioManager.dispose();
-    if (this.liveKitManager) this.liveKitManager.dispose();
+
     if (this.microphoneManager) this.microphoneManager.dispose();
     if (this.displayManager) this.displayManager.dispose();
     if (this.dashboardManager) this.dashboardManager.dispose();
@@ -733,6 +765,7 @@ export class UserSession {
     if (this.unmanagedStreamingExtension) this.unmanagedStreamingExtension.dispose();
     if (this.photoManager) this.photoManager.dispose();
     if (this.managedStreamingExtension) this.managedStreamingExtension.dispose();
+    if (this.appAudioStreamManager) this.appAudioStreamManager.dispose();
 
     // Persist location to DB cold cache and clean up
     if (this.locationManager) await this.locationManager.dispose();

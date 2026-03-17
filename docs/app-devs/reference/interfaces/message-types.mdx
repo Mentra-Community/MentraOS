@@ -39,7 +39,7 @@ interface AppConnectionInit extends BaseMessage {
 }
 ```
 
-**Note:** This message is automatically sent by the SDK when [`appSession.connect()`](/reference/app-session#connect) is called.
+**Note:** This message is automatically sent by the SDK when [`appSession.connect()`](/app-devs/reference/app-session#connect) is called.
 
 ### AppSubscriptionUpdate
 
@@ -53,11 +53,11 @@ interface AppSubscriptionUpdate extends BaseMessage {
 }
 ```
 
-**Note:** This message is automatically sent by the SDK when [`appSession.subscribe()`](/reference/app-session#subscribe) is called or when subscription settings change.
+**Note:** This message is automatically sent by the SDK when [`appSession.subscribe()`](/app-devs/reference/app-session#subscribe) is called or when subscription settings change.
 
 ### DisplayRequest
 
-Message sent from a App to request displaying a layout. Covered in detail in the [Layout Types](/reference/interfaces/layout-types) section.
+Message sent from a App to request displaying a layout. Covered in detail in the [Layout Types](/app-devs/reference/interfaces/layout-types) section.
 
 ```typescript
 interface DisplayRequest extends BaseMessage {
@@ -70,7 +70,7 @@ interface DisplayRequest extends BaseMessage {
 }
 ```
 
-**Note:** This message is automatically sent by the SDK when using [`appSession.layouts`](/reference/managers/layout-manager) methods.
+**Note:** This message is automatically sent by the SDK when using [`appSession.layouts`](/app-devs/reference/managers/layout-manager) methods.
 
 ### DashboardContentUpdate
 
@@ -87,7 +87,7 @@ interface DashboardContentUpdate extends BaseMessage {
 }
 ```
 
-**Note:** This message is automatically sent by the SDK when using [`session.dashboard.content`](/reference/dashboard-api#class-dashboardcontentapi) methods.
+**Note:** This message is automatically sent by the SDK when using [`session.dashboard.content`](/app-devs/reference/dashboard-api#class-dashboardcontentapi) methods.
 
 ## Cloud to App Messages
 
@@ -191,7 +191,7 @@ Stream data can either be sent wrapped in a `DataStream` message or directly as 
 
 ### TranscriptionData
 
-Data for real-time speech transcription. See [Event Types](/reference/interfaces/event-types#transcriptiondata) for details.
+Data for real-time speech transcription. See [Event Types](/app-devs/reference/interfaces/event-types#transcriptiondata) for details.
 
 ```typescript
 interface TranscriptionData extends BaseMessage {
@@ -204,7 +204,7 @@ interface TranscriptionData extends BaseMessage {
 
 ### TranslationData
 
-Data for real-time speech translation. See [Event Types](/reference/interfaces/event-types#translationdata) for details.
+Data for real-time speech translation. See [Event Types](/app-devs/reference/interfaces/event-types#translationdata) for details.
 
 ```typescript
 interface TranslationData extends BaseMessage {
@@ -217,7 +217,7 @@ interface TranslationData extends BaseMessage {
 
 ### AudioChunk
 
-Raw audio data chunk. See [Event Types](/reference/interfaces/event-types#audiochunk) for details.
+Raw audio data chunk. See [Event Types](/app-devs/reference/interfaces/event-types#audiochunk) for details.
 
 ```typescript
 interface AudioChunk extends BaseMessage {
@@ -335,7 +335,7 @@ function isDashboardAlwaysOnChanged(message: CloudToAppMessage): message is Dash
 ## WebSocket Connection Flow
 
 1. **Initialization**:
-   - When [`appSession.connect()`](/reference/app-session#connect) is called, the SDK establishes a WebSocket connection to the URL provided
+   - When [`appSession.connect()`](/app-devs/reference/app-session#connect) is called, the SDK establishes a WebSocket connection to the URL provided
    - It sends a [`AppConnectionInit`](#appconnectioninit) message with the App's credentials
 
 2. **Authentication**:
@@ -344,7 +344,7 @@ function isDashboardAlwaysOnChanged(message: CloudToAppMessage): message is Dash
    - If invalid, it sends back a [`AppConnectionError`](#appconnectionerror)
 
 3. **Subscribing to Streams**:
-   - The App can call [`appSession.subscribe()`](/reference/app-session#subscribe) to receive specific event types
+   - The App can call [`appSession.subscribe()`](/app-devs/reference/app-session#subscribe) to receive specific event types
    - The SDK sends a [`AppSubscriptionUpdate`](#appsubscriptionupdate) message to the cloud
 
 4. **Receiving Data**:

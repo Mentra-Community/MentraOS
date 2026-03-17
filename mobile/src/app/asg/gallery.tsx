@@ -1,31 +1,32 @@
-import {useFocusEffect} from "expo-router"
-import {useCallback} from "react"
-import {BackHandler} from "react-native"
-
 import {GalleryScreen} from "@/components/glasses/Gallery/GalleryScreen"
 import {Screen} from "@/components/ignite"
+import {MiniAppDualButtonHeader} from "@/components/miniapps/DualButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/contexts/ThemeContext"
+import {useRef} from "react"
+import {View} from "react-native"
+import {captureRef} from "react-native-view-shot"
 
 export default function AsgGallery() {
-  const {theme} = useAppTheme()
+  const viewShotRef = useRef(null)
   const {goBack} = useNavigationHistory()
 
-  const handleGoBack = useCallback(() => {
-    goBack()
-    return true // Prevent default back behavior
-  }, [goBack])
-
-  // Handle Android back button
-  useFocusEffect(
-    useCallback(() => {
-      const backHandler = BackHandler.addEventListener("hardwareBackPress", handleGoBack)
-      return () => backHandler.remove()
-    }, [handleGoBack]),
-  )
+  const handleExit = async () => {
+    // take a screenshot of the webview and save it to the applet zustand store:
+    try {
+      const uri = await captureRef(viewShotRef, {
+        format: "jpg",
+        quality: 0.5,
+      })
+    } catch (e) {
+      console.warn("screenshot failed:", e)
+    }
+    // goBack()
+  }
 
   return (
-    <Screen preset="fixed">
+    <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef}>
+      {/* <MiniAppDualButtonHeader packageName="com.mentra.camera" viewShotRef={viewShotRef} /> */}
+      {/* <View className="h-24" /> */}
       <GalleryScreen />
     </Screen>
   )

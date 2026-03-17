@@ -16,6 +16,7 @@
 import {
   createDisplayToolkit,
   G1_PROFILE,
+  G2_PROFILE,
   Z100_PROFILE,
   NEX_PROFILE,
   TextMeasurer,
@@ -38,7 +39,7 @@ import CoreModule, {GlassesStatus} from "core"
 /**
  * Supported device models for display processing
  */
-export type DeviceModel = "g1" | "z100" | "nex" | "mach1" | "mentra-live" | "simulated" | "unknown"
+export type DeviceModel = "g1" | "g2" | "z100" | "nex" | "mach1" | "mentra-live" | "simulated" | "unknown"
 
 /**
  * Display event types that we process
@@ -194,6 +195,7 @@ function replacePlaceholders(text: string): string {
  */
 const DEVICE_PROFILES: Record<DeviceModel, DisplayProfile> = {
   "g1": G1_PROFILE,
+  "g2": G2_PROFILE,
   "z100": Z100_PROFILE,
   "nex": NEX_PROFILE,
   "mach1": Z100_PROFILE, // Mach1 uses same hardware as Vuzix Z100
@@ -210,6 +212,9 @@ function normalizeModelName(modelName: string | null | undefined): DeviceModel {
 
   const lower = modelName.toLowerCase()
 
+  if (lower.includes("g2") || lower.includes("even realities g2")) {
+    return "g2"
+  }
   if (lower.includes("g1") || lower.includes("even realities")) {
     return "g1"
   }
@@ -283,7 +288,7 @@ export class DisplayProcessor {
     const defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
     if (defaultWearable) {
       this.setDeviceModel(defaultWearable)
-      console.log(`[MantleBridge] Initialized DisplayProcessor with default wearable: ${defaultWearable}`)
+      console.log(`DISPLAY_PROCESSOR: Initialized DisplayProcessor with default wearable: ${defaultWearable}`)
     }
 
     // subscribe to core status changes:

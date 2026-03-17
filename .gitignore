@@ -13,6 +13,7 @@ mcu_client/esp32_ble_simulator/.pio/
 mcu_client/**/esp32**/.pio/
 
 local/*
+K900Server_mentra/
 K900_server_sdk/*
 AugmentOS-Cloud-Example-App/*
 RtmpStreamExampleBasic/*

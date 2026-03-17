@@ -210,6 +210,18 @@ const AppCard: React.FC<AppCardProps> = memo(
                 }>
                 <div className="text-[14px]">Installed</div>
               </Button>
+            ) : app.compatibility?.isCompatible === false ? (
+              // Incompatible app - show disabled "Get" button
+              <Button
+                disabled={true}
+                className="text-[11px] font-normal tracking-[0.1em] px-4 py-[6px] rounded-full w-[56px] h-[36px] flex items-center justify-center opacity-40 cursor-not-allowed"
+                style={{
+                  backgroundColor: "var(--button-bg)",
+                  color: "var(--button-text)",
+                }}
+                title="This app is incompatible with your glasses">
+                <div className="text-[14px] font-medium">Get</div>
+              </Button>
             ) : (
               // )
               <Button

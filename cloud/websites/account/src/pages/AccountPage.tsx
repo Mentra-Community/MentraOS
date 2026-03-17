@@ -1,8 +1,5 @@
-import {useAuth} from "@mentra/shared"
+import {useAuth, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label, Spinner} from "@mentra/shared"
 import DashboardLayout from "../components/DashboardLayout"
-import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "../components/ui/card"
-import {Input} from "../components/ui/input"
-import {Label} from "../components/ui/label"
 
 const AccountPage: React.FC = () => {
   const {user, isLoading} = useAuth()
@@ -11,7 +8,7 @@ const AccountPage: React.FC = () => {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+          <Spinner size="lg" />
         </div>
       </DashboardLayout>
     )

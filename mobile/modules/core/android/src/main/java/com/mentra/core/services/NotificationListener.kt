@@ -17,6 +17,7 @@ import android.text.TextUtils
 import android.util.Base64
 import com.mentra.core.Bridge
 import com.mentra.core.CoreManager
+import com.mentra.core.GlassesStore
 import java.io.ByteArrayOutputStream
 
 class NotificationListener private constructor(private val context: Context) {
@@ -116,14 +117,15 @@ class NotificationListener private constructor(private val context: Context) {
         }
 
         // Check blocklist
-        val blocklist = CoreManager.getInstance().notificationsBlocklist
+        val blocklist = GlassesStore.get("core", "notifications_blocklist") as? List<String> ?: emptyList()
         if (blocklist.contains(packageName)) {
             Bridge.log("NOTIF: Notification in blocklist, returning")
             return
         }
 
         // Check if notifications enabled globally
-        if (!CoreManager.getInstance().notificationsEnabled) {
+        val notificationsEnabled = GlassesStore.get("core", "notifications_enabled") as? Boolean ?: false
+        if (!notificationsEnabled) {
             Bridge.log("NOTIF: Notifications disabled globally")
             return
         }
@@ -245,7 +247,7 @@ class NotificationListener private constructor(private val context: Context) {
     fun getInstalledApps(): List<Map<String, Any?>> {
         val packageManager = context.packageManager
         val packages = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
-        val blocklist = CoreManager.getInstance().notificationsBlocklist
+        val blocklist = GlassesStore.get("core", "notifications_blocklist") as? List<String> ?: emptyList()
 
         return packages
                 .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 } // Filter out system apps

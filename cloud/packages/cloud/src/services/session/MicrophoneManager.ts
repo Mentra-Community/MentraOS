@@ -128,17 +128,10 @@ export class MicrophoneManager {
         this.lastSentState = this.pendingState!;
         this.lastSentRequiredData = this.pendingRequiredData!;
         this.enabled = this.pendingState!;
-
-        this.session.liveKitManager.onMicStateChange();
       }
 
       // Update transcription service state
       this.updateTranscriptionState();
-
-      // Inform LiveKitManager about mic state and media need
-      // const hasMedia = this.cachedSubscriptionState.hasMedia;
-      // this.session.liveKitManager.onMicStateChange(this.enabled);
-      // this.session.liveKitManager.onMediaNeeded(hasMedia);
 
       // Update keep-alive timer based on final state
       this.updateKeepAliveTimer();
@@ -340,7 +333,7 @@ export class MicrophoneManager {
         },
         `Subscription changed, media subscriptions: ${hasMediaSubscriptions}`,
       );
-      // Inform LiveKitManager (mic state drives subscribe now)
+
       // Apply holddown when turning mic off to avoid flapping
       if (hasMediaSubscriptions) {
         // Cancel any pending mic-off holddown

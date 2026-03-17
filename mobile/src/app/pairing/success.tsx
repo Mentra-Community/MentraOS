@@ -62,7 +62,7 @@ export default function PairingSuccessScreen() {
       // sort the stack by the order:
       newStack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
     }
-    if (deviceModel === DeviceTypes.G1) {
+    if (deviceModel === DeviceTypes.G1 || deviceModel === DeviceTypes.G2) {
       if (!onboardingOsCompleted) {
         // newStack.push("/onboarding/os")
       }
@@ -139,6 +139,19 @@ export default function PairingSuccessScreen() {
           transition: false,
           title: translate("common:success"),
           // subtitle: translate("onboarding:nexConnected"),
+        },
+      ]
+      break
+    case DeviceTypes.G2:
+      steps = [
+        {
+          name: "Start Onboarding",
+          type: "image",
+          source: glassesImage,
+          containerClassName: "px-12",
+          transition: false,
+          title: translate("common:success"),
+          subtitle: translate("onboarding:g2Connected"),
         },
       ]
       break

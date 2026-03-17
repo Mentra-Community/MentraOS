@@ -1,31 +1,45 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '../utils/supabase';
+import React, {useState, useEffect} from 'react';
+import {useNavigate} from 'react-router-dom';
+import {supabase} from '../utils/supabase';
+import {mapAuthError} from '../utils/authErrors';
+import {Button} from '../components/ui/button';
+import {Input} from '../components/ui/input';
+import {Label} from '../components/ui/label';
+import {Spinner} from '../components/ui/spinner';
+import {IMAGES} from '../../constants/images';
+import {FiEye, FiEyeOff} from 'react-icons/fi';
 
 interface ResetPasswordPageProps {
   redirectUrl?: string;
+  logoUrl?: string;
 }
 
-const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({ redirectUrl = '/dashboard' }) => {
+const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({
+  redirectUrl = '/dashboard',
+  logoUrl = IMAGES.iconOnly,
+}) => {
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [userEmail, setUserEmail] = useState('');
-  
+
   const navigate = useNavigate();
 
   useEffect(() => {
     // Listen for the PASSWORD_RECOVERY event
-    const { data: authListener } = supabase.auth.onAuthStateChange(
+    const {data: authListener} = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'PASSWORD_RECOVERY') {
           // This event fires when the user clicks the link in their email.
           // The Supabase client has automatically authenticated the user.
           // You can now show the form to reset the password.
           setShowForm(true);
-          
+
           // Store the user's email for login after password reset
           if (session?.user?.email) {
             setUserEmail(session.user.email);
@@ -50,28 +64,38 @@ const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({ redirectUrl = '/d
       return;
     }
 
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
     setLoading(true);
 
     // Call updateUser to set the new password
-    const { error: updateError } = await supabase.auth.updateUser({
+    const {error: updateError} = await supabase.auth.updateUser({
       password: newPassword,
     });
 
     if (updateError) {
-      setError(updateError.message);
+      setError(mapAuthError(updateError));
       setLoading(false);
       return;
     }
 
     // Password updated successfully, now log in with the new password
     if (userEmail) {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const {error: signInError} = await supabase.auth.signInWithPassword({
         email: userEmail,
         password: newPassword,
       });
 
       if (signInError) {
-        setError('Password reset successful, but login failed. Please try logging in manually.');
+        setError(mapAuthError(signInError));
         setLoading(false);
         return;
       }
@@ -89,106 +113,119 @@ const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({ redirectUrl = '/d
         navigate('/login');
       }, 2000);
     }
-    
+
     setLoading(false);
   };
 
   if (!showForm) {
-    // You can show a loading spinner or a message
-    // while the client library is processing the token.
+    // Show a loading state while processing the token
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Verifying your request...</p>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+        <div className="text-center flex flex-col items-center">
+          <Spinner size="lg" className="mb-4" />
+          <p className="text-muted-foreground">Verifying your request...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col" style={{ width: '100%' }}>
-      <main className="flex-1 flex flex-col items-center justify-center px-4 py-8" style={{ maxWidth: '100%' }}>
-        <div className="w-full max-w-md mx-auto flex flex-col items-center" style={{ maxWidth: '28rem' }}>
-          {/* Logo */}
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/757b23a3-9ec0-457d-2634-29e28f03fe00/verysmall" alt="Mentra Logo" />
+    <div className="min-h-screen bg-background flex flex-col w-full">
+      <main className="flex-1 flex flex-col items-center justify-center px-6 py-8">
+        <div className="w-full max-w-sm mx-auto flex flex-col items-center">
+          {/* Icon */}
+          <img src={logoUrl} alt="Mentra Logo" className="h-24 w-24" />
+
+          {/* Wordmark */}
+          <p className="text-[46px] text-secondary-foreground text-center pt-8 pb-4">
+            Mentra
+          </p>
 
           {/* Header */}
-          <div className="w-full text-center mt-6 mb-6">
-            <h1 className="text-2xl font-bold mb-2">
-              Set Your New Password
-            </h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Enter your new password below
-            </p>
-          </div>
+          <p className="text-xl text-secondary-foreground text-center mb-4">
+            Set Your New Password
+          </p>
+          <p className="text-sm text-muted-foreground text-center mb-6">
+            Enter your new password below
+          </p>
 
-          {/* Card */}
-          <div className="w-full bg-white p-8 rounded-lg shadow-md">
-            <form onSubmit={handlePasswordReset}>
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-2">
-                    New Password
-                  </label>
-                  <input
-                    type="password"
-                    id="newPassword"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Enter new password"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    required
-                    disabled={loading}
-                  />
-                </div>
-
-                <button
-                  type="submit"
+          {/* Form */}
+          <form onSubmit={handlePasswordReset} className="w-full space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="newPassword">New Password</Label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  id="newPassword"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  required
                   disabled={loading}
-                  className="w-full py-2 bg-emerald-400 hover:bg-emerald-500 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded text-sm transition-colors duration-200"
-                  style={{ borderRadius: '4px', fontSize: '14px', fontWeight: '500' }}
-                >
-                  {loading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Saving...
-                    </span>
-                  ) : (
-                    'Save New Password'
-                  )}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showPassword ? <FiEyeOff className="w-5 h-5" /> : <FiEye className="w-5 h-5" />}
                 </button>
               </div>
-            </form>
-
-            {message && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-md mt-4">
-                <p className="text-sm text-green-700 text-center">
-                  {message}
-                </p>
-              </div>
-            )}
-
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-md mt-4">
-                <p className="text-sm text-red-700 text-center">
-                  {error}
-                </p>
-              </div>
-            )}
-
-            {/* Sign In Link */}
-            <div className="text-center text-sm text-gray-500 mt-6">
-              <a
-                href="/login"
-                className="cursor-pointer underline"
-              >
-                Back to sign in
-              </a>
             </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <div className="relative">
+                <Input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  id="confirmPassword"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm new password"
+                  required
+                  disabled={loading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {showConfirmPassword ? <FiEyeOff className="w-5 h-5" /> : <FiEye className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading ? (
+                <>
+                  <Spinner size="sm" />
+                  Saving...
+                </>
+              ) : (
+                'Save New Password'
+              )}
+            </Button>
+
+            {/* Success Message */}
+            {message && (
+              <div className="text-sm text-accent text-center mt-2">
+                {message}
+              </div>
+            )}
+
+            {/* Error Message */}
+            {error && (
+              <div className="text-sm text-destructive text-center mt-2">
+                {error}
+              </div>
+            )}
+          </form>
+
+          {/* Back to sign in link */}
+          <div className="flex items-center justify-center gap-1 mt-6">
+            <a
+              href="/login"
+              className="text-sm text-accent font-semibold cursor-pointer hover:underline">
+              Back to sign in
+            </a>
           </div>
         </div>
       </main>

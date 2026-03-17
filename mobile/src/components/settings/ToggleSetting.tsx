@@ -3,6 +3,7 @@ import {View, ViewStyle, TextStyle} from "react-native"
 import {Switch, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
+import GlassView from "@/components/ui/GlassView"
 
 type ToggleSettingProps = {
   label: string
@@ -43,7 +44,7 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
       : undefined
 
   return (
-    <View
+    <GlassView
       style={[
         themed($container),
         groupedStyle,
@@ -54,12 +55,12 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
       <View style={themed($textContainer)}>
         <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4, justifyContent: "center"}}>
           {icon && icon}
-          <Text weight="semibold" text={label} style={[themed($label), compact && {fontSize: 12}]} />
+          <Text className="" text={label} style={[themed($label), compact && {fontSize: 12}]} />
         </View>
         {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
       <Switch value={value} onValueChange={onValueChange} disabled={disabled} />
-    </View>
+    </GlassView>
   )
 }
 

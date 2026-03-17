@@ -199,11 +199,11 @@ This should rarely fire because the server sends app-level pings every 2 seconds
 
 ### Summary of all three kill mechanisms
 
-| #   | Killer                     | Timer | Code | Reason                                | Status                                                       |
-| --- | -------------------------- | ----- | ---- | ------------------------------------- | ------------------------------------------------------------ |
-| 1   | nginx `proxy_send_timeout` | 60s   | 1006 | _(empty)_                             | **Fixed** — `ingressAnnotations` in `porter.yaml` with 3600s |
-| 2   | Server pong timeout        | 30s   | 1001 | "Ping timeout - no pong received"     | **Fixed** — `PONG_TIMEOUT_ENABLED = false`                   |
-| 3   | Bun `idleTimeout`          | 120s  | 1006 | "WebSocket timed out from inactivity" | **Mitigated** — server pings every 2s keep it alive          |
+| #   | Killer                     | Timer | Code | Reason                                | Status                                              |
+| --- | -------------------------- | ----- | ---- | ------------------------------------- | --------------------------------------------------- |
+| 1   | nginx `proxy_send_timeout` | 60s   | 1006 | _(empty)_                             | **Fixed** — WS ingress with 3600s on all clusters   |
+| 2   | Server pong timeout        | 30s   | 1001 | "Ping timeout - no pong received"     | **Fixed** — `PONG_TIMEOUT_ENABLED = false`          |
+| 3   | Bun `idleTimeout`          | 120s  | 1006 | "WebSocket timed out from inactivity" | **Mitigated** — server pings every 2s keep it alive |
 
 All three share the same root cause: **no client → server traffic visible to the server** after audio moved to UDP. Cloudflare's ping/pong absorption makes it worse — even protocol-level keepalives don't flow end-to-end.
 
@@ -233,6 +233,6 @@ These are the disconnections that the [034 client-side liveness detection](../03
 
 ## Next steps
 
-- See [spec.md](./spec.md) for the permanent fix — `ingressAnnotations` in `porter.yaml` sets 3600s timeouts on the Porter-managed ingress
-- ~~WS ingress manifests are checked into `cloud/k8s/` for all environments and clusters~~ **Deprecated** — separate WS ingress resources caused Porter domain conflicts that blocked all CI deploys. The `cloud/k8s/ws-ingress-*.yaml` manifests have been removed. Any previously-applied WS ingress resources must be deleted from clusters via `porter kubectl -- delete ingress cloud-<env>-cloud-ws -n default`
+- See [spec.md](./spec.md) for the permanent WS ingress fix — dedicated Kubernetes Ingress resources for WebSocket paths with long timeouts, separate from the REST ingress
+- WS ingress manifests are checked into `cloud/k8s/` for all environments and clusters
 - Client-side pings (mobile app change from [034](../034-ws-liveness/spec.md)) will independently solve all three kill mechanisms by creating constant client → server traffic

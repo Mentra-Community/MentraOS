@@ -122,7 +122,7 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(@NonNull String requestId, @NonNull String appId, @NonNull String size, @Nullable String webhookUrl, @Nullable String authToken, @Nullable String compress, boolean silent) {
+    public void requestPhoto(@NonNull String requestId, @NonNull String appId, @NonNull String size, @Nullable String webhookUrl, @Nullable String authToken, @Nullable String compress, boolean flash, boolean sound) {
 
     }
 
@@ -157,7 +157,7 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void startVideoRecording(@NonNull String requestId, boolean save, boolean silent) {
+    public void startVideoRecording(@NonNull String requestId, boolean save, boolean flash, boolean sound) {
 
     }
 
@@ -248,6 +248,10 @@ public class Mach1 extends SGCManager {
     @Override
     public void showDashboard() {
 
+    }
+
+    @Override
+    public void ping() {
     }
 
     @Override
@@ -363,6 +367,11 @@ public class Mach1 extends SGCManager {
     @Override
     public void sendUserEmailToGlasses(String email) {
         // Mach1 doesn't support user email (no ASG client)
+    }
+
+    @Override
+    public void sendIncidentId(String incidentId) {
+        // Mach1 doesn't support incident reporting (no ASG client)
     }
 
     @Override

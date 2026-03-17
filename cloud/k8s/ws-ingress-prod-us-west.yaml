@@ -1,0 +1,80 @@
+# WebSocket Ingress for prod environment (us-west cluster 4965)
+# Separate from Porter-managed ingress to set extended timeouts for WS paths.
+# See cloud/issues/035-nginx-ws-timeout/spec.md for context.
+#
+# Apply: PORTER_CLUSTER=4965 porter kubectl -- apply -f cloud/k8s/ws-ingress-prod-us-west.yaml
+# Delete: PORTER_CLUSTER=4965 porter kubectl -- delete ingress cloud-prod-cloud-ws
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloud-prod-cloud-ws
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: uswestapi.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: uswestapi.mentraglass.com
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - api.mentra.glass
+      secretName: cloud-prod-cloud-api-mentra-glass
+    - hosts:
+        - uswestapi.mentra.glass
+      secretName: cloud-prod-cloud-uswestapi-mentra-glass
+    - hosts:
+        - uswestapi.mentraglass.com
+      secretName: cloud-prod-cloud-uswestapi-mentraglass-com

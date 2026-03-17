@@ -321,7 +321,7 @@ const $timeButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
   alignItems: "center",
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
@@ -350,7 +350,7 @@ const $modalOverlay: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $modalContent: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderRadius: 12,
   padding: spacing.s6,
   width: "90%",
@@ -420,7 +420,7 @@ const $modalFooter: ThemedStyle<ViewStyle> = ({spacing}) => ({
 
 const $cancelButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flex: 1,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,

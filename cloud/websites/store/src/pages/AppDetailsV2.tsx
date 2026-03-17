@@ -6,7 +6,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useIsDesktop } from "../hooks/useMediaQuery";
 import { usePlatform } from "../hooks/usePlatform";
 import api from "../api";
-import { AppI } from "../types";
+import { AppI, DeviceInfo } from "../types";
 import { useToast } from "../components/ui/MuiToast";
 import { formatCompatibilityError } from "../utils/errorHandling";
 import Header_v2 from "../components/Header_v2";
@@ -63,6 +63,7 @@ const AppDetails: React.FC = () => {
   };
 
   const [app, setApp] = useState<AppI | null>(null);
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [installingApp, setInstallingApp] = useState<boolean>(false);
@@ -89,13 +90,16 @@ const AppDetails: React.FC = () => {
       setError(null);
 
       // Get app details
-      const appDetails = await api.app.getAppByPackageName(pkgName);
-      console.log("Raw app details from API:", appDetails);
+      const result = await api.app.getAppByPackageName(pkgName);
+      console.log("Raw app details from API:", result);
 
-      if (!appDetails) {
+      if (!result.app) {
         setError("App not found");
         return;
       }
+
+      const appDetails = result.app;
+      setDeviceInfo(result.deviceInfo || null);
 
       // If authenticated, check if app is installed
       if (isAuthenticated) {
@@ -233,6 +237,7 @@ const AppDetails: React.FC = () => {
             {isDesktop ? (
               <AppDetailsDesktop
                 app={app}
+                deviceInfo={deviceInfo}
                 theme={theme}
                 isAuthenticated={isAuthenticated}
                 isWebView={isWebView}
@@ -247,6 +252,7 @@ const AppDetails: React.FC = () => {
             ) : (
               <AppDetailsMobile
                 app={app}
+                deviceInfo={deviceInfo}
                 theme={theme}
                 isAuthenticated={isAuthenticated}
                 isWebView={isWebView}

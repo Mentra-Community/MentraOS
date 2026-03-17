@@ -1,0 +1,51 @@
+diff --git a/src/DraggableMasonryList.tsx b/src/DraggableMasonryList.tsx
+index cacb84dbd769c001852547c720696ff2772cbdca..86a91158ceb7772df7eaa34f806148f44e8f8517 100644
+--- a/src/DraggableMasonryList.tsx
++++ b/src/DraggableMasonryList.tsx
+@@ -606,7 +606,18 @@ function DraggableMasonryList<T extends MasonryItemType>({
+ 
+     // --- Drag Handlers ---
+     const handleDragStart = useCallback((id: string) => {
+-        if (!sortEnabled) return;
++        if (!sortEnabled) {
++            if (onDragStart) {
++                onDragStart({ key: id, fromIndex: -1 });
++            }
++            return;
++        }
++
++        const current = orderedDataRef.current.find(item => keyExtractor(item) === id);
++        const packageName = current?.["packageName"] ?? "";
++        if (packageName?.includes("@empty")) {
++            return;
++        }
+ 
+         setActiveDragId(id);
+         isDraggingShared.value = true;
+diff --git a/src/MasonryItem.tsx b/src/MasonryItem.tsx
+index e4bbf4c488c5406be4222d7b76fae950bc2ce162..755f657aa98603281a7eb8b6bb7a579e01f67a48 100644
+--- a/src/MasonryItem.tsx
++++ b/src/MasonryItem.tsx
+@@ -238,6 +238,13 @@ const MasonryItemComponent = ({
+             runOnJS(onDragEnd)(id);
+         });
+ 
++    const longPressGesture = Gesture.Pan()
++        .enabled(!sortEnabled)
++        .activateAfterLongPress(dragActivationDelay)
++        .onStart(() => {
++            runOnJS(onDragStart)(id);
++        });
++    const composedGesture = Gesture.Simultaneous(panGesture, longPressGesture);
+ 
+     // レイアウトアニメーション用のスタイル（外側のラッパー）
+     const wrapperStyle = useAnimatedStyle(() => {
+@@ -296,7 +303,7 @@ const MasonryItemComponent = ({
+     const exitingAnimation = itemExiting;
+ 
+     return (
+-        <GestureDetector gesture={panGesture}>
++        <GestureDetector gesture={composedGesture}>
+             {/* 外側: 位置とentering/exitingアニメーション */}
+             <Animated.View
+                 style={wrapperStyle}

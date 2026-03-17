@@ -22,6 +22,7 @@ public class AsgSettings {
     private static final String KEY_SAVE_IN_GALLERY_MODE = "save_in_gallery_mode";
     private static final String KEY_ZSL_ENABLED = "zsl_enabled";
     private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
+    private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
 
     private final SharedPreferences prefs;
@@ -211,6 +212,23 @@ public class AsgSettings {
         Log.d(TAG, "Setting MFNR enabled to: " + enabled);
         // Using commit() for immediate persistence
         prefs.edit().putBoolean(KEY_MFNR_ENABLED, enabled).commit();
+    }
+
+    /**
+     * Get the HDR burst capture setting
+     * @return true if HDR burst should be enabled, false otherwise (default: true)
+     */
+    public boolean isHdrBurstEnabled() {
+        return prefs.getBoolean(KEY_HDR_BURST_ENABLED, false);
+    }
+
+    /**
+     * Set the HDR burst capture setting
+     * @param enabled true to enable HDR burst, false to disable
+     */
+    public void setHdrBurstEnabled(boolean enabled) {
+        Log.d(TAG, "Setting HDR burst enabled to: " + enabled);
+        prefs.edit().putBoolean(KEY_HDR_BURST_ENABLED, enabled).commit();
     }
 
     /**

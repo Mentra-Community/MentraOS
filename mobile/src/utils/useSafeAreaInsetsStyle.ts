@@ -1,4 +1,5 @@
-import {Edge, useSafeAreaInsets} from "react-native-safe-area-context"
+import {Edge} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 export type ExtendedEdge = Edge | "start" | "end"
 
@@ -37,7 +38,7 @@ export function useSafeAreaInsetsStyle<
   safeAreaEdges: Edges = [] as unknown as Edges,
   property: Property = "padding" as Property,
 ): SafeAreaInsetsStyle<Property, Edges> {
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
 
   return safeAreaEdges.reduce((acc, e) => {
     const value = edgeInsetMap[e] ?? e

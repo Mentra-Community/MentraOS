@@ -1,16 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from "@/components/ui/select";
+import { Alert, AlertDescription, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Spinner } from "@mentra/shared";
 import {
   Table,
   TableBody,
@@ -19,7 +8,7 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
-import { Mail, UserPlus, AlertCircle, CheckCircle2, Loader2, Shield, User, UserCog, AlertTriangle, LogOut } from "lucide-react";
+import { Mail, UserPlus, AlertCircle, CheckCircle2, Loader2, Shield, LogOut } from "lucide-react";
 import DashboardLayout from "../components/DashboardLayout";
 import api, { OrgMember, OrgRole, PendingInvite } from '@/services/api.service';
 import { useOrganization } from '@/context/OrganizationContext';
@@ -236,16 +225,6 @@ const Members: React.FC = () => {
     }
   };
 
-  // Render role icon based on role
-  const RoleIcon = ({ role }: { role: OrgRole }) => {
-    switch (role) {
-      case 'admin':
-        return <UserCog className="h-4 w-4 text-blue-600" />;
-      default:
-        return <User className="h-4 w-4 text-gray-600" />;
-    }
-  };
-
   // If no organization is selected
   if (!currentOrg) {
     return (
@@ -272,11 +251,16 @@ const Members: React.FC = () => {
 
   return (
     <DashboardLayout>
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-center justify-between mb-6 min-h-10">
+          <h1 className="text-2xl font-semibold text-foreground">Members</h1>
+        </div>
+
+        <div className="space-y-6">
         {/* Member list */}
         <Card className="shadow-sm">
           <CardHeader>
-            <CardTitle className="text-2xl">Organization Members</CardTitle>
+            <CardTitle>Organization Members</CardTitle>
             <CardDescription>
               {isAdmin
                 ? `Manage members of ${currentOrg?.name}`
@@ -285,9 +269,9 @@ const Members: React.FC = () => {
           </CardHeader>
           <CardContent>
             {loadingMembers || permissionsLoading ? (
-              <div className="p-8 text-center">
-                <div className="animate-spin mx-auto h-8 w-8 border-t-2 border-b-2 border-blue-500 rounded-full"></div>
-                <p className="mt-2 text-gray-500">Loading members...</p>
+              <div className="p-8 text-center flex flex-col items-center">
+                <Spinner size="lg" />
+                <p className="mt-2 text-muted-foreground">Loading members...</p>
               </div>
             ) : (
               <div className="border rounded-md">
@@ -303,7 +287,7 @@ const Members: React.FC = () => {
                   <TableBody>
                     {members.length === 0 && pendingInvites.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={isAdmin ? 4 : 3} className="text-center py-4 text-gray-500">
+                        <TableCell colSpan={isAdmin ? 4 : 3} className="text-center py-4 text-muted-foreground">
                           No members found
                         </TableCell>
                       </TableRow>
@@ -312,8 +296,7 @@ const Members: React.FC = () => {
                         {members.map((member) => (
                           <TableRow key={member.user.id}>
                             <TableCell>{member.user.email}</TableCell>
-                            <TableCell className="flex items-center gap-1">
-                              <RoleIcon role={member.role} />
+                            <TableCell>
                               {isAdmin ? (
                                 // Prevent modifying your own role
                                 user?.email?.toLowerCase() === member.user.email.toLowerCase() ? (
@@ -371,24 +354,23 @@ const Members: React.FC = () => {
                         ))}
                         {/* Pending invitations */}
                         {pendingInvites.map((invite) => (
-                          <TableRow key={invite.email} className="bg-gray-50">
+                          <TableRow key={invite.email} className="bg-secondary">
                             <TableCell>
                               <div className="flex items-center gap-2">
                                 {invite.email}
-                                <span className="text-xs text-gray-500">(pending)</span>
+                                <span className="text-xs text-muted-foreground">(pending)</span>
                               </div>
                             </TableCell>
-                            <TableCell className="flex items-center gap-1">
-                              <RoleIcon role={invite.role} />
-                              <span className="ml-2 capitalize text-sm">{invite.role}</span>
+                            <TableCell>
+                              <span className="capitalize text-sm">{invite.role}</span>
                             </TableCell>
                             <TableCell>
                               <div>
                                 <div className="text-sm">Invited {new Date(invite.invitedAt).toLocaleDateString()}</div>
-                                <div className="text-xs text-gray-500">
+                                <div className="text-xs text-muted-foreground">
                                   {invite.emailSentCount > 1 && `Resent ${invite.emailSentCount - 1} time${invite.emailSentCount > 2 ? 's' : ''}`}
                                   {new Date(invite.expiresAt) < new Date() && (
-                                    <span className="text-red-500 ml-2">Expired</span>
+                                    <span className="text-destructive ml-2">Expired</span>
                                   )}
                                 </div>
                               </div>
@@ -445,9 +427,9 @@ const Members: React.FC = () => {
                 )}
 
                 {inviteSuccess && (
-                  <Alert className="bg-green-50 text-green-800 border-green-200">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <AlertDescription className="text-green-700">
+                  <Alert className="bg-success-light text-success border-success/30">
+                    <CheckCircle2 className="h-4 w-4 text-success" />
+                    <AlertDescription className="text-success">
                       Invitation sent successfully!
                     </AlertDescription>
                   </Alert>
@@ -482,7 +464,7 @@ const Members: React.FC = () => {
                       <SelectItem value="member">Member (manage apps)</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     {inviteRole === 'admin' && 'Admins have full control over the organization, including managing members and apps.'}
                     {inviteRole === 'member' && 'Members can manage apps, but cannot manage the organization or its members.'}
                   </p>
@@ -507,6 +489,7 @@ const Members: React.FC = () => {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
     </DashboardLayout>
   );

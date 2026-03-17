@@ -18,7 +18,7 @@ Before using photo capture, your app must have the `CAMERA` permission:
 
 **Add to App Manifest**: Include `CAMERA` in your app's permissions in the [Developer Console](https://console.mentra.glass/)
 
-For complete permission setup instructions, see the [Permissions Guide](/permissions).
+For complete permission setup instructions, see the [Permissions Guide](/app-devs/core-concepts/permissions).
 
 ## Basic Usage
 
@@ -47,6 +47,21 @@ const medium = await session.camera.requestPhoto() // or { size: 'medium' }
 // Large, highest available resolution
 const large = await session.camera.requestPhoto({size: "large"})
 ```
+
+### Photo Resolutions
+
+The resolution of the photo your app receives depends on the requested size and whether the user's Mentra Live is connected to WiFi.
+
+When on WiFi, photos are uploaded at full quality via webhook. When not on WiFi, photos are transferred over BLE with aggressive compression to fit Bluetooth bandwidth constraints.
+
+| Size | WiFi Resolution | No WiFi (BLE) Resolution |
+|------|----------------|--------------------------|
+| `small` | 640×480 | 400×300 |
+| `medium` | 1280×960 | 640×480 |
+| `large` | 1920×1440 | 800×600 |
+| `full` | 3264×2448 | 1024×768 |
+
+All photos maintain a 4:3 aspect ratio. BLE photos are encoded as AVIF (with JPEG fallback) and are significantly smaller in file size to accommodate Bluetooth transfer limits.
 
 ### Working with Photo Data
 
@@ -84,7 +99,6 @@ private async uploadPhotoToAPI(buffer: Buffer, mimeType: string): Promise<void> 
 
 ## See Also
 
-- [Camera API Reference](/reference/managers/camera) - Complete API documentation
-- [RTMP Streaming Guide](/camera/rtmp-streaming) - Live video streaming
-- [Permissions Guide](/permissions) - Setting up camera permissions
-- [Events Documentation](/events) - Camera-related events
+- [Camera API Reference](/app-devs/reference/managers/camera) - Complete API documentation
+- [RTMP Streaming Guide](/app-devs/core-concepts/camera/rtmp-streaming) - Live video streaming
+- [Permissions Guide](/app-devs/core-concepts/permissions) - Setting up camera permissions

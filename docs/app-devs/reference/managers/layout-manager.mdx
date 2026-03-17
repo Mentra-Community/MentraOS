@@ -7,7 +7,7 @@ title: LayoutManager
 
 The `LayoutManager` is responsible for sending display requests to MentraOS Cloud to show layouts in the AR view. It provides methods for displaying different types of content in the user's field of view.
 
-You access the LayoutManager through the `layouts` property of a [`AppSession`](/reference/app-session) instance:
+You access the LayoutManager through the `layouts` property of a [`AppSession`](/app-devs/reference/app-session) instance:
 
 ```typescript
 const layoutManager = appSession.layouts;
@@ -32,7 +32,7 @@ showTextWall(
 **Parameters:**
 - `text`: The text content to display
 - `options`: Optional parameters
-  - `view`: Target view ([`ViewType.MAIN`](/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/reference/enums#viewtype)). Defaults to `MAIN`
+  - `view`: Target view ([`ViewType.MAIN`](/app-devs/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/app-devs/reference/enums#viewtype)). Defaults to `MAIN`
   - `durationMs`: Optional duration in milliseconds to show the layout
 
 **Example:**
@@ -68,7 +68,7 @@ showDoubleTextWall(
 - `topText`: Text for the top section
 - `bottomText`: Text for the bottom section
 - `options`: Optional parameters
-  - `view`: Target view ([`ViewType.MAIN`](/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/reference/enums#viewtype)). Defaults to `MAIN`
+  - `view`: Target view ([`ViewType.MAIN`](/app-devs/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/app-devs/reference/enums#viewtype)). Defaults to `MAIN`
   - `durationMs`: Optional duration in milliseconds
 
 **Example:**
@@ -100,7 +100,7 @@ showReferenceCard(
 - `title`: The title of the card
 - `text`: The main content text of the card
 - `options`: Optional parameters
-  - `view`: Target view ([`ViewType.MAIN`](/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/reference/enums#viewtype)). Defaults to `MAIN`
+  - `view`: Target view ([`ViewType.MAIN`](/app-devs/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/app-devs/reference/enums#viewtype)). Defaults to `MAIN`
   - `durationMs`: Optional duration in milliseconds
 
 **Example:**
@@ -132,7 +132,7 @@ showDashboardCard(
 - `leftText`: Text for the left side (often a label)
 - `rightText`: Text for the right side (often a value)
 - `options`: Optional parameters
-  - `view`: Target view ([`ViewType.MAIN`](/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/reference/enums#viewtype)). Defaults to `DASHBOARD`
+  - `view`: Target view ([`ViewType.MAIN`](/app-devs/reference/enums#viewtype) or [`ViewType.DASHBOARD`](/app-devs/reference/enums#viewtype)). Defaults to `DASHBOARD`
   - `durationMs`: Optional duration in milliseconds
 
 **Example:**
@@ -159,7 +159,7 @@ interface TextWall {
 }
 ```
 
-See the full definition in [Layout Types](/reference/interfaces/layout-types#textwall).
+See the full definition in [Layout Types](/app-devs/reference/interfaces/layout-types#textwall).
 
 ### DoubleTextWall
 
@@ -171,7 +171,7 @@ interface DoubleTextWall {
 }
 ```
 
-See the full definition in [Layout Types](/reference/interfaces/layout-types#doubletextwall).
+See the full definition in [Layout Types](/app-devs/reference/interfaces/layout-types#doubletextwall).
 
 ### ReferenceCard
 
@@ -183,7 +183,7 @@ interface ReferenceCard {
 }
 ```
 
-See the full definition in [Layout Types](/reference/interfaces/layout-types#referencecard).
+See the full definition in [Layout Types](/app-devs/reference/interfaces/layout-types#referencecard).
 
 ### DashboardCard
 
@@ -195,11 +195,11 @@ interface DashboardCard {
 }
 ```
 
-See the full definition in [Layout Types](/reference/interfaces/layout-types#dashboardcard).
+See the full definition in [Layout Types](/app-devs/reference/interfaces/layout-types#dashboardcard).
 
 ## View Types
 
-The [`ViewType`](/reference/enums#viewtype) enum is used to specify where in the AR display the layout should appear:
+The [`ViewType`](/app-devs/reference/enums#viewtype) enum is used to specify where in the AR display the layout should appear:
 
 ```typescript
 enum ViewType {
@@ -219,6 +219,6 @@ enum ViewType {
    - For notifications or transient information, use shorter durations (2-5 seconds)
 
 4. **Dashboard vs. Main View**:
-   - Use the [`DASHBOARD`](/reference/enums#viewtype) view for persistent information the user may need to reference
-   - Use the [`MAIN`](/reference/enums#viewtype) view for temporary information or responses to user actions
+   - Use the [`DASHBOARD`](/app-devs/reference/enums#viewtype) view for persistent information the user may need to reference
+   - Use the [`MAIN`](/app-devs/reference/enums#viewtype) view for temporary information or responses to user actions
 

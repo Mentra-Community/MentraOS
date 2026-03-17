@@ -120,6 +120,8 @@ export enum AppToCloudMessageType {
   PHOTO_REQUEST = "photo_request",
   AUDIO_PLAY_REQUEST = "audio_play_request",
   AUDIO_STOP_REQUEST = "audio_stop_request",
+  AUDIO_STREAM_START = "audio_stream_start",
+  AUDIO_STREAM_END = "audio_stream_end",
   RGB_LED_CONTROL = "rgb_led_control",
   REQUEST_WIFI_SETUP = "request_wifi_setup",
 
@@ -149,6 +151,9 @@ export enum AppToCloudMessageType {
 
   // Session lifecycle
   OWNERSHIP_RELEASE = "ownership_release",
+
+  // Telemetry (for incident debugging)
+  TELEMETRY_RESPONSE = "telemetry_response",
 }
 
 /**
@@ -175,6 +180,7 @@ export enum CloudToAppMessageType {
   // Media responses
   PHOTO_RESPONSE = "photo_response",
   AUDIO_PLAY_RESPONSE = "audio_play_response",
+  AUDIO_STREAM_READY = "audio_stream_ready",
   RGB_LED_CONTROL_RESPONSE = "rgb_led_control_response",
   RTMP_STREAM_STATUS = "rtmp_stream_status",
   MANAGED_STREAM_STATUS = "managed_stream_status",
@@ -184,6 +190,9 @@ export enum CloudToAppMessageType {
 
   // Permissions
   PERMISSION_ERROR = "permission_error",
+
+  // Telemetry (for incident debugging)
+  REQUEST_TELEMETRY = "request_telemetry",
 
   /**
    * @deprecated Use the settings system (mentraosSettings) instead.

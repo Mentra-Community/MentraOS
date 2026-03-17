@@ -1,0 +1,41 @@
+{
+  "name": "@mentra/webview-sdk",
+  "version": "1.0.0",
+  "description": "JavaScript SDK for building local mini apps (LMA) in MentraOS WebViews",
+  "author": "Mentra Labs",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && bun x tsc -p tsconfig.json",
+    "dev": "bun x tsc -p tsconfig.json --watch",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "mentra",
+    "mentraos",
+    "webview",
+    "smartglasses",
+    "local-mini-app",
+    "lma"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

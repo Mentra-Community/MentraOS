@@ -19,6 +19,25 @@ export interface AppSettings {
 }
 
 /**
+ * Result of a hardware compatibility check
+ * Matches backend CompatibilityResult from HardwareCompatibilityService
+ */
+export interface CompatibilityResult {
+  isCompatible: boolean;
+  missingRequired: HardwareRequirement[];
+  missingOptional: HardwareRequirement[];
+  warnings: string[];
+}
+
+/**
+ * Device info returned from backend when user has connected glasses
+ */
+export interface DeviceInfo {
+  connected: boolean;
+  modelName: string | null;
+}
+
+/**
  * App interface for frontend
  * Matches server-side AppI but adapted for the frontend needs
  */
@@ -79,6 +98,9 @@ export interface AppI {
   // Timestamps
   createdAt?: string;
   updatedAt?: string;
+
+  // Compatibility info (returned when user is authenticated and has connected glasses)
+  compatibility?: CompatibilityResult;
 }
 
 // Install info interface

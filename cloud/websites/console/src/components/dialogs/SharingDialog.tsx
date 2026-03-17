@@ -1,8 +1,6 @@
 // components/dialogs/SharingDialog.tsx
 import {useEffect, useState, FC} from "react"
-import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle} from "@/components/ui/dialog"
-import {Button} from "@/components/ui/button"
-import {Input} from "@/components/ui/input"
+import {Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input} from "@mentra/shared"
 
 import {Copy, LinkIcon, CheckCircle, ExternalLink} from "lucide-react"
 import api from "@/services/api.service"
@@ -83,7 +81,7 @@ const SharingDialog: FC<SharingDialogProps> = ({app, open, onOpenChange, orgId})
         <div className="py-4 space-y-6">
           {/* Installation Link Section */}
           <div className="space-y-3">
-            <p className="text-sm text-gray-500">Share this link with anyone to let them install your app:</p>
+            <p className="text-sm text-muted-foreground">Share this link with anyone to let them install your MiniApp:</p>
             <div className="flex items-center gap-2">
               <div className="flex-1 relative">
                 <Input
@@ -98,41 +96,41 @@ const SharingDialog: FC<SharingDialogProps> = ({app, open, onOpenChange, orgId})
                 onClick={handleCopyLink}
                 className="shrink-0 ml-2"
                 disabled={loadingShareLink}>
-                {isLinkCopied ? <CheckCircle className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                {isLinkCopied ? <CheckCircle className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
           </div>
 
-          {/* App Store Information */}
-          <div className="bg-blue-50 border border-blue-200 p-3 rounded-md">
-            <p className="text-sm text-blue-900 font-medium mb-2">View in MentraOS App Store</p>
-            <p className="text-xs text-blue-700 mb-3">
-              You can also visit the app store and search for the exact package name to see how your app appears to
+          {/* Mentra MiniApp Store Information */}
+          <div className="bg-accent/10 border border-accent p-3 rounded-md">
+            <p className="text-sm text-link font-medium mb-2">View in Mentra MiniApp Store</p>
+            <p className="text-xs text-link mb-3">
+              You can also visit the Mentra MiniApp Store and search for the exact package name to see how your MiniApp appears to
               others.
             </p>
             <a
               href={`https://apps.mentra.glass/`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 hover:underline">
+              className="inline-flex items-center gap-2 text-sm text-link hover:text-link hover:underline">
               <ExternalLink className="h-4 w-4" />
-              Open in App Store
+              Open in Mentra MiniApp Store
             </a>
-            <div className="mt-2 pt-2 border-t border-blue-200">
+            <div className="mt-2 pt-2 border-t border-accent">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <p className="text-xs text-blue-600">Search for:</p>
-                  <code className="bg-blue-100 px-1.5 py-0.5 rounded font-mono text-xs">{app?.packageName}</code>
+                  <p className="text-xs text-link">Search for:</p>
+                  <code className="bg-accent/20 px-1.5 py-0.5 rounded font-mono text-xs">{app?.packageName}</code>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleCopyPackageName}
-                  className="h-7 px-2 hover:bg-blue-100">
+                  className="h-7 px-2 hover:bg-accent/20">
                   {isPackageNameCopied ? (
-                    <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+                    <CheckCircle className="h-3.5 w-3.5 text-success" />
                   ) : (
-                    <Copy className="h-3.5 w-3.5 text-blue-600" />
+                    <Copy className="h-3.5 w-3.5 text-link" />
                   )}
                 </Button>
               </div>

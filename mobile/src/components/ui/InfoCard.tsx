@@ -73,7 +73,7 @@ const InfoCardSection: React.FC<InfoCardSectionProps> = ({items, style}) => {
 const $infoCardContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingVertical: 18.5,
   paddingHorizontal: 16,
   marginBottom: spacing.s2,

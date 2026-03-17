@@ -99,8 +99,10 @@ export interface PhotoRequestToGlasses extends BaseMessage {
   size?: "small" | "medium" | "large" | "full";
   /** Image compression level: none, medium, or heavy */
   compress?: "none" | "medium" | "heavy";
-  /** Silent mode: disables LED flash and shutter sound when true. Cloud-controlled based on packageName. */
-  silent?: boolean;
+  /** Controls front-facing privacy flash LED. Cloud-controlled based on packageName. */
+  flash?: boolean;
+  /** Controls shutter/video sounds. */
+  sound?: boolean;
 }
 
 /**
@@ -168,6 +170,10 @@ export interface StartRtmpStream extends BaseMessage {
   video?: any; // Video configuration
   audio?: any; // Audio configuration
   stream?: any; // Stream configuration
+  /** Controls front-facing privacy flash LED. Cloud-controlled. */
+  flash?: boolean;
+  /** Controls stream start/stop sounds. */
+  sound?: boolean;
 }
 
 /**

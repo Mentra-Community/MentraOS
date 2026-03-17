@@ -5,13 +5,17 @@
  */
 
 import { Hono } from "hono";
+import { Capabilities } from "@mentra/sdk";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import type { AppEnv, AppContext } from "../../../types/hono";
 import { User } from "../../../models/user.model";
 import UserSession from "../../../services/session/UserSession";
-import { clientAuth, requireUser } from "../middleware/client.middleware";
+import { clientAuth, requireUser, optionalClientAuth } from "../middleware/client.middleware";
 import storeService from "../../../services/core/store.service";
 import { batchEnrichAppsWithProfiles } from "../../../services/core/app-enrichment.service";
+import { HardwareCompatibilityService } from "../../../services/session/HardwareCompatibilityService";
+import { getCapabilitiesForModel } from "../../../config/hardware-capabilities";
+import * as UserSettingsService from "../../../services/client/user-settings.service";
 
 const logger = rootLogger.child({ service: "store.apps.api" });
 
@@ -24,9 +28,9 @@ const app = new Hono<AppEnv>();
 // IMPORTANT: Specific routes must come before dynamic routes (/:packageName)
 // Otherwise /:packageName will match everything
 
-// Public endpoints (no auth required)
+// Public endpoints (no auth required, but optionally enriched with compatibility if authenticated)
 app.get("/published-apps", getPublicApps);
-app.get("/search", searchApps);
+app.get("/search", optionalClientAuth, searchApps);
 
 // Authenticated endpoints (require user auth)
 app.get("/published-apps-loggedin", clientAuth, requireUser, getPublishedAppsForUser);
@@ -38,7 +42,60 @@ app.post("/uninstall/:packageName", clientAuth, requireUser, uninstallApp);
 // app.post("/:packageName/stop", clientAuth, requireUser, stopApp);
 
 // Dynamic route must come LAST (catches everything else)
-app.get("/:packageName", getAppDetails);
+// Uses optionalClientAuth to enrich with compatibility info if authenticated
+app.get("/:packageName", optionalClientAuth, getAppDetails);
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Resolve device capabilities and model name for a user.
+ *
+ * Priority 1: Live UserSession on this backend instance.
+ *   The session model can be set via WS glasses_connection_state or the
+ *   device-state REST endpoint — neither of which persists to the DB. So the
+ *   session may know the device even when default_wearable is absent from DB.
+ *
+ * Priority 2: Persisted default_wearable from UserSettings DB.
+ *   Works cross-backend (e.g. user connected to dev backend, store hitting
+ *   prod backend — prod has no UserSession for that user, so falls through here).
+ *
+ * isConnected always reflects live WS state regardless of which path resolved
+ * the capabilities.
+ */
+async function resolveDeviceInfo(email: string): Promise<{
+  capabilities: Capabilities | null;
+  deviceName: string | null;
+  isConnected: boolean;
+}> {
+  const userSession = UserSession.getById(email);
+  const isConnected = userSession?.deviceManager.isGlassesConnected ?? false;
+
+  // Priority 1: live session (same backend instance)
+  if (userSession) {
+    const model = userSession.deviceManager.getModel();
+    const capabilities = userSession.getCapabilities();
+    if (model && capabilities) {
+      return { capabilities, deviceName: model, isConnected };
+    }
+  }
+
+  // Priority 2: persisted default_wearable — reliable cross-backend fallback
+  try {
+    const defaultWearable = await UserSettingsService.getUserSetting(email, "default_wearable");
+    if (defaultWearable && typeof defaultWearable === "string") {
+      const capabilities = getCapabilitiesForModel(defaultWearable);
+      if (capabilities) {
+        return { capabilities, deviceName: defaultWearable, isConnected };
+      }
+    }
+  } catch (e) {
+    logger.warn({ email, error: e }, "Failed to fetch default_wearable from user settings");
+  }
+
+  return { capabilities: null, deviceName: null, isConnected };
+}
 
 // ============================================================================
 // Handlers
@@ -68,7 +125,7 @@ async function getPublicApps(c: AppContext) {
 
 /**
  * GET /api/store/published-apps-loggedin
- * Get available apps for authenticated user with installation status.
+ * Get available apps for authenticated user with installation status and compatibility info.
  * Requires authentication.
  */
 async function getPublishedAppsForUser(c: AppContext) {
@@ -86,7 +143,22 @@ async function getPublishedAppsForUser(c: AppContext) {
     const appsWithStatus = await storeService.getPublishedAppsForUser(user);
     const enrichedApps = await batchEnrichAppsWithProfiles(appsWithStatus);
 
-    return c.json({ success: true, data: enrichedApps });
+    const { capabilities, deviceName, isConnected } = await resolveDeviceInfo(email);
+
+    // Add compatibility info to each app
+    const appsWithCompatibility = enrichedApps.map((app) => ({
+      ...app,
+      compatibility: HardwareCompatibilityService.checkCompatibility(app, capabilities),
+    }));
+
+    return c.json({
+      success: true,
+      data: appsWithCompatibility,
+      deviceInfo: {
+        connected: isConnected,
+        modelName: deviceName,
+      },
+    });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get available apps");
@@ -135,7 +207,7 @@ async function getInstalledApps(c: AppContext) {
 /**
  * GET /api/store/:packageName
  * Get app details by package name.
- * No authentication required.
+ * No authentication required, but optionally enriched with compatibility if authenticated.
  */
 async function getAppDetails(c: AppContext) {
   try {
@@ -152,8 +224,29 @@ async function getAppDetails(c: AppContext) {
     }
 
     const enrichedApps = await batchEnrichAppsWithProfiles([app]);
+    const enrichedApp = enrichedApps[0] || app;
 
-    return c.json({ success: true, data: enrichedApps[0] || app });
+    // Try to get auth context for compatibility check (optionalClientAuth may have set email)
+    let compatibility = null;
+    let deviceInfo = null;
+
+    const email = c.get("email");
+    if (email) {
+      const { capabilities, deviceName, isConnected } = await resolveDeviceInfo(email);
+      if (capabilities) {
+        compatibility = HardwareCompatibilityService.checkCompatibility(enrichedApp, capabilities);
+        deviceInfo = { connected: isConnected, modelName: deviceName };
+      }
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        ...enrichedApp,
+        compatibility,
+      },
+      deviceInfo,
+    });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to get app details");
@@ -169,7 +262,7 @@ async function getAppDetails(c: AppContext) {
 /**
  * GET /api/store/search
  * Search for apps by query string.
- * No authentication required.
+ * No authentication required, but optionally enriched with compatibility if authenticated.
  */
 async function searchApps(c: AppContext) {
   try {
@@ -182,7 +275,28 @@ async function searchApps(c: AppContext) {
     const filteredApps = await storeService.searchApps(query);
     const enrichedApps = await batchEnrichAppsWithProfiles(filteredApps);
 
-    return c.json({ success: true, data: enrichedApps });
+    // Try to get auth context for compatibility check (optionalClientAuth may have set email)
+    let appsWithCompatibility = enrichedApps;
+    let deviceInfo = null;
+
+    const email = c.get("email");
+    if (email) {
+      const { capabilities, deviceName, isConnected } = await resolveDeviceInfo(email);
+      if (capabilities) {
+        appsWithCompatibility = enrichedApps.map((app) => ({
+          ...app,
+          compatibility: HardwareCompatibilityService.checkCompatibility(app, capabilities),
+        }));
+
+        deviceInfo = { connected: isConnected, modelName: deviceName };
+      }
+    }
+
+    return c.json({
+      success: true,
+      data: appsWithCompatibility,
+      deviceInfo,
+    });
   } catch (e: unknown) {
     const error = e as Error;
     logger.error(error, "Failed to search apps");

@@ -1,7 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, AlertCircle, Loader2, Image as ImageIcon } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, Button } from '@mentra/shared';
 import api from '@/services/api.service';
 import { toast } from 'sonner';
 
@@ -194,7 +193,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
       {/* Image preview or upload area */}
       {previewUrl ? (
         <div className="relative">
-          <div className="relative w-32 h-32 rounded-lg overflow-hidden border-2 border-gray-200 bg-gray-50">
+          <div className="relative w-32 h-32 rounded-lg overflow-hidden border-2 border-border bg-secondary">
             <img
               src={previewUrl}
               alt="App icon"
@@ -237,8 +236,8 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         <div
           className={`
             relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors
-            ${hasError ? 'border-red-300' : 'border-gray-300'}
-            ${isDragging ? 'border-blue-400 bg-blue-50' : 'hover:border-gray-400'}
+            ${hasError ? 'border-destructive/50' : 'border-border'}
+            ${isDragging ? 'border-link bg-accent/10' : 'hover:border-muted-foreground'}
             ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
           `}
           onClick={() => !disabled && fileInputRef.current?.click()}
@@ -248,17 +247,17 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         >
           <div className="flex flex-col items-center">
             {isUploading ? (
-              <Loader2 className="h-8 w-8 text-gray-400 mb-2 animate-spin" />
+              <Loader2 className="h-8 w-8 text-muted-foreground mb-2 animate-spin" />
             ) : (
-              <ImageIcon className="h-8 w-8 text-gray-400 mb-2" />
+              <ImageIcon className="h-8 w-8 text-muted-foreground mb-2" />
             )}
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-foreground">
               {isUploading ? 'Uploading...' : 'Click to upload or drag and drop'}
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               PNG, JPEG, GIF or WebP (max 10MB)
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               Recommended: 512x512px
             </p>
           </div>

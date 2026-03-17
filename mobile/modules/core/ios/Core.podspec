@@ -34,6 +34,11 @@ Pod::Spec.new do |s|
     'SWIFT_INCLUDE_PATHS' => '$(PODS_TARGET_SRCROOT)/Packages/libbz2'
   }
 
+  # Propagate libbz2 module map path to consuming targets
+  s.user_target_xcconfig = {
+    'SWIFT_INCLUDE_PATHS' => '$(PODS_ROOT)/../../modules/core/ios/Packages/libbz2'
+  }
+
   # iOS frameworks required by MentraOS
   s.frameworks = 'AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics'
 

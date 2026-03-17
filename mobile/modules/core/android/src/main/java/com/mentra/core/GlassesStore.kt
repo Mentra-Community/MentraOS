@@ -58,7 +58,6 @@ object GlassesStore {
         store.set("core", "pending_wearable", "")
         store.set("core", "device_name", "")
         store.set("core", "device_address", "")
-        store.set("core", "offline_mode", false)
         store.set("core", "screen_disabled", false)
         store.set("core", "preferred_mic", "auto")
         store.set("core", "power_saving_mode", false)
@@ -139,7 +138,6 @@ object GlassesStore {
             }
             "core" to "brightness" -> {
                 val b = (value as? Number)?.toInt()  ?: 50
-                Bridge.log("Yayyieeeeee yashhhh, brightness: ${value} ${b}")
                 val auto = (store.get("core", "auto_brightness") as? Boolean) ?: true
                 CoroutineScope(Dispatchers.Main).launch {
                     CoreManager.getInstance().sgc?.setBrightness(b, auto)
@@ -220,26 +218,13 @@ object GlassesStore {
                             )
                 }
             }
-            "core" to "offline_mode" -> {
-                (value as? Boolean)?.let { offline ->
-                    // set should_send_transcript to true if offline_mode is true && running is true, otherwise false
-                    val shouldSendTranscript = offline && (store.get("core", "offline_captions_running") as? Boolean) ?: false
-                    CoreManager.getInstance()
-                            .setMicState(
-                                    (store.get("core", "should_send_pcm_data") as? Boolean)
-                                            ?: false,
-                                    shouldSendTranscript,
-                                    (store.get("core", "bypass_vad") as? Boolean) ?: true
-                            )
-                }
-            }
             "core" to "offline_captions_running" -> {
                 (value as? Boolean)?.let { running ->
                     Bridge.log("GlassesStore: offline_captions_running changed to $running")
                     // When offline captions are enabled, start the microphone for local transcription
                     // When disabled, stop the microphone
-                    // set should_send_transcript to true if offline_mode is true && running is true, otherwise false
-                    val shouldSendTranscript = (store.get("core", "offline_mode") as? Boolean) ?: false && running
+                    // set should_send_transcript to true if running is true, otherwise false
+                    val shouldSendTranscript = running
                     CoreManager.getInstance().setMicState(
                         (store.get("core", "should_send_pcm_data") as? Boolean) ?: false,
                         shouldSendTranscript,

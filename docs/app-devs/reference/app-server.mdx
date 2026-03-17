@@ -45,7 +45,7 @@ protected onSession(
 ```
 
 **Parameters:**
-- `session`: The [`AppSession`](/reference/app-session) instance for this specific user session
+- `session`: The [`AppSession`](/app-devs/reference/app-session) instance for this specific user session
 - `sessionId`: The unique identifier for this session
 - `userId`: The unique identifier for the user
 
@@ -74,7 +74,7 @@ protected onStop(
 
 Override this method to handle tool calls from Mira AI. This is where you implement your app's tool functionality.
 
-For a comprehensive guide on implementing AI tools, see [AI Tools](/tools).
+AI Tool Calls are temporarily unavailable while this feature is under maintenance. This feature will return later in 2026.
 
 ```typescript
 protected onToolCall(
@@ -83,7 +83,7 @@ protected onToolCall(
 ```
 
 **Parameters:**
-- `toolCall`: A [ToolCall](/reference/interfaces/tool-types#toolcall) object containing the tool ID, parameters, user ID, and timestamp
+- `toolCall`: A [ToolCall](/app-devs/reference/interfaces/tool-types#toolcall) object containing the tool ID, parameters, user ID, and timestamp
 
 **Returns:** A Promise that resolves to an optional string response that will be sent back to Mira
 
@@ -131,7 +131,7 @@ stop(): void
 
 ### generateToken() _[protected]_
 
-Generates a JWT token suitable for app authentication, typically used for webviews. See [Token Utilities](/reference/token-utils) for more details.
+Generates a JWT token suitable for app authentication, typically used for webviews. See [Token Utilities](/app-devs/reference/token-utils) for more details.
 
 ```typescript
 protected generateToken(

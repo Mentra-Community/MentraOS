@@ -86,7 +86,7 @@ export default function ActionButton({
 }
 
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingVertical: spacing.s3,
   paddingHorizontal: spacing.s4,
   borderRadius: spacing.s4,

@@ -23,7 +23,6 @@ import {
   CalendarEvent,
   RtmpStreamStatus,
   KeepAliveAck,
-  PhotoResponse,
   TouchEvent,
   StreamType,
   CloudToAppMessageType,
@@ -115,10 +114,8 @@ export async function handleGlassesMessage(userSession: UserSession, message: Gl
         break;
       }
 
-      // Photo
-      case GlassesToCloudMessageType.PHOTO_RESPONSE:
-        userSession.photoManager.handlePhotoResponse(message as PhotoResponse);
-        break;
+      // Photo — PHOTO_RESPONSE is handled via REST at POST /api/client/photo/response
+      // See: cloud/issues/038-photo-error-rest-endpoint/spec.md
 
       // Audio playback
       case GlassesToCloudMessageType.AUDIO_PLAY_RESPONSE:

@@ -9,6 +9,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ClientAppletInterface} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
+import GlassView from "@/components/ui/GlassView"
 interface ButtonSettingsProps {
   enabled: boolean
   selectedApp: string
@@ -23,7 +24,7 @@ export function ButtonSettings({enabled, selectedApp, applets, onEnabledChange, 
 
   return (
     <>
-      <View style={themed($container)}>
+      <GlassView style={themed($container)}>
         <ToggleSetting
           label="Default Button Action"
           value={enabled}
@@ -64,7 +65,7 @@ export function ButtonSettings({enabled, selectedApp, applets, onEnabledChange, 
             </TouchableOpacity>
           </>
         )}
-      </View>
+      </GlassView>
 
       <AppPicker
         visible={showAppPicker}

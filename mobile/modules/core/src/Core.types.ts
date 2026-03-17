@@ -8,7 +8,7 @@ export type ButtonPressEvent = {
   type: "button_press"
   buttonId: string
   pressType: "long" | "short"
-  timestamp: string
+  timestamp: number
 }
 
 export type TouchEvent = {
@@ -55,7 +55,17 @@ export type HotspotStatusChangeEvent = {
 export type HotspotErrorEvent = {
   type: "hotspot_error"
   error_message: string
-  timestamp: string
+  timestamp: number
+}
+
+export type PhotoResponseEvent = {
+  type: "photo_response"
+  requestId: string
+  photoUrl: string
+  timestamp: number
+  success: boolean
+  errorCode?: string
+  errorMessage?: string
 }
 
 export type GalleryStatusEvent = {
@@ -75,14 +85,14 @@ export type CompatibleGlassesSearchStopEvent = {
 export type HeartbeatSentEvent = {
   type: "heartbeat_sent"
   heartbeat_sent: {
-    timestamp: string
+    timestamp: number
   }
 }
 
 export type HeartbeatReceivedEvent = {
   type: "heartbeat_received"
   heartbeat_received: {
-    timestamp: string
+    timestamp: number
   }
 }
 
@@ -140,7 +150,7 @@ export type PhoneNotificationEvent = {
   title: string
   content: string
   priority: number
-  timestamp: string
+  timestamp: number
   packageName: string
 }
 
@@ -179,7 +189,7 @@ export type KeepAliveAckEvent = {
 export type MtkUpdateCompleteEvent = {
   type: "mtk_update_complete"
   message: string
-  timestamp: string
+  timestamp: number
 }
 
 export type OtaUpdateAvailableEvent = {
@@ -201,39 +211,13 @@ export type OtaProgressEvent = {
   error_message?: string
 }
 
+export type OtaStartAckEvent = {
+  type: "ota_start_ack"
+  timestamp: number
+}
+
 // Union type of all core events
-export type CoreEvent =
-  | ButtonPressEvent
-  | TouchEvent
-  | HeadUpEvent
-  | LocalTranscriptionEvent
-  | LogEvent
-  | WifiStatusChangeEvent
-  | HotspotStatusChangeEvent
-  | HotspotErrorEvent
-  | GalleryStatusEvent
-  | CompatibleGlassesSearchStopEvent
-  | HeartbeatSentEvent
-  | HeartbeatReceivedEvent
-  | SwipeVolumeStatusEvent
-  | SwitchStatusEvent
-  | RgbLedControlResponseEvent
-  | PairFailureEvent
-  | AudioPairingNeededEvent
-  | AudioConnectedEvent
-  | AudioDisconnectedEvent
-  | SaveSettingEvent
-  | PhoneNotificationEvent
-  | PhoneNotificationDismissedEvent
-  | WsTextEvent
-  | WsBinEvent
-  | MicDataEvent
-  | RtmpStreamStatusEvent
-  | KeepAliveAckEvent
-  | MtkUpdateCompleteEvent
-  | OtaUpdateAvailableEvent
-  | OtaProgressEvent
-  | GlassesNotReadyEvent
+export type CoreEvent = Parameters<CoreModuleEvents[keyof CoreModuleEvents]>[0]
 
 export type CoreModuleEvents = {
   glasses_status: (changed: Partial<GlassesStatus>) => void
@@ -271,6 +255,7 @@ export type CoreModuleEvents = {
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
   ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_progress: (event: OtaProgressEvent) => void
+  ota_start_ack: (event: OtaStartAckEvent) => void
 }
 
 export type GlassesConnectionState = "disconnected" | "connected" | "connecting"

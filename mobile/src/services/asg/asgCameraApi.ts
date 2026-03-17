@@ -5,7 +5,7 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
-import {PhotoInfo, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
+import {PhotoInfo, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
 
 import {localStorageService} from "./localStorageService"
 
@@ -561,7 +561,9 @@ export class AsgCameraApiClient {
   ): Promise<{
     status: string
     data: {
+      api_version?: number
       client_id: string
+      captures?: CaptureGroup[]
       changed_files: PhotoInfo[]
       deleted_files: string[]
       server_time: number
@@ -585,7 +587,9 @@ export class AsgCameraApiClient {
     return response as {
       status: string
       data: {
+        api_version?: number
         client_id: string
+        captures?: CaptureGroup[]
         changed_files: PhotoInfo[]
         deleted_files: string[]
         server_time: number
@@ -596,7 +600,9 @@ export class AsgCameraApiClient {
   }
 
   /**
-   * Batch sync files from server with controlled concurrency
+   * Batch sync files from server with controlled concurrency.
+   * Used by the legacy executeDownload path for old asg_client firmware
+   * that doesn't send api_version=2.
    */
   async batchSyncFiles(
     files: PhotoInfo[],
@@ -621,8 +627,7 @@ export class AsgCameraApiClient {
 
     // Process files in parallel batches for better performance
     // Use controlled concurrency to avoid overwhelming the network
-    const CONCURRENCY_LIMIT = 1 // Process 3 files simultaneously
-    const deletePromises: Promise<void>[] = [] // Track delete operations for cleanup
+    const CONCURRENCY_LIMIT = 1
 
     // Process files in batches
     for (let i = 0; i < files.length; i += CONCURRENCY_LIMIT) {
@@ -665,21 +670,8 @@ export class AsgCameraApiClient {
             onProgress(globalIndex + 1, files.length, file.name, 100, downloadedFile)
           }
 
-          // Schedule delete operation (non-blocking)
-          const deletePromise = this.deleteFilesFromServer([file.name])
-            .then((deleteResult) => {
-              if (deleteResult.deleted.length > 0) {
-                console.log(`[ASG Camera API] Successfully deleted ${file.name} from glasses`)
-              } else if (deleteResult.failed.length > 0) {
-                console.warn(`[ASG Camera API] Failed to delete ${file.name} from glasses, but keeping downloaded file`)
-              }
-            })
-            .catch((deleteError) => {
-              // Log the error but don't fail the sync - the file was downloaded successfully
-              console.warn(`[ASG Camera API] Error deleting ${file.name} from glasses (non-fatal):`, deleteError)
-            })
-
-          deletePromises.push(deletePromise)
+          // Don't delete from glasses here — deletion is deferred until after
+          // processing completes (in mediaProcessingQueue) to avoid data loss on crash.
 
           return {downloadedFile, fileSize: file.size}
         } catch (error) {
@@ -708,15 +700,103 @@ export class AsgCameraApiClient {
       }
     }
 
-    // Wait for all delete operations to complete (non-blocking for sync completion)
-    Promise.all(deletePromises).catch((error) => {
-      console.warn(`[ASG Camera API] Some delete operations failed:`, error)
-    })
-
     console.log(
       `[ASG Camera API] Batch sync completed: ${results.downloaded.length} downloaded, ${results.failed.length} failed`,
     )
     return results
+  }
+
+  /**
+   * Download all files in a capture group sequentially.
+   * Reports aggregate byte progress across all files in the group.
+   */
+  async downloadCapture(
+    capture: CaptureGroup,
+    onProgress?: (bytesDownloaded: number, totalBytes: number) => void,
+  ): Promise<{captureDir: string; primaryPath: string; bracketPaths: string[]; sidecarPath?: string}> {
+    const captureDir = localStorageService.getPhotoFilePath(capture.capture_id)
+    console.log(`[ASG Camera API] downloadCapture: ${capture.capture_id} (${capture.files.length} files) -> ${captureDir}`)
+
+    // Ensure capture directory exists
+    const dirExists = await RNFS.exists(captureDir)
+    if (!dirExists) {
+      await RNFS.mkdir(captureDir)
+      console.log(`[ASG Camera API] downloadCapture: created dir ${captureDir}`)
+    }
+
+    let primaryPath = ""
+    const bracketPaths: string[] = []
+    let sidecarPath: string | undefined
+
+    let totalBytesDownloaded = 0
+    const totalBytes = capture.total_size
+
+    // Sort files: brackets first, then primary, then sidecar
+    // This ensures brackets are available before merge runs on the primary
+    const sortedFiles = [...capture.files].sort((a, b) => {
+      const order = {bracket: 0, primary: 1, sidecar: 2}
+      return (order[a.role] ?? 1) - (order[b.role] ?? 1)
+    })
+
+    for (const file of sortedFiles) {
+      // Derive local filename: use leaf of path if folder-based, otherwise full name
+      const leafName = file.name.includes("/") ? file.name.split("/").pop()! : file.name
+      const localFilePath = `${captureDir}/${leafName}`
+
+      const isVideo = file.name.match(/\.(mp4|mov|avi|webm|mkv)$/i)
+      const downloadEndpoint = isVideo ? "download" : "photo"
+      const downloadUrl = `${this.baseUrl}/api/${downloadEndpoint}?file=${encodeURIComponent(file.name)}`
+
+      console.log(`[ASG Camera API] downloadCapture: downloading ${file.name} (${file.role}) -> ${localFilePath}`)
+
+      try {
+        const downloadResult = await RNFS.downloadFile({
+          fromUrl: downloadUrl,
+          toFile: localFilePath,
+          headers: {
+            Accept: "*/*",
+            "User-Agent": "MentraOS-Mobile/1.0",
+          },
+          connectionTimeout: 300000,
+          readTimeout: 300000,
+          backgroundTimeout: 600000,
+          progressDivider: 1,
+          progressInterval: 250,
+          progress: (res: {bytesWritten: number}) => {
+            if (onProgress) {
+              onProgress(totalBytesDownloaded + (res.bytesWritten || 0), totalBytes)
+            }
+          },
+        }).promise
+
+        if (downloadResult.statusCode !== 200) {
+          throw new Error(`HTTP ${downloadResult.statusCode}`)
+        }
+
+        console.log(`[ASG Camera API] downloadCapture: completed ${file.name} (${file.size} bytes)`)
+      } catch (dlErr: any) {
+        const errMsg = dlErr?.message || dlErr?.toString?.() || JSON.stringify(dlErr)
+        console.error(`[ASG Camera API] downloadCapture: FAILED ${file.name}: ${errMsg}`)
+        throw new Error(`Failed to download ${file.name}: ${errMsg}`)
+      }
+
+      totalBytesDownloaded += file.size
+
+      if (file.role === "primary") {
+        primaryPath = localFilePath
+      } else if (file.role === "bracket") {
+        bracketPaths.push(localFilePath)
+      } else if (file.role === "sidecar") {
+        sidecarPath = localFilePath
+      }
+    }
+
+    // Report final progress
+    if (onProgress) {
+      onProgress(totalBytes, totalBytes)
+    }
+
+    return {captureDir, primaryPath, bracketPaths, sidecarPath}
   }
 
   /**
@@ -801,6 +881,15 @@ export class AsgCameraApiClient {
       // Get the local file path where we'll save this
       const localFilePath = localStorageService.getPhotoFilePath(filename)
       const localThumbnailPath = includeThumbnail ? localStorageService.getThumbnailFilePath(filename) : undefined
+
+      // Ensure parent directory exists (for folder-based capture paths like IMG_xxx/base.jpg)
+      if (filename.includes("/")) {
+        const parentDir = localFilePath.substring(0, localFilePath.lastIndexOf("/"))
+        const parentExists = await RNFS.exists(parentDir)
+        if (!parentExists) {
+          await RNFS.mkdir(parentDir)
+        }
+      }
 
       // Determine if this is a video file based on extension
       const isVideo = filename.match(/\.(mp4|mov|avi|webm|mkv)$/i)

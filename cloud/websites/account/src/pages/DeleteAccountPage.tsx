@@ -1,17 +1,16 @@
 import React, { useState } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import {
+  useAuth,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
-import { Textarea } from "../components/ui/textarea";
-import {
+  Button,
+  Input,
+  Label,
+  Textarea,
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -20,9 +19,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "../components/ui/alert-dialog";
+} from "@mentra/shared";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@mentra/shared";
 
 const DeleteAccountPage: React.FC = () => {
   const navigate = useNavigate();

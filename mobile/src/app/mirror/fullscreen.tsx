@@ -13,7 +13,7 @@ import {
   ViewStyle,
 } from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import Icon from "react-native-vector-icons/MaterialIcons"
 
 import {Text} from "@/components/ignite"
@@ -33,7 +33,7 @@ const requestMicrophonePermission = async () => {
 
 export default function GlassesMirrorFullscreen() {
   const {theme, themed} = useAppTheme()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const [permission, requestPermission] = useCameraPermissions()
   const [hasMicrophonePermission, setHasMicrophonePermission] = useState(false)
   const [cameraType, setCameraType] = useState<CameraType>("front")

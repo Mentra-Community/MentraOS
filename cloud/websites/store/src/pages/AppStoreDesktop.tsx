@@ -6,7 +6,7 @@ import { useAuth } from "@mentra/shared";
 import { useTheme } from "../hooks/useTheme";
 import { useSearch } from "../contexts/SearchContext";
 import api, { AppFilterOptions } from "../api";
-import { AppI } from "../types";
+import { AppI, DeviceInfo } from "../types";
 import Header from "../components/Header_v2";
 import AppCard from "../components/AppCard";
 import SkeletonAppCard from "../components/SkeletonAppCard";
@@ -38,6 +38,7 @@ const AppStoreDesktop: React.FC = () => {
   const [installingApp, setInstallingApp] = useState<string | null>(null);
   const [activeOrgFilter, setActiveOrgFilter] = useState<string | null>(orgId);
   const [orgName, setOrgName] = useState<string>("");
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
 
   // Slideshow state - desktop slides only
   const slideComponents = [CaptionsSlide, MergeSlide, StreamSlide, XSlide];
@@ -149,9 +150,12 @@ const AppStoreDesktop: React.FC = () => {
 
         // Use public endpoint if not authenticated, available endpoint if authenticated
         if (isAuthenticated) {
-          appList = await api.app.getAvailableApps(orgId ? filterOptions : undefined);
+          const result = await api.app.getAvailableApps(orgId ? filterOptions : undefined);
+          appList = result.apps;
+          setDeviceInfo(result.deviceInfo || null);
         } else {
           appList = await api.app.getPublicApps();
+          setDeviceInfo(null);
         }
 
         if (orgId && appList.length > 0) {
@@ -215,6 +219,22 @@ const AppStoreDesktop: React.FC = () => {
 
     return filtered;
   }, [apps, originalApps, searchQuery]);
+
+  // Split apps by compatibility
+  const { compatibleApps, incompatibleApps } = useMemo(() => {
+    const compatible: AppI[] = [];
+    const incompatible: AppI[] = [];
+
+    filteredApps.forEach((app) => {
+      if (app.compatibility?.isCompatible === false) {
+        incompatible.push(app);
+      } else {
+        compatible.push(app);
+      }
+    });
+
+    return { compatibleApps: compatible, incompatibleApps: incompatible };
+  }, [filteredApps]);
 
   /**
    * Handles search form submission
@@ -352,7 +372,8 @@ const AppStoreDesktop: React.FC = () => {
       if (filtered.length === 0) {
         setIsLoading(true);
         try {
-          const pkgApp = await api.app.getAppByPackageName(value);
+          const result = await api.app.getAppByPackageName(value);
+          const pkgApp = result.app;
 
           if (pkgApp) {
             if (isAuthenticated && isAuthTokenReady()) {
@@ -551,36 +572,79 @@ const AppStoreDesktop: React.FC = () => {
               ))}
             </div>
           ) : !error ? (
-            <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[48px] gap-y-[24px]">
-              {filteredApps.map((app, index) => {
-                // Calculate if this card is in the last row
-                const totalApps = filteredApps.length;
-                const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280;
-                const isXlBreakpoint = window.innerWidth >= 1280;
+            <>
+              {/* Compatible Apps */}
+              <div className="mt-4 mb-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[48px] gap-y-[24px]">
+                {compatibleApps.map((app, index) => {
+                  // Calculate if this card is in the last row
+                  const totalApps = compatibleApps.length;
+                  const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280;
+                  const isXlBreakpoint = window.innerWidth >= 1280;
 
-                let columns = 1;
-                if (isXlBreakpoint) columns = 3;
-                else if (isMdBreakpoint) columns = 2;
+                  let columns = 1;
+                  if (isXlBreakpoint) columns = 3;
+                  else if (isMdBreakpoint) columns = 2;
 
-                const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns;
-                const isLastRow = index >= lastRowStartIndex;
+                  const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns;
+                  const isLastRow = index >= lastRowStartIndex;
 
-                return (
-                  <AppCard
-                    key={app.packageName}
-                    app={app}
-                    theme={theme}
-                    isAuthenticated={isAuthenticated}
-                    installingApp={installingApp}
-                    onInstall={handleInstall}
-                    onUninstall={handleUninstall}
-                    onCardClick={handleCardClick}
-                    onLogin={handleLogin}
-                    isLastRow={isLastRow}
-                  />
-                );
-              })}
-            </div>
+                  return (
+                    <AppCard
+                      key={app.packageName}
+                      app={app}
+                      theme={theme}
+                      isAuthenticated={isAuthenticated}
+                      installingApp={installingApp}
+                      onInstall={handleInstall}
+                      onUninstall={handleUninstall}
+                      onCardClick={handleCardClick}
+                      onLogin={handleLogin}
+                      isLastRow={isLastRow}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Incompatible Apps Section */}
+              {incompatibleApps.length > 0 && deviceInfo?.modelName && (
+                <>
+                  <div
+                    className="mt-8 mb-4 text-[18px] font-medium"
+                    style={{ color: "var(--text-secondary)" }}>
+                    Incompatible with {deviceInfo.modelName}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[48px] gap-y-[24px] opacity-60">
+                    {incompatibleApps.map((app, index) => {
+                      const totalApps = incompatibleApps.length;
+                      const isMdBreakpoint = window.innerWidth >= 768 && window.innerWidth < 1280;
+                      const isXlBreakpoint = window.innerWidth >= 1280;
+
+                      let columns = 1;
+                      if (isXlBreakpoint) columns = 3;
+                      else if (isMdBreakpoint) columns = 2;
+
+                      const lastRowStartIndex = Math.floor((totalApps - 1) / columns) * columns;
+                      const isLastRow = index >= lastRowStartIndex;
+
+                      return (
+                        <AppCard
+                          key={app.packageName}
+                          app={app}
+                          theme={theme}
+                          isAuthenticated={isAuthenticated}
+                          installingApp={installingApp}
+                          onInstall={handleInstall}
+                          onUninstall={handleUninstall}
+                          onCardClick={handleCardClick}
+                          onLogin={handleLogin}
+                          isLastRow={isLastRow}
+                        />
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </>
           ) : null}
         </div>
 
@@ -591,7 +655,7 @@ const AppStoreDesktop: React.FC = () => {
         )}
 
         {/* Empty state */}
-        {!isLoading && !error && filteredApps.length === 0 && (
+        {!isLoading && !error && compatibleApps.length === 0 && incompatibleApps.length === 0 && (
           <div className="flex flex-col min-h-[calc(100vh-200px)] items-center justify-center py-16 px-4">
             {searchQuery ? (
               <>

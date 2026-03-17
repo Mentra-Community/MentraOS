@@ -54,7 +54,7 @@ export const Group = ({title, style, children}: {title?: string; style?: ViewSty
 }
 
 const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
+  // flex: 1,
   gap: spacing.s2,
 })
 

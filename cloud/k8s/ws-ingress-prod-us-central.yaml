@@ -1,0 +1,140 @@
+# WebSocket Ingress for prod environment (us-central cluster 4689)
+# Separate from Porter-managed ingress to set extended timeouts for WS paths.
+# See cloud/issues/035-nginx-ws-timeout/spec.md for context.
+#
+# Apply: porter kubectl -- apply -f cloud/k8s/ws-ingress-prod-us-central.yaml
+# Delete: porter kubectl -- delete ingress cloud-prod-cloud-ws
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloud-prod-cloud-ws
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: global.augmentos.cloud
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: prod.augmentos.cloud
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: us-central.augmentos.cloud
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: uscentral.api.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+    - host: uscentralapi.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-prod-cloud
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - api.mentra.glass
+      secretName: cloud-prod-cloud-api-mentra-glass
+    - hosts:
+        - global.augmentos.cloud
+      secretName: cloud-prod-cloud-global-augmentos-cloud
+    - hosts:
+        - prod.augmentos.cloud
+      secretName: cloud-prod-cloud-prod-augmentos-cloud
+    - hosts:
+        - us-central.augmentos.cloud
+      secretName: cloud-prod-cloud-us-central-augmentos-cloud
+    - hosts:
+        - uscentral.api.mentra.glass
+      secretName: cloud-prod-cloud-uscentral-api-mentra-glass
+    - hosts:
+        - uscentralapi.mentra.glass
+      secretName: cloud-prod-cloud-uscentralapi-mentra-glass
