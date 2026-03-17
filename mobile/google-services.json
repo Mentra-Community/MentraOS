@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "628999331901",
+    "project_id": "mentraos",
+    "storage_bucket": "mentraos.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:628999331901:android:24aba2277f877681328a54",
+        "android_client_info": {
+          "package_name": "com.mentra.mentra"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "628999331901-2adet2sssh3r6ijoab2lk270r0gm0g6p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDiVR-o352o2ap9oTZj1apM2c9heu_W8OI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "628999331901-2adet2sssh3r6ijoab2lk270r0gm0g6p.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

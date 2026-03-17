@@ -5,21 +5,21 @@
  * Controls the RGB LEDs on smart glasses with custom colors and timing patterns.
  */
 
-import {RgbLedControlRequest, AppToCloudMessageType, LedColor} from "../../../types"
-import {Logger} from "pino"
+import { RgbLedControlRequest, AppToCloudMessageType, LedColor } from "../../../types";
+import { Logger } from "pino";
 
 /**
  * Options for LED control
  */
 export interface LedControlOptions {
   /** LED color */
-  color?: LedColor
+  color?: LedColor;
   /** LED on duration in milliseconds */
-  ontime?: number
+  ontime?: number;
   /** LED off duration in milliseconds */
-  offtime?: number
+  offtime?: number;
   /** Number of on/off cycles */
-  count?: number
+  count?: number;
 }
 
 /**
@@ -41,10 +41,10 @@ export interface LedControlOptions {
  * ```
  */
 export class LedModule {
-  private session: any
-  private packageName: string
-  private sessionId: string
-  private logger: Logger
+  private session: any;
+  private packageName: string;
+  private sessionId: string;
+  private logger: Logger;
 
   /**
    * Create a new LedModule
@@ -55,10 +55,10 @@ export class LedModule {
    * @param logger - Logger instance for debugging
    */
   constructor(session: any, packageName: string, sessionId: string, logger?: Logger) {
-    this.session = session
-    this.packageName = packageName
-    this.sessionId = sessionId
-    this.logger = logger || (console as any)
+    this.session = session;
+    this.packageName = packageName;
+    this.sessionId = sessionId;
+    this.logger = logger || (console as any);
   }
 
   // =====================================
@@ -83,7 +83,7 @@ export class LedModule {
   async turnOn(options: LedControlOptions): Promise<void> {
     try {
       // Generate unique request ID for tracking
-      const requestId = `led_req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+      const requestId = `led_req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
       // Create LED control request message
       const message: RgbLedControlRequest = {
@@ -97,12 +97,12 @@ export class LedModule {
         ontime: options.ontime || 1000,
         offtime: options.offtime || 0,
         count: options.count || 1,
-      }
+      };
 
       // Send request to cloud (fire-and-forget)
-      this.session.sendMessage(message)
+      this.session.sendMessage(message);
 
-      this.logger.info(
+      this.logger.debug(
         {
           requestId,
           color: options.color,
@@ -110,14 +110,14 @@ export class LedModule {
           offtime: options.offtime,
           count: options.count,
         },
-        `💡 LED control request sent`,
-      )
+        `LED control request sent`,
+      );
 
       // Resolve immediately - no waiting for response
-      return Promise.resolve()
+      return Promise.resolve();
     } catch (error) {
-      this.logger.error({error, options}, "❌ Error in LED turnOn request")
-      throw error
+      this.logger.error({ error, options }, "Error in LED turnOn request");
+      throw error;
     }
   }
 
@@ -134,7 +134,7 @@ export class LedModule {
   async turnOff(): Promise<void> {
     try {
       // Generate unique request ID for tracking
-      const requestId = `led_req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+      const requestId = `led_req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
       // Create LED control request message
       const message: RgbLedControlRequest = {
@@ -144,18 +144,18 @@ export class LedModule {
         requestId,
         timestamp: new Date(),
         action: "off",
-      }
+      };
 
       // Send request to cloud (fire-and-forget)
-      this.session.sendMessage(message)
+      this.session.sendMessage(message);
 
-      this.logger.info({requestId}, `💡 LED turn off request sent`)
+      this.logger.debug({ requestId }, `LED turn off request sent`);
 
       // Resolve immediately - no waiting for response
-      return Promise.resolve()
+      return Promise.resolve();
     } catch (error) {
-      this.logger.error({error}, "❌ Error in LED turnOff request")
-      throw error
+      this.logger.error({ error }, "Error in LED turnOff request");
+      throw error;
     }
   }
 
@@ -171,15 +171,15 @@ export class LedModule {
    * ```
    */
   getCapabilities(): Array<{
-    id: string
-    purpose: string
-    isFullColor: boolean
-    color?: string
-    position?: string
+    id: string;
+    purpose: string;
+    isFullColor: boolean;
+    color?: string;
+    position?: string;
   }> {
     // This would need to be implemented with access to session capabilities
     // For now, return empty array - this would be populated from session.capabilities
-    return []
+    return [];
   }
 
   // =====================================
@@ -207,7 +207,7 @@ export class LedModule {
       ontime,
       offtime,
       count,
-    })
+    });
   }
 
   /**
@@ -234,7 +234,7 @@ export class LedModule {
       ontime: duration,
       offtime: 0, // No off time for solid mode
       count: 1, // Single cycle
-    })
+    });
   }
 
   // =====================================
@@ -247,6 +247,6 @@ export class LedModule {
    * @internal
    */
   cleanup(): void {
-    this.logger.info("🧹 LED module cleaned up")
+    this.logger.debug("LED module cleaned up");
   }
 }

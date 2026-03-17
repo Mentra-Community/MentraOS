@@ -1,18 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Alert,
+  AlertDescription,
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+} from "@mentra/shared";
 import { AppResponse } from '@/services/api.service';
 import api from '@/services/api.service';
 import { toast } from 'sonner';
 import { App } from '@/types/app';
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
 import { useNavigate } from 'react-router-dom';
 import { useOrganization } from '@/context/OrganizationContext';
@@ -57,7 +58,7 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
       // Do an additional check to ensure org profile is complete
       if (!currentOrg?.profile?.contactEmail) {
         setIsProfileIncomplete(true);
-        setError('Your organization profile is incomplete. Please fill out your organization name and contact email before publishing an app.');
+        setError('Your organization profile is incomplete. Please fill out your organization name and contact email before publishing a MiniApp.');
         return;
       }
 
@@ -71,7 +72,7 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
       // Get the updated app data
       const updatedApp = await api.apps.getByPackageName(app.packageName, effectiveOrgId);
 
-      toast.success('App submitted for publication!');
+      toast.success('MiniApp submitted for publication!');
 
       // Notify parent of the successful publish with updated data
       if (onPublishComplete) {
@@ -85,10 +86,10 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
       // Check if this is a profile incomplete error
       if (error.response?.data?.error && error.response.data.error.includes('PROFILE_INCOMPLETE')) {
         setIsProfileIncomplete(true);
-        setError('Your organization profile is incomplete. Please fill out your organization name and contact email before publishing an app.');
+        setError('Your organization profile is incomplete. Please fill out your organization name and contact email before publishing a MiniApp.');
       } else {
-        setError('Failed to publish app. Please try again.');
-        toast.error('Failed to publish app');
+        setError('Failed to publish MiniApp. Please try again.');
+        toast.error('Failed to publish MiniApp');
       }
     } finally {
       setIsPublishing(false);
@@ -99,9 +100,9 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Publish App to Store</DialogTitle>
+          <DialogTitle>Publish MiniApp to Store</DialogTitle>
           <DialogDescription>
-            Are you ready to publish "{app.name}" to the MentraOS App Store?
+            Are you ready to publish "{app.name}" to the Mentra MiniApp Store?
           </DialogDescription>
         </DialogHeader>
 
@@ -115,8 +116,8 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
 
           {isProfileIncomplete ? (
             <div className="space-y-4">
-              <p className="text-sm text-gray-600">
-                Before you can publish your app, you need to complete your organization profile. This information will be visible to users who install your app.
+              <p className="text-sm text-muted-foreground">
+                Before you can publish your MiniApp, you need to complete your organization profile. This information will be visible to users who install your MiniApp.
               </p>
               <Button onClick={goToProfile} className="w-full">
                 Complete Organization Profile
@@ -124,11 +125,11 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
             </div>
           ) : (
             <>
-              <p className="text-sm text-gray-600 mb-3">
-                Publishing your app will make it available for review. Once approved, it will be visible to all MentraOS users.
+              <p className="text-sm text-muted-foreground mb-3">
+                Publishing your MiniApp will make it available for review. Once approved, it will be visible to all MentraOS users.
               </p>
-              <p className="text-sm text-gray-600">
-                Your app will initially be submitted in a <strong>SUBMITTED</strong> state and will need to undergo review before being published.
+              <p className="text-sm text-muted-foreground">
+                Your MiniApp will initially be submitted in a <strong>SUBMITTED</strong> state and will need to undergo review before being published.
               </p>
             </>
           )}
@@ -144,7 +145,7 @@ const PublishDialog: React.FC<PublishDialogProps> = ({
               onClick={handlePublish}
               disabled={isPublishing}
             >
-              {isPublishing ? 'Publishing...' : 'Publish App'}
+              {isPublishing ? 'Publishing...' : 'Publish MiniApp'}
             </Button>
           )}
         </DialogFooter>

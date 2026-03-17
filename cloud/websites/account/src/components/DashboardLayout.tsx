@@ -1,7 +1,6 @@
 import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Button } from "./ui/button";
-import { useAuth } from "@mentra/shared";
+import { Button, useAuth } from "@mentra/shared";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -40,11 +39,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex items-center gap-2">
-            <Link to="https://docs.mentra.glass">
-              <Button variant="ghost" size="sm" className="hover:bg-gray-200">
-                Documentation
-              </Button>
-            </Link>
             <Button variant="ghost" size="sm" onClick={handleSignOut}>
               Sign Out
             </Button>

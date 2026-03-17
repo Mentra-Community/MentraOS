@@ -2,17 +2,23 @@ import {createIconSet} from "@expo/vector-icons"
 import {
   Bell,
   CircleUser,
+  Ellipsis,
   FileType2,
   Fullscreen,
   Glasses,
   Info,
   LayoutDashboard,
   Locate,
+  Minus,
   Unlink,
   Unplug,
   UserRound,
   Wifi,
   WifiOff,
+  Grid3X3,
+  Share,
+  Cog,
+  ExternalLink,
 } from "lucide-react-native"
 import {
   Image,
@@ -117,10 +123,17 @@ const lucideIcons = {
   "shopping-bag-filled": ShoppingBagIcon,
   "house": HomeIcon,
   "house-filled": HomeIcon,
+  "ellipsis": Ellipsis,
+  "minus": Minus,
+  "grid-3x3": Grid3X3,
+  "share": Share,
+  "cog": Cog,
+  "external-link": ExternalLink,
 }
 
 const tablerIcons = {
   "settings": 1,
+  "bluetooth": 1,
   "bluetooth-connected": 1,
   "bluetooth-off": 1,
   "battery-3": 1,
@@ -153,6 +166,8 @@ const tablerIcons = {
   "chevron-down": 1,
   "chevron-up": 1,
   "alert-triangle": 1,
+  "plus": 1,
+  "search": 1,
 }
 
 /**
@@ -192,7 +207,7 @@ export function Icon(props: IconProps) {
     const IconComponent = lucideIcons[name] as any
 
     return (
-      <View {...viewProps} style={$containerStyleOverride}>
+      <View {...viewProps} style={[$containerStyleOverride, $iconCenterStyle]}>
         <IconComponent style={$imageStyle} size={size} color={color} fill={backgroundColor ?? "transparent"} />
       </View>
     )
@@ -200,14 +215,14 @@ export function Icon(props: IconProps) {
 
   if (TablerIcon.glyphMap[name]) {
     return (
-      <View {...viewProps} style={$containerStyleOverride}>
+      <View {...viewProps} style={[$containerStyleOverride, $iconCenterStyle]}>
         <TablerIcon style={$textStyle} name={name} size={size} color={color} />
       </View>
     )
   }
 
   return (
-    <View {...viewProps} style={$containerStyleOverride}>
+    <View {...viewProps} style={[$containerStyleOverride, $iconCenterStyle]}>
       <Image style={$imageStyle} source={iconRegistry[name] as any} />
     </View>
   )
@@ -220,6 +235,11 @@ export const iconRegistry = {
   ...tablerIcons,
   // lucide-react-native icons:
   ...lucideIcons,
+}
+
+const $iconCenterStyle: ViewStyle = {
+  // justifyContent: "center",
+  // alignItems: "center",
 }
 
 const $imageStyleBase: ImageStyle = {

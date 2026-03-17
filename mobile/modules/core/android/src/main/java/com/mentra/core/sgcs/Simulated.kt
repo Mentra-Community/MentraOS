@@ -33,9 +33,10 @@ class Simulated : SGCManager() {
             webhookUrl: String?,
             authToken: String?,
             compress: String?,
-            silent: Boolean
+            flash: Boolean,
+            sound: Boolean
     ) {
-        Bridge.log("requestPhoto silent=$silent")
+        Bridge.log("requestPhoto flash=$flash, sound=$sound")
     }
 
     override fun startRtmpStream(message: MutableMap<String, Any>) {
@@ -62,8 +63,8 @@ class Simulated : SGCManager() {
         Bridge.log("saveBufferVideo")
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, silent: Boolean) {
-        Bridge.log("startVideoRecording silent=$silent")
+    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
+        Bridge.log("startVideoRecording flash=$flash, sound=$sound")
     }
 
     override fun stopVideoRecording(requestId: String) {
@@ -183,6 +184,10 @@ class Simulated : SGCManager() {
         Bridge.log("cleanup")
     }
 
+    override fun ping() {
+        Bridge.log("ping")
+    }
+
     // Network Management
     override fun requestWifiScan() {
         Bridge.log("requestWifiScan")
@@ -202,6 +207,10 @@ class Simulated : SGCManager() {
 
     override fun sendUserEmailToGlasses(email: String) {
         Bridge.log("sendUserEmailToGlasses: $email")
+    }
+
+    override fun sendIncidentId(incidentId: String) {
+        Bridge.log("sendIncidentId: $incidentId")
     }
 
     // Gallery

@@ -303,6 +303,175 @@ export class SlackNotificationService {
   }
 
   /**
+   * Send incident notification to the feedback channel.
+   * Used by the background incident processor after collecting logs.
+   */
+  async sendIncidentNotification(
+    incidentId: string,
+    userId: string,
+    ticketUrl: string,
+    consoleUrl: string,
+    summary?: string,
+    isNewIssue?: boolean,
+    feedback?: Record<string, unknown>,
+  ): Promise<boolean> {
+    const timestamp = new Date().toLocaleString("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "America/Los_Angeles",
+    });
+
+    // Determine header based on whether this is new or duplicate
+    const isLinearUrl = ticketUrl.includes("linear.app");
+    const headerText = isNewIssue === false
+      ? ":bug: +1 Bug Report (Duplicate)"
+      : ":bug: New Bug Report";
+
+    // Extract expected/actual behavior from feedback
+    const expectedBehavior = feedback?.expectedBehavior as string | undefined;
+    const actualBehavior = feedback?.actualBehavior as string | undefined;
+    const severityRating = feedback?.severityRating as number | undefined;
+    const systemInfo = feedback?.systemInfo as Record<string, unknown> | undefined;
+
+    // Build feedback fields if available
+    const feedbackBlocks: SlackBlock[] = [];
+    if (expectedBehavior || actualBehavior) {
+      const feedbackFields: Array<{ type: string; text: string }> = [];
+      if (expectedBehavior) {
+        feedbackFields.push({
+          type: "mrkdwn",
+          text: `*Expected:*\n${this.escapeSlackText(expectedBehavior.substring(0, 300))}${expectedBehavior.length > 300 ? "..." : ""}`,
+        });
+      }
+      if (actualBehavior) {
+        feedbackFields.push({
+          type: "mrkdwn",
+          text: `*Actual:*\n${this.escapeSlackText(actualBehavior.substring(0, 300))}${actualBehavior.length > 300 ? "..." : ""}`,
+        });
+      }
+      feedbackBlocks.push({
+        type: "section",
+        fields: feedbackFields,
+      });
+    }
+
+    // Severity indicator
+    const severityBlock: SlackBlock[] = [];
+    if (severityRating !== undefined) {
+      const severityEmoji = severityRating >= 4 ? ":red_circle:" : severityRating >= 3 ? ":large_orange_circle:" : ":large_green_circle:";
+      severityBlock.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Severity:* ${severityEmoji} ${severityRating}/5`,
+        },
+      });
+    }
+
+    // System info block
+    const systemInfoBlock: SlackBlock[] = [];
+    if (systemInfo) {
+      const sysInfoParts: string[] = [];
+      if (systemInfo.appVersion) sysInfoParts.push(`App: ${this.escapeSlackText(String(systemInfo.appVersion))}`);
+      if (systemInfo.platform) sysInfoParts.push(`Platform: ${this.escapeSlackText(String(systemInfo.platform))}`);
+      if (systemInfo.deviceName) sysInfoParts.push(`Device: ${this.escapeSlackText(String(systemInfo.deviceName))}`);
+      if (systemInfo.osVersion) sysInfoParts.push(`OS: ${this.escapeSlackText(String(systemInfo.osVersion))}`);
+      if (systemInfo.glassesConnected !== undefined) sysInfoParts.push(`Glasses: ${systemInfo.glassesConnected ? "Connected" : "Not connected"}`);
+      if (systemInfo.defaultWearable) sysInfoParts.push(`Wearable: ${this.escapeSlackText(String(systemInfo.defaultWearable))}`);
+      if (systemInfo.backendUrl) sysInfoParts.push(`Backend: ${this.escapeSlackText(String(systemInfo.backendUrl))}`);
+
+      if (sysInfoParts.length > 0) {
+        systemInfoBlock.push({
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `*System:* ${sysInfoParts.join(" | ")}`,
+          },
+        });
+      }
+    }
+
+    const message: SlackMessage = {
+      text: isNewIssue === false
+        ? `[BUG] +1 occurrence: ${summary || incidentId}`
+        : `[BUG] New: ${summary || incidentId}`,
+      blocks: [
+        {
+          type: "header",
+          text: {
+            type: "plain_text",
+            text: headerText,
+            emoji: true,
+          },
+        },
+        ...(summary
+          ? [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `*Summary:* ${this.escapeSlackText(summary)}`,
+                },
+              } as SlackBlock,
+            ]
+          : []),
+        {
+          type: "section",
+          fields: [
+            {
+              type: "mrkdwn",
+              text: `*User:*\n${this.escapeSlackText(userId)}`,
+            },
+            {
+              type: "mrkdwn",
+              text: `*Incident ID:*\n\`${this.escapeSlackText(incidentId.slice(0, 8))}...\``,
+            },
+          ],
+        },
+        ...feedbackBlocks,
+        ...severityBlock,
+        ...systemInfoBlock,
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `_Processed: ${timestamp}_`,
+          },
+        },
+        {
+          type: "actions",
+          elements: [
+            ...(isLinearUrl
+              ? [
+                  {
+                    type: "button",
+                    text: {
+                      type: "plain_text",
+                      text: "View in Linear",
+                      emoji: true,
+                    },
+                    url: ticketUrl,
+                  },
+                ]
+              : []),
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "View Logs",
+                emoji: true,
+              },
+              url: consoleUrl,
+            },
+          ],
+        },
+      ],
+    };
+
+    return this.sendToWebhook(this.feedbackWebhookUrl, message, "incident-notification");
+  }
+
+  /**
    * Notify the #mini-app-submissions channel about new mini app submissions.
    */
   async notifyMiniAppSubmission(app: AppInfo, developerEmail: string): Promise<boolean> {

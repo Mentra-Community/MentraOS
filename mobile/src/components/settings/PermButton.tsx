@@ -33,7 +33,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   justifyContent: "space-between",
   alignItems: "center",
   width: "100%",
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingVertical: spacing.s4,
   paddingHorizontal: spacing.s4,
   borderRadius: spacing.s4,

@@ -1,0 +1,19 @@
+version: v2
+# Omit a hard-coded name here. Use environment variables to supply dynamic values.
+namespace: ${PORTER_NAMESPACE}
+build:
+  method: docker
+  context: .
+  dockerfile: ./docker/Dockerfile
+services:
+  - name: mentra-live-template-app
+    type: web
+    run: bun run start
+    port: 80
+    cpuCores: 1.0
+    ramMegabytes: 1024
+    env:
+      NODE_ENV: ${NODE_ENV}
+      PORTER_APP_NAME: ${PORTER_APP_NAME}
+      HOST: "0.0.0.0"
+      PORT: "80"

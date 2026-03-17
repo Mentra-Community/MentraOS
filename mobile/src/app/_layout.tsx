@@ -3,9 +3,9 @@ import "@/utils/polyfills/event" // Must be before any livekit imports
 import {registerGlobals} from "@livekit/react-native-webrtc"
 import * as Sentry from "@sentry/react-native"
 import {useFonts} from "expo-font"
-import {SplashScreen, useNavigationContainerRef} from "expo-router"
+import {useNavigationContainerRef} from "expo-router"
+import * as SplashScreen from "expo-splash-screen"
 import {useEffect, useState} from "react"
-import {LogBox} from "react-native"
 
 import {SentryNavigationIntegration, SentrySetup} from "@/effects/SentrySetup"
 import {initI18n} from "@/i18n"
@@ -15,43 +15,20 @@ import {loadDateFnsLocale} from "@/utils/formatDate"
 import {AllEffects} from "@/effects/AllEffects"
 import {AllProviders} from "@/contexts/AllProviders"
 import "@/global.css"
-
-// prevent the annoying warning box at the bottom of the screen from getting in the way:
-const IGNORED_LOGS = [
-  /Failed to open debugger. Please check that the dev server is running and reload the app./,
-  /Require cycle:/,
-  /is missing the required default export./,
-  /Attempted to import the module/,
-  /The action 'RESET' with payload/,
-  /The action 'POP_TO_TOP' was not handled/,
-]
-
-LogBox.ignoreLogs(IGNORED_LOGS)
-
-if (__DEV__) {
-  const withoutIgnored =
-    (logger: any) =>
-    (...args: any[]) => {
-      const output = args.join(" ")
-
-      if (!IGNORED_LOGS.some((log) => log.test(output))) {
-        logger(...args)
-      }
-    }
-
-  console.log = withoutIgnored(console.log)
-  console.info = withoutIgnored(console.info)
-  console.warn = withoutIgnored(console.warn)
-  console.error = withoutIgnored(console.error)
-}
+import {logBuffer} from "@/utils/dev/logging"
 
 SentrySetup()
+logBuffer.startConsoleInterception()
 
 // initialize the settings store
 useSettingsStore.getState().loadAllSettings()
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync()
+SplashScreen.setOptions({
+  duration: 1000,
+  fade: true,
+})
 
 function Root() {
   const [_fontsLoaded, fontError] = useFonts(customFontsToLoad)

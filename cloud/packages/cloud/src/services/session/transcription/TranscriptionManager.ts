@@ -7,6 +7,8 @@ import { Logger } from "pino";
 import {
   ExtendedStreamType,
   getLanguageInfo,
+  isLanguageStream,
+  parseLanguageStream,
   StreamType,
   CloudToAppMessageType,
   DataStream,
@@ -18,7 +20,6 @@ import { PosthogService } from "../../logging/posthog.service";
 import UserSession from "../UserSession";
 
 import { AlibabaTranscriptionProvider } from "./providers/AlibabaTranscriptionProvider";
-import { AzureTranscriptionProvider } from "./providers/AzureTranscriptionProvider";
 import { SonioxTranscriptionProvider } from "./providers/SonioxTranscriptionProvider";
 import { ProviderSelector } from "./ProviderSelector";
 import {
@@ -51,6 +52,7 @@ export class TranscriptionManager {
   // Stream Management
   private streams = new Map<string, StreamInstance>();
   private activeSubscriptions = new Set<ExtendedStreamType>();
+  private rawSubscriptions: ExtendedStreamType[] = []; // un-normalized, for option merging
 
   // Retry Logic
   private streamRetryAttempts = new Map<string, number>();
@@ -140,33 +142,38 @@ export class TranscriptionManager {
       return true;
     });
 
-    const desired = new Set(validSubscriptions);
+    // Store raw subscriptions for option merging (hints, no-language-identification)
+    this.rawSubscriptions = validSubscriptions;
+
+    // Normalize to base language for stream identity
+    // "transcription:en-US?hints=ja" → "transcription:en-US"
+    const normalizedDesired = new Set(validSubscriptions.map((s) => this.normalizeToBaseLanguage(s)));
     const current = new Set(this.streams.keys());
 
     this.logger.debug(
       {
-        desired: Array.from(desired),
+        raw: validSubscriptions,
+        normalized: Array.from(normalizedDesired),
         current: Array.from(current),
-        filtered: subscriptions.filter((s) => !validSubscriptions.includes(s)),
       },
-      "Updating transcription subscriptions",
+      "Updating transcription subscriptions (normalized)",
     );
 
-    // Stop removed streams
+    // Stop streams whose base language is no longer needed
     for (const subscription of current) {
-      if (!desired.has(subscription)) {
+      if (!normalizedDesired.has(subscription)) {
         await this.stopStream(subscription);
       }
     }
 
-    // Start new streams
-    for (const subscription of desired) {
+    // Start streams for new base languages
+    for (const subscription of normalizedDesired) {
       if (!current.has(subscription)) {
         await this.startStream(subscription);
       }
     }
 
-    this.activeSubscriptions = desired;
+    this.activeSubscriptions = normalizedDesired;
   }
 
   /**
@@ -198,7 +205,6 @@ export class TranscriptionManager {
             "Forced finalization of Soniox transcription tokens",
           );
         }
-        // Azure doesn't need forced finalization as it sends final results immediately
         // Other providers can be added here as needed
       } catch (error) {
         this.logger.warn(
@@ -978,22 +984,6 @@ export class TranscriptionManager {
         providerErrors.push({ provider: "Alibaba", error: error as Error });
       }
 
-      // Try to initialize Azure provider
-      try {
-        if (this.IS_CHINA) {
-          this.logger.info("Azure provider not initialized for China");
-        } else {
-          const azureProvider = new AzureTranscriptionProvider(this.config.azure, this.logger);
-          await azureProvider.initialize();
-          this.providers.set(ProviderType.AZURE, azureProvider);
-          availableProviders.push(ProviderType.AZURE);
-          this.logger.info("Azure provider initialized successfully");
-        }
-      } catch (error) {
-        this.logger.error(error, "Failed to initialize Azure provider");
-        providerErrors.push({ provider: "Azure", error: error as Error });
-      }
-
       // Try to initialize Soniox provider
       try {
         if (this.IS_CHINA) {
@@ -1019,8 +1009,6 @@ export class TranscriptionManager {
           {
             providerErrors,
             config: {
-              azureHasKey: !!this.config.azure.key,
-              azureRegion: this.config.azure.region,
               sonioxHasKey: !!this.config.soniox.apiKey,
               sonioxEndpoint: this.config.soniox.endpoint,
             },
@@ -1180,12 +1168,26 @@ export class TranscriptionManager {
     const languageInfo = getLanguageInfo(subscription)!;
     const streamId = this.generateStreamId(subscription);
 
+    // Merge options (hints, language ID) from all apps subscribing to this base language
+    const mergedOptions = this.getMergedOptionsForLanguage(subscription);
+    const subscriptionWithOptions = this.buildSubscriptionWithOptions(subscription, mergedOptions);
+
+    this.logger.debug(
+      {
+        normalizedSubscription: subscription,
+        mergedHints: mergedOptions.hints,
+        disableLanguageIdentification: mergedOptions.disableLanguageIdentification,
+        subscriptionWithOptions,
+      },
+      "Creating stream with merged options from all subscribers",
+    );
+
     const callbacks = this.createStreamCallbacks(subscription);
 
     const options = {
       streamId,
       userSession: this.userSession,
-      subscription,
+      subscription: subscriptionWithOptions, // Soniox reads hints from this
       callbacks,
     };
 
@@ -1277,16 +1279,10 @@ export class TranscriptionManager {
 
     // Smart provider cycling based on error type and current provider
     if (currentProvider === ProviderType.SONIOX) {
-      // Soniox failed - check if we should retry Soniox or immediately switch to Azure
+      // Soniox failed - check if we should retry Soniox or try another provider
       if (this.isSonioxRateLimit(error)) {
-        // Rate limit - immediately try Azure
-        this.logger.info(
-          { subscription, error: error.message },
-          "Soniox rate limit detected - falling back to Azure immediately",
-        );
-        if (await this.trySpecificProvider(subscription, ProviderType.AZURE)) {
-          return; // Success with Azure
-        }
+        // Rate limit - log and fall through to retry logic
+        this.logger.info({ subscription, error: error.message }, "Soniox rate limit detected");
       } else if (this.isRetryableError(error)) {
         // Other retryable Soniox errors - retry Soniox first
         this.logger.info({ subscription, error: error.message }, "Retrying Soniox for retryable error");
@@ -1294,20 +1290,8 @@ export class TranscriptionManager {
         return;
       }
 
-      // If we reach here, either:
-      // 1. Rate limit and Azure failed, OR
-      // 2. Non-retryable Soniox error
-      // Try Azure as fallback
-      this.logger.info({ subscription }, "Trying Azure as fallback after Soniox failure");
-      if (await this.trySpecificProvider(subscription, ProviderType.AZURE)) {
-        return; // Success with Azure
-      }
-    } else if (currentProvider === ProviderType.AZURE) {
-      // Azure failed - cycle back to Soniox since it's preferred
-      this.logger.info({ subscription }, "Azure failed - cycling back to preferred Soniox provider");
-      if (await this.trySpecificProvider(subscription, ProviderType.SONIOX)) {
-        return; // Success with Soniox
-      }
+      // If we reach here, Soniox failed (rate limit or non-retryable error)
+      // No Azure fallback available — will fall through to retry/give-up logic below
     }
 
     // If we reach here, both providers have been tried and failed
@@ -1767,15 +1751,109 @@ export class TranscriptionManager {
   }
 
   /**
-   * Get the target subscriptions for routing data
-   * Now simplified since there's no optimization mapping
+   * Normalize a subscription string to its base language form.
+   * Strips query parameters (hints, no-language-identification) so that
+   * stream identity is based solely on language code.
+   *
+   * "transcription:en-US?hints=ja" → "transcription:en-US"
+   * "transcription:auto"           → "transcription:auto"
+   * "audio_chunk"                  → "audio_chunk" (non-language, no-op)
    */
-  private getTargetSubscriptions(
-    streamSubscription: ExtendedStreamType,
-    effectiveSubscription: ExtendedStreamType,
-  ): ExtendedStreamType[] {
-    // Simply return the effective subscription
-    return [effectiveSubscription];
+  private normalizeToBaseLanguage(subscription: ExtendedStreamType): ExtendedStreamType {
+    if (typeof subscription !== "string") return subscription;
+
+    const parsed = parseLanguageStream(subscription);
+    if (!parsed) return subscription; // not a language stream
+
+    if (parsed.type === StreamType.TRANSCRIPTION) {
+      return `${StreamType.TRANSCRIPTION}:${parsed.transcribeLanguage}` as ExtendedStreamType;
+    }
+    if (parsed.type === StreamType.TRANSLATION && parsed.translateLanguage) {
+      return `${StreamType.TRANSLATION}:${parsed.transcribeLanguage}-to-${parsed.translateLanguage}` as ExtendedStreamType;
+    }
+
+    return subscription;
+  }
+
+  /**
+   * Merge options (hints, no-language-identification) from all raw subscriptions
+   * that normalize to the given base language.
+   *
+   * Hints: union of all hint arrays, deduplicated.
+   * no-language-identification: false (enabled) unless ALL subscribers disable it.
+   */
+  private getMergedOptionsForLanguage(normalizedSubscription: ExtendedStreamType): {
+    hints: string[];
+    disableLanguageIdentification: boolean;
+  } {
+    const allHints = new Set<string>();
+    let allDisable = true; // assume disabled until proven otherwise
+    let hasAnySubscriber = false;
+
+    for (const raw of this.rawSubscriptions) {
+      if (this.normalizeToBaseLanguage(raw) !== normalizedSubscription) continue;
+      hasAnySubscriber = true;
+
+      const parsed = parseLanguageStream(raw);
+      if (!parsed) continue;
+
+      // Collect hints
+      const hintsParam = parsed.options?.hints;
+      if (hintsParam) {
+        const hints = (hintsParam as string).split(",").map((h) => h.trim());
+        hints.forEach((h) => allHints.add(h));
+      }
+
+      // Track language identification preference
+      const disableParam = parsed.options?.["no-language-identification"];
+      if (disableParam !== true && disableParam !== "true") {
+        allDisable = false; // at least one subscriber wants it enabled
+      }
+    }
+
+    return {
+      hints: Array.from(allHints),
+      disableLanguageIdentification: hasAnySubscriber ? allDisable : false,
+    };
+  }
+
+  /**
+   * Reconstruct a subscription string with merged options.
+   * Used so the Soniox stream's sendConfiguration() can extract hints.
+   */
+  private buildSubscriptionWithOptions(
+    normalizedSubscription: ExtendedStreamType,
+    options: { hints: string[]; disableLanguageIdentification: boolean },
+  ): string {
+    const result = normalizedSubscription as string;
+    const params = new URLSearchParams();
+
+    if (options.hints.length > 0) {
+      params.set("hints", options.hints.join(","));
+    }
+    if (options.disableLanguageIdentification) {
+      params.set("no-language-identification", "true");
+    }
+
+    const qs = params.toString();
+    return qs ? `${result}?${qs}` : result;
+  }
+
+  /**
+   * Find the app's own transcription subscription for a given base language.
+   * Used to set DataStream.streamType to the app's exact subscription string,
+   * so old SDKs (which do exact string matching) can match their handler key.
+   */
+  private findAppTranscriptionSubscription(packageName: string, transcribeLanguage: string): ExtendedStreamType | null {
+    const appSubs = this.userSession.subscriptionManager.getAppSubscriptions(packageName);
+    for (const sub of appSubs) {
+      if (!isLanguageStream(sub as string)) continue;
+      const parsed = parseLanguageStream(sub as ExtendedStreamType);
+      if (parsed && parsed.type === StreamType.TRANSCRIPTION && parsed.transcribeLanguage === transcribeLanguage) {
+        return sub;
+      }
+    }
+    return null;
   }
 
   private async relayDataToApps(subscription: ExtendedStreamType, data: any): Promise<void> {
@@ -1799,23 +1877,13 @@ export class TranscriptionManager {
       // Add to transcript history before relaying to apps
       this.addToTranscriptHistory(data, streamType);
 
-      // Handle optimized subscription routing
-      const targetSubscriptions = this.getTargetSubscriptions(subscription, effectiveSubscription);
-      const allSubscribedApps = new Set<string>();
-
-      // Get subscribed apps for all target subscriptions
-      for (const targetSub of targetSubscriptions) {
-        const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(targetSub);
-        subscribedApps.forEach((app) => allSubscribedApps.add(app));
-      }
-
-      const subscribedApps = Array.from(allSubscribedApps);
+      // Get all apps subscribed to this base language
+      const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(effectiveSubscription);
 
       this.logger.debug(
         {
           subscription,
           effectiveSubscription,
-          targetSubscriptions,
           subscribedApps,
           streamType,
           dataType: data.type,
@@ -1828,11 +1896,19 @@ export class TranscriptionManager {
       for (const packageName of subscribedApps) {
         const appSessionId = `${this.userSession.sessionId}-${packageName}`;
 
+        // Use the app's own subscription string as streamType so old SDKs
+        // can exact-match their handler key. Falls back to effectiveSubscription
+        // if the app doesn't have a matching transcription subscription
+        // (e.g., WILDCARD or ALL subscribers).
+        const appSubscription = data.transcribeLanguage
+          ? this.findAppTranscriptionSubscription(packageName, data.transcribeLanguage)
+          : null;
+
         const dataStream: DataStream = {
           type: CloudToAppMessageType.DATA_STREAM,
           sessionId: appSessionId,
-          streamType: subscription as ExtendedStreamType, // Base type remains the same in the message
-          data, // The data now may contain language info
+          streamType: (appSubscription || effectiveSubscription) as ExtendedStreamType,
+          data,
           timestamp: new Date(),
         };
 
@@ -1882,11 +1958,11 @@ export class TranscriptionManager {
           isFinal: data.isFinal,
           confidence: data.confidence,
           appsNotified: subscribedApps.length,
-          subscribedApps,
+          subscribedApps: Array.from(subscribedApps),
         },
-        `📝 TRANSCRIPTION: [${data.provider || "unknown"}] ${
-          data.isFinal ? "FINAL" : "interim"
-        } "${data.text || "no text"}" → ${subscribedApps.length} apps`,
+        `📝 TRANSCRIPTION: [${data.provider || "unknown"}] ${data.isFinal ? "FINAL" : "interim"} "${
+          data.text || "no text"
+        }" → ${subscribedApps.length} apps`,
       );
     } catch (error) {
       this.logger.error(

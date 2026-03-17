@@ -3,9 +3,11 @@
  */
 
 import { evenRealitiesG1 } from "./capabilities/even-realities-g1";
+import { evenRealitiesG2 } from "./capabilities/even-realities-g2";
 import { mentraLive } from "./capabilities/mentra-live";
 import { simulatedGlasses } from "./capabilities/simulated-glasses";
 import { vuzixZ100 } from "./capabilities/vuzix-z100";
+import { none } from "./capabilities/none";
 import { DeviceTypes, HardwareRequirementLevel, HardwareType } from "./enums";
 
 /**
@@ -155,18 +157,20 @@ export interface Capabilities {
  */
 export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [evenRealitiesG1.modelName]: evenRealitiesG1,
+  [evenRealitiesG2.modelName]: evenRealitiesG2,
   [mentraLive.modelName]: mentraLive,
   [simulatedGlasses.modelName]: simulatedGlasses,
   [vuzixZ100.modelName]: vuzixZ100,
+  [none.modelName]: none,
 };
 
 export const getModelCapabilities = (deviceType: DeviceTypes): Capabilities => {
   const modelName = deviceType as string;
   if (!HARDWARE_CAPABILITIES[modelName]) {
-    return HARDWARE_CAPABILITIES[simulatedGlasses.modelName];
+    return HARDWARE_CAPABILITIES[DeviceTypes.NONE];
   }
   return HARDWARE_CAPABILITIES[modelName];
 };
 
 // export * from "./capabilities"
-export { simulatedGlasses, evenRealitiesG1, mentraLive, vuzixZ100 };
+export { simulatedGlasses, evenRealitiesG1, evenRealitiesG2, mentraLive, vuzixZ100 };

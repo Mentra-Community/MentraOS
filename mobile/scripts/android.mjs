@@ -22,6 +22,9 @@ if (validDevices.length === 0) {
   process.exit(1)
 }
 
+// build only for real devices new arch:
+process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a'
+
 if (validDevices.length > 1) {
   console.log('Multiple devices found, launching interactive picker')
   await $({stdio: "inherit"})`bun expo run:android --device`

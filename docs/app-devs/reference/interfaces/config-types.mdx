@@ -93,10 +93,10 @@ interface BaseAppSetting {
 }
 ```
 
-The [`AppSettingType`](/reference/enums#appsettingtype) enum defines the available types of settings:
-- [`AppSettingType.TOGGLE`](/reference/enums#appsettingtype) - A boolean toggle/switch
-- [`AppSettingType.TEXT`](/reference/enums#appsettingtype) - A text input field
-- [`AppSettingType.SELECT`](/reference/enums#appsettingtype) - A dropdown selection
+The [`AppSettingType`](/app-devs/reference/enums#appsettingtype) enum defines the available types of settings:
+- [`AppSettingType.TOGGLE`](/app-devs/reference/enums#appsettingtype) - A boolean toggle/switch
+- [`AppSettingType.TEXT`](/app-devs/reference/enums#appsettingtype) - A text input field
+- [`AppSettingType.SELECT`](/app-devs/reference/enums#appsettingtype) - A dropdown selection
 
 ### Toggle Setting Example
 
@@ -209,7 +209,7 @@ const allSettings = appSession.getSettings();
 const refreshInterval = allSettings.find(s => s.key === "refreshInterval")?.value;
 ```
 
-The [`getSetting()`](/reference/app-session#getsetting) and [`getSettings()`](/reference/app-session#getsettings) methods are available on the [`AppSession`](/reference/app-session) class.
+The [`getSetting()`](/app-devs/reference/app-session#getsetting) and [`getSettings()`](/app-devs/reference/app-session#getsettings) methods are available on the [`AppSession`](/app-devs/reference/app-session) class.
 
 ### Reacting to Setting Changes
 
@@ -227,7 +227,7 @@ appSession.events.onSettingChange<number>("refreshInterval", (newValue, oldValue
 });
 ```
 
-The [`onSettingsUpdate()`](/reference/managers/event-manager#onsettingsupdate) and [`onSettingChange()`](/reference/managers/event-manager#onsettingchange) methods are available on the [`EventManager`](/reference/managers/event-manager) class, accessed via `appSession.events`.
+The [`onSettingsUpdate()`](/app-devs/reference/managers/event-manager#onsettingsupdate) and [`onSettingChange()`](/app-devs/reference/managers/event-manager#onsettingchange) methods are available on the [`EventManager`](/app-devs/reference/managers/event-manager) class, accessed via `appSession.events`.
 
 ### Automatic Subscription Management Based on Settings
 
@@ -258,4 +258,4 @@ appSession.setSubscriptionSettings({
 });
 ```
 
-The [`setSubscriptionSettings()`](/reference/app-session#setsubscriptionsettings) method is available on the [`AppSession`](/reference/app-session) class. It allows automatic management of [`StreamType`](/reference/enums#streamtype) subscriptions based on setting changes.
+The [`setSubscriptionSettings()`](/app-devs/reference/app-session#setsubscriptionsettings) method is available on the [`AppSession`](/app-devs/reference/app-session) class. It allows automatic management of [`StreamType`](/app-devs/reference/enums#streamtype) subscriptions based on setting changes.

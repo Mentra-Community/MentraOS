@@ -116,8 +116,6 @@ export const colors = {
 
   // Backgrounds
   // background: palette.neutral100,
-  backgroundAlt: palette.neutral200,
-  backgroundNeo: palette.neutral100,
   modalOverlay: "rgba(0, 0, 0, 0.7)",
 
   // Borders

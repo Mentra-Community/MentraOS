@@ -1,6 +1,6 @@
 <div align="center">
   <p>
-    <img src="./mobile/assets/glasses/mentra-mach1-glasses.png" alt="Mentra Mach 1" height="80" style="margin: 0 15px;" />
+    <img src="./images/mach1.png" alt="Mentra Mach 1" height="80" style="margin: 0 15px;" />
     <img src="./mobile/assets/glasses/g1.png" alt="Even Realities G1" height="80" style="margin: 0 15px;" />
     <img src="./images/MentraLiveFinal.png" alt="Mentra Live" height="80" style="margin: 0 15px;" />
   </p>

@@ -23,9 +23,11 @@ export interface AppWithInstallStatus {
 /**
  * Get all published apps available in the store.
  * No authentication required.
+ * Uses .lean() to return plain JavaScript objects instead of Mongoose documents.
  */
-export async function getPublishedApps() {
-  return App.find({ appStoreStatus: "PUBLISHED" });
+export async function getPublishedApps(): Promise<AppI[]> {
+  const apps = await App.find({ appStoreStatus: "PUBLISHED" }).lean();
+  return apps as AppI[];
 }
 
 /**
@@ -36,7 +38,7 @@ export async function getPublishedApps() {
  * @returns Apps with isInstalled flag added
  */
 export async function getPublishedAppsForUser(user: UserI): Promise<AppWithInstallStatus[]> {
-  // Get all available apps
+  // Get all available apps (already plain objects from .lean())
   const apps = await getPublishedApps();
 
   // Get user to check which apps are installed

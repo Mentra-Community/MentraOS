@@ -165,6 +165,7 @@ function OriginalButton(props: ButtonProps) {
       !!flex && {flex: 1},
       (!!compact || !!compactIcon) && themed($compactViewStyle),
       !!compactIcon && themed($compactIconStyle),
+      !!disabled && $disabledViewStyle,
       !!disabled && themed($disabledViewStyleOverride),
       themed($viewStyleOverride),
     ]
@@ -200,18 +201,22 @@ function OriginalButton(props: ButtonProps) {
             </View>
           )}
 
-          <Text
-            tx={tx}
-            text={text}
-            txOptions={txOptions}
-            style={[
-              $textStyle(state),
-              {textAlign: props.textAlignment === "left" ? "left" : "center"},
-              !!LeftAccessory && {paddingLeft: 28},
-              !!RightAccessory && {paddingRight: 28},
-            ]}>
-            {children}
-          </Text>
+          {!tx && !text && children ? (
+            children
+          ) : (
+            <Text
+              tx={tx}
+              text={text}
+              txOptions={txOptions}
+              style={[
+                $textStyle(state),
+                {textAlign: props.textAlignment === "left" ? "left" : "center"},
+                !!LeftAccessory && {paddingLeft: 28},
+                !!RightAccessory && {paddingRight: 28},
+              ]}>
+              {children}
+            </Text>
+          )}
 
           {!!RightAccessory && (
             <View style={{position: "absolute", right: 0, alignItems: "center", justifyContent: "center"}}>
@@ -254,8 +259,8 @@ const $compactIconStyle: StyleProp<ViewStyle> = {
 
 const $baseTextStyle: ThemedStyle<TextStyle> = ({colors}) => ({
   fontSize: 14,
-  lineHeight: 20,
   textAlign: "center",
+  textAlignVertical: "center",
   flexShrink: 1,
   flexGrow: 0,
   zIndex: 2,
@@ -346,7 +351,7 @@ const $textPresets: Record<Presets, ThemedStyleArray<TextStyle>> = {
   alternate: [$baseTextStyle, ({colors}) => ({color: colors.secondary_foreground})],
   accent: [$baseTextStyle],
   warning: [$baseTextStyle, ({colors}) => ({color: colors.secondary_foreground})],
-  destructive: [$baseTextStyle, ({colors}) => ({color: colors.palette.angry600})],
+  destructive: [$baseTextStyle],
   outlined: [$baseTextStyle, ({colors}) => ({color: colors.text})],
 }
 
@@ -359,6 +364,10 @@ const $pressedViewPresets: Record<Presets, ThemedStyle<ViewStyle>> = {
   warning: ({colors}) => ({backgroundColor: colors.palette.transparent, borderColor: colors.border}),
   destructive: ({colors}) => ({backgroundColor: colors.palette.transparent, borderColor: colors.border}),
   outlined: ({colors}) => ({backgroundColor: colors.palette.transparent, borderColor: colors.border}),
+}
+
+const $disabledViewStyle: ViewStyle = {
+  opacity: 0.4,
 }
 
 const $pressedTextPresets: Record<Presets, ThemedStyle<TextStyle>> = {

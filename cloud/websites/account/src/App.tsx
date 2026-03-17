@@ -1,7 +1,7 @@
 import {BrowserRouter as Router, Routes, Route, Navigate} from "react-router-dom"
 import {Toaster} from "sonner"
 import {useState, useEffect} from "react"
-import {AuthProvider, useAuth, ForgotPasswordPage, ResetPasswordPage} from "@mentra/shared"
+import {AuthProvider, useAuth, ForgotPasswordPage, ResetPasswordPage, Spinner} from "@mentra/shared"
 import LoginPage from "./pages/LoginPage"
 import AccountPage from "./pages/AccountPage"
 import DeleteAccountPage from "./pages/DeleteAccountPage"
@@ -35,7 +35,7 @@ const ProtectedRoute = ({children}: {children: React.ReactNode}) => {
   if (isLoading || isCheckingAuth) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        <Spinner size="lg" />
       </div>
     )
   }

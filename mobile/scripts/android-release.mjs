@@ -3,6 +3,9 @@
 import { setBuildEnv } from './set-build-env.mjs';
 await setBuildEnv();
 
+// build only for real devices new arch:
+process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a'
+
 console.log('Building Android release...');
 
 // Prebuild Android

@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard"
 import {useEffect, useRef, useState} from "react"
-import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {TextStyle, TouchableOpacity, View} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
@@ -13,8 +13,9 @@ import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 
 export const VersionInfo = () => {
-  const {theme, themed} = useAppTheme()
+  const {themed} = useAppTheme()
   const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
+  const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
   const [storeUrl] = useSetting(SETTINGS.store_url.key)
   const [backendUrl] = useSetting(SETTINGS.backend_url.key)
   const [audioTransport, setAudioTransport] = useState<string>("websocket")
@@ -40,6 +41,7 @@ export const VersionInfo = () => {
   const pressCount = useRef(0)
   const lastPressTime = useRef(0)
   const pressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleQuickPress = () => {
     const currentTime = Date.now()
@@ -57,6 +59,8 @@ export const VersionInfo = () => {
 
     lastPressTime.current = currentTime
 
+    copyVersionInfo()
+
     // Clear existing timeout
     if (pressTimeout.current) {
       clearTimeout(pressTimeout.current)
@@ -64,15 +68,17 @@ export const VersionInfo = () => {
 
     // Handle different press counts
     if (pressCount.current === maxPressCount) {
-      showAlert("Developer Mode", "Developer mode enabled!", [{text: translate("common:ok")}])
+      showAlert(translate("dev:developerModeEnabled"), translate("dev:developerModeEnabled"), [
+        {text: translate("common:ok")},
+      ])
       setDevMode(true)
       pressCount.current = 0
     } else if (pressCount.current >= showAlertAtPressCount) {
       const remaining = maxPressCount - pressCount.current
       Toast.show({
         type: "info",
-        text1: "Developer Mode",
-        text2: `${remaining} more taps to enable developer mode`,
+        text1: translate("dev:developerMode"),
+        text2: translate("dev:developerModeMoreTaps", {number: remaining}),
         position: "bottom",
         topOffset: 80,
         visibilityTime: 1000,
@@ -85,7 +91,7 @@ export const VersionInfo = () => {
     }, maxTimeDiff)
   }
 
-  const handlePress = async () => {
+  const copyVersionInfo = async () => {
     const res = await mentraAuth.getUser()
     let user = null
     if (res.is_ok()) {
@@ -107,19 +113,44 @@ export const VersionInfo = () => {
     }
 
     await Clipboard.setStringAsync(info.join("\n"))
-    Toast.show({
-      type: "info",
-      text1: "Version info copied to clipboard",
-      position: "bottom",
-      topOffset: 80,
-      visibilityTime: 1000,
-    })
+    if (devMode) {
+      Toast.show({
+        type: "info",
+        text1: translate("dev:versionInfoCopied"),
+        position: "bottom",
+        topOffset: 80,
+        visibilityTime: 1000,
+      })
+    }
+  }
+
+  const handlePressIn = () => {
+    longPressTimer.current = setTimeout(() => {
+      setSuperMode(true)
+      // showAlert(translate("dev:superMode"), translate("dev:superModeActivated"), [{text: translate("common:ok")}])
+      Toast.show({
+        type: "success",
+        text1: translate("dev:superModeActivated"),
+        position: "bottom",
+        topOffset: 80,
+        visibilityTime: 2000,
+      })
+      longPressTimer.current = null
+    }, 10000)
+  }
+
+  const handlePressOut = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+      copyVersionInfo()
+    }
   }
 
   if (devMode) {
     return (
-      <TouchableOpacity onPress={handlePress}>
-        <View style={themed($versionContainer)}>
+      <TouchableOpacity onPressIn={handlePressIn} onPressOut={handlePressOut}>
+        <View className="items-center bottom-2 w-full py-2 rounded-xl mt-16">
           <View className="flex-row gap-2">
             <Text
               style={themed($buildInfo)}
@@ -147,8 +178,8 @@ export const VersionInfo = () => {
 
   return (
     <TouchableOpacity onPress={handleQuickPress}>
-      <View style={themed($versionContainer)}>
-        <View style={{flexDirection: "row", gap: theme.spacing.s2}}>
+      <View className="items-center bottom-2 w-full py-2 rounded-xl mt-16">
+        <View className="flex-row gap-2">
           <Text
             style={themed($buildInfo)}
             text={translate("common:version", {number: process.env.EXPO_PUBLIC_MENTRAOS_VERSION})}
@@ -159,16 +190,7 @@ export const VersionInfo = () => {
   )
 }
 
-const $versionContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  alignItems: "center",
-  bottom: spacing.s2,
-  width: "100%",
-  paddingVertical: spacing.s2,
-  borderRadius: spacing.s4,
-  marginTop: spacing.s16,
-})
-
 const $buildInfo: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.textDim,
+  color: colors.muted_foreground,
   fontSize: 13,
 })

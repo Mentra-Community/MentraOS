@@ -275,6 +275,12 @@ class MantleManager {
       )
 
       this.subs.push(
+        CoreModule.addListener("photo_response", (event) => {
+          restComms.sendPhotoResponse(event)
+        }),
+      )
+
+      this.subs.push(
         CoreModule.addListener("heartbeat_sent", (event) => {
           console.log("MANTLE: received heartbeat_sent event from Core", event.heartbeat_sent)
           // TODO: remove the global event emitter and sub directly in the component where needed
@@ -514,6 +520,13 @@ class MantleManager {
             message: event.message,
             timestamp: event.timestamp,
           })
+        }),
+      )
+
+      this.subs.push(
+        CoreModule.addListener("ota_start_ack", (event) => {
+          console.log("MANTLE: ota_start_ack received from glasses")
+          GlobalEventEmitter.emit("ota_start_ack", {timestamp: event.timestamp})
         }),
       )
 

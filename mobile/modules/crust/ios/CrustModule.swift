@@ -1,39 +1,27 @@
 import ExpoModulesCore
 import AVKit
+import Photos
 
 public class CrustModule: Module {
-  // Each module class must implement the definition function. The definition consists of components
-  // that describes the module's functionality and behavior.
-  // See https://docs.expo.dev/modules/module-api for more details about available components.
   public func definition() -> ModuleDefinition {
-    // Sets the name of the module that JavaScript code will use to refer to the module. Takes a string as an argument.
-    // Can be inferred from module's class name, but it's recommended to set it explicitly for clarity.
-    // The module will be accessible from `requireNativeModule('Crust')` in JavaScript.
     Name("Crust")
 
-    // Defines constant property on the module.
     Constant("PI") {
       Double.pi
     }
 
-    // Defines event names that the module can send to JavaScript.
     Events("onChange")
 
-    // Defines a JavaScript synchronous function that runs the native code on the JavaScript thread.
     Function("hello") {
       return "Hello world! 👋"
     }
 
-    // Defines a JavaScript function that always returns a Promise and whose native code
-    // is by default dispatched on the different thread than the JavaScript runtime runs on.
     AsyncFunction("setValueAsync") { (value: String) in
-      // Send an event to JavaScript.
       self.sendEvent("onChange", [
         "value": value
       ])
     }
 
-    // Defines a JavaScript function to show the AVRoutePicker
     Function("showAVRoutePicker") { (tintColor: String?) in
       DispatchQueue.main.async {
         let picker = AVRoutePickerView()
@@ -45,17 +33,13 @@ public class CrustModule: Module {
           picker.tintColor = .label
         }
 
-        // Programmatically trigger the route picker button
         if let button = picker.subviews.first(where: { $0 is UIButton }) as? UIButton {
           button.sendActions(for: .touchUpInside)
         }
       }
     }
 
-    // Enables the module to be used as a native view. Definition components that are accepted as part of the
-    // view definition: Prop, Events.
     View(CrustView.self) {
-      // Defines a setter for the `url` prop.
       Prop("url") { (view: CrustView, url: URL) in
         if view.webView.url != url {
           view.webView.load(URLRequest(url: url))
@@ -63,6 +47,136 @@ public class CrustModule: Module {
       }
 
       Events("onLoad")
+    }
+
+    // MARK: - Image Processing Commands
+
+    AsyncFunction("processGalleryImage") {
+      (inputPath: String, outputPath: String, options: [String: Any]) -> [String: Any] in
+      let lensCorrection = options["lensCorrection"] as? Bool ?? true
+      let colorCorrection = options["colorCorrection"] as? Bool ?? true
+
+      guard FileManager.default.fileExists(atPath: inputPath) else {
+        return ["success": false, "error": "Input file does not exist"]
+      }
+
+      let processingTimeMs = ImageProcessor.process(
+        inputPath: inputPath,
+        outputPath: outputPath,
+        lensCorrection: lensCorrection,
+        colorCorrection: colorCorrection
+      )
+
+      if processingTimeMs >= 0 {
+        return [
+          "success": true,
+          "outputPath": outputPath,
+          "processingTimeMs": processingTimeMs,
+        ]
+      } else {
+        return ["success": false, "error": "Processing failed"]
+      }
+    }
+
+    // MARK: - HDR Merge Commands
+
+    AsyncFunction("mergeHdrBrackets") {
+      (underPath: String, normalPath: String, overPath: String, outputPath: String)
+        -> [String: Any] in
+      let processingTimeMs = ImageProcessor.mergeHdr(
+        underPath: underPath,
+        normalPath: normalPath,
+        overPath: overPath,
+        outputPath: outputPath
+      )
+      if processingTimeMs >= 0 {
+        return [
+          "success": true,
+          "outputPath": outputPath,
+          "processingTimeMs": processingTimeMs,
+        ]
+      } else {
+        return ["success": false, "error": "HDR merge failed"]
+      }
+    }
+
+    // MARK: - Video Stabilization Commands
+
+    AsyncFunction("stabilizeVideo") {
+      (inputPath: String, imuPath: String, outputPath: String) -> [String: Any] in
+
+      guard FileManager.default.fileExists(atPath: inputPath) else {
+        return ["success": false, "error": "Input video does not exist"]
+      }
+      guard FileManager.default.fileExists(atPath: imuPath) else {
+        return ["success": false, "error": "IMU sidecar does not exist"]
+      }
+
+      let processingTimeMs = VideoStabilizer.stabilize(
+        inputPath: inputPath,
+        imuPath: imuPath,
+        outputPath: outputPath
+      )
+
+      if processingTimeMs >= 0 {
+        return [
+          "success": true,
+          "outputPath": outputPath,
+          "processingTimeMs": processingTimeMs,
+        ]
+      } else {
+        return ["success": false, "error": "Stabilization failed"]
+      }
+    }
+
+    // MARK: - Media Library Commands
+
+    AsyncFunction("saveToGalleryWithDate") {
+      (filePath: String, captureTimeMillis: Int64?) -> [String: Any] in
+      let fileURL = URL(fileURLWithPath: filePath)
+
+      guard FileManager.default.fileExists(atPath: filePath) else {
+        return ["success": false, "error": "File does not exist"]
+      }
+
+      var assetIdentifier: String?
+      let semaphore = DispatchSemaphore(value: 0)
+      var resultError: Error?
+
+      PHPhotoLibrary.shared().performChanges {
+        let creationRequest: PHAssetChangeRequest
+        let pathExtension = fileURL.pathExtension.lowercased()
+
+        if ["mp4", "mov", "avi", "m4v"].contains(pathExtension) {
+          creationRequest = PHAssetChangeRequest.creationRequestForAssetFromVideo(
+            atFileURL: fileURL)!
+        } else {
+          creationRequest = PHAssetChangeRequest.creationRequestForAssetFromImage(
+            atFileURL: fileURL)!
+        }
+
+        if let captureMillis = captureTimeMillis {
+          let captureDate = Date(
+            timeIntervalSince1970: TimeInterval(captureMillis) / 1000.0)
+          creationRequest.creationDate = captureDate
+          NSLog("CrustModule: Setting creation date to: \(captureDate)")
+        }
+
+        assetIdentifier = creationRequest.placeholderForCreatedAsset?.localIdentifier
+      } completionHandler: { _, error in
+        resultError = error
+        semaphore.signal()
+      }
+
+      semaphore.wait()
+
+      if let error = resultError {
+        NSLog("CrustModule: Error saving to gallery: \(error.localizedDescription)")
+        return ["success": false, "error": error.localizedDescription]
+      }
+
+      NSLog("CrustModule: Successfully saved to gallery with proper creation date")
+      return ["success": true, "identifier": assetIdentifier ?? ""]
     }
   }
 }

@@ -1,7 +1,7 @@
-import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useOrganization } from '@/context/OrganizationContext';
 import { Link } from 'react-router-dom';
+import { Alert, AlertTitle, AlertDescription } from '@mentra/shared';
 
 /**
  * Banner component that displays a warning when the current organization
@@ -20,32 +20,22 @@ export function ContactEmailBanner() {
   }
 
   return (
-    <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
-      <div className="flex items-start">
-        <div className="flex-shrink-0">
-          <AlertTriangle className="h-5 w-5 text-yellow-400" />
-        </div>
-        <div className="ml-3">
-          <h3 className="text-sm font-medium text-yellow-800">
-            Organization profile incomplete
-          </h3>
-          <div className="mt-2 text-sm text-yellow-700">
-            <p>
-              Your organization needs a contact email before you can publish apps.
-              This email will be used for app store communications and user support.
-            </p>
-          </div>
-          <div className="mt-3">
-            <Link
-              to="/org-settings"
-              className="text-sm font-medium text-yellow-800 hover:text-yellow-700 underline"
-            >
-              Complete organization profile →
-            </Link>
-          </div>
-        </div>
-      </div>
-    </div>
+    <Alert variant="warning" className="mb-6">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>Organization profile incomplete</AlertTitle>
+      <AlertDescription>
+        <p>
+          Your organization needs a contact email before you can publish MiniApps.
+          This email will be used for Mentra MiniApp Store communications and user support.
+        </p>
+        <Link
+          to="/org-settings"
+          className="mt-2 inline-block text-sm font-medium text-warning hover:text-warning/80 underline"
+        >
+          Complete organization profile →
+        </Link>
+      </AlertDescription>
+    </Alert>
   );
 }
 

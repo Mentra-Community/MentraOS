@@ -54,6 +54,7 @@ export default function InitScreen() {
   const [backendUrl, setBackendUrl] = useSetting(SETTINGS.backend_url.key)
   const [onboardingCompleted, _setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const [defaultWearable, _setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [superMode] = useSetting(SETTINGS.super_mode.key)
 
   // Helper Functions
   const getLocalVersion = (): string | null => {
@@ -75,22 +76,20 @@ export default function InitScreen() {
   const setAnimationDelayed = () => {
     BackgroundTimer.setTimeout(() => {
       setAnimation("simple_push")
-    }, 500)
+    }, 800)
   }
 
   const navigateToDestination = async () => {
     if (!user?.email) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-      replace("/auth/start")
-      setAnimationDelayed()
+      replace("/auth/start", {transition: "fade"})
       return
     }
 
     // Check onboarding status
     if (!onboardingCompleted && !defaultWearable) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-      replace("/onboarding/welcome")
-      setAnimationDelayed()
+      replace("/onboarding/welcome", {transition: "fade"})
       return
     }
 
@@ -103,7 +102,7 @@ export default function InitScreen() {
 
     await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
     setAnimationDelayed()
-    clearHistoryAndGoHome()
+    clearHistoryAndGoHome({transition: "fade"})
   }
 
   const checkLoggedIn = async (): Promise<void> => {
@@ -265,7 +264,7 @@ export default function InitScreen() {
   if (state === "loading") {
     return (
       <Screen preset="fixed">
-        <SplashVideo />
+        <SplashVideo colorOverride={superMode ? theme.colors.chart_4 : undefined} />
       </Screen>
     )
   }
@@ -277,7 +276,7 @@ export default function InitScreen() {
       <View className="flex-1 p-6">
         <View className="flex-1 items-center justify-center pt-8">
           <View className="mb-8">
-            <Icon name={statusConfig.icon} size={80} color={statusConfig.iconColor} />
+            <Icon name={statusConfig.icon as any} size={80} color={statusConfig.iconColor} />
           </View>
 
           <Text className="text-2xl font-bold text-center mb-4">{statusConfig.title}</Text>

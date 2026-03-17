@@ -148,6 +148,39 @@ public class CameraSettings {
   }
 
   /**
+   * Check if 3DNR (temporal noise reduction) is supported
+   * @return true if 3DNR vendor key is available
+   */
+  public boolean is3DNRSupported() {
+    return mKey3DNRMode != null;
+  }
+
+  /**
+   * Configure 3DNR (temporal noise reduction) on a video capture request builder.
+   * 3DNR uses inter-frame data to reduce noise in video, significantly improving
+   * low-light video quality with minimal performance cost.
+   * @param builder Capture request builder for video preview/recording
+   */
+  public void configure3DNR(CaptureRequest.Builder builder) {
+    if (builder == null) {
+      Log.w(TAG, "Builder is null, cannot configure 3DNR");
+      return;
+    }
+
+    if (!is3DNRSupported()) {
+      Log.d(TAG, "3DNR vendor key not available on this device");
+      return;
+    }
+
+    try {
+      builder.set(mKey3DNRMode, new int[]{1});
+      Log.d(TAG, "3DNR enabled for video capture");
+    } catch (Exception e) {
+      Log.e(TAG, "Failed to enable 3DNR", e);
+    }
+  }
+
+  /**
    * Configure capture builder with ZSL + MFNR enabled (for photo capture)
    * @param builder Capture request builder for still capture
    */

@@ -331,7 +331,7 @@ const $warningContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   alignItems: "flex-start",
   marginTop: spacing.s2,
   gap: spacing.s2,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   padding: spacing.s2,
   borderRadius: spacing.s2,
 })

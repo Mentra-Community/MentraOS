@@ -44,6 +44,8 @@ export interface PhotoRequest extends BaseMessage {
   size?: "small" | "medium" | "large" | "full"
   /** Image compression level: none, medium, or heavy. Defaults to none. */
   compress?: "none" | "medium" | "heavy"
+  /** Controls shutter sound. Defaults to true if omitted. */
+  sound?: boolean
 }
 
 /**
@@ -72,6 +74,8 @@ export interface RtmpStreamRequest extends BaseMessage {
   video?: VideoConfig
   audio?: AudioConfig
   stream?: StreamConfig
+  /** Controls stream start/stop sounds. Defaults to true if omitted. */
+  sound?: boolean
 }
 
 /**
@@ -116,6 +120,8 @@ export interface ManagedStreamRequest extends BaseMessage {
   stream?: StreamConfig
   /** Optional RTMP destinations to re-stream to (YouTube, Twitch, etc) */
   restreamDestinations?: RestreamDestination[]
+  /** Controls stream start/stop sounds. Defaults to true if omitted. */
+  sound?: boolean
 }
 
 /**
@@ -174,6 +180,33 @@ export interface AudioStopRequest extends BaseMessage {
 }
 
 /**
+ * Audio output stream start request from App.
+ * Creates an HTTP streaming relay on the cloud. The cloud responds with
+ * AUDIO_STREAM_READY containing the relay URL. The SDK then sends binary
+ * WS frames (streamId header + MP3 data) and tells the phone to play
+ * the relay URL via AUDIO_PLAY_REQUEST.
+ */
+export interface AudioStreamStart extends BaseMessage {
+  type: AppToCloudMessageType.AUDIO_STREAM_START
+  packageName: string
+  sessionId: string
+  streamId: string
+  /** MIME type of the audio being streamed (default: audio/mpeg) */
+  contentType?: string
+}
+
+/**
+ * Audio output stream end signal from App.
+ * Tells the cloud to close the HTTP relay response for this stream.
+ */
+export interface AudioStreamEnd extends BaseMessage {
+  type: AppToCloudMessageType.AUDIO_STREAM_END
+  packageName: string
+  sessionId: string
+  streamId: string
+}
+
+/**
  * WiFi setup request from App
  */
 export interface RequestWifiSetup extends BaseMessage {
@@ -206,6 +239,8 @@ export type AppToCloudMessage =
   | RgbLedControlRequest
   | AudioPlayRequest
   | AudioStopRequest
+  | AudioStreamStart
+  | AudioStreamEnd
   | RtmpStreamRequest
   | RtmpStreamStopRequest
   | ManagedStreamRequest
@@ -223,6 +258,8 @@ export type AppToCloudMessage =
   | AppUserDiscovery
   | AppRoomJoin
   | AppRoomLeave
+  // Telemetry response (for incident debugging)
+  | TelemetryResponse
 
 /**
  * Type guard to check if a message is a App connection init
@@ -391,4 +428,43 @@ export function isRtmpStreamStopRequest(message: AppToCloudMessage): message is 
  */
 export function isOwnershipRelease(message: AppToCloudMessage): message is OwnershipReleaseMessage {
   return message.type === AppToCloudMessageType.OWNERSHIP_RELEASE
+}
+
+//===========================================================
+// Telemetry messages (for incident debugging)
+//===========================================================
+
+/**
+ * Telemetry log entry from an App server
+ */
+export interface TelemetryLogEntry {
+  timestamp: number
+  level: "debug" | "info" | "warn" | "error"
+  message: string
+  source?: string
+  data?: unknown
+}
+
+/**
+ * Telemetry response from App server to cloud.
+ * Sent in response to REQUEST_TELEMETRY message.
+ */
+export interface TelemetryResponse extends BaseMessage {
+  type: AppToCloudMessageType.TELEMETRY_RESPONSE
+  incidentId: string
+  packageName: string
+  logs: TelemetryLogEntry[]
+  /** Metadata about the telemetry collection */
+  metadata?: {
+    bufferSize?: number
+    oldestEntryMs?: number
+    newestEntryMs?: number
+  }
+}
+
+/**
+ * Type guard to check if a message is a telemetry response
+ */
+export function isTelemetryResponse(message: AppToCloudMessage): message is TelemetryResponse {
+  return message.type === AppToCloudMessageType.TELEMETRY_RESPONSE
 }

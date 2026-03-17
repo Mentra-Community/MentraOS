@@ -12,11 +12,29 @@ export interface PhotoInfo {
   is_video?: boolean
   thumbnail_data?: string
   downloaded_at?: number
+  // Video duration in milliseconds (from glasses sync response)
+  duration?: number
   // New fields for filesystem storage
   filePath?: string
   thumbnailPath?: string
   // Glasses model that captured this media
   glassesModel?: string
+}
+
+export interface CaptureFile {
+  name: string // "IMG_xxx/base.jpg" or "IMG_xxx.jpg" (legacy)
+  size: number
+  role: "primary" | "bracket" | "sidecar"
+}
+
+export interface CaptureGroup {
+  capture_id: string // folder name: "IMG_20250302_143022_456_123"
+  type: "photo" | "video"
+  timestamp: number
+  total_size: number
+  files: CaptureFile[]
+  thumbnail_data?: string
+  duration?: number // video only
 }
 
 export interface GalleryResponse {

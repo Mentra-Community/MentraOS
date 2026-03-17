@@ -25,10 +25,6 @@ import { handleUpgrade, websocketHandlers } from "./services/websocket/bun-webso
 
 // Hono app with all routes
 
-// Optional: Legacy Express handler for routes not yet migrated
-// Uncomment the import below if you need Express fallback
-// import { createLegacyExpressHandler } from "./legacy-express";
-
 const logger = rootLogger.child({ service: "index" });
 
 // Initialize MongoDB connection

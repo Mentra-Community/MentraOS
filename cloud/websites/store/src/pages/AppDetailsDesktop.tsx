@@ -1,4 +1,4 @@
-import { Info, Share2, Smartphone, ChevronLeft, X, ChevronRight } from "lucide-react";
+import { Info, Share2, Smartphone, ChevronLeft, X, ChevronRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import GetMentraOSButton from "../components/GetMentraOSButton";
 import { HardwareRequirementLevel, HardwareType } from "../types";
@@ -14,6 +14,7 @@ import { useState } from "react";
 
 const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
   app,
+  deviceInfo,
   isAuthenticated,
   isWebView,
   installingApp,
@@ -111,6 +112,17 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                       }}>
                       Installed
                     </Button>
+                  ) : app.compatibility?.isCompatible === false ? (
+                    <Button
+                      disabled={true}
+                      className="px-8 h-[44px] text-[18px] font-medium rounded-full opacity-40 cursor-not-allowed min-w-[242px]"
+                      style={{
+                        fontFamily: '"Red Hat Display", sans-serif',
+                        backgroundColor: "var(--button-bg)",
+                        color: "var(--button-text)",
+                      }}>
+                      Get
+                    </Button>
                   ) : (
                     <Button
                       onClick={handleInstall}
@@ -160,15 +172,27 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
               </div>
 
               {/* Device Compatibility Notice - Desktop only */}
-              <div
-                className="flex items-center gap-2 text-[14px] mt-[32px]"
-                style={{
-                  color: "var(--text-secondary)",
-                  fontFamily: '"Red Hat Display", sans-serif',
-                }}>
-                <Smartphone className="w-[18px] h-[18px] text-[14px]" />
-                <span>This app is available for your device</span>
-              </div>
+              {app.compatibility?.isCompatible === false && deviceInfo?.modelName ? (
+                <div
+                  className="flex items-center gap-2 text-[14px] font-medium mt-[32px]"
+                  style={{
+                    color: "var(--text-primary)",
+                    fontFamily: '"Red Hat Display", sans-serif',
+                  }}>
+                  <AlertTriangle className="w-[18px] h-[18px]" />
+                  <span>This app is incompatible with {deviceInfo.modelName}</span>
+                </div>
+              ) : deviceInfo?.connected ? (
+                <div
+                  className="flex items-center gap-2 text-[14px] mt-[32px]"
+                  style={{
+                    color: "var(--text-secondary)",
+                    fontFamily: '"Red Hat Display", sans-serif',
+                  }}>
+                  <Smartphone className="w-[18px] h-[18px]" />
+                  <span>This app is compatible with {deviceInfo.modelName || "your device"}</span>
+                </div>
+              ) : null}
             </div>
 
             {/* Right Side - App Icon (desktop only, larger) */}
@@ -206,6 +230,35 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                   color: "var(--error-color)",
                 }}>
                 This app appears to be offline. Some actions may not work.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Incompatibility Warning */}
+        {app.compatibility?.isCompatible === false && deviceInfo?.modelName && (
+          <div className="mb-6">
+            <div
+              className="flex items-center gap-2 p-3 rounded-lg"
+              style={{
+                backgroundColor: "var(--warning-bg, #fffbeb)",
+                border: "1px solid var(--warning-text, #d97706)",
+              }}>
+              <AlertTriangle
+                className="h-5 w-5 flex-shrink-0"
+                style={{
+                  color: "var(--warning-text, #d97706)",
+                }}
+              />
+              <span
+                className="text-[14px]"
+                style={{
+                  color: "var(--warning-text, #d97706)",
+                }}>
+                This app is incompatible with {deviceInfo.modelName}
+                {app.compatibility.missingRequired && app.compatibility.missingRequired.length > 0 && (
+                  <>. Missing hardware: {app.compatibility.missingRequired.map(r => r.type).join(", ")}</>
+                )}
               </span>
             </div>
           </div>

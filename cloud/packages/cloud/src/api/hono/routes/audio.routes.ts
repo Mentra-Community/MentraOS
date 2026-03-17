@@ -1,6 +1,6 @@
 /**
  * @fileoverview Hono audio routes.
- * Audio streaming and TTS endpoints.
+ * Audio streaming, TTS, and audio output relay endpoints.
  * Mounted at: /api/audio
  */
 
@@ -35,6 +35,7 @@ const ALLOWED_PACKAGE = "com.augmentos.shazam";
 // Routes
 // ============================================================================
 
+app.get("/stream/:userId/:streamId", streamRelay);
 app.get("/:userId", shazamAuthMiddleware, getAudio);
 app.get("/tts", textToSpeech);
 
@@ -93,6 +94,51 @@ async function shazamAuthMiddleware(c: AppContext, next: () => Promise<void>) {
 // ============================================================================
 // Handlers
 // ============================================================================
+
+/**
+ * GET /api/audio/stream/:userId/:streamId
+ * Audio output streaming relay — dumb pipe.
+ *
+ * The SDK creates a stream (AUDIO_STREAM_START), pushes MP3 bytes via WS binary
+ * frames, and sends the phone this URL to play. This endpoint holds the HTTP
+ * response open and pipes the bytes through as a chunked audio/mpeg response.
+ * ExoPlayer (Android) and AVPlayer (iOS) play it like internet radio.
+ *
+ * No auth middleware — ExoPlayer makes a raw HTTP GET with no JWT.
+ * The userId routes to the correct UserSession, the streamId (unguessable UUID)
+ * acts as a capability token.
+ *
+ * See: cloud/issues/041-sdk-audio-output-streaming/
+ */
+async function streamRelay(c: AppContext) {
+  const userId = c.req.param("userId");
+  const streamId = c.req.param("streamId");
+
+  if (!userId || !streamId) {
+    return c.json({ error: "Missing userId or streamId" }, 400);
+  }
+
+  const userSession = UserSession.getById(userId);
+  if (!userSession) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  const stream = userSession.appAudioStreamManager.claimStream(streamId);
+  if (!stream) {
+    return c.json({ error: "Stream not found or already ended" }, 404);
+  }
+
+  logger.debug({ streamId, userId }, "Phone connected to audio stream relay");
+
+  return new Response(stream.readable, {
+    headers: {
+      "Content-Type": stream.contentType,
+      "Cache-Control": "no-cache, no-store",
+      "Connection": "keep-alive",
+      "Transfer-Encoding": "chunked",
+    },
+  });
+}
 
 /**
  * GET /api/audio/:userId

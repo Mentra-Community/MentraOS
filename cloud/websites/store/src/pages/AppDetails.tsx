@@ -150,13 +150,15 @@ const AppDetails: React.FC = () => {
       setError(null);
 
       // Get app details
-      const appDetails = await api.app.getAppByPackageName(pkgName);
-      console.log("Raw app details from API:", appDetails);
+      const result = await api.app.getAppByPackageName(pkgName);
+      console.log("Raw app details from API:", result);
 
-      if (!appDetails) {
+      if (!result.app) {
         setError("App not found");
         return;
       }
+
+      const appDetails = result.app;
 
       // If authenticated, check if app is installed
       if (isAuthenticated) {

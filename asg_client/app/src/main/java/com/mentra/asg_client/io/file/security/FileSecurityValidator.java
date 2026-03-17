@@ -32,11 +32,11 @@ public class FileSecurityValidator {
     // Pattern for valid package names (alphanumeric, dots, underscores, hyphens)
     private static final Pattern PACKAGE_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9._-]+$");
     
-    // Pattern for valid file names (alphanumeric, dots, underscores, hyphens, spaces)
-    private static final Pattern FILENAME_PATTERN = Pattern.compile("^[a-zA-Z0-9._\\-\\s]+$");
-    
-    // Path traversal patterns to block
-    private static final Pattern PATH_TRAVERSAL_PATTERN = Pattern.compile("(\\.\\.|/|\\\\|:|\\|)");
+    // Pattern for valid file names (alphanumeric, dots, underscores, hyphens, spaces, forward slashes for subdirs)
+    private static final Pattern FILENAME_PATTERN = Pattern.compile("^[a-zA-Z0-9._\\-\\s/]+$");
+
+    // Path traversal patterns to block (allow forward slash for subdirectory paths, block .. and backslash)
+    private static final Pattern PATH_TRAVERSAL_PATTERN = Pattern.compile("(\\.\\.|\\\\|:|\\|)");
     
     /**
      * Validate package name for security

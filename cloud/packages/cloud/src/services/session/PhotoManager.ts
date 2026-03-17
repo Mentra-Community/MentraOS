@@ -18,19 +18,6 @@ import { ConnectionValidator } from "../validators/ConnectionValidator";
 // Timeout handling is managed by CameraModule in the SDK
 
 /**
- * Packages that should have silent photo mode (no LED flash, no shutter sound).
- * These are AI apps that take photos continuously for context awareness.
- */
-const SILENT_PHOTO_PACKAGES_HARDCODED = ["com.mentra.mira", "com.mentra.mentraai", "com.mentra.mentraai.beta"];
-
-// Build the allowlist: hardcoded + env var
-const envPackages =
-  process.env.SILENT_PHOTO_PACKAGES?.split(",")
-    .map((p) => p.trim())
-    .filter(Boolean) || [];
-const SILENT_PHOTO_PACKAGES = new Set([...SILENT_PHOTO_PACKAGES_HARDCODED, ...envPackages]);
-
-/**
  * Internal representation of a pending photo request,
  * adapted from PendingPhotoRequest in photo-request.service.ts.
  */
@@ -133,8 +120,9 @@ export class PhotoManager {
     };
     this.pendingPhotoRequests.set(requestId, requestInfo);
 
-    // Determine if this app should use silent mode (no LED flash, no shutter sound)
-    const silent = SILENT_PHOTO_PACKAGES.has(packageName);
+    // Flash is always on (privacy indicator for bystanders), sound is app-controlled via SDK
+    const flash = true;
+    const sound = appRequest.sound ?? true;
 
     // Message to glasses based on CloudToGlassesMessageType.PHOTO_REQUEST
     // Include webhook URL so ASG can upload directly to the app
@@ -147,7 +135,8 @@ export class PhotoManager {
       authToken, // Include authToken for webhook authentication
       size, // Propagate desired size
       compress, // Propagate compression setting
-      silent, // Silent mode: disables LED flash and shutter sound for AI apps
+      flash, // Controls privacy flash LED (cloud-controlled)
+      sound, // Controls shutter sound (app-controllable via SDK)
       timestamp: new Date(),
     };
 
@@ -160,9 +149,10 @@ export class PhotoManager {
           webhookUrl,
           isCustom: !!customWebhookUrl,
           hasAuthToken: !!authToken,
-          silent,
+          flash,
+          sound,
         },
-        `PHOTO_REQUEST command sent to glasses${silent ? " (silent mode)" : ""}.`,
+        `PHOTO_REQUEST command sent to glasses (flash=${flash}, sound=${sound}).`,
       );
 
       // If using custom webhook URL, resolve immediately since glasses won't send response back to cloud
@@ -192,36 +182,19 @@ export class PhotoManager {
   }
 
   /**
-   * Handles a photo response from glasses.
-   * Adapts logic from photoRequestService.processPhotoResponse.
+   * Handles a validated photo response.
+   *
+   * Callers (the REST endpoint) are responsible for validation and
+   * building a well-formed PhotoResponse before calling this method.
    */
-  async handlePhotoResponse(glassesResponse: PhotoResponse | any): Promise<void> {
-    // Handle simplified error format from glasses/phone
-    let normalizedResponse: PhotoResponse;
-
-    if (glassesResponse.errorCode && glassesResponse.errorMessage) {
-      // Convert simplified format to expected PhotoResponse format
-      normalizedResponse = {
-        type: GlassesToCloudMessageType.PHOTO_RESPONSE,
-        requestId: glassesResponse.requestId,
-        success: glassesResponse.success || false,
-        error: {
-          code: glassesResponse.errorCode as PhotoErrorCode,
-          message: glassesResponse.errorMessage,
-        },
-      };
-    } else {
-      // Use as-is if already in expected format
-      normalizedResponse = glassesResponse as PhotoResponse;
-    }
-
-    const { requestId, success } = normalizedResponse;
+  async handlePhotoResponse(response: PhotoResponse): Promise<void> {
+    const { requestId, success } = response;
     const pendingPhotoRequest = this.pendingPhotoRequests.get(requestId);
 
     this.logger.debug(
       {
         pendingPhotoRequests: Array.from(this.pendingPhotoRequests.keys()),
-        glassesResponse,
+        response,
         success,
         requestId,
       },
@@ -230,7 +203,7 @@ export class PhotoManager {
 
     if (!pendingPhotoRequest) {
       this.logger.warn(
-        { requestId, glassesResponse: normalizedResponse },
+        { requestId, response },
         "Received photo response for unknown, timed-out, or already processed request.",
       );
       return;
@@ -241,19 +214,17 @@ export class PhotoManager {
         requestId,
         packageName: pendingPhotoRequest.packageName,
         success,
-        hasError: !success && !!normalizedResponse.error,
-        errorCode: normalizedResponse.error?.code,
+        hasError: !success && !!response.error,
+        errorCode: response.error?.code,
       },
       "Photo response received from glasses.",
     );
     this.pendingPhotoRequests.delete(requestId);
 
     if (success) {
-      // Handle success response
-      await this._sendPhotoResultToApp(pendingPhotoRequest, normalizedResponse);
+      await this._sendPhotoResultToApp(pendingPhotoRequest, response);
     } else {
-      // Handle error response
-      await this._sendPhotoErrorToApp(pendingPhotoRequest, normalizedResponse);
+      await this._sendPhotoErrorToApp(pendingPhotoRequest, response);
     }
   }
 

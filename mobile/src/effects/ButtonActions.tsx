@@ -116,7 +116,7 @@ export function ButtonActions() {
       }
 
       console.log("BUTTON_ACTION: Starting default app:", defaultAppPackageName)
-      startApplet(defaultAppPackageName)
+      startApplet(targetApp, {skipNavigation: true})
     }
 
     let sub = CoreModule.addListener("button_press", onButtonPress)

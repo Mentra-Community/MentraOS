@@ -1,9 +1,11 @@
 import {useState} from "react"
 import {Button} from "./ui/button"
+import {Spinner} from "./ui/spinner"
 import {Input} from "./ui/input"
 import {Label} from "./ui/label"
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter} from "./ui/dialog"
 import {useAuth} from "../hooks/useAuth"
+import {mapAuthError} from "../utils/authErrors"
 
 interface EmailAuthModalProps {
   open: boolean
@@ -14,7 +16,7 @@ interface EmailAuthModalProps {
   onForgotPassword?: () => void
 }
 
-const EmailAuthModal: React.FC<EmailAuthModalProps> = ({open, onOpenChange, redirectPath, isSignUp}) => {
+const EmailAuthModal: React.FC<EmailAuthModalProps> = ({open, onOpenChange, redirectPath, isSignUp, onForgotPassword}) => {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -34,8 +36,8 @@ const EmailAuthModal: React.FC<EmailAuthModalProps> = ({open, onOpenChange, redi
         // Handle sign up
         const {error: signUpError} = await signUp(email, password, redirectPath)
 
-        if (signUpError?.message) {
-          setError(signUpError.message.toString())
+        if (signUpError) {
+          setError(mapAuthError(signUpError))
         } else {
           setMessage("Account created! Check your email for confirmation.")
         }
@@ -43,8 +45,8 @@ const EmailAuthModal: React.FC<EmailAuthModalProps> = ({open, onOpenChange, redi
         // Handle sign in
         const {data, error: signInError} = await signIn(email, password)
 
-        if (signInError?.message) {
-          setError(signInError.message.toString())
+        if (signInError) {
+          setError(mapAuthError(signInError))
         } else if (data?.session) {
           // Successfully logged in, close the modal and let Login Page handle redirect
           setMessage("Login successful! Redirecting...")
@@ -56,7 +58,7 @@ const EmailAuthModal: React.FC<EmailAuthModalProps> = ({open, onOpenChange, redi
         }
       }
     } catch (e) {
-      setError("An unexpected error occurred. Please try again.")
+      setError(mapAuthError(e))
       console.error(e)
     } finally {
       setLoading(false)
@@ -98,13 +100,31 @@ const EmailAuthModal: React.FC<EmailAuthModalProps> = ({open, onOpenChange, redi
               />
             </div>
 
-            {error && <div className="text-sm text-red-500 mt-2">{error}</div>}
+            {error && <div className="text-sm text-destructive mt-2">{error}</div>}
 
-            {message && <div className="text-sm text-green-600 mt-2">{message}</div>}
+            {message && <div className="text-sm text-accent mt-2">{message}</div>}
+
+            {!isSignUp && onForgotPassword && (
+              <button
+                type="button"
+                onClick={onForgotPassword}
+                className="text-sm text-accent self-center mt-2 cursor-pointer hover:underline">
+                Forgot Password?
+              </button>
+            )}
           </div>
           <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:space-x-0">
-            <Button type="submit" disabled={loading}>
-              {loading ? "Processing..." : isSignUp ? "Create Account" : "Sign In"}
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading ? (
+                <>
+                  <Spinner size="sm" />
+                  Processing...
+                </>
+              ) : isSignUp ? (
+                "Create Account"
+              ) : (
+                "Sign In"
+              )}
             </Button>
           </DialogFooter>
         </form>

@@ -534,6 +534,105 @@ export class ResendEmailService {
   }
 
   /**
+   * Sends an incident notification email to admins.
+   * Used by the background incident processor after collecting logs.
+   */
+  async sendIncidentNotification(
+    userId: string,
+    incidentId: string,
+    consoleUrl: string,
+    feedback?: Record<string, unknown>,
+    to?: string[],
+  ): Promise<{ id?: string; error?: any }> {
+    const recipients = to && to.length > 0 ? to : ["isaiah@mentra.glass"];
+
+    // Extract feedback details if available
+    const feedbackType = feedback?.type || "bug";
+    const expectedBehavior = feedback?.expectedBehavior as string | undefined;
+    const actualBehavior = feedback?.actualBehavior as string | undefined;
+    const severityRating = feedback?.severityRating as number | undefined;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Bug Report Logs Ready</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+            .container { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; overflow: hidden; }
+            .header { background: #d32f2f; color: #fff; padding: 20px; text-align: center; }
+            .content { padding: 24px; }
+            .meta { background: #f5f5f5; padding: 16px; border-radius: 6px; margin: 16px 0; }
+            .meta dt { font-weight: 600; color: #666; margin-top: 8px; }
+            .meta dd { margin: 4px 0 12px 0; }
+            .button { display: inline-block; background: #1976d2; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 16px; }
+            .footer { background: #f8f9fa; padding: 16px; text-align: center; color: #666; font-size: 13px; border-top: 1px solid #e1e4e8; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h2>🐛 Bug Report Logs Ready</h2>
+            </div>
+            <div class="content">
+              <p>A bug report has been processed and logs are now available for review.</p>
+
+              <dl class="meta">
+                <dt>User</dt>
+                <dd>${this.escapeHtml(userId)}</dd>
+
+                <dt>Incident ID</dt>
+                <dd><code>${this.escapeHtml(incidentId)}</code></dd>
+
+                ${expectedBehavior ? `<dt>Expected Behavior</dt><dd>${this.escapeHtml(expectedBehavior)}</dd>` : ""}
+                ${actualBehavior ? `<dt>Actual Behavior</dt><dd>${this.escapeHtml(actualBehavior)}</dd>` : ""}
+                ${severityRating !== undefined ? `<dt>Severity</dt><dd>${severityRating}/5</dd>` : ""}
+              </dl>
+
+              <a href="${consoleUrl}" class="button">View Incident Details</a>
+            </div>
+            <div class="footer">
+              &copy; ${new Date().getFullYear()} Mentra Labs
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    try {
+      const { data, error } = await this.resend.emails.send({
+        from: this.defaultSender,
+        to: recipients,
+        subject: `Bug Report: ${incidentId.substring(0, 8)}... from ${userId}`,
+        html,
+      });
+
+      if (error) {
+        console.error("[resend.service] Failed to send incident notification:", error);
+        return { error };
+      }
+
+      return { id: data?.id };
+    } catch (error) {
+      console.error("[resend.service] Error sending incident notification:", error);
+      return { error };
+    }
+  }
+
+  /**
+   * Escape HTML special characters for safe rendering.
+   */
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  /**
    * Generates HTML for approval notification.
    */
   private generateApprovalEmailHtml(

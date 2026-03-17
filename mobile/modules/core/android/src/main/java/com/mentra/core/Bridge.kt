@@ -277,19 +277,27 @@ public class Bridge private constructor() {
         /** Send photo response */
         @JvmStatic
         fun sendPhotoResponse(requestId: String, photoUrl: String) {
-            try {
-                val event = HashMap<String, Any>()
-                event["type"] = "photo_response"
-                event["requestId"] = requestId
-                event["photoUrl"] = photoUrl
-                event["timestamp"] = System.currentTimeMillis().toInt()
+            val event = HashMap<String, Any>()
+            event["type"] = "photo_response"
+            event["requestId"] = requestId
+            event["photoUrl"] = photoUrl
+            event["timestamp"] = System.currentTimeMillis().toInt()
+            event["success"] = true
+            sendTypedMessage("photo_response", event as Map<String, Any>)
+        }
 
-                val jsonData = JSONObject(event as Map<*, *>)
-                val jsonString = jsonData.toString()
-                sendWSText(jsonString)
-            } catch (e: Exception) {
-                log("ServerComms: Error building photo_response JSON: $e")
-            }
+        @JvmStatic
+        fun sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+            val event = HashMap<String, Any>()
+            event["type"] = "photo_response"
+            event["requestId"] = requestId
+            event["photoUrl"] = ""
+            event["success"] = false
+            event["errorCode"] = errorCode
+            event["errorMessage"] = errorMessage
+            event["timestamp"] = System.currentTimeMillis()
+            // sendWSText(JSONObject(event as Map<*, *>).toString())
+            sendTypedMessage("photo_response", event as Map<String, Any>)
         }
 
         /** Send RGB LED control response */
@@ -412,7 +420,9 @@ public class Bridge private constructor() {
         /** Send WiFi scan results */
         @JvmStatic
         fun updateWifiScanResults(networks: List<Map<String, Any>>) {
-            var storedNetworks: List<Map<String, Any>> = GlassesStore.get("core", "wifiScanResults") as? List<Map<String, Any>> ?: emptyList()
+            var storedNetworks: List<Map<String, Any>> =
+                    GlassesStore.get("core", "wifiScanResults") as? List<Map<String, Any>>
+                            ?: emptyList()
             // add the networks to the storedNetworks array, removing duplicates by ssid
             val updatedNetworks = storedNetworks.toMutableList()
             for (network in networks) {
@@ -496,6 +506,14 @@ public class Bridge private constructor() {
             eventBody["total_size"] = totalSize
 
             sendTypedMessage("ota_update_available", eventBody as Map<String, Any>)
+        }
+
+        /** Send ota_start_ack — glasses confirmed receipt of ota_start command */
+        @JvmStatic
+        fun sendOtaStartAck() {
+            val eventBody = HashMap<String, Any>()
+            eventBody["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("ota_start_ack", eventBody as Map<String, Any>)
         }
 
         /** Send OTA progress update - glasses are downloading/installing an update */

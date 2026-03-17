@@ -279,7 +279,7 @@ public class FileManagerImpl implements FileManager {
             
             // Recursively collect all files from package directory and subdirectories
             List<FileMetadata> metadataList = new ArrayList<>();
-            int totalFiles = collectFilesRecursively(packageDir, packageName, metadataList);
+            int totalFiles = collectFilesRecursively(packageDir, packageDir, packageName, metadataList);
             
             operationLogger.logOperation("LIST", packageName, null, metadataList.size(), true);
             Log.d(TAG, "✅ File listing completed - " + metadataList.size() + " files found in " + totalFiles + " locations");
@@ -298,27 +298,28 @@ public class FileManagerImpl implements FileManager {
     /**
      * Recursively collect all files from a directory and its subdirectories
      * @param directory The directory to scan
+     * @param rootDir The root package directory (for computing relative paths)
      * @param packageName The package name for metadata
      * @param metadataList The list to populate with file metadata
      * @return Total number of files found
      */
-    private int collectFilesRecursively(File directory, String packageName, List<FileMetadata> metadataList) {
+    private int collectFilesRecursively(File directory, File rootDir, String packageName, List<FileMetadata> metadataList) {
         if (!directory.exists() || !directory.isDirectory()) {
             return 0;
         }
-        
+
         int fileCount = 0;
         File[] items = directory.listFiles();
-        
+
         if (items != null) {
             for (File item : items) {
                 if (item.isFile()) {
                     // Add file to metadata list
                     String mimeType = new MimeTypeRegistry().getMimeType(item.getName());
-                    String relativePath = getRelativePath(directory, item);
-                    
+                    String relativePath = getRelativePath(rootDir, item);
+
                     metadataList.add(new FileMetadata(
-                        relativePath, // Use relative path as filename to preserve directory structure
+                        relativePath, // Use relative path from package root to preserve directory structure
                         item.getAbsolutePath(),
                         item.length(),
                         item.lastModified(),
@@ -326,16 +327,16 @@ public class FileManagerImpl implements FileManager {
                         packageName
                     ));
                     fileCount++;
-                    
+
                     Log.d(TAG, "📄 Found file: " + relativePath + " (" + item.length() + " bytes)");
                 } else if (item.isDirectory()) {
                     // Recursively scan subdirectory
                     Log.d(TAG, "📁 Scanning subdirectory: " + item.getName());
-                    fileCount += collectFilesRecursively(item, packageName, metadataList);
+                    fileCount += collectFilesRecursively(item, rootDir, packageName, metadataList);
                 }
             }
         }
-        
+
         return fileCount;
     }
     

@@ -36,6 +36,14 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, initialDel
 }
 
 // Extended App interface for API responses
+// Locally defined until PreviewImage is published to @mentra/sdk@latest
+interface PreviewImageLocal {
+  url: string;
+  imageId: string;
+  orientation: "landscape" | "portrait";
+  order: number;
+}
+
 export interface AppResponse extends AppI {
   id: string; // Add id property to match App interface
   createdAt: string;
@@ -47,6 +55,7 @@ export interface AppResponse extends AppI {
   reviewedAt?: string;
   sharedWithEmails?: string[];
   onboardingInstructions?: string;
+  previewImages?: PreviewImageLocal[];
 }
 
 // API key response
@@ -701,6 +710,27 @@ const api = {
       const response = await axios.patch(`/api/dev/apps/${packageName}/share-emails`, { emails });
       return response.data;
     },
+
+    /**
+     * Verify that a server URL is reachable by checking its /health endpoint
+     * @param url - The server URL to verify
+     * @returns Object with reachable status and message
+     */
+    verifyServerUrl: async (url: string): Promise<{ reachable: boolean; message: string }> => {
+      try {
+        const response = await axios.post("/api/apps/verify-url", { url });
+        return response.data;
+      } catch (error: unknown) {
+        // If the endpoint doesn't exist yet, return a graceful error
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          return {
+            reachable: false,
+            message: "URL verification not available",
+          };
+        }
+        throw error;
+      }
+    },
   },
 
   // Image upload endpoints for cloud storage
@@ -887,7 +917,80 @@ const api = {
       const response = await axios.post("/api/admin/create-test-submission");
       return response.data;
     },
+
+    // Incident management for bug reports
+    incidents: {
+      // List all incidents
+      list: async (
+        limit = 100,
+        offset = 0,
+      ): Promise<{
+        data: Incident[];
+        pagination: { total: number; limit: number; offset: number; hasMore: boolean };
+      }> => {
+        const response = await axios.get("/api/console/admin/incidents", {
+          params: { limit, offset },
+        });
+        return response.data;
+      },
+
+      // Get incident metadata
+      get: async (incidentId: string): Promise<Incident> => {
+        const response = await axios.get(`/api/console/admin/incidents/${incidentId}`);
+        return response.data?.data ?? response.data;
+      },
+
+      // Get full incident logs from R2
+      getLogs: async (incidentId: string): Promise<IncidentLogs> => {
+        const response = await axios.get(`/api/console/admin/incidents/${incidentId}/logs`);
+        return response.data?.data ?? response.data;
+      },
+    },
   },
 };
+
+// Incident types
+export interface Incident {
+  incidentId: string;
+  userId: string;
+  status: "processing" | "complete" | "partial" | "failed";
+  summary?: string;
+  linearIssueId?: string;
+  linearIssueUrl?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IncidentLogEntry {
+  timestamp: number | string;
+  level: string;
+  message: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IncidentAttachment {
+  filename: string;
+  storedAs: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string;
+}
+
+export interface IncidentLogs {
+  incidentId: string;
+  createdAt: string;
+  feedback: Record<string, unknown>;
+  phoneState: Record<string, unknown>;
+  phoneLogs: IncidentLogEntry[];
+  cloudLogs: IncidentLogEntry[];
+  glassesLogs: IncidentLogEntry[];
+  /** BES chip logs (source glasses_firmware) */
+  glassesFirmwareLogs: IncidentLogEntry[];
+  /** App telemetry logs organized by package name */
+  appTelemetryLogs: Record<string, IncidentLogEntry[]>;
+  attachments?: IncidentAttachment[];
+}
 
 export default api;

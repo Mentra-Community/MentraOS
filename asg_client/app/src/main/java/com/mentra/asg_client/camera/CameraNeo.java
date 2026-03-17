@@ -140,6 +140,9 @@ public class CameraNeo extends LifecycleService {
     // MediaTek vendor-specific camera settings (ZSL, MFNR)
     private CameraSettings mCameraSettings;
 
+    // IMU recorder for bundling sensor data with captured media
+    private com.mentra.asg_client.sensors.ImuRecorder mImuRecorder;
+
     // Camera characteristics for dynamic auto-exposure and autofocus
     private int[] availableAeModes;
     private Range<Integer> exposureCompensationRange;
@@ -628,7 +631,10 @@ public class CameraNeo extends LifecycleService {
                         if (photoFilePath == null || photoFilePath.isEmpty()) {
                             Log.d(TAG, "Photo file path is empty, using default");
                             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-                            photoFilePath = getExternalFilesDir(null) + File.separator + "IMG_" + timeStamp + ".jpg";
+                            String captureDir = "IMG_" + timeStamp;
+                            File captureDirFile = new File(getExternalFilesDir(null), captureDir);
+                            captureDirFile.mkdirs();
+                            photoFilePath = new File(captureDirFile, "base.jpg").getAbsolutePath();
                         }
                         setupCameraAndTakePicture(photoFilePath, requestedSize);
                     }
@@ -638,7 +644,10 @@ public class CameraNeo extends LifecycleService {
                     currentVideoPath = intent.getStringExtra(EXTRA_VIDEO_FILE_PATH);
                     if (currentVideoPath == null || currentVideoPath.isEmpty()) {
                         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-                        currentVideoPath = getExternalFilesDir(null) + File.separator + "VID_" + timeStamp + ".mp4";
+                        String videoCaptureDir = "VID_" + timeStamp;
+                        File videoCaptureDirFile = new File(getExternalFilesDir(null), videoCaptureDir);
+                        videoCaptureDirFile.mkdirs();
+                        currentVideoPath = new File(videoCaptureDirFile, "base.mp4").getAbsolutePath();
                     }
                     // Extract video settings if provided
                     int width = intent.getIntExtra(EXTRA_VIDEO_SETTINGS + "_width", 0);
@@ -948,11 +957,24 @@ public class CameraNeo extends LifecycleService {
                 mediaRecorder.reset();
             }
             Log.d(TAG, "Video recording stopped for: " + currentVideoId);
+
+            // Stop IMU recording and save sidecar alongside the video
+            if (mImuRecorder != null && currentVideoPath != null) {
+                String imuPath = mImuRecorder.stopRecordingAndSave(currentVideoPath);
+                if (imuPath != null) {
+                    Log.d(TAG, "Video IMU sidecar saved: " + imuPath);
+                }
+            }
+
             if (sVideoCallback != null) {
                 sVideoCallback.onRecordingStopped(currentVideoId, currentVideoPath);
             }
         } catch (RuntimeException stopErr) {
             Log.e(TAG, "MediaRecorder.stop() failed", stopErr);
+            // Cancel IMU recording on error
+            if (mImuRecorder != null) {
+                mImuRecorder.cancel();
+            }
             if (sVideoCallback != null) {
                 sVideoCallback.onRecordingError(currentVideoId, "Failed to stop recorder: " + stopErr.getMessage());
             }
@@ -1092,8 +1114,10 @@ public class CameraNeo extends LifecycleService {
 
         // Generate output path
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        String outputPath = getExternalFilesDir(null) + File.separator +
-                          "BUFFER_" + timeStamp + "_" + requestId + ".mp4";
+        String bufferCaptureDir = "BUFFER_" + timeStamp + "_" + requestId;
+        File bufferCaptureDirFile = new File(getExternalFilesDir(null), bufferCaptureDir);
+        bufferCaptureDirFile.mkdirs();
+        String outputPath = new File(bufferCaptureDirFile, "base.mp4").getAbsolutePath();
 
         try {
             Log.d(TAG, "Saving last " + seconds + " seconds to " + outputPath);
@@ -1393,14 +1417,16 @@ public class CameraNeo extends LifecycleService {
             }
 
                 // Process the captured JPEG (only when in SHOOTING state)
-                Log.d(TAG, "Processing final photo capture...");
+                Log.d(TAG, "Processing photo capture...");
                 try (Image image = reader.acquireLatestImage()) {
                     if (image == null) {
                         Log.e(TAG, "Acquired image is null");
-                        notifyPhotoError("Failed to acquire image data");
-                        shotState = ShotState.IDLE;
-                        closeCamera();
-                        stopSelf();
+                        if (!mHdrBurstActive) {
+                            notifyPhotoError("Failed to acquire image data");
+                            shotState = ShotState.IDLE;
+                            closeCamera();
+                            stopSelf();
+                        }
                         return;
                     }
 
@@ -1410,18 +1436,81 @@ public class CameraNeo extends LifecycleService {
 
                     // Use pending photo path if available (from queued requests), otherwise use the original path
                     String targetPath = (pendingPhotoPath != null) ? pendingPhotoPath : filePath;
-                    
+
+                    // HDR burst mode: save frames with bracket suffixes
+                    if (mHdrBurstActive) {
+                        int frameIdx = mHdrBurstFramesReceived;
+                        mHdrBurstFramesReceived++;
+                        // Save as ev-2.jpg, ev0.jpg, ev2.jpg inside the capture folder
+                        File parentDir = new File(targetPath).getParentFile();
+                        String bracketPath = new File(parentDir, "ev" + HDR_EV_BRACKETS[Math.min(frameIdx, HDR_EV_BRACKETS.length - 1)] + ".jpg").getAbsolutePath();
+                        boolean saved = saveImageDataToFile(bytes, bracketPath);
+                        Log.d(TAG, "HDR: Saved bracket " + (frameIdx + 1) + "/" + HDR_BURST_COUNT
+                                + " -> " + bracketPath + " (success=" + saved + ")");
+
+                        if (mHdrBurstFramesReceived >= HDR_BURST_COUNT) {
+                            // All HDR frames captured — notify with the base path
+                            // The phone side will find the bracket files by convention
+                            mHdrBurstActive = false;
+                            lastPhotoPath = targetPath;
+
+                            // Also save the middle exposure (EV=0) as the base file
+                            // so the gallery shows something even without HDR merge
+                            File ev0ParentDir = new File(targetPath).getParentFile();
+                            String ev0Path = new File(ev0ParentDir, "ev0.jpg").getAbsolutePath();
+                            try {
+                                java.nio.file.Files.copy(
+                                    new File(ev0Path).toPath(),
+                                    new File(targetPath).toPath(),
+                                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                            } catch (Exception copyErr) {
+                                Log.w(TAG, "HDR: Could not copy EV0 as base file", copyErr);
+                            }
+
+                            // Stop IMU recording
+                            if (mImuRecorder != null) {
+                                String imuPath = mImuRecorder.stopRecordingAndSave(targetPath);
+                                if (imuPath != null) {
+                                    Log.d(TAG, "IMU sidecar saved: " + imuPath);
+                                }
+                            }
+
+                            notifyPhotoCaptured(targetPath);
+                            Log.i(TAG, "HDR: Burst complete, base saved: " + targetPath);
+                            pendingPhotoPath = null;
+                            pendingRequestedSize = null;
+
+                            shotState = ShotState.IDLE;
+                            processQueuedPhotoRequests();
+                        }
+                        return;
+                    }
+
+                    // Standard single-frame path
                     // Save the image data to the file
                     boolean success = saveImageDataToFile(bytes, targetPath);
 
                     if (success) {
                         lastPhotoPath = targetPath;
+
+                        // Stop IMU recording and save sidecar JSON alongside the photo
+                        if (mImuRecorder != null) {
+                            String imuPath = mImuRecorder.stopRecordingAndSave(targetPath);
+                            if (imuPath != null) {
+                                Log.d(TAG, "IMU sidecar saved: " + imuPath);
+                            }
+                        }
+
                         notifyPhotoCaptured(targetPath);
                         Log.d(TAG, "Photo saved successfully: " + targetPath);
                         // Clear pending photo path and size after successful capture
                         pendingPhotoPath = null;
                         pendingRequestedSize = null;
                     } else {
+                        // Cancel IMU recording on save failure
+                        if (mImuRecorder != null) {
+                            mImuRecorder.cancel();
+                        }
                         notifyPhotoError("Failed to save image");
                     }
 
@@ -1433,8 +1522,11 @@ public class CameraNeo extends LifecycleService {
                 } catch (Exception e) {
                     Log.e(TAG, "Error handling image data", e);
                     notifyPhotoError("Error processing photo: " + e.getMessage());
+                    if (mImuRecorder != null) {
+                        mImuRecorder.cancel();
+                    }
                     shotState = ShotState.IDLE;
-                    
+
                     // Check if there are queued photo requests even after error
                     if (!photoRequestQueue.isEmpty()) {
                         processQueuedPhotoRequests();
@@ -1783,6 +1875,11 @@ public class CameraNeo extends LifecycleService {
                 Log.d(TAG, "📹 EIS disabled for video");
             }
 
+            // Apply 3DNR (temporal noise reduction) - VIDEO ONLY
+            if (forVideo && mCameraSettings != null) {
+                mCameraSettings.configure3DNR(previewBuilder);
+            }
+
             // Apply user exposure compensation BEFORE capture (not during)
             previewBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, userExposureCompensation);
 
@@ -1937,7 +2034,13 @@ public class CameraNeo extends LifecycleService {
                     mediaRecorder.start();
                     isRecording = true;
                     recordingStartTime = System.currentTimeMillis();
-                    
+
+                    // Start IMU recording for video
+                    if (mImuRecorder == null) {
+                        mImuRecorder = new com.mentra.asg_client.sensors.ImuRecorder(CameraNeo.this);
+                    }
+                    mImuRecorder.startRecording();
+
                     // Clear pending settings after use
                     pendingVideoSettings = null;
                     if (sVideoCallback != null) {
@@ -2820,8 +2923,24 @@ public class CameraNeo extends LifecycleService {
      * Simplified photo capture - relies on AE convergence and automatic CONTINUOUS_PICTURE autofocus
      */
     private void capturePhoto() {
+        // Check if HDR burst is enabled and we're capturing a button photo (not SDK)
+        boolean hdrEnabled = mCameraSettings != null
+                && mCameraSettings.mAsgSettings.isHdrBurstEnabled()
+                && !pendingIsFromSdk;
+
+        if (hdrEnabled) {
+            captureHdrBurst();
+            return;
+        }
+
         try {
             shotState = ShotState.SHOOTING;
+
+            // Start IMU recording for this capture
+            if (mImuRecorder == null) {
+                mImuRecorder = new com.mentra.asg_client.sensors.ImuRecorder(this);
+            }
+            mImuRecorder.startRecording();
 
             // Create still capture request with high quality settings
             CaptureRequest.Builder stillBuilder =
@@ -2893,13 +3012,24 @@ public class CameraNeo extends LifecycleService {
                                              @NonNull CaptureRequest request,
                                              @NonNull TotalCaptureResult result) {
                     Log.i(TAG, "Photo capture completed successfully");  // Keep as INFO level
-                    
+
                     // Verify ZSL was actually used by checking the request
                     Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
                     if (zslInRequest != null && zslInRequest) {
                         Log.d(TAG, "✓ ZSL confirmed active in capture result");
                     }
-                    
+
+                    // MFNR diagnostic: log ISO and exposure to verify MFNR triggers
+                    Integer captureIso = result.get(CaptureResult.SENSOR_SENSITIVITY);
+                    Long captureExposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+                    Integer captureNrMode = result.get(CaptureResult.NOISE_REDUCTION_MODE);
+                    double captureExposureMs = (captureExposureNs != null) ? captureExposureNs / 1_000_000.0 : -1;
+                    boolean mfnrLikelyTriggered = (captureIso != null && captureIso > 800);
+                    Log.i(TAG, "MFNR_DIAG: ISO=" + captureIso
+                            + " exposure=" + String.format("%.2f", captureExposureMs) + "ms"
+                            + " NR_MODE=" + captureNrMode
+                            + " MFNR_likely=" + mfnrLikelyTriggered);
+
                     // XyCamera2 pattern: Restore preview after capture (unlock AE, restore repeating request)
                     restorePreview(session);
                     
@@ -2912,10 +3042,15 @@ public class CameraNeo extends LifecycleService {
                                           @NonNull CaptureFailure failure) {
                     Log.e(TAG, "Photo capture failed: " + failure.getReason());
                     notifyPhotoError("Photo capture failed: " + failure.getReason());
-                    
+
+                    // Cancel IMU recording since capture failed
+                    if (mImuRecorder != null) {
+                        mImuRecorder.cancel();
+                    }
+
                     // XyCamera2 pattern: Restore preview even on failure
                     restorePreview(session);
-                    
+
                     shotState = ShotState.IDLE;
                     mWaitingForAeConvergence = false;
                     mAeLockRequested = false;
@@ -2928,8 +3063,126 @@ public class CameraNeo extends LifecycleService {
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error during photo capture", e);
             notifyPhotoError("Error capturing photo: " + e.getMessage());
+            if (mImuRecorder != null) {
+                mImuRecorder.cancel();
+            }
             shotState = ShotState.IDLE;
             cancelKeepAliveTimer();
+            closeCamera();
+            stopSelf();
+        }
+    }
+
+    // ========== HDR BURST CAPTURE ==========
+
+    /** Counter for HDR burst frames received in the ImageReader. */
+    private volatile int mHdrBurstFramesReceived = 0;
+    /** Number of frames expected in the current HDR burst. */
+    private static final int HDR_BURST_COUNT = 3;
+    /** Exposure compensation values for brackets: under, normal, over. */
+    private static final int[] HDR_EV_BRACKETS = {-2, 0, 2};
+    /** Flag indicating we're in HDR burst mode (ImageReader should save multiple frames). */
+    private volatile boolean mHdrBurstActive = false;
+
+    /**
+     * Capture 3 exposure-bracketed photos via captureBurst() for phone-side HDR merge.
+     * Locks AE first, then shoots 3 frames at -2, 0, +2 EV.
+     * Frames 2 and 3 skip the AE convergence delay since AE is locked.
+     */
+    private void captureHdrBurst() {
+        try {
+            shotState = ShotState.SHOOTING;
+            mHdrBurstActive = true;
+            mHdrBurstFramesReceived = 0;
+
+            // Start IMU recording
+            if (mImuRecorder == null) {
+                mImuRecorder = new com.mentra.asg_client.sensors.ImuRecorder(this);
+            }
+            mImuRecorder.startRecording();
+
+            Log.i(TAG, "HDR: Starting burst capture with brackets " + java.util.Arrays.toString(HDR_EV_BRACKETS));
+
+            // Build 3 capture requests with different exposure compensation
+            List<CaptureRequest> burstRequests = new ArrayList<>();
+            for (int ev : HDR_EV_BRACKETS) {
+                CaptureRequest.Builder builder =
+                    cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+                builder.addTarget(imageReader.getSurface());
+
+                // Copy base settings
+                builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                builder.set(CaptureRequest.CONTROL_AE_LOCK, true); // Lock AE for consistent base
+                builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
+                builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, ev);
+                builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
+
+                if (hasAutoFocus) {
+                    builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                }
+
+                builder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
+                builder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
+                builder.set(CaptureRequest.JPEG_QUALITY, (byte) getJpegQualityForSize());
+
+                int displayOrientation = getDisplayRotation();
+                int jpegOrientation = JPEG_ORIENTATION.get(displayOrientation, 90);
+                builder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
+
+                // Apply ZSL/MFNR if available
+                if (mCameraSettings != null && mCameraSettings.isMfnrSupported()) {
+                    mCameraSettings.configureCaptureBuilder(builder);
+                }
+
+                burstRequests.add(builder.build());
+            }
+
+            cameraCaptureSession.captureBurst(burstRequests, new CameraCaptureSession.CaptureCallback() {
+                private int completedCount = 0;
+
+                @Override
+                public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+                                             @NonNull CaptureRequest request,
+                                             @NonNull TotalCaptureResult result) {
+                    completedCount++;
+                    Integer ev = request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION);
+                    Integer iso = result.get(CaptureResult.SENSOR_SENSITIVITY);
+                    Long expNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+                    Log.i(TAG, "HDR: Frame " + completedCount + "/" + HDR_BURST_COUNT
+                            + " completed (EV=" + ev + " ISO=" + iso
+                            + " exp=" + (expNs != null ? expNs / 1_000_000.0 : "?") + "ms)");
+
+                    if (completedCount == HDR_BURST_COUNT) {
+                        Log.i(TAG, "HDR: All burst frames captured");
+                        restorePreview(session);
+                    }
+                }
+
+                @Override
+                public void onCaptureFailed(@NonNull CameraCaptureSession session,
+                                          @NonNull CaptureRequest request,
+                                          @NonNull CaptureFailure failure) {
+                    Log.e(TAG, "HDR: Burst frame failed: " + failure.getReason());
+                    mHdrBurstActive = false;
+                    if (mImuRecorder != null) {
+                        mImuRecorder.cancel();
+                    }
+                    notifyPhotoError("HDR burst capture failed");
+                    restorePreview(session);
+                    shotState = ShotState.IDLE;
+                    closeCamera();
+                    stopSelf();
+                }
+            }, backgroundHandler);
+
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Error during HDR burst capture", e);
+            mHdrBurstActive = false;
+            if (mImuRecorder != null) {
+                mImuRecorder.cancel();
+            }
+            notifyPhotoError("HDR burst error: " + e.getMessage());
+            shotState = ShotState.IDLE;
             closeCamera();
             stopSelf();
         }
