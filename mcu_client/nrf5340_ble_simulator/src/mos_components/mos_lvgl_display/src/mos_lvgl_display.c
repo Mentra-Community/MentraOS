@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-03-04 17:40:37
+ * @LastEditTime : 2026-03-17 18:43:01
  * @FilePath     : mos_lvgl_display.c
  * @Description  :
  *
@@ -47,15 +47,15 @@ K_MSGQ_DEFINE(lvgl_display_msgq, sizeof(display_cmd_t), DISPLAY_CMD_QSZ, 4);
 static volatile bool display_onoff = false;
 
 /* 全局 protobuf 文本容器引用 / Global references for protobuf text container */
-static lv_obj_t* protobuf_container = NULL;
-static lv_obj_t* protobuf_label = NULL;
-static lv_obj_t* protobuf_gbk_container = NULL;
+static lv_obj_t *protobuf_container = NULL;
+static lv_obj_t *protobuf_label = NULL;
+static lv_obj_t *protobuf_gbk_container = NULL;
 /* DFU 状态文字（电量下面一行）/ DFU status text (one line below battery) */
-static lv_obj_t* dfu_status_label = NULL;
+static lv_obj_t *dfu_status_label = NULL;
 /* DFU 进度条：容器(背景条) + 前景条(按 % 设宽度)，避免 lv_bar 显示满格问题 | DFU progress: container + fill rect by %
  */
-static lv_obj_t* dfu_progress_bar = NULL; /* 背景轨道 / track */
-static lv_obj_t* dfu_progress_fill = NULL; /* 前景填充，宽度 = 百分比 | fill, width = percent */
+static lv_obj_t *dfu_progress_bar = NULL; /* 背景轨道 / track */
+static lv_obj_t *dfu_progress_fill = NULL; /* 前景填充，宽度 = 百分比 | fill, width = percent */
 static lv_coord_t dfu_progress_bar_w = 0; /* 轨道宽度，用于算填充宽度 | track width for fill % */
 
 /* 仅欢迎屏时刷新电量；避免覆盖 BLE 等内容 / Only refresh welcome+battery when welcome screen is active; avoid
@@ -66,20 +66,20 @@ static uint32_t lvgl_min_refresh_ms = 10;
 static volatile bool lvgl_freeze_refresh = false;
 
 /* Pattern 5 XY 文本定位区域（全局引用）/ Pattern 5 XY Text Positioning Area (Global references) */
-static lv_obj_t* xy_text_container = NULL; /* 124x60 可视区域，适配 SSD1306 128x64 / 124x60 bordered viewing area for
+static lv_obj_t *xy_text_container = NULL; /* 124x60 可视区域，适配 SSD1306 128x64 / 124x60 bordered viewing area for
                                               SSD1306 128x64 */
-static lv_obj_t* current_xy_text_label = NULL; /* 当前定位文本标签 / Current positioned text label */
-static lv_obj_t* gbk_test_label = NULL; /* 简单中文测试标签 / Simple GBK test label */
+static lv_obj_t *current_xy_text_label = NULL; /* 当前定位文本标签 / Current positioned text label */
+static lv_obj_t *gbk_test_label = NULL; /* 简单中文测试标签 / Simple GBK test label */
 
 #define WELCOME_BATTERY_REFRESH_MS (60 * 1000)
 static struct k_work_delayable welcome_battery_work;
 /* 前向声明，供 k_work_init_delayable / forward decl for k_work_init_delayable */
-static void welcome_battery_work_handler(struct k_work* work); 
+static void welcome_battery_work_handler(struct k_work *work);
 
 void lv_example_scroll_text(void)
 {
     /* 创建一个标签 / Create a label */
-    lv_obj_t* label = lv_label_create(lv_screen_active());
+    lv_obj_t *label = lv_label_create(lv_screen_active());
 
     /* 设置滚动模式（自动横向滚动）/ Set scroll mode (auto horizontal scroll) */
     /* lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL); */
@@ -155,7 +155,7 @@ void display_update_dfu_progress(uint8_t show, uint8_t percent)
 
 /* 线程安全：更新电量下方一行 DFU 状态文字（如 "DFU Updating... 45%"）；text 为空或 NULL 则隐藏
 | Thread-safe: update DFU status line below battery; empty/NULL = hide */
-void display_update_dfu_status_text(const char* text)
+void display_update_dfu_status_text(const char *text)
 {
     display_cmd_t cmd = {.type = LCD_CMD_UPDATE_DFU_STATUS_TEXT};
     if (text != NULL)
@@ -180,15 +180,14 @@ void display_cycle_pattern(void)
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
-void display_update_height(uint16_t height) {
-    display_cmd_t cmd = {
-        .type = LCD_CMD_UPDATE_HEIGHT, .p.height = {.height = height}
-    };
+void display_update_height(uint16_t height)
+{
+    display_cmd_t cmd = {.type = LCD_CMD_UPDATE_HEIGHT, .p.height = {.height = height}};
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
 /* 线程安全 protobuf 文本更新：发消息到 LVGL 线程 / Thread-safe protobuf text update - sends message to LVGL thread */
-void display_update_protobuf_text(const char* text_content)
+void display_update_protobuf_text(const char *text_content)
 {
     if (!text_content)
     {
@@ -235,7 +234,7 @@ void display_draw_chess_pattern(void)
 }
 
 /* Pattern 5 XY 文本定位，线程安全 / Pattern 5 XY Text Positioning - Thread-safe function */
-void display_update_xy_text(uint16_t x, uint16_t y, const char* text_content, uint16_t font_size, uint32_t color)
+void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color)
 {
     if (!text_content)
     {
@@ -294,14 +293,14 @@ void display_clear_screen(void)
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
-void display_send_frame(void* data_ptr)
+void display_send_frame(void *data_ptr)
 {
     // display_cmd_t cmd = {.type = LCD_CMD_DATA, .param = data_ptr};
     // mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 void lvgl_display_text(void)
 {
-    lv_obj_t* hello_world_label = lv_label_create(lv_screen_active());
+    lv_obj_t *hello_world_label = lv_label_create(lv_screen_active());
     lv_label_set_text(hello_world_label, "Hello LVGL World");
     lv_obj_align(hello_world_label, LV_ALIGN_CENTER, 0, 0); /* 居中对齐 / Center align */
     /* lv_obj_align(hello_world_label, LV_TEXT_ALIGN_RIGHT, 0, 0); 右对齐 / Right align */
@@ -313,11 +312,11 @@ void lvgl_display_text(void)
                                0); /* 原 48，现 14 省内存 / Was 48, using 14 for memory */
     lv_obj_set_style_bg_color(lv_screen_active(), display_get_background_color(), 0);
 }
-static lv_obj_t* counter_label;
-static lv_timer_t* counter_timer; /* 指针即可 / Pointer only */
-static lv_obj_t* acc_label;
-static lv_obj_t* gyr_label;
-static void counter_timer_cb(lv_timer_t* timer)
+static lv_obj_t *counter_label;
+static lv_timer_t *counter_timer; /* 指针即可 / Pointer only */
+static lv_obj_t *acc_label;
+static lv_obj_t *gyr_label;
+static void counter_timer_cb(lv_timer_t *timer)
 {
     // int *count = (int *)lv_timer_get_user_data(timer);
     // // lv_label_set_text_fmt(counter_label, "Count: %d", (*count)++);
@@ -359,18 +358,18 @@ void ui_create(void)
 }
 
 /****************************************************/
-static lv_obj_t* cont = NULL;
+static lv_obj_t *cont = NULL;
 static lv_anim_t anim;
 
 /* 动画回调：将容器纵向滚动到 v 像素 / Animation callback: scroll container vertically to v pixels */
-static void scroll_cb(void* var, int32_t v)
+static void scroll_cb(void *var, int32_t v)
 {
     LV_UNUSED(var);
     lv_obj_scroll_to_y(cont, v, LV_ANIM_OFF);
 }
 
-void scroll_text_create(lv_obj_t* parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h, const char* txt,
-                        const lv_font_t* font, uint32_t time_ms)
+void scroll_text_create(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h, const char *txt,
+                        const lv_font_t *font, uint32_t time_ms)
 {
     /* 移除旧区域 / Remove old area */
     scroll_text_stop();
@@ -386,7 +385,7 @@ void scroll_text_create(lv_obj_t* parent, lv_coord_t x, lv_coord_t y, lv_coord_t
     lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, LV_PART_MAIN);
 
     /* 在容器中创建标签 / Create label inside container */
-    lv_obj_t* label = lv_label_create(cont);
+    lv_obj_t *label = lv_label_create(cont);
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, w);
     lv_label_set_text(label, txt);
@@ -461,10 +460,10 @@ static void show_default_ui(void)
 }
 
 /* 测试图案函数 / Test pattern functions */
-static void create_chess_pattern(lv_obj_t* screen)
+static void create_chess_pattern(lv_obj_t *screen)
 {
     /* 获取模块化显示配置以适配棋盘图案 / Get modular display configuration for adaptive chess pattern */
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     /* 使用配置中的棋盘格尺寸 / Use configuration-based chess square size */
     const int chess_size = config->patterns.chess_square_size;
@@ -481,7 +480,7 @@ static void create_chess_pattern(lv_obj_t* screen)
             /* 黑白格交替 / Alternate black and white squares */
             bool is_white = (row + col) % 2 == 0;
 
-            lv_obj_t* square = lv_obj_create(screen);
+            lv_obj_t *square = lv_obj_create(screen);
             lv_obj_set_size(square, chess_size, chess_size);
             lv_obj_set_pos(square, col * chess_size, row * chess_size);
             lv_color_t color =
@@ -494,10 +493,10 @@ static void create_chess_pattern(lv_obj_t* screen)
     }
 }
 
-static void create_horizontal_zebra_pattern(lv_obj_t* screen)
+static void create_horizontal_zebra_pattern(lv_obj_t *screen)
 {
     /* 获取模块化显示配置以适配横向条纹 / Get modular display configuration for adaptive horizontal bars */
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     /* 使用配置中的条纹厚度 / Use configuration-based bar thickness */
     const int stripe_height = config->patterns.bar_thickness;
@@ -510,7 +509,7 @@ static void create_horizontal_zebra_pattern(lv_obj_t* screen)
     {
         bool is_white = i % 2 == 0;
 
-        lv_obj_t* stripe = lv_obj_create(screen);
+        lv_obj_t *stripe = lv_obj_create(screen);
         lv_obj_set_size(stripe, config->width, stripe_height);
         lv_obj_set_pos(stripe, 0, i * stripe_height);
         lv_color_t color =
@@ -522,10 +521,10 @@ static void create_horizontal_zebra_pattern(lv_obj_t* screen)
     }
 }
 
-static void create_vertical_zebra_pattern(lv_obj_t* screen)
+static void create_vertical_zebra_pattern(lv_obj_t *screen)
 {
     /* 获取模块化显示配置以适配纵向条纹 / Get modular display configuration for adaptive vertical bars */
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     /* 使用配置中的条纹厚度 / Use configuration-based bar thickness */
     const int stripe_width = config->patterns.bar_thickness;
@@ -538,7 +537,7 @@ static void create_vertical_zebra_pattern(lv_obj_t* screen)
     {
         bool is_white = i % 2 == 0;
 
-        lv_obj_t* stripe = lv_obj_create(screen);
+        lv_obj_t *stripe = lv_obj_create(screen);
         lv_obj_set_size(stripe, stripe_width, config->height);
         lv_obj_set_pos(stripe, i * stripe_width, 0);
         lv_color_t color =
@@ -551,17 +550,17 @@ static void create_vertical_zebra_pattern(lv_obj_t* screen)
 }
 
 /* 平滑滚动动画用全局变量 / Global variables for smooth scrolling animation */
-static lv_obj_t* scrolling_welcome_label = NULL;
+static lv_obj_t *scrolling_welcome_label = NULL;
 static lv_anim_t welcome_scroll_anim;
 
 /* 平滑横向滚动动画回调 / Animation callback for smooth horizontal scrolling */
-static void welcome_scroll_anim_cb(void* var, int32_t v)
+static void welcome_scroll_anim_cb(void *var, int32_t v)
 {
-    lv_obj_set_x((lv_obj_t*)var, v);
+    lv_obj_set_x((lv_obj_t *)var, v);
 }
 
 /* 动画结束回调，用于重新开始滚动 / Animation ready callback to restart the scroll */
-static void welcome_scroll_ready_cb(lv_anim_t* a)
+static void welcome_scroll_ready_cb(lv_anim_t *a)
 {
     if (scrolling_welcome_label == NULL)
         return;
@@ -581,7 +580,7 @@ static void welcome_scroll_ready_cb(lv_anim_t* a)
     lv_anim_start(&welcome_scroll_anim);
 }
 
-static void create_center_rectangle_pattern(lv_obj_t* screen)
+static void create_center_rectangle_pattern(lv_obj_t *screen)
 {
     /* 创建滚动文本标签 / Create a scrolling text label */
     scrolling_welcome_label = lv_label_create(screen);
@@ -626,15 +625,15 @@ static void create_center_rectangle_pattern(lv_obj_t* screen)
     LOG_DBG("🔄 Started infinite smooth horizontal scrolling animation for welcome text");
 }
 
-static void anim_set_x_cb(void* obj, int32_t v)
+static void anim_set_x_cb(void *obj, int32_t v)
 {
-    lv_obj_set_x((lv_obj_t*)obj, v);
+    lv_obj_set_x((lv_obj_t *)obj, v);
 }
 
-static void create_center_rectangle_pattern_ssd1306(lv_obj_t* screen)
+static void create_center_rectangle_pattern_ssd1306(lv_obj_t *screen)
 {
-    const char* text = "Welcome to MentraOS NExFirmware!";
-    const lv_font_t* font = &lv_font_montserrat_18;
+    const char *text = "Welcome to MentraOS NExFirmware!";
+    const lv_font_t *font = &lv_font_montserrat_18;
     const uint32_t ms_per_px = 25;
     const lv_coord_t sw = lv_obj_get_width(screen);
     const lv_coord_t sh = lv_obj_get_height(screen);
@@ -642,7 +641,7 @@ static void create_center_rectangle_pattern_ssd1306(lv_obj_t* screen)
     lv_obj_set_style_bg_color(screen, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
-    lv_obj_t* label = lv_label_create(screen);
+    lv_obj_t *label = lv_label_create(screen);
     lv_obj_set_style_text_color(label, lv_color_black(), 0);
     lv_obj_set_style_text_font(label, font, 0);
     lv_label_set_text(label, text);
@@ -677,7 +676,7 @@ static void create_center_rectangle_pattern_ssd1306(lv_obj_t* screen)
  * Return LVGL Bluetooth symbol for device name line on welcome screen.
  * 仅未连接时显示蓝牙图标，已连接时不显示。
  */
-static const char* get_ble_icon(void)
+static const char *get_ble_icon(void)
 {
 #ifdef LV_SYMBOL_BLUETOOTH
     if (!get_ble_connected_status())
@@ -695,7 +694,7 @@ static const char* get_ble_icon(void)
  * @param charging  Charging state
  * @return          LVGL symbol string
  */
-static const char* get_battery_icon(uint32_t pct, bool charging)
+static const char *get_battery_icon(uint32_t pct, bool charging)
 {
 #ifdef LV_SYMBOL_CHARGE
     if (charging)
@@ -724,13 +723,13 @@ static const char* get_battery_icon(uint32_t pct, bool charging)
 #endif
 }
 
-static void create_scrolling_text_container(lv_obj_t* screen)
+static void create_scrolling_text_container(lv_obj_t *screen)
 {
     /* 获取模块化显示配置 / Get modular display configuration */
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     /* 按模块化尺寸创建可滚动容器 / Create scrollable container using modular dimensions */
-    lv_obj_t* container = lv_obj_create(screen);
+    lv_obj_t *container = lv_obj_create(screen);
     display_apply_container_config(container, screen, config);
 
     /* 保存全局引用供 protobuf 文本更新 / Store global reference for protobuf text updates */
@@ -747,7 +746,7 @@ static void create_scrolling_text_container(lv_obj_t* screen)
     lv_obj_set_style_border_opa(container, LV_OPA_TRANSP, 0); /* 边框透明 / Make border transparent */
 
     /* 在容器内创建 protobuf 文本标签 / Create label inside container with protobuf text */
-    lv_obj_t* label = lv_label_create(container);
+    lv_obj_t *label = lv_label_create(container);
     lv_obj_set_width(label, config->layout.usable_width - (config->layout.padding * 2));
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP); /* 自动换行适应宽度 / Wrap text to fit width */
 
@@ -755,8 +754,8 @@ static void create_scrolling_text_container(lv_obj_t* screen)
     protobuf_label = label;
 
     /* 未连接/未配对时初始文案（含电量行）/ Set initial text for disconnected/unpaired state (with battery line) */
-    const char* initial_text;
-    const char* device_name = get_ble_device_name(); /* 获取动态 BLE 设备名 / Get dynamic BLE device name */
+    const char *initial_text;
+    const char *device_name = get_ble_device_name(); /* 获取动态 BLE 设备名 / Get dynamic BLE device name */
     uint32_t battery_pct = protobuf_get_battery_level();
     bool charging = protobuf_get_charging_state();
     char display_text[160];
@@ -857,13 +856,13 @@ static void create_scrolling_text_container(lv_obj_t* screen)
 }
 
 /* Pattern 5：XY 文本定位区域，模块化配置 / Pattern 5 - XY Text Positioning Area with modular configuration */
-static void create_xy_text_positioning_area(lv_obj_t* screen)
+static void create_xy_text_positioning_area(lv_obj_t *screen)
 {
     /* 获取模块化显示配置 / Get modular display configuration */
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
 
     /* 按模块化尺寸创建 XY 定位容器 / Create XY positioning container using modular dimensions */
-    lv_obj_t* container = lv_obj_create(screen);
+    lv_obj_t *container = lv_obj_create(screen);
 
     /* 设置容器大小和位置 / Set container size and position */
     lv_obj_set_size(container, config->layout.usable_width, config->layout.usable_height);
@@ -902,10 +901,10 @@ static void show_test_pattern(int pattern_id)
     /* 仅由 LVGL 线程调用，无需加锁 / SAFE: Now called only from LVGL thread - no locking needed */
 
     /* 获取屏幕并设黑色背景 / Get screen and set black background */
-    lv_obj_t* screen = lv_screen_active();
+    lv_obj_t *screen = lv_screen_active();
 
     /* 先快速删除屏幕上的所有子对象，避免长时间阻塞 / Quickly clear all children */
-    lv_obj_t* child;
+    lv_obj_t *child;
     while ((child = lv_obj_get_child(screen, 0)) != NULL)
     {
         lv_obj_del(child);
@@ -960,7 +959,8 @@ void cycle_test_pattern(void)
 
 static void update_display_height(uint16_t height)
 {
-    if (height > 8) height = 8;
+    if (height > 8)
+        height = 8;
 
     LOG_INF("update_display_height - Thread-safe height update: %u", height);
 
@@ -980,14 +980,14 @@ static void update_display_height(uint16_t height)
     uint32_t mt = (config->height - config->layout.usable_height) - (20u * (uint32_t)height);
 
     /* Clamp to uint16_t and screen bounds so it never goes off-screen */
-    if (mt > UINT16_MAX) mt = UINT16_MAX;
+    if (mt > UINT16_MAX)
+        mt = UINT16_MAX;
     tmp.layout.margin_top = (uint16_t)mt;
 
     /* Keep container fully visible: margin_top + usable_height <= screen height */
     if ((uint32_t)tmp.layout.margin_top + (uint32_t)tmp.layout.usable_height > (uint32_t)tmp.height)
     {
-        tmp.layout.margin_top =
-            (tmp.height > tmp.layout.usable_height) ? (tmp.height - tmp.layout.usable_height) : 0;
+        tmp.layout.margin_top = (tmp.height > tmp.layout.usable_height) ? (tmp.height - tmp.layout.usable_height) : 0;
     }
 
     /* Apply to the existing container */
@@ -999,14 +999,90 @@ static void update_display_height(uint16_t height)
     LOG_INF("Applied margin_top=%u (height=%u)", tmp.layout.margin_top, height);
 }
 
-/* 中文字库逐字渲染（汉字/标点/ASCII）；max_width>0 时按宽度自动换行，否则仅按 \\n/\\r 换行 */
-static void render_gbk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coord_t y, lv_coord_t max_width,
-                                    const char* render_text, const lv_font_t* gbk_font,
-                                const lv_font_t* font_primary, lv_coord_t* out_end_x, lv_coord_t* out_end_y,
-                                size_t* out_byte_len)
+static bool utf8_is_ascii_only(const char *text)
 {
-    const uint8_t* p = (const uint8_t*)render_text;
-    const uint8_t* p_start = p;
+    if (!text)
+    {
+        return true;
+    }
+    for (const uint8_t *p = (const uint8_t *)text; *p != '\0'; ++p)
+    {
+        if (*p >= 0x80u)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool utf8_contains_cjk(const char *text)
+{
+    if (!text)
+    {
+        return false;
+    }
+
+    const uint8_t *p = (const uint8_t *)text;
+    while (*p != '\0')
+    {
+        uint32_t code = 0;
+        uint8_t len = 1;
+
+        if ((*p & 0x80u) == 0)
+        {
+            code = *p;
+            len = 1;
+        }
+        else if ((*p & 0xE0u) == 0xC0u)
+        {
+            if ((p[1] & 0xC0u) != 0x80u)
+            {
+                break;
+            }
+            code = ((uint32_t)(p[0] & 0x1Fu) << 6) | (uint32_t)(p[1] & 0x3Fu);
+            len = 2;
+        }
+        else if ((*p & 0xF0u) == 0xE0u)
+        {
+            if ((p[1] & 0xC0u) != 0x80u || (p[2] & 0xC0u) != 0x80u)
+            {
+                break;
+            }
+            code = ((uint32_t)(p[0] & 0x0Fu) << 12) | ((uint32_t)(p[1] & 0x3Fu) << 6) | (uint32_t)(p[2] & 0x3Fu);
+            len = 3;
+        }
+        else if ((*p & 0xF8u) == 0xF0u)
+        {
+            if ((p[1] & 0xC0u) != 0x80u || (p[2] & 0xC0u) != 0x80u || (p[3] & 0xC0u) != 0x80u)
+            {
+                break;
+            }
+            code = ((uint32_t)(p[0] & 0x07u) << 18) | ((uint32_t)(p[1] & 0x3Fu) << 12) | ((uint32_t)(p[2] & 0x3Fu) << 6)
+                   | (uint32_t)(p[3] & 0x3Fu);
+            len = 4;
+        }
+
+        if ((code >= 0x3400u && code <= 0x9FFFu) || (code >= 0xF900u && code <= 0xFAFFu)
+            || (code >= 0x20000u && code <= 0x2EBEFu))
+        {
+            return true;
+        }
+
+        p += len;
+    }
+
+    return false;
+}
+
+/* 中文字库逐字渲染（汉字/标点/ASCII）；max_width>0 时按宽度自动换行，否则仅按 \\n/\\r 换行 */
+static void render_gbk_per_char(lv_obj_t *target_container, lv_coord_t x, lv_coord_t y, lv_coord_t max_width,
+                                const char *render_text, const lv_font_t *gbk_font, const lv_font_t *font_primary,
+                                lv_color_t text_color, lv_coord_t *out_end_x, lv_coord_t *out_end_y,
+                                size_t *out_byte_len)
+{
+    LV_UNUSED(font_primary);
+    const uint8_t *p = (const uint8_t *)render_text;
+    const uint8_t *p_start = p;
     lv_coord_t cur_x = x;
     lv_coord_t cur_y = y;
     lv_coord_t line_h = (gbk_font ? gbk_font->line_height : 16);
@@ -1120,10 +1196,10 @@ static void render_gbk_per_char(lv_obj_t* target_container, lv_coord_t x, lv_coo
             cur_y += line_h;
         }
 
-        lv_obj_t* lbl = lv_label_create(target_container);
+        lv_obj_t *lbl = lv_label_create(target_container);
         lv_label_set_text(lbl, buf);
         lv_obj_set_style_text_font(lbl, gbk_font, 0);
-        lv_obj_set_style_text_color(lbl, display_get_text_color(), 0);
+        lv_obj_set_style_text_color(lbl, text_color, 0);
         lv_obj_set_style_bg_opa(lbl, LV_OPA_TRANSP, 0);
         lv_obj_set_style_pad_all(lbl, 0, 0);
         lv_obj_set_pos(lbl, cur_x, cur_y);
@@ -1162,7 +1238,7 @@ static char last_protobuf_text[MAX_TEXT_LEN + 1];
 static bool last_protobuf_text_valid = false;
 
 /* 在自动滚动容器中更新 protobuf 文本内容 / Update protobuf text content in the auto-scroll container */
-static void update_protobuf_text_content(const char* text_content)
+static void update_protobuf_text_content(const char *text_content)
 {
     if (!text_content)
     {
@@ -1184,14 +1260,50 @@ static void update_protobuf_text_content(const char* text_content)
 
     welcome_screen_active = false;
 
+    bool ascii_only = utf8_is_ascii_only(text_content);
+    bool has_cjk = utf8_contains_cjk(text_content);
+
+    if (!ascii_only && has_cjk)
+    {
+        const lv_font_t *gbk_font = display_get_font("gbk");
+        const lv_font_t *font_primary = display_get_font("primary");
+
+        if (protobuf_gbk_container && gbk_font)
+        {
+            lv_obj_clean(protobuf_gbk_container);
+
+            /* Use per-character GBK rendering for UTF-8 CJK text in protobuf path. */
+            render_gbk_per_char(protobuf_gbk_container, 0, 0, lv_obj_get_content_width(protobuf_gbk_container),
+                                text_content, gbk_font, font_primary, display_get_text_color(), NULL, NULL, NULL);
+
+            lv_obj_clear_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
+
+            lv_obj_update_layout(protobuf_gbk_container);
+            lv_obj_scroll_to_y(protobuf_gbk_container, lv_obj_get_scroll_bottom(protobuf_gbk_container), LV_ANIM_OFF);
+
+            strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
+            last_protobuf_text[MAX_TEXT_LEN] = '\0';
+            last_protobuf_text_valid = true;
+            return;
+        }
+    }
+
+    if (protobuf_gbk_container)
+    {
+        lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_clear_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
+
     /* 清空并更新：用新 protobuf 内容替换现有文本 / CLEAR AND UPDATE: Replace existing text with new protobuf content */
     lv_label_set_text(protobuf_label, text_content);
 
-    /* BLE 文本偏移：标签距顶 100px（欢迎文案保持居中）/ BLE text offset: position label 100px down from top (welcome message stays centered) */
+    /* BLE 文本偏移：标签距顶 100px（欢迎文案保持居中）/ BLE text offset: position label 100px down from top (welcome
+     * message stays centered) */
     lv_obj_align(protobuf_label, LV_ALIGN_TOP_MID, 0, 80);
 
     /* 自动滚到底部显示最新内容 / AUTO-SCROLL TO BOTTOM: Show latest content */
-    lv_obj_update_layout(protobuf_container);  /* 确保布局已计算 / Ensure layout is calculated */
+    lv_obj_update_layout(protobuf_container); /* 确保布局已计算 / Ensure layout is calculated */
     lv_obj_scroll_to_y(protobuf_container, lv_obj_get_scroll_bottom(protobuf_container), LV_ANIM_OFF);
 
     strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
@@ -1215,11 +1327,10 @@ static void update_welcome_label_with_battery(void)
         return;
     }
 
-    const display_config_t* config = display_get_config();
-    const char* device_name = get_ble_device_name();
+    const display_config_t *config = display_get_config();
+    const char *device_name = get_ble_device_name();
     uint32_t battery_pct = protobuf_get_battery_level();
     bool charging = protobuf_get_charging_state();
-
     static char welcome_buf[160];
     if (config->width >= 500)
     {
@@ -1247,16 +1358,16 @@ static void update_welcome_label_with_battery(void)
     lv_label_set_text(protobuf_label, welcome_buf);
 }
 
-static void welcome_battery_work_handler(struct k_work* work)
+static void welcome_battery_work_handler(struct k_work *work)
 {
     display_cmd_t cmd = {.type = LCD_CMD_UPDATE_WELCOME_BATTERY};
     mos_msgq_send(&lvgl_display_msgq, &cmd,
                   (int64_t)100); /* 100 ms 超时；bal_os 使用 int64_t ms / 100 ms timeout; bal_os uses int64_t ms */
-    k_work_schedule((struct k_work_delayable*)work, K_MSEC(WELCOME_BATTERY_REFRESH_MS));
+    k_work_schedule((struct k_work_delayable *)work, K_MSEC(WELCOME_BATTERY_REFRESH_MS));
 }
 
 /* Pattern 4 & 5：处理 XY 定位文本及字号控制 / Pattern 4 & 5 - Handle XY positioned text with font size control */
-static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_content, uint16_t font_size,
+static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size,
                                       uint32_t color)
 {
     /* 必须仅在 LVGL 线程上下文中调用 / SAFETY: This function must only be called from LVGL thread context */
@@ -1270,7 +1381,7 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
      * content */
     welcome_screen_active = false;
 
-    lv_obj_t* target_container = NULL;
+    lv_obj_t *target_container = NULL;
 
     /* 同时支持 Pattern 4（滚动容器）与 Pattern 5（XY 定位容器）/ Support both Pattern 4 (scrolling container) and
      * Pattern 5 (XY positioning container) */
@@ -1325,10 +1436,12 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
 
     bool use_gbk = true;
     bool use_gbk_chars = true;
-    const char* render_text = text_content;
+    bool force_cjk = false;
+    const char *render_text = text_content;
     /* 协议前缀 [cjk]/[cjkchars] 与手机端约定，此处走 GBK 字库 */
     if (strncmp(text_content, "[cjkchars]", 10) == 0)
     {
+        force_cjk = true;
         render_text = text_content + 10;
         while (*render_text == ' ')
         {
@@ -1338,6 +1451,7 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
     }
     else if (strncmp(text_content, "[cjk]", 5) == 0)
     {
+        force_cjk = true;
         render_text = text_content + 5;
         while (*render_text == ' ')
         {
@@ -1346,30 +1460,19 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
         LOG_INF("GBK mode detected, text='%.30s'", render_text);
     }
 
-    /* 纯 ASCII 时走普通字体路径，不走中文字库逐字渲染 */
-    bool ascii_only = true;
-    for (const uint8_t* t = (const uint8_t*)render_text; *t != '\0'; ++t)
-    {
-        if (*t >= 0x80u)
-        {
-            ascii_only = false;
-            break;
-        }
-    }
-    if (ascii_only)
+    /* 非 CJK 文字默认不走 GBK，留给 secondary/primary 字体处理 */
+    if (!force_cjk && !utf8_contains_cjk(render_text))
     {
         use_gbk = false;
         use_gbk_chars = false;
     }
 
-    const lv_font_t* font = use_gbk ? display_get_font("gbk") : display_get_font("secondary");
+    const lv_font_t *font = use_gbk ? display_get_font("gbk") : display_get_font("secondary");
     if (!font)
     {
         LOG_WRN("%s font not available, falling back to primary font", use_gbk ? "gbk" : "secondary");
         font = display_get_font("primary"); /* 回退到主显示字体 / Fallback to primary display font */
     }
-    const lv_font_t* font_primary = display_get_font("primary");
-
     /* GBK字库已加载，移除探针代码以避免性能开销 */
     if (use_gbk && font)
     {
@@ -1387,134 +1490,8 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
 
     if (use_gbk_chars && font)
     {
-        /* Per-character horizontal layout for testing */
-        const uint8_t* p = (const uint8_t*)render_text;
-        lv_coord_t cur_x = x;
-        lv_coord_t cur_y = y;
-        lv_coord_t line_h = (font ? font->line_height : 16);
-        /* 不按宽度自动换行，仅按 \\n/\\r 换行，与手机 app 一致 */
-
-        while (*p != '\0')
-        {
-            uint32_t code = 0;
-            uint8_t len = 1;
-            uint8_t advance_len = 1;
-
-            if ((*p & 0x80u) == 0)
-            {
-                code = *p;
-                len = 1;
-            }
-            else if ((*p & 0xE0u) == 0xC0u)
-            {
-                if ((p[1] & 0xC0u) != 0x80u)
-                    break;
-                code = ((uint32_t)(p[0] & 0x1Fu) << 6) | (uint32_t)(p[1] & 0x3Fu);
-                len = 2;
-            }
-            else if ((*p & 0xF0u) == 0xE0u)
-            {
-                if ((p[1] & 0xC0u) != 0x80u || (p[2] & 0xC0u) != 0x80u)
-                    break;
-                code = ((uint32_t)(p[0] & 0x0Fu) << 12) | ((uint32_t)(p[1] & 0x3Fu) << 6) | (uint32_t)(p[2] & 0x3Fu);
-                len = 3;
-            }
-            else if ((*p & 0xF8u) == 0xF0u)
-            {
-                if ((p[1] & 0xC0u) != 0x80u || (p[2] & 0xC0u) != 0x80u || (p[3] & 0xC0u) != 0x80u)
-                    break;
-                code = ((uint32_t)(p[0] & 0x07u) << 18) | ((uint32_t)(p[1] & 0x3Fu) << 12)
-                       | ((uint32_t)(p[2] & 0x3Fu) << 6) | (uint32_t)(p[3] & 0x3Fu);
-                len = 4;
-            }
-            advance_len = len;
-
-            /* Handle newlines explicitly */
-            if (code == '\n' || code == '\r')
-            {
-                cur_x = x;
-                cur_y += (font ? font->line_height : 16);
-                p += len;
-                continue;
-            }
-
-            /* BLE 发什么就显示什么：不转换全角/半角标点 */
-            char buf[5] = {0};
-            if (len > 0 && len <= 4)
-            {
-                /* If we mapped to ASCII, emit ASCII byte */
-                if (code <= 0x7F && len == 1)
-                {
-                    buf[0] = (char)code;
-                }
-                else
-                {
-                    memcpy(buf, p, len);
-                }
-                buf[len] = '\0';
-            }
-
-            /* 仅用字库：有则显示，无则用 ? 占位（占位符也用字库，不用系统字库） */
-            lv_font_glyph_dsc_t dsc;
-            bool has_glyph = false;
-
-            if (font && lv_font_get_glyph_dsc(font, &dsc, code, 0))
-            {
-                has_glyph = true;
-            }
-            else
-            {
-                buf[0] = '?';
-                buf[1] = '\0';
-                if (font && lv_font_get_glyph_dsc(font, &dsc, (uint32_t)0x3F, 0))
-                {
-                    has_glyph = true;
-                }
-                LOG_WRN("GBK per-char: 字库无 U+%04X，显示占位", (unsigned int)code);
-            }
-
-            if (!has_glyph)
-            {
-                lv_coord_t skip_adv = (code < 0x80u) ? (line_h / 2) : line_h;
-                cur_x += skip_adv;
-                p += advance_len;
-                continue;
-            }
-
-            lv_coord_t glyph_w = dsc.box_w;
-            if (glyph_w == 0)
-            {
-                glyph_w = (lv_coord_t)((dsc.adv_w + 15) / 16);
-            }
-
-            /* 本字 advance（不按宽度自动换行） */
-            lv_coord_t adv = (lv_coord_t)((dsc.adv_w + 15) / 16);
-            if (code >= 0x80u && glyph_w > 0 && (lv_coord_t)glyph_w < adv)
-            {
-                bool is_fullwidth_punct = (code >= 0x3000u && code <= 0x303Fu) || (code >= 0xFF00u && code <= 0xFFEFu);
-                if (is_fullwidth_punct)
-                {
-                    adv = (glyph_w + adv) / 2;
-                }
-                else
-                {
-                    adv = glyph_w + 2;
-                }
-            }
-
-            lv_obj_t* lbl = lv_label_create(target_container);
-            lv_label_set_text(lbl, buf);
-            lv_obj_set_style_text_font(lbl, font, 0);
-            lv_obj_set_style_text_color(lbl, text_color, 0);
-            lv_obj_set_style_bg_opa(lbl, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_pad_all(lbl, 0, 0);
-            lv_obj_set_pos(lbl, cur_x, cur_y);
-            lv_obj_invalidate(lbl);
-
-            cur_x += adv;
-
-            p += advance_len;
-        }
+        /* 不按宽度自动换行：max_width=0，仅按 \n/\r 换行，与手机 app 一致 */
+        render_gbk_per_char(target_container, x, y, 0, render_text, font, NULL, text_color, NULL, NULL, NULL);
         lv_obj_invalidate(target_container);
     }
     else
@@ -1538,8 +1515,8 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
         lv_obj_set_pos(current_xy_text_label, x, y);
     }
 
-    const char* pattern_name = (target_container == xy_text_container) ? "Pattern 5" : "Pattern 4";
-    const char* font_name = use_gbk ? "gbk" : "secondary";
+    const char *pattern_name = (target_container == xy_text_container) ? "Pattern 5" : "Pattern 4";
+    const char *font_name = use_gbk ? "gbk" : "secondary";
     LOG_INF("📝 [%s] Cleared all text, positioned new at (%u,%u), %s_font, color:0x%06X: %.30s%s", pattern_name, x, y,
             font_name, color, render_text, strlen(render_text) > 30 ? "..." : "");
 
@@ -1559,7 +1536,7 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char* text_c
 static void show_gbk_chars_test(void)
 {
     /* Use UTF-8 byte escapes to avoid source encoding ambiguity */
-    static const char* k_gbk_chars[] = {
+    static const char *k_gbk_chars[] = {
         "\xE4\xBD\xA0", /* 你 */
         "\xE5\xA5\xBD", /* 好 */
         "!", /* ! */
@@ -1577,8 +1554,8 @@ static void show_gbk_chars_test(void)
     static const uint32_t k_gbk_codepoints[] = {
         0x4F60, 0x597D, 0x0021, 0x6B22, 0x8FCE, 0x8FDB, 0x5165, 0x5F00, 0x53D1, 0x8005, 0x6A21, 0x5F0F,
     };
-    static lv_obj_t* gbk_chars_screen = NULL;
-    static lv_obj_t* gbk_char_labels[ARRAY_SIZE(k_gbk_chars)] = {0};
+    static lv_obj_t *gbk_chars_screen = NULL;
+    static lv_obj_t *gbk_char_labels[ARRAY_SIZE(k_gbk_chars)] = {0};
 
     printk("GBK_TEST: start\r\n");
     LOG_INF("GBK_TEST: start");
@@ -1621,7 +1598,7 @@ static void show_gbk_chars_test(void)
     lv_screen_load(gbk_chars_screen);
     printk("GBK_TEST: set text\r\n");
 
-    const lv_font_t* font = display_get_font("gbk");
+    const lv_font_t *font = display_get_font("gbk");
     if (!font)
     {
         font = display_get_font("primary");
@@ -1633,7 +1610,7 @@ static void show_gbk_chars_test(void)
     }
 
     /* Center a horizontal row of per-character labels */
-    lv_display_t* disp = lv_display_get_default();
+    lv_display_t *disp = lv_display_get_default();
     lv_coord_t disp_w = disp ? lv_display_get_horizontal_resolution(disp) : 640;
     lv_coord_t disp_h = disp ? lv_display_get_vertical_resolution(disp) : 480;
 
@@ -1688,9 +1665,9 @@ static void show_gbk_chars_test(void)
 static void show_gbk_test_text(void)
 {
     /* Use UTF-8 byte escapes to avoid source encoding ambiguity */
-    static const char* k_gbk_text =
+    static const char *k_gbk_text =
         "\xE4\xB8\xAD\xE5\x8D\x8E\xE4\xBA\xBA\xE5\x90\x8D\xE5\x85\xB1\xE5\x92\x8C\xE5\x9B\xBD!!!";
-    static lv_obj_t* gbk_screen = NULL;
+    static lv_obj_t *gbk_screen = NULL;
 
     printk("GBK_TEST: start\r\n");
     LOG_INF("GBK_TEST: start");
@@ -1726,7 +1703,7 @@ static void show_gbk_test_text(void)
         lv_obj_set_style_text_color(gbk_test_label, display_get_text_color(), 0);
 
         printk("GBK_TEST: get font\r\n");
-        const lv_font_t* font = display_get_font("gbk");
+        const lv_font_t *font = display_get_font("gbk");
         if (!font)
         {
             font = display_get_font("primary");
@@ -1763,9 +1740,9 @@ static void show_gbk_test_text(void)
     LOG_INF("GBK_TEST: end");
 }
 
-void lvgl_dispaly_init(void* p1, void* p2, void* p3)
+void lvgl_dispaly_init(void *p1, void *p2, void *p3)
 {
-    const struct device* display_dev;
+    const struct device *display_dev;
     display_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
     if (!device_is_ready(display_dev))
     {
@@ -1781,7 +1758,7 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
         return;
     }
 
-    const display_config_t* config = display_get_config();
+    const display_config_t *config = display_get_config();
     LOG_INF("🖼️ Display configuration loaded: %s (%dx%d)", config->name, config->width, config->height);
     if (a6n_init_sem_take() != 0) /* 等待屏幕 SPI 初始化完成 / Wait for screen SPI init complete */
     {
@@ -2010,7 +1987,7 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
                 case LCD_CMD_TEXT:
                 {
                     // lv_obj_t *scr = lv_disp_get_scr_act(lv_disp_get_default());
-                    lv_obj_t* lbl = lv_label_create(lv_screen_active());
+                    lv_obj_t *lbl = lv_label_create(lv_screen_active());
                     lv_label_set_text(lbl, cmd.p.text.text);
                     // lv_label_set_text(lbl, "Hello, world lvgl!"); //test
                     lv_obj_set_style_text_color(lbl, lv_color_white(), LV_PART_MAIN);
@@ -2069,15 +2046,7 @@ void lvgl_dispaly_init(void* p1, void* p2, void* p3)
 void lvgl_display_thread(void)
 {
     /* 启动 LVGL 专用线程 / Start LVGL dedicated thread */
-    lvgl_thread_handle = k_thread_create(&lvgl_thread_data,
-                                         lvgl_stack_area,
-                                         K_THREAD_STACK_SIZEOF(lvgl_stack_area),
-                                         lvgl_dispaly_init,
-                                         NULL,
-                                         NULL,
-                                         NULL,
-                                         LVGL_THREAD_PRIORITY,
-                                         0,
-                                         K_NO_WAIT);
+    lvgl_thread_handle = k_thread_create(&lvgl_thread_data, lvgl_stack_area, K_THREAD_STACK_SIZEOF(lvgl_stack_area),
+                                         lvgl_dispaly_init, NULL, NULL, NULL, LVGL_THREAD_PRIORITY, 0, K_NO_WAIT);
     k_thread_name_set(lvgl_thread_handle, TASK_LVGL_NAME);
 }
