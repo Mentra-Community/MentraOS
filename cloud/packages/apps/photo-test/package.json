@@ -1,0 +1,31 @@
+{
+  "name": "photo-test",
+  "version": "1.0.0",
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "NODE_ENV=development bun --watch src/index.ts",
+    "ngrok": "ngrok http 3000 --url https://isaiah-tpa.ngrok.app",
+    "start": "bun src/index.ts"
+  },
+  "author": "Isaiah Ballah",
+  "license": "ISC",
+  "description": "MentraOS photo request test app — verifies photo capture, error handling, and timeout behavior (OS-947/OS-951)",
+  "dependencies": {
+    "@mentra/react": "workspace:*",
+    "@mentra/sdk": "workspace:*",
+    "bun-plugin-tailwind": "^0.1.2",
+    "hono": "^4.11.3",
+    "react": "^19",
+    "react-dom": "^19",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/ws": "^8.18.0",
+    "tailwindcss": "^4.1.17",
+    "typescript": "^5.0.0"
+  }
+}

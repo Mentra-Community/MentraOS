@@ -1,10 +1,64 @@
 /**
- * @fileoverview Feedback-related type definitions.
- * Separated to avoid circular imports between services.
+ * @fileoverview Feedback and incident type definitions.
+ * Shared types used by both the feedback service (feature requests)
+ * and the incidents API (bug reports).
  */
 
+// ============================================================================
+// Incident Types (bug reports via /api/incidents)
+// ============================================================================
+
 /**
- * Structured feedback data from mobile app.
+ * Metadata for screenshot attachments on bug reports.
+ * Stored in the incident logs JSON in R2.
+ */
+export interface AttachmentMetadata {
+  filename: string; // Original filename
+  storedAs: string; // R2 object key (e.g., incidents/{id}/attachments/{timestamp}-{filename})
+  mimeType: string;
+  size: number;
+  uploadedAt: string; // ISO timestamp
+}
+
+/**
+ * Phone state snapshot for bug reports.
+ * Captures relevant state from all stores at time of bug report.
+ */
+export interface PhoneStateSnapshot {
+  glasses?: Record<string, unknown>;
+  core?: Record<string, unknown>;
+  debug?: Record<string, unknown>;
+  connection?: Record<string, unknown>;
+  applets?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+}
+
+/**
+ * Response from incident creation (POST /api/incidents).
+ */
+export interface IncidentResponse {
+  success: boolean;
+  incidentId: string;
+}
+
+// ============================================================================
+// Feedback Types (feature requests via /api/client/feedback)
+// ============================================================================
+
+/**
+ * Response from feedback submission (POST /api/client/feedback).
+ */
+export interface FeedbackResponse {
+  success: boolean;
+}
+
+// ============================================================================
+// Shared Types
+// ============================================================================
+
+/**
+ * Structured feedback/bug report data from mobile app.
+ * Used by both /api/client/feedback and /api/incidents.
  */
 export interface FeedbackData {
   type: "bug" | "feature";

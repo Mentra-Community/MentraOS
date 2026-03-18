@@ -21,13 +21,15 @@ extension Data {
 @MainActor
 @objc(MentraNexSGC)
 class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCManager {
+    func sendIncidentId(_ incidentId: String) {}
+    
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
 
     func setMicEnabled(_: Bool) {}
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, silent _: Bool
+        compress _: String?, flash _: Bool, sound _: Bool
     ) {}
 
     func startRtmpStream(_: [String: Any]) {}
@@ -42,7 +44,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, silent _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -95,6 +97,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func cleanup() {}
 
+    func ping() {}
+
     func requestWifiScan() {}
 
     func sendWifiCredentials(_: String, _: String) {}
@@ -120,6 +124,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     // MARK: - Properties
 
     private var centralManager: CBCentralManager?
+
     private var peripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
     private var notifyCharacteristic: CBCharacteristic?

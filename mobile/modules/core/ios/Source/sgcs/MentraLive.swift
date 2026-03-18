@@ -594,6 +594,7 @@ extension MentraLive: CBCentralManagerDelegate {
         if let name = peripheral.name {
             UserDefaults.standard.set(name, forKey: PREFS_DEVICE_NAME)
             Bridge.log("Saved device name for future reconnection: \(name)")
+            GlassesStore.shared.apply("glasses", "bluetoothName", name)
         }
 
         // Audio Pairing: Setup Bluetooth audio after BLE connection
@@ -870,7 +871,7 @@ class MentraLive: NSObject, SGCManager {
     // Feature Flags
     // BLOCK_AUDIO_DUPLEX: When true, suspends LC3 mic while phone is playing audio via A2DP
     // to avoid overloading the MCU. Set to false to allow simultaneous A2DP + LC3 mic.
-    private let BLOCK_AUDIO_DUPLEX = true
+    private let BLOCK_AUDIO_DUPLEX = false
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
@@ -888,6 +889,11 @@ class MentraLive: NSObject, SGCManager {
     func setBrightness(_: Int, autoMode _: Bool) {}
     func clearDisplay() {}
     func sendTextWall(_: String) {}
+    func ping() {
+        Bridge.log("LIVE: ping()")
+        keepAwake()
+    }
+
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
@@ -925,7 +931,9 @@ class MentraLive: NSObject, SGCManager {
             if BLOCK_AUDIO_DUPLEX, let monitor = phoneAudioMonitor, monitor.isPlaying() {
                 // Phone is currently playing audio - don't start mic yet, mark as suspended
                 micSuspendedForAudio = true
-                Bridge.log("LIVE: 🎤 Mic requested but phone audio is playing - suspending until audio stops")
+                Bridge.log(
+                    "LIVE: 🎤 Mic requested but phone audio is playing - suspending until audio stops"
+                )
             } else {
                 // Safe to start mic
                 micSuspendedForAudio = false
@@ -978,8 +986,8 @@ class MentraLive: NSObject, SGCManager {
     // LC3 Mic suspend/resume state machine for A2DP conflict avoidance
     // When phone plays audio via A2DP while LC3 mic is active, it overloads the MCU
     // So we temporarily suspend the LC3 mic during phone audio playback
-    private var micIntentEnabled = false       // User/system WANTS mic enabled
-    private var micSuspendedForAudio = false   // Mic temporarily suspended due to phone audio
+    private var micIntentEnabled = false // User/system WANTS mic enabled
+    private var micSuspendedForAudio = false // Mic temporarily suspended due to phone audio
     private var phoneAudioMonitor: PhoneAudioMonitor?
 
     // Timing Constants
@@ -1002,6 +1010,7 @@ class MentraLive: NSObject, SGCManager {
 
     // BLE Properties
     private var centralManager: CBCentralManager?
+
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
@@ -1054,7 +1063,9 @@ class MentraLive: NSObject, SGCManager {
         if BLOCK_AUDIO_DUPLEX {
             phoneAudioMonitor = PhoneAudioMonitor.getInstance()
             phoneAudioMonitor?.startMonitoring(listener: self)
-            Bridge.log("LIVE: 🎵 Phone audio monitor started for LC3 mic suspend/resume (BLOCK_AUDIO_DUPLEX=true)")
+            Bridge.log(
+                "LIVE: 🎵 Phone audio monitor started for LC3 mic suspend/resume (BLOCK_AUDIO_DUPLEX=true)"
+            )
         } else {
             Bridge.log("LIVE: 🎵 Phone audio monitor disabled (BLOCK_AUDIO_DUPLEX=false)")
         }
@@ -1212,12 +1223,6 @@ class MentraLive: NSObject, SGCManager {
                 "B": enableString,
             ]
 
-            // Send this 5 times to ensure this gets through, since we don't get ACK from BES.
-            // Kind of hacky but works for now.
-            sendRawK900Command(command)
-            sendRawK900Command(command)
-            sendRawK900Command(command)
-            sendRawK900Command(command)
             if sendRawK900Command(command) {
                 Bridge.log("LIVE: Sent enable_custom_audio_tx via queue (BES-handled command)")
             } else {
@@ -1230,9 +1235,9 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, silent: Bool
+        compress: String?, flash: Bool, sound: Bool
     ) {
-        Bridge.log("Requesting photo: \(requestId) for app: \(appId), silent: \(silent)")
+        Bridge.log("Requesting photo: \(requestId) for app: \(appId), flash: \(flash), sound: \(sound)")
 
         var json: [String: Any] = [
             "type": "take_photo",
@@ -1276,8 +1281,8 @@ class MentraLive: NSObject, SGCManager {
         // Add compress parameter
         json["compress"] = compress ?? "none"
 
-        // silent mode: disables shutter sound and privacy LED
-        json["silent"] = silent
+        json["flash"] = flash
+        json["sound"] = sound
 
         Bridge.log("Using auto transfer mode with BLE fallback ID: \(bleImgId)")
 
@@ -1880,6 +1885,11 @@ class MentraLive: NSObject, SGCManager {
                 totalSize: totalSize
             )
 
+        case "ota_start_ack":
+            // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
+            Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
+            Bridge.sendOtaStartAck()
+
         case "ota_progress":
             // Process OTA progress update from glasses
             let stage = json["stage"] as? String ?? "download"
@@ -2083,7 +2093,9 @@ class MentraLive: NSObject, SGCManager {
                 }
                 lastBesOtaProgress = progress
 
-                Bridge.log("LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%")
+                Bridge.log(
+                    "LIVE: 📱 BES OTA progress via sr_adota - type: \(type), raw: \(rawProgress)%, rounded: \(progress)%"
+                )
 
                 // Determine status and error message based on type
                 var besOtaStatus: String
@@ -2126,7 +2138,8 @@ class MentraLive: NSObject, SGCManager {
                let gestureType = bodyObj["type"] as? Int
             {
                 if let gestureName = mapK900GestureType(gestureType) {
-                    Bridge.log("LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)")
+                    Bridge.log(
+                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)")
                     Bridge.sendTouchEvent(
                         deviceModel: deviceModel,
                         gestureName: gestureName,
@@ -2195,6 +2208,11 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendIncidentId(_ incidentId: String) {
+        Bridge.log("LIVE: Sending incidentId to glasses for log upload: \(incidentId)")
+        sendJson(["type": "upload_incident_logs", "incidentId": incidentId], wakeUp: true)
+    }
+
     func forgetWifiNetwork(_ ssid: String) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)")
 
@@ -2248,6 +2266,17 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func keepAwake() {
+        Bridge.log("LIVE: 📱 Sending keep_awake command to glasses")
+
+        let json: [String: Any] = [
+            "type": "keep_awake",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
     // MARK: - Message Handlers
 
     private func handleGlassesReady() {
@@ -2273,10 +2302,23 @@ class MentraLive: NSObject, SGCManager {
         // Start heartbeat
         startHeartbeat()
 
+        // Restore mic state if it was enabled before reconnect
+        if micIntentEnabled {
+            if BLOCK_AUDIO_DUPLEX, let monitor = phoneAudioMonitor, monitor.isPlaying() {
+                micSuspendedForAudio = true
+                Bridge.log(
+                    "LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending"
+                )
+            } else {
+                micSuspendedForAudio = false
+                Bridge.log("LIVE: 🎤 Restoring mic state after reconnect")
+                startMicBeat()
+            }
+        }
+
         fullyBooted = true
         connected = true
         connectionState = ConnTypes.CONNECTED
-        // maybe add audio monitoring here?
     }
 
     private func handleWifiScanResult(_ json: [String: Any]) {
@@ -2487,13 +2529,22 @@ class MentraLive: NSObject, SGCManager {
     private func handleTransferFailed(_ json: [String: Any]) {
         let fileName = json["fileName"] as? String ?? ""
         let reason = json["reason"] as? String ?? "unknown"
+        let requestId = json["requestId"] as? String ?? ""
 
         guard !fileName.isEmpty else {
             Bridge.log("LIVE: ❌ Transfer failed notification missing fileName: \(json)")
+            Bridge.sendPhotoError(
+                requestId: requestId, errorCode: "FILE_NAME_MISSING",
+                errorMessage: "Transfer failed fileName is missing"
+            )
             return
         }
 
         Bridge.log("LIVE: ❌ Transfer failed for: \(fileName) (reason: \(reason))")
+        Bridge.sendPhotoError(
+            requestId: requestId, errorCode: "TRANSFER_FAILED",
+            errorMessage: "Transfer failed for: \(fileName) (reason: \(reason))"
+        )
 
         if let session = activeFileTransfers.removeValue(forKey: fileName) {
             Bridge.log(
@@ -3951,9 +4002,9 @@ extension MentraLive {
         sendJson(json, wakeUp: true)
     }
 
-    func startVideoRecording(requestId: String, save: Bool, silent: Bool) {
+    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool) {
         startVideoRecording(
-            requestId: requestId, save: save, silent: silent, width: 0, height: 0, fps: 0
+            requestId: requestId, save: save, flash: flash, sound: sound, width: 0, height: 0, fps: 0
         )
     }
 
@@ -3977,10 +4028,10 @@ extension MentraLive {
     }
 
     func startVideoRecording(
-        requestId: String, save: Bool, silent: Bool, width: Int, height: Int, fps: Int
+        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int
     ) {
         Bridge.log(
-            "Starting video recording on glasses: requestId=\(requestId), save=\(save), silent=\(silent), resolution=\(width)x\(height)@\(fps)fps"
+            "Starting video recording on glasses: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps"
         )
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -3992,7 +4043,8 @@ extension MentraLive {
             "type": "start_video_recording",
             "request_id": requestId,
             "save": save,
-            "silent": silent,
+            "flash": flash,
+            "sound": sound,
         ]
 
         // Add video settings if provided

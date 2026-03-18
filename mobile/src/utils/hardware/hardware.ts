@@ -3,6 +3,7 @@ import {
   HardwareRequirement,
   HardwareType,
   HardwareRequirementLevel,
+  DeviceTypes,
 } from "@/../../cloud/packages/types/src"
 import {simulatedGlasses} from "@/../../cloud/packages/types/src/hardware"
 
@@ -70,6 +71,13 @@ export class HardwareCompatibility {
    * @returns true if hardware is available
    */
   private static checkHardwareAvailable(hardwareType: HardwareType, capabilities: Capabilities): boolean {
+    if (hardwareType === HardwareType.EXIST) {
+      if (capabilities.modelName === DeviceTypes.NONE) {
+        return false
+      }
+      return true
+    }
+
     switch (hardwareType) {
       case HardwareType.CAMERA:
         return capabilities.hasCamera

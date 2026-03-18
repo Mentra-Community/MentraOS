@@ -1,19 +1,24 @@
 import React, { useState } from 'react';
 import {
+  Alert,
+  AlertDescription,
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+  DialogTitle,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@mentra/shared";
 import { AlertCircle, Loader2, MoveIcon } from "lucide-react";
 import { Organization } from '@/services/api.service';
 import { App } from '@/types/app';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 
 /**
  * Interface for MoveOrgDialog props

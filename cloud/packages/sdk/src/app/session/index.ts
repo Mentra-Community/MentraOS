@@ -1,5 +1,3 @@
-/* eslint-disable import/order */
- 
 /**
  * 🎯 App Session Module
  *
@@ -12,6 +10,7 @@
 // v2: Add 'terminated' flag to prevent reconnection after "User session ended"
 // This helps verify the correct SDK version is running in production
 const SDK_SUBSCRIPTION_PATCH = "bug007-fix-v2";
+import pino from "pino";
 import { WebSocket } from "ws";
 import { EventManager, EventData } from "./events";
 import { LayoutManager } from "./layouts";
@@ -21,6 +20,10 @@ import { CameraModule } from "./modules/camera";
 import { LedModule } from "./modules/led";
 import { AudioManager } from "./modules/audio";
 import { ResourceTracker } from "../../utils/resource-tracker";
+import { MentraAuthError, MentraConnectionError, MentraTimeoutError, MentraError } from "../../logging/errors";
+import { createTelemetryStream } from "../../logging/telemetry-transport";
+import type { TelemetryLogEntry } from "../../types/messages/app-to-cloud";
+import type { RequestWifiSetup, OwnershipReleaseMessage } from "../../types/messages/app-to-cloud";
 import {
   // Message types
   AppToCloudMessage,
@@ -28,10 +31,9 @@ import {
   AppConnectionInit,
   AppSubscriptionUpdate,
   AudioPlayResponse,
-  RequestWifiSetup,
-  OwnershipReleaseMessage,
   AppToCloudMessageType,
   CloudToAppMessageType,
+  TelemetryResponse,
 
   // Event data types
   StreamType,
@@ -83,7 +85,10 @@ import {
   isManagedStreamStatus,
   isStreamStatusCheckResponse,
   isDeviceStateUpdate,
+  isRequestTelemetry,
 } from "../../types/messages/cloud-to-app";
+import type { RequestTelemetry } from "../../types/messages/cloud-to-app";
+import type { PhotoResponse } from "../../types/messages/glasses-to-cloud";
 import { SimpleStorage } from "./modules/simple-storage";
 import { DeviceState } from "./device-state";
 import { readNotificationWarnLog } from "../../utils/permissions-utils";
@@ -232,6 +237,22 @@ export class AppSession {
   /** Dedicated emitter for App-to-App events */
   private appEvents = new EventEmitter();
 
+  /**
+   * Pending handlers waiting for AUDIO_STREAM_READY responses from the cloud.
+   * Key: streamId, Value: handler function that receives the raw message.
+   * Used by AudioOutputStream.waitForReady() to resolve the relay URL.
+   * @internal
+   */
+  public _audioStreamReadyHandlers = new Map<string, (msg: any) => void>();
+
+  /** Per-session ring buffer of recent log entries for incident telemetry uploads */
+  private telemetryBuffer: TelemetryLogEntry[] = [];
+  /** Interval that sends app-level pings to keep the app-ws connection alive.
+   * Bidirectional traffic (ping → cloud, pong ← cloud) prevents load balancer
+   * idle timeouts from killing the WebSocket. See: cloud/issues/046-sdk-app-ws-liveness */
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private static readonly PING_INTERVAL_MS = 15_000;
+
   constructor(private config: AppSessionConfig) {
     // Set defaults and merge with provided config
     this.config = {
@@ -243,11 +264,30 @@ export class AppSession {
     };
 
     this.appServer = this.config.appServer;
-    this.logger = this.appServer.logger.child({
+    this.userId = this.config.userId;
+
+    // Build session logger: child of appServer.logger (for BetterStack + console)
+    // PLUS a telemetry stream that captures info+ entries into this session's
+    // ring buffer. Because pino child loggers share the parent transport, we
+    // instead create a fresh pino instance that:
+    //   1. Forwards all writes to the parent (preserving BetterStack + console)
+    //   2. Also tees into the per-session telemetry buffer
+    // This means every session.logger.info/warn/error call — including all
+    // module child loggers — is automatically captured for incident debugging.
+    const parentLogger = this.appServer.logger.child({
       userId: this.config.userId,
       service: "app-session",
     });
-    this.userId = this.config.userId;
+    const telemetryStream = createTelemetryStream(this.telemetryBuffer, 500);
+    // pino multistream: parent at debug (so BetterStack/console still control their own levels)
+    // + telemetry stream at info (debug is too noisy for incident bundles)
+    this.logger = pino(
+      { level: "debug", base: null },
+      pino.multistream([
+        { stream: (parentLogger as any)[pino.symbols.streamSym] ?? process.stderr, level: "debug" },
+        { stream: telemetryStream, level: "info" },
+      ]),
+    );
 
     // Make sure the URL is correctly formatted to prevent double protocol issues
     if (this.config.mentraOSWebsocketUrl) {
@@ -257,19 +297,14 @@ export class AppSession {
           // Fix URLs with incorrect protocol (e.g., 'ws://http://host')
           const fixedUrl = this.config.mentraOSWebsocketUrl.replace(/^ws:\/\/http:\/\//, "ws://");
           this.config.mentraOSWebsocketUrl = fixedUrl;
-          this.logger.warn(`⚠️ [${this.config.packageName}] Fixed malformed WebSocket URL: ${fixedUrl}`);
+          this.logger.warn(`Fixed malformed WebSocket URL: ${fixedUrl}`);
         }
       } catch (error) {
-        this.logger.error(
-          error,
-          `⚠️ [${this.config.packageName}] Invalid WebSocket URL format: ${this.config.mentraOSWebsocketUrl}`,
-        );
+        this.logger.error(error, `Invalid WebSocket URL format: ${this.config.mentraOSWebsocketUrl}`);
       }
     }
 
-    // Log initialization
-    this.logger.debug(`🚀 [${this.config.packageName}] App Session initialized`);
-    this.logger.debug(`🚀 [${this.config.packageName}] WebSocket URL: ${this.config.mentraOSWebsocketUrl}`);
+    this.logger.debug("App session initialized");
 
     // Validate URL format - give early warning for obvious issues
     // Check URL format but handle undefined case
@@ -279,7 +314,7 @@ export class AppSession {
         if (!["ws:", "wss:"].includes(url.protocol)) {
           this.logger.error(
             { config: this.config },
-            `⚠️ [${this.config.packageName}] Invalid WebSocket URL protocol: ${url.protocol}. Should be ws: or wss:`,
+            `Invalid WebSocket URL protocol: ${url.protocol}. Should be ws: or wss:`,
           );
         }
       } catch (error) {
@@ -295,6 +330,7 @@ export class AppSession {
       this.unsubscribe.bind(this),
       this.config.packageName,
       this.getHttpsServerUrl() || "",
+      this.logger,
     );
     this.layouts = new LayoutManager(config.packageName, this.send.bind(this));
 
@@ -635,6 +671,12 @@ export class AppSession {
 
     return new Promise((resolve, reject) => {
       try {
+        // Stop ping interval before replacing the WebSocket.
+        // This prevents a stale interval from a previous connection running
+        // during the reconnect window. startPingInterval() also calls this,
+        // but clearing here means no pings fire on a dead socket at all.
+        this.stopPingInterval();
+
         // Clear previous resources if reconnecting
         if (this.ws) {
           // Don't call full dispose() as that would clear subscriptions
@@ -648,14 +690,11 @@ export class AppSession {
         // Validate WebSocket URL before attempting connection
         if (!this.config.mentraOSWebsocketUrl) {
           this.logger.error("WebSocket URL is missing or undefined");
-          reject(new Error("WebSocket URL is required"));
+          reject(new MentraConnectionError("WebSocket URL is required"));
           return;
         }
 
-        // Add debug logging for connection attempts
-        this.logger.info(
-          `🔌🔌🔌 [${this.config.packageName}] Attempting to connect to: ${this.config.mentraOSWebsocketUrl} for session ${this.sessionId}`,
-        );
+        this.logger.debug(`Connecting to ${this.config.mentraOSWebsocketUrl}`);
 
         // Create connection with error handling
         this.ws = new WebSocket(this.config.mentraOSWebsocketUrl);
@@ -674,8 +713,8 @@ export class AppSession {
           } catch (error: unknown) {
             this.logger.error(error, "Error during connection initialization");
             const errorMessage = error instanceof Error ? error.message : String(error);
-            this.events.emit("error", new Error(`Connection initialization failed: ${errorMessage}`));
-            reject(error);
+            this.events.emit("error", new MentraConnectionError(`Connection initialization failed: ${errorMessage}`));
+            reject(error instanceof Error ? error : new MentraConnectionError(String(error)));
           }
         });
 
@@ -687,7 +726,7 @@ export class AppSession {
               try {
                 // Validate buffer before processing
                 if (data.length === 0) {
-                  this.events.emit("error", new Error("Received empty binary data"));
+                  this.events.emit("error", new MentraError("Received empty binary data", "EMPTY_DATA"));
                   return;
                 }
 
@@ -706,7 +745,10 @@ export class AppSession {
               } catch (error: unknown) {
                 this.logger.error(error, "Error processing binary message:");
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                this.events.emit("error", new Error(`Failed to process binary message: ${errorMessage}`));
+                this.events.emit(
+                  "error",
+                  new MentraError(`Failed to process binary message: ${errorMessage}`, "PARSE_ERROR"),
+                );
                 return;
               }
             }
@@ -730,7 +772,7 @@ export class AppSession {
 
               // Validate JSON before parsing
               if (!jsonData || jsonData.trim() === "") {
-                this.events.emit("error", new Error("Received empty JSON message"));
+                this.events.emit("error", new MentraError("Received empty JSON message", "PARSE_ERROR"));
                 return;
               }
 
@@ -739,7 +781,7 @@ export class AppSession {
 
               // Basic schema validation
               if (!message || typeof message !== "object" || !("type" in message)) {
-                this.events.emit("error", new Error("Malformed message: missing type property"));
+                this.events.emit("error", new MentraError("Malformed message: missing type property", "PARSE_ERROR"));
                 return;
               }
 
@@ -748,13 +790,13 @@ export class AppSession {
             } catch (error: unknown) {
               this.logger.error(error, "JSON parsing error");
               const errorMessage = error instanceof Error ? error.message : String(error);
-              this.events.emit("error", new Error(`Failed to parse JSON message: ${errorMessage}`));
+              this.events.emit("error", new MentraError(`Failed to parse message: ${errorMessage}`, "PARSE_ERROR"));
             }
           } catch (error: unknown) {
             // Final catch - should never reach here if individual handlers work correctly
             this.logger.error({ error }, "Unhandled message processing error");
             const errorMessage = error instanceof Error ? error.message : String(error);
-            this.events.emit("error", new Error(`Unhandled message error: ${errorMessage}`));
+            this.events.emit("error", new MentraError(`Unhandled message error: ${errorMessage}`, "INTERNAL_ERROR"));
           }
         };
 
@@ -789,34 +831,29 @@ export class AppSession {
           const isManualStop = reason && reason.includes("App stopped");
           const isUserSessionEnded = reason && reason.includes("User session ended");
 
-          // Log closure details for diagnostics
-          this.logger.debug(`🔌 [${this.config.packageName}] WebSocket closed with code ${code}${reasonStr}`);
-          this.logger.debug(
-            `🔌 [${this.config.packageName}] isNormalClosure: ${isNormalClosure}, isManualStop: ${isManualStop}, isUserSessionEnded: ${isUserSessionEnded}`,
-          );
+          this.logger.debug(`WebSocket closed (code: ${code}${reasonStr})`);
+
+          // Stop ping interval immediately — the socket is closed so pings are pointless.
+          // connect() will restart it on reconnect; disconnect() would also clear it,
+          // but stopping here prevents an orphaned interval if neither is called.
+          this.stopPingInterval();
 
           // If user session ended, mark as terminated to prevent any future reconnection
           if (isUserSessionEnded) {
             this.terminated = true;
-            this.logger.info(
-              `🛑 [${this.config.packageName}] User session ended - marking as terminated, no reconnection allowed`,
-            );
+            this.logger.debug("User session ended — marked as terminated, no reconnection");
           }
 
           if (!isNormalClosure && !isManualStop && !this.terminated) {
-            this.logger.warn(`🔌 [${this.config.packageName}] Abnormal closure detected, attempting reconnection`);
+            this.logger.debug("Abnormal closure detected, attempting reconnection");
             this.handleReconnection();
           } else {
-            this.logger.debug(
-              `🔌 [${this.config.packageName}] Normal/terminated closure detected, not attempting reconnection (terminated: ${this.terminated})`,
-            );
+            this.logger.debug("Normal closure, not reconnecting");
           }
 
           // if user session ended, then trigger onStop.
           if (isUserSessionEnded) {
-            this.logger.info(
-              `🛑 [${this.config.packageName}] User session ended - emitting disconnected event with sessionEnded flag`,
-            );
+            this.logger.debug("User session ended — emitting disconnected event");
             // Emit a disconnected event with a special flag to indicate session end
             // This will be caught by AppServer which will call the onStop callback
             const disconnectInfo = {
@@ -843,28 +880,10 @@ export class AppSession {
         // Connection error handler
         const errorHandler = (error: Error) => {
           this.logger.error(error, "WebSocket error");
-          this.events.emit("error", error);
+          this.events.emit("error", new MentraConnectionError(error.message));
         };
 
-        // Enhanced error handler with detailed logging
         this.ws.on("error", (error: Error) => {
-          this.logger.error(
-            error,
-            `⛔️⛔️⛔️ [${this.config.packageName}] WebSocket connection error: ${error.message}`,
-          );
-
-          // Try to provide more context
-          const errMsg = error.message || "";
-          if (errMsg.includes("ECONNREFUSED")) {
-            this.logger.error(
-              `⛔️⛔️⛔️ [${this.config.packageName}] Connection refused - Check if the server is running at the specified URL`,
-            );
-          } else if (errMsg.includes("ETIMEDOUT")) {
-            this.logger.error(
-              `⛔️⛔️⛔️ [${this.config.packageName}] Connection timed out - Check network connectivity and firewall rules`,
-            );
-          }
-
           errorHandler(error);
         });
 
@@ -891,11 +910,12 @@ export class AppSession {
               sessionId: this.sessionId,
               timeoutMs,
             },
-            `⏱️⏱️⏱️ [${this.config.packageName}] Connection timeout after ${timeoutMs}ms`,
+            `Connection timeout after ${timeoutMs}ms`,
           );
 
-          this.events.emit("error", new Error(`Connection timeout after ${timeoutMs}ms`));
-          reject(new Error("Connection timeout"));
+          const err = new MentraTimeoutError(`Connection timeout after ${timeoutMs}ms`);
+          this.events.emit("error", err);
+          reject(err);
         }, timeoutMs);
 
         // Clear timeout on successful connection
@@ -909,7 +929,7 @@ export class AppSession {
       } catch (error: unknown) {
         this.logger.error(error, "Connection setup error");
         const errorMessage = error instanceof Error ? error.message : String(error);
-        reject(new Error(`Failed to setup connection: ${errorMessage}`));
+        reject(new MentraConnectionError(`Failed to setup connection: ${errorMessage}`));
       }
     });
   }
@@ -981,6 +1001,9 @@ export class AppSession {
     if (this.audio) {
       this.audio.cancelAllRequests();
     }
+
+    // Stop ping interval before disposing resources
+    this.stopPingInterval();
 
     // Use the resource tracker to clean up everything
     this.resources.dispose();
@@ -1072,7 +1095,10 @@ export class AppSession {
     } catch (error: unknown) {
       this.logger.error(error, "Error updating subscriptions from settings");
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.events.emit("error", new Error(`Failed to update subscriptions: ${errorMessage}`));
+      this.events.emit(
+        "error",
+        new MentraError(`Failed to update subscriptions: ${errorMessage}`, "SUBSCRIPTION_ERROR"),
+      );
     }
   }
 
@@ -1244,7 +1270,7 @@ export class AppSession {
     try {
       // Validate message before processing
       if (!this.validateMessage(message)) {
-        this.events.emit("error", new Error("Invalid message format received"));
+        this.events.emit("error", new MentraError("Invalid message format received", "PARSE_ERROR"));
         return;
       }
 
@@ -1304,6 +1330,14 @@ export class AppSession {
           // Emit connected event with settings
           this.events.emit("connected", this.settingsData);
 
+          // Start app-level ping interval to keep the app-ws connection alive.
+          // The SDK sends {type:"ping"} every 15s; the cloud responds {type:"pong"}.
+          // Both directions produce traffic, satisfying infra bidirectional-traffic
+          // requirements that prevent load balancer idle timeouts.
+          // Only new-SDK apps send pings — old 2.x apps are unaffected.
+          // See: cloud/issues/046-sdk-app-ws-liveness
+          this.startPingInterval();
+
           // Log once to confirm Bug 007 fix is active (subscriptions derived from handlers)
           const handlerCount = this.events.getRegisteredStreams().length;
           this.logger.info(
@@ -1321,7 +1355,7 @@ export class AppSession {
         } else if (isAppConnectionError(message) || message.type === "connection_error") {
           // Handle both App-specific connection_error and standard connection_error
           const errorMessage = message.message || "Unknown connection error";
-          this.events.emit("error", new Error(errorMessage));
+          this.events.emit("error", new MentraAuthError(errorMessage));
         } else if (message.type === StreamType.AUDIO_CHUNK) {
           // Check if we have a handler registered for AUDIO_CHUNK (derived from handlers)
           const hasAudioHandler = this.events.getRegisteredStreams().includes(StreamType.AUDIO_CHUNK);
@@ -1520,7 +1554,7 @@ export class AppSession {
           this.logger.warn(
             `Received 'connection_error' type directly. Consider aligning cloud to send 'tpa_connection_error'. Message: ${errorMessage}`,
           );
-          this.events.emit("error", new Error(errorMessage));
+          this.events.emit("error", new MentraConnectionError(errorMessage));
         } else if (message.type === "permission_error") {
           // Handle permission errors from cloud
           this.logger.warn(
@@ -1548,38 +1582,182 @@ export class AppSession {
               message: detail.message,
             });
           });
+        } else if (message.type === "audio_stream_ready") {
+          // Route AUDIO_STREAM_READY to the pending handler for this streamId
+          const streamId = (message as any).streamId;
+          const handler = this._audioStreamReadyHandlers.get(streamId);
+          if (handler) {
+            handler(message);
+            this._audioStreamReadyHandlers.delete(streamId);
+          } else {
+            this.logger.debug({ streamId }, "Received audio_stream_ready with no pending handler");
+          }
         } else if (isAudioPlayResponse(message)) {
           // Delegate audio play response handling to the audio module
           if (this.audio) {
             this.audio.handleAudioPlayResponse(message as AudioPlayResponse);
           }
         } else if (isPhotoResponse(message)) {
-          // Legacy photo response handling - now photos come directly via webhook
-          // This branch can be removed in the future as all photos now go through /photo-upload
-          this.logger.warn(
-            { message },
-            "Received legacy photo response - photos should now come via /photo-upload webhook",
-          );
+          // Photo responses can arrive via WebSocket when the cloud forwards error/success
+          // from the phone's REST endpoint (POST /api/client/photo/response).
+          // Success photos normally arrive via HTTP to /photo-upload, but errors always
+          // come through WebSocket because the phone reports them to cloud, not directly
+          // to the SDK. We MUST handle errors here to reject the pending promise immediately
+          // instead of letting the developer wait 30s for a generic timeout.
+          // See: OS-947, OS-951
+          const photoResponse = message as PhotoResponse;
+          const { requestId, success } = photoResponse;
+
+          if (requestId && this.appServer) {
+            const pending = this.appServer.completePhotoRequest(requestId);
+            if (pending) {
+              if (success) {
+                // Success via WebSocket (legacy path — normally comes via /photo-upload HTTP)
+                this.logger.info({ requestId }, "📸 Photo success received via WebSocket (legacy path)");
+                pending.resolve({
+                  buffer: Buffer.from([]),
+                  mimeType: "image/jpeg",
+                  filename: "photo.jpg",
+                  requestId,
+                  size: 0,
+                  timestamp: new Date(),
+                  photoUrl: photoResponse.photoUrl,
+                } as any);
+              } else {
+                // Error response — this is the critical path for OS-947/OS-951
+                const errorCode = photoResponse.error?.code || "UNKNOWN_ERROR";
+                const errorMessage = photoResponse.error?.message || "Photo capture failed";
+                this.logger.warn(
+                  { requestId, errorCode, errorMessage },
+                  `📸 Photo error received via WebSocket: ${errorCode} - ${errorMessage}`,
+                );
+                pending.reject(new Error(`${errorCode}: ${errorMessage}`));
+              }
+            } else {
+              this.logger.debug(
+                { requestId, success },
+                "Photo response received via WebSocket but no pending request found (may have timed out or been completed via /photo-upload)",
+              );
+            }
+          } else {
+            this.logger.warn(
+              { requestId, hasAppServer: !!this.appServer },
+              "Photo response received via WebSocket but missing requestId or appServer",
+            );
+          }
         } else if (isRgbLedControlResponse(message)) {
           // LED control responses are no longer handled - fire-and-forget mode
           this.logger.debug({ message }, "Received LED control response (ignored - fire-and-forget mode)");
+        } else if (isRequestTelemetry(message)) {
+          // Cloud is asking us to upload recent telemetry logs for incident debugging
+          this.handleTelemetryRequest(message as RequestTelemetry).catch((err) => {
+            this.logger.warn(err, "handleTelemetryRequest failed");
+          });
+        } else if ((message as any).type === "pong") {
+          // Cloud responded to our app-level ping — bidirectional traffic maintained.
+          // No action needed: the response itself satisfies the egress requirement.
+          // See: cloud/issues/046-sdk-app-ws-liveness
         }
         // Handle unrecognized message types gracefully
         else {
           this.logger.warn(`Unrecognized message type: ${(message as any).type}`);
-          this.events.emit("error", new Error(`Unrecognized message type: ${(message as any).type}`));
+          this.events.emit(
+            "error",
+            new MentraError(`Unrecognized message type: ${(message as any).type}`, "UNKNOWN_TYPE"),
+          );
         }
       } catch (processingError: unknown) {
         // Catch any errors during message processing to prevent App crashes
         this.logger.error(processingError, "Error processing message:");
         const errorMessage = processingError instanceof Error ? processingError.message : String(processingError);
-        this.events.emit("error", new Error(`Error processing message: ${errorMessage}`));
+        this.events.emit("error", new MentraError(`Error processing message: ${errorMessage}`, "INTERNAL_ERROR"));
       }
     } catch (error: unknown) {
       // Final safety net to ensure the App doesn't crash on any unexpected errors
       this.logger.error(error, "Unexpected error in message handler");
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.events.emit("error", new Error(`Unexpected error in message handler: ${errorMessage}`));
+    }
+  }
+
+  /**
+   * 🏓 Start the app-level ping interval.
+   * Clears any existing interval first so reconnects don't double-up.
+   */
+  private startPingInterval(): void {
+    this.stopPingInterval();
+    this.pingInterval = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      try {
+        this.ws.send(JSON.stringify({ type: "ping" }));
+      } catch {
+        // If send fails the WebSocket is already dead; the close handler
+        // will fire and trigger reconnection — nothing to do here.
+      }
+    }, AppSession.PING_INTERVAL_MS);
+  }
+
+  /**
+   * 🏓 Stop the app-level ping interval.
+   */
+  private stopPingInterval(): void {
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+
+  /**
+   * 📤 Handle a REQUEST_TELEMETRY message from cloud.
+   * Collects recent log entries from the AppServer's telemetry buffer and
+   * POSTs them back to the cloud's incident endpoint so the support team
+   * can diagnose production issues.
+   *
+   * @param request - The REQUEST_TELEMETRY message from cloud
+   */
+  private async handleTelemetryRequest(request: RequestTelemetry): Promise<void> {
+    const { incidentId, uploadToken, windowMs } = request;
+
+    // Read from this session's own buffer — already scoped to this user
+    const cutoff = windowMs ? Date.now() - windowMs : 0;
+    const logs = cutoff > 0 ? this.telemetryBuffer.filter((e) => e.timestamp >= cutoff) : [...this.telemetryBuffer];
+
+    this.logger.debug({ incidentId, logCount: logs.length, windowMs }, "Collecting telemetry for incident upload");
+
+    const payload: TelemetryResponse = {
+      type: AppToCloudMessageType.TELEMETRY_RESPONSE,
+      incidentId,
+      packageName: this.config.packageName,
+      logs,
+      metadata: {
+        bufferSize: logs.length,
+        oldestEntryMs: logs.length > 0 ? logs[0].timestamp : undefined,
+        newestEntryMs: logs.length > 0 ? logs[logs.length - 1].timestamp : undefined,
+      },
+    };
+
+    const baseUrl = this.getHttpsServerUrl();
+    if (!baseUrl) {
+      this.logger.warn({ incidentId }, "Cannot upload telemetry — no server URL available");
+      return;
+    }
+
+    try {
+      // Strip any path suffix (e.g. /app-ws) to get the cloud root URL
+      const cloudBase = baseUrl.replace(/\/app-ws.*$/, "");
+      const url = `${cloudBase}/api/incidents/${incidentId}/logs`;
+
+      await axios.post(url, payload, {
+        headers: {
+          "Authorization": `Bearer ${uploadToken}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 10_000,
+      });
+
+      this.logger.info({ incidentId, logCount: logs.length }, "Telemetry uploaded successfully");
+    } catch (err) {
+      this.logger.error(err, `Failed to upload telemetry for incident ${incidentId}`);
     }
   }
 
@@ -1777,7 +1955,7 @@ export class AppSession {
     // Check if we've exceeded the maximum attempts
     const maxAttempts = this.config.maxReconnectAttempts || 3;
     if (this.reconnectAttempts >= maxAttempts) {
-      this.logger.info(`🔄 Maximum reconnection attempts (${maxAttempts}) reached, giving up`);
+      this.logger.warn(`Reconnection failed after ${maxAttempts} attempts, giving up`);
 
       // Emit a permanent disconnection event to trigger onStop in the App server
       this.events.emit("disconnected", {
@@ -1796,9 +1974,7 @@ export class AppSession {
     const delay = baseDelay * Math.pow(2, this.reconnectAttempts);
     this.reconnectAttempts++;
 
-    this.logger.debug(
-      `🔄 [${this.config.packageName}] Reconnection attempt ${this.reconnectAttempts}/${maxAttempts} in ${delay}ms`,
-    );
+    this.logger.warn(`Connection lost, reconnecting (${this.reconnectAttempts}/${maxAttempts})...`);
 
     // Use the resource tracker for the timeout
     await new Promise<void>((resolve) => {
@@ -1806,20 +1982,17 @@ export class AppSession {
     });
 
     try {
-      this.logger.debug(`🔄 [${this.config.packageName}] Attempting to reconnect...`);
       await this.connect(this.sessionId);
-      this.logger.debug(`✅ [${this.config.packageName}] Reconnection successful!`);
+      this.logger.info("Reconnected successfully");
       this.reconnectAttempts = 0;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(error, `❌ [${this.config.packageName}] Reconnection failed for user ${this.userId}`);
+      this.logger.debug(error, "Reconnection attempt failed");
       this.events.emit("error", new Error(`Reconnection failed: ${errorMessage}`));
 
       // Check if this was the last attempt
       if (this.reconnectAttempts >= maxAttempts) {
-        this.logger.debug(
-          `🔄 [${this.config.packageName}] Final reconnection attempt failed, emitting permanent disconnection`,
-        );
+        this.logger.debug("Final reconnection attempt failed, emitting permanent disconnection");
 
         // Emit permanent disconnection event after the last failed attempt
         this.events.emit("disconnected", {
@@ -1839,6 +2012,33 @@ export class AppSession {
    */
   public sendMessage(message: AppToCloudMessage): void {
     return this.send(message);
+  }
+
+  /**
+   * 📤 Send raw binary data over the WebSocket.
+   * Used by AudioOutputStream to push audio frames to the cloud relay.
+   *
+   * Binary frame format for audio streaming:
+   *   [36 bytes: streamId UUID as ASCII] [N bytes: audio data]
+   *
+   * @param data - Binary data to send
+   * @throws {Error} If WebSocket is not connected
+   * @internal
+   */
+  public sendBinary(data: Uint8Array | Buffer): void {
+    if (!this.ws) {
+      throw new Error("WebSocket connection not established");
+    }
+    if (this.ws.readyState !== 1) {
+      throw new Error("WebSocket not connected");
+    }
+    try {
+      this.ws.send(data);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      this.logger.debug({ err }, "Failed to send binary frame");
+      throw new Error(`Failed to send binary data: ${errorMessage}`);
+    }
   }
 
   /**
@@ -1959,7 +2159,7 @@ export class AppSession {
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${appApiKey}`,
+        "Authorization": `Bearer ${appApiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -2211,8 +2411,13 @@ export class TpaSession extends AppSession {
   }
 }
 
-// Export module types for developers
-export { CameraModule, PhotoRequestOptions, RtmpStreamOptions } from "./modules/camera";
-export { LedModule, LedControlOptions } from "./modules/led";
-export { AudioManager, AudioPlayOptions, AudioPlayResult, SpeakOptions } from "./modules/audio";
+// Export module classes for developers
+export { CameraModule } from "./modules/camera";
+export { LedModule } from "./modules/led";
+export { AudioManager } from "./modules/audio";
 export { SimpleStorage } from "./modules/simple-storage";
+
+// Export module types for developers
+export type { PhotoRequestOptions, RtmpStreamOptions } from "./modules/camera";
+export type { LedControlOptions } from "./modules/led";
+export type { AudioPlayOptions, AudioPlayResult, SpeakOptions } from "./modules/audio";

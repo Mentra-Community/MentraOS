@@ -29,10 +29,6 @@ config.resolver.sourceExts = [...config.resolver.sourceExts, "svg"]
 // Add HTML to asset extensions
 config.resolver.assetExts = [...config.resolver.assetExts, "html"]
 
-// This helps support certain popular third-party libraries
-// such as Firebase that use the extension cjs.
-config.resolver.sourceExts.push("cjs")
-
 // Watch the core and cloud modules for changes
 config.watchFolders = [
   path.resolve(__dirname, "./modules/core"),

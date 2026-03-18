@@ -1,7 +1,7 @@
 import {useVideoPlayer, VideoView} from "expo-video"
 import {useEffect, useState} from "react"
 import {View, Modal} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 import {Button} from "@/components/ignite"
 
@@ -11,7 +11,7 @@ interface LoadingCoverVideoProps {
 }
 
 export function LoadingCoverVideo({videoUrl, onClose}: LoadingCoverVideoProps) {
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const [isReady, setIsReady] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [dismissed, setDismissed] = useState(false)

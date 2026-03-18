@@ -15,6 +15,7 @@ const LoginPage: React.FC = () => {
     location.state?.returnTo ||
     '/account';
   const message = location.state?.message;
+  const heading = location.state?.heading;
 
   useEffect(() => {
     if (from && from !== '/' && from !== '/account') {
@@ -36,7 +37,8 @@ const LoginPage: React.FC = () => {
 
   return (
     <LoginUI
-      siteName="Account"
+      siteName="Account Portal"
+      heading={heading}
       message={message}
       redirectTo={`${window.location.origin}/login`}
       emailRedirectPath="/"

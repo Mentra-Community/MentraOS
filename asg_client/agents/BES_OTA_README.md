@@ -186,6 +186,14 @@ All files stored in `/storage/emulated/0/asg/`:
 
 ## Testing
 
+### Test BES Firmware Update
+
+Use the test script to quickly test BES firmware OTA:
+
+```bash
+./scripts/test-bes-ota.sh path/to/firmware.bin
+```
+
 ### Manual Testing Procedure
 
 1. Upload firmware .bin file to server

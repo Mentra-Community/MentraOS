@@ -36,7 +36,7 @@ export default function WifiScanScreen() {
 
   // if the previous route is in this list, or the second to last route is in this list
   // show / allow the back button:
-  const backableRoutes = ["/settings/glasses", "/home"]
+  const backableRoutes = ["/miniapps/settings/glasses", "/home"]
 
   const secondLastRoute = getPreviousRoute(1)
   const showBack = backableRoutes.includes(getPreviousRoute() || "") || backableRoutes.includes(secondLastRoute || "")

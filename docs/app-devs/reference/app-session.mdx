@@ -25,7 +25,7 @@ constructor(config: AppSessionConfig)
 
 ### events
 
-Provides access to the [`EventManager`](/reference/managers/event-manager) for subscribing to real-time events.
+Provides access to the [`EventManager`](/app-devs/reference/managers/event-manager) for subscribing to real-time events.
 
 ```typescript
 readonly events: EventManager
@@ -33,7 +33,7 @@ readonly events: EventManager
 
 ### layouts
 
-Provides access to the [`LayoutManager`](/reference/managers/layout-manager) for controlling the AR display.
+Provides access to the [`LayoutManager`](/app-devs/reference/managers/layout-manager) for controlling the AR display.
 
 ```typescript
 readonly layouts: LayoutManager
@@ -41,7 +41,7 @@ readonly layouts: LayoutManager
 
 ### settings
 
-Provides access to the [`SettingsManager`](/reference/managers/settings-manager) for reading and monitoring app settings.
+Provides access to the [`SettingsManager`](/app-devs/reference/managers/settings-manager) for reading and monitoring app settings.
 
 ```typescript
 readonly settings: SettingsManager
@@ -49,13 +49,13 @@ readonly settings: SettingsManager
 
 ### dashboard
 
-Provides access to the [`DashboardAPI`](/reference/dashboard-api#interface-dashboardapi) for sending content to the user's dashboard.
+Provides access to the [`DashboardAPI`](/app-devs/reference/dashboard-api#interface-dashboardapi) for sending content to the user's dashboard.
 
 ```typescript
 readonly dashboard: DashboardAPI
 ```
 
-The dashboard is a persistent UI surface that appears when users look up, allowing your app to display status updates and information even when other apps are active. See the [Dashboard Tutorial](/dashboard) for a quick start guide and the [Dashboard API Reference](/reference/dashboard-api) for complete documentation.
+The dashboard is a persistent UI surface that appears when users look up, allowing your app to display status updates and information even when other apps are active. See the [Dashboard Tutorial](/dashboard) for a quick start guide and the [Dashboard API Reference](/app-devs/reference/dashboard-api) for complete documentation.
 
 ### capabilities
 
@@ -67,7 +67,7 @@ readonly capabilities: Capabilities | null
 
 The capabilities object contains information about what hardware features are available on the connected device, allowing your app to adapt its behavior accordingly.
 
-See the [Device Capabilities Guide](/capabilities) for usage examples and the [Capabilities Reference](/reference/interfaces/capabilities) for complete type documentation.
+See the [Device Capabilities Guide](/capabilities) for usage examples and the [Capabilities Reference](/app-devs/reference/interfaces/capabilities) for complete type documentation.
 
 ### logger
 
@@ -135,7 +135,7 @@ onTranscription(handler: (data: TranscriptionData) => void): () => void
 ```
 
 **Parameters:**
-- `handler`: Callback function to process [`TranscriptionData`](/reference/interfaces/event-types#transcriptiondata)
+- `handler`: Callback function to process [`TranscriptionData`](/app-devs/reference/interfaces/event-types#transcriptiondata)
 
 **Returns:** An unsubscribe function to remove the handler
 
@@ -148,7 +148,7 @@ onHeadPosition(handler: (data: HeadPosition) => void): () => void
 ```
 
 **Parameters:**
-- `handler`: Callback function to process [`HeadPosition`](/reference/interfaces/event-types#headposition) data
+- `handler`: Callback function to process [`HeadPosition`](/app-devs/reference/interfaces/event-types#headposition) data
 
 **Returns:** An unsubscribe function to remove the handler
 
@@ -161,7 +161,7 @@ onButtonPress(handler: (data: ButtonPress) => void): () => void
 ```
 
 **Parameters:**
-- `handler`: Callback function to process [`ButtonPress`](/reference/interfaces/event-types#buttonpress) data
+- `handler`: Callback function to process [`ButtonPress`](/app-devs/reference/interfaces/event-types#buttonpress) data
 
 **Returns:** An unsubscribe function to remove the handler
 
@@ -174,7 +174,7 @@ onPhoneNotifications(handler: (data: PhoneNotification) => void): () => void
 ```
 
 **Parameters:**
-- `handler`: Callback function to process [`PhoneNotification`](/reference/interfaces/event-types#phonenotification) data
+- `handler`: Callback function to process [`PhoneNotification`](/app-devs/reference/interfaces/event-types#phonenotification) data
 
 **Returns:** An unsubscribe function to remove the handler
 
@@ -189,7 +189,7 @@ subscribe(type: StreamType): void
 ```
 
 **Parameters:**
-- `type`: The [`StreamType`](/reference/enums#streamtype) to subscribe to
+- `type`: The [`StreamType`](/app-devs/reference/enums#streamtype) to subscribe to
 
 ### on()
 
@@ -203,7 +203,7 @@ on<T extends StreamType>(
 ```
 
 **Parameters:**
-- `event`: The [`StreamType`](/reference/enums#streamtype) to listen for
+- `event`: The [`StreamType`](/app-devs/reference/enums#streamtype) to listen for
 - `handler`: Callback function to process the data associated with the stream type
 
 **Returns:** An unsubscribe function to remove the handler
@@ -219,7 +219,7 @@ connect(sessionId: string): Promise<void>
 ```
 
 **Parameters:**
-- `sessionId`: The unique identifier for this session (provided by the [`SESSION_REQUEST`](/reference/interfaces/webhook-types#sessionwebhookrequest) webhook)
+- `sessionId`: The unique identifier for this session (provided by the [`SESSION_REQUEST`](/app-devs/reference/interfaces/webhook-types#sessionwebhookrequest) webhook)
 
 **Returns:** A promise that resolves upon successful connection and authentication, or rejects on failure
 
@@ -241,7 +241,7 @@ Retrieves all current application settings for this user session.
 getSettings(): AppSettings
 ```
 
-**Returns:** A copy of the current [`AppSettings`](/reference/interfaces/config-types#appsettings)
+**Returns:** A copy of the current [`AppSettings`](/app-devs/reference/interfaces/config-types#appsettings)
 
 ### getSetting()
 
@@ -270,7 +270,7 @@ setSubscriptionSettings(options: {
 **Parameters:**
 - `options`: Configuration object
 	- `options.updateOnChange`: An array of setting keys that should trigger a subscription update when their value changes
-	- `options.handler`: A function that takes the current [`AppSettings`](/reference/interfaces/config-types#appsettings) and returns an array of [`StreamType`](/reference/enums#streamtype) subscriptions that should be active
+	- `options.handler`: A function that takes the current [`AppSettings`](/app-devs/reference/interfaces/config-types#appsettings) and returns an array of [`StreamType`](/app-devs/reference/enums#streamtype) subscriptions that should be active
 
 ## Configuration
 

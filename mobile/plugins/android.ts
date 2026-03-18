@@ -5,6 +5,7 @@ import path from "path"
 import {
   ConfigPlugin,
   withAppBuildGradle,
+  withProjectBuildGradle,
   // withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
@@ -16,6 +17,7 @@ import {
  */
 const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
+  config = withProjectBuildGradleModifications(config)
   config = withAppBuildGradleModifications(config)
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
@@ -26,11 +28,41 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
 }
 
 /**
+ * Modify root build.gradle to exclude protobuf-javalite globally
+ * (conflicts with protobuf-java required by core module's MentraosBle)
+ */
+function withProjectBuildGradleModifications(config: any) {
+  return withProjectBuildGradle(config, (config) => {
+    let buildGradle = config.modResults.contents
+
+    if (!buildGradle.includes("exclude group: 'com.google.protobuf', module: 'protobuf-javalite'")) {
+      buildGradle = buildGradle.replace(
+        /(allprojects\s*\{[^}]*repositories\s*\{[^}]*\})/s,
+        `$1
+  // Exclude protobuf-javalite globally to avoid conflicts with protobuf-java
+  configurations.all {
+    exclude group: 'com.google.protobuf', module: 'protobuf-javalite'
+  }`,
+      )
+    }
+
+    config.modResults.contents = buildGradle
+    return config
+  })
+}
+
+/**
  * Modify app/build.gradle to add custom configurations
  */
 function withAppBuildGradleModifications(config: any) {
   return withAppBuildGradle(config, (config) => {
     let buildGradle = config.modResults.contents
+
+    // 0. Remove any unconditional sentry.gradle apply added by @sentry/react-native expo plugin
+    // We use our own conditional apply gated on sentryUploadEnabled property
+    // ^apply matches only unindented (top-level) applies; the conditional one inside
+    // the if block is indented and won't match
+    buildGradle = buildGradle.replace(/^apply from:.*sentry\.gradle.*\n*/gm, "")
 
     // 1. Add release credentials and conditional Sentry script (after jscFlavor)
     if (!buildGradle.includes("releaseStorePassword =")) {
@@ -87,8 +119,8 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 2.5.0
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.5.0"')
+    // 2. Update versionName to 2.7.0
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.7.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -185,6 +217,28 @@ function withAndroidManifestModifications(config: any) {
       manifest["uses-permission"] = manifest["uses-permission"].filter(
         (p: any) => !permissionsToRemove.includes(p.$["android:name"]),
       )
+    }
+
+    // Remove AD_ID permission via tools:node="remove" so the manifest merger strips it
+    // even when Firebase Analytics adds it via transitive dependencies
+    if (!manifest.$["xmlns:tools"]) {
+      manifest.$["xmlns:tools"] = "http://schemas.android.com/tools"
+    }
+    if (!manifest["uses-permission"]) {
+      manifest["uses-permission"] = []
+    }
+    const adIdPerm = manifest["uses-permission"].find(
+      (p: any) => p.$["android:name"] === "com.google.android.gms.permission.AD_ID",
+    )
+    if (adIdPerm) {
+      adIdPerm.$["tools:node"] = "remove"
+    } else {
+      manifest["uses-permission"].push({
+        $: {
+          "android:name": "com.google.android.gms.permission.AD_ID",
+          "tools:node": "remove",
+        },
+      })
     }
 
     // Add permissions that need to be added
@@ -399,20 +453,23 @@ function withGradlePropertiesModifications(config: any) {
       const jvmArgsIndex = props.findIndex((p) => p.type === "property" && p.key === "org.gradle.jvmargs")
 
       if (jvmArgsIndex !== -1) {
-        // Append nodePath to existing jvmargs if not already present
         const jvmArgsProp = props[jvmArgsIndex]
         if (jvmArgsProp.type === "property" && "value" in jvmArgsProp) {
-          const currentValue = jvmArgsProp.value
+          let currentValue = jvmArgsProp.value
+          // Increase heap and metaspace to avoid OOM during release builds
+          currentValue = currentValue.replace(/-Xmx\d+m/, "-Xmx8192m")
+          currentValue = currentValue.replace(/-XX:MaxMetaspaceSize=\d+m/, "-XX:MaxMetaspaceSize=2048m")
           if (!currentValue.includes("-Dorg.gradle.project.nodePath=")) {
-            jvmArgsProp.value = `${currentValue} -Dorg.gradle.project.nodePath=${nodePath}`
+            currentValue = `${currentValue} -Dorg.gradle.project.nodePath=${nodePath}`
           }
+          jvmArgsProp.value = currentValue
         }
       } else {
         // Create new jvmargs property with nodePath
         props.push({
           type: "property",
           key: "org.gradle.jvmargs",
-          value: `-Dorg.gradle.project.nodePath=${nodePath}`,
+          value: `-Xmx8192m -XX:MaxMetaspaceSize=2048m -Dorg.gradle.project.nodePath=${nodePath}`,
         })
       }
     } catch (error) {

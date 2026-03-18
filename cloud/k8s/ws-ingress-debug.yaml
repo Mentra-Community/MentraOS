@@ -1,0 +1,60 @@
+# WebSocket Ingress for debug environment (us-central cluster 4689)
+# Separate from Porter-managed ingress to set extended timeouts for WS paths.
+# See cloud/issues/035-nginx-ws-timeout/spec.md for context.
+#
+# Apply: porter kubectl -- apply -f cloud/k8s/ws-ingress-debug.yaml
+# Delete: porter kubectl -- delete ingress cloud-debug-cloud-ws
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloud-debug-cloud-ws
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: debug.augmentos.cloud
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-debug-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-debug-cloud
+                port:
+                  number: 80
+    - host: debugapi.mentra.glass
+      http:
+        paths:
+          - path: /glasses-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-debug-cloud
+                port:
+                  number: 80
+          - path: /app-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-debug-cloud
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - debug.augmentos.cloud
+      secretName: cloud-debug-cloud-debug-augmentos-cloud
+    - hosts:
+        - debugapi.mentra.glass
+      secretName: cloud-debug-cloud-debugapi-mentra-glass

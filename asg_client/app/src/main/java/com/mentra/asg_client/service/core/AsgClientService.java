@@ -214,6 +214,12 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.d(TAG, "📶 Initializing WiFi debouncing");
             initializeWifiDebouncing();
 
+            // Enable 5 GHz WiFi scanning after a short delay so system UI / WiFi stack is ready
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                Log.d(TAG, "📶 Enabling 5 GHz Hotspot scan via SysControl");
+                SysControl.setHotspot5G(this, true);
+            }, 3000);
+
             // Register receivers
             Log.d(TAG, "📻 Registering broadcast receivers");
             registerReceivers();
@@ -553,7 +559,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                       ", StreamingManager: " + (streamingManager != null ? "valid" : "null") +
                       ", CommandProcessor: " + (commandProcessor != null ? "valid" : "null"));
 
-
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing service container", e);
             try {
@@ -808,10 +813,16 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         Log.d(TAG, "📋 Data preview: " + new String(data, 0, Math.min(data.length, 100)) + 
                   (data.length > 100 ? "..." : ""));
 
+        // BLE/serial can deliver data before getInterfaceReferences() runs (e.g. right after
+        // MY_PACKAGE_REPLACED when the service is still in onCreate). Guard to avoid NPE.
+        final CommandProcessor processor = commandProcessor;
+        if (processor == null) {
+            Log.w(TAG, "⚠️ CommandProcessor not yet initialized - dropping " + data.length
+                    + " bytes (interface refs not yet obtained)");
+            return;
+        }
         try {
-            // Delegate JSON parsing and processing to CommandProcessor
-            Log.d(TAG, "🔄 Delegating data processing to CommandProcessor");
-            commandProcessor.processCommand(data);
+            processor.processCommand(data);
             Log.d(TAG, "✅ Data processing delegated successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error processing received data", e);

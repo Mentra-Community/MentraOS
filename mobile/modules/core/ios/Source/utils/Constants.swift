@@ -1,6 +1,7 @@
 struct DeviceTypes {
     static let SIMULATED = "Simulated Glasses"
     static let G1 = "Even Realities G1"
+    static let G2 = "Even Realities G2"
     static let LIVE = "Mentra Live"
     static let MACH1 = "Mentra Mach1"
     static let Z100 = "Vuzix Z100"
@@ -10,6 +11,7 @@ struct DeviceTypes {
     static let ALL = [
         SIMULATED,
         G1,
+        G2,
         MACH1,
         LIVE,
         Z100,

@@ -6,6 +6,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
 
 import {getModelSpecificTips} from "@/components/glasses/GlassesTroubleshootingModal"
+import GlassView from "@/components/ui/GlassView"
 
 interface GlassesPairingLoaderProps {
   deviceModel: string
@@ -67,7 +68,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
 
   return (
     <View className="flex-1 justify-center">
-      <View className="bg-primary-foreground rounded-lg p-6 gap-4">
+      <GlassView className="bg-primary-foreground rounded-2xl p-6 gap-4">
         {/* Title */}
         <Text tx="pairing:pairing" className="text-xl font-semibold text-center" />
         <Text className="text-xl text-center">
@@ -108,7 +109,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
             <Button preset="alternate" compact tx="common:cancel" onPress={onCancel} className="min-w-24" />
           </View>
         )}
-      </View>
+      </GlassView>
     </View>
   )
 }

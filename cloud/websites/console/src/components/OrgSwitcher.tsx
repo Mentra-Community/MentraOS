@@ -1,12 +1,5 @@
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuGroup,
-} from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
-import { Building, CheckIcon, ChevronDown } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@mentra/shared";
+import { Building } from "lucide-react";
 import { useOrgStore } from "@/stores/orgs.store";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAppStore } from "@/stores/apps.store";
@@ -31,61 +24,40 @@ export function OrgSwitcher() {
     return null;
   }
 
+  const handleOrgChange = async (orgId: string) => {
+    setSelectedOrgId(orgId);
+    const match = location.pathname.match(/^\/apps\/([^/]+)\/edit/);
+    if (match) {
+      const pkg = decodeURIComponent(match[1]);
+      try {
+        await useAppStore.getState().fetchApps({ orgId });
+        const exists = !!useAppStore.getState().appsByPackage[pkg];
+        if (!exists) {
+          navigate("/apps");
+        }
+      } catch {
+        navigate("/apps");
+      }
+    }
+  };
+
   return (
     <div className="px-3 py-2">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" className="w-full justify-between">
-            <div className="flex items-center gap-2 truncate">
-              <Building className="h-4 w-4" />
-              <span className="truncate">
-                {orgs.find((o) => o.id === selectedOrgId)?.name ||
-                  "Select Organization"}
-              </span>
-            </div>
-            <ChevronDown className="h-4 w-4 opacity-50" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          side="bottom"
-          sideOffset={4}
-          className="w-56"
-        >
-          <DropdownMenuGroup>
-            {orgs.map((org) => (
-              <DropdownMenuItem
-                key={org.id}
-                onClick={async () => {
-                  setSelectedOrgId(org.id);
-                  const match = location.pathname.match(
-                    /^\/apps\/([^/]+)\/edit/,
-                  );
-                  if (match) {
-                    const pkg = decodeURIComponent(match[1]);
-                    try {
-                      await useAppStore.getState().fetchApps({ orgId: org.id });
-                      const exists =
-                        !!useAppStore.getState().appsByPackage[pkg];
-                      if (!exists) {
-                        navigate("/apps");
-                      }
-                    } catch {
-                      navigate("/apps");
-                    }
-                  }
-                }}
-                className="flex items-center justify-between"
-              >
-                <span className="truncate">{org.name}</span>
-                {selectedOrgId === org.id && (
-                  <CheckIcon className="h-4 w-4 text-primary" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Select value={selectedOrgId || ""} onValueChange={handleOrgChange}>
+        <SelectTrigger className="w-full">
+          <div className="flex items-center gap-2 truncate">
+            <Building className="h-4 w-4" />
+            <SelectValue placeholder="Select Organization" />
+          </div>
+        </SelectTrigger>
+        <SelectContent>
+          {orgs.map((org) => (
+            <SelectItem key={org.id} value={org.id}>
+              {org.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

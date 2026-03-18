@@ -75,7 +75,13 @@ interface GallerySyncState extends GallerySyncInfo {
   onFileProgress: (fileName: string, progress: number) => void
   onFileComplete: (fileName: string) => void
   onFileFailed: (fileName: string, error?: string) => void
+  onFileProcessing: (fileName: string) => void
+  onFileProcessed: (fileName: string) => void
   updateFileInQueue: (fileName: string, updatedFile: PhotoInfo) => void
+
+  // Processing queue tracking
+  processingFiles: Set<string>
+  processedFiles: number
 
   // Hotspot management
   setHotspotInfo: (info: HotspotInfo | null) => void
@@ -94,7 +100,7 @@ interface GallerySyncState extends GallerySyncInfo {
   reset: () => void
 }
 
-const initialState: GallerySyncInfo = {
+const initialState: GallerySyncInfo & {processingFiles: Set<string>; processedFiles: number} = {
   syncState: "idle",
   currentFile: null,
   currentFileProgress: 0,
@@ -110,6 +116,8 @@ const initialState: GallerySyncInfo = {
   glassesTotalCount: 0,
   glassesHasContent: false,
   lastError: null,
+  processingFiles: new Set<string>(),
+  processedFiles: 0,
 }
 
 export const useGallerySyncStore = create<GallerySyncState>()(
@@ -142,6 +150,8 @@ export const useGallerySyncStore = create<GallerySyncState>()(
         currentFileProgress: 0,
         failedFiles: [],
         lastError: null,
+        processedFiles: 0,
+        processingFiles: new Set<string>(),
       }),
 
     setSyncComplete: () =>
@@ -210,6 +220,20 @@ export const useGallerySyncStore = create<GallerySyncState>()(
       })
     },
 
+    onFileProcessing: (fileName: string) => {
+      const state = get()
+      const newSet = new Set(state.processingFiles)
+      newSet.add(fileName)
+      set({processingFiles: newSet})
+    },
+
+    onFileProcessed: (fileName: string) => {
+      const state = get()
+      const newSet = new Set(state.processingFiles)
+      newSet.delete(fileName)
+      set({processingFiles: newSet, processedFiles: state.processedFiles + 1})
+    },
+
     updateFileInQueue: (fileName: string, updatedFile: PhotoInfo) => {
       const state = get()
       const updatedQueue = state.queue.map((file) => (file.name === fileName ? updatedFile : file))
@@ -269,7 +293,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
       }),
 
     // Full reset
-    reset: () => set(initialState),
+    reset: () => set({...initialState, processingFiles: new Set<string>()}),
   })),
 )
 
@@ -281,6 +305,7 @@ export const selectSyncProgress = (state: GallerySyncState) => ({
   completedFiles: state.completedFiles,
   totalFiles: state.totalFiles,
   failedFiles: state.failedFiles,
+  processingFiles: state.processingFiles,
 })
 
 export const selectIssyncing = (state: GallerySyncState) =>

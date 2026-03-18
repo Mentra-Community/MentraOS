@@ -38,6 +38,14 @@ function addPodDependencies(podfileContent: string): string {
     # Add SWCompression for TarBz2Extractor functionality
     pod 'onnxruntime-objc', '1.18.0', :modular_headers => true
     pod 'SWCompression', '~> 4.8.0'
+
+    # Firebase dependencies need modular headers for static library linking
+    pod 'GoogleUtilities', :modular_headers => true
+    pod 'FirebaseCore', :modular_headers => true
+    pod 'FirebaseCoreInternal', :modular_headers => true
+    pod 'FirebaseInstallations', :modular_headers => true
+    pod 'GoogleAppMeasurement', :modular_headers => true
+    pod 'nanopb', :modular_headers => true
   `
     return podfileContent.replace(nativeModulesRegex, `$1${podDependencies}\n`)
   }

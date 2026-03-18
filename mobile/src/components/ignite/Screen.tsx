@@ -210,6 +210,7 @@ function ScreenWithScrolling(props: ScreenProps) {
   useScrollToTop(ref)
 
   return (
+    // @ts-ignore
     <KeyboardAwareScrollView
       bottomOffset={keyboardBottomOffset}
       {...{keyboardShouldPersistTaps, scrollEnabled, ref}}
@@ -237,7 +238,7 @@ function ScreenWithScrolling(props: ScreenProps) {
  * @param {ScreenProps} props - The props for the `Screen` component.
  * @returns {JSX.Element} The rendered `Screen` component.
  */
-export function Screen(props: ScreenProps) {
+export function Screen(props: ScreenProps & {ref?: any; className?: string}) {
   const {
     theme: {colors},
     themeContext,
@@ -249,46 +250,33 @@ export function Screen(props: ScreenProps) {
     safeAreaEdges,
     StatusBarProps,
     statusBarStyle,
+    ref,
+    className,
   } = props
 
-  let $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges)
-  const {theme} = useAppTheme()
+  let $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges, "padding")
   // const [debugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
-
-  if (Platform.OS === "android") {
-    if (safeAreaEdges?.includes("top")) {
-      if ($containerInsets.paddingTop) {
-        $containerInsets.paddingTop += theme.spacing.s4
-      } else {
-        $containerInsets.paddingTop = theme.spacing.s4
-      }
-    }
-    if (safeAreaEdges?.includes("bottom")) {
-      if ($containerInsets.paddingBottom) {
-        $containerInsets.paddingBottom += theme.spacing.s6
-      } else {
-        $containerInsets.paddingBottom = theme.spacing.s6
-      }
-    }
-  }
+  // console.log("$containerInsets", $containerInsets)
 
   return (
-    <View
-      style={[
-        {paddingHorizontal: theme.spacing.s6},
-        {backgroundColor: backgroundColor || colors.background},
-        {...$containerInsets},
-        {flex: 1},
-      ]}>
-      <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />
-      <KeyboardAvoidingView
-        behavior={isIos ? "padding" : "height"}
-        keyboardVerticalOffset={keyboardOffset}
-        {...KeyboardAvoidingViewProps}
-        style={[$styles.flex1, KeyboardAvoidingViewProps?.style]}>
-        {isNonScrolling(props.preset) ? <ScreenWithoutScrolling {...props} /> : <ScreenWithScrolling {...props} />}
-      </KeyboardAvoidingView>
-      {/* {debugCoreStatusBarEnabled && <CoreStatusBar />} */}
+    // separate view for screenshots:
+    <View className="flex-1" style={[{...$containerInsets}, {backgroundColor: backgroundColor || colors.background}]}>
+      <View
+        ref={ref}
+        className={`flex-1 px-6 ${className ?? ""}`}
+        style={{backgroundColor: backgroundColor || colors.background}}
+        collapsable={false}
+        collapsableChildren={false}>
+        <StatusBar style={statusBarStyle || (themeContext === "dark" ? "light" : "dark")} {...StatusBarProps} />
+        <KeyboardAvoidingView
+          behavior={isIos ? "padding" : "height"}
+          keyboardVerticalOffset={keyboardOffset}
+          {...KeyboardAvoidingViewProps}
+          style={[$styles.flex1, KeyboardAvoidingViewProps?.style]}>
+          {isNonScrolling(props.preset) ? <ScreenWithoutScrolling {...props} /> : <ScreenWithScrolling {...props} />}
+        </KeyboardAvoidingView>
+        {/* {debugCoreStatusBarEnabled && <CoreStatusBar />} */}
+      </View>
     </View>
   )
 }

@@ -22,7 +22,6 @@ import {
   GlassesToCloudMessageType,
 } from "@mentra/sdk";
 
-
 import { StreamLifecycleController } from "../streaming/StreamLifecycleController";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 import { WebSocketReadyState } from "../websocket/types";
@@ -35,12 +34,7 @@ const KEEP_ALIVE_INTERVAL_MS = 15000; // 15 seconds keep-alive interval
 const ACK_TIMEOUT_MS = 10000; // 10 seconds to wait for ACK
 const MAX_MISSED_ACKS = 3; // Max consecutive missed ACKs before considering connection suspect
 
-type UnmanagedStreamStatus =
-  | "initializing"
-  | "active"
-  | "stopping"
-  | "stopped"
-  | "timeout";
+type UnmanagedStreamStatus = "initializing" | "active" | "stopping" | "stopped" | "timeout";
 
 interface UnmanagedStreamRuntime {
   streamId: string;
@@ -74,13 +68,7 @@ export class UnmanagedStreamingExtension {
    * Start tracking a new RTMP stream (simplified from original stream-tracker logic)
    */
   async startRtmpStream(request: RtmpStreamRequest): Promise<string> {
-    const {
-      packageName,
-      rtmpUrl,
-      video,
-      audio,
-      stream: streamOptions,
-    } = request;
+    const { packageName, rtmpUrl, video, audio, stream: streamOptions, sound: appSound } = request;
     this.logger.info(
       {
         debugKey: "RTMP_STREAM_START_REQUEST",
@@ -100,14 +88,9 @@ export class UnmanagedStreamingExtension {
     if (!this.userSession.appManager.isAppRunning(packageName)) {
       throw new Error(`App ${packageName} is not running`);
     }
-    const validation = ConnectionValidator.validateForHardwareRequest(
-      this.userSession,
-      "stream",
-    );
+    const validation = ConnectionValidator.validateForHardwareRequest(this.userSession, "stream");
     if (!validation.valid) {
-      const connectionStatus = ConnectionValidator.getConnectionStatus(
-        this.userSession,
-      );
+      const connectionStatus = ConnectionValidator.getConnectionStatus(this.userSession);
       this.logger.error(
         {
           userId: this.userSession.userId,
@@ -118,18 +101,13 @@ export class UnmanagedStreamingExtension {
         },
         "RTMP stream request blocked by connection validator",
       );
-      const error = new Error(
-        validation.error ||
-          "Cannot process stream request - connection validation failed",
-      );
+      const error = new Error(validation.error || "Cannot process stream request - connection validation failed");
       (error as any).code = validation.errorCode;
       throw error;
     }
 
     // WiFi validation for glasses that require it
-    const wifiValidation = ConnectionValidator.validateWifiForOperation(
-      this.userSession,
-    );
+    const wifiValidation = ConnectionValidator.validateWifiForOperation(this.userSession);
     if (!wifiValidation.valid) {
       this.logger.error(
         {
@@ -140,31 +118,19 @@ export class UnmanagedStreamingExtension {
         },
         "RTMP stream request blocked - WiFi required",
       );
-      const error = new Error(
-        wifiValidation.error || "WiFi connection required for streaming",
-      );
+      const error = new Error(wifiValidation.error || "WiFi connection required for streaming");
       (error as any).code = wifiValidation.errorCode;
       throw error;
     }
-    if (
-      !rtmpUrl ||
-      (!rtmpUrl.startsWith("rtmp://") && !rtmpUrl.startsWith("rtmps://"))
-    ) {
+    if (!rtmpUrl || (!rtmpUrl.startsWith("rtmp://") && !rtmpUrl.startsWith("rtmps://"))) {
       throw new Error("Invalid RTMP URL");
     }
-    if (
-      !this.userSession.websocket ||
-      this.userSession.websocket.readyState !== WebSocketReadyState.OPEN
-    ) {
+    if (!this.userSession.websocket || this.userSession.websocket.readyState !== WebSocketReadyState.OPEN) {
       throw new Error("Glasses WebSocket not connected");
     }
 
     // Check for managed stream conflicts and stop if exists
-    if (
-      this.userSession.managedStreamingExtension.checkUnmanagedStreamConflict(
-        this.userSession.userId,
-      )
-    ) {
+    if (this.userSession.managedStreamingExtension.checkUnmanagedStreamConflict(this.userSession.userId)) {
       // Stop the managed stream instead of throwing error
       this.logger.info(
         {
@@ -176,18 +142,12 @@ export class UnmanagedStreamingExtension {
       );
 
       // Get current managed stream viewers for this user and stop them
-      const activeViewers =
-        this.userSession.managedStreamingExtension.getManagedStreamViewers(
-          this.userSession.userId,
-        );
+      const activeViewers = this.userSession.managedStreamingExtension.getManagedStreamViewers(this.userSession.userId);
       for (const viewerPackageName of activeViewers) {
-        await this.userSession.managedStreamingExtension.stopManagedStream(
-          this.userSession,
-          {
-            type: AppToCloudMessageType.MANAGED_STREAM_STOP,
-            packageName: viewerPackageName,
-          },
-        );
+        await this.userSession.managedStreamingExtension.stopManagedStream(this.userSession, {
+          type: AppToCloudMessageType.MANAGED_STREAM_STOP,
+          packageName: viewerPackageName,
+        });
       }
     }
 
@@ -245,6 +205,10 @@ export class UnmanagedStreamingExtension {
       stream: streamOptions,
     });
 
+    // Flash is always on (privacy indicator for bystanders), sound is app-controlled via SDK
+    const flash = true;
+    const sound = appSound ?? true;
+
     // Send start command to glasses
     const startMessage: StartRtmpStream = {
       type: CloudToGlassesMessageType.START_RTMP_STREAM,
@@ -255,6 +219,8 @@ export class UnmanagedStreamingExtension {
       video: video || {},
       audio: audio || {},
       stream: streamOptions || {},
+      flash,
+      sound,
       timestamp: now,
     };
 
@@ -325,23 +291,14 @@ export class UnmanagedStreamingExtension {
   /**
    * Update stream status (simplified from original)
    */
-  async updateStatus(
-    streamId: string,
-    status: UnmanagedStreamStatus,
-  ): Promise<void> {
+  async updateStatus(streamId: string, status: UnmanagedStreamStatus): Promise<void> {
     const runtime = this.unmanagedStreams.get(streamId);
     if (!runtime) {
-      this.logger.warn(
-        { streamId },
-        "Attempted to update status for unknown stream",
-      );
+      this.logger.warn({ streamId }, "Attempted to update status for unknown stream");
       return;
     }
 
-    this.logger.info(
-      { streamId, oldStatus: runtime.status, newStatus: status },
-      "Updating stream status",
-    );
+    this.logger.info({ streamId, oldStatus: runtime.status, newStatus: status }, "Updating stream status");
 
     runtime.status = status;
     runtime.lastActivity = new Date();
@@ -375,14 +332,8 @@ export class UnmanagedStreamingExtension {
     runtime.lifecycle.dispose();
     this.unmanagedStreams.delete(streamId);
 
-    const currentStream = this.userSession.streamRegistry.getStreamState(
-      this.userSession.userId,
-    );
-    if (
-      currentStream &&
-      currentStream.type === "unmanaged" &&
-      currentStream.streamId === streamId
-    ) {
+    const currentStream = this.userSession.streamRegistry.getStreamState(this.userSession.userId);
+    if (currentStream && currentStream.type === "unmanaged" && currentStream.streamId === streamId) {
       this.userSession.streamRegistry.removeStream(this.userSession.userId);
     }
   }
@@ -437,10 +388,7 @@ export class UnmanagedStreamingExtension {
     this.userSession.streamRegistry.updateLastActivity(this.userSession.userId);
   }
 
-  private createLifecycleController(
-    streamId: string,
-    packageName: string,
-  ): StreamLifecycleController {
+  private createLifecycleController(streamId: string, packageName: string): StreamLifecycleController {
     const lifecycle = new StreamLifecycleController(
       {
         logger: this.logger.child({
@@ -453,29 +401,19 @@ export class UnmanagedStreamingExtension {
         ackTimeoutMs: ACK_TIMEOUT_MS,
         maxMissedAcks: MAX_MISSED_ACKS,
         shouldSendKeepAlive: () =>
-          !!this.userSession.websocket &&
-          this.userSession.websocket.readyState === WebSocketReadyState.OPEN,
+          !!this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN,
       },
       {
         sendKeepAlive: (ackId) => this.sendKeepAliveMessage(streamId, ackId),
         onTimeout: () => this.handleLifecycleTimeout(streamId),
         onKeepAliveSent: (ackId) => {
-          this.logger.debug(
-            { streamId, ackId },
-            "Unmanaged stream keep-alive sent",
-          );
+          this.logger.debug({ streamId, ackId }, "Unmanaged stream keep-alive sent");
         },
         onKeepAliveAcked: (ackId, ageMs) => {
-          this.logger.debug(
-            { streamId, ackId, ageMs },
-            "Unmanaged stream keep-alive ACK received",
-          );
+          this.logger.debug({ streamId, ackId, ageMs }, "Unmanaged stream keep-alive ACK received");
         },
         onKeepAliveMissed: (ackId, ageMs, missed) => {
-          this.logger.warn(
-            { streamId, ackId, ageMs, missed },
-            "Unmanaged stream keep-alive ACK missed",
-          );
+          this.logger.warn({ streamId, ackId, ageMs, missed }, "Unmanaged stream keep-alive ACK missed");
         },
       },
     );
@@ -484,18 +422,9 @@ export class UnmanagedStreamingExtension {
     return lifecycle;
   }
 
-  private async sendKeepAliveMessage(
-    streamId: string,
-    ackId: string,
-  ): Promise<void> {
-    if (
-      !this.userSession.websocket ||
-      this.userSession.websocket.readyState !== WebSocketReadyState.OPEN
-    ) {
-      this.logger.warn(
-        { streamId },
-        "Cannot send keep-alive because WebSocket is not open",
-      );
+  private async sendKeepAliveMessage(streamId: string, ackId: string): Promise<void> {
+    if (!this.userSession.websocket || this.userSession.websocket.readyState !== WebSocketReadyState.OPEN) {
+      this.logger.warn({ streamId }, "Cannot send keep-alive because WebSocket is not open");
       return;
     }
 
@@ -508,18 +437,12 @@ export class UnmanagedStreamingExtension {
     try {
       this.userSession.websocket.send(JSON.stringify(keepAliveMsg));
     } catch (error) {
-      this.logger.error(
-        { error, streamId },
-        "Failed to send keep-alive message",
-      );
+      this.logger.error({ error, streamId }, "Failed to send keep-alive message");
     }
   }
 
   private async handleLifecycleTimeout(streamId: string): Promise<void> {
-    this.logger.warn(
-      { streamId },
-      "Unmanaged stream keep-alive timeout reached",
-    );
+    this.logger.warn({ streamId }, "Unmanaged stream keep-alive timeout reached");
     await this.updateStatus(streamId, "timeout");
   }
 
@@ -540,19 +463,13 @@ export class UnmanagedStreamingExtension {
     );
 
     if (!streamId) {
-      this.logger.warn(
-        { statusMessage },
-        "Received status message without streamId",
-      );
+      this.logger.warn({ statusMessage }, "Received status message without streamId");
       return;
     }
 
     const runtime = this.unmanagedStreams.get(streamId);
     if (!runtime) {
-      this.logger.warn(
-        { streamId, status },
-        "Received status for unknown stream",
-      );
+      this.logger.warn({ streamId, status }, "Received status for unknown stream");
       return;
     }
 
@@ -560,10 +477,7 @@ export class UnmanagedStreamingExtension {
     runtime.lifecycle.recordActivity();
 
     if (!status) {
-      this.logger.warn(
-        { streamId },
-        "Received status message without status value",
-      );
+      this.logger.warn({ streamId }, "Received status message without status value");
       return;
     }
 
@@ -597,10 +511,7 @@ export class UnmanagedStreamingExtension {
       case "error":
         mappedStatus = "stopped";
         runtime.lifecycle.setActive(false);
-        this.logger.error(
-          { streamId, status },
-          "Stream error received from glasses",
-        );
+        this.logger.error({ streamId, status }, "Stream error received from glasses");
         break;
       case "reconnect_failed":
         mappedStatus = "stopped";
@@ -610,10 +521,7 @@ export class UnmanagedStreamingExtension {
       default:
         mappedStatus = "stopped";
         runtime.lifecycle.setActive(false);
-        this.logger.warn(
-          { streamId, status },
-          "Received unknown status from glasses, defaulting to stopped",
-        );
+        this.logger.warn({ streamId, status }, "Received unknown status from glasses, defaulting to stopped");
         break;
     }
 
@@ -625,10 +533,7 @@ export class UnmanagedStreamingExtension {
    */
   async stopRtmpStream(request: RtmpStreamStopRequest): Promise<void> {
     const { packageName, streamId } = request;
-    this.logger.info(
-      { packageName, streamId },
-      "Processing stop RTMP stream request",
-    );
+    this.logger.info({ packageName, streamId }, "Processing stop RTMP stream request");
 
     if (streamId) {
       // Stop specific stream
@@ -636,14 +541,9 @@ export class UnmanagedStreamingExtension {
       if (stream && stream.packageName === packageName) {
         await this.updateStatus(streamId, "stopped");
       } else if (stream) {
-        throw new Error(
-          `App ${packageName} cannot stop stream ${streamId} owned by ${stream.packageName}`,
-        );
+        throw new Error(`App ${packageName} cannot stop stream ${streamId} owned by ${stream.packageName}`);
       } else {
-        this.logger.warn(
-          { streamId, packageName },
-          "Request to stop non-existent stream",
-        );
+        this.logger.warn({ streamId, packageName }, "Request to stop non-existent stream");
       }
     } else {
       // Stop all streams for this package
@@ -651,10 +551,7 @@ export class UnmanagedStreamingExtension {
     }
 
     // Send stop command to glasses if WebSocket is connected
-    if (
-      this.userSession.websocket &&
-      this.userSession.websocket.readyState === WebSocketReadyState.OPEN
-    ) {
+    if (this.userSession.websocket && this.userSession.websocket.readyState === WebSocketReadyState.OPEN) {
       const stopMessage: StopRtmpStream = {
         type: CloudToGlassesMessageType.STOP_RTMP_STREAM,
         sessionId: this.userSession.sessionId,
@@ -665,15 +562,9 @@ export class UnmanagedStreamingExtension {
 
       try {
         this.userSession.websocket.send(JSON.stringify(stopMessage));
-        this.logger.info(
-          { packageName, streamId },
-          "STOP_RTMP_STREAM sent to glasses",
-        );
+        this.logger.info({ packageName, streamId }, "STOP_RTMP_STREAM sent to glasses");
       } catch (error) {
-        this.logger.error(
-          { error, packageName, streamId },
-          "Failed to send stop command to glasses",
-        );
+        this.logger.error({ error, packageName, streamId }, "Failed to send stop command to glasses");
       }
     }
   }
@@ -689,9 +580,7 @@ export class UnmanagedStreamingExtension {
   ): Promise<void> {
     const streamInfo = this.unmanagedStreams.get(streamId);
     // It's possible streamInfo is gone if cleanup happened due to rapid events.
-    const packageName = streamInfo
-      ? streamInfo.packageName
-      : "unknown_package_owner";
+    const packageName = streamInfo ? streamInfo.packageName : "unknown_package_owner";
 
     // Direct message to the App that owns the stream
     const appOwnerMessage = {
@@ -707,10 +596,7 @@ export class UnmanagedStreamingExtension {
 
     // Send status to owning App using centralized messaging
     try {
-      const result = await this.userSession.appManager.sendMessageToApp(
-        packageName,
-        appOwnerMessage,
-      );
+      const result = await this.userSession.appManager.sendMessageToApp(packageName, appOwnerMessage);
 
       if (result.sent) {
         this.logger.debug(
@@ -760,19 +646,14 @@ export class UnmanagedStreamingExtension {
     // Relay to Apps who subscribed to this RTMP stream
     this.userSession.relayMessageToApps(broadcastPayload);
 
-    this.logger.debug(
-      { streamId, status },
-      "Broadcast RTMP status via DataStream",
-    );
+    this.logger.debug({ streamId, status }, "Broadcast RTMP status via DataStream");
   }
 
   /**
    * Called when the UserSession is ending.
    */
   dispose(): void {
-    this.logger.info(
-      "Disposing UnmanagedStreamingExtension, stopping all active streams for this session",
-    );
+    this.logger.info("Disposing UnmanagedStreamingExtension, stopping all active streams for this session");
     const streamIdsToStop = Array.from(this.unmanagedStreams.keys());
     streamIdsToStop.forEach((streamId) => {
       this.stopTracking(streamId);

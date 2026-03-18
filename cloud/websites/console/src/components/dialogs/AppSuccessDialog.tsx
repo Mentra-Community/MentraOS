@@ -1,7 +1,6 @@
 // components/dialogs/AppSuccessDialog.tsx
 import React, { useState } from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@mentra/shared";
 import { AppResponse } from '@/services/api.service';
 import { toast } from 'sonner';
 import { CheckCircle, KeyRound, Copy, ArrowRight, AlertCircle } from "lucide-react";
@@ -52,7 +51,7 @@ const AppSuccessDialog: React.FC<AppSuccessDialogProps> = ({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <CheckCircle className="h-5 w-5 text-green-500" />
+            <CheckCircle className="h-5 w-5 text-success" />
             App Created Successfully
           </DialogTitle>
           <DialogDescription>
@@ -61,7 +60,7 @@ const AppSuccessDialog: React.FC<AppSuccessDialogProps> = ({
         </DialogHeader>
 
         <div className="py-4 space-y-4">
-          <div className="bg-green-50 border-l-4 border-green-500 border-t border-r border-b rounded-md p-4 text-green-800 shadow-sm">
+          <div className="bg-success-light border-l-4 border-success border-t border-r border-b rounded-md p-4 text-success shadow-sm">
             <p className="text-sm font-medium">Your app is now ready! 🎉</p>
             <p className="text-sm mt-1">Your API key has been automatically copied to your clipboard.</p>
           </div>
@@ -73,22 +72,22 @@ const AppSuccessDialog: React.FC<AppSuccessDialogProps> = ({
                 Your API Key
               </p>
               <div className="flex items-center gap-2">
-                <div className="flex-1 font-mono text-sm p-3 border-2 border-blue-300 rounded-md bg-blue-50 overflow-x-auto shadow-sm">
+                <div className="flex-1 font-mono text-sm p-3 border-2 border-accent rounded-md bg-accent/10 overflow-x-auto shadow-sm">
                   {apiKey}
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleCopyApiKey}
-                  className="shrink-0 border-blue-300"
+                  className="shrink-0 border-accent"
                 >
                   {isCopied ?
-                    <CheckCircle className="h-4 w-4 text-green-600" /> :
+                    <CheckCircle className="h-4 w-4 text-success" /> :
                     <Copy className="h-4 w-4" />
                   }
                 </Button>
               </div>
-              <div className="flex items-center text-xs text-red-600 font-medium bg-red-50 p-2 rounded-md border border-red-200">
+              <div className="flex items-center text-xs text-destructive font-medium bg-destructive/10 p-2 rounded-md border border-destructive">
                 <AlertCircle className="h-4 w-4 mr-1 shrink-0" />
                 Important: This key will only be shown once. Save it securely!
               </div>
@@ -106,7 +105,7 @@ const AppSuccessDialog: React.FC<AppSuccessDialogProps> = ({
               >
                 Generate API Key
               </Button>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 Generate an API key to authenticate your app with MentraOS.
               </p>
             </div>

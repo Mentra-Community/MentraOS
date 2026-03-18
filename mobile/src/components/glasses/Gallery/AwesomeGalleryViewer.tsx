@@ -9,7 +9,7 @@ import {useState, useRef, useEffect, useCallback, useMemo, memo, type ElementRef
 // eslint-disable-next-line no-restricted-imports
 import {View, TouchableOpacity, Modal, StatusBar, Text, Dimensions} from "react-native"
 import Gallery, {GalleryRef} from "react-native-awesome-gallery"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 import Video from "react-native-video"
 
@@ -337,7 +337,7 @@ interface CustomOverlayProps {
 }
 
 function CustomOverlay({onClose, currentIndex, total, onShare}: CustomOverlayProps) {
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const {themed} = useAppTheme()
 
   return (

@@ -52,6 +52,7 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   const caseBatteryLevel = useGlassesStore((state) => state.caseBatteryLevel)
   const caseOpen = useGlassesStore((state) => state.caseOpen)
   const batteryLevel = useGlassesStore((state) => state.batteryLevel)
+  const charging = useGlassesStore((state) => state.charging)
   const wifiConnected = useGlassesStore((state) => state.wifiConnected)
   const wifiSsid = useGlassesStore((state) => state.wifiSsid)
   const searching = useCoreStore((state) => state.searching)
@@ -148,14 +149,14 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (
       <View style={[themed($disconnectedContainer), style]}>
-        <View style={themed($header)}>
-          <Text style={themed($headerText)} text={defaultWearable} />
+        <View className="justify-between items-center flex-row">
+          <Text className="font-semibold text-secondary-foreground text-lg" text={defaultWearable} />
           <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
         </View>
 
         <View style={[themed($sideBySideContainer)]}>
           <Image source={getCurrentGlassesImage()} style={[themed($glassesImage)]} />
-          <Button compactIcon preset="alternate" onPress={() => push("/settings/glasses")}>
+          <Button compactIcon preset="alternate" onPress={() => push("/miniapps/settings/glasses")}>
             <Icon name="settings" size={24} color={theme.colors.foreground} />
           </Button>
         </View>
@@ -198,11 +199,11 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
 
   if (showSimulatedGlasses) {
     return (
-      <View style={[themed($container), style]}>
-        <View style={themed($header)}>
+      <View className="bg-primary-foreground p-6" style={style}>
+        <View className="just">
           <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s2}}>
             <Image source={getCurrentGlassesImage()} style={[themed($glassesImage), {width: 54, maxHeight: 24}]} />
-            <Text style={themed($headerText)}>{defaultWearable}</Text>
+            <Text className="font-semibold text-secondary-foreground text-lg">{defaultWearable}</Text>
           </View>
         </View>
         <View style={{marginHorizontal: -theme.spacing.s6}}>
@@ -215,7 +216,7 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
             onPress={() => setShowSimulatedGlasses(!showSimulatedGlasses)}>
             <Icon name="arrow-left" size={18} color={theme.colors.foreground} />
           </Button>
-          <Button flexContainer={false} preset="alternate" onPress={() => push("/settings/glasses")}>
+          <Button flexContainer={false} preset="alternate" onPress={() => push("/miniapps/settings/glasses")}>
             <Icon name="settings" size={18} color={theme.colors.foreground} />
           </Button>
         </View>
@@ -224,14 +225,18 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   return (
-    <View style={[themed($container), style]}>
+    <View className="bg-primary-foreground p-6" style={style}>
       {/* Header with device name and icons */}
-      <View style={themed($header)}>
-        <Text style={themed($headerText)}>{defaultWearable}</Text>
+      <View className="justify-between items-center flex-row">
+        <Text className="font-semibold text-secondary-foreground text-lg">{defaultWearable}</Text>
         <View style={themed($iconRow)}>
           {!isExpanded && batteryLevel !== -1 && (
             <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s1}}>
-              <Icon name={getBatteryIcon(batteryLevel)} size={18} color={theme.colors.foreground} />
+              <Icon
+                name={charging ? "battery-charging" : getBatteryIcon(batteryLevel)}
+                size={18}
+                color={theme.colors.foreground}
+              />
               <Text style={themed($iconText)}>{batteryLevel}%</Text>
             </View>
           )}
@@ -264,7 +269,7 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
         ]}>
         <Image source={getCurrentGlassesImage()} style={themed(isExpanded ? $glassesImageExpanded : $glassesImage)} />
         {!isExpanded && (
-          <Button preset="alternate" onPress={() => push("/settings/glasses")}>
+          <Button preset="alternate" onPress={() => push("/miniapps/settings/glasses")}>
             <Icon name="settings" size={24} color={theme.colors.foreground} />
           </Button>
         )}
@@ -272,7 +277,7 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
 
       {/* Expanded Content */}
       {isExpanded && (
-        <View style={themed($statusContainer)}>
+        <View className="flex-1 gap-3">
           {/* Brightness Settings */}
           {features?.display?.adjustBrightness && glassesConnected && (
             <BrightnessSetting
@@ -319,7 +324,7 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
                 }
               />
             )}
-            <Button compactIcon preset="alternate" onPress={() => push("/settings/glasses")}>
+            <Button compactIcon preset="alternate" onPress={() => push("/miniapps/settings/glasses")}>
               <Icon name="settings" size={24} color={theme.colors.foreground} />
             </Button>
           </View>
@@ -361,18 +366,6 @@ const $glassesImageExpanded: ThemedStyle<ImageStyle> = () => ({
   resizeMode: "contain",
 })
 
-const $header: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-})
-
-const $headerText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.secondary_foreground,
-  fontSize: 20,
-  fontWeight: 600,
-})
-
 const $iconRow: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   alignItems: "center",
@@ -390,11 +383,6 @@ const $sideBySideContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   justifyContent: "space-between",
   paddingVertical: spacing.s6,
   alignItems: "center",
-})
-
-const $statusContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  gap: spacing.s3,
 })
 
 const $expandButton: ThemedStyle<ViewStyle> = ({spacing}) => ({

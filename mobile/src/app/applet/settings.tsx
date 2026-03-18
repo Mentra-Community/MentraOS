@@ -1,7 +1,7 @@
 import {useFocusEffect, useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {Animated, BackHandler, TextStyle, View, ViewStyle} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 import {Header, Icon, PillButton, Screen, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
@@ -20,22 +20,23 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import Divider from "@/components/ui/Divider"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
-import {useApplets, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
+import {useApplets, useAppletStatusStore, useRefreshApplets, useStartApplet, useStopApplet, SYSTEM_APPS} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage"
+import {captureRef} from "react-native-view-shot"
 
 export default function AppSettings() {
   const {packageName, appName: appNameParam} = useLocalSearchParams()
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
   const {goBack, replaceAll} = useNavigationHistory()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const hasLoadedData = useRef(false)
 
   // Use appName from params or default to empty string
@@ -66,6 +67,26 @@ export default function AppSettings() {
   const SETTINGS_CACHE_KEY = (packageName: string) => `app_settings_cache_${packageName}`
   const [settingsLoading, setSettingsLoading] = useState(true)
   const [hasCachedSettings, setHasCachedSettings] = useState(false)
+
+  const viewShotRef = useRef(null)
+  const handleExit = async () => {
+    // take a screenshot of the webview and save it to the applet zustand store:
+    try {
+      const uri = await captureRef(viewShotRef, {
+        format: "jpg",
+        quality: 0.5,
+      })
+      // save uri to zustand stoare
+      console.log("saving screenshot for", packageName)
+      await useAppletStatusStore.getState().saveScreenshot(packageName as string, uri)
+    } catch (e) {
+      console.warn("screenshot failed:", e)
+    }
+    goBack()
+  }
+  focusEffectPreventBack(() => {
+    handleExit()
+  }, true)
 
   // Handle app start/stop actions with debouncing
   const handleStartStopApp = async () => {
@@ -119,7 +140,7 @@ export default function AppSettings() {
         return
       }
 
-      startApp(packageName)
+      startApp(appInfo)
     } catch (error) {
       // Refresh the app status to get the accurate state from the server
       refreshApplets()
@@ -199,7 +220,7 @@ export default function AppSettings() {
           name: appInfo?.name || appName,
           description: translate("appSettings:noDescription"),
           settings: [],
-          uninstallable: true,
+          uninstallable: !SYSTEM_APPS.includes(packageName),
         })
         setSettingsState({})
         setHasCachedSettings(false)
@@ -465,19 +486,6 @@ export default function AppSettings() {
     }
   }
 
-  useFocusEffect(
-    useCallback(() => {
-      const onBackPress = () => {
-        goBack()
-        return true
-      }
-      const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress)
-      return () => {
-        subscription.remove()
-      }
-    }, [goBack]),
-  )
-
   // Reset hasLoadedData when packageName changes
   useEffect(() => {
     hasLoadedData.current = false
@@ -552,11 +560,11 @@ export default function AppSettings() {
   }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={[]}>
+    <Screen preset="fixed" ref={viewShotRef}>
       {isUninstalling && <LoadingOverlay message={`Uninstalling ${appInfo?.name || appName}...`} />}
 
       <View>
-        <Header title="" leftIcon="chevron-left" onLeftPress={() => goBack()} />
+        <Header title="" leftIcon="chevron-left" onLeftPress={handleExit} />
         <Animated.View
           style={{
             opacity: headerOpacity,
@@ -703,7 +711,7 @@ export default function AppSettings() {
             label={translate("appSettings:uninstall")}
             preset="destructive"
             onPress={() => {
-              if (serverAppInfo?.uninstallable) {
+              if (serverAppInfo?.uninstallable && !SYSTEM_APPS.includes(packageName)) {
                 handleUninstallApp()
               } else {
                 showAlert(translate("appSettings:cannotUninstall"), translate("appSettings:cannotUninstallMessage"), [
@@ -711,7 +719,7 @@ export default function AppSettings() {
                 ])
               }
             }}
-            disabled={!serverAppInfo?.uninstallable}
+            disabled={!serverAppInfo?.uninstallable || SYSTEM_APPS.includes(packageName)}
           />
 
           {/* Bottom safe area padding */}

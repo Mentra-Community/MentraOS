@@ -42,6 +42,8 @@ export interface PhotoRequestOptions {
   size?: "small" | "medium" | "large" | "full";
   /** Image compression level for upload optimization. Defaults to "none". */
   compress?: "none" | "medium" | "heavy";
+  /** Controls shutter sound. Defaults to true if omitted. */
+  sound?: boolean;
 }
 
 /**
@@ -56,6 +58,8 @@ export interface RtmpStreamOptions {
   audio?: AudioConfig;
   /** Optional stream configuration settings */
   stream?: StreamConfig;
+  /** Controls stream start/stop sounds. Defaults to true if omitted. */
+  sound?: boolean;
 }
 
 /**
@@ -176,6 +180,7 @@ export class CameraModule {
           authToken: options?.authToken,
           size: options?.size || "medium",
           compress: options?.compress || "none",
+          sound: options?.sound,
         };
 
         // Send request to cloud
@@ -243,13 +248,13 @@ export class CameraModule {
    * @deprecated Photo requests are now managed at AppServer level. This method delegates to AppServer.
    *
    * @param requestId - The request ID to cancel
-   * @returns true if the request was cancelled, false if it wasn't found
+   * @returns true if the request was found and cancelled
    */
   cancelPhotoRequest(requestId: string): boolean {
     const pending = this.session.appServer.completePhotoRequest(requestId);
     if (pending) {
       pending.reject(new Error("Photo request cancelled"));
-      this.logger.info({ requestId }, `📸 Photo request cancelled`);
+      this.logger.debug({ requestId }, "Photo request cancelled");
       return true;
     }
     return false;
@@ -264,7 +269,7 @@ export class CameraModule {
   cancelAllPhotoRequests(): number {
     // Photo request cleanup is now handled by AppServer.cleanupPhotoRequestsForSession()
     // which is called when the session permanently disconnects
-    this.logger.debug(`📸 cancelAllPhotoRequests called - cleanup now happens at AppServer level`);
+    this.logger.debug("cancelAllPhotoRequests called — cleanup now happens at AppServer level");
     return 0;
   }
 
@@ -316,6 +321,7 @@ export class CameraModule {
       video: options.video,
       audio: options.audio,
       stream: options.stream,
+      sound: options.sound,
       timestamp: new Date(),
     };
 
@@ -678,4 +684,4 @@ export class CameraModule {
 }
 
 // Re-export types for convenience
-export { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler };
+export type { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler };

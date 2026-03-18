@@ -40,7 +40,7 @@ public final class CameraConstants {
     public static final int BUTTON_HEIGHT_LARGE = 2448;
 
     /** JPEG quality for all button photos (high quality for personal photos) */
-    public static final int BUTTON_JPEG_QUALITY = 90;
+    public static final int BUTTON_JPEG_QUALITY = 95;
 
     // =========================================================================
     // SDK PHOTO RESOLUTIONS
@@ -76,13 +76,13 @@ public final class CameraConstants {
     public static final int SDK_JPEG_QUALITY_SMALL = 70;
 
     /** JPEG quality for SDK medium photos (good balance) */
-    public static final int SDK_JPEG_QUALITY_MEDIUM = 75;
+    public static final int SDK_JPEG_QUALITY_MEDIUM = 80;
 
     /** JPEG quality for SDK large photos (prioritize quality) */
-    public static final int SDK_JPEG_QUALITY_LARGE = 80;
+    public static final int SDK_JPEG_QUALITY_LARGE = 85;
 
     /** JPEG quality for SDK full photos (max quality for max resolution) */
-    public static final int SDK_JPEG_QUALITY_FULL = 85;
+    public static final int SDK_JPEG_QUALITY_FULL = 95;
 
     // =========================================================================
     // SIZE TIER NAMES

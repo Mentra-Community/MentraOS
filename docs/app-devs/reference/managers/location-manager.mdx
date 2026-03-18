@@ -75,7 +75,7 @@ subscribeToStream(
 
 *   `options`: An object containing the subscription parameters.
     *   `accuracy`: The desired accuracy tier. Must be one of the tiers listed below.
-*   `handler`: The callback function that will be executed with [`LocationUpdate`](/reference/interfaces/event-types#locationupdate) data each time a new location is available.
+*   `handler`: The callback function that will be executed with [`LocationUpdate`](/app-devs/reference/interfaces/event-types#locationupdate) data each time a new location is available.
 
 **Returns:** An `unsubscribe` function to stop this specific subscription.
 
@@ -99,7 +99,7 @@ async getLatestLocation(options: { accuracy: string }): Promise<LocationUpdate>
 *   `options`: An object containing the accuracy requirement.
     *   `accuracy`: The desired accuracy tier.
 
-**Returns:** A `Promise` that resolves to a single [`LocationUpdate`](/reference/interfaces/event-types#locationupdate) object.
+**Returns:** A `Promise` that resolves to a single [`LocationUpdate`](/app-devs/reference/interfaces/event-types#locationupdate) object.
 
 ---
 

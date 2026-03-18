@@ -1,8 +1,10 @@
 package com.mentra.asg_client.io.bes;
 
+import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
+import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
 import com.mentra.asg_client.io.bluetooth.core.ComManager;
@@ -27,6 +29,11 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     
     private static BesOtaManager mInstance;
     private static byte[] sCurrentFirmwareVersion = null; // Store current firmware version bytes
+
+    // Wakelock timeout for BES OTA to prevent CPU sleep during firmware transfer
+    private static final long WAKELOCK_TIMEOUT_MS = 120000; // 120 seconds
+    private Context mContext;
+
     private String filePath;
     private boolean bInit = false;
     private byte[] fileData = null;
@@ -45,9 +52,11 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     /**
      * Constructor - receives ComManager instance from AsgClientService
      * @param comManager The ComManager instance for UART communication
+     * @param context Application context for wakelock
      */
-    public BesOtaManager(ComManager comManager) {
+    public BesOtaManager(ComManager comManager, Context context) {
         this.comManager = comManager;
+        this.mContext = context.getApplicationContext();
     }
     
     /**
@@ -228,7 +237,11 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
             Log.e(TAG, "Failed to initialize firmware update");
             return false;
         }
-        
+
+        // Acquire wakelock to prevent CPU sleep during firmware transfer
+        WakeLockManager.acquireCpuWakeLock(mContext, WAKELOCK_TIMEOUT_MS);
+        Log.i(TAG, "BES OTA wakelock acquired for " + WAKELOCK_TIMEOUT_MS + "ms");
+
         // Set waiting for authorization flag (NOT in OTA mode yet!)
         isWaitingForAuthorization = true;
         isBesOtaInProgress = true;
@@ -257,6 +270,10 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      * Cleanup and reset state
      */
     private void cleanup() {
+        // Release wakelock
+        WakeLockManager.releaseCpuWakeLock();
+        Log.i(TAG, "BES OTA wakelock released");
+
         isBesOtaInProgress = false;
         isWaitingForAuthorization = false;
         if (comManager != null) {

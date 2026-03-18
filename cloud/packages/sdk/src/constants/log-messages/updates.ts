@@ -1,53 +1,55 @@
 /**
  * updates.ts
  *
- * This file defines constant messages that should be displayed
- * in the terminal to notify developers about new SDK releases.
+ * SDK update notification messages and dist-tag utilities.
  *
- * Each function generates a stylized ASCII message (banner-style)
- * that highlights the latest SDK version and provides the npm install command.
- * https://patorjk.com/software/taag/
+ * Previously used boxen-bordered ASCII art banners. Now returns plain
+ * single-line strings that the clean transport formats with color/prefix.
  *
- * These messages are intended to be logged to the console or shown in
- * terminal output so developers are aware of updates in a clear
- * and visually distinct way.
- *
- *
+ * The clean logger renders this as:
+ *   MentraOS  ⚠ SDK update available: 2.1.29 → 2.1.30 — bun install @mentra/sdk@latest
+ *   MentraOS  ⚠ SDK update available: 3.0.0-hono.4 → 3.0.0-hono.5 — bun install @mentra/sdk@hono
  */
 
-import chalk from "chalk";
-import boxen from "boxen";
-import { mentraLogo_1, newUpdateText } from "./logos";
+/**
+ * Known npm dist-tags for @mentra/sdk.
+ * Used to parse the current version's prerelease identifier into a dist-tag,
+ * and to validate the tag before sending it to the cloud API.
+ */
+const KNOWN_DIST_TAGS = ["alpha", "beta", "hono", "rc", "canary", "next"] as const;
 
-const createUpdateNotification = (versionNumb: string): string => {
-  const line = chalk.bold.gray("-------------------------------");
-  const logo = chalk.cyan(mentraLogo_1);
-  const title = chalk.bold.cyan(newUpdateText);
-  const versionMessage = `Version ${chalk.bold.cyan(`SDK VERSION V${versionNumb} is out! 🎉`)}`;
-  const currentNote = chalk.yellow("You are running an older version");
-  const instructions = chalk.yellow("Update to the latest version with:");
-  const command = chalk.green.bold("bun install @mentra/sdk@latest");
+/**
+ * Determine the npm dist-tag (release track) from a semver version string.
+ *
+ * Parses the prerelease identifier:
+ *   "2.1.29"          → "latest"  (no prerelease)
+ *   "2.1.31-beta.5"   → "beta"
+ *   "3.0.0-hono.4"    → "hono"
+ *   "2.1.2-alpha.0"   → "alpha"
+ *   "4.0.0-rc.1"      → "rc"
+ *   "1.0.0-unknown.1" → "latest"  (unrecognized prerelease falls back to latest)
+ *
+ * @param version - The installed SDK version string
+ * @returns The dist-tag name (e.g., "latest", "beta", "hono")
+ */
+export function getDistTag(version: string): string {
+  const pattern = new RegExp(`-(${KNOWN_DIST_TAGS.join("|")})`);
+  const match = version.match(pattern);
+  return match ? match[1] : "latest";
+}
 
-  const content = [
-    logo,
-    title,
-    line,
-    versionMessage,
-    currentNote,
-    line,
-    instructions,
-    command,
-  ].join("\n");
-
-  return boxen(content, {
-    padding: 1,
-    margin: 1,
-    borderStyle: "round",
-    borderColor: "cyan",
-    textAlignment: "left",
-  });
-};
-
-export const newSDKUpdate = (versionNumb: string): string => {
-  return createUpdateNotification(versionNumb);
+/**
+ * Generate a single-line SDK update notification message.
+ *
+ * The install command uses the correct dist-tag so developers on non-latest
+ * tracks (beta, hono, etc.) aren't told to install @latest which would
+ * downgrade/brick their app.
+ *
+ * @param currentVersion - The currently installed SDK version
+ * @param latestVersion - The latest available SDK version for this track
+ * @param tag - The npm dist-tag for the install command (default: "latest")
+ * @returns A plain string suitable for `logger.warn()`
+ */
+export const newSDKUpdate = (currentVersion: string, latestVersion: string, tag: string = "latest"): string => {
+  return `SDK update available: ${currentVersion} → ${latestVersion} — bun install @mentra/sdk@${tag}`;
 };

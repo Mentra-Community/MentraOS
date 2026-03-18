@@ -1,5 +1,5 @@
 import {Calendar, Camera, MapPin, Mic, Shield, Cpu, Speaker, Wifi, RotateCw, CircleDot, Lightbulb} from "lucide-react"
-import {HardwareType, AppI} from "../types"
+import {HardwareType, AppI, DeviceInfo} from "../types"
 
 // App tags mapping
 export const APP_TAGS: Record<string, string[]> = {
@@ -86,6 +86,7 @@ export type Theme = "light" | "dark"
 // Base shared prop types
 export interface AppDetailsBasePropsCore {
   app: AppI
+  deviceInfo: DeviceInfo | null
   theme: Theme
   isAuthenticated: boolean
   isWebView: boolean

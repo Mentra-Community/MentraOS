@@ -67,9 +67,7 @@ function toObjectId(id: string, label = "id"): Types.ObjectId {
 async function ensureMember(user: UserI, orgId: string) {
   const org = await Organization.findById(orgId);
   if (!org) throw new ApiError(404, "Organization not found");
-  const isMember = org.members.some(
-    (m) => m.user.toString() === user._id.toString(),
-  );
+  const isMember = org.members.some((m) => m.user.toString() === user._id.toString());
   if (!isMember) throw new ApiError(403, "Insufficient permissions");
   return org;
 }
@@ -77,9 +75,7 @@ async function ensureMember(user: UserI, orgId: string) {
 async function ensureAdmin(user: UserI, orgId: string) {
   const org = await Organization.findById(orgId);
   if (!org) throw new ApiError(404, "Organization not found");
-  const isAdmin = org.members.some(
-    (m) => m.user.toString() === user._id.toString() && m.role === "admin",
-  );
+  const isAdmin = org.members.some((m) => m.user.toString() === user._id.toString() && m.role === "admin");
   if (!isAdmin) throw new ApiError(403, "Insufficient permissions");
   return org;
 }
@@ -102,19 +98,23 @@ export async function listUserOrgs(email: string): Promise<OrganizationI[]> {
  * - Adds creator as admin member.
  * - Sets contactEmail = user.email in profile.
  */
-export async function createOrg(
-  email: string,
-  name: string,
-): Promise<OrganizationI> {
+export async function createOrg(email: string, name: string): Promise<OrganizationI> {
   const user = await getOrCreateUserByEmail(email);
 
-  const trimmed =
-    typeof name === "string" ? name.trim().replace(/\s+/g, " ") : "";
+  const trimmed = typeof name === "string" ? name.trim().replace(/\s+/g, " ") : "";
   if (!trimmed) {
     throw new ApiError(400, "Organization name is required");
   }
 
-  const slug = Organization.generateSlug(trimmed);
+  // Generate a base slug, then check for uniqueness (the model static is
+  // synchronous and cannot do DB lookups, so we handle it here).
+  let slug = Organization.generateSlug(trimmed);
+  const existing = await Organization.findOne({ slug }).lean();
+  if (existing) {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    slug = `${slug}-${suffix}`;
+  }
+
   const orgDoc = new Organization({
     name: trimmed,
     slug,
@@ -128,7 +128,21 @@ export async function createOrg(
   try {
     await orgDoc.save();
     return orgDoc;
-  } catch (error: unknown) {
+  } catch (error: any) {
+    // Handle duplicate slug race condition: another request inserted the same
+    // slug between our check and save. Retry once with a fresh random suffix.
+    if (error?.code === 11000) {
+      const retrySuffix = Math.random().toString(36).slice(2, 8);
+      orgDoc.slug = `${Organization.generateSlug(trimmed)}-${retrySuffix}`;
+      try {
+        await orgDoc.save();
+        return orgDoc;
+      } catch (_retryError: unknown) {
+        logger.error({ userId: email, method: "createOrg" }, "Failed to create organization after slug retry");
+        throw new ApiError(500, "Failed to create organization");
+      }
+    }
+
     const _logger = logger.child({
       userId: email,
       method: "createOrg",
@@ -141,10 +155,7 @@ export async function createOrg(
 /**
  * Get a specific organization by ID (must be a member).
  */
-export async function getOrg(
-  email: string,
-  orgId: string,
-): Promise<OrganizationI> {
+export async function getOrg(email: string, orgId: string): Promise<OrganizationI> {
   if (!orgId) throw new ApiError(400, "Organization ID is required");
   const user = await getOrCreateUserByEmail(email);
   const org = await ensureMember(user, orgId);
@@ -154,7 +165,7 @@ export async function getOrg(
 /**
  * Update an organization (admin only).
  * - Allows updating name and profile (website/contactEmail/description/logo).
- * - Recomputes slug if name changes.
+ * - Slug is NOT recomputed on rename (set once at creation, treated as a permanent URL identifier).
  */
 export async function updateOrg(
   email: string,
@@ -168,7 +179,6 @@ export async function updateOrg(
   const updates: any = {};
   if (patch.name && typeof patch.name === "string") {
     updates.name = patch.name.trim().replace(/\s+/g, " ");
-    updates.slug = Organization.generateSlug(updates.name);
   }
   if (patch.profile && typeof patch.profile === "object") {
     updates.profile = {
@@ -225,9 +235,7 @@ export async function inviteMember(
   const token = `${org._id.toString()}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
   // Remove any existing pending invite for the same email
-  org.pendingInvites = (org.pendingInvites || []).filter(
-    (i) => i.email !== lower,
-  );
+  org.pendingInvites = (org.pendingInvites || []).filter((i) => i.email !== lower);
 
   org.pendingInvites.push({
     email: lower,
@@ -248,11 +256,7 @@ export async function inviteMember(
  * Resend an invitation email (admin only).
  * - Increments emailSentCount and updates lastEmailSentAt.
  */
-export async function resendInvite(
-  email: string,
-  orgId: string,
-  inviteeEmail: string,
-): Promise<void> {
+export async function resendInvite(email: string, orgId: string, inviteeEmail: string): Promise<void> {
   if (!orgId) throw new ApiError(400, "Organization ID is required");
   if (!inviteeEmail) throw new ApiError(400, "Invitee email is required");
   const user = await getOrCreateUserByEmail(email);
@@ -271,11 +275,7 @@ export async function resendInvite(
 /**
  * Rescind (cancel) a pending invitation (admin only).
  */
-export async function rescindInvite(
-  email: string,
-  orgId: string,
-  inviteeEmail: string,
-): Promise<void> {
+export async function rescindInvite(email: string, orgId: string, inviteeEmail: string): Promise<void> {
   if (!orgId) throw new ApiError(400, "Organization ID is required");
   if (!inviteeEmail) throw new ApiError(400, "Invitee email is required");
   const user = await getOrCreateUserByEmail(email);
@@ -283,9 +283,7 @@ export async function rescindInvite(
 
   const lower = inviteeEmail.toLowerCase().trim();
   const before = org.pendingInvites.length;
-  org.pendingInvites = (org.pendingInvites || []).filter(
-    (i) => i.email !== lower,
-  );
+  org.pendingInvites = (org.pendingInvites || []).filter((i) => i.email !== lower);
   if (before === org.pendingInvites.length) {
     throw new ApiError(404, "Invite not found");
   }
@@ -297,10 +295,7 @@ export async function rescindInvite(
  * - Adds user as member with the role embedded in the invite.
  * - Removes the pending invite.
  */
-export async function acceptInvite(
-  email: string,
-  token: string,
-): Promise<OrganizationI> {
+export async function acceptInvite(email: string, token: string): Promise<OrganizationI> {
   if (!token) throw new ApiError(400, "Invite token is required");
   const user = await getOrCreateUserByEmail(email);
 
@@ -314,9 +309,7 @@ export async function acceptInvite(
   if (!invite) throw new ApiError(404, "Invitation not found");
 
   // If already a member, just drop invite
-  const alreadyMember = org.members.some(
-    (m) => m.user.toString() === user._id.toString(),
-  );
+  const alreadyMember = org.members.some((m) => m.user.toString() === user._id.toString());
   if (!alreadyMember) {
     org.members.push({
       user: user._id as Types.ObjectId,
@@ -361,11 +354,7 @@ export async function changeMemberRole(
 /**
  * Remove a member from the organization (admin only).
  */
-export async function removeMember(
-  email: string,
-  orgId: string,
-  memberId: string,
-): Promise<void> {
+export async function removeMember(email: string, orgId: string, memberId: string): Promise<void> {
   if (!orgId || !memberId) {
     throw new ApiError(400, "orgId and memberId are required");
   }

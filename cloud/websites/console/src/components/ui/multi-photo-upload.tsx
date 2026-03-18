@@ -1,8 +1,7 @@
 import * as React from "react";
 import { X, Upload, Image as ImageIcon, ZoomIn, Loader2, Info } from "lucide-react";
 import { cn } from "@/libs/utils";
-import { Button } from "./button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./dialog";
+import { Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@mentra/shared";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -368,12 +367,12 @@ export function MultiPhotoUpload({
       )}
 
       {/* Info Text */}
-      <div className="flex items-center justify-between text-xs text-gray-500">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
         <p>
           {photos.length} / {maxPhotos} photos
         </p>
         {canAddMore && (
-          <Button type="button" variant="outline" size="sm" onClick={openOrientationDialog} disabled={disabled}>
+          <Button type="button" size="sm" onClick={openOrientationDialog} disabled={disabled}>
             <Upload className="w-4 h-4" />
             Upload Photos
           </Button>

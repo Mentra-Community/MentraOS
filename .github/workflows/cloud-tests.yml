@@ -5,8 +5,14 @@ name: Run Cloud Tests ☁️
 on:
   push:
     paths:
-      - "cloud/**"
-      - ".github/workflows/cloud.yml"
+      - "cloud/packages/**"
+      - "cloud/bun.lock"
+      - "cloud/package.json"
+      - ".github/workflows/cloud-tests.yml"
+
+concurrency:
+  group: cloud-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build_and_test:
@@ -39,7 +45,7 @@ jobs:
           # Path to Bun's global package cache on the runner
           path: ~/.bun/install/cache
           # Key includes OS and lockfile hash. If bun.lockb (lockfile) hasn't changed, cache hits.
-          key: ${{ runner.os }}-bun-${{ hashFiles('cloud/bun.lockb') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('cloud/bun.lock') }}
           # In case of partial match, allow restore with just OS identifier (fallback).
           restore-keys: |
             ${{ runner.os }}-bun-

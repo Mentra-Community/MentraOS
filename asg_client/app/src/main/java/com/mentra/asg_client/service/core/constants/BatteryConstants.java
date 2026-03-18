@@ -8,7 +8,7 @@ public class BatteryConstants {
      * Minimum battery level (percentage) required for camera operations.
      * Operations will be blocked if battery is below this level.
      */
-    public static final int MIN_BATTERY_LEVEL = 10;
+    public static final int MIN_BATTERY_LEVEL = 15;
 
     /**
      * Battery check interval during recording/streaming (milliseconds).

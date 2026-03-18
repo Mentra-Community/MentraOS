@@ -1,7 +1,9 @@
+import {Platform} from "react-native"
 import {getTimeZone} from "react-native-localize"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
+import * as Device from "expo-device"
 
 import restComms from "@/services/RestComms"
 import {storage} from "@/utils/storage"
@@ -24,8 +26,33 @@ export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  app_switcher_ui: {
+    key: "app_switcher_ui",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   enable_squircles: {
     key: "enable_squircles",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  android_blur: {
+    key: "android_blur",
+    defaultValue: () => {
+      if (Platform.OS !== "android") return true
+      const ram = Device.totalMemory
+      return ram ? ram >= 4 * 1024 * 1024 * 1024 : true
+    },
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  ios_glass_effect: {
+    key: "ios_glass_effect",
     defaultValue: () => true,
     writable: true,
     saveOnServer: true,
@@ -94,6 +121,20 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  saved_backend_urls: {
+    key: "saved_backend_urls",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  saved_store_urls: {
+    key: "saved_store_urls",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   reconnect_on_app_foreground: {
     key: "reconnect_on_app_foreground",
     defaultValue: () => true,
@@ -136,6 +177,13 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // ui state:
+  home_background: {
+    key: "home_background",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   theme_preference: {
     key: "theme_preference",
     defaultValue: () => (__DEV__ ? "system" : "light"),
@@ -336,6 +384,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  media_post_processing: {
+    key: "media_post_processing",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
 
   // time zone settings
   time_zone: {
@@ -369,6 +424,13 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   gallery_mode: {key: "gallery_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  gallery_sync_explained: {
+    key: "gallery_sync_explained",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   offline_camera_running: {
     key: "offline_camera_running",
     defaultValue: () => false,
@@ -478,6 +540,7 @@ interface SettingsState {
   getRestUrl: () => string
   getWsUrl: () => string
   getCoreSettings: () => Record<string, any>
+  resetAllSettingsLocally: () => void
 }
 
 const getDefaultSettings = () =>
@@ -666,6 +729,12 @@ export const useSettingsStore = create<SettingsState>()(
         }
       })
       return coreSettings
+    },
+    resetAllSettingsLocally: () => {
+      set((state) => ({
+        settings: getDefaultSettings(),
+        isInitialized: true,
+      }))
     },
   })),
 )

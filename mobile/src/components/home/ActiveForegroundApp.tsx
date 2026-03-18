@@ -16,29 +16,32 @@ export const ActiveForegroundApp: React.FC = () => {
   const stopApplet = useStopApplet()
 
   const handlePress = () => {
-    if (applet) {
-      // Handle offline apps - navigate directly to React Native route
-      if (applet.offline) {
-        const offlineRoute = applet.offlineRoute
-        if (offlineRoute) {
-          push(offlineRoute)
-          return
-        }
-      }
+    if (!applet) {
+      console.log("no active foreground app")
+      return
+    }
 
-      // Check if app has webviewURL and navigate directly to it
-      if (applet.webviewUrl && applet.healthy) {
-        push("/applet/webview", {
-          webviewURL: applet.webviewUrl,
-          appName: applet.name,
-          packageName: applet.packageName,
-        })
-      } else {
-        push("/applet/settings", {
-          packageName: applet.packageName,
-          appName: applet.name,
-        })
+    // Handle offline apps - navigate directly to React Native route
+    if (applet.offline) {
+      const offlineRoute = applet.offlineRoute
+      if (offlineRoute) {
+        push(offlineRoute)
+        return
       }
+    }
+
+    // Check if app has webviewURL and navigate directly to it
+    if (applet.webviewUrl && applet.healthy) {
+      push("/applet/webview", {
+        webviewURL: applet.webviewUrl,
+        appName: applet.name,
+        packageName: applet.packageName,
+      })
+    } else {
+      push("/applet/settings", {
+        packageName: applet.packageName,
+        appName: applet.name,
+      })
     }
   }
 
@@ -74,9 +77,9 @@ export const ActiveForegroundApp: React.FC = () => {
   if (!applet) {
     // Show placeholder when no active app
     return (
-      <View style={themed($container)}>
-        <View style={themed($placeholderContent)}>
-          <Text style={themed($placeholderText)} tx="home:appletPlaceholder" />
+      <View className="min-h-22 my-2 rounded-2xl bg-primary-foreground">
+        <View className="flex-row items-center justify-center flex-1">
+          <Text className="text-muted-foreground text-lg" tx="home:appletPlaceholder" />
         </View>
       </View>
     )
@@ -84,7 +87,7 @@ export const ActiveForegroundApp: React.FC = () => {
 
   return (
     <TouchableOpacity
-      style={themed($container)}
+      className="bg-primary-foreground px-2 rounded-2xl flex-row justify-between items-center min-h-22 my-2 mb-2"
       onPress={handlePress}
       onLongPress={handleLongPress}
       activeOpacity={0.7}>
@@ -117,7 +120,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   // borderWidth: 2,
   // borderColor: colors.border,
   borderRadius: spacing.s4,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingHorizontal: spacing.s2,
 })
 
@@ -165,13 +168,6 @@ const $closeButton: ThemedStyle<ViewStyle> = ({spacing}) => ({
   padding: spacing.s2,
   justifyContent: "center",
   alignItems: "center",
-})
-
-const $placeholderContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  padding: spacing.s6,
-  alignItems: "center",
-  justifyContent: "center",
-  paddingVertical: spacing.s8,
 })
 
 const $placeholderText: ThemedStyle<TextStyle> = ({colors}) => ({

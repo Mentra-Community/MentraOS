@@ -67,7 +67,17 @@ jobs:
         working-directory: cloud
         run: bun install --frozen-lockfile
 
-      - name: Build SDK package (required for TypeScript types)
+      - name: Build types package
+        if: steps.filter.outputs.console == 'true'
+        working-directory: cloud/packages/types
+        run: bun run build
+
+      - name: Build display-utils package
+        if: steps.filter.outputs.console == 'true'
+        working-directory: cloud/packages/display-utils
+        run: bun run build
+
+      - name: Build SDK package
         if: steps.filter.outputs.console == 'true'
         working-directory: cloud/packages/sdk
         run: bun run build

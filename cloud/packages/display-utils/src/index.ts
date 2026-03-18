@@ -46,6 +46,9 @@ export type {
 
 export { G1_PROFILE, G1_PROFILE_LEGACY, G1_HYPHEN_WIDTH_PX, G1_SPACE_WIDTH_PX } from "./profiles";
 
+// G2 Profile
+export { G2_PROFILE, G2_HYPHEN_WIDTH_PX, G2_SPACE_WIDTH_PX } from "./profiles";
+
 // Z100 Profile
 export { Z100_PROFILE, Z100_HYPHEN_WIDTH_PX, Z100_SPACE_WIDTH_PX } from "./profiles";
 
@@ -53,7 +56,7 @@ export { Z100_PROFILE, Z100_HYPHEN_WIDTH_PX, Z100_SPACE_WIDTH_PX } from "./profi
 export { NEX_PROFILE, NEX_HYPHEN_WIDTH_PX, NEX_SPACE_WIDTH_PX } from "./profiles";
 
 // Import for factory functions
-import { G1_PROFILE_LEGACY, Z100_PROFILE, NEX_PROFILE } from "./profiles";
+import { G1_PROFILE_LEGACY, G2_PROFILE, Z100_PROFILE, NEX_PROFILE } from "./profiles";
 
 // =============================================================================
 // Measurer - Pixel-accurate text measurement
@@ -194,6 +197,30 @@ export function createG1LegacyToolkit(): {
   profile: DisplayProfile;
 } {
   return createDisplayToolkit(G1_PROFILE_LEGACY, {
+    breakMode: "character-no-hyphen",
+  });
+}
+
+/**
+ * Create a G2-configured display toolkit with character breaking.
+ * G2 uses EvenHub protocol with the same display hardware as G1.
+ *
+ * @returns Object with measurer, wrapper, and helpers configured for Even G2
+ *
+ * @example
+ * ```typescript
+ * const { wrapper } = createG2Toolkit()
+ * const result = wrapper.wrap("Your text here")
+ * ```
+ */
+export function createG2Toolkit(): {
+  measurer: TextMeasurer;
+  wrapper: TextWrapper;
+  helpers: DisplayHelpers;
+  composer: ColumnComposer;
+  profile: DisplayProfile;
+} {
+  return createDisplayToolkit(G2_PROFILE, {
     breakMode: "character-no-hyphen",
   });
 }

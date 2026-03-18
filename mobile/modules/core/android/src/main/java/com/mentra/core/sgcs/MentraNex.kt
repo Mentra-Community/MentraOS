@@ -288,14 +288,14 @@ class MentraNex : SGCManager() {
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, silent: Boolean) { Bridge.log("Nex: requestPhoto operation not supported") }
+    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, sound: Boolean) { Bridge.log("Nex: requestPhoto operation not supported") }
     override fun startRtmpStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startRtmpStream operation not supported") }
     override fun stopRtmpStream() { Bridge.log("Nex: stopRtmpStream operation not supported") }
     override fun sendRtmpKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendRtmpKeepAlive operation not supported") }
     override fun startBufferRecording() { Bridge.log("Nex: startBufferRecording operation not supported") }
     override fun stopBufferRecording() { Bridge.log("Nex: stopBufferRecording operation not supported") }
     override fun saveBufferVideo(requestId: String, durationSeconds: Int) { Bridge.log("Nex: saveBufferVideo operation not supported") }
-    override fun startVideoRecording(requestId: String, save: Boolean, silent: Boolean) { Bridge.log("Nex: startVideoRecording operation not supported") }
+    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) { Bridge.log("Nex: startVideoRecording operation not supported") }
     override fun stopVideoRecording(requestId: String) { Bridge.log("Nex: stopVideoRecording operation not supported") }
 
     // Button Settings: Not supported on Nex
@@ -306,6 +306,8 @@ class MentraNex : SGCManager() {
     override fun sendButtonCameraLedSetting() { Bridge.log("Nex: sendButtonCameraLedSetting operation not supported") }
 
     override fun sendUserEmailToGlasses(email: String) {  Bridge.log("Nex: sendUserEmailToGlasses operation not supported") }
+
+    override fun sendIncidentId(incidentId: String) { Bridge.log("Nex: sendIncidentId operation not supported") }
 
     // Connection
     override fun findCompatibleDevices() {
@@ -497,6 +499,10 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: setDashboardPosition() - height: " + height + ", depth: " + depth);
         val cmdBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height, depth)
         sendDataSequentially(cmdBytes, 10)
+    }
+
+    override fun ping() {
+        Bridge.log("Nex: ping()");
     }
 
     // Audio Control

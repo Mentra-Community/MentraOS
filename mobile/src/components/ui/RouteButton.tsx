@@ -4,6 +4,7 @@ import {View, TouchableOpacity, TextStyle, ViewStyle} from "react-native"
 import {Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
+import GlassView from "@/components/ui/GlassView"
 
 interface StatusCardProps {
   label: string
@@ -23,19 +24,16 @@ export function StatusCard({label, style, iconStart, iconEnd, textStyle, subtitl
   const {flex, ...restStyle} = (style || {}) as ViewStyle & {flex?: number}
 
   const content = (
-    <View style={[themed($settingsGroup), themed($statusCardContainer), restStyle]}>
-      <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4}}>
-        {iconStart && <View style={themed($icon)}>{iconStart}</View>}
-        <View
-          style={{
-            gap: theme.spacing.s1,
-          }}>
-          <Text style={[themed($label), textStyle]} weight="semibold" text={label} />
-          {subtitle && <Text style={themed($subtitle)} text={subtitle} />}
+    <GlassView className="bg-primary-foreground px-4 py-3 flex-row justify-between items-center rounded-2xl" style={[restStyle]}>
+      <View className="flex-row items-center gap-4">
+        {iconStart && <View className="justify-center items-center">{iconStart}</View>}
+        <View className="gap-1">
+          <Text className="text-sm text-secondary-foreground" style={textStyle} text={label} />
+          {subtitle && <Text className="text-muted-foreground text-xs" text={subtitle} />}
         </View>
       </View>
       {iconEnd && iconEnd}
-    </View>
+    </GlassView>
   )
 
   if (onPress) {
@@ -83,19 +81,19 @@ export function RouteButton({
   preset = "default",
   disabled = false,
 }: RouteButtonProps) {
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
 
   const isDestructive = preset === "destructive"
   const labelColor = disabled
-    ? theme.colors.textDim
+    ? theme.colors.muted_foreground
     : isDestructive
-      ? theme.colors.destructive
-      : theme.colors.secondary_foreground
+    ? theme.colors.destructive
+    : theme.colors.secondary_foreground
 
   return (
-    <View style={[themed($settingsGroup), {paddingVertical: 0}, disabled && {opacity: 0.5}, style]}>
+    <GlassView className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>
       <TouchableOpacity onPress={onPress} disabled={disabled || !onPress}>
-        <View style={{flexDirection: "row", paddingVertical: 8, alignItems: "center"}}>
+        <View className="items-center py-2 flex-row">
           <View
             style={{
               flexDirection: "column",
@@ -103,62 +101,29 @@ export function RouteButton({
               flex: 1,
               gap: theme.spacing.s1,
             }}>
-            <View style={{flexDirection: "row", alignItems: "center", gap: theme.spacing.s4}}>
-              {icon && <View style={themed($icon)}>{icon}</View>}
-              <Text style={[themed($label), {color: labelColor}]}>{label}</Text>
+            <View className="flex-row items-center gap-4">
+              {icon && <View className="justify-center items-center">{icon}</View>}
+              <Text style={{color: labelColor}} className="text-sm text-secondary-foreground" text={label} />
             </View>
-            {subtitle && <Text style={themed($subtitle)}>{subtitle}</Text>}
+            {subtitle && <Text className="text-muted-foreground text-xs" text={subtitle} />}
           </View>
           {onPress && (
-            <View style={[themed($iconContainer), {flexShrink: 0, marginLeft: theme.spacing.s3}]}>
-              <Icon name="arrow-right" size={24} color={disabled ? theme.colors.textDim : theme.colors.text} />
+            <View className="bg-background rounded-full p-3 w-12 h-12 ml-3 flex-shrink-0">
+              <Icon
+                name="arrow-right"
+                size={24}
+                color={disabled ? theme.colors.muted_foreground : theme.colors.foreground}
+              />
             </View>
           )}
           {text && (
-            <Text style={[themed($text), {flexShrink: 0, marginLeft: theme.spacing.s3}]} weight="light">
-              {text}
-            </Text>
+            <Text
+              className="text-text text-base flex-shrink-0 font-light ml-3 text-ellipsis max-w-[70%] align-center justify-center"
+              text={text}
+            />
           )}
         </View>
       </TouchableOpacity>
-    </View>
+    </GlassView>
   )
 }
-
-const $icon: ThemedStyle<ViewStyle> = () => ({
-  justifyContent: "center",
-  alignItems: "center",
-})
-
-const $settingsGroup: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
-  paddingVertical: spacing.s3,
-  paddingHorizontal: spacing.s4,
-  borderRadius: spacing.s4,
-})
-
-const $text: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.text,
-  fontSize: 16,
-})
-
-const $iconContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  padding: spacing.s3,
-  width: spacing.s12,
-  height: spacing.s12,
-  borderRadius: spacing.s12,
-  alignItems: "center",
-})
-
-const $label: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.secondary_foreground,
-  fontSize: 14,
-  lineHeight: 16,
-})
-
-const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.textDim,
-  fontSize: 12,
-  lineHeight: 14,
-})

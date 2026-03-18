@@ -50,6 +50,8 @@ export default function WebsocketStatus() {
     const prevStatus = prevConnectionStatusRef.current
     prevConnectionStatusRef.current = connectionStatus
 
+    console.log(`WSM: useEffect: connectionStatus: ${connectionStatus}`)
+
     if (connectionStatus === WebSocketStatus.CONNECTED) {
       if (disconnectionTimerRef.current) {
         BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
@@ -85,15 +87,11 @@ export default function WebsocketStatus() {
 
   const config = STATUS_CONFIG[displayStatus]
 
-  if (!superMode && displayStatus == "connected") {
-    return null
-  }
-
   if (offlineMode) {
     return (
       <TouchableOpacity
         onPress={() => {
-          push("/settings/transcription")
+          push("/miniapps/settings/transcription")
         }}>
         <View
           className={`flex-row items-center self-center align-middle justify-center py-1 px-2 rounded-full bg-destructive`}>
@@ -104,6 +102,10 @@ export default function WebsocketStatus() {
         </View>
       </TouchableOpacity>
     )
+  }
+
+  if (!superMode && displayStatus == "connected") {
+    return null
   }
 
   return (

@@ -1,6 +1,6 @@
 import CoreModule from "core"
 
-import {push} from "@/contexts/NavigationRef"
+import {push} from "@/contexts/NavigationHistoryContext"
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import displayProcessor from "@/services/DisplayProcessor"
 import mantle from "@/services/MantleManager"
@@ -13,6 +13,7 @@ import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import restComms from "@/services/RestComms"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
+import {throttle} from "@/utils/timers"
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -322,19 +323,19 @@ class SocketComms {
     const udpHost = msg.udpHost || msg.udp_host
     const udpPort = msg.udpPort || msg.udp_port || 8000
 
-    console.log("SOCKET: connection_ack UDP fields:", {
-      udpHost: msg.udpHost,
-      udp_host: msg.udp_host,
-      udpPort: msg.udpPort,
-      udp_port: msg.udp_port,
-      resolvedHost: udpHost,
-      resolvedPort: udpPort,
-      hasEncryption: !!msg.udpEncryption,
-      allKeys: Object.keys(msg),
-    })
+    // console.log("SOCKET: connection_ack UDP fields:", {
+    //   udpHost: msg.udpHost,
+    //   udp_host: msg.udp_host,
+    //   udpPort: msg.udpPort,
+    //   udp_port: msg.udp_port,
+    //   resolvedHost: udpHost,
+    //   resolvedPort: udpPort,
+    //   hasEncryption: !!msg.udpEncryption,
+    //   allKeys: Object.keys(msg),
+    // })
 
     if (udpHost) {
-      console.log(`SOCKET: UDP endpoint found, configuring with ${udpHost}:${udpPort}`)
+      // console.log(`SOCKET: UDP endpoint found, configuring with ${udpHost}:${udpPort}`)
       udp.configure(udpHost, udpPort, this.userid)
 
       // Configure encryption if server provided a key
@@ -395,16 +396,21 @@ class SocketComms {
       return
     }
 
-    console.log(
-      `SOCKET: Audio format configured successfully: ${audioFormat}${
-        bypassEncoding ? " (raw PCM)" : `, ${frameSizeBytes} bytes/frame`
-      }`,
-    )
+    // console.log(
+    //   `SOCKET: Audio format configured successfully: ${audioFormat}${
+    //     bypassEncoding ? " (raw PCM)" : `, ${frameSizeBytes} bytes/frame`
+    //   }`,
+    // )
   }
+
+  private refreshAppletsThrottled = throttle(() => {
+    useAppletStatusStore.getState().refreshApplets()
+  }, 500)
 
   private handle_app_state_change(msg: any) {
     console.log("SOCKET: app_state_change", msg)
-    useAppletStatusStore.getState().refreshApplets()
+    // throttle so we don't call more than once in 500ms
+    this.refreshAppletsThrottled()
   }
 
   private handle_connection_error(msg: any) {
@@ -510,16 +516,17 @@ class SocketComms {
     const size = msg.size ?? "medium"
     const authToken = msg.authToken ?? ""
     const compress = msg.compress ?? "none"
-    const silent = msg.silent ?? true
+    const flash = msg.flash ?? true
+    const sound = msg.sound ?? true
     console.log(
-      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} silent: ${silent}`,
+      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} flash: ${flash} sound: ${sound}`,
     )
     if (!requestId || !appId) {
       console.log("Invalid photo request: missing requestId or appId")
       return
     }
-    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, silent
-    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, silent)
+    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound
+    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
   }
 
   private handle_start_rtmp_stream(msg: any) {
@@ -561,8 +568,9 @@ class SocketComms {
     console.log(`SOCKET: Received START_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const videoRequestId = msg.requestId || `video_${Date.now()}`
     const save = msg.save !== false
-    const silent = msg.silent ?? false
-    CoreModule.startVideoRecording(videoRequestId, save, silent)
+    const flash = msg.flash ?? true
+    const sound = msg.sound ?? true
+    CoreModule.startVideoRecording(videoRequestId, save, flash, sound)
   }
 
   private handle_stop_video_recording(msg: any) {

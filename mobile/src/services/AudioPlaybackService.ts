@@ -1,5 +1,5 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
-import CoreModule from "modules/core"
+import CoreModule from "core"
 import {BackgroundTimer} from "@/utils/timers"
 
 interface AudioPlayRequest {
@@ -44,6 +44,7 @@ class AudioPlaybackService {
       await setAudioModeAsync({
         shouldPlayInBackground: true,
         playsInSilentMode: true,
+        interruptionMode: "duckOthers",
       })
       this.audioModeConfigured = true
       console.log("AUDIO: Audio mode configured for background playback")

@@ -103,8 +103,7 @@
                   "app-devs/core-concepts/hardware-capabilities/camera-glasses",
                   "app-devs/core-concepts/hardware-capabilities/device-capabilities"
                 ]
-              },
-              "app-devs/core-concepts/mira-tool-calls"
+              }
             ]
           },
           {
@@ -138,7 +137,6 @@
                   "app-devs/reference/interfaces/capabilities",
                   "app-devs/reference/interfaces/webhook-types",
                   "app-devs/reference/interfaces/message-types",
-                  "app-devs/reference/interfaces/tool-types",
                   "app-devs/reference/interfaces/setting-types"
                 ]
               },

@@ -1,5 +1,5 @@
 import {useCameraPermissions} from "expo-camera"
-import {Linking, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {Linking, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Button, Icon, Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
@@ -8,6 +8,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
+import GlassView from "@/components/ui/GlassView"
 
 export default function ConnectedSimulatedGlassesInfo({
   style,
@@ -18,7 +19,7 @@ export default function ConnectedSimulatedGlassesInfo({
   mirrorStyle?: ViewStyle
   showHeader?: boolean
 }) {
-  const {themed, theme} = useAppTheme()
+  const {theme} = useAppTheme()
   const [permission, requestPermission] = useCameraPermissions()
   const {push} = useNavigationHistory()
 
@@ -70,38 +71,25 @@ export default function ConnectedSimulatedGlassesInfo({
   }
 
   return (
-    <View style={[themed($connectedContent), style]}>
+    <GlassView className="bg-primary-foreground py-2 px-3" style={style}>
       {showHeader && (
-        <View style={themed($header)}>
-          <Text style={themed($title)} tx="home:simulatedGlasses" />
-          <Button flex={false} flexContainer={false} preset="alternate" onPress={() => push("/settings/glasses")}>
-            <Icon name="settings" size={18} color={theme.colors.secondary_foreground} />
+        <View className="flex-row justify-between items-center mb-4">
+          <Text className="font-semibold text-secondary-foreground text-lg" tx="home:simulatedGlasses" />
+          <Button
+            flex={false}
+            flexContainer={false}
+            preset="alternate"
+            onPress={() => push("/miniapps/settings/glasses")}>
+            <Icon name="settings" size={24} color={theme.colors.secondary_foreground} />
           </Button>
         </View>
       )}
       <View>
         <GlassesDisplayMirror fallbackMessage="Glasses Mirror" style={mirrorStyle} />
         <TouchableOpacity style={{position: "absolute", bottom: 10, right: 10}} onPress={navigateToFullScreen}>
-          <Icon name="fullscreen" size={24} color={theme.colors.text} />
+          <Icon name="fullscreen" size={24} color={theme.colors.secondary_foreground} />
         </TouchableOpacity>
       </View>
-    </View>
+    </GlassView>
   )
 }
-
-const $connectedContent: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary_foreground,
-  paddingVertical: spacing.s2,
-  paddingHorizontal: spacing.s3,
-})
-
-const $header: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: spacing.s4,
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.secondary_foreground,
-})
