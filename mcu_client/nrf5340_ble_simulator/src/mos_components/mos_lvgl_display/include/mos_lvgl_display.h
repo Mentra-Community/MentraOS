@@ -34,6 +34,7 @@ typedef enum
     LCD_CMD_UPDATE_XY_TEXT,        // **NEW: Pattern 5 XY positioned text**
     LCD_CMD_UPDATE_WELCOME_BATTERY,  // **NEW: Refresh welcome label with current battery (60s period)**
     LCD_CMD_SHOW_WELCOME_SCREEN,      // **NEW: Return to welcome screen (e.g. after BLE disconnect)**
+    LCD_CMD_SHOW_DISCONNECTED_SCREEN, // Show "Disconnected" warning (BLE drop or ping failure)
     LCD_CMD_UPDATE_DFU_PROGRESS,      // **NEW: Show/update DFU progress bar below battery on welcome screen**
     LCD_CMD_UPDATE_DFU_STATUS_TEXT,   // **NEW: Show/hide DFU status line (e.g. "DFU Updating... 45%") below battery**
     LCD_CMD_GRAYSCALE_HORIZONTAL,  // **NEW: Direct A6N horizontal grayscale**
@@ -156,6 +157,9 @@ void display_request_welcome_battery_refresh(void);
 
 /** Return to welcome screen (e.g. after BLE disconnect). Thread-safe, sends command to LVGL. */
 void display_show_welcome_screen(void);
+
+/** Show disconnected warning screen ("Disconnected / Please connect to your phone."). Thread-safe, sends command to LVGL. */
+void display_show_disconnected_screen(void);
 
 /** Update DFU progress bar on welcome screen (below battery). show=1 to show and set percent (0..100), show=0 to hide. Thread-safe. */
 void display_update_dfu_progress(uint8_t show, uint8_t percent);

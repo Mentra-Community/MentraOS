@@ -213,6 +213,15 @@ void protobuf_process_clear_display(void);
 void protobuf_init_ping_monitoring(void);
 
 /**
+ * @brief Reset ping/pong state on BLE connect or disconnect
+ *
+ * Cancels any in-flight ping timeout, resets retry counters, and marks
+ * phone as connected. Call from both connected() and disconnected()
+ * callbacks to prevent stale ping state leaking across sessions.
+ */
+void protobuf_reset_ping_state(void);
+
+/**
  * @brief Send pong response to phone after receiving ping (DEPRECATED)
  *
  * @deprecated This function is from the old ping/pong direction where phone

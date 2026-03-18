@@ -11,6 +11,7 @@
 
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -30,6 +31,25 @@
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(mos_lvgl_display, LOG_LEVEL_DBG);
+
+static void debug_agent_log(const char *run_id,
+                            const char *hypothesis_id,
+                            const char *location,
+                            const char *message,
+                            const char *data_json)
+{
+    FILE *f = fopen("/Users/mentra/Documents/MentraApps/MentraOS/.cursor/debug-f4e4e4.log", "a");
+    if (!f)
+    {
+        return;
+    }
+    int64_t ts = k_uptime_get();
+    fprintf(f,
+            "{\"sessionId\":\"f4e4e4\",\"runId\":\"%s\",\"hypothesisId\":\"%s\","
+            "\"location\":\"%s\",\"message\":\"%s\",\"data\":%s,\"timestamp\":%lld}\n",
+            run_id, hypothesis_id, location, message, data_json, (long long)ts);
+    fclose(f);
+}
 
 #define TASK_LVGL_NAME "MOS_LVGL"
 
@@ -135,6 +155,13 @@ void display_request_welcome_battery_refresh(void)
 void display_show_welcome_screen(void)
 {
     display_cmd_t cmd = { .type = LCD_CMD_SHOW_WELCOME_SCREEN };
+    (void)mos_msgq_send(&lvgl_display_msgq, &cmd, (int64_t)100);
+}
+
+/* Thread-safe: show "Disconnected" warning screen (BLE drop or ping failure) */
+void display_show_disconnected_screen(void)
+{
+    display_cmd_t cmd = { .type = LCD_CMD_SHOW_DISCONNECTED_SCREEN };
     (void)mos_msgq_send(&lvgl_display_msgq, &cmd, (int64_t)100);
 }
 
@@ -252,6 +279,18 @@ void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, ui
 
     strncpy(cmd.p.xy_text.text, text_content, text_len);
     cmd.p.xy_text.text[text_len] = '\0';  /* 保证 NUL 结尾 / Ensure null termination */
+
+    char debug_data[224];
+    snprintf(debug_data, sizeof(debug_data),
+             "{\"x\":%u,\"y\":%u,\"fontSize\":%u,\"color\":%u,\"textLen\":%u}",
+             (unsigned int)x, (unsigned int)y, (unsigned int)font_size, (unsigned int)color, (unsigned int)text_len);
+    // #region agent log
+    debug_agent_log("baseline",
+                    "H3",
+                    "mos_lvgl_display.c:display_update_xy_text",
+                    "enqueue xy text command",
+                    debug_data);
+    // #endregion
 
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
@@ -980,6 +1019,20 @@ static void update_protobuf_text_content(const char *text_content)
     LOG_INF("📱 Protobuf text updated: %.50s%s", text_content, strlen(text_content) > 50 ? "..." : "");
 }
 
+/* Show "Disconnected" warning on screen; call from LVGL thread only */
+static void update_disconnected_label(void)
+{
+    if (!protobuf_label)
+    {
+        return;
+    }
+    welcome_screen_active = false;
+    lv_label_set_text(protobuf_label, "Disconnected\n\nPlease connect\nto your phone.");
+    lv_obj_set_style_text_align(protobuf_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(protobuf_label, LV_ALIGN_CENTER, 0, 0);
+    LOG_INF("Disconnect warning displayed");
+}
+
 /* 用当前电量重建欢迎标签文案（60s 刷新）；仅由 LVGL 线程调用 / Rebuild welcome label text with current battery (60s refresh); call from LVGL thread only */
 static void update_welcome_label_with_battery(void)
 {
@@ -1063,6 +1116,13 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
     else
     {
         LOG_ERR("No valid text container available - must be in Pattern 4 or Pattern 5");
+        // #region agent log
+        debug_agent_log("baseline",
+                        "H2",
+                        "mos_lvgl_display.c:update_xy_positioned_text",
+                        "no valid container for xy text",
+                        "{\"hasXyContainer\":false,\"hasProtobufContainer\":false}");
+        // #endregion
         return;
     }
 
@@ -1084,6 +1144,22 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
         y = (y >= max_y) ? max_y - 30 : y;
         LOG_WRN( "📍 Clamped to: (%u,%u)", x, y);
     }
+
+    lv_obj_update_layout(target_container);
+    lv_coord_t container_w = lv_obj_get_width(target_container);
+    lv_coord_t container_h = lv_obj_get_height(target_container);
+    char debug_data_pre[256];
+    snprintf(debug_data_pre, sizeof(debug_data_pre),
+             "{\"x\":%u,\"y\":%u,\"maxX\":%u,\"maxY\":%u,\"containerW\":%d,\"containerH\":%d,\"fontSize\":%u}",
+             (unsigned int)x, (unsigned int)y, (unsigned int)max_x, (unsigned int)max_y,
+             (int)container_w, (int)container_h, (unsigned int)font_size);
+    // #region agent log
+    debug_agent_log("baseline",
+                    "H1-H4",
+                    "mos_lvgl_display.c:update_xy_positioned_text",
+                    "resolved container and coordinates before label placement",
+                    debug_data_pre);
+    // #endregion
 
 
     const lv_font_t *font = display_get_font("secondary");  
@@ -1108,6 +1184,26 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
 
     /* 在指定坐标放置文本（相对容器内边距）/ Position the text at specified coordinates (relative to container padding) */
     lv_obj_set_pos(current_xy_text_label, x, y);
+    lv_obj_update_layout(target_container);
+
+    lv_coord_t label_x = lv_obj_get_x(current_xy_text_label);
+    lv_coord_t label_y = lv_obj_get_y(current_xy_text_label);
+    lv_coord_t label_w = lv_obj_get_width(current_xy_text_label);
+    lv_coord_t label_h = lv_obj_get_height(current_xy_text_label);
+    bool is_outside = (label_x >= container_w) || (label_y >= container_h) || ((label_x + label_w) <= 0)
+                   || ((label_y + label_h) <= 0);
+    char debug_data_post[256];
+    snprintf(debug_data_post, sizeof(debug_data_post),
+             "{\"labelX\":%d,\"labelY\":%d,\"labelW\":%d,\"labelH\":%d,\"containerW\":%d,\"containerH\":%d,\"outside\":%s}",
+             (int)label_x, (int)label_y, (int)label_w, (int)label_h, (int)container_w, (int)container_h,
+             is_outside ? "true" : "false");
+    // #region agent log
+    debug_agent_log("baseline",
+                    "H1-H5",
+                    "mos_lvgl_display.c:update_xy_positioned_text",
+                    "label geometry after placement",
+                    debug_data_post);
+    // #endregion
 
     const char *pattern_name = (target_container == xy_text_container) ? "Pattern 5" : "Pattern 4";
     LOG_INF("📝 [%s] Cleared all text, positioned new at (%u,%u), secondary_font, color:0x%06X: %.30s%s", 
@@ -1251,6 +1347,19 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     /* 处理 Pattern 5 的 XY 定位文本更新 / Handle XY positioned text updates for Pattern 5 */
                     LOG_INF("LCD_CMD_UPDATE_XY_TEXT - XY positioned text at (%u,%u)", cmd.p.xy_text.x,
                              cmd.p.xy_text.y);
+                    char debug_data_xy_cmd[224];
+                    snprintf(debug_data_xy_cmd, sizeof(debug_data_xy_cmd),
+                             "{\"x\":%u,\"y\":%u,\"fontSize\":%u,\"color\":%u,\"textLen\":%u}",
+                             (unsigned int)cmd.p.xy_text.x, (unsigned int)cmd.p.xy_text.y,
+                             (unsigned int)cmd.p.xy_text.font_size, (unsigned int)cmd.p.xy_text.color,
+                             (unsigned int)strlen(cmd.p.xy_text.text));
+                    // #region agent log
+                    debug_agent_log("baseline",
+                                    "H3",
+                                    "mos_lvgl_display.c:lvgl_dispaly_init/LCD_CMD_UPDATE_XY_TEXT",
+                                    "dequeued xy text command",
+                                    debug_data_xy_cmd);
+                    // #endregion
                     update_xy_positioned_text(cmd.p.xy_text.x, cmd.p.xy_text.y, cmd.p.xy_text.text,
                                               cmd.p.xy_text.font_size, cmd.p.xy_text.color);
                     break;
@@ -1262,6 +1371,10 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     /* 回到欢迎界面（如 BLE 断开后）/ Return to welcome screen (e.g. after BLE disconnect) */
                     welcome_screen_active = true;
                     update_welcome_label_with_battery();
+                    break;
+                case LCD_CMD_SHOW_DISCONNECTED_SCREEN:
+                    /* Show "Disconnected" warning (BLE drop or ping failure) */
+                    update_disconnected_label();
                     break;
                 case LCD_CMD_UPDATE_DFU_PROGRESS:
                     /* 显示/隐藏并更新 DFU 进度条：前景条宽度 = 百分比，随 % 滑动 | Progress bar: fill width = percent */

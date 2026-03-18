@@ -50,12 +50,32 @@
 #include <zephyr/logging/log.h>
 
 #include "../../custom_driver_module/drivers/display/lcd/a6n.h"
+#include "main.h"                                                      // For get_ble_connected_status(), ble_send_data()
 #include "mos_ble_service.h"
 #include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
 #include "pdm_audio_stream.h"                                          // **NEW: For microphone audio streaming**
 #include "proto/mentraos_ble.pb.h"
 
 LOG_MODULE_REGISTER(protobuf_handler, LOG_LEVEL_DBG);
+
+static void debug_agent_log(const char *run_id,
+                            const char *hypothesis_id,
+                            const char *location,
+                            const char *message,
+                            const char *data_json)
+{
+    FILE *f = fopen("/Users/mentra/Documents/MentraApps/MentraOS/.cursor/debug-f4e4e4.log", "a");
+    if (!f)
+    {
+        return;
+    }
+    int64_t ts = k_uptime_get();
+    fprintf(f,
+            "{\"sessionId\":\"f4e4e4\",\"runId\":\"%s\",\"hypothesisId\":\"%s\","
+            "\"location\":\"%s\",\"message\":\"%s\",\"data\":%s,\"timestamp\":%lld}\n",
+            run_id, hypothesis_id, location, message, data_json, (long long)ts);
+    fclose(f);
+}
 
 // Global battery level state (0-100%)
 static uint32_t current_battery_level = 85;
@@ -72,10 +92,12 @@ static bool auto_brightness_enabled = false;
 // Audio streaming error counter
 static uint32_t streaming_errors = 0;
 
-// **NEW: Ping/Pong connectivity monitoring**
+// Ping/Pong connectivity monitoring
 // (Glasses send periodic pings to phone, phone responds with pongs)
-static struct k_timer ping_timer;
-static struct k_timer ping_timeout_timer;
+// Uses k_work_delayable so handlers run directly in thread context,
+// safe to call BLE APIs (ble_send_data, bt_gatt_notify, k_msleep, etc.)
+static struct k_work_delayable ping_dwork;          // Periodic ping sender
+static struct k_work_delayable ping_timeout_dwork;  // Pong timeout detector
 static uint32_t       ping_sequence_number  = 0;
 static uint32_t       ping_retry_count      = 0;
 static bool           ping_waiting_for_pong = false;
@@ -87,8 +109,8 @@ bool                  ping_logging_enabled  = true;  // Global flag to control p
 #define PING_MAX_RETRIES 3      // Retry 3 times before declaring disconnect
 
 // Forward declarations for ping/pong functions
-static void ping_timer_handler(struct k_timer* timer);
-static void ping_timeout_handler(struct k_timer* timer);
+static void ping_dwork_handler(struct k_work* work);
+static void ping_timeout_dwork_handler(struct k_work* work);
 static void protobuf_send_ping_request(void);
 static void protobuf_process_pong_response(const mentraos_ble_PingRequest* pong);
 static void protobuf_handle_ping_failure(void);
@@ -948,6 +970,19 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText* display_text)
     // *** LVGL INTEGRATION: Display text based on current pattern ***
     // **NEW: Check current pattern to determine display mode**
     int current_pattern = display_get_current_pattern();
+    const char *render_path = (current_pattern == 5) ? "xy" : "scroll";
+    char debug_data[256];
+    snprintf(debug_data, sizeof(debug_data),
+             "{\"pattern\":%d,\"x\":%u,\"y\":%u,\"size\":%u,\"textLen\":%u,\"color565\":%u,\"path\":\"%s\"}",
+             current_pattern, (unsigned int)display_text->x, (unsigned int)display_text->y,
+             (unsigned int)display_text->size, (unsigned int)text_length, (unsigned int)color_rgb565, render_path);
+    // #region agent log
+    debug_agent_log("baseline",
+                    "H1-H2",
+                    "protobuf_handler.c:protobuf_process_display_text",
+                    "decoded display text and selected render path",
+                    debug_data);
+    // #endregion
 
     if (current_pattern == 5)
     {
@@ -1392,9 +1427,17 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig* mic_st
 // Phone responds with pongs (tag 16)
 // After 3 failed ping attempts, glasses go to sleep/disconnect mode
 
-// Timer handler: Send ping every 10 seconds
-static void ping_timer_handler(struct k_timer* timer)
+// Periodic ping handler (thread context): Send ping and reschedule
+static void ping_dwork_handler(struct k_work* work)
 {
+    // Only send pings when a BLE client is connected
+    if (!get_ble_connected_status())
+    {
+        // Reschedule even when disconnected so pings resume on reconnect
+        k_work_schedule(&ping_dwork, K_MSEC(PING_INTERVAL_MS));
+        return;
+    }
+
     if (!ping_waiting_for_pong)
     {
         protobuf_send_ping_request();
@@ -1406,10 +1449,13 @@ static void ping_timer_handler(struct k_timer* timer)
             LOG_WRN("[PING] Still waiting for pong response, skipping this ping");
         }
     }
+
+    // Reschedule next ping
+    k_work_schedule(&ping_dwork, K_MSEC(PING_INTERVAL_MS));
 }
 
-// Timeout handler: Handle ping timeout (no pong received)
-static void ping_timeout_handler(struct k_timer* timer)
+// Timeout handler (thread context): Handle ping timeout (no pong received)
+static void ping_timeout_dwork_handler(struct k_work* work)
 {
     if (ping_logging_enabled)
     {
@@ -1432,7 +1478,7 @@ static void ping_timeout_handler(struct k_timer* timer)
         {
             LOG_WRN("[PING] Retry %d/%d - attempt failed", ping_retry_count, PING_MAX_RETRIES);
         }
-        // The next ping will be sent by the regular ping timer
+        // The next ping will be sent by the regular ping dwork
     }
 }
 
@@ -1449,24 +1495,34 @@ static void protobuf_send_ping_request(void)
     // For now we'll track sequence numbers in our local variables
     message.payload.pong.dummy_field = 1;  // Just to set something
 
-    // Encode the message
-    uint8_t      buffer[256];
-    pb_ostream_t stream = pb_ostream_from_buffer(buffer, sizeof(buffer));
+    // Encode the message (reserve byte 0 for the 0x02 protobuf header)
+    uint8_t buffer[256];
+    size_t  bytes_written;
 
-    if (pb_encode(&stream, mentraos_ble_GlassesToPhone_fields, &message))
+    if (encode_glasses_to_phone_message(&message, buffer + 1, sizeof(buffer) - 1, &bytes_written))
     {
-        size_t message_length = stream.bytes_written;
+        // Prepend the 0x02 protobuf header
+        buffer[0] = 0x02;
 
         if (ping_logging_enabled)
         {
-            LOG_DBG("[PING] Sending ping #%u (%zu bytes)", ping_sequence_number, message_length);
+            LOG_DBG("[PING] Sending ping #%u (%zu bytes)", ping_sequence_number, bytes_written + 1);
         }
 
-        // TODO: Get current BLE connection handle and send
-        // int result = custom_nus_send(conn, buffer, message_length);
+        // Send via BLE
+        int result = ble_send_data(buffer, bytes_written + 1);
+        if (result != 0)
+        {
+            if (ping_logging_enabled)
+            {
+                LOG_ERR("[PING] Failed to send ping over BLE: %d", result);
+            }
+            ping_waiting_for_pong = false;
+            return;
+        }
 
-        // Start timeout timer
-        k_timer_start(&ping_timeout_timer, K_MSEC(PING_TIMEOUT_MS), K_NO_WAIT);
+        // Schedule timeout check
+        k_work_schedule(&ping_timeout_dwork, K_MSEC(PING_TIMEOUT_MS));
 
         if (ping_logging_enabled)
         {
@@ -1492,8 +1548,8 @@ static void protobuf_process_pong_response(const mentraos_ble_PingRequest* pong)
         return;
     }
 
-    // Stop timeout timer
-    k_timer_stop(&ping_timeout_timer);
+    // Cancel timeout work
+    k_work_cancel_delayable(&ping_timeout_dwork);
     ping_waiting_for_pong = false;
 
     // Calculate simple round-trip time (note: no timestamp in current protobuf)
@@ -1522,43 +1578,43 @@ static void protobuf_handle_ping_success(void)
 }
 
 // Handle ping failure (no pong response after max retries)
+// Shows disconnect screen and force-cuts BLE. The BLE disconnect triggers
+// disconnected() -> recycled_cb() -> advertising_start(), so the glasses
+// immediately begin advertising for reconnection.
 static void protobuf_handle_ping_failure(void)
 {
     phone_connected       = false;
     ping_retry_count      = 0;
     ping_waiting_for_pong = false;
 
-    if (ping_logging_enabled)
-    {
-        LOG_ERR("[PING] Phone connection lost - entering sleep mode");
-    }
+    LOG_ERR("[PING] Phone connection lost after %d retries - disconnecting BLE", PING_MAX_RETRIES);
 
-    // TODO: Implement sleep/disconnect logic:
-    // 1. Stop all non-essential operations
-    // 2. Reduce display brightness or turn off display
-    // 3. Stop audio streaming
-    // 4. Enter low-power mode
-    // 5. Wake up periodically to check for reconnection
-
-    if (ping_logging_enabled)
-    {
-        LOG_WRN("[PING] TODO: Implement sleep mode (display off, low power)");
-        LOG_WRN("[PING] TODO: Wake up periodically to check for phone reconnection");
-    }
+    display_show_disconnected_screen();
+    ble_force_disconnect();
 }
 
 // Initialize ping/pong monitoring system
 void protobuf_init_ping_monitoring(void)
 {
-    // Initialize timers
-    k_timer_init(&ping_timer, ping_timer_handler, NULL);
-    k_timer_init(&ping_timeout_timer, ping_timeout_handler, NULL);
+    // Initialize delayable work items (handlers run in thread context on system workqueue)
+    k_work_init_delayable(&ping_dwork, ping_dwork_handler);
+    k_work_init_delayable(&ping_timeout_dwork, ping_timeout_dwork_handler);
 
-    // Start periodic ping timer (10 seconds interval)
-    k_timer_start(&ping_timer, K_MSEC(PING_INTERVAL_MS), K_MSEC(PING_INTERVAL_MS));
+    // Schedule first ping (handlers self-reschedule after each run)
+    k_work_schedule(&ping_dwork, K_MSEC(PING_INTERVAL_MS));
 
     LOG_INF("[PING] Ping monitoring started (interval: %d ms, timeout: %d ms, max retries: %d)", PING_INTERVAL_MS,
             PING_TIMEOUT_MS, PING_MAX_RETRIES);
+}
+
+// Reset ping state on BLE connect/disconnect to prevent stale state leaking across sessions
+void protobuf_reset_ping_state(void)
+{
+    phone_connected       = true;
+    ping_retry_count      = 0;
+    ping_waiting_for_pong = false;
+    k_work_cancel_delayable(&ping_timeout_dwork);
+    LOG_INF("[PING] Ping state reset");
 }
 
 // =============================================================================

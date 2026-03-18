@@ -64,6 +64,27 @@ class MantleManager {
     })
   }
 
+  private getHeartbeatTimestamp(
+    event: Record<string, unknown>,
+    nestedKey: "heartbeat_sent" | "heartbeat_received",
+  ): number {
+    const nested = event[nestedKey]
+    if (nested && typeof nested === "object") {
+      const nestedTimestamp = (nested as {timestamp?: unknown}).timestamp
+      if (typeof nestedTimestamp === "number") {
+        return nestedTimestamp
+      }
+    }
+
+    if (typeof event.timestamp === "number") {
+      // Backward compatibility for older bridge payloads.
+      return event.timestamp
+    }
+
+    console.warn(`MANTLE: ${nestedKey} missing timestamp, falling back to Date.now()`, event)
+    return Date.now()
+  }
+
   private sendPendingTranscript() {
     const pendingText = this.transcriptProcessor.getPendingUpdate()
     if (pendingText) {
@@ -282,20 +303,22 @@ class MantleManager {
 
       this.subs.push(
         CoreModule.addListener("heartbeat_sent", (event) => {
-          console.log("MANTLE: received heartbeat_sent event from Core", event.heartbeat_sent)
+          const timestamp = this.getHeartbeatTimestamp(event, "heartbeat_sent")
+          console.log("MANTLE: received heartbeat_sent event from Core", event)
           // TODO: remove the global event emitter and sub directly in the component where needed
           GlobalEventEmitter.emit("heartbeat_sent", {
-            timestamp: event.heartbeat_sent.timestamp,
+            timestamp,
           })
         }),
       )
 
       this.subs.push(
         CoreModule.addListener("heartbeat_received", (event) => {
-          console.log("MANTLE: received heartbeat_received event from Core", event.heartbeat_received)
+          const timestamp = this.getHeartbeatTimestamp(event, "heartbeat_received")
+          console.log("MANTLE: received heartbeat_received event from Core", event)
           // TODO: remove the global event emitter and sub directly in the component where needed
           GlobalEventEmitter.emit("heartbeat_received", {
-            timestamp: event.heartbeat_received.timestamp,
+            timestamp,
           })
         }),
       )

@@ -23,7 +23,7 @@
 #include "mos_lvgl_display.h"  // Working LVGL display integration
 #include "pdm_audio_stream.h"
 #include "protobuf_handler.h"
-// #include "display/lcd/a6n.h"  // Working A6N driver
+#include <display/lcd/a6n.h>
 #include <hal/nrf_gpio.h>  // For direct GPIO access
 #include <nrfx_clock.h>
 #include <stdbool.h>
@@ -62,6 +62,15 @@ static struct k_work adv_work;
 
 static uint16_t payload_mtu = 20;
 static bool ble_connected = false;
+
+#define DISPLAY_OFF_AFTER_DISCONNECT_MS (30 * 1000)
+static struct k_work_delayable display_off_dwork;
+static void display_off_work_handler(struct k_work* work)
+{
+    LOG_INF("Disconnect timeout reached - powering off display to save power");
+    set_display_onoff(false);
+    a6n_power_off();
+}
 
 static char dynamic_device_name[30];
 static struct bt_data ad[] = {
@@ -147,6 +156,17 @@ static void connected(struct bt_conn* conn, uint8_t err)
     LOG_INF("Connected %s", addr);
     set_ble_connected_status(true);
     current_conn = bt_conn_ref(conn);
+
+    k_work_cancel_delayable(&display_off_dwork);
+
+    if (!get_display_onoff())
+    {
+        LOG_INF("Display was off - running full display reopen after reconnect");
+        display_open();
+    }
+
+    protobuf_reset_ping_state();
+    display_show_welcome_screen();
 }
 
 static void disconnected(struct bt_conn* conn, uint8_t reason)
@@ -157,7 +177,9 @@ static void disconnected(struct bt_conn* conn, uint8_t reason)
 
     LOG_INF("Disconnected: %s, reason 0x%02x %s", addr, reason, bt_hci_err_to_str(reason));
     set_ble_connected_status(false);
-    display_show_welcome_screen(); /* 断开后自动回到欢迎界面 | Return to welcome screen on disconnect */
+    protobuf_reset_ping_state();
+    display_show_disconnected_screen();
+    k_work_schedule(&display_off_dwork, K_MSEC(DISPLAY_OFF_AFTER_DISCONNECT_MS));
     if (auth_conn)
     {
         bt_conn_unref(auth_conn);
@@ -175,6 +197,15 @@ static void recycled_cb(void)
 {
     LOG_INF("Connection object available from previous conn. Disconnect is complete!");
     advertising_start();
+}
+
+void ble_force_disconnect(void)
+{
+    if (current_conn)
+    {
+        LOG_INF("Force-disconnecting BLE connection");
+        bt_conn_disconnect(current_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+    }
 }
 
 #ifdef CONFIG_BT_NUS_SECURITY_ENABLED
@@ -598,6 +629,8 @@ int main(void)
     pdm_audio_stream_init();
 
     protobuf_init_ping_monitoring();
+
+    k_work_init_delayable(&display_off_dwork, display_off_work_handler);
 
     opt3006_initialize();
 

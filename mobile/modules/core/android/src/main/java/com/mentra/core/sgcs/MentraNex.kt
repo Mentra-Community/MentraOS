@@ -73,6 +73,8 @@ class MentraNex : SGCManager() {
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
         private const val MICBEAT_INTERVAL_MS: Long = (1000 * 60) * 30; // micbeat every 30 minutes
+        private const val SCAN_LOG_DEDUP_WINDOW_MS = 15_000L
+        private const val MAX_TRACKED_SCAN_ADDRESSES = 256
 
         private const val MAIN_TASK_HANDLER_CODE_GATT_STATUS_CHANGED: Int = 110
         private const val MAIN_TASK_HANDLER_CODE_DISCOVER_SERVICES: Int = 120
@@ -115,6 +117,8 @@ class MentraNex : SGCManager() {
     private var lastConnectionTimestamp: Long = 0
     private var lastSendTimestamp: Long = 0
     private var mainReconnectAttempts: Int = 0
+    private var hasConnectedOnce: Boolean = false
+    private var shouldSendReconnectText: Boolean = false
 
     private var lastReceivedLc3Sequence: Int = -1
     
@@ -150,37 +154,58 @@ class MentraNex : SGCManager() {
     private var protobufVersionPosted: Boolean = false
     
     private var bleScanCallback: ScanCallback? = null
+    private val recentLoggedScanAddresses: MutableMap<String, Long> = mutableMapOf()
+
+    private fun isMentraNexDeviceName(name: String?): Boolean {
+        return !name.isNullOrEmpty() && (name.startsWith("Nex1-") || name.startsWith("MENTRA_DISPLAY_"))
+    }
+
+    private fun shouldLogScanAddress(address: String): Boolean {
+        val now = System.currentTimeMillis()
+        synchronized(recentLoggedScanAddresses) {
+            if (recentLoggedScanAddresses.size > MAX_TRACKED_SCAN_ADDRESSES) {
+                recentLoggedScanAddresses.entries.removeAll { now - it.value > SCAN_LOG_DEDUP_WINDOW_MS }
+            }
+
+            val lastLoggedAt = recentLoggedScanAddresses[address]
+            if (lastLoggedAt != null && now - lastLoggedAt < SCAN_LOG_DEDUP_WINDOW_MS) {
+                return false
+            }
+
+            recentLoggedScanAddresses[address] = now
+            return true
+        }
+    }
 
     private val modernScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.getDevice()
             val name = device.getName()
+            val address = device.address
 
             // Now you can reference the bluetoothAdapter field if needed:
             if (!bluetoothAdapter.isEnabled) {
                 Log.e(TAG, "Bluetooth is disabled")
                 return
             }
-            Bridge.log("=== New Device is Found ===$name ${device.address}")
-            Bridge.log("=== New Glasses Device Information ===")
 
-            // Log all available device information for debugging
-            Bridge.log("=== Device Information ===")
-            Bridge.log("Device Name: $name")
-            Bridge.log("Device Address: ${device.address}")
-            Bridge.log("Device Type: ${device.type}")
-            Bridge.log("Device Class: ${device.bluetoothClass}")
-            Bridge.log("Bond State: ${device.bondState}")
-
-            if (name == null || (!name.contains("Nex1-") && !name.contains("MENTRA_DISPLAY_"))) {
+            if (!isMentraNexDeviceName(name)) {
                 return
             }
 
-            // If we already have saved device names for main...
-            if (name != null && preferredMainDeviceId != null) {
-                if (!name.contains(preferredMainDeviceId!!)) {
-                    return // Not a matching device
-                }
+            if (preferredMainDeviceId != null && !name.contains(preferredMainDeviceId!!)) {
+                return // Not a matching device
+            }
+
+            if (shouldLogScanAddress(address)) {
+                Bridge.log("=== New Device is Found ===$name $address")
+                Bridge.log("=== New Glasses Device Information ===")
+                Bridge.log("=== Device Information ===")
+                Bridge.log("Device Name: $name")
+                Bridge.log("Device Address: $address")
+                Bridge.log("Device Type: ${device.type}")
+                Bridge.log("Device Class: ${device.bluetoothClass}")
+                Bridge.log("Bond State: ${device.bondState}")
             }
 
             // Identify which side (main)
@@ -341,14 +366,14 @@ class MentraNex : SGCManager() {
                 val name = device.name
                 val address = device.address
                 
-                name?.let {
-                    if (it.startsWith("Nex1-") || it.startsWith("MENTRA_DISPLAY_")) {
-                        Bridge.log("bleScanCallback onScanResult: $name address $address")
+                name?.let { deviceName ->
+                    if (isMentraNexDeviceName(deviceName)) {
                         synchronized(foundDeviceNames) {
-                            if (!foundDeviceNames.contains(it)) {
-                                foundDeviceNames.add(it)
-                                Bridge.log("Found smart glasses: $name")
-                                Bridge.sendDiscoveredDevice(DeviceTypes.NEX, it);
+                            if (!foundDeviceNames.contains(deviceName)) {
+                                foundDeviceNames.add(deviceName)
+                                Bridge.log("bleScanCallback onScanResult: $deviceName address $address")
+                                Bridge.log("Found smart glasses: $deviceName")
+                                Bridge.sendDiscoveredDevice(DeviceTypes.NEX, deviceName);
                             }
                         }
                     }
@@ -572,6 +597,7 @@ class MentraNex : SGCManager() {
             private fun handleDisconnection(gatt: BluetoothGatt) {
                 Bridge.log("glass disconnected, stopping heartbeats")
                 Bridge.log("Entering STATE_DISCONNECTED branch")
+                shouldSendReconnectText = hasConnectedOnce
                 
                 // Save current microphone state before disconnection
                 microphoneStateBeforeDisconnection = isMicrophoneEnabled
@@ -637,6 +663,8 @@ class MentraNex : SGCManager() {
                 forceSideDisconnection()
                 Bridge.log("Called forceSideDisconnection() after connection failure")
                 Bridge.log("GATT connection disconnected and closed due to failure")
+
+                updateConnectionState()
 
                 mainTaskHandler?.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_RECONNECT_DEVICE, 0)
             }
@@ -850,6 +878,13 @@ class MentraNex : SGCManager() {
                 showHomeScreen() // Turn on the NexGlasses display
                 updateConnectionState()
 
+                if (shouldSendReconnectText) {
+                    Bridge.log("Nex: Sending glasses reconnected text command")
+                    sendTextWall("// Glasses Reconnected")
+                    shouldSendReconnectText = false
+                }
+                hasConnectedOnce = true
+
                 // Post protobuf schema version information (only once)
                 if (!protobufVersionPosted) {
                     postProtobufSchemaVersionInfo()
@@ -900,13 +935,13 @@ class MentraNex : SGCManager() {
             val data = characteristic.value
             val deviceName = mainGlassGatt?.device?.name ?: return
             val packetHex = data.joinToString("") { "%02X".format(it) }
-            Bridge.log("onCharacteristicChangedHandler len: ${data.size}")
-            Bridge.log("onCharacteristicChangedHandler: $packetHex")
+            // Bridge.log("onCharacteristicChangedHandler len: ${data.size}")
+            // Bridge.log("onCharacteristicChangedHandler: $packetHex")
             
             if (data.isEmpty()) return
             
             val packetType = data[0]
-            Bridge.log("onCharacteristicChangedHandler packetType: ${String.format("%02X ", packetType)}")
+            // Bridge.log("onCharacteristicChangedHandler packetType: ${String.format("%02X ", packetType)}")
             
             when (packetType) {
                 NexBluetoothPacketTypes.PACKET_TYPE_JSON -> {
@@ -925,23 +960,23 @@ class MentraNex : SGCManager() {
 
                         // Basic sequence validation
                         if (lastReceivedLc3Sequence != -1 && (lastReceivedLc3Sequence + 1).toByte() != sequenceNumber) {
-                            Bridge.log("LC3 packet sequence mismatch. Expected: ${lastReceivedLc3Sequence + 1}, Got: $sequenceNumber")
+                            // Bridge.log("LC3 packet sequence mismatch. Expected: ${lastReceivedLc3Sequence + 1}, Got: $sequenceNumber")
                         }
                         lastReceivedLc3Sequence = sequenceNumber.toInt()
 
                         val lc3Data = data.copyOfRange(2, data.size)
 
-                        Bridge.log("Received LC3 audio packet seq=$sequenceNumber, size=${lc3Data.size}")
+                        // Bridge.log("Received LC3 audio packet seq=$sequenceNumber, size=${lc3Data.size}")
 
                         // Play LC3 audio directly through LC3 player
                         if (lc3AudioPlayer != null && isLc3AudioEnabled) {
                             // Use the original packet format that LC3 player expects
                             lc3AudioPlayer?.write(data, 0, data.size)
-                            Bridge.log("Playing LC3 audio directly through LC3 player: ${data.size} bytes")
+                            // Bridge.log("Playing LC3 audio directly through LC3 player: ${data.size} bytes")
                         } else if (!isLc3AudioEnabled) {
-                            Bridge.log("LC3 audio disabled - skipping LC3 audio output")
+                            // Bridge.log("LC3 audio disabled - skipping LC3 audio output")
                         } else {
-                            Bridge.log("LC3 player not available - skipping LC3 audio output")
+                            // Bridge.log("LC3 player not available - skipping LC3 audio output")
                         }
 
                         CoreManager.getInstance().handleGlassesMicData(lc3Data);
