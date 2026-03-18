@@ -1,0 +1,142 @@
+/*
+ * Copyright (c) 2024 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/ {
+	chosen {
+		nordic,nus-uart = &uart135;
+		zephyr,settings_partition = &cpurad_storage_partition;
+	};
+
+	/* LEDs and buttons definitions are required for the DK Buttons and
+	 * LEDs module.
+	 */
+
+	aliases {
+		led0 = &led0;
+		led1 = &led1;
+		led2 = &led2;
+		led3 = &led3;
+
+		sw0 = &button0;
+		sw1 = &button1;
+		sw2 = &button2;
+		sw3 = &button3;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+
+		button0: button_0 {
+			gpios = <&gpio0 8 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Push button 0";
+			zephyr,code = <INPUT_KEY_0>;
+		};
+
+		button1: button_1 {
+			gpios = <&gpio0 9 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Push button 1";
+			zephyr,code = <INPUT_KEY_1>;
+		};
+
+		button2: button_2 {
+			gpios = <&gpio0 10 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Push button 2";
+			zephyr,code = <INPUT_KEY_2>;
+		};
+
+		button3: button_3 {
+			gpios = <&gpio0 11 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Push button 3";
+			zephyr,code = <INPUT_KEY_3>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led0: led_0 {
+			gpios = <&gpio9 0 GPIO_ACTIVE_HIGH>;
+			label = "Green LED 0";
+		};
+
+		led1: led_1 {
+			gpios = <&gpio9 1 GPIO_ACTIVE_HIGH>;
+			label = "Green LED 1";
+		};
+
+		led2: led_2 {
+			gpios = <&gpio9 2 GPIO_ACTIVE_HIGH>;
+			label = "Green LED 2";
+		};
+
+		led3: led_3 {
+			gpios = <&gpio9 3 GPIO_ACTIVE_HIGH>;
+			label = "Green LED 3";
+		};
+	};
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio9 {
+	status = "okay";
+};
+
+&gpiote130 {
+	status = "okay";
+	owned-channels = <4 5 6 7>;
+};
+
+/* Change to memory map to make room for read write partition for settings
+ * module and increase the radio core program memory size.
+ *
+ * @note In case of running firmware on the application core, the same memory map
+ * change must be applied to the application core DTS.
+ */
+/delete-node/ &dfu_partition;
+/delete-node/ &storage_partition;
+/delete-node/ &cpuapp_slot0_partition;
+
+&cpuapp_rw_partitions {
+	dfu_partition: partition@100000 {
+		reg = < 0x100000 DT_SIZE_K(884) >;
+	};
+
+	storage_partition: partition@1dd000 {
+		reg = < 0x1dd000 DT_SIZE_K(24) >;
+	};
+};
+
+&cpurad_rx_partitions {
+	cpurad_slot0_partition: partition@54000 {
+		reg = <0x54000 DT_SIZE_K(320)>;
+	};
+};
+
+&cpuapp_rx_partitions {
+	cpuapp_slot0_partition: partition@a4000 {
+		reg = <0xa4000 DT_SIZE_K(256)>;
+	};
+};
+
+&mram1x {
+	cpurad_rw_partitions: cpurad-rw-partitions {
+		compatible = "nordic,owned-partitions", "fixed-partitions";
+		nordic,access = <NRF_OWNER_ID_RADIOCORE NRF_PERM_RWS>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		cpurad_storage_partition: partition@1e3000 {
+			reg = <0x1e3000 DT_SIZE_K(24)>;
+		};
+	};
+};
+
+&cpurad_rw_partitions {
+	status = "okay";
+};

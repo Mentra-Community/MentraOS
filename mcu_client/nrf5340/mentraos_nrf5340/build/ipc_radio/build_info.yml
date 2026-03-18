@@ -1,0 +1,58 @@
+cmake:
+  application:
+    configuration-dir: /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/sysbuild/ipc_radio
+    source-dir: /opt/nordic/ncs/v3.0.0/nrf/applications/ipc_radio
+  board:
+    name: nrf5340dk
+    path:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk
+    qualifiers: nrf5340/cpunet
+    revision: 
+  devicetree:
+    bindings-dirs:
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/bindings
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/bindings
+    files:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_nrf5340_cpunet.dts
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/sysbuild/ipc_radio/app.overlay
+    include-dirs:
+     - /opt/nordic/ncs/v3.0.0/nrf/include
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/common
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/riscv
+     - /opt/nordic/ncs/v3.0.0/nrf/dts/arm
+     - /opt/nordic/ncs/v3.0.0/nrf/dts
+     - /opt/nordic/ncs/v3.0.0/zephyr/include
+     - /opt/nordic/ncs/v3.0.0/zephyr/include/zephyr
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/common
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/x86
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/xtensa
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/sparc
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/riscv
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/posix
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/nios2
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/arm64
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/arm
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts/arc
+     - /opt/nordic/ncs/v3.0.0/zephyr/dts
+    user-files:
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/sysbuild/ipc_radio/app.overlay
+  kconfig:
+    extra-user-files:
+     - /opt/nordic/ncs/v3.0.0/nrf/applications/ipc_radio/overlay-bt_hci_ipc.conf
+    files:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_nrf5340_cpunet_defconfig
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/sysbuild/ipc_radio/prj.conf
+     - /opt/nordic/ncs/v3.0.0/nrf/applications/ipc_radio/overlay-bt_hci_ipc.conf
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/ipc_radio/zephyr/.config.sysbuild
+    user-files:
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/sysbuild/ipc_radio/prj.conf
+  toolchain:
+    name: zephyr
+    path: /opt/nordic/ncs/toolchains/ef4fc6722e/opt/zephyr-sdk
+  vendor-specific:
+    nordic:
+      svdfile: /opt/nordic/ncs/v3.0.0/modules/hal/nordic/nrfx/mdk/nrf5340_network.svd
+  zephyr:
+    version: 4.0.99
+    zephyr-base: /opt/nordic/ncs/v3.0.0/zephyr
+version: 0.1.0

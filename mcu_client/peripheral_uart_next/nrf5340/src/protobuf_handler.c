@@ -1,0 +1,327 @@
+/*
+ * Copyright (c) 2024 Mentra
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <string.h>
+#include <stdio.h>
+
+#include "protobuf_handler.h"
+#include "mentraos_ble.pb.h"
+#include <bluetooth/services/nus.h>
+#include <pb_decode.h>
+#include <pb_encode.h>
+
+LOG_MODULE_REGISTER(protobuf_handler, LOG_LEVEL_DBG);
+
+// Global battery level state (0-100%)
+static uint32_t current_battery_level = 85;
+
+// Adapter function for BLE sending using Nordic UART Service
+static int mentra_ble_send(struct bt_conn *conn, const uint8_t *data, uint16_t len)
+{
+	return bt_nus_send(conn, data, len);
+}
+
+void protobuf_analyze_message(const uint8_t *data, uint16_t len)
+{
+	if (len == 0) {
+		LOG_WRN("Received empty data - ignoring");
+		return;
+	}
+
+	LOG_INF("=== BLE DATA RECEIVED ===");
+	LOG_INF("Received BLE data (%u bytes):", len);
+	
+	// Print hex dump
+	for (int i = 0; i < len; i++) {
+		printk("0x%02X ", data[i]);
+		if ((i + 1) % 16 == 0) {
+			printk("\n");
+		}
+	}
+	if (len % 16 != 0) {
+		printk("\n");
+	}
+
+	// Check if this looks like a protobuf message (starts with control header)
+	uint8_t firstByte = data[0];
+	switch (firstByte) {
+	case 0x02:
+		LOG_INF("[PROTOBUF] Control header detected: 0x02 (Protobuf message)");
+		protobuf_parse_control_message(data + 1, len - 1);
+		break;
+	case 0xA0:
+		LOG_INF("[AUDIO] Control header detected: 0xA0 (Audio data)");
+		protobuf_parse_audio_chunk(data, len);
+		break;
+	case 0xB0:
+		LOG_INF("[IMAGE] Control header detected: 0xB0 (Image data)");
+		protobuf_parse_image_chunk(data, len);
+		break;
+	default:
+		LOG_WRN("[UNKNOWN] Unknown control header: 0x%02X", firstByte);
+		break;
+	}
+
+	// Show raw ASCII if printable
+	LOG_INF("[ASCII] Raw string: \"");
+	for (int i = 0; i < len; i++) {
+		if (data[i] >= 32 && data[i] <= 126) {
+			printk("%c", data[i]);
+		} else {
+			printk(".");
+		}
+	}
+	printk("\"\n");
+	LOG_INF("=== END BLE DATA ===");
+}
+
+void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
+{
+	LOG_INF("Parsing protobuf control message (%u bytes) using nanopb", len);
+	
+	if (len == 0) {
+		LOG_WRN("Empty protobuf message");
+		return;
+	}
+
+	// Try to decode as PhoneToGlasses message
+	mentraos_ble_PhoneToGlasses phone_msg = mentraos_ble_PhoneToGlasses_init_default;
+	
+	if (decode_phone_to_glasses_message(protobuf_data, len, &phone_msg)) {
+		LOG_INF("✅ Successfully decoded PhoneToGlasses message!");
+		LOG_INF("Message type (which_payload): %u", phone_msg.which_payload);
+		
+		// Process the decoded message based on payload type
+		switch (phone_msg.which_payload) {
+		case 11: // battery_state_tag
+			LOG_INF("📱 Battery state request received");
+			LOG_INF("📊 Current battery level: %u%%", current_battery_level);
+			// Send battery response
+			protobuf_send_battery_notification();
+			break;
+			
+		case 12: // glasses_info_tag  
+			LOG_INF("📱 Glasses info request received");
+			// TODO: Generate device info response
+			break;
+			
+		case 10: // disconnect_tag
+			LOG_INF("📱 Disconnect request received");
+			// TODO: Handle disconnect
+			break;
+			
+		case 30: // display_text_tag
+			LOG_INF("📱 Display text received");
+			// Access text safely - will need to check the DisplayText structure
+			// TODO: Display text on glasses
+			break;
+			
+		case 35: // display_scrolling_text_tag (estimated)
+			LOG_INF("📱 Display scrolling text received");
+			// TODO: Display scrolling text
+			break;
+			
+		case 16: // ping_tag
+			LOG_INF("📱 Ping request received");
+			// TODO: Send pong response
+			break;
+			
+		default:
+			LOG_INF("📱 Unknown message type: %u", phone_msg.which_payload);
+			break;
+		}
+		
+	} else {
+		LOG_ERR("❌ Failed to decode protobuf message - falling back to basic parsing");
+		
+		// Fallback to basic parsing for debugging
+		for (int i = 0; i < len && i < 10; i++) {
+			uint8_t field_tag = protobuf_data[i] >> 3;
+			uint8_t wire_type = protobuf_data[i] & 0x07;
+			
+			LOG_DBG("Protobuf field: tag=%u, wire_type=%u", field_tag, wire_type);
+		}
+	}
+}
+
+bool decode_phone_to_glasses_message(const uint8_t *data, uint16_t len, 
+                                    mentraos_ble_PhoneToGlasses *msg)
+{
+	if (!data || !msg || len == 0) {
+		return false;
+	}
+
+	// Create input stream
+	pb_istream_t stream = pb_istream_from_buffer(data, len);
+	
+	// Decode the message
+	bool status = pb_decode(&stream, mentraos_ble_PhoneToGlasses_fields, msg);
+	
+	if (!status) {
+		LOG_ERR("Protobuf decode error: %s", PB_GET_ERROR(&stream));
+	}
+	
+	return status;
+}
+
+bool encode_glasses_to_phone_message(const mentraos_ble_GlassesToPhone *msg,
+                                    uint8_t *buffer, size_t buffer_size,
+                                    size_t *bytes_written)
+{
+	if (!msg || !buffer || !bytes_written) {
+		return false;
+	}
+
+	// Create output stream
+	pb_ostream_t stream = pb_ostream_from_buffer(buffer, buffer_size);
+	
+	// Encode the message
+	bool status = pb_encode(&stream, mentraos_ble_GlassesToPhone_fields, msg);
+	
+	if (status) {
+		*bytes_written = stream.bytes_written;
+		LOG_DBG("Encoded %zu bytes", *bytes_written);
+	} else {
+		LOG_ERR("Protobuf encode error: %s", PB_GET_ERROR(&stream));
+		*bytes_written = 0;
+	}
+	
+	return status;
+}
+
+void protobuf_parse_audio_chunk(const uint8_t *data, uint16_t len)
+{
+	if (len < 2) {
+		LOG_WRN("Audio chunk too short");
+		return;
+	}
+
+	uint8_t stream_id = data[1];
+	uint16_t audio_data_len = len - 2;
+	
+	LOG_INF("🎵 Audio chunk: stream_id=0x%02X, data_len=%u", stream_id, audio_data_len);
+}
+
+void protobuf_parse_image_chunk(const uint8_t *data, uint16_t len)
+{
+	if (len < 4) {
+		LOG_WRN("Image chunk too short");
+		return;
+	}
+
+	uint16_t stream_id = (data[1] << 8) | data[2];
+	uint8_t chunk_index = data[3];
+	uint16_t image_data_len = len - 4;
+	
+	LOG_INF("🖼️  Image chunk: stream_id=0x%04X, chunk_index=%u, data_len=%u", 
+stream_id, chunk_index, image_data_len);
+}
+
+uint32_t protobuf_get_battery_level(void)
+{
+	return current_battery_level;
+}
+
+void protobuf_set_battery_level(uint32_t level)
+{
+	// Clamp battery level to valid range (0-100%)
+	if (level > 100) {
+		level = 100;
+	}
+	
+	uint32_t old_level = current_battery_level;
+	current_battery_level = level;
+	LOG_INF("🔋 Battery level set to %u%%", current_battery_level);
+	
+	// Send proactive notification if level changed
+	if (old_level != current_battery_level) {
+		protobuf_send_battery_notification();
+	}
+}
+
+void protobuf_increase_battery_level(void)
+{
+	uint32_t new_level = current_battery_level + 5;
+	if (new_level > 100) {
+		new_level = 100;
+	}
+	protobuf_set_battery_level(new_level);
+}
+
+void protobuf_decrease_battery_level(void)
+{
+	uint32_t new_level;
+	if (current_battery_level >= 5) {
+		new_level = current_battery_level - 5;
+	} else {
+		new_level = 0;
+	}
+	protobuf_set_battery_level(new_level);
+}
+
+void protobuf_send_battery_notification(void)
+{
+	// Create a battery status notification message
+	mentraos_ble_GlassesToPhone notification = mentraos_ble_GlassesToPhone_init_default;
+	
+	// Set which_payload to battery_status (tag 10)
+	notification.which_payload = 10;
+	
+	// Fill battery status with current level
+	notification.payload.battery_status.level = current_battery_level;
+	notification.payload.battery_status.charging = false;
+	
+	// Encode the notification
+	uint8_t buffer[64]; // Small buffer for battery notification
+	size_t bytes_written;
+	
+	if (encode_glasses_to_phone_message(&notification, buffer + 1, 
+					   sizeof(buffer) - 1, &bytes_written)) {
+		// Add the 0x02 header for protobuf messages
+		buffer[0] = 0x02;
+		
+		// Send via BLE (to all connected clients)
+		int ret = mentra_ble_send(NULL, buffer, bytes_written + 1);
+		if (ret == 0) {
+			LOG_INF("📱✅ Sent battery level notification: %u%%", current_battery_level);
+		} else {
+			LOG_WRN("📱❌ Failed to send battery notification (ret: %d)", ret);
+		}
+	} else {
+		LOG_ERR("❌ Failed to encode battery notification");
+	}
+}
+
+int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_len,
+   uint8_t *output_data, uint16_t max_output_len)
+{
+	// Create a simple response message
+	mentraos_ble_GlassesToPhone response = mentraos_ble_GlassesToPhone_init_default;
+	
+	// Set which_payload to battery_status (tag 10) - simpler than device_info
+	response.which_payload = 10;
+	
+	// Create a battery status response using current battery level
+	response.payload.battery_status.level = current_battery_level;
+	response.payload.battery_status.charging = false;
+	
+	// Encode the response
+	size_t bytes_written;
+	if (encode_glasses_to_phone_message(&response, output_data + 1, 
+					   max_output_len - 1, &bytes_written)) {
+		// Add the 0x02 header for protobuf messages
+		output_data[0] = 0x02;
+		
+		LOG_INF("✅ Generated protobuf echo response: %zu + 1 bytes (Battery: %u%%)", 
+			bytes_written, current_battery_level);
+		return bytes_written + 1;
+	} else {
+		LOG_ERR("❌ Failed to generate protobuf response");
+		return -ENOMEM;
+	}
+}

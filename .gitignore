@@ -1,3 +1,17 @@
+# MCU Client exceptions - allow build directories for embedded projects
+!mcu_client/**/build/
+!mcu_client/**/include/
+!mcu_client/**/lib/
+!mcu_client/**/*.so
+!mcu_client/**/*.a
+!mcu_client/**/*.lib
+!mcu_client/**/*.o
+!mcu_client/**/*.obj
+
+# ESP32 PlatformIO directories
+mcu_client/esp32_ble_simulator/.pio/
+mcu_client/**/esp32**/.pio/
+
 local/*
 K900Server_mentra/
 K900_server_sdk/*
@@ -21,7 +35,9 @@ asg_client/app/libs/temp_check/*
 .vscode/
 .zed/
 node_modules/
-build/
+# React/Web build directories (not MCU builds)
+**/node_modules/**/build/
+web-build/
 .DS_Store
 *.tgz
 my-app*
@@ -96,15 +112,24 @@ aiohttp/_http_writer.html
 aiohttp/_websocket.c
 aiohttp/_websocket.html
 bin
-build
+# Python build directory (specific to Python projects)
+**/python/build
 coverage.xml
 develop-eggs
 dist
 docs/_build/
 eggs
 htmlcov
+<<<<<<< dev-nexfirmware-evt1
+# Python include/lib directories (not MCU includes)
+**/python/**/include/
+**/python/**/lib/
+**/venv/**/include/
+**/venv/**/lib/
+=======
 #include/
 .lib/
+>>>>>>> dev
 man/
 nosetests.xml
 parts
@@ -119,7 +144,9 @@ virtualenv.py
 
 # Gradle files
 .gradle/
-build/
+# Android build directories (not MCU builds)
+**/android/**/build/
+**/app/build/
 
 # Local configuration file (sdk path, etc)
 local.properties
@@ -161,13 +188,20 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
+# Python build directories (not MCU builds)  
+**/python/**/build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
+<<<<<<< dev-nexfirmware-evt1
+# Python lib directories (specific to Python builds)
+**/python/**/lib/
+**/python/**/lib64/
+=======
 .lib/
+>>>>>>> dev
 lib64/
 parts/
 sdist/

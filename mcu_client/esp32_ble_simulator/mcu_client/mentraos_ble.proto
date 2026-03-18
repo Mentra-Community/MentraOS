@@ -1,0 +1,359 @@
+syntax = "proto3";
+
+package mentraos.ble;
+
+// ============================================
+// Base Message Types
+// ============================================
+
+// All messages from phone to glasses
+message PhoneToGlasses {
+  string msg_id = 1;  // Optional message ID for request/response correlation
+  
+  oneof payload {
+    // Connection Management
+    DisconnectRequest disconnect = 10;
+    BatteryStateRequest battery_state = 11;
+    GlassesInfoRequest glasses_info = 12;
+    PairingModeRequest pairing_mode = 13;
+    HeadPositionRequest head_position = 14;
+    HeadUpAngleConfig head_up_angle = 15;
+    PingRequest ping = 16;
+    
+    // Audio System
+    MicStateConfig mic_state = 20;
+    VadEnabledConfig vad_enabled = 21;
+    VadConfig vad_config = 22;
+    
+    // Display System
+    DisplayText display_text = 30;
+    DisplayImage display_image = 31;
+    PreloadImage preload_image = 32;
+    DisplayCachedImage display_cached_image = 33;
+    ClearCachedImage clear_cached_image = 34;
+    DisplayScrollingText display_scrolling_text = 35;
+    DisplayPowerConfig display_power = 36;
+    BrightnessConfig brightness = 37;
+    AutoBrightnessConfig auto_brightness = 38;
+    AutoBrightnessMultiplier auto_brightness_mult = 39;
+    DrawLine draw_line = 40;
+    DrawRect draw_rect = 41;
+    DrawCircle draw_circle = 42;
+    CommitDisplay commit = 43;
+    DisplayDistanceConfig display_distance = 44;
+    DisplayHeightConfig display_height = 45;
+    
+    // User Input
+    ImuEnabledConfig imu_enabled = 50;
+    ImuSingleRequest imu_single = 51;
+    ImuStreamConfig imu_stream = 52;
+    HeadGestureConfig head_gesture = 53;
+    
+    // System Control
+    RestartRequest restart = 60;
+    FactoryResetRequest factory_reset = 61;
+  }
+}
+
+// All messages from glasses to phone
+message GlassesToPhone {
+  oneof payload {
+    // Connection Management
+    BatteryStatus battery_status = 10;
+    ChargingState charging_state = 11;
+    DeviceInfo device_info = 12;
+    HeadPosition head_position = 13;
+    HeadUpAngleResponse head_up_angle_set = 14;
+    PongResponse pong = 15;
+    
+    // Audio System
+    VadEvent vad_event = 20;
+    
+    // Display System  
+    ImageTransferComplete image_transfer_complete = 30;
+    
+    // User Input
+    ImuData imu_data = 40;
+    ButtonEvent button_event = 41;
+    HeadGesture head_gesture = 42;
+  }
+}
+
+// ============================================
+// Connection Management Messages
+// ============================================
+
+message DisconnectRequest {}
+
+message BatteryStateRequest {}
+
+message BatteryStatus {
+  uint32 level = 1;  // 0-100 percentage
+  bool charging = 2;
+}
+
+message ChargingState {
+  enum State {
+    NOT_CHARGING = 0;
+    CHARGING = 1;
+  }
+  State state = 1;
+}
+
+message GlassesInfoRequest {}
+
+message DeviceInfo {
+  string fw_version = 1;
+  string hw_model = 2;
+  DeviceFeatures features = 3;
+}
+
+message DeviceFeatures {
+  bool camera = 1;
+  bool display = 2;
+  bool audio_tx = 3;
+  bool audio_rx = 4;
+  bool imu = 5;
+  bool vad = 6;
+  bool mic_switching = 7;
+  uint32 image_chunk_buffer = 8;  // Max chunks that can be buffered
+}
+
+message PairingModeRequest {}
+
+message HeadPositionRequest {}
+
+message HeadPosition {
+  int32 angle = 1;  // degrees
+}
+
+message HeadUpAngleConfig {
+  uint32 angle = 1;  // degrees
+}
+
+message HeadUpAngleResponse {
+  bool success = 1;
+}
+
+message PingRequest {}
+
+message PongResponse {}
+
+// ============================================
+// Audio System Messages
+// ============================================
+
+message MicStateConfig {
+  bool enabled = 1;
+}
+
+message VadEnabledConfig {
+  bool enabled = 1;
+}
+
+message VadConfig {
+  uint32 sensitivity = 1;  // 0-100
+}
+
+message VadEvent {
+  enum State {
+    INACTIVE = 0;
+    ACTIVE = 1;
+  }
+  State state = 1;
+}
+
+// ============================================
+// Display System Messages
+// ============================================
+
+message DisplayText {
+  string text = 1;
+  uint32 color = 2;      // RGB565 format (e.g., 0xF800 for red)
+  uint32 font_code = 3;  // Font identifier
+  uint32 x = 4;
+  uint32 y = 5;
+  uint32 size = 6;       // Font size multiplier
+}
+
+// Initiates bitmap transfer - actual data comes via binary protocol
+message DisplayImage {
+  string stream_id = 1;   // 2-byte hex string like "002A"
+  uint32 x = 2;
+  uint32 y = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  string encoding = 6;    // "rle", "webp", etc.
+  uint32 total_chunks = 7;
+}
+
+message PreloadImage {
+  string stream_id = 1;
+  uint32 image_id = 2;    // ID for later reference
+  uint32 width = 3;
+  uint32 height = 4;
+  string encoding = 5;
+  uint32 total_chunks = 6;
+}
+
+message DisplayCachedImage {
+  uint32 image_id = 1;
+  uint32 x = 2;
+  uint32 y = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+}
+
+message ClearCachedImage {
+  uint32 image_id = 1;
+}
+
+message DisplayScrollingText {
+  string text = 1;
+  uint32 color = 2;
+  uint32 font_code = 3;
+  uint32 x = 4;
+  uint32 y = 5;
+  uint32 width = 6;
+  uint32 height = 7;
+  
+  enum Alignment {
+    LEFT = 0;
+    CENTER = 1;
+    RIGHT = 2;
+  }
+  Alignment align = 8;
+  
+  uint32 line_spacing = 9;   // pixels between lines
+  uint32 speed = 10;         // pixels/sec scrolling up
+  uint32 size = 11;          // font size multiplier
+  bool loop = 12;            // wrap to top when finished
+  uint32 pause_ms = 13;      // delay before restart (if looping)
+}
+
+message DisplayPowerConfig {
+  bool on = 1;  // true = turn on, false = turn off
+}
+
+message BrightnessConfig {
+  uint32 value = 1;  // 0-100
+}
+
+message AutoBrightnessConfig {
+  bool enabled = 1;
+}
+
+message AutoBrightnessMultiplier {
+  float multiplier = 1;  // e.g., 0.8 = 80%
+}
+
+message DrawLine {
+  uint32 color = 1;
+  uint32 stroke = 2;
+  uint32 x1 = 3;
+  uint32 y1 = 4;
+  uint32 x2 = 5;
+  uint32 y2 = 6;
+}
+
+message DrawRect {
+  uint32 color = 1;
+  uint32 stroke = 2;
+  uint32 x = 3;
+  uint32 y = 4;
+  uint32 width = 5;
+  uint32 height = 6;
+}
+
+message DrawCircle {
+  uint32 color = 1;
+  uint32 stroke = 2;
+  uint32 x = 3;
+  uint32 y = 4;
+  uint32 radius = 5;
+}
+
+message CommitDisplay {}
+
+message DisplayDistanceConfig {
+  uint32 distance_cm = 1;
+}
+
+message DisplayHeightConfig {
+  uint32 height = 1;
+}
+
+message ImageTransferComplete {
+  string stream_id = 1;
+  
+  enum Status {
+    OK = 0;
+    INCOMPLETE = 1;
+  }
+  Status status = 2;
+  
+  repeated uint32 missing_chunks = 3;  // List of missing chunk indices
+}
+
+// ============================================
+// User Input Messages
+// ============================================
+
+message ImuEnabledConfig {
+  bool enabled = 1;
+}
+
+message ImuSingleRequest {}
+
+message ImuStreamConfig {
+  bool enabled = 1;
+}
+
+message ImuData {
+  Vector3 accel = 1;
+  Vector3 gyro = 2;
+  Vector3 mag = 3;
+}
+
+message Vector3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message ButtonEvent {
+  enum Button {
+    CENTER = 0;
+    LEFT = 1;
+    RIGHT = 2;
+  }
+  Button button = 1;
+  
+  enum State {
+    UP = 0;
+    DOWN = 1;
+  }
+  State state = 2;
+}
+
+message HeadGesture {
+  enum Gesture {
+    NOD = 0;
+    SHAKE = 1;
+    HEAD_UP = 2;
+  }
+  Gesture gesture = 1;
+}
+
+message HeadGestureConfig {
+  HeadGesture.Gesture gesture = 1;
+  bool enabled = 2;
+}
+
+// ============================================
+// System Control Messages
+// ============================================
+
+message RestartRequest {}
+
+message FactoryResetRequest {}

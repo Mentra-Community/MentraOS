@@ -1,0 +1,2 @@
+mcuboot_sram:
+  span: [sram_primary, sram_nonsecure, sram_secure]

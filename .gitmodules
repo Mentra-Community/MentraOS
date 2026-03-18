@@ -1,0 +1,3 @@
+[submodule "mcu_client/peripheral_uart_next/nrf5340"]
+	path = mcu_client/peripheral_uart_next/nrf5340
+	url = ./mcu_client/peripheral_uart_next/nrf5340

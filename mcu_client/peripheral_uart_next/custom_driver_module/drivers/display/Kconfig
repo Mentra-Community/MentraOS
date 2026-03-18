@@ -1,0 +1,4 @@
+
+if DISPLAY
+rsource "lcd/Kconfig"
+endif

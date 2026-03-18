@@ -1,0 +1,9 @@
+# In nRF54L15 we place the TF-M non-secure storage partitions after the
+# TF-M non-secure application to avoid splitting the secure/non-secure
+# partitions more than necessary.
+nvs_storage:
+  placement:
+    before: [tfm_storage, end]
+    align: {start: 0x4000}
+  inside: [nonsecure_storage]
+  size: 0x6000

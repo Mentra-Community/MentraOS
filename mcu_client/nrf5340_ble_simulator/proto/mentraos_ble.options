@@ -1,0 +1,17 @@
+# nanopb options file for MentraOS BLE protobuf
+# This configures string fields to use direct char arrays instead of callbacks
+
+# Configure text fields to use fixed-size char arrays instead of callbacks
+mentraos.ble.DisplayText.text                max_size:247
+mentraos.ble.DisplayScrollingText.text        max_size:247
+
+# Other string fields that might need direct access
+mentraos.ble.DeviceInfo.fw_version           max_size:32
+mentraos.ble.DeviceInfo.hw_model             max_size:32
+mentraos.ble.DisplayImage.stream_id          max_size:16
+mentraos.ble.DisplayImage.encoding           max_size:16
+mentraos.ble.PreloadImage.stream_id          max_size:16
+mentraos.ble.PreloadImage.encoding           max_size:16
+mentraos.ble.ImageTransferComplete.stream_id max_size:16
+mentraos.ble.ImageTransferComplete.missing_chunks max_size:64
+mentraos.ble.PhoneToGlasses.msg_id           max_size:16

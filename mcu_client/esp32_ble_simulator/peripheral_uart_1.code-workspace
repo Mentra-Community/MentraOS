@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "../peripheral_uart_1"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {}
+}

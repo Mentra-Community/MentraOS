@@ -1,0 +1,17 @@
+
+config CUSTOM_A6M_0011
+    bool "A6M_0011 Display Driver"
+    default n
+    depends on DT_HAS_ZEPHYR_CUSTOM_A6M_0011_ENABLED
+    select SPI 
+    help
+      Driver for A6M_0011 SPI-based display controller.
+
+config CUSTOM_A6M_0011_INIT_PRIORITY
+    int "Initialization priority"
+    default 60
+
+config CUSTOM_A6M_0011_LOG_LEVEL
+    int "Logging level"
+    default 3
+    range 0 4
