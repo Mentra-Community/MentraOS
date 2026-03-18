@@ -502,7 +502,7 @@ object NexEventUtils {
     fun sendHeartbeatSentEvent(timestamp: Long) {
         try {
             val data = HashMap<String, Any>()
-            data["timestamp"] = timestamp
+            data["heartbeat_sent"] = hashMapOf<String, Any>("timestamp" to timestamp)
 
             Bridge.sendTypedMessage("heartbeat_sent", data as Map<String, Any>)
             Bridge.log("NOTIF: Successfully queued heartbeat sent event")
@@ -514,7 +514,7 @@ object NexEventUtils {
     fun sendHeartbeatReceivedEvent(timestamp: Long) {
         try {
             val data = HashMap<String, Any>()
-            data["timestamp"] = timestamp
+            data["heartbeat_received"] = hashMapOf<String, Any>("timestamp" to timestamp)
 
             Bridge.sendTypedMessage("heartbeat_received", data as Map<String, Any>)
             Bridge.log("NOTIF: Successfully queued heartbeat received event")
