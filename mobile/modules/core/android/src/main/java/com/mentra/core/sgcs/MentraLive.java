@@ -136,6 +136,10 @@ public class MentraLive extends SGCManager {
     private static final int RECONNECT_SCAN_TIMEOUT_MS = 10000; // 10 seconds for reconnection scans (faster than 60s default)
     private int reconnectAttempts = 0;
     private boolean isReconnecting = false; // Track if we're in reconnection mode
+    /** Timestamp when sr_shut (K900 shutdown) was last received; used to delay first reconnect scan so glasses can reboot. */
+    private long lastShutdownTimeMs = 0;
+    private static final long POST_SHUTDOWN_RECONNECT_DELAY_MS = 10_000; // 10s before first scan after shutdown
+    private static final long SHUTDOWN_RECENT_MS = 45_000; // Consider "recent shutdown" for 45s
 
     // Keep-alive parameters
     private static final int KEEP_ALIVE_INTERVAL_MS = 5000; // 5 seconds
@@ -879,19 +883,25 @@ public class MentraLive extends SGCManager {
         } 
 
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            Log.e(TAG, "🔌 ❌ RECONNECTION FAILED - Maximum attempts reached (" + MAX_RECONNECT_ATTEMPTS + ")");
-            Bridge.log("LIVE: 🔌 ❌ RECONNECTION FAILED - Gave up after " + MAX_RECONNECT_ATTEMPTS + " attempts");
+            // Keep retrying in cycles until user explicitly forgets/kills the device.
+            Log.w(TAG, "🔌 ♻️ Max reconnect attempts reached - restarting retry cycle");
+            Bridge.log("LIVE: 🔌 ♻️ Max reconnect attempts reached - continuing reconnection cycle");
             reconnectAttempts = 0;
-            isReconnecting = false;
-            return;
         }
 
         // Set reconnecting flag for faster scan timeout
         isReconnecting = true;
 
+        reconnectAttempts++;
         // Calculate delay with exponential backoff
         long delay = Math.min(BASE_RECONNECT_DELAY_MS * (1L << reconnectAttempts), MAX_RECONNECT_DELAY_MS);
-        reconnectAttempts++;
+        // After K900 shutdown, glasses need time to power cycle before they advertise again
+        if (reconnectAttempts == 1 && lastShutdownTimeMs > 0
+                && (System.currentTimeMillis() - lastShutdownTimeMs) < SHUTDOWN_RECENT_MS) {
+            delay = Math.max(delay, POST_SHUTDOWN_RECONNECT_DELAY_MS);
+            Log.i(TAG, "🔌 ⏳ Post-shutdown: waiting " + (POST_SHUTDOWN_RECONNECT_DELAY_MS / 1000) + "s before first reconnect scan");
+            Bridge.log("LIVE: 🔌 ⏳ Post-shutdown: waiting for glasses to reboot before first reconnect scan");
+        }
 
         Log.i(TAG, "🔌 📅 SCHEDULING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
               " in " + delay + "ms (base=" + BASE_RECONNECT_DELAY_MS + "ms, max=" + MAX_RECONNECT_DELAY_MS + "ms, scan_timeout=" + RECONNECT_SCAN_TIMEOUT_MS + "ms)");
@@ -923,8 +933,8 @@ public class MentraLive extends SGCManager {
                         handleReconnection();
                     }
                 } else if (isConnected) {
-                    Log.i(TAG, "🔌 ✅ RECONNECTION SUCCESSFUL - Already connected (attempt " + reconnectAttempts + ")");
-                    Bridge.log("LIVE: 🔌 ✅ Reconnection successful - Already connected");
+                    Log.i(TAG, "🔌 🔗 Reconnect attempt skipped - BLE link already connected (attempt " + reconnectAttempts + ")");
+                    Bridge.log("LIVE: 🔌 🔗 Reconnect attempt skipped - BLE link already connected");
                     reconnectAttempts = 0;
                     isReconnecting = false;
                 } else {
@@ -950,7 +960,7 @@ public class MentraLive extends SGCManager {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Bridge.log("LIVE: 🔌 ✅ RECONNECTION SUCCESSFUL - Connected to GATT server, discovering services...");
+                    Bridge.log("LIVE: 🔌 🔗 BLE GATT link connected - validating services/characteristics...");
                     isConnecting = false;
                     isConnected = true;
                     connectedDevice = gatt.getDevice();
@@ -1003,6 +1013,8 @@ public class MentraLive extends SGCManager {
                     glassesReadyReceived = false;
                     audioConnected = false;
 
+                    notificationsEnabled = false;
+
                     // Notify frontend and backend of disconnection
                     updateConnectionState(ConnTypes.DISCONNECTED);
 
@@ -1046,6 +1058,8 @@ public class MentraLive extends SGCManager {
                 glassesReady = false;
                 glassesReadyReceived = false;
                 audioConnected = false;
+
+                notificationsEnabled = false;
 
                 // Notify frontend and backend of disconnection
                 updateConnectionState(ConnTypes.DISCONNECTED);
@@ -1091,7 +1105,7 @@ public class MentraLive extends SGCManager {
 
                     if (hasRequiredCharacteristics) {
                         // BLE connection established, but we still need to wait for glasses SOC
-                        Bridge.log("LIVE: ✅ Core TX/RX and LC3 TX/RX characteristics found - BLE connection ready");
+                        Bridge.log("LIVE: 🔌 ✅ BLE reconnection fully ready (Core TX/RX + LC3 TX/RX characteristics verified)");
                         Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...");
 
                         // Don't set connected=true here - wait for SOC to be ready (fullyBooted=true)
@@ -2878,13 +2892,8 @@ public class MentraLive extends SGCManager {
 
             case "sr_shut":
                 Bridge.log("LIVE: K900 shutdown command received - glasses shutting down");
-                // // Mark as killed to prevent reconnection attempts
-                // isKilled = true;
-                // // Clean disconnect without reconnection
-                // if (bluetoothGatt != null) {
-                //     Bridge.log("LIVE: Disconnecting from glasses due to shutdown");
-                //     bluetoothGatt.disconnect();
-                // }
+                lastShutdownTimeMs = System.currentTimeMillis();
+                reconnectAttempts = 0; // Fresh reconnection budget after power cycle
                 // Notify the system that glasses are intentionally disconnected
                 updateConnectionState(ConnTypes.DISCONNECTED);
                 glassesReady = false;

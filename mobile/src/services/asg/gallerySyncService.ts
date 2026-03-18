@@ -872,6 +872,10 @@ class GallerySyncService {
         try {
           const finalSSID = await WifiManager.getCurrentWifiSSID()
           console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
+          if (Platform.OS === "android") {
+            // Some local builds can have stale generated typings for the core module.
+            ;(CoreModule as any).logCurrentWifiFrequency?.()
+          }
           if (finalSSID !== hotspotInfo.ssid) {
             console.error(
               `[GallerySyncService] ❌ SSID mismatch detected! Expected "${hotspotInfo.ssid}", got "${finalSSID}"`,
@@ -1355,7 +1359,7 @@ class GallerySyncService {
               }
 
               // Enqueue for background processing (non-blocking)
-              const isPhoto = downloadedFile.name?.match(/\.(jpg|jpeg|png)$/i)
+              const _isPhoto = downloadedFile.name?.match(/\.(jpg|jpeg|png)$/i)
               const isVideo = downloadedFile.name?.match(/\.(mp4|mov)$/i)
               const leaf = downloadedFile.name?.includes("/")
                 ? downloadedFile.name.substring(downloadedFile.name.lastIndexOf("/") + 1)

@@ -201,11 +201,10 @@ public class SysControl {
         Log.d(TAG, "Sent WiFi disable broadcast");
     }
 
-    public static void setWifi5G(Context context, boolean enable) {
+    public static void setHotspot5G(Context context, boolean enable) {
         Intent nn = new Intent();
-        nn.putExtra("cmd", "setInt");
-        nn.putExtra("name", "wifi_scan_5ghz");
-        nn.putExtra("value", enable ? 1 : 0);
+        nn.putExtra("cmd", "hotspot_wifi5g");
+        nn.putExtra("value", enable ? 1: 0);
         sendBroadcast(context, nn);
     }
 

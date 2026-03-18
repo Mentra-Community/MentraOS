@@ -337,6 +337,8 @@ export interface WifiSearchResult {
   ssid: string
   requiresPassword: boolean
   signalStrength: number
+  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170–5825. Omitted if unknown. */
+  frequency?: number
 }
 
 export interface CoreStatus {
