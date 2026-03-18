@@ -161,9 +161,8 @@ static void connected(struct bt_conn* conn, uint8_t err)
 
     if (!get_display_onoff())
     {
-        LOG_INF("Display was off - powering back on after reconnect");
-        a6n_power_on();
-        set_display_onoff(true);
+        LOG_INF("Display was off - running full display reopen after reconnect");
+        display_open();
     }
 
     protobuf_reset_ping_state();

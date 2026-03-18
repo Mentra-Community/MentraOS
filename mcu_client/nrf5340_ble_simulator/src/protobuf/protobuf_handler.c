@@ -58,6 +58,25 @@
 
 LOG_MODULE_REGISTER(protobuf_handler, LOG_LEVEL_DBG);
 
+static void debug_agent_log(const char *run_id,
+                            const char *hypothesis_id,
+                            const char *location,
+                            const char *message,
+                            const char *data_json)
+{
+    FILE *f = fopen("/Users/mentra/Documents/MentraApps/MentraOS/.cursor/debug-f4e4e4.log", "a");
+    if (!f)
+    {
+        return;
+    }
+    int64_t ts = k_uptime_get();
+    fprintf(f,
+            "{\"sessionId\":\"f4e4e4\",\"runId\":\"%s\",\"hypothesisId\":\"%s\","
+            "\"location\":\"%s\",\"message\":\"%s\",\"data\":%s,\"timestamp\":%lld}\n",
+            run_id, hypothesis_id, location, message, data_json, (long long)ts);
+    fclose(f);
+}
+
 // Global battery level state (0-100%)
 static uint32_t current_battery_level = 85;
 
@@ -951,6 +970,19 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText* display_text)
     // *** LVGL INTEGRATION: Display text based on current pattern ***
     // **NEW: Check current pattern to determine display mode**
     int current_pattern = display_get_current_pattern();
+    const char *render_path = (current_pattern == 5) ? "xy" : "scroll";
+    char debug_data[256];
+    snprintf(debug_data, sizeof(debug_data),
+             "{\"pattern\":%d,\"x\":%u,\"y\":%u,\"size\":%u,\"textLen\":%u,\"color565\":%u,\"path\":\"%s\"}",
+             current_pattern, (unsigned int)display_text->x, (unsigned int)display_text->y,
+             (unsigned int)display_text->size, (unsigned int)text_length, (unsigned int)color_rgb565, render_path);
+    // #region agent log
+    debug_agent_log("baseline",
+                    "H1-H2",
+                    "protobuf_handler.c:protobuf_process_display_text",
+                    "decoded display text and selected render path",
+                    debug_data);
+    // #endregion
 
     if (current_pattern == 5)
     {
