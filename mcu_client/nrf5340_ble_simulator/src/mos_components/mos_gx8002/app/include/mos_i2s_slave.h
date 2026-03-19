@@ -13,6 +13,7 @@
 #define MOS_I2S_SLAVE_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 /***
  * @brief  Initialize I2S slave
  * @return 0 on success, error code otherwise

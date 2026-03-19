@@ -50,16 +50,15 @@
 #include <zephyr/logging/log.h>
 
 #include "../../custom_driver_module/drivers/display/lcd/a6n.h"
-#include "mos_gx8002.h"
-#include "mos_i2s_slave.h"
 #include "main.h"
 #include "mos_ble_service.h"
 #include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
+#include "mos_gx8002.h"
+#include "mos_i2s_slave.h"
 #include "proto/mentraos_ble.pb.h"
 #include "vad_interrupt_handler.h"
 
 LOG_MODULE_REGISTER(protobuf_handler, LOG_LEVEL_DBG);
-
 
 // Global battery level state (0-100%)
 static uint32_t current_battery_level = 85;
@@ -97,6 +96,37 @@ static void protobuf_send_ping_request(void);
 static void protobuf_process_pong_response(const mentraos_ble_PingRequest *pong);
 static void protobuf_handle_ping_failure(void);
 static void protobuf_handle_ping_success(void);
+
+static const char *protobuf_message_name(uint32_t which_payload)
+{
+    switch (which_payload)
+    {
+        case 10:
+            return "DisconnectRequest";
+        case 11:
+            return "BatteryStateRequest";
+        case 12:
+            return "GlassesInfoRequest";
+        case 16:
+            return "PingRequest";
+        case 20:
+            return "MicStateConfig";
+        case 30:
+            return "DisplayText";
+        case 35:
+            return "DisplayScrollingText";
+        case 37:
+            return "BrightnessConfig";
+        case 38:
+            return "AutoBrightnessConfig";
+        case 45:
+            return "DisplayHeightConfig";
+        case 46:
+            return "ClearDisplay";
+        default:
+            return "Unknown";
+    }
+}
 
 static const char *protobuf_wire_type_name(uint8_t wire_type)
 {
@@ -259,8 +289,8 @@ void protobuf_analyze_message(const uint8_t *data, uint16_t len)
         LOG_WRN("Received empty data - ignoring");
         return;
     }
-    LOG_INF("=== BLE DATA RECEIVED ===");
-    LOG_INF("Received BLE data (%u bytes):", len);
+    /* LOG_INF("=== BLE DATA RECEIVED ==="); */
+    /* LOG_INF("Received BLE data (%u bytes):", len); */
 
     // Print hex dump (use Zephyr hexdump helper so logging backend and
     // runtime filtering are respected)
@@ -271,15 +301,15 @@ void protobuf_analyze_message(const uint8_t *data, uint16_t len)
     switch (firstByte)
     {
         case 0x02:
-            LOG_INF("[PROTOBUF] Control header detected: 0x02 (Protobuf message)");
+            /* LOG_INF("[PROTOBUF] Control header detected: 0x02 (Protobuf message)"); */
             protobuf_parse_control_message(data + 1, len - 1);
             break;
         case 0xA0:
-            LOG_INF("[AUDIO] Control header detected: 0xA0 (Audio data)");
+            /* LOG_INF("[AUDIO] Control header detected: 0xA0 (Audio data)"); */
             protobuf_parse_audio_chunk(data, len);
             break;
         case 0xB0:
-            LOG_INF("[IMAGE] Control header detected: 0xB0 (Image data)");
+            /* LOG_INF("[IMAGE] Control header detected: 0xB0 (Image data)"); */
             protobuf_parse_image_chunk(data, len);
             break;
         default:
@@ -298,19 +328,19 @@ void protobuf_analyze_message(const uint8_t *data, uint16_t len)
 
             if (looks_like_json)
             {
-                LOG_INF("[NON_PROTOBUF] JSON-like payload detected; skipping protobuf decode fallback");
+                /* LOG_INF("[NON_PROTOBUF] JSON-like payload detected; skipping protobuf decode fallback"); */
                 break;
             }
 
             // Fallback parse only when payload does not look like known text/JSON framing
             if (len > 1)
             {
-                LOG_INF("[FALLBACK] Attempting protobuf parse without header...");
+                LOG_WRN("[PROTOBUF] Missing 0x02 header, trying fallback decode");
                 protobuf_parse_control_message(data, len);
             }
             break;
     }
-    LOG_INF("=== END BLE DATA ===");
+    /* LOG_INF("=== END BLE DATA ==="); */
 }
 
 void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
@@ -325,99 +355,31 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
     // Try to decode as PhoneToGlasses message
     mentraos_ble_PhoneToGlasses phone_msg = mentraos_ble_PhoneToGlasses_init_default;
 
-    LOG_INF("Attempting to decode PhoneToGlasses message...");
-    LOG_INF("[Phone->Glasses] Decoding protobuf message (%u bytes)\n", len);
+    /* LOG_INF("Attempting to decode PhoneToGlasses message..."); */
     bool decode_result = decode_phone_to_glasses_message(protobuf_data, len, &phone_msg);
 
     if (decode_result)
     {
-        LOG_INF("Successfully decoded PhoneToGlasses message!");
-        LOG_INF("Message type (which_payload): %u", phone_msg.which_payload);
-        LOG_INF("[Phone->Glasses] Successfully decoded message type: %u\n", phone_msg.which_payload);
-
-        // Enhanced message type logging with protocol details
-        const char *message_name;
-        const char *message_description;
-
-        switch (phone_msg.which_payload)
-        {
-            case 10:
-                message_name = "DisconnectRequest";
-                message_description = "Connection termination request";
-                break;
-            case 11:
-                message_name = "BatteryStateRequest";
-                message_description = "Request current battery level";
-                break;
-            case 12:
-                message_name = "GlassesInfoRequest";
-                message_description = "Request device information";
-                break;
-            case 16:
-                message_name = "PingRequest";
-                message_description = "Connectivity test request";
-                break;
-            case 20:
-                message_name = "MicStateConfig";
-                message_description = "Configure microphone streaming state";
-                break;
-            case 30:
-                message_name = "DisplayText";
-                message_description = "Display static text message";
-                break;
-            case 35:
-                message_name = "DisplayScrollingText";
-                message_description = "Display animated scrolling text";
-                break;
-            case 37:
-                message_name = "BrightnessConfig";
-                message_description = "Set display brightness level";
-                break;
-            case 38:
-                message_name = "AutoBrightnessConfig";
-                message_description = "Configure automatic brightness adjustment";
-                break;
-            case 45:
-                message_name = "DisplayHeightConfig";
-                message_description = "Configure display height";
-                break;
-            case 46:
-                message_name = "ClearDisplay";
-                message_description = "Clear display content (temporary tag)";
-                break;
-            default:
-                message_name = "Unknown";
-                message_description = "Unrecognized message type";
-                break;
-        }
-
-        LOG_INF("Message Details:");
-        LOG_INF("  - Type: PhoneToGlasses::%s", message_name);
-        LOG_INF("  - Tag: %u", phone_msg.which_payload);
-        LOG_INF("  - Description: %s", message_description);
-        LOG_INF("  - Protocol: MentraOS BLE Protobuf v3");
-        LOG_INF("[Phone->Glasses] %s (Tag %u): %s\n", message_name, phone_msg.which_payload, message_description);
+        const char *message_name = protobuf_message_name(phone_msg.which_payload);
+        LOG_INF("[PROTOBUF] RX %s tag=%u len=%u", message_name, phone_msg.which_payload, len);
 
         // Process the decoded message based on payload type
         switch (phone_msg.which_payload)
         {
             case 11:  // battery_state_tag
-                LOG_INF("Processing Battery State Request...");
+                LOG_INF("Processing Battery State Request");
                 LOG_INF("Current battery level: %u%%", current_battery_level);
-                // Send battery response
                 protobuf_send_battery_notification();
                 break;
 
             case 12:  // glasses_info_tag
-                LOG_INF("Processing Glasses Info Request...");
-                // TODO: Generate device info response
-                LOG_INF("TODO: Implement device info response (DeviceInfo message)");
+                LOG_INF("Processing Glasses Info Request");
+                LOG_WRN("TODO: Implement device info response (DeviceInfo message)");
                 break;
 
             case 10:  // disconnect_tag
-                LOG_INF("Processing Disconnect Request...");
-                // TODO: Handle disconnect
-                LOG_INF("TODO: Implement graceful disconnection");
+                LOG_INF("Processing Disconnect Request");
+                LOG_WRN("TODO: Implement graceful disconnection");
                 break;
 
             case 30:  // display_text_tag
@@ -484,33 +446,15 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
                 break;
 
             default:
-                LOG_WRN("Unknown message type: %u", phone_msg.which_payload);
-                LOG_WRN("Available message types:");
-                LOG_WRN("  - 10: DisconnectRequest");
-                LOG_WRN("  - 11: BatteryStateRequest");
-                LOG_WRN("  - 12: GlassesInfoRequest");
-                LOG_WRN("  - 16: PingRequest");
-                LOG_WRN("  - 30: DisplayText");
-                LOG_WRN("  - 35: DisplayScrollingText");
-                LOG_WRN("  - 37: BrightnessConfig");
-                LOG_WRN("  - 38: AutoBrightnessConfig");
-                LOG_WRN("  - 45: DisplayHeightConfig");
-                LOG_WRN("  - 46: ClearDisplay");
+                LOG_WRN("Unknown message type: tag=%u len=%u", phone_msg.which_payload, len);
                 break;
         }
     }
     else
     {
-        LOG_ERR("Failed to decode protobuf message - falling back to detailed analysis");
-        LOG_INF("[Phone->Glasses] ❌ Failed to decode protobuf message (%u bytes)\n", len);
-
-        // Enhanced protobuf wire format analysis
-        LOG_INF("=== PROTOBUF DECODE FAILURE ANALYSIS ===");
-        LOG_INF("Message length: %u bytes", len);
+        LOG_ERR("Failed to decode protobuf message (%u bytes)", len);
 
         protobuf_dump_wire_fields(protobuf_data, len);
-
-        LOG_INF("=== END ANALYSIS ===");
     }
 }
 
@@ -707,9 +651,7 @@ void protobuf_decrease_battery_level(void)
 //
 void protobuf_send_battery_notification(void)
 {
-    LOG_INF("=== BLE DATA TRANSMISSION ===");
-    LOG_INF("Direction: GlassesToPhone (Outgoing Response)");
-    LOG_INF("Trigger: Battery level changed or requested");
+    /* LOG_INF("=== BLE DATA TRANSMISSION ==="); */
 
     // Create a battery status notification message
     mentraos_ble_GlassesToPhone notification = mentraos_ble_GlassesToPhone_init_default;
@@ -721,66 +663,36 @@ void protobuf_send_battery_notification(void)
     notification.payload.battery_status.level = current_battery_level;
     notification.payload.battery_status.charging = current_charging_state;
 
-    LOG_INF("Pre-Encoding Message Analysis:");
-    LOG_INF("  - Message Type: GlassesToPhone::BatteryStatus");
-    LOG_INF("  - Protocol: MentraOS BLE Protobuf v3");
-    LOG_INF("  - Payload Tag: 10 (battery_status)");
-    LOG_INF("  - Direction: Glasses → Phone");
-
-    LOG_INF("Battery Status Payload:");
-    LOG_INF("  - Field 1 (uint32 level): %u%%", notification.payload.battery_status.level);
-    LOG_INF("  - Field 2 (bool charging): %s", notification.payload.battery_status.charging ? "true" : "false");
-
-    // Protocol compliance
-    LOG_INF("Protocol Compliance:");
-    LOG_INF("  - Message Type: GlassesToPhone::BatteryStatus");
-    LOG_INF("  - All required fields present: YES");
-    LOG_INF("  - Level range valid: %s (0-100%%)", (notification.payload.battery_status.level <= 100) ? "YES" : "NO");
-    LOG_INF("  - Charging state valid: YES");
+    /* LOG_INF("[PROTOBUF][TX] BatteryStatus level=%u charging=%s",
+             notification.payload.battery_status.level,
+             notification.payload.battery_status.charging ? "true" : "false"); */
 
     // Encode the notification
     uint8_t buffer[64];  // Small buffer for battery notification
     size_t bytes_written;
 
-    LOG_INF("Encoding Process:");
-    LOG_INF("  - Encoder: nanopb library");
-    LOG_INF("  - Target buffer size: %zu bytes", sizeof(buffer) - 1);
+    /* LOG_INF("Encoding BatteryStatus with buffer=%zu bytes", sizeof(buffer) - 1); */
 
     if (encode_glasses_to_phone_message(&notification, buffer + 1, sizeof(buffer) - 1, &bytes_written))
     {
         // Add the 0x02 header for protobuf messages
         buffer[0] = 0x02;
 
-        LOG_INF("Encoding Success:");
-        LOG_INF("  - Protobuf Length: %zu bytes", bytes_written);
-        LOG_INF("  - Total Length: %zu bytes (with 0x02 header)", bytes_written + 1);
-        LOG_INF("  - Header: 0x02 (protobuf marker)");
-        LOG_INF("  - Efficiency: %zu bytes for battery status", bytes_written);
-
-        // Detailed hex dump of response packet
-        LOG_INF("Outgoing Packet Hex Dump (%zu bytes):", bytes_written + 1);
         LOG_HEXDUMP_INF(buffer, bytes_written + 1, "OUTGOING_PKT");
 
-        // Print to UART with comprehensive details
-        LOG_INF("\n[Glasses->Phone BATTERY] Battery Status: %u%%, charging:%s (protobuf:%zu bytes)\n",
-                notification.payload.battery_status.level, notification.payload.battery_status.charging ? "Y" : "N",
-                bytes_written);
-
         // Send via BLE (to all connected clients that have enabled TX notifications)
-        LOG_INF("BLE Transmission:");
         if (!get_ble_connected_status())
         {
-            LOG_DBG("  - Skipped: no BLE connection");
+            LOG_DBG("[PROTOBUF][TX] Skip BatteryStatus: no BLE connection");
         }
         else
         {
             int ret = custom_nus_send(NULL, buffer, bytes_written + 1);
             if (ret == 0)
             {
-                LOG_INF("  - Status: SUCCESS");
-                LOG_INF("  - Sent: %zu bytes via BLE", bytes_written + 1);
-                LOG_INF("  - Target: All connected phones");
-                LOG_INF("Battery notification sent successfully");
+                LOG_INF("[PROTOBUF][TX] BatteryStatus sent level=%u charging=%s bytes=%zu",
+                        notification.payload.battery_status.level,
+                        notification.payload.battery_status.charging ? "Y" : "N", bytes_written + 1);
             }
             else
             {
@@ -789,16 +701,10 @@ void protobuf_send_battery_notification(void)
                         ret);
             }
         }
-
-        LOG_INF("=== END BLE DATA TRANSMISSION ===");
     }
     else
     {
-        LOG_ERR("Encoding Failed:");
-        LOG_ERR("  - Protobuf encoding error");
-        LOG_ERR("  - Buffer size may be insufficient");
-        LOG_ERR("  - Required: ~32 bytes, Available: %zu bytes", sizeof(buffer) - 1);
-        LOG_ERR("Failed to encode battery notification");
+        LOG_ERR("Failed to encode battery notification (buf=%zu)", sizeof(buffer) - 1);
     }
 }
 
@@ -807,11 +713,7 @@ int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_le
 {
     // NOTE: This is a fallback echo response using BatteryStatus message
     // TODO: Implement proper echo response message type when protobuf definition is updated
-    LOG_INF("=== BLE DATA TRANSMISSION ===");
-    LOG_INF("Direction: GlassesToPhone (Echo Response)");
-    LOG_INF("Trigger: Echo request received");
-    LOG_INF("Input packet length: %u bytes", input_len);
-    LOG_INF("Output buffer size: %u bytes", max_output_len);
+    /* LOG_INF("Generating echo response: input=%u output_buf=%u", input_len, max_output_len); */
 
     // Create a simple response message
     mentraos_ble_GlassesToPhone response = mentraos_ble_GlassesToPhone_init_default;
@@ -823,27 +725,8 @@ int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_le
     response.payload.battery_status.level = current_battery_level;
     response.payload.battery_status.charging = current_charging_state;
 
-    LOG_INF("� Pre-Encoding Message Analysis:");
-    LOG_INF("  - Message Type: GlassesToPhone::BatteryStatus");
-    LOG_INF("  - Protocol: MentraOS BLE Protobuf v3");
-    LOG_INF("  - Payload Tag: 10 (battery_status)");
-    LOG_INF("  - Direction: Glasses → Phone");
-    LOG_INF("  - Context: Echo response using battery status");
-
-    LOG_INF("Battery Status Payload:");
-    LOG_INF("  - Field 1 (uint32 level): %u%%", response.payload.battery_status.level);
-    LOG_INF("  - Field 2 (bool charging): %s", response.payload.battery_status.charging ? "true" : "false");
-
-    // Protocol compliance
-    LOG_INF("Protocol Compliance:");
-    LOG_INF("  - Message Type: GlassesToPhone::BatteryStatus");
-    LOG_INF("  - All required fields present: YES");
-    LOG_INF("  - Level range valid: %s (0-100%%)", (response.payload.battery_status.level <= 100) ? "YES" : "NO");
-    LOG_INF("  - Charging state valid: YES");
-
-    LOG_INF("Encoding Process:");
-    LOG_INF("  - Encoder: nanopb library");
-    LOG_INF("  - Target buffer size: %u bytes", max_output_len - 1);
+    /* LOG_INF("Encoding echo response as BatteryStatus level=%u charging=%s",
+             response.payload.battery_status.level, response.payload.battery_status.charging ? "true" : "false"); */
 
     // Encode the response
     size_t bytes_written;
@@ -852,36 +735,13 @@ int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_le
         // Add the 0x02 header for protobuf messages
         output_data[0] = 0x02;
 
-        LOG_INF("Encoding Success:");
-        LOG_INF("  - Protobuf Length: %zu bytes", bytes_written);
-        LOG_INF("  - Total Length: %zu bytes (with 0x02 header)", bytes_written + 1);
-        LOG_INF("  - Header: 0x02 (protobuf marker)");
-        LOG_INF("  - Efficiency: %zu bytes for echo response", bytes_written);
-
-        // Detailed hex dump of response packet
-        LOG_INF("Outgoing Echo Packet Hex Dump (%zu bytes):", bytes_written + 1);
         LOG_HEXDUMP_INF(output_data, bytes_written + 1, "ECHO_PKT");
-
-        // Print to UART with comprehensive details
-        LOG_INF("\n[Glasses->Phone ECHO] Echo Response: battery:%u%%, charging:%s (protobuf:%zu bytes)\n",
-                response.payload.battery_status.level, response.payload.battery_status.charging ? "Y" : "N",
-                bytes_written);
-
-        LOG_INF("Echo Response Ready:");
-        LOG_INF("  - Status: SUCCESS");
-        LOG_INF("  - Generated: %zu bytes", bytes_written + 1);
-        LOG_INF("  - Return value: %zu", bytes_written + 1);
-
-        LOG_INF("=== END BLE DATA TRANSMISSION ===");
+        LOG_INF("[PROTOBUF][TX] Echo response ready bytes=%zu", bytes_written + 1);
         return bytes_written + 1;
     }
     else
     {
-        LOG_ERR("Encoding Failed:");
-        LOG_ERR("  - Protobuf encoding error");
-        LOG_ERR("  - Buffer size may be insufficient");
-        LOG_ERR("  - Required: ~32 bytes, Available: %u bytes", max_output_len - 1);
-        LOG_ERR("  - Return value: -ENOMEM");
+        LOG_ERR("Failed to encode echo response (buf=%u)", max_output_len - 1);
         return -ENOMEM;
     }
 }
@@ -940,54 +800,27 @@ void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig *bri
         return;
     }
 
-    LOG_INF("=== BRIGHTNESS CONFIG MESSAGE (Tag 37) ===");
-
     uint32_t new_level = brightness_config->value;
-
-    // Brightness value analysis
-    LOG_INF("Brightness Configuration:");
-    LOG_INF("  - Field 1 (uint32 value): %u%%", new_level);
-    LOG_INF("  - Valid Range: 0-100%%");
-    LOG_INF("  - Current Level: %u%%", current_brightness_level);
-    LOG_INF("  - Requested Level: %u%%", new_level);
-    LOG_INF("  - Auto Brightness: %s -> DISABLED (manual override)", auto_brightness_enabled ? "ENABLED" : "DISABLED");
 
     // Value validation
     bool valid_range = (new_level <= 100);
-    LOG_INF("  - Value Valid: %s", valid_range ? "YES" : "NO (will be clamped)");
 
     if (!valid_range)
     {
-        LOG_WRN("  - Brightness value %u exceeds maximum (100), will clamp to 100", new_level);
+        LOG_WRN("[PROTOBUF] Brightness value %u exceeds maximum (100), will clamp", new_level);
     }
 
     uint32_t clamped_level = (new_level > 100) ? 100 : new_level;
-    LOG_INF("  - Projector Brightness: %u%% -> level %u/9", clamped_level, (clamped_level * 9) / 100);
-
-    // Protocol compliance
-    LOG_INF("Protocol Compliance:");
-    LOG_INF("  - Message Type: PhoneToGlasses::BrightnessConfig");
-    LOG_INF("  - Field 1 present: YES");
-    LOG_INF("  - Value type: uint32");
-    LOG_INF("  - Implementation: Projector brightness (A6N) + Auto brightness disable");
-
-    // Print to UART
-    LOG_INF("\n[Phone->Glasses BRIGHTNESS] %u%% -> Projector: %u/9, Auto: %s->OFF\n", current_brightness_level,
-            (clamped_level * 9) / 100, auto_brightness_enabled ? "ON" : "OFF");
+    uint32_t previous_level = current_brightness_level;
+    bool previous_auto = auto_brightness_enabled;
+    LOG_INF("[PROTOBUF] BrightnessConfig request=%u%% clamp=%u%% prev=%u%% auto=%s", new_level, clamped_level,
+            previous_level, previous_auto ? "ON" : "OFF");
 
     // Clamp and set the new brightness level (this will disable auto brightness)
     protobuf_set_brightness_level(new_level);
 
-    LOG_INF("Brightness Update Result:");
-    LOG_INF("  - Previous Level: %u%%",
-            current_brightness_level == clamped_level ? new_level : current_brightness_level);
-    LOG_INF("  - New Level: %u%%", current_brightness_level);
-    LOG_INF("  - Auto Brightness: DISABLED (manual override)");
-    LOG_INF("  - Change: %+d%%",
-            (int32_t)current_brightness_level
-                - (int32_t)(current_brightness_level == clamped_level ? new_level : current_brightness_level));
-
-    LOG_INF("=== END BRIGHTNESS CONFIG MESSAGE ===");
+    LOG_INF("[PROTOBUF] BrightnessConfig applied new=%u%% delta=%+d%% auto=%s", current_brightness_level,
+            (int32_t)current_brightness_level - (int32_t)previous_level, auto_brightness_enabled ? "ON" : "OFF");
 }
 
 void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
@@ -998,64 +831,12 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
         return;
     }
 
-    LOG_INF("=== DISPLAY TEXT MESSAGE (Tag 30) ===");
-
-    // Text content analysis
     size_t text_length = strlen(display_text->text);
-    // LOG_INF("Text Content:");
-    // LOG_INF("  - Length: %zu characters", text_length);
-    // LOG_INF("  - Field 1 (string text): \"%s\"", display_text->text);
 
-    // Color analysis (RGB565 format)
     uint32_t color_rgb888 = display_text->color;
     uint16_t color_rgb565 = (uint16_t)color_rgb888;
-
-    // Convert RGB565 back to RGB888 components for analysis
-    uint8_t red = (color_rgb565 >> 11) & 0x1F;  // 5 bits
-    uint8_t green = (color_rgb565 >> 5) & 0x3F;  // 6 bits
-    uint8_t blue = color_rgb565 & 0x1F;  // 5 bits
-
-    // Scale to 8-bit values
-    uint8_t red_8bit = (red * 255) / 31;
-    uint8_t green_8bit = (green * 255) / 63;
-    uint8_t blue_8bit = (blue * 255) / 31;
-
-    LOG_INF("Color Configuration:");
-    LOG_INF("  - Field 2 (uint32 color): 0x%06X", color_rgb888);
-    LOG_INF("  - RGB565 Format: 0x%04X", color_rgb565);
-    LOG_INF("  - RGB888 Components: R=%u, G=%u, B=%u", red_8bit, green_8bit, blue_8bit);
-    LOG_INF("  - Color Name: %s", (color_rgb565 == 0xF800)   ? "Red"
-                                  : (color_rgb565 == 0x07E0) ? "Green"
-                                  : (color_rgb565 == 0x001F) ? "Blue"
-                                  : (color_rgb565 == 0xFFFF) ? "White"
-                                  : (color_rgb565 == 0x0000) ? "Black"
-                                  : (color_rgb565 == 0xFFE0) ? "Yellow"
-                                  : (color_rgb565 == 0xF81F) ? "Magenta"
-                                  : (color_rgb565 == 0x07FF) ? "Cyan"
-                                                             : "Custom");
-
-    // Font configuration
-    LOG_INF("Font Configuration:");
-    LOG_INF("  - Field 3 (uint32 font_code): %u", display_text->font_code);
-    LOG_INF("  - Field 6 (uint32 size): %u (font size multiplier)", display_text->size);
-
-    // Position and layout
-    LOG_INF("Position & Layout:");
-    LOG_INF("  - Field 4 (uint32 x): %u pixels", display_text->x);
-    LOG_INF("  - Field 5 (uint32 y): %u pixels", display_text->y);
-    LOG_INF("  - Screen Position: (%u, %u)", display_text->x, display_text->y);
-
-    // Protocol compliance check
-    LOG_INF("Protocol Compliance:");
-    LOG_INF("  - Message Type: PhoneToGlasses::DisplayText");
-    LOG_INF("  - All required fields present: YES");
-    LOG_INF("  - Color format valid: %s", (color_rgb565 <= 0xFFFF) ? "YES" : "NO");
-    LOG_INF("  - Position bounds: X=%u, Y=%u (bounds depend on display)", display_text->x, display_text->y);
-
-    // Print to UART with comprehensive details
-    LOG_INF("[Phone->Glasses TEXT] Display Text: \"%s\"", display_text->text);
-    LOG_INF("len:%zu, pos:(%u,%u), color:0x%04X, font:%u, size:%u", text_length, display_text->x, display_text->y,
-            color_rgb565, display_text->font_code, display_text->size);
+    LOG_INF("[PROTOBUF] DisplayText len=%zu pos=(%u,%u) color=0x%04X font=%u size=%u", text_length, display_text->x,
+            display_text->y, color_rgb565, display_text->font_code, display_text->size);
 
     // *** LVGL INTEGRATION: Display text based on current pattern ***
     // **NEW: Check current pattern to determine display mode**
@@ -1069,17 +850,14 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
         uint16_t y_clamped = (y_offset > 65535U) ? 65535 : (uint16_t)y_offset;
         uint16_t font_size = (display_text->size > 0) ? display_text->size : 12;  // Default to 12pt
         display_update_xy_text(display_text->x, y_clamped, display_text->text, font_size, color_rgb565);
-        LOG_INF("✅ LVGL: XY positioned text at (%u,%u) with font %upt in Pattern 5\n", display_text->x, y_clamped,
-                font_size);
+        /* LOG_INF("LVGL XY positioned text at (%u,%u) font=%u", display_text->x, y_clamped, font_size); */
     }
     else
     {
         // Pattern 4 or others: Auto-scroll container (backward compatibility)
         display_update_protobuf_text(display_text->text);
-        LOG_INF("✅ LVGL: Protobuf text updated in auto-scroll container (Pattern %d)\n", current_pattern);
+        /* LOG_INF("LVGL protobuf text updated in auto-scroll container (Pattern %d)", current_pattern); */
     }
-
-    LOG_INF("=== END DISPLAY TEXT MESSAGE ===");
 }
 
 void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrollingText *scrolling_text)
@@ -1090,46 +868,8 @@ void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrolling
         return;
     }
 
-    LOG_INF("=== DISPLAY SCROLLING TEXT MESSAGE (Tag 35) ===");
-
-    // Text content analysis
     size_t text_length = strlen(scrolling_text->text);
-    LOG_INF("Text Content:");
-    LOG_INF("  - Field 1 (string text): \"%s\"", scrolling_text->text);
-    LOG_INF("  - Text Length: %zu characters", text_length);
 
-    // Color analysis (same as DisplayText)
-    uint32_t color_rgb888 = scrolling_text->color;
-    uint16_t color_rgb565 = (uint16_t)color_rgb888;
-
-    uint8_t red = (color_rgb565 >> 11) & 0x1F;
-    uint8_t green = (color_rgb565 >> 5) & 0x3F;
-    uint8_t blue = color_rgb565 & 0x1F;
-
-    uint8_t red_8bit = (red * 255) / 31;
-    uint8_t green_8bit = (green * 255) / 63;
-    uint8_t blue_8bit = (blue * 255) / 31;
-
-    LOG_INF("Color Configuration:");
-    LOG_INF("  - Field 2 (uint32 color): 0x%06X", color_rgb888);
-    LOG_INF("  - RGB565 Format: 0x%04X", color_rgb565);
-    LOG_INF("  - RGB888 Components: R=%u, G=%u, B=%u", red_8bit, green_8bit, blue_8bit);
-
-    // Font configuration
-    LOG_INF("Font Configuration:");
-    LOG_INF("  - Field 3 (uint32 font_code): %u", scrolling_text->font_code);
-    LOG_INF("  - Field 11 (uint32 size): %u (font size multiplier)", scrolling_text->size);
-
-    // Position and dimensions
-    LOG_INF("Position & Dimensions:");
-    LOG_INF("  - Field 4 (uint32 x): %u pixels", scrolling_text->x);
-    LOG_INF("  - Field 5 (uint32 y): %u pixels", scrolling_text->y);
-    LOG_INF("  - Field 6 (uint32 width): %u pixels", scrolling_text->width);
-    LOG_INF("  - Field 7 (uint32 height): %u pixels", scrolling_text->height);
-    LOG_INF("  - Scroll Area: %ux%u at (%u, %u)", scrolling_text->width, scrolling_text->height, scrolling_text->x,
-            scrolling_text->y);
-
-    // Alignment configuration
     const char *alignment_name;
     switch (scrolling_text->align)
     {
@@ -1147,42 +887,14 @@ void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrolling
             break;
     }
 
-    LOG_INF("Text Alignment:");
-    LOG_INF("  - Field 8 (Alignment align): %u (%s)", scrolling_text->align, alignment_name);
-
-    // Scrolling behavior
-    LOG_INF("Scrolling Behavior:");
-    LOG_INF("  - Field 9 (uint32 line_spacing): %u pixels", scrolling_text->line_spacing);
-    LOG_INF("  - Field 10 (uint32 speed): %u pixels/second", scrolling_text->speed);
-    LOG_INF("  - Field 12 (bool loop): %s", scrolling_text->loop ? "true" : "false");
-    LOG_INF("  - Field 13 (uint32 pause_ms): %u milliseconds", scrolling_text->pause_ms);
-
-    // Calculated scrolling parameters
-    if (scrolling_text->speed > 0)
-    {
-        float scroll_time = (float)scrolling_text->height / scrolling_text->speed;
-        LOG_INF("  - Calculated scroll time: %.1f seconds", scroll_time);
-    }
-
-    // Protocol compliance
-    LOG_INF("Protocol Compliance:");
-    LOG_INF("  - Message Type: PhoneToGlasses::DisplayScrollingText");
-    LOG_INF("  - All fields present: YES");
-    LOG_INF("  - Alignment valid: %s", (scrolling_text->align <= 2) ? "YES" : "NO");
-    LOG_INF("  - Speed reasonable: %s", (scrolling_text->speed <= 1000) ? "YES" : "VERY_FAST");
-    LOG_INF("  - Area size: %u pixels²", scrolling_text->width * scrolling_text->height);
-
-    // Print to UART with comprehensive details
-    LOG_INF("\n[Phone->Glasses SCROLL] Scrolling Text: \"%s\" (len:%zu, area:%ux%u, speed:%ups, align:%s, loop:%s)\n",
-            scrolling_text->text, text_length, scrolling_text->width, scrolling_text->height, scrolling_text->speed,
+    LOG_INF("[PROTOBUF] DisplayScrollingText len=%zu area=%ux%u pos=(%u,%u) speed=%u align=%s loop=%s", text_length,
+            scrolling_text->width, scrolling_text->height, scrolling_text->x, scrolling_text->y, scrolling_text->speed,
             alignment_name, scrolling_text->loop ? "Y" : "N");
 
     // *** LVGL INTEGRATION: Display scrolling text in protobuf container ***
     // **NEW: Both DisplayText and DisplayScrollingText update the same auto-scroll container**
     display_update_protobuf_text(scrolling_text->text);
-    LOG_INF("✅ LVGL: Protobuf scrolling text updated in auto-scroll container\n");
-
-    LOG_INF("=== END SCROLLING TEXT MESSAGE ===");
+    /* LOG_INF("LVGL protobuf scrolling text updated in auto-scroll container"); */
 }
 
 void protobuf_parse_text_brightness(const char *text)
@@ -1192,8 +904,7 @@ void protobuf_parse_text_brightness(const char *text)
         return;
     }
 
-    LOG_INF("TEXT BRIGHTNESS PARSER ACTIVATED");
-    LOG_INF("Parsing text: \"%s\"", text);
+    /* LOG_INF("TEXT BRIGHTNESS parser input: %s", text); */
 
     // Look for patterns like "brightness to 61%" or "61%"
     const char *brightness_keyword = "brightness to ";
@@ -1243,59 +954,15 @@ void protobuf_parse_text_brightness(const char *text)
 
 void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig *config)
 {
-    LOG_INF("=== DISPLAY HEIGHT CONFIGURATION (Tag 45) ===");
-
-    LOG_INF("Display Height Configuration:");
-    LOG_INF("  - Message Type: PhoneToGlasses::DisplayHeightConfig");
-    LOG_INF("  - Protocol: MentraOS BLE Protobuf v3 (EXTENDED)");
-    LOG_INF("  - Payload Tag: 45 (display_height)");
-    LOG_INF("  - Direction: Phone → Glasses");
-
-    LOG_INF("Configuration Details:");
-    LOG_INF("  - Height: %d pixels", config->height);
+    LOG_INF("[PROTOBUF] DisplayHeightConfig height=%d", config->height);
 
     display_update_height(config->height);
 }
 
 void protobuf_process_clear_display(void)
 {
-    LOG_INF("=== CLEAR DISPLAY MESSAGE (Tag 46) ===");
     LOG_WRN("TEMPORARY IMPLEMENTATION: Using tag 46 for ClearDisplay");
-    LOG_WRN("TODO: Update to official tag when protobuf definition is updated");
-
-    LOG_INF("Clear Display Command:");
-    LOG_INF("  - Message Type: PhoneToGlasses::ClearDisplay");
-    LOG_INF("  - Protocol: MentraOS BLE Protobuf v3 (EXTENDED)");
-    LOG_INF("  - Payload Tag: 46 (clear_display)");
-    LOG_INF("  - Direction: Phone → Glasses");
-    LOG_INF("  - Action: Clear all display content");
-
-    LOG_INF("Display Operations:");
-    LOG_INF("  - Clear static text: YES");
-    LOG_INF("  - Clear scrolling text: YES");
-    LOG_INF("  - Reset display state: YES");
-    LOG_INF("  - Preserve brightness: YES");
-
-    // Protocol compliance (temporary)
-    LOG_INF("Protocol Compliance (TEMPORARY):");
-    LOG_INF("  - Message Type: PhoneToGlasses::ClearDisplay");
-    LOG_INF("  - Official definition: PENDING");
-    LOG_INF("  - Temporary tag: 46");
-    LOG_INF("  - Implementation: Display hardware clear");
-
-    // TODO: Implement actual display clearing logic here
-    // This is where you would interface with your display driver
-    LOG_INF("Display Clear Implementation:");
-    LOG_INF("  - Clear framebuffer: TODO");
-    LOG_INF("  - Reset text state: TODO");
-    LOG_INF("  - Stop scrolling animations: TODO");
-    LOG_INF("  - Refresh display: TODO");
-
-    // Print to UART
-    LOG_INF("\n[Phone->Glasses CLEAR] Clear Display: all content cleared (temporary tag:46)\n");
-
-    LOG_INF("Clear Display Command Processed");
-    LOG_INF("=== END CLEAR DISPLAY MESSAGE ===");
+    LOG_INF("[PROTOBUF] ClearDisplay requested");
 
     display_clear_screen();
 }
@@ -1308,100 +975,14 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
         return;
     }
 
-    LOG_INF("=== AUTO BRIGHTNESS CONFIG MESSAGE (Tag 38) ===");
-
     bool enabled = auto_brightness_config->enabled;
     bool previous_state = auto_brightness_enabled;
 
     // Update the global auto brightness state
     auto_brightness_enabled = enabled;
 
-    // Auto brightness configuration analysis
-    LOG_INF("Auto Brightness Configuration:");
-    LOG_INF("  - Field 1 (bool enabled): %s", enabled ? "true" : "false");
-    LOG_INF("  - Previous State: %s", previous_state ? "ENABLED" : "DISABLED");
-    LOG_INF("  - New State: %s", enabled ? "ENABLED" : "DISABLED");
-    LOG_INF("  - State Change: %s", (previous_state != enabled) ? "YES" : "NO");
-    LOG_INF("  - Feature: Automatic brightness adjustment based on ambient light sensor");
-
-    // Protocol compliance
-    LOG_INF("Protocol Compliance:");
-    LOG_INF("  - Message Type: PhoneToGlasses::AutoBrightnessConfig");
-    LOG_INF("  - Field 1 present: YES");
-    LOG_INF("  - Value type: bool");
-    LOG_INF("  - Implementation: Light sensor + Projector brightness control");
-
-    // Auto brightness status and behavior
-    LOG_INF("Auto Brightness Status:");
-    if (enabled)
-    {
-        LOG_INF("  - Mode: AUTOMATIC");
-        LOG_INF("  - Light Sensor: ACTIVE (will be integrated with driver)");
-        LOG_INF("  - Brightness Control: Automatic based on ambient light");
-        LOG_INF("  - Manual Override: DISABLED (auto mode takes priority)");
-        LOG_INF("  - Current Manual Level: %u%% (will be overridden by sensor)", protobuf_get_brightness_level());
-        LOG_INF("  - Sensor Integration: TODO - Light sensor driver pending");
-    }
-    else
-    {
-        LOG_INF("  - Mode: MANUAL");
-        LOG_INF("  - Light Sensor: INACTIVE");
-        LOG_INF("  - Brightness Control: Manual setting only");
-        LOG_INF("  - Current Level: %u%%", protobuf_get_brightness_level());
-        LOG_INF("  - Auto Adjustment: DISABLED");
-    }
-
-    // Implementation details based on your requirements
-    LOG_INF("Implementation Details:");
-    if (enabled)
-    {
-        LOG_INF("  - Light Sensor Driver: TODO - Will be integrated later");
-        LOG_INF("  - Brightness Algorithm: TODO - Automatic adjustment curve");
-        LOG_INF("  - Response Time: TODO - Real-time sensor monitoring");
-        LOG_INF("  - Brightness Range: 0-100%% (sensor-controlled)");
-        LOG_INF("  - Override Behavior: Manual brightness messages will disable auto mode");
-    }
-    else
-    {
-        LOG_INF("  - Light Sensor: Deactivated");
-        LOG_INF("  - Manual Control: Active");
-        LOG_INF("  - Current Setting: %u%% (preserved)", protobuf_get_brightness_level());
-        LOG_INF("  - Manual Override: Ready to accept BrightnessConfig messages");
-    }
-
-    // Print to UART with comprehensive details
-    LOG_INF("\n[Phone->Glasses AUTO_BRIGHTNESS] Auto Brightness: %s->%s (manual_level:%u%%)\n",
-            previous_state ? "ON" : "OFF", enabled ? "ON" : "OFF", protobuf_get_brightness_level());
-
-    // Status change logging
-    LOG_INF("Auto Brightness Update Result:");
-    if (previous_state != enabled)
-    {
-        if (enabled)
-        {
-            LOG_INF("  - Transition: Manual → Automatic");
-            LOG_INF("  - Light Sensor: Activating (pending driver integration)");
-            LOG_INF("  - Brightness Control: Sensor will override manual setting");
-            LOG_INF("  - Manual Level Preserved: %u%% (for fallback)", protobuf_get_brightness_level());
-        }
-        else
-        {
-            LOG_INF("  - Transition: Automatic → Manual");
-            LOG_INF("  - Light Sensor: Deactivating");
-            LOG_INF("  - Brightness Control: Manual setting restored");
-            LOG_INF("  - Current Level: %u%%", protobuf_get_brightness_level());
-        }
-    }
-    else
-    {
-        LOG_INF("  - No State Change: Already %s", enabled ? "AUTOMATIC" : "MANUAL");
-    }
-
-    LOG_INF("  - Current Mode: %s", enabled ? "AUTOMATIC" : "MANUAL");
-    LOG_INF("  - Ambient Control: %s", enabled ? "ACTIVE (pending sensor driver)" : "INACTIVE");
-    LOG_INF("  - Manual Override Ready: %s", enabled ? "NO (auto mode active)" : "YES");
-
-    LOG_INF("=== END AUTO BRIGHTNESS CONFIG MESSAGE ===");
+    LOG_INF("[PROTOBUF] AutoBrightnessConfig %s->%s manual_level=%u%%", previous_state ? "ON" : "OFF",
+            enabled ? "ON" : "OFF", protobuf_get_brightness_level());
 }
 
 void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_state)
@@ -1412,33 +993,12 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
         return;
     }
 
-    LOG_INF("=== MICROPHONE STATE CONFIG MESSAGE (Tag 20) ===");
-
-    // *** RAW PROTOBUF FIELD ANALYSIS ***
-    LOG_INF("\n🔍 RAW MICSTATECONFIG FIELD VALUES:\n");
-    LOG_INF("  - enabled field: %s (bool value: %d)\n", mic_state->enabled ? "true" : "false", mic_state->enabled);
-    LOG_INF("🔍 FIELD INTERPRETATION:\n");
-    LOG_INF("  - Message Type: PhoneToGlasses::MicStateConfig\n");
-    LOG_INF("  - Tag Number: 20\n");
-    LOG_INF("  - Field 1 (enabled): %s\n", mic_state->enabled ? "ENABLE_MICROPHONE" : "DISABLE_MICROPHONE");
-    LOG_INF("  - Expected Action: %s\n",
-            mic_state->enabled ? "Enable VAD-triggered I2S capture" : "Stop I2S capture and keep microphone idle");
-
     bool enabled = mic_state->enabled;
 
     bool was_enabled = vad_interrupt_handler_is_enabled();
     bool was_streaming = vad_interrupt_handler_is_i2s_active();
-
-    LOG_INF("Microphone Configuration:");
-    LOG_INF("  - Field 1 (bool enabled): %s", enabled ? "true" : "false");
-    LOG_INF("  - Previous State: %s", was_enabled ? "ENABLED" : "DISABLED");
-    LOG_INF("  - Requested State: %s", enabled ? "ENABLED" : "DISABLED");
-    LOG_INF("  - State Change Required: %s", (was_enabled != enabled) ? "YES" : "NO");
-    LOG_INF("  - Current I2S Activity: %s", was_streaming ? "ACTIVE" : "INACTIVE");
-
-    // Hardware configuration details
-    LOG_INF("Hardware Configuration:");
-    LOG_INF("  - Audio source: GX8002 VAD (I2S slave)");
+    LOG_INF("[PROTOBUF] MicStateConfig %s->%s i2s=%s", was_enabled ? "ON" : "OFF", enabled ? "ON" : "OFF",
+            was_streaming ? "ACTIVE" : "INACTIVE");
 
     int ret = 0;
     vad_interrupt_handler_set_enabled(enabled);
@@ -1462,43 +1022,15 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
         /* Do not treat GX8002 I2C disable failure as fatal: local pipeline is already stopped */
     }
 
-    uint32_t frames_captured = 0, frames_encoded = 0, frames_transmitted = 0, errors = 0;
-
-    LOG_INF("Configuration Result:");
     if (ret == 0 || ret == -EALREADY)
     {
-        LOG_INF("  - Status: SUCCESS");
-        LOG_INF("  - Microphone: %s", enabled ? "STREAMING ACTIVE" : "STREAMING STOPPED");
-        LOG_INF("  - Audio Processing: %s", enabled ? "VAD-ARMED" : "INACTIVE");
-        LOG_INF("  - BLE Transmission: %s", enabled ? "DEPENDENT ON I2S/PIPELINE" : "INACTIVE");
+        LOG_INF("[PROTOBUF] MicState applied state=%s", enabled ? "ON" : "OFF");
     }
     else
     {
-        LOG_ERR("  - Status: FAILED (error %d)", ret);
-        LOG_ERR("  - Microphone: ERROR STATE");
+        LOG_ERR("[PROTOBUF] MicState apply failed err=%d", ret);
         streaming_errors++;
     }
-
-    // Current streaming statistics
-    LOG_INF("Streaming Statistics:");
-    LOG_INF("  - Frames Captured: %u", frames_captured);
-    LOG_INF("  - Frames Encoded: %u", frames_encoded);
-    LOG_INF("  - Frames Transmitted: %u", frames_transmitted);
-    LOG_INF("  - Streaming Errors: %u", errors);
-
-    // Protocol compliance
-    LOG_INF("Protocol Compliance:");
-    LOG_INF("  - Message Type: PhoneToGlasses::MicStateConfig");
-    LOG_INF("  - Field 1 present: YES");
-    LOG_INF("  - Value type: bool");
-    LOG_INF("  - Implementation: GX8002 VAD + I2S capture pipeline");
-
-    // Print concise status to UART
-    LOG_INF("\n[Phone->Glasses MIC_STATE] Microphone: %s->%s (frames: %u/%u/%u, errors: %u)\n",
-            was_enabled ? "ON" : "OFF", enabled ? "ON" : "OFF", frames_captured, frames_encoded, frames_transmitted,
-            errors);
-
-    LOG_INF("=== END MICROPHONE STATE CONFIG MESSAGE ===");
 }
 
 // =============================================================================
@@ -1607,9 +1139,6 @@ static void protobuf_process_pong_response(const mentraos_ble_PingRequest *pong)
     // Stop timeout timer
     k_timer_stop(&ping_timeout_timer);
     ping_waiting_for_pong = false;
-
-    // Calculate simple round-trip time (note: no timestamp in current protobuf)
-    int64_t current_time = k_uptime_get();
 
     LOG_INF("[GLASSES<-PHONE PONG] Received pong response (dummy_field: %c)\n", pong->dummy_field);
 

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-03-17 18:43:01
+ * @LastEditTime : 2026-03-19 09:27:57
  * @FilePath     : mos_lvgl_display.c
  * @Description  :
  *
@@ -64,6 +64,14 @@ static bool welcome_screen_active = true;
 static volatile bool lvgl_force_one_refresh = false; /* 强制下一轮刷新一次 / Force a single refresh on next loop */
 static uint32_t lvgl_min_refresh_ms = 10;
 static volatile bool lvgl_freeze_refresh = false;
+static K_MUTEX_DEFINE(s_pending_protobuf_text_lock);
+static char s_pending_protobuf_text[MAX_TEXT_LEN + 1];
+static bool s_pending_protobuf_text_valid = false;
+static bool s_pending_protobuf_text_notify_pending = false;
+
+#define PROTOBUF_GBK_LABEL_POOL_SIZE 256
+static lv_obj_t *s_protobuf_gbk_label_pool[PROTOBUF_GBK_LABEL_POOL_SIZE];
+static size_t s_protobuf_gbk_label_pool_used = 0;
 
 /* Pattern 5 XY 文本定位区域（全局引用）/ Pattern 5 XY Text Positioning Area (Global references) */
 static lv_obj_t *xy_text_container = NULL; /* 124x60 可视区域，适配 SSD1306 128x64 / 124x60 bordered viewing area for
@@ -195,10 +203,7 @@ void display_update_protobuf_text(const char *text_content)
         return;
     }
 
-    display_cmd_t cmd = {
-        .type = LCD_CMD_UPDATE_PROTOBUF_TEXT,
-        .p = {.protobuf_text = {{0}}} /* 嵌套大括号正确初始化 / Proper initialization with nested braces */
-    };
+    LOG_INF("Filling protobuf text: %s", text_content);
 
     /* 安全拷贝文本并做边界检查 / Safely copy text content with bounds checking */
     size_t text_len = strlen(text_content);
@@ -208,10 +213,29 @@ void display_update_protobuf_text(const char *text_content)
         LOG_WRN("Protobuf text truncated to %d chars", MAX_TEXT_LEN);
     }
 
-    strncpy(cmd.p.protobuf_text.text, text_content, text_len);
-    cmd.p.protobuf_text.text[text_len] = '\0'; /* 保证 NUL 结尾 / Ensure null termination */
+    bool should_notify = false;
 
-    mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
+    strncpy(s_pending_protobuf_text, text_content, text_len);
+    s_pending_protobuf_text[text_len] = '\0'; /* 保证 NUL 结尾 / Ensure null termination */
+    s_pending_protobuf_text_valid = true;
+    if (!s_pending_protobuf_text_notify_pending)
+    {
+        s_pending_protobuf_text_notify_pending = true;
+        should_notify = true;
+    }
+    k_mutex_unlock(&s_pending_protobuf_text_lock);
+
+    if (should_notify)
+    {
+        display_cmd_t cmd = {
+            .type = LCD_CMD_UPDATE_PROTOBUF_TEXT,
+            .p = {.protobuf_text = {{0}}} /* 唤醒 LVGL 线程，正文从 pending 槽读取 / Wake LVGL thread; payload comes
+                                             from pending slot */
+        };
+
+        mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+    }
 }
 
 /* 直接 A6N 图案接口，线程安全 / Direct A6N pattern functions - Thread-safe */
@@ -238,9 +262,11 @@ void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, ui
 {
     if (!text_content)
     {
-        LOG_ERR("Invalid XY text content pointer");
+        LOG_ERR("Invalid text content pointer for XY text");
         return;
     }
+
+    LOG_INF("Buffer: Filling XY text pos=(%u,%u) size=%u: %s", x, y, font_size, text_content);
 
     display_cmd_t cmd = {.type = LCD_CMD_UPDATE_XY_TEXT,
                          .p.xy_text = {
@@ -827,6 +853,8 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     lv_obj_set_scrollbar_mode(protobuf_gbk_container, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_MID, 0, 80);
     lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+    memset(s_protobuf_gbk_label_pool, 0, sizeof(s_protobuf_gbk_label_pool));
+    s_protobuf_gbk_label_pool_used = 0;
 
     /* DFU 进度条：单色显示（亮/暗），轨道=背景色、填充=文字色 | Progress bar: monochrome (bright/dark), track=bg,
      * fill=text color */
@@ -1074,6 +1102,9 @@ static bool utf8_contains_cjk(const char *text)
     return false;
 }
 
+/* Forward declaration for label pool helper */
+static lv_obj_t *protobuf_gbk_acquire_label(lv_obj_t *parent, size_t index);
+
 /* 中文字库逐字渲染（汉字/标点/ASCII）；max_width>0 时按宽度自动换行，否则仅按 \\n/\\r 换行 */
 static void render_gbk_per_char(lv_obj_t *target_container, lv_coord_t x, lv_coord_t y, lv_coord_t max_width,
                                 const char *render_text, const lv_font_t *gbk_font, const lv_font_t *font_primary,
@@ -1086,6 +1117,8 @@ static void render_gbk_per_char(lv_obj_t *target_container, lv_coord_t x, lv_coo
     lv_coord_t cur_x = x;
     lv_coord_t cur_y = y;
     lv_coord_t line_h = (gbk_font ? gbk_font->line_height : 16);
+    bool use_pool = (target_container == protobuf_gbk_container);
+    size_t label_index = 0;
 
     while (*p != '\0')
     {
@@ -1196,14 +1229,29 @@ static void render_gbk_per_char(lv_obj_t *target_container, lv_coord_t x, lv_coo
             cur_y += line_h;
         }
 
-        lv_obj_t *lbl = lv_label_create(target_container);
+        lv_obj_t *lbl;
+        if (use_pool)
+        {
+            lbl = protobuf_gbk_acquire_label(target_container, label_index);
+            if (lbl == NULL)
+            {
+                LOG_WRN("GBK per-char: label pool exhausted at %u", (unsigned int)label_index);
+                break;
+            }
+            lv_obj_clear_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+            label_index++;
+        }
+        else
+        {
+            lbl = lv_label_create(target_container);
+        }
+
         lv_label_set_text(lbl, buf);
         lv_obj_set_style_text_font(lbl, gbk_font, 0);
         lv_obj_set_style_text_color(lbl, text_color, 0);
         lv_obj_set_style_bg_opa(lbl, LV_OPA_TRANSP, 0);
         lv_obj_set_style_pad_all(lbl, 0, 0);
         lv_obj_set_pos(lbl, cur_x, cur_y);
-        lv_obj_invalidate(lbl);
 
         cur_x += adv;
 
@@ -1222,6 +1270,23 @@ static void render_gbk_per_char(lv_obj_t *target_container, lv_coord_t x, lv_coo
     {
         *out_byte_len = (size_t)(p - p_start);
     }
+
+    // if (!use_pool)
+    // {
+    //     lv_obj_invalidate(target_container);
+    // }
+
+    if (use_pool)
+    {
+        for (size_t index = label_index; index < s_protobuf_gbk_label_pool_used; ++index)
+        {
+            if (s_protobuf_gbk_label_pool[index] != NULL)
+            {
+                lv_obj_add_flag(s_protobuf_gbk_label_pool[index], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        s_protobuf_gbk_label_pool_used = label_index;
+    }
 }
 
 static lv_color_t color_from_rgb565(uint32_t color)
@@ -1237,6 +1302,44 @@ static lv_color_t color_from_rgb565(uint32_t color)
 static char last_protobuf_text[MAX_TEXT_LEN + 1];
 static bool last_protobuf_text_valid = false;
 
+static bool protobuf_text_take_latest(char *out_text, size_t out_size)
+{
+    bool has_text = false;
+
+    if (!out_text || out_size == 0U)
+    {
+        return false;
+    }
+
+    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
+    if (s_pending_protobuf_text_valid)
+    {
+        strncpy(out_text, s_pending_protobuf_text, out_size - 1U);
+        out_text[out_size - 1U] = '\0';
+        s_pending_protobuf_text_valid = false;
+        has_text = true;
+    }
+    s_pending_protobuf_text_notify_pending = false;
+    k_mutex_unlock(&s_pending_protobuf_text_lock);
+
+    return has_text;
+}
+
+static lv_obj_t *protobuf_gbk_acquire_label(lv_obj_t *parent, size_t index)
+{
+    if (index >= PROTOBUF_GBK_LABEL_POOL_SIZE)
+    {
+        return NULL;
+    }
+
+    if (s_protobuf_gbk_label_pool[index] == NULL)
+    {
+        s_protobuf_gbk_label_pool[index] = lv_label_create(parent);
+    }
+
+    return s_protobuf_gbk_label_pool[index];
+}
+
 /* 在自动滚动容器中更新 protobuf 文本内容 / Update protobuf text content in the auto-scroll container */
 static void update_protobuf_text_content(const char *text_content)
 {
@@ -1245,6 +1348,8 @@ static void update_protobuf_text_content(const char *text_content)
         LOG_ERR("Invalid text content pointer");
         return;
     }
+
+    uint32_t t_update_begin = k_uptime_get_32();
 
     /* 内容与上次完全一致则跳过 */
     if (last_protobuf_text_valid && strcmp(text_content, last_protobuf_text) == 0)
@@ -1270,8 +1375,6 @@ static void update_protobuf_text_content(const char *text_content)
 
         if (protobuf_gbk_container && gbk_font)
         {
-            lv_obj_clean(protobuf_gbk_container);
-
             /* Use per-character GBK rendering for UTF-8 CJK text in protobuf path. */
             render_gbk_per_char(protobuf_gbk_container, 0, 0, lv_obj_get_content_width(protobuf_gbk_container),
                                 text_content, gbk_font, font_primary, display_get_text_color(), NULL, NULL, NULL);
@@ -1285,6 +1388,8 @@ static void update_protobuf_text_content(const char *text_content)
             strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
             last_protobuf_text[MAX_TEXT_LEN] = '\0';
             last_protobuf_text_valid = true;
+            LOG_INF("[LAT][UI] update_protobuf_text_content (CJK) cost=%u ms",
+                    (unsigned int)(k_uptime_get_32() - t_update_begin));
             return;
         }
     }
@@ -1309,6 +1414,8 @@ static void update_protobuf_text_content(const char *text_content)
     strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
     last_protobuf_text[MAX_TEXT_LEN] = '\0';
     last_protobuf_text_valid = true;
+    LOG_INF("[LAT][UI] update_protobuf_text_content (label) cost=%u ms",
+            (unsigned int)(k_uptime_get_32() - t_update_begin));
 }
 
 /* 用当前电量重建欢迎标签文案（60s 刷新）；仅由 LVGL 线程调用 / Rebuild welcome label text with current battery (60s
@@ -1874,22 +1981,30 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     break;
                 case LCD_CMD_UPDATE_PROTOBUF_TEXT:
                 {
-                    /* 排空队列中后续的 UPDATE_PROTOBUF_TEXT，只保留最后一条，只做一次 clean+重绘 */
+                    char latest_text[MAX_TEXT_LEN + 1];
+
+                    /* 队列中的 UPDATE_PROTOBUF_TEXT 只作为唤醒事件，正文统一从 pending 槽取最新值。 */
                     display_cmd_t next;
                     while (mos_msgq_receive(&lvgl_display_msgq, &next, 0) == 0)
                     {
                         if (next.type == LCD_CMD_UPDATE_PROTOBUF_TEXT)
                         {
-                            cmd = next;
+                            continue;
                         }
                         else
                         {
-                            update_protobuf_text_content(cmd.p.protobuf_text.text);
+                            if (protobuf_text_take_latest(latest_text, sizeof(latest_text)))
+                            {
+                                update_protobuf_text_content(latest_text);
+                            }
                             cmd = next;
                             goto reenter_switch;
                         }
                     }
-                    update_protobuf_text_content(cmd.p.protobuf_text.text);
+                    if (protobuf_text_take_latest(latest_text, sizeof(latest_text)))
+                    {
+                        update_protobuf_text_content(latest_text);
+                    }
                     break;
                 }
                 case LCD_CMD_UPDATE_XY_TEXT:
@@ -2036,6 +2151,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
             if (!lvgl_freeze_refresh || lvgl_force_one_refresh)
             {
                 lv_timer_handler(); /* 每轮只刷一次 / Only refresh once per round */
+
                 last_refresh_ms = k_uptime_get_32();
                 lvgl_force_one_refresh = false;
             }

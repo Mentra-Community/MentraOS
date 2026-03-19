@@ -1,8 +1,8 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-03-02 15:33:39
- * @LastEditTime : 2026-03-04 16:36:07
- * @FilePath     : mos_components/mos_gx8002/app/src/mos_i2s_slave.c
+ * @LastEditTime : 2026-03-18 16:47:34
+ * @FilePath     : mos_i2s_slave.c
  * @Description  : MOS I2S slave driver - GX8002 VAD path (nRF as I2S slave)
  *
  *  Copyright (c) MentraOS Contributors 2026
@@ -110,14 +110,7 @@ static k_tid_t gx8002_audio_worker_tid;
 static bool gx8002_audio_worker_started;
 static bool gx8002_lc3_encoder_ready;
 static uint32_t gx8002_dropped_frames;
-static uint32_t gx8002_lc3_frames_sent;
-/* Debug: pipeline stats for VAD/I2S/BLE analysis */
-static uint32_t gx8002_frames_queued; /* I2S rx -> msgq put success */
-static uint32_t gx8002_frames_consumed; /* worker got from msgq */
-static uint32_t gx8002_enc_fail; /* LC3 encode failed in worker */
 
-#define GX8002_DEBUG_LOG_INTERVAL_QUEUED 100U
-#define GX8002_DEBUG_LOG_INTERVAL_SENT 50U
 #define GX8002_DEBUG_MTU_SKIP_LOG_INTERVAL 50U
 
 /* Batch buffer: 5 × 40-byte LC3 frames. Send as one 202-byte packet (2-byte header + 200). */
@@ -157,14 +150,7 @@ static void gx8002_send_batched_packet(void)
     int send_ret = ble_send_data(pkt, GX8002_PACKET_TOTAL_LEN);
     if (send_ret == 0)
     {
-        gx8002_lc3_frames_sent += GX8002_LC3_FRAMES_PER_PACKET;
-        if ((gx8002_lc3_frames_sent % GX8002_DEBUG_LOG_INTERVAL_SENT) == 0U)
-        {
-            LOG_INF("GX8002 pipeline: queued=%u consumed=%u sent=%u dropped=%u enc_fail=%u",
-                    (unsigned int)gx8002_frames_queued, (unsigned int)gx8002_frames_consumed,
-                    (unsigned int)gx8002_lc3_frames_sent, (unsigned int)gx8002_dropped_frames,
-                    (unsigned int)gx8002_enc_fail);
-        }
+        /* sent */
     }
     else
     {
@@ -196,7 +182,6 @@ static void gx8002_i2s_audio_worker(void *p1, void *p2, void *p3)
         {
             continue;
         }
-        gx8002_frames_consumed++;
 
         if (state != GX8002_I2S_STARTED || !get_ble_connected_status() || !gx8002_lc3_encoder_ready)
         {
@@ -214,11 +199,6 @@ static void gx8002_i2s_audio_worker(void *p1, void *p2, void *p3)
                                        GX8002_LC3_FRAME_LEN, lc3_frame, &encoded_bytes_written);
         if (ret < 0 || encoded_bytes_written == 0)
         {
-            gx8002_enc_fail++;
-            if ((gx8002_enc_fail % GX8002_DEBUG_LOG_INTERVAL_SENT) == 1U)
-            {
-                LOG_WRN("GX8002 LC3 enc fail: ret=%d enc_fail=%u", ret, (unsigned int)gx8002_enc_fail);
-            }
             continue;
         }
         if (encoded_bytes_written != GX8002_LC3_FRAME_LEN)
@@ -274,16 +254,7 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
             gx8002_dropped_frames++;
             if ((gx8002_dropped_frames % 50U) == 1U)
             {
-                LOG_WRN("GX8002 I2S audio queue full, dropped=%u queued=%u", (unsigned int)gx8002_dropped_frames,
-                        (unsigned int)gx8002_frames_queued);
-            }
-        }
-        else
-        {
-            gx8002_frames_queued++;
-            if ((gx8002_frames_queued % GX8002_DEBUG_LOG_INTERVAL_QUEUED) == 1U)
-            {
-                LOG_INF("GX8002 I2S rx: queued=%u (nRF receiving from GX8002)", (unsigned int)gx8002_frames_queued);
+                LOG_WRN("GX8002 I2S audio queue full, dropped=%u", (unsigned int)gx8002_dropped_frames);
             }
         }
     }
@@ -336,14 +307,9 @@ int gx8002_i2s_init(void)
 
     if (!gx8002_audio_worker_started)
     {
-        gx8002_audio_worker_tid = k_thread_create(&gx8002_audio_worker_data,
-                                                    gx8002_audio_worker_stack,
-                                                    K_THREAD_STACK_SIZEOF(gx8002_audio_worker_stack),
-                                                    gx8002_i2s_audio_worker,
-                                                    NULL, NULL, NULL,
-                                                    5,
-                                                    0,
-                                                    K_NO_WAIT);
+        gx8002_audio_worker_tid = k_thread_create(&gx8002_audio_worker_data, gx8002_audio_worker_stack,
+                                                  K_THREAD_STACK_SIZEOF(gx8002_audio_worker_stack),
+                                                  gx8002_i2s_audio_worker, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
         if (gx8002_audio_worker_tid != NULL)
         {
             k_thread_name_set(gx8002_audio_worker_tid, "gx8k_i2s_audio");
@@ -374,12 +340,7 @@ int gx8002_i2s_start(void)
     memset(i2s_rx_req_buffer, 0, sizeof(i2s_rx_req_buffer));
     memset(i2s_tx_req_buffer, 0, sizeof(i2s_tx_req_buffer));
     current_buffer_index = 0;
-    /* Reset pipeline debug counters and batch for this I2S session */
-    gx8002_frames_queued = 0;
-    gx8002_frames_consumed = 0;
     gx8002_dropped_frames = 0;
-    gx8002_lc3_frames_sent = 0;
-    gx8002_enc_fail = 0;
     gx8002_batch_count = 0;
 
     nrfx_err_t ret = nrfx_i2s_start(&i2s_inst, &i2s_req_buffer[0], 0);
@@ -389,7 +350,7 @@ int gx8002_i2s_start(void)
     }
 
     state = GX8002_I2S_STARTED;
-    LOG_INF("GX8002 I2S started (slave); pipeline counters reset, wait for I2S rx log");
+    LOG_INF("GX8002 I2S started (slave)");
     return 0;
 }
 

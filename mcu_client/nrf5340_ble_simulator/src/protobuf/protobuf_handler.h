@@ -7,14 +7,11 @@
 #ifndef PROTOBUF_HANDLER_H_
 #define PROTOBUF_HANDLER_H_
 
-#include <zephyr/types.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
-#include "mentraos_ble.pb.h"
+#include <zephyr/types.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "mentraos_ble.pb.h"
 
 /**
  * @brief Analyze incoming BLE message and determine protocol type
@@ -40,8 +37,7 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len);
  * @param msg Pointer to message structure to fill
  * @return true if decoding successful, false otherwise
  */
-bool decode_phone_to_glasses_message(const uint8_t *data, uint16_t len,
-                                    mentraos_ble_PhoneToGlasses *msg);
+bool decode_phone_to_glasses_message(const uint8_t *data, uint16_t len, mentraos_ble_PhoneToGlasses *msg);
 
 /**
  * @brief Encode GlassesToPhone message using nanopb
@@ -52,9 +48,8 @@ bool decode_phone_to_glasses_message(const uint8_t *data, uint16_t len,
  * @param bytes_written Pointer to store number of bytes written
  * @return true if encoding successful, false otherwise
  */
-bool encode_glasses_to_phone_message(const mentraos_ble_GlassesToPhone *msg,
-                                    uint8_t *buffer, size_t buffer_size,
-                                    size_t *bytes_written);
+bool encode_glasses_to_phone_message(const mentraos_ble_GlassesToPhone *msg, uint8_t *buffer, size_t buffer_size,
+                                     size_t *bytes_written);
 
 /**
  * @brief Parse audio chunk message (header 0xA0)
@@ -81,8 +76,8 @@ void protobuf_parse_image_chunk(const uint8_t *data, uint16_t len);
  * @param max_output_len Maximum length of output buffer
  * @return Length of generated response, or negative error code
  */
-int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_len,
-   uint8_t *output_data, uint16_t max_output_len);
+int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_len, uint8_t *output_data,
+                                    uint16_t max_output_len);
 
 /**
  * @brief Get current battery level
@@ -139,8 +134,7 @@ void protobuf_toggle_charging_state(void);
  */
 uint32_t protobuf_get_brightness_level(void);
 
-
-void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig* config);
+void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig *config);
 
 /**
  * @brief Set brightness level and update LED 3
@@ -220,9 +214,5 @@ void protobuf_init_ping_monitoring(void);
  * @param ping_request Pointer to PingRequest message from phone
  */
 void protobuf_send_pong_response(mentraos_ble_PingRequest *ping_request);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* PROTOBUF_HANDLER_H_ */

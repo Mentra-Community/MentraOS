@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-02-05 14:53:31
- * @LastEditTime : 2026-02-26 11:34:39
+ * @LastEditTime : 2026-03-18 16:41:48
  * @FilePath     : mos_binfont_lvgl.c
  * @Description  :
  *
@@ -107,6 +107,157 @@ static lv_draw_buf_t s_glyph_draw_buf;
 /* Safety limits to avoid pathological glyph sizes blocking the system */
 #define MAX_GLYPH_BOX_W 64
 #define MAX_GLYPH_BOX_H 64
+
+/* =============================================================
+ * Optimization 1: Batch glyph record read buffer
+ * Read the entire glyph record in ONE flash_area_read() call.
+ * Replaces ~165 per-byte SPI transactions with a single call.
+ * ============================================================= */
+#define MAX_GLYPH_RECORD_BYTES 2056 /* 4-byte header + 64×64 @ 4bpp = 2048 B */
+static uint8_t s_glyph_raw_buf[MAX_GLYPH_RECORD_BYTES];
+
+/* In-memory bit iterator — same bit ordering as read_bits() but from RAM */
+typedef struct
+{
+    const uint8_t *data;
+    uint32_t size;
+    uint32_t byte_pos;
+    int8_t bit_pos;
+    uint8_t byte_val;
+} mem_bit_iter_t;
+
+static mem_bit_iter_t mem_bit_iter_init(const uint8_t *data, uint32_t size)
+{
+    mem_bit_iter_t it;
+    it.data = data;
+    it.size = size;
+    it.byte_pos = 0;
+    it.bit_pos = -1;
+    it.byte_val = 0;
+    return it;
+}
+
+static unsigned int mem_read_bits(mem_bit_iter_t *it, int n_bits, int *err)
+{
+    unsigned int value = 0;
+    if (n_bits <= 0 || n_bits > 32)
+    {
+        if (err)
+            *err = -EINVAL;
+        return 0;
+    }
+    for (int i = 0; i < n_bits; i++)
+    {
+        if (it->bit_pos < 0)
+        {
+            if (it->byte_pos >= it->size)
+            {
+                if (err)
+                    *err = -EIO;
+                return 0;
+            }
+            it->byte_val = it->data[it->byte_pos++];
+            it->bit_pos = 7;
+        }
+        value = (value << 1) | ((it->byte_val >> it->bit_pos) & 1u);
+        it->bit_pos--;
+    }
+    if (err)
+        *err = 0;
+    return value;
+}
+
+static int mem_read_bits_signed(mem_bit_iter_t *it, int n_bits, int *err)
+{
+    if (n_bits <= 0)
+    {
+        if (err)
+            *err = 0;
+        return 0;
+    }
+    unsigned int v = mem_read_bits(it, n_bits, err);
+    if (err && *err)
+        return 0;
+    if (v & (1u << (n_bits - 1)))
+        v |= ~0u << n_bits;
+    return (int)v;
+}
+
+/* =============================================================
+ * Optimization 2: LRU glyph bitmap cache
+ * Caches decoded A8 bitmaps for recently used glyphs.
+ * Repeated characters (labels, status strings) require zero
+ * flash reads after their first render.
+ * ============================================================= */
+#ifndef GLYPH_CACHE_SLOTS
+#define GLYPH_CACHE_SLOTS 12 /* ~6.5 KB total RAM */
+#endif
+/* 512 B covers A8 bitmaps up to ~22×23 px; 18 px CJK uses ~324 B */
+#define GLYPH_CACHE_BMP_BYTES 512
+
+typedef struct
+{
+    bool valid;
+    uint8_t lru_age; /* relative to s_gcache_lru; lower = older */
+    uint32_t unicode;
+    uint32_t glyph_id;
+    uint16_t adv_w;
+    uint8_t box_w;
+    uint8_t box_h;
+    int8_t ofs_x;
+    int8_t ofs_y;
+    uint32_t bmp_size; /* 0 = dsc cached but bitmap not yet decoded */
+    uint32_t bmp_stride;
+    uint8_t bmp[GLYPH_CACHE_BMP_BYTES];
+} glyph_cache_t;
+
+static glyph_cache_t s_gcache[GLYPH_CACHE_SLOTS];
+static uint8_t s_gcache_lru; /* monotonic 8-bit counter; wraps are fine */
+static int s_pinned_slot = -1; /* slot in use by the current draw call */
+
+static int gcache_find(uint32_t unicode)
+{
+    for (int i = 0; i < GLYPH_CACHE_SLOTS; i++)
+    {
+        if (s_gcache[i].valid && s_gcache[i].unicode == unicode)
+            return i;
+    }
+    return -1;
+}
+
+static int gcache_find_by_gid(uint32_t glyph_id)
+{
+    for (int i = 0; i < GLYPH_CACHE_SLOTS; i++)
+    {
+        if (s_gcache[i].valid && s_gcache[i].glyph_id == glyph_id)
+            return i;
+    }
+    return -1;
+}
+
+/* Returns a free slot, or the LRU non-pinned slot to evict. */
+static int gcache_evict(void)
+{
+    for (int i = 0; i < GLYPH_CACHE_SLOTS; i++)
+    {
+        if (!s_gcache[i].valid)
+            return i;
+    }
+    int oldest = -1;
+    uint8_t oldest_diff = 0;
+    for (int i = 0; i < GLYPH_CACHE_SLOTS; i++)
+    {
+        if (i == s_pinned_slot)
+            continue;
+        uint8_t diff = (uint8_t)(s_gcache_lru - s_gcache[i].lru_age);
+        if (diff >= oldest_diff)
+        {
+            oldest_diff = diff;
+            oldest = i;
+        }
+    }
+    return oldest;
+}
 
 static inline int read_bytes(off_t offset, void *buf, size_t len)
 {
@@ -404,6 +555,26 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
 
     memset(dsc_out, 0, sizeof(*dsc_out));
 
+    /* === Cache hit: zero flash reads === */
+    int cslot = gcache_find(unicode);// 先按unicode找，避免同一glyph ID对应多个unicode时缓存失效（如全半角标点）
+    if (cslot >= 0)
+    {
+        glyph_cache_t *e = &s_gcache[cslot];
+        e->lru_age = ++s_gcache_lru;
+        dsc_out->adv_w = e->adv_w;
+        dsc_out->box_w = e->box_w;
+        dsc_out->box_h = e->box_h;
+        dsc_out->ofs_x = e->ofs_x;
+        dsc_out->ofs_y = e->ofs_y;
+        dsc_out->gid.index = e->glyph_id;
+        dsc_out->resolved_font = font;
+        dsc_out->entry = NULL;
+        dsc_out->is_placeholder = 0;
+        dsc_out->format = (uint8_t)s_font_header.bits_per_pixel;
+        dsc_out->req_raw_bitmap = 0;
+        return true;
+    }
+
     uint32_t glyph_id = 0;
     if (find_glyph_id_in_cmap(unicode, &glyph_id) != 0)
     {
@@ -446,10 +617,18 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
         return true;
     }
 
-    /* loca offsets are relative to glyf SECTION start (including 8-byte label),
-     * matching the official LVGL binfont loader (lv_binfont_loader.c line 334). */
+    /* === Batch-read entire glyph record in one flash call, parse from RAM === */
     const off_t start = (off_t)(s_glyf_start_offset + glyph_offset);
-    bit_iterator_t bit_it = init_bit_iterator(start);
+    uint32_t record_bytes = next_offset - glyph_offset;
+    if (record_bytes > MAX_GLYPH_RECORD_BYTES)
+    {
+        record_bytes = MAX_GLYPH_RECORD_BYTES;
+    }
+    if (read_bytes(start, s_glyph_raw_buf, record_bytes) != 0)
+    {
+        return false;
+    }
+    mem_bit_iter_t bit_it = mem_bit_iter_init(s_glyph_raw_buf, record_bytes);
     int err = 0;
 
     uint16_t adv_w;
@@ -459,7 +638,7 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
     }
     else
     {
-        adv_w = (uint16_t)read_bits(&bit_it, s_font_header.advance_width_bits, &err);
+        adv_w = (uint16_t)mem_read_bits(&bit_it, s_font_header.advance_width_bits, &err);
         if (err)
             return false;
     }
@@ -470,16 +649,16 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
     }
 
     /* 固定顺序：adv -> ofs_x -> ofs_y -> box_w -> box_h */
-    int16_t ofs_x = (int16_t)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
+    int16_t ofs_x = (int16_t)mem_read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
     if (err)
         return false;
-    int16_t ofs_y = (int16_t)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
+    int16_t ofs_y = (int16_t)mem_read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
     if (err)
         return false;
-    uint16_t box_w = (uint16_t)read_bits(&bit_it, s_font_header.wh_bits, &err);
+    uint16_t box_w = (uint16_t)mem_read_bits(&bit_it, s_font_header.wh_bits, &err);
     if (err)
         return false;
-    uint16_t box_h = (uint16_t)read_bits(&bit_it, s_font_header.wh_bits, &err);
+    uint16_t box_h = (uint16_t)mem_read_bits(&bit_it, s_font_header.wh_bits, &err);
     if (err)
         return false;
 
@@ -490,6 +669,23 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
     }
 
     LOG_DBG("U+%04X gid=%u adv_w=%u box=%ux%u ofs=(%d,%d)", unicode, glyph_id, adv_w, box_w, box_h, ofs_x, ofs_y);
+
+    /* === Store descriptor in LRU cache (bitmap filled by get_glyph_bitmap) === */
+    int cs = gcache_evict();
+    if (cs >= 0)
+    {
+        glyph_cache_t *e = &s_gcache[cs];
+        e->valid = true;
+        e->lru_age = ++s_gcache_lru;
+        e->unicode = unicode;
+        e->glyph_id = glyph_id;
+        e->adv_w = adv_w;
+        e->box_w = (uint8_t)box_w;
+        e->box_h = (uint8_t)box_h;
+        e->ofs_x = (int8_t)ofs_x;
+        e->ofs_y = (int8_t)ofs_y;
+        e->bmp_size = 0; /* bitmap stored on demand in get_glyph_bitmap */
+    }
 
     dsc_out->adv_w = adv_w;
     dsc_out->box_w = box_w;
@@ -550,8 +746,24 @@ static const void *mos_binfont_get_glyph_bitmap(lv_font_glyph_dsc_t *dsc, lv_dra
         return binfont_set_fallback_buf(draw_buf);
     }
 
+    /* === Cache hit: return previously decoded A8 bitmap, zero flash reads === */
+    int cslot = gcache_find_by_gid(glyph_id);
+    if (cslot >= 0 && s_gcache[cslot].bmp_size > 0)
+    {
+        glyph_cache_t *e = &s_gcache[cslot];
+        e->lru_age = ++s_gcache_lru;
+        s_pinned_slot = cslot;
+        draw_buf->data = e->bmp;
+        draw_buf->data_size = e->bmp_size;
+        draw_buf->header.w = (lv_coord_t)e->box_w;
+        draw_buf->header.h = (lv_coord_t)e->box_h;
+        draw_buf->header.stride = e->bmp_stride;
+        draw_buf->header.cf = LV_COLOR_FORMAT_A8;
+        return draw_buf;
+    }
+
     uint32_t glyph_offset = 0;
-    uint32_t next_offset = s_glyf_length; /* section length – matches official loader */
+    uint32_t next_offset = s_glyf_length;
 
     if (read_loca_offset(glyph_id, &glyph_offset) != 0)
     {
@@ -571,8 +783,8 @@ static const void *mos_binfont_get_glyph_bitmap(lv_font_glyph_dsc_t *dsc, lv_dra
         return binfont_set_fallback_buf(draw_buf);
     }
 
-    const uint32_t record_bytes = next_offset - glyph_offset;
-    if (record_bytes == 0)
+    const uint32_t record_bytes_full = next_offset - glyph_offset;
+    if (record_bytes_full == 0)
     {
         return binfont_set_fallback_buf(draw_buf);
     }
@@ -598,31 +810,40 @@ static const void *mos_binfont_get_glyph_bitmap(lv_font_glyph_dsc_t *dsc, lv_dra
         return binfont_set_fallback_buf(draw_buf);
     }
 
-    memset(s_glyph_bitmap_buf, 0, out_size);
-
-    /* loca offsets are section-relative (see get_glyph_dsc comment) */
+    /* === Batch-read entire glyph record in one flash call, parse from RAM === */
     const off_t start = (off_t)(s_glyf_start_offset + glyph_offset);
-    bit_iterator_t bit_it = init_bit_iterator(start);
+    uint32_t record_bytes = record_bytes_full;
+    if (record_bytes > MAX_GLYPH_RECORD_BYTES)
+    {
+        record_bytes = MAX_GLYPH_RECORD_BYTES;
+    }
+    if (read_bytes(start, s_glyph_raw_buf, record_bytes) != 0)
+    {
+        return binfont_set_fallback_buf(draw_buf);
+    }
+
+    memset(s_glyph_bitmap_buf, 0, out_size);
+    mem_bit_iter_t bit_it = mem_bit_iter_init(s_glyph_raw_buf, record_bytes);
     int err = 0;
 
     /* 跳过 header bits（顺序与 get_glyph_dsc 一致） */
     if (s_font_header.advance_width_bits != 0)
     {
-        (void)read_bits(&bit_it, s_font_header.advance_width_bits, &err);
+        (void)mem_read_bits(&bit_it, s_font_header.advance_width_bits, &err);
         if (err)
             return binfont_set_fallback_buf(draw_buf);
     }
 
-    (void)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
+    (void)mem_read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
     if (err)
         return binfont_set_fallback_buf(draw_buf);
-    (void)read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
+    (void)mem_read_bits_signed(&bit_it, s_font_header.xy_bits, &err);
     if (err)
         return binfont_set_fallback_buf(draw_buf);
-    (void)read_bits(&bit_it, s_font_header.wh_bits, &err);
+    (void)mem_read_bits(&bit_it, s_font_header.wh_bits, &err);
     if (err)
         return binfont_set_fallback_buf(draw_buf);
-    (void)read_bits(&bit_it, s_font_header.wh_bits, &err);
+    (void)mem_read_bits(&bit_it, s_font_header.wh_bits, &err);
     if (err)
         return binfont_set_fallback_buf(draw_buf);
 
@@ -630,14 +851,13 @@ static const void *mos_binfont_get_glyph_bitmap(lv_font_glyph_dsc_t *dsc, lv_dra
     static const uint8_t opa2_table[4] = {0, 85, 170, 255};
     static const uint8_t opa4_table[16] = {0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 221, 238, 255};
 
-    /* Read pixels from flash bitstream and convert to A8, row by row.
-     * This matches the official lv_font_get_bitmap_fmt_txt non-aligned path. */
+    /* Read pixels from RAM bitstream and convert to A8, row by row. */
     for (uint32_t y = 0; y < h; y++)
     {
         uint8_t *row = &s_glyph_bitmap_buf[y * row_stride];
         for (uint32_t x = 0; x < w; x++)
         {
-            uint32_t px = read_bits(&bit_it, bpp, &err);
+            uint32_t px = mem_read_bits(&bit_it, bpp, &err);
             if (err)
                 return binfont_set_fallback_buf(draw_buf);
 
@@ -667,6 +887,37 @@ static const void *mos_binfont_get_glyph_bitmap(lv_font_glyph_dsc_t *dsc, lv_dra
     draw_buf->header.stride = row_stride;
     draw_buf->header.cf = LV_COLOR_FORMAT_A8;
 
+    /* === Store decoded bitmap in LRU cache if it fits === */
+    if (out_size <= GLYPH_CACHE_BMP_BYTES)
+    {
+        int cs = gcache_find_by_gid(glyph_id);
+        if (cs < 0)
+        {
+            /* get_glyph_dsc may not have cached this (e.g. cache was full); evict now */
+            cs = gcache_evict();
+            if (cs >= 0)
+            {
+                s_gcache[cs].valid = true;
+                s_gcache[cs].glyph_id = glyph_id;
+                s_gcache[cs].unicode = 0;
+                s_gcache[cs].adv_w = dsc->adv_w;
+                s_gcache[cs].box_w = (uint8_t)w;
+                s_gcache[cs].box_h = (uint8_t)h;
+                s_gcache[cs].ofs_x = (int8_t)dsc->ofs_x;
+                s_gcache[cs].ofs_y = (int8_t)dsc->ofs_y;
+            }
+        }
+        if (cs >= 0)
+        {
+            glyph_cache_t *e = &s_gcache[cs];
+            memcpy(e->bmp, s_glyph_bitmap_buf, out_size);
+            e->bmp_size = out_size;
+            e->bmp_stride = row_stride;
+            e->lru_age = ++s_gcache_lru;
+            s_pinned_slot = cs;
+        }
+    }
+
     return draw_buf;
 }
 
@@ -675,7 +926,7 @@ static void mos_binfont_release_glyph(const lv_font_t *font, lv_font_glyph_dsc_t
 {
     ARG_UNUSED(font);
     ARG_UNUSED(dsc);
-    /* 无需操作 - 使用静态buffer */
+    s_pinned_slot = -1; /* 允许缓存槽被后续字形回收 */
 }
 
 /* 静态LVGL字体实例 */
@@ -859,8 +1110,8 @@ int mos_binfont_lvgl_init(void)
         flash_area_close(s_fa);
         return -EINVAL;
     }
-    LOG_INF("Glyf expected at offset 0x%X (loca_start=0x%X + loca_len=%u)", 
-            s_glyf_start_offset, s_loca_start_offset, loca_len);
+    LOG_INF("Glyf expected at offset 0x%X (loca_start=0x%X + loca_len=%u)", s_glyf_start_offset, s_loca_start_offset,
+            loca_len);
     uint32_t glyf_len;
     char glyf_label[5];
     if (!read_section_label(s_glyf_start_offset, &glyf_len, glyf_label) || strcmp(glyf_label, "glyf") != 0)
@@ -921,6 +1172,9 @@ int mos_binfont_lvgl_init(void)
     s_binfont_lvgl.base_line = base_line;
 
     s_initialized = true;
+    memset(s_gcache, 0, sizeof(s_gcache));
+    s_gcache_lru = 0;
+    s_pinned_slot = -1;
     LOG_WRN("========================================");
     LOG_WRN("Binfont LVGL init SUCCESS!");
     LOG_WRN("Font: size=%u, cmap_tables=%u", s_font_header.font_size, s_cmap_count);
@@ -955,6 +1209,8 @@ void mos_binfont_lvgl_deinit(void)
     }
 
     s_initialized = false;
+    memset(s_gcache, 0, sizeof(s_gcache));
+    s_pinned_slot = -1;
     s_glyf_start_offset = 0;
     s_glyf_data_offset = 0;
     s_glyf_length = 0;
