@@ -35,6 +35,8 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   sendWifiCredentials(ssid: string, password: string): Promise<void>
   forgetWifiNetwork(ssid: string): Promise<void>
   setHotspotState(enabled: boolean): Promise<void>
+  /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
+  logCurrentWifiFrequency(): Promise<void>
 
   // Gallery Commands
   queryGalleryStatus(): Promise<void>

@@ -1,5 +1,7 @@
 package com.mentra.core
 
+import android.net.wifi.WifiManager
+import android.os.Build
 import com.mentra.core.services.NotificationListener
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -155,6 +157,25 @@ class CoreModule : Module() {
 
         AsyncFunction("setHotspotState") { enabled: Boolean ->
             coreManager?.setHotspotState(enabled)
+        }
+
+        AsyncFunction("logCurrentWifiFrequency") {
+            val ctx = appContext.reactContext ?: appContext.currentActivity ?: return@AsyncFunction null
+            val wifiManager = ctx.applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as? WifiManager
+            if (wifiManager == null) {
+                val unavailableMsg = "NATIVE: 📶 WiFi frequency: WifiManager unavailable"
+                android.util.Log.d("CoreModule", unavailableMsg)
+                Bridge.log(unavailableMsg)
+                return@AsyncFunction null
+            }
+            val info = wifiManager.connectionInfo
+            val freqMhz = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) info.frequency else -1
+            val is5Ghz = freqMhz >= 5000
+            val frequencyMsg =
+                "NATIVE: 📶 Current WiFi frequency: ${freqMhz} MHz, 5 GHz: $is5Ghz (SSID: ${info.ssid?.trim('\"') ?: "unknown"})"
+            android.util.Log.d("CoreModule", frequencyMsg)
+            Bridge.log(frequencyMsg)
+            null
         }
 
         // MARK: - Gallery Commands
