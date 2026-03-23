@@ -67,12 +67,16 @@ export default function Homepage() {
   }, [glassesConnected, isSearching, defaultWearable])
 
   const renderContent = () => {
+    const androidDeviceStackStyle = Platform.OS === "android" ? {zIndex: 2, elevation: 4} : undefined
+
     if (!defaultWearable) {
       return (
         <>
-          <Group>
-            <PairGlassesCard />
-          </Group>
+          <View style={androidDeviceStackStyle}>
+            <Group>
+              <PairGlassesCard />
+            </Group>
+          </View>
           <View className="flex-1" />
           <AppsGrid />
         </>
@@ -81,14 +85,16 @@ export default function Homepage() {
 
     return (
       <>
-        <Group>
-          {!appSwitcherUi && <CompactDeviceStatus />}
-          {appSwitcherUi && <DeviceStatus />}
-          {appSwitcherUi && <ControllerStatus />}
-          {!offlineMode && !appSwitcherUi && <BackgroundAppsLink />}
-        </Group>
-        <View className="h-2" />
-        {!appSwitcherUi && <ActiveForegroundApp />}
+        <View style={androidDeviceStackStyle}>
+          <Group>
+            {!appSwitcherUi && <CompactDeviceStatus />}
+            {appSwitcherUi && <DeviceStatus />}
+            {appSwitcherUi && <ControllerStatus />}
+            {!offlineMode && !appSwitcherUi && <BackgroundAppsLink />}
+          </Group>
+          <View className="h-2" />
+          {!appSwitcherUi && <ActiveForegroundApp />}
+        </View>
         <AppsGrid />
       </>
     )
@@ -187,6 +193,7 @@ export default function Homepage() {
             showsVerticalScrollIndicator={false}
             contentContainerClassName={`${appSwitcherUi ? "px-6" : ""}`}
             contentContainerStyle={{flexGrow: 1}}
+            nestedScrollEnabled={Platform.OS === "android"}
             scrollEventThrottle={16}>
             {appSwitcherUi && Platform.OS === "android" && <View style={{paddingTop: insets.top}} />}
             <View className="h-4" />
