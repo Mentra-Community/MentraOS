@@ -5,12 +5,19 @@
 # Verifies that gallery counts update correctly after photo/video capture.
 # Glasses must be connected via ADB with AsgClientService running.
 #
-# Usage: ./scripts/test-gallery-sync.sh
+# Usage: ./scripts/test-gallery-sync.sh [--no-prompt]
+#   --no-prompt: wipe test data (photos/videos) from device after test
 #
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
+
+for arg in "$@"; do
+  case $arg in
+    --no-prompt) SKIP_CLEANUP_PROMPTS=1 ;;
+  esac
+done
 
 echo "=========================================="
 echo "Gallery Sync Test"
@@ -89,3 +96,14 @@ else
 fi
 
 summary
+
+# --- Wipe test data when --no-prompt ---
+if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
+  echo ""
+  PHOTOS=$(count_photos)
+  VIDEOS=$(count_videos)
+  if [ "$PHOTOS" -gt 0 ] || [ "$VIDEOS" -gt 0 ]; then
+    adb shell "rm -rf '$CAMERA_DIR'/IMG_* '$CAMERA_DIR'/VID_*" 2>/dev/null || true
+    info "Wiped $PHOTOS photos and $VIDEOS videos from glasses"
+  fi
+fi

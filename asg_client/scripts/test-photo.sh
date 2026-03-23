@@ -5,10 +5,11 @@
 # Triggers photo capture via ADB, verifies files are created and valid.
 # Glasses must be connected via ADB with AsgClientService running.
 #
-# Usage: ./scripts/test-photo.sh [count] [--no-wipe] [--no-pull]
-#   count:     number of photos to take in burst test (default: 5)
-#   --no-wipe: skip wiping camera directory before tests
-#   --no-pull: skip pulling photos to local machine for viewing
+# Usage: ./scripts/test-photo.sh [count] [--no-wipe] [--no-pull] [--no-prompt]
+#   count:      number of photos to take in burst test (default: 5)
+#   --no-wipe:  skip wiping camera directory before tests
+#   --no-pull:  skip pulling photos to local machine for viewing
+#   --no-prompt: skip interactive cleanup prompts (for CI/automation)
 #
 
 set -e
@@ -24,6 +25,7 @@ for arg in "$@"; do
   case $arg in
     --no-wipe) WIPE=false ;;
     --no-pull) PULL=false ;;
+    --no-prompt) SKIP_CLEANUP_PROMPTS=1 ;;
     [0-9]*) COUNT=$arg ;;
   esac
 done
@@ -45,11 +47,11 @@ info "Wipe before test: $WIPE"
 info "Pull photos after: $PULL"
 echo ""
 
-# --- Wipe camera directory ---
+# --- Wipe camera directory (photos only: IMG_* dirs) ---
 if [ "$WIPE" = true ]; then
   echo "--- Wiping camera directory ---"
   EXISTING=$(count_photos)
-  adb shell "rm -f '$CAMERA_DIR'/*.jpg '$CAMERA_DIR'/*.avif" 2>/dev/null || true
+  adb shell "rm -rf '$CAMERA_DIR'/IMG_*" 2>/dev/null || true
   AFTER_WIPE=$(count_photos)
   info "Wiped $EXISTING photos (now: $AFTER_WIPE)"
   echo ""
@@ -78,11 +80,10 @@ else
 fi
 
 # Check the file is valid
-LATEST=$(latest_file)
-if [ -n "$LATEST" ] && [ "$LATEST" != "" ]; then
-  FPATH="$CAMERA_DIR/$LATEST"
+FPATH=$(latest_photo_file)
+if [ -n "$FPATH" ] && [ "$FPATH" != "" ]; then
   SIZE=$(file_size "$FPATH")
-  info "Latest file: $LATEST (${SIZE} bytes)"
+  info "Latest photo: $(basename "$(dirname "$FPATH")") (${SIZE} bytes)"
 
   if [ "${SIZE:-0}" -gt 0 ]; then
     pass "Photo file has content (${SIZE} bytes)"
@@ -98,12 +99,13 @@ if [ -n "$LATEST" ] && [ "$LATEST" != "" ]; then
 
   # Pull and show
   if [ "$PULL" = true ]; then
-    adb pull "$FPATH" "$LOCAL_DIR/" 2>/dev/null && \
-      info "Pulled to: $LOCAL_DIR/$LATEST" && \
-      open "$LOCAL_DIR/$LATEST" 2>/dev/null || true
+    LOCAL_NAME=$(basename "$(dirname "$FPATH")")_$(basename "$FPATH")
+    adb pull "$FPATH" "$LOCAL_DIR/$LOCAL_NAME" 2>/dev/null && \
+      info "Pulled to: $LOCAL_DIR/$LOCAL_NAME" && \
+      open "$LOCAL_DIR/$LOCAL_NAME" 2>/dev/null || true
   fi
 else
-  fail "Could not find latest file"
+  fail "Could not find latest photo"
 fi
 
 # --- Test 2: Sequential photo burst ---
@@ -120,7 +122,7 @@ for i in $(seq 1 $COUNT); do
   CURRENT=$(count_photos)
   if [ "$CURRENT" -gt "$BEFORE" ]; then
     SUCCESSES=$((SUCCESSES + 1))
-    NEW_FILE=$(latest_file)
+    NEW_FILE=$(latest_photo_file)
     BURST_FILES+=("$NEW_FILE")
     BEFORE=$CURRENT
   fi
@@ -141,10 +143,9 @@ if [ "$PULL" = true ] && [ ${#BURST_FILES[@]} -gt 0 ]; then
   echo ""
   info "Pulling ${#BURST_FILES[@]} burst photos..."
   for f in "${BURST_FILES[@]}"; do
-    adb pull "$CAMERA_DIR/$f" "$LOCAL_DIR/" 2>/dev/null || true
+    [ -n "$f" ] && adb pull "$f" "$LOCAL_DIR/$(basename "$(dirname "$f")")_$(basename "$f")" 2>/dev/null || true
   done
   info "Photos saved to: $LOCAL_DIR/"
-  # Open the directory so user can see all photos
   open "$LOCAL_DIR" 2>/dev/null || true
 fi
 
@@ -173,27 +174,37 @@ summary
 # --- Cleanup prompt ---
 echo ""
 TOTAL_ON_DEVICE=$(count_photos)
-if [ "$TOTAL_ON_DEVICE" -gt 0 ]; then
-  echo -n "Delete $TOTAL_ON_DEVICE test photos from glasses? [y/N] "
-  read -r REPLY
-  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-    adb shell "rm -f '$CAMERA_DIR'/*.jpg '$CAMERA_DIR'/*.avif" 2>/dev/null || true
-    info "Deleted photos from glasses"
+  if [ "$TOTAL_ON_DEVICE" -gt 0 ]; then
+  if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
+    adb shell "rm -rf '$CAMERA_DIR'/IMG_*" 2>/dev/null || true
+    info "Wiped $TOTAL_ON_DEVICE photos from glasses"
   else
-    info "Photos kept on glasses"
+    echo -n "Delete $TOTAL_ON_DEVICE test photos from glasses? [y/N] "
+    read -r REPLY
+    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+      adb shell "rm -rf '$CAMERA_DIR'/IMG_*" 2>/dev/null || true
+      info "Deleted photos from glasses"
+    else
+      info "Photos kept on glasses"
+    fi
   fi
 fi
 
 if [ "$PULL" = true ] && [ -d "$LOCAL_DIR" ]; then
-  LOCAL_COUNT=$(ls "$LOCAL_DIR"/*.jpg 2>/dev/null | wc -l | tr -d ' ')
+  LOCAL_COUNT=$(find "$LOCAL_DIR" -maxdepth 1 \( -name "*.jpg" -o -name "*.avif" \) -type f 2>/dev/null | wc -l | tr -d ' ')
   if [ "${LOCAL_COUNT:-0}" -gt 0 ]; then
-    echo -n "Delete $LOCAL_COUNT pulled photos from $LOCAL_DIR? [y/N] "
-    read -r REPLY
-    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+    if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
       rm -f "$LOCAL_DIR"/*.jpg "$LOCAL_DIR"/*.avif 2>/dev/null || true
-      info "Deleted local photos"
+      info "Wiped $LOCAL_COUNT local photos from $LOCAL_DIR"
     else
-      info "Local photos kept at: $LOCAL_DIR/"
+      echo -n "Delete $LOCAL_COUNT pulled photos from $LOCAL_DIR? [y/N] "
+      read -r REPLY
+      if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+        rm -f "$LOCAL_DIR"/*.jpg "$LOCAL_DIR"/*.avif 2>/dev/null || true
+        info "Deleted local photos"
+      else
+        info "Local photos kept at: $LOCAL_DIR/"
+      fi
     fi
   fi
 fi

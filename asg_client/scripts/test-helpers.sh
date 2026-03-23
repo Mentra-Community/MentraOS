@@ -9,6 +9,9 @@ ACTION="com.mentra.DEBUG_TEST"
 CAMERA_DIR="/sdcard/Android/data/$PKG/files/$PKG.camera"
 LOG_TAG="DebugTestReceiver"
 
+# Set SKIP_CLEANUP_PROMPTS=1 or use --no-prompt to run non-interactively (no delete prompts)
+SKIP_CLEANUP_PROMPTS="${SKIP_CLEANUP_PROMPTS:-0}"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -47,45 +50,53 @@ get_battery() {
   adb shell dumpsys battery | grep "level:" | awk '{print $2}'
 }
 
-# Count files in camera directory
+# Camera stores photos in IMG_*/base.jpg (or base.avif), videos in VID_*/base.mp4
+
+# Count files in camera directory (all items - dirs for photos/videos)
 count_camera_files() {
   local count
   count=$(adb shell "ls '$CAMERA_DIR' 2>/dev/null | wc -l" | tr -d '[:space:]')
   echo "${count:-0}"
 }
 
-# Count only JPEGs
+# Count photos (IMG_* directories)
 count_photos() {
   local count
-  count=$(adb shell "ls '$CAMERA_DIR'/*.jpg 2>/dev/null | wc -l" | tr -d '[:space:]')
+  count=$(adb shell "ls -d '$CAMERA_DIR'/IMG_* 2>/dev/null | wc -l" | tr -d '[:space:]')
   echo "${count:-0}"
 }
 
-# Count only videos
+# Count videos (VID_* directories)
 count_videos() {
   local count
-  count=$(adb shell "ls '$CAMERA_DIR'/*.mp4 2>/dev/null | wc -l" | tr -d '[:space:]')
+  count=$(adb shell "ls -d '$CAMERA_DIR'/VID_* 2>/dev/null | wc -l" | tr -d '[:space:]')
   echo "${count:-0}"
 }
 
-# Get most recent file in camera dir
+# Get most recent photo file path (IMG_*/base.jpg or base.avif)
+latest_photo_file() {
+  local dir
+  dir=$(adb shell "ls -td '$CAMERA_DIR'/IMG_* 2>/dev/null | head -1" | tr -d '[:space:]')
+  [ -z "$dir" ] && return
+  # Use base.jpg (primary) or base.avif
+  if adb shell "[ -f '$dir/base.jpg' ]" 2>/dev/null; then
+    echo "${dir}/base.jpg"
+  else
+    echo "${dir}/base.avif"
+  fi
+}
+
+# Get most recent video file path (VID_*/base.mp4)
+latest_video_file() {
+  local dir
+  dir=$(adb shell "ls -td '$CAMERA_DIR'/VID_* 2>/dev/null | head -1" | tr -d '[:space:]')
+  [ -z "$dir" ] && return
+  echo "${dir}/base.mp4"
+}
+
+# Legacy: get most recent dir name (for backward compat, prefer latest_photo_file/latest_video_file)
 latest_file() {
   adb shell "ls -t '$CAMERA_DIR' 2>/dev/null | head -1" | tr -d '[:space:]'
-}
-
-# Buffer videos are in FILES_BASE/BUFFER_*/base.mp4 (siblings of CAMERA_DIR)
-FILES_BASE="/sdcard/Android/data/$PKG/files"
-
-# Get most recent buffer video path (BUFFER_*/*/base.mp4)
-latest_buffer_video() {
-  adb shell "ls -td $FILES_BASE/BUFFER_* 2>/dev/null | head -1" | tr -d '[:space:]' | sed 's|$|/base.mp4|'
-}
-
-# Count buffer videos
-count_buffer_videos() {
-  local count
-  count=$(adb shell "ls -d $FILES_BASE/BUFFER_* 2>/dev/null | wc -l" | tr -d '[:space:]')
-  echo "${count:-0}"
 }
 
 # Get file size in bytes

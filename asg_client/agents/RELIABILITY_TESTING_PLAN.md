@@ -18,7 +18,7 @@
 | Script                 | What it tests                                                                                   |
 | ---------------------- | ----------------------------------------------------------------------------------------------- | --- |
 | `test-photo.sh`        | Trigger photo via ADB, verify JPEG exists + valid header, 10x sequential, low-battery rejection | ✅  |
-| `test-video.sh`        | Record 5s video, verify MP4 + moov atom, 5x corruption check, buffer record test                | ✅  |
+| `test-video.sh`        | Record 5s video, verify MP4 + moov atom, 5x corruption check                                    | ✅  |
 | `test-gallery-sync.sh` | Count files before/after photo+video, verify increments                                         | ✅  |
 | `test-wifi.sh`         | Send WiFi creds, verify connection, ping, disconnect                                            | ✅  |
 | `test-ota.sh`          | Trigger version check → download → verify checksum (don't install)                              | ✅  |

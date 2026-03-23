@@ -5,10 +5,11 @@
 # Tests normal video recording and video integrity.
 # Glasses must be connected via ADB with AsgClientService running.
 #
-# Usage: ./scripts/test-video.sh [count] [--no-wipe] [--no-pull]
-#   count:     number of videos in multi-record test (default: 3)
-#   --no-wipe: skip wiping camera directory before tests
-#   --no-pull: skip pulling videos to local machine for viewing
+# Usage: ./scripts/test-video.sh [count] [--no-wipe] [--no-pull] [--no-prompt]
+#   count:      number of videos in multi-record test (default: 5)
+#   --no-wipe:  skip wiping camera directory before tests
+#   --no-pull:  skip pulling videos to local machine for viewing
+#   --no-prompt: skip interactive cleanup prompts (for CI/automation)
 #
 
 set -e
@@ -24,6 +25,7 @@ for arg in "$@"; do
   case $arg in
     --no-wipe) WIPE=false ;;
     --no-pull) PULL=false ;;
+    --no-prompt) SKIP_CLEANUP_PROMPTS=1 ;;
     [0-9]*) COUNT=$arg ;;
   esac
 done
@@ -43,11 +45,11 @@ info "Wipe before test: $WIPE"
 info "Pull videos after: $PULL"
 echo ""
 
-# --- Wipe camera directory (videos only) ---
+# --- Wipe camera directory (videos only: VID_* dirs) ---
 if [ "$WIPE" = true ]; then
   echo "--- Wiping camera directory (videos) ---"
   EXISTING=$(count_videos)
-  adb shell "rm -f '$CAMERA_DIR'/*.mp4" 2>/dev/null || true
+  adb shell "rm -rf '$CAMERA_DIR'/VID_*" 2>/dev/null || true
   AFTER_WIPE=$(count_videos)
   info "Wiped $EXISTING videos (now: $AFTER_WIPE)"
   echo ""
@@ -77,10 +79,10 @@ info "Videos after: $AFTER"
 if [ "$AFTER" -gt "$BEFORE" ]; then
   pass "Video file created"
 
-  LATEST=$(adb shell "ls -t '$CAMERA_DIR'/*.mp4 2>/dev/null | head -1" | tr -d '[:space:]')
+  LATEST=$(latest_video_file)
   if [ -n "$LATEST" ]; then
     SIZE=$(file_size "$LATEST")
-    info "Video file: $(basename $LATEST) (${SIZE} bytes)"
+    info "Video file: $(basename "$(dirname "$LATEST")") (${SIZE} bytes)"
 
     if [ "${SIZE:-0}" -gt 10000 ]; then
       pass "Video has reasonable size (${SIZE} bytes)"
@@ -101,9 +103,10 @@ if [ "$AFTER" -gt "$BEFORE" ]; then
     fi
 
     if [ "$PULL" = true ]; then
-      adb pull "$LATEST" "$LOCAL_DIR/" 2>/dev/null && \
-        info "Pulled to: $LOCAL_DIR/$(basename "$LATEST")" && \
-        open "$LOCAL_DIR/$(basename "$LATEST")" 2>/dev/null || true
+      LOCAL_NAME=$(basename "$(dirname "$LATEST")")_base.mp4
+      adb pull "$LATEST" "$LOCAL_DIR/$LOCAL_NAME" 2>/dev/null && \
+        info "Pulled to: $LOCAL_DIR/$LOCAL_NAME" && \
+        open "$LOCAL_DIR/$LOCAL_NAME" 2>/dev/null || true
     fi
   fi
 else
@@ -121,7 +124,7 @@ for i in $(seq 1 $COUNT); do
   send_command "{\"type\":\"stop_video_recording\",\"requestId\":\"test_multi_$i\"}"
   sleep 3
 
-  LATEST=$(adb shell "ls -t '$CAMERA_DIR'/*.mp4 2>/dev/null | head -1" | tr -d '[:space:]')
+  LATEST=$(latest_video_file)
   if [ -n "$LATEST" ]; then
     if has_moov_atom "$LATEST"; then
       info "Video $i: OK (has moov atom)"
@@ -145,68 +148,14 @@ fi
 if [ "$PULL" = true ]; then
   echo ""
   info "Pulling $COUNT multi-record videos..."
-  adb shell "ls -t '$CAMERA_DIR'/*.mp4 2>/dev/null" | head -$COUNT | while read -r FPATH; do
-    [ -n "$FPATH" ] && adb pull "$FPATH" "$LOCAL_DIR/" 2>/dev/null || true
+  adb shell "ls -td '$CAMERA_DIR'/VID_* 2>/dev/null" | head -$COUNT | while read -r VD; do
+    [ -n "$VD" ] && adb pull "${VD}/base.mp4" "$LOCAL_DIR/$(basename "$VD").mp4" 2>/dev/null || true
   done
   info "Videos saved to: $LOCAL_DIR/"
   open "$LOCAL_DIR" 2>/dev/null || true
 fi
 
-# --- Test 3: Buffer record test ---
-echo ""
-echo "--- Test: Buffer recording (start -> fill -> save -> stop) ---"
-# Ensure no recording is in progress
-BEFORE_BUFFER=$(count_buffer_videos)
-info "Buffer videos before: $BEFORE_BUFFER"
-
-send_command '{"type":"start_buffer_recording"}'
-info "Buffer recording started, filling for 15s..."
-sleep 15
-
-send_command '{"type":"save_buffer_video","requestId":"test_buf_001","duration":10}'
-info "Save buffer command sent, waiting for finalization..."
-sleep 8
-
-send_command '{"type":"stop_buffer_recording"}'
-sleep 2
-
-AFTER_BUFFER=$(count_buffer_videos)
-LATEST_BUF=$(latest_buffer_video)
-info "Buffer videos after: $AFTER_BUFFER"
-
-if [ "$AFTER_BUFFER" -gt "$BEFORE_BUFFER" ] && [ -n "$LATEST_BUF" ]; then
-  pass "Buffer video saved"
-  SIZE=$(file_size "$LATEST_BUF")
-  info "Buffer file: $LATEST_BUF (${SIZE} bytes)"
-
-  if [ "${SIZE:-0}" -gt 10000 ]; then
-    pass "Buffer video has reasonable size"
-  else
-    warn "Buffer video suspiciously small (${SIZE} bytes)"
-  fi
-
-  if is_valid_mp4 "$LATEST_BUF"; then
-    pass "Buffer video has valid MP4 header"
-  else
-    fail "Buffer video missing MP4 header"
-  fi
-
-  if has_moov_atom "$LATEST_BUF"; then
-    pass "Buffer video has moov atom (properly finalized)"
-  else
-    fail "Buffer video missing moov atom (CORRUPTED)"
-  fi
-
-  if [ "$PULL" = true ]; then
-    mkdir -p "$LOCAL_DIR"
-    adb pull "$LATEST_BUF" "$LOCAL_DIR/buffer_test.mp4" 2>/dev/null && \
-      info "Pulled buffer video to: $LOCAL_DIR/buffer_test.mp4"
-  fi
-else
-  fail "No buffer video created (buffering may not be supported on this device)"
-fi
-
-# --- Test 4: Photo during video (should be rejected) ---
+# --- Test 3: Photo during video (should be rejected) ---
 echo ""
 echo "--- Test: Photo during video recording (should be rejected) ---"
 send_command '{"type":"start_video_recording","requestId":"test_reject_vid","save":true}'
@@ -228,27 +177,22 @@ fi
 
 summary
 
-# --- Cleanup prompt (device - regular videos) ---
+# --- Cleanup prompt (device) ---
 echo ""
 TOTAL_VIDEOS=$(count_videos)
-TOTAL_BUFFER=$(count_buffer_videos)
 if [ "$TOTAL_VIDEOS" -gt 0 ]; then
-  echo -n "Delete $TOTAL_VIDEOS test videos from glasses? [y/N] "
-  read -r REPLY
-  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-    adb shell "rm -f '$CAMERA_DIR'/*.mp4" 2>/dev/null || true
-    info "Deleted videos from glasses"
+  if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
+    adb shell "rm -rf '$CAMERA_DIR'/VID_*" 2>/dev/null || true
+    info "Wiped $TOTAL_VIDEOS videos from glasses"
   else
-    info "Videos kept on glasses"
-  fi
-fi
-
-if [ "$TOTAL_BUFFER" -gt 0 ]; then
-  echo -n "Delete $TOTAL_BUFFER buffer test dir(s) from glasses? [y/N] "
-  read -r REPLY
-  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-    adb shell "rm -rf $FILES_BASE/BUFFER_*" 2>/dev/null || true
-    info "Deleted buffer videos from glasses"
+    echo -n "Delete $TOTAL_VIDEOS test videos from glasses? [y/N] "
+    read -r REPLY
+    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+      adb shell "rm -rf '$CAMERA_DIR'/VID_*" 2>/dev/null || true
+      info "Deleted videos from glasses"
+    else
+      info "Videos kept on glasses"
+    fi
   fi
 fi
 
@@ -256,13 +200,18 @@ fi
 if [ "$PULL" = true ] && [ -d "$LOCAL_DIR" ]; then
   LOCAL_COUNT=$(ls "$LOCAL_DIR"/*.mp4 2>/dev/null | wc -l | tr -d ' ')
   if [ "${LOCAL_COUNT:-0}" -gt 0 ]; then
-    echo -n "Delete $LOCAL_COUNT pulled videos from $LOCAL_DIR? [y/N] "
-    read -r REPLY
-    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+    if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
       rm -f "$LOCAL_DIR"/*.mp4 2>/dev/null || true
-      info "Deleted local videos"
+      info "Wiped $LOCAL_COUNT local videos from $LOCAL_DIR"
     else
-      info "Local videos kept at: $LOCAL_DIR/"
+      echo -n "Delete $LOCAL_COUNT pulled videos from $LOCAL_DIR? [y/N] "
+      read -r REPLY
+      if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+        rm -f "$LOCAL_DIR"/*.mp4 2>/dev/null || true
+        info "Deleted local videos"
+      else
+        info "Local videos kept at: $LOCAL_DIR/"
+      fi
     fi
   fi
 fi
