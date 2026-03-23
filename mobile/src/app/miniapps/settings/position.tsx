@@ -40,7 +40,7 @@ export default function ScreenSettingsScreen() {
           value={dashboardDepth ?? 5}
           min={1}
           max={5}
-          onValueChange={(_value) => {}}
+          onValueChange={setDashboardDepth}
           onValueSet={setDashboardDepth}
         />
 
@@ -50,7 +50,7 @@ export default function ScreenSettingsScreen() {
           value={dashboardHeight ?? 4}
           min={1}
           max={8}
-          onValueChange={(_value) => {}}
+          onValueChange={setDashboardHeight}
           onValueSet={setDashboardHeight}
         />
       </View>
