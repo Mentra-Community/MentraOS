@@ -54,6 +54,7 @@ class CoreModule : Module() {
             "mtk_update_complete",
             "ota_update_available",
             "ota_progress",
+            "stress_test_complete",
         )
 
         OnCreate {
@@ -489,5 +490,138 @@ class CoreModule : Module() {
             true
         }
 
+        // MARK: - Media Library Commands
+
+        AsyncFunction("saveToGalleryWithDate") { filePath: String, captureTimeMillis: Long? ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+
+            try {
+                val file = java.io.File(filePath)
+                if (!file.exists()) {
+                    throw IllegalArgumentException("File does not exist: $filePath")
+                }
+
+                val mimeType =
+                        when (file.extension.lowercase()) {
+                            "jpg", "jpeg" -> "image/jpeg"
+                            "png" -> "image/png"
+                            "mp4" -> "video/mp4"
+                            "mov" -> "video/quicktime"
+                            else -> "application/octet-stream"
+                        }
+
+                val isVideo = mimeType.startsWith("video/")
+                val collection =
+                        if (isVideo) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                            ) {
+                                android.provider.MediaStore.Video.Media.getContentUri(
+                                        android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY
+                                )
+                            } else {
+                                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                            }
+                        } else {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                            ) {
+                                android.provider.MediaStore.Images.Media.getContentUri(
+                                        android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY
+                                )
+                            } else {
+                                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                            }
+                        }
+
+                val values =
+                        android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                            put(android.provider.MediaStore.MediaColumns.SIZE, file.length())
+
+                            // Set the capture time (DATE_TAKEN) if provided
+                            if (captureTimeMillis != null) {
+                                if (isVideo) {
+                                    put(
+                                            android.provider.MediaStore.Video.Media.DATE_TAKEN,
+                                            captureTimeMillis
+                                    )
+                                } else {
+                                    put(
+                                            android.provider.MediaStore.Images.Media.DATE_TAKEN,
+                                            captureTimeMillis
+                                    )
+                                }
+                                android.util.Log.d(
+                                        "CoreModule",
+                                        "Setting DATE_TAKEN to: $captureTimeMillis (${java.util.Date(captureTimeMillis)})"
+                                )
+                            }
+
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                            ) {
+                                put(
+                                        android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                                        if (isVideo) "DCIM/Camera" else "DCIM/Camera"
+                                )
+                                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                            }
+                        }
+
+                val resolver = context.contentResolver
+                val uri =
+                        resolver.insert(collection, values)
+                                ?: throw IllegalStateException("Failed to create MediaStore entry")
+
+                try {
+                    resolver.openOutputStream(uri)?.use { outputStream ->
+                        file.inputStream().use { inputStream -> inputStream.copyTo(outputStream) }
+                    }
+                            ?: throw IllegalStateException("Failed to open output stream")
+
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        values.clear()
+                        values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                        resolver.update(uri, values, null, null)
+                    }
+
+                    android.util.Log.d(
+                            "CoreModule",
+                            "Successfully saved to gallery with proper DATE_TAKEN: ${file.name}"
+                    )
+                    mapOf("success" to true, "uri" to uri.toString())
+                } catch (e: Exception) {
+                    resolver.delete(uri, null, null)
+                    throw e
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CoreModule", "Error saving to gallery: ${e.message}", e)
+                mapOf("success" to false, "error" to e.message)
+            }
+        }
+
+        // MARK: - Stress Testing
+
+        AsyncFunction("runAllStressTests") {
+            com.mentra.core.testing.StressTestRunner.getInstance().runAllTests { results ->
+                sendEvent("stress_test_complete", mapOf(
+                    "results" to results.map { it.toMap() }
+                ))
+            }
+        }
+
+        AsyncFunction("runStressTest") { testName: String ->
+            com.mentra.core.testing.StressTestRunner.getInstance().runTest(testName) { result ->
+                sendEvent("stress_test_complete", mapOf(
+                    "results" to listOf(result.toMap())
+                ))
+            }
+        }
+
+        AsyncFunction("getStressTestResults") {
+            com.mentra.core.testing.StressTestRunner.getInstance().getResults().map { it.toMap() }
+        }
     }
 }

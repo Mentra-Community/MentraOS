@@ -28,6 +28,7 @@ import com.mentra.asg_client.service.core.handlers.KeepAwakeCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
+import com.mentra.asg_client.service.core.handlers.MicrophoneCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UploadIncidentLogsCommandHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
@@ -49,6 +50,9 @@ import java.util.concurrent.TimeUnit;
 public class CommandProcessor {
     private static final String TAG = "CommandProcessor";
     
+    // Singleton reference for debug/test access
+    private static volatile CommandProcessor sInstance;
+
     // Duplicate detection
     private static final long DUPLICATE_WINDOW_MS = TimeUnit.SECONDS.toMillis(10);
     private final ConcurrentHashMap<Long, Long> processedMessageIds = new ConcurrentHashMap<>();
@@ -103,7 +107,16 @@ public class CommandProcessor {
 
         // Register command handlers
         initializeCommandHandlers();
+        sInstance = this;
         Log.i(TAG, "✅ CommandProcessor initialization completed successfully");
+    }
+
+    /**
+     * Get the current CommandProcessor instance (for debug/test use only).
+     * @return CommandProcessor or null if not yet initialized
+     */
+    public static CommandProcessor getInstance() {
+        return sInstance;
     }
 
     /**
@@ -276,11 +289,8 @@ public class CommandProcessor {
             return;
         }
 
-        // Fall back to legacy processor
-        String error = "❌ No handler found for command" + type + ", Implement the handler, or register command type for specific handler";
-        Log.e(TAG, error);
-        throw new IllegalStateException(error);
-
+        // Unknown command type: log and skip (graceful degradation — no process crash)
+        Log.w(TAG, "⚠️ No handler found for command type: " + type + " — skipping (implement handler or register in CommandProcessor)");
     }
 
     /**
@@ -352,6 +362,9 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new BleConfigCommandHandler());
             Log.d(TAG, "✅ Registered BleConfigCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new MicrophoneCommandHandler(serviceManager));
+            Log.d(TAG, "✅ Registered MicrophoneCommandHandler");
 
             commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.PowerCommandHandler(context, serviceManager));
             Log.d(TAG, "✅ Registered PowerCommandHandler");

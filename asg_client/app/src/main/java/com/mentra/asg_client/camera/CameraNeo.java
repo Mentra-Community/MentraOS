@@ -1014,8 +1014,9 @@ public class CameraNeo extends LifecycleService {
         bufferManager = new CircularVideoBufferInternal(this);
         bufferManager.setCallback(new CircularVideoBufferInternal.SegmentSwitchCallback() {
             @Override
-            public void onSegmentSwitch(int newSegmentIndex, Surface newSurface) {
-                Log.d(TAG, "Buffer requesting segment switch to index " + newSegmentIndex);
+            public void onSegmentSwitch(int newSegmentIndex, Surface newSurface, boolean needsSessionRecreate) {
+                Log.d(TAG, "Buffer requesting segment switch to index " + newSegmentIndex
+                    + " (sessionRecreate=" + needsSessionRecreate + ")");
                 // Handle segment switch - recreate camera session with new surface
                 switchToNewSegment(newSurface);
             }
@@ -1826,8 +1827,18 @@ public class CameraNeo extends LifecycleService {
                 // Handle buffer mode or regular video
                 Surface surfaceToUse = null;
                 if (currentMode == RecordingMode.BUFFER && bufferManager != null) {
-                    // Use buffer manager's current surface
+                    // Use buffer manager's current surface for the active recording target
                     surfaceToUse = bufferManager.getCurrentSurface();
+
+                    // Add ALL segment surfaces to the session so that segment switching
+                    // can call setRepeatingRequest without "unconfigured Surface" errors
+                    List<Surface> allBufferSurfaces = bufferManager.getAllSurfaces();
+                    for (Surface s : allBufferSurfaces) {
+                        if (s != null && s.isValid()) {
+                            surfaces.add(s);
+                        }
+                    }
+                    Log.d(TAG, "Buffer mode: added " + surfaces.size() + " surfaces to session");
                 } else {
                     // Use regular recorder surface
                     surfaceToUse = recorderSurface;
@@ -1838,7 +1849,10 @@ public class CameraNeo extends LifecycleService {
                     conditionalStopSelf();
                     return;
                 }
-                surfaces.add(surfaceToUse);
+                // For non-buffer mode, add the single surface
+                if (currentMode != RecordingMode.BUFFER) {
+                    surfaces.add(surfaceToUse);
+                }
                 recorderSurface = surfaceToUse; // Store for later use
                 previewBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
                 previewBuilder.addTarget(surfaceToUse);
@@ -3273,17 +3287,48 @@ public class CameraNeo extends LifecycleService {
         bufferManager = new CircularVideoBufferInternal(this);
         bufferManager.setCallback(new CircularVideoBufferInternal.SegmentSwitchCallback() {
             @Override
-            public void onSegmentSwitch(int newSegmentIndex, Surface newSurface) {
-                Log.d(TAG, "Buffer segment switch to index " + newSegmentIndex);
-                // Handle segment switch - update camera session with new surface
+            public void onSegmentSwitch(int newSegmentIndex, Surface newSurface, boolean needsSessionRecreate) {
+                Log.d(TAG, "Buffer segment switch to index " + newSegmentIndex
+                    + " (sessionRecreate=" + needsSessionRecreate + ")");
+
+                if (needsSessionRecreate) {
+                    // Wrap-around: recorder was re-prepared with a new Surface.
+                    // Must close the current session and create a new one with
+                    // the updated set of surfaces from the buffer manager.
+                    Log.d(TAG, "Recreating camera session for wrap-around segment switch");
+                    recorderSurface = newSurface;
+                    if (cameraCaptureSession != null) {
+                        try {
+                            cameraCaptureSession.stopRepeating();
+                            cameraCaptureSession.close();
+                        } catch (Exception e) {
+                            Log.w(TAG, "Error closing old session for recreate", e);
+                        }
+                    }
+                    createCameraSessionInternal(true);
+                    return;
+                }
+
+                // First rotation: just swap the target surface in the existing session
                 if (cameraCaptureSession != null && previewBuilder != null) {
                     try {
                         previewBuilder.removeTarget(recorderSurface);
                         recorderSurface = newSurface;
                         previewBuilder.addTarget(recorderSurface);
                         cameraCaptureSession.setRepeatingRequest(previewBuilder.build(), null, backgroundHandler);
+                        Log.d(TAG, "Buffer segment switch successful to index " + newSegmentIndex);
                     } catch (CameraAccessException e) {
-                        Log.e(TAG, "Error switching buffer segment", e);
+                        Log.e(TAG, "Error switching buffer segment (CameraAccess)", e);
+                    } catch (IllegalArgumentException e) {
+                        Log.e(TAG, "Error switching buffer segment (unconfigured surface)", e);
+                        if (sBufferCallback != null) {
+                            sBufferCallback.onBufferError("Segment switch failed: " + e.getMessage());
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Unexpected error switching buffer segment", e);
+                        if (sBufferCallback != null) {
+                            sBufferCallback.onBufferError("Segment switch failed: " + e.getMessage());
+                        }
                     }
                 }
             }
