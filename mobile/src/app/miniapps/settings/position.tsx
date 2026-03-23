@@ -1,5 +1,5 @@
 import {useFocusEffect} from "expo-router"
-import {useCallback, useEffect} from "react"
+import {useCallback, useEffect, useState} from "react"
 import {View} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
@@ -15,13 +15,24 @@ export default function ScreenSettingsScreen() {
   const [_screenDisabled, setScreenDisabled] = useSetting(SETTINGS.screen_disabled.key)
   const {setEnabled} = useKonamiCode()
 
+  const [depthUi, setDepthUi] = useState(() => dashboardDepth ?? 5)
+  const [heightUi, setHeightUi] = useState(() => dashboardHeight ?? 4)
+
+  useEffect(() => {
+    setDepthUi(dashboardDepth ?? 5)
+  }, [dashboardDepth])
+
+  useEffect(() => {
+    setHeightUi(dashboardHeight ?? 4)
+  }, [dashboardHeight])
+
   useFocusEffect(
     useCallback(() => {
       setScreenDisabled(true)
       return () => {
         setScreenDisabled(false)
       }
-    }, []),
+    }, [setScreenDisabled]),
   )
 
   useEffect(() => {
@@ -37,21 +48,21 @@ export default function ScreenSettingsScreen() {
         <SliderSetting
           label="Display Depth"
           subtitle="Adjust how far the content appears from you."
-          value={dashboardDepth ?? 5}
+          value={depthUi}
           min={1}
           max={5}
-          onValueChange={(_value) => {}}
-          onValueSet={setDashboardDepth}
+          onValueChange={setDepthUi}
+          onValueSet={(v: number) => void setDashboardDepth(v)}
         />
 
         <SliderSetting
           label="Display Height"
           subtitle="Adjust the vertical position of the content."
-          value={dashboardHeight ?? 4}
+          value={heightUi}
           min={1}
           max={8}
-          onValueChange={(_value) => {}}
-          onValueSet={setDashboardHeight}
+          onValueChange={setHeightUi}
+          onValueSet={(v: number) => void setDashboardHeight(v)}
         />
       </View>
     </Screen>
