@@ -74,7 +74,7 @@ export default function Homepage() {
           <Group>
             <PairGlassesCard />
           </Group>
-          <View className="flex-1" />
+          <View style={{flex: 1, minHeight: 32}} />
           <AppsGrid />
         </>
       )
@@ -88,7 +88,7 @@ export default function Homepage() {
           {appSwitcherUi && <DeviceStatus />}
           {!offlineMode && !appSwitcherUi && <BackgroundAppsLink />}
         </Group>
-        <View className="h-2" />
+        <View className="h-6" />
         {!appSwitcherUi && <ActiveForegroundApp />}
         <AppsGrid />
       </>
