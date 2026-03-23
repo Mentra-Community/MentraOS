@@ -5,6 +5,7 @@ import android.os.Looper
 import android.util.Log
 import com.mentra.core.Bridge
 import com.mentra.core.CoreManager
+import com.mentra.core.GlassesStore
 import com.mentra.core.utils.PhoneAudioMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -140,13 +141,17 @@ class StressTestRunner private constructor() {
     try {
       for (i in 1..MIC_TOGGLE_COUNT) {
         val enable = (i % 2 == 1)
-        withContext(Dispatchers.Main) { cm.setMicState(enable, false, false) }
+        withContext(Dispatchers.Main) { GlassesStore.apply("core", "should_send_lc3", enable) }
         delay(MIC_TOGGLE_DELAY_MS)
         if (i % 10 == 0) log("[$name] Progress: $i/$MIC_TOGGLE_COUNT")
       }
 
       // Cleanup
-      withContext(Dispatchers.Main) { cm.setMicState(false, false, false) }
+      withContext(Dispatchers.Main) {
+        GlassesStore.apply("core", "should_send_lc3", false)
+        GlassesStore.apply("core", "should_send_pcm", false)
+        GlassesStore.apply("core", "should_send_transcript", false)
+      }
 
       val dur = System.currentTimeMillis() - t0
       results.add(StressTestResult(name, true, dur, "$MIC_TOGGLE_COUNT toggles completed", null))
@@ -156,7 +161,11 @@ class StressTestRunner private constructor() {
       results.add(StressTestResult(name, false, dur, "Exception during toggles", e.message))
       log("[$name] FAIL - ${e.message}")
       // Attempt cleanup
-      try { withContext(Dispatchers.Main) { cm.setMicState(false, false, false) } } catch (_: Exception) {}
+      try { withContext(Dispatchers.Main) {
+        GlassesStore.apply("core", "should_send_lc3", false)
+        GlassesStore.apply("core", "should_send_pcm", false)
+        GlassesStore.apply("core", "should_send_transcript", false)
+      } } catch (_: Exception) {}
     }
   }
 
@@ -197,7 +206,9 @@ class StressTestRunner private constructor() {
 
       // Cleanup
       withContext(Dispatchers.Main) {
-        cm.setMicState(false, false, false)
+        GlassesStore.apply("core", "should_send_lc3", false)
+        GlassesStore.apply("core", "should_send_pcm", false)
+        GlassesStore.apply("core", "should_send_transcript", false)
         PhoneAudioMonitor.getInstance(Bridge.getContext()).setOwnAppAudioPlaying(false)
       }
 
@@ -210,7 +221,9 @@ class StressTestRunner private constructor() {
       log("[$name] FAIL - ${e.message}")
       try {
         withContext(Dispatchers.Main) {
-          cm.setMicState(false, false, false)
+          GlassesStore.apply("core", "should_send_lc3", false)
+          GlassesStore.apply("core", "should_send_pcm", false)
+          GlassesStore.apply("core", "should_send_transcript", false)
           PhoneAudioMonitor.getInstance(Bridge.getContext()).setOwnAppAudioPlaying(false)
         }
       } catch (_: Exception) {}
@@ -230,7 +243,7 @@ class StressTestRunner private constructor() {
     try {
       // 1. Start LC3 mic
       log("[$name] Step 1: Starting LC3 mic")
-      withContext(Dispatchers.Main) { cm.setMicState(true, false, false) }
+      withContext(Dispatchers.Main) { GlassesStore.apply("core", "should_send_lc3", true) }
       delay(1000)
 
       // 2. Simulate SCO entry (phone audio playing)
@@ -253,7 +266,11 @@ class StressTestRunner private constructor() {
 
       // 5. Cleanup
       log("[$name] Step 5: Stopping LC3 mic")
-      withContext(Dispatchers.Main) { cm.setMicState(false, false, false) }
+      withContext(Dispatchers.Main) {
+        GlassesStore.apply("core", "should_send_lc3", false)
+        GlassesStore.apply("core", "should_send_pcm", false)
+        GlassesStore.apply("core", "should_send_transcript", false)
+      }
 
       val dur = System.currentTimeMillis() - t0
       results.add(StressTestResult(name, true, dur, "Simulated SCO conflict completed",
@@ -265,7 +282,9 @@ class StressTestRunner private constructor() {
       log("[$name] FAIL - ${e.message}")
       try {
         withContext(Dispatchers.Main) {
-          cm.setMicState(false, false, false)
+          GlassesStore.apply("core", "should_send_lc3", false)
+          GlassesStore.apply("core", "should_send_pcm", false)
+          GlassesStore.apply("core", "should_send_transcript", false)
           PhoneAudioMonitor.getInstance(Bridge.getContext()).setOwnAppAudioPlaying(false)
         }
       } catch (_: Exception) {}
@@ -332,7 +351,7 @@ class StressTestRunner private constructor() {
         val requestId = "stress_photo_${System.currentTimeMillis()}_$i"
         withContext(Dispatchers.Main) {
           try {
-            cm.photoRequest(requestId, "stress_test", "small", "", "", "true", true)
+            cm.photoRequest(requestId, "stress_test", "small", "", "", "true", true, true)
             sent++
           } catch (e: Exception) {
             rejected++
@@ -360,8 +379,8 @@ class StressTestRunner private constructor() {
 
   private fun executeAudioAction(cm: CoreManager, action: String) {
     when (action) {
-      "lc3_on" -> cm.setMicState(true, false, false)
-      "lc3_off" -> cm.setMicState(false, false, false)
+      "lc3_on" -> GlassesStore.apply("core", "should_send_lc3", true)
+      "lc3_off" -> GlassesStore.apply("core", "should_send_lc3", false)
       "audio_on" -> PhoneAudioMonitor.getInstance(Bridge.getContext()).setOwnAppAudioPlaying(true)
       "audio_off" -> PhoneAudioMonitor.getInstance(Bridge.getContext()).setOwnAppAudioPlaying(false)
     }

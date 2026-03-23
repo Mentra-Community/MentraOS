@@ -177,41 +177,18 @@ fi
 
 summary
 
-# --- Cleanup prompt (device) ---
+# --- Cleanup (always wipe, no prompt) ---
 echo ""
 TOTAL_VIDEOS=$(count_videos)
 if [ "$TOTAL_VIDEOS" -gt 0 ]; then
-  if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
-    adb shell "rm -rf '$CAMERA_DIR'/VID_*" 2>/dev/null || true
-    info "Wiped $TOTAL_VIDEOS videos from glasses"
-  else
-    echo -n "Delete $TOTAL_VIDEOS test videos from glasses? [y/N] "
-    read -r REPLY
-    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-      adb shell "rm -rf '$CAMERA_DIR'/VID_*" 2>/dev/null || true
-      info "Deleted videos from glasses"
-    else
-      info "Videos kept on glasses"
-    fi
-  fi
+  adb shell "rm -rf '$CAMERA_DIR'/VID_*" 2>/dev/null || true
+  info "Wiped $TOTAL_VIDEOS videos from glasses"
 fi
 
-# --- Cleanup prompt (local) ---
 if [ "$PULL" = true ] && [ -d "$LOCAL_DIR" ]; then
   LOCAL_COUNT=$(ls "$LOCAL_DIR"/*.mp4 2>/dev/null | wc -l | tr -d ' ')
   if [ "${LOCAL_COUNT:-0}" -gt 0 ]; then
-    if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
-      rm -f "$LOCAL_DIR"/*.mp4 2>/dev/null || true
-      info "Wiped $LOCAL_COUNT local videos from $LOCAL_DIR"
-    else
-      echo -n "Delete $LOCAL_COUNT pulled videos from $LOCAL_DIR? [y/N] "
-      read -r REPLY
-      if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-        rm -f "$LOCAL_DIR"/*.mp4 2>/dev/null || true
-        info "Deleted local videos"
-      else
-        info "Local videos kept at: $LOCAL_DIR/"
-      fi
-    fi
+    rm -f "$LOCAL_DIR"/*.mp4 2>/dev/null || true
+    info "Wiped $LOCAL_COUNT local videos from $LOCAL_DIR"
   fi
 fi

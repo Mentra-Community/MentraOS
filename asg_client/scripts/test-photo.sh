@@ -171,40 +171,18 @@ fi
 
 summary
 
-# --- Cleanup prompt ---
+# --- Cleanup (always wipe, no prompt) ---
 echo ""
 TOTAL_ON_DEVICE=$(count_photos)
-  if [ "$TOTAL_ON_DEVICE" -gt 0 ]; then
-  if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
-    adb shell "rm -rf '$CAMERA_DIR'/IMG_*" 2>/dev/null || true
-    info "Wiped $TOTAL_ON_DEVICE photos from glasses"
-  else
-    echo -n "Delete $TOTAL_ON_DEVICE test photos from glasses? [y/N] "
-    read -r REPLY
-    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-      adb shell "rm -rf '$CAMERA_DIR'/IMG_*" 2>/dev/null || true
-      info "Deleted photos from glasses"
-    else
-      info "Photos kept on glasses"
-    fi
-  fi
+if [ "$TOTAL_ON_DEVICE" -gt 0 ]; then
+  adb shell "rm -rf '$CAMERA_DIR'/IMG_*" 2>/dev/null || true
+  info "Wiped $TOTAL_ON_DEVICE photos from glasses"
 fi
 
 if [ "$PULL" = true ] && [ -d "$LOCAL_DIR" ]; then
   LOCAL_COUNT=$(find "$LOCAL_DIR" -maxdepth 1 \( -name "*.jpg" -o -name "*.avif" \) -type f 2>/dev/null | wc -l | tr -d ' ')
   if [ "${LOCAL_COUNT:-0}" -gt 0 ]; then
-    if [ "${SKIP_CLEANUP_PROMPTS:-0}" = "1" ]; then
-      rm -f "$LOCAL_DIR"/*.jpg "$LOCAL_DIR"/*.avif 2>/dev/null || true
-      info "Wiped $LOCAL_COUNT local photos from $LOCAL_DIR"
-    else
-      echo -n "Delete $LOCAL_COUNT pulled photos from $LOCAL_DIR? [y/N] "
-      read -r REPLY
-      if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-        rm -f "$LOCAL_DIR"/*.jpg "$LOCAL_DIR"/*.avif 2>/dev/null || true
-        info "Deleted local photos"
-      else
-        info "Local photos kept at: $LOCAL_DIR/"
-      fi
-    fi
+    rm -f "$LOCAL_DIR"/*.jpg "$LOCAL_DIR"/*.avif 2>/dev/null || true
+    info "Wiped $LOCAL_COUNT local photos from $LOCAL_DIR"
   fi
 fi

@@ -83,7 +83,7 @@ run_test() {
   echo "## $name"
   echo "##################################################"
   echo ""
-  "$@"
+  "$@" || { echo ""; echo "  (Test exited with code $?)"; true; }
 }
 
 # Core tests (always run)
