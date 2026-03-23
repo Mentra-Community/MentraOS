@@ -9,6 +9,10 @@ Convert an LVGL binfont (`.bin`) to Intel HEX and program it onto the nRF5340 DK
 - Device connected via USB; **serial number** known (e.g. `771549234`)
 - Font XIP base address matches the project (example `0x100f0000`; see `pm_static.yml` / Kconfig)
 
+## Font Source Note
+
+- `font_en_*` files in this folder are generated from the **Red Hat Display** font family.
+
 ## Step 1: BIN → HEX (with XIP address)
 
 Convert the font binary to Intel HEX and set the load address in QSPI:
