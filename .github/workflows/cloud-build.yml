@@ -66,16 +66,26 @@ jobs:
       - name: Install dependencies
         if: steps.filter.outputs.cloud == 'true'
         working-directory: cloud
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Build types package
+        if: steps.filter.outputs.cloud == 'true'
+        working-directory: cloud/packages/types
+        run: bun run build
+
+      - name: Build display-utils package
+        if: steps.filter.outputs.cloud == 'true'
+        working-directory: cloud/packages/display-utils
+        run: bun run build
 
       - name: Build SDK package
         if: steps.filter.outputs.cloud == 'true'
         working-directory: cloud/packages/sdk
         run: bun run build
 
-      - name: Build types package
+      - name: Build utils package
         if: steps.filter.outputs.cloud == 'true'
-        working-directory: cloud/packages/types
+        working-directory: cloud/packages/utils
         run: bun run build
 
       - name: Run build

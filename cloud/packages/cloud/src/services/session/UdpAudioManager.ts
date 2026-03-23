@@ -66,6 +66,11 @@ export class UdpAudioManager {
    * Initialize encryption for this session.
    * Called when client connects with ?udpEncryption=true
    * Generates symmetric key for the session.
+   *
+   * Note: On reconnect, handleGlassesOpen() skips this call if encryption
+   * is already enabled — the existing key is reused. This avoids unnecessary
+   * key rotation and the in-flight packet decryption failures it would cause.
+   * (Fix 044-2)
    */
   initializeEncryption(): void {
     this._encryptionState = createEncryptionState();

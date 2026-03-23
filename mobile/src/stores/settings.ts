@@ -1,7 +1,9 @@
+import {Platform} from "react-native"
 import {getTimeZone} from "react-native-localize"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
+import * as Device from "expo-device"
 
 import restComms from "@/services/RestComms"
 import {storage} from "@/utils/storage"
@@ -26,13 +28,31 @@ export const SETTINGS: Record<string, Setting> = {
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   app_switcher_ui: {
     key: "app_switcher_ui",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
   },
   enable_squircles: {
     key: "enable_squircles",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  android_blur: {
+    key: "android_blur",
+    defaultValue: () => {
+      if (Platform.OS !== "android") return true
+      const ram = Device.totalMemory
+      return ram ? ram >= 4 * 1024 * 1024 * 1024 : true
+    },
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  ios_glass_effect: {
+    key: "ios_glass_effect",
     defaultValue: () => true,
     writable: true,
     saveOnServer: true,
@@ -134,13 +154,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: false,
   },
-  pending_device_name: {
-    key: "pending_device_name",
-    defaultValue: () => "",
-    writable: true,
-    saveOnServer: false,
-    persist: false,
-  },
   default_wearable: {
     key: "default_wearable",
     defaultValue: () => "",
@@ -156,7 +169,42 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  default_controller: {
+    key: "default_controller",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  pending_controller: {
+    key: "pending_controller",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  controller_device_name: {
+    key: "controller_device_name",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  controller_address: {
+    key: "controller_address",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   // ui state:
+  home_background: {
+    key: "home_background",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   theme_preference: {
     key: "theme_preference",
     defaultValue: () => (__DEV__ ? "system" : "light"),
@@ -357,6 +405,20 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  camera_fov: {
+    key: "camera_fov",
+    defaultValue: () => ({fov: 118, roi_position: 0}),
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  media_post_processing: {
+    key: "media_post_processing",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
 
   // time zone settings
   time_zone: {
@@ -390,11 +452,40 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   gallery_mode: {key: "gallery_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  gallery_sync_explained: {
+    key: "gallery_sync_explained",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   offline_camera_running: {
     key: "offline_camera_running",
     defaultValue: () => false,
     writable: true,
     saveOnServer: false,
+    persist: true,
+  },
+  // offline translation
+  offline_translation_running: {
+    key: "offline_translation_running",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  offline_translation_source: {
+    key: "offline_translation_source",
+    defaultValue: () => "en",
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  offline_translation_target: {
+    key: "offline_translation_target",
+    defaultValue: () => "es",
+    writable: true,
+    saveOnServer: true,
     persist: true,
   },
   // button action settings
@@ -467,15 +558,22 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.button_video_settings.key,
   SETTINGS.button_camera_led.key,
   SETTINGS.button_max_recording_time.key,
+  SETTINGS.camera_fov.key,
   // device / pairing:
   SETTINGS.pending_wearable.key,
-  SETTINGS.pending_device_name.key,
   SETTINGS.default_wearable.key,
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
+  SETTINGS.default_controller.key,
+  SETTINGS.pending_controller.key,
+  SETTINGS.controller_device_name.key,
+  SETTINGS.controller_address.key,
   // offline applets:
   SETTINGS.offline_mode.key,
   SETTINGS.offline_captions_running.key,
+  SETTINGS.offline_translation_running.key,
+  SETTINGS.offline_translation_source.key,
+  SETTINGS.offline_translation_target.key,
   SETTINGS.gallery_mode.key,
   // notifications:
   SETTINGS.notifications_enabled.key,
@@ -499,6 +597,7 @@ interface SettingsState {
   getRestUrl: () => string
   getWsUrl: () => string
   getCoreSettings: () => Record<string, any>
+  resetAllSettingsLocally: () => void
 }
 
 const getDefaultSettings = () =>
@@ -684,6 +783,12 @@ export const useSettingsStore = create<SettingsState>()(
         }
       })
       return coreSettings
+    },
+    resetAllSettingsLocally: () => {
+      set((_state) => ({
+        settings: getDefaultSettings(),
+        isInitialized: true,
+      }))
     },
   })),
 )

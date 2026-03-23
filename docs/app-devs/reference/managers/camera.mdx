@@ -44,8 +44,8 @@ interface PhotoRequestOptions {
   customWebhookUrl?: string;
   /** Authentication token for custom webhook authentication */
   authToken?: string;
-  /** Desired photo size: "small" | "medium" | "large" */
-  size?: "small" | "medium" | "large";
+  /** Desired photo size: "small" | "medium" | "large" | "full" */
+  size?: "small" | "medium" | "large" | "full";
   /** Image compression level for upload optimization */
   compress?: "none" | "medium" | "heavy";
 }

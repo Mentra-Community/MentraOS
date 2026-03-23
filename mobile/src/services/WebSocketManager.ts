@@ -232,19 +232,19 @@ class WebSocketManager extends EventEmitter {
     this.lastMessageTime = Date.now()
 
     // --- Liveness checker ---
-    this.livenessCheckInterval = BackgroundTimer.setInterval(() => {
-      const elapsed = Date.now() - this.lastMessageTime
-      if (elapsed > LIVENESS_TIMEOUT_MS) {
-        console.log(`WSM: Liveness timeout — no message for ${elapsed}ms, force-closing`)
+    // this.livenessCheckInterval = BackgroundTimer.setInterval(() => {
+    //   const elapsed = Date.now() - this.lastMessageTime
+    //   if (elapsed > LIVENESS_TIMEOUT_MS) {
+    //     console.log(`WSM: Liveness timeout — no message for ${elapsed}ms, force-closing`)
 
-        // Force-close the dead connection.  detachAndCloseSocket nulls the
-        // handlers so the stale onclose won't fire and double-reconnect.
-        this.stopLivenessMonitor()
-        this.detachAndCloseSocket()
-        this.updateStatus(WebSocketStatus.DISCONNECTED)
-        this.startReconnectInterval()
-      }
-    }, LIVENESS_CHECK_INTERVAL_MS)
+    //     // Force-close the dead connection.  detachAndCloseSocket nulls the
+    //     // handlers so the stale onclose won't fire and double-reconnect.
+    //     this.stopLivenessMonitor()
+    //     this.detachAndCloseSocket()
+    //     this.updateStatus(WebSocketStatus.DISCONNECTED)
+    //     this.startReconnectInterval()
+    //   }
+    // }, LIVENESS_CHECK_INTERVAL_MS)
   }
 
   /**

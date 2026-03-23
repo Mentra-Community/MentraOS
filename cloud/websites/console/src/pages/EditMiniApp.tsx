@@ -19,7 +19,16 @@ import DashboardLayout from "../components/DashboardLayout";
 import { useAppStore } from "@/stores/apps.store";
 import { useOrgStore } from "@/stores/orgs.store";
 import { App, Permission, Setting, Tool } from "@/types/app";
-import { HardwareRequirement, PreviewImage, PhotoOrientation } from "@mentra/sdk";
+import { HardwareRequirement } from "@mentra/sdk";
+import { PhotoOrientation } from "@/components/ui/multi-photo-upload";
+
+// Locally defined until PreviewImage/PhotoOrientation are published to @mentra/sdk@latest
+interface PreviewImage {
+  url: string;
+  imageId: string;
+  orientation: PhotoOrientation;
+  order: number;
+}
 import { toast } from "sonner";
 import ApiKeyDialog from "../components/dialogs/ApiKeyDialog";
 import SharingDialog from "../components/dialogs/SharingDialog";
@@ -182,14 +191,10 @@ export default function EditMiniApp() {
         setFormData(app);
 
         // Track if the app originally had settings configured (to show/hide legacy settings UI)
-        setHasExistingSettings(
-          Array.isArray(appData.settings) && appData.settings.length > 0
-        );
+        setHasExistingSettings(Array.isArray(appData.settings) && appData.settings.length > 0);
 
         // Track if the app originally had tools configured (to show/hide tools UI)
-        setHasExistingTools(
-          Array.isArray(appData.tools) && appData.tools.length > 0
-        );
+        setHasExistingTools(Array.isArray(appData.tools) && appData.tools.length > 0);
 
         // Load preview images if they exist
         if (appData.previewImages && Array.isArray(appData.previewImages)) {
@@ -1166,8 +1171,10 @@ export default function EditMiniApp() {
                 <FormSection
                   title="MiniApp Distribution"
                   description="Core details for your MiniApp listing in the Mentra MiniApp Store"
-                  helpLink={{ text: "Publishing Guide", href: "https://docs.mentraglass.com/app-devs/getting-started/overview" }}
-                >
+                  helpLink={{
+                    text: "Publishing Guide",
+                    href: "https://docs.mentraglass.com/app-devs/getting-started/overview",
+                  }}>
                   <div className="space-y-2">
                     <Label htmlFor="packageName">Package Name</Label>
                     <Input
@@ -1243,13 +1250,11 @@ export default function EditMiniApp() {
                 <FormSection
                   title="MiniApp Configuration"
                   description="Configure how MentraOS connects to your MiniApp server"
-                  helpLink={{ text: "Server Setup Guide", href: "https://docs.mentraglass.com/app-devs/getting-started/deployment/overview" }}
-                >
-                  <ServerUrlField
-                    value={formData.publicUrl || ""}
-                    onChange={handleChange}
-                    onBlur={handleUrlBlur}
-                  />
+                  helpLink={{
+                    text: "Server Setup Guide",
+                    href: "https://docs.mentraglass.com/app-devs/getting-started/deployment/overview",
+                  }}>
+                  <ServerUrlField value={formData.publicUrl || ""} onChange={handleChange} onBlur={handleUrlBlur} />
 
                   <WebviewUrlToggle
                     value={formData.webviewURL || ""}
@@ -1264,16 +1269,10 @@ export default function EditMiniApp() {
                     disabled={isSaving}
                   />
 
-                  <AppTypeSelect
-                    value={formData.appType || "background"}
-                    onChange={handleAppTypeChange}
-                  />
+                  <AppTypeSelect value={formData.appType || "background"} onChange={handleAppTypeChange} />
 
                   {/* Permissions */}
-                  <PermissionsSection
-                    permissions={formData.permissions || []}
-                    onChange={handlePermissionsChange}
-                  />
+                  <PermissionsSection permissions={formData.permissions || []} onChange={handlePermissionsChange} />
 
                   {/* Minimum Hardware Requirements */}
                   <HardwareRequirementsSection
@@ -1297,11 +1296,8 @@ export default function EditMiniApp() {
                   )}
 
                   {/* Mentra AI Tools - only show if app already has tools or user is from Mentra */}
-                  {(hasExistingTools || accountEmail?.toLowerCase().includes('mentra')) && (
-                    <ToolsSection
-                      tools={formData.tools || []}
-                      onChange={handleToolsChange}
-                    />
+                  {(hasExistingTools || accountEmail?.toLowerCase().includes("mentra")) && (
+                    <ToolsSection tools={formData.tools || []} onChange={handleToolsChange} />
                   )}
                 </FormSection>
 
@@ -1309,8 +1305,10 @@ export default function EditMiniApp() {
                 <FormSection
                   title="MiniApp Development"
                   description="Share your MiniApp with testers and manage API keys"
-                  helpLink={{ text: "Development Guide", href: "https://docs.mentraglass.com/app-devs/getting-started/overview" }}
-                >
+                  helpLink={{
+                    text: "Development Guide",
+                    href: "https://docs.mentraglass.com/app-devs/getting-started/overview",
+                  }}>
                   {/* Share with Testers */}
                   <div className="border rounded-md p-4">
                     <h4 className="text-sm font-medium mb-2 flex items-center">
@@ -1354,13 +1352,11 @@ export default function EditMiniApp() {
                       API Key
                     </h4>
                     <p className="text-sm text-muted-foreground mb-4">
-                      Your API key is used to authenticate your app with MentraOS cloud services. Keep it secure and never
-                      share it publicly.
+                      Your API key is used to authenticate your app with MentraOS cloud services. Keep it secure and
+                      never share it publicly.
                     </p>
                     <div className="flex items-center justify-end">
-                      <Button onClick={handleViewApiKey}>
-                        View Key
-                      </Button>
+                      <Button onClick={handleViewApiKey}>View Key</Button>
                     </div>
                   </div>
                 </FormSection>
@@ -1369,8 +1365,7 @@ export default function EditMiniApp() {
                 <FormSection
                   title="Publish to Mentra MiniApp Store"
                   description="Manage your MiniApp's status in the Mentra MiniApp Store"
-                  helpLink={{ text: "Store Guidelines", href: "/store-guidelines" }}
-                >
+                  helpLink={{ text: "Store Guidelines", href: "/store-guidelines" }}>
                   <div className="border rounded-md p-4">
                     <h4 className="text-sm font-medium mb-2 flex items-center">
                       <Upload className="h-4 w-4 mr-2" />
@@ -1413,7 +1408,9 @@ export default function EditMiniApp() {
                       <div className="flex items-center justify-end">
                         <Button onClick={handleOpenPublishDialog} className="gap-2" type="button">
                           <Upload className="h-4 w-4" />
-                          {formData.appStoreStatus === "REJECTED" ? "Resubmit to Mentra MiniApp Store" : "Publish to Mentra MiniApp Store"}
+                          {formData.appStoreStatus === "REJECTED"
+                            ? "Resubmit to Mentra MiniApp Store"
+                            : "Publish to Mentra MiniApp Store"}
                         </Button>
                       </div>
                     )}
@@ -1426,8 +1423,8 @@ export default function EditMiniApp() {
                       Configuration Management
                     </h4>
                     <p className="text-sm text-muted-foreground mb-4">
-                      Import or export your MiniApp configuration (name, description, URLs, permissions, settings, and tools)
-                      as a app_config.json file
+                      Import or export your MiniApp configuration (name, description, URLs, permissions, settings, and
+                      tools) as a app_config.json file
                     </p>
 
                     {importError && !isImportDialogOpen && (

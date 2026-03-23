@@ -1,7 +1,7 @@
 import {useFocusEffect, useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {Animated, BackHandler, TextStyle, View, ViewStyle} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 import {Header, Icon, PillButton, Screen, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
@@ -24,7 +24,14 @@ import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/Navigatio
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
-import {useApplets, useAppletStatusStore, useRefreshApplets, useStartApplet, useStopApplet} from "@/stores/applets"
+import {
+  useApplets,
+  useAppletStatusStore,
+  useRefreshApplets,
+  useStartApplet,
+  useStopApplet,
+  SYSTEM_APPS,
+} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
@@ -36,7 +43,7 @@ export default function AppSettings() {
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
   const {goBack, replaceAll} = useNavigationHistory()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const hasLoadedData = useRef(false)
 
   // Use appName from params or default to empty string
@@ -69,23 +76,26 @@ export default function AppSettings() {
   const [hasCachedSettings, setHasCachedSettings] = useState(false)
 
   const viewShotRef = useRef(null)
-  const handleExit = async () => {
-    // take a screenshot of the webview and save it to the applet zustand store:
+  const saveScreenshot = async () => {
     try {
       const uri = await captureRef(viewShotRef, {
         format: "jpg",
         quality: 0.5,
       })
-      // save uri to zustand stoare
       console.log("saving screenshot for", packageName)
       await useAppletStatusStore.getState().saveScreenshot(packageName as string, uri)
     } catch (e) {
       console.warn("screenshot failed:", e)
     }
+  }
+  const handleExit = async () => {
+    await saveScreenshot()
     goBack()
   }
   focusEffectPreventBack(() => {
-    handleExit()
+    // Only capture screenshot on back — don't call goBack() since the native
+    // back gesture/button already handles navigation (iosDontPreventBack=true)
+    saveScreenshot()
   }, true)
 
   // Handle app start/stop actions with debouncing
@@ -140,7 +150,7 @@ export default function AppSettings() {
         return
       }
 
-      startApp(packageName)
+      startApp(appInfo)
     } catch (error) {
       // Refresh the app status to get the accurate state from the server
       refreshApplets()
@@ -220,7 +230,7 @@ export default function AppSettings() {
           name: appInfo?.name || appName,
           description: translate("appSettings:noDescription"),
           settings: [],
-          uninstallable: true,
+          uninstallable: !SYSTEM_APPS.includes(packageName),
         })
         setSettingsState({})
         setHasCachedSettings(false)
@@ -595,7 +605,7 @@ export default function AppSettings() {
         style={{flex: 1}}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}> */}
       <Animated.ScrollView
-        style={{marginRight: -theme.spacing.s4, paddingRight: theme.spacing.s4}}
+        style={{marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event([{nativeEvent: {contentOffset: {y: scrollY}}}], {useNativeDriver: true})}
@@ -613,14 +623,14 @@ export default function AppSettings() {
                   <Text style={themed($versionText)}>{serverAppInfo?.version || "1.0.0"}</Text>
                 )}
               </View>
-              <View style={themed($buttonContainer)}>
+              {/* <View style={themed($buttonContainer)}>
                 <PillButton
                   text={appInfo.running ? translate("common:stop") : translate("common:start")}
                   onPress={handleStartStopApp}
                   variant="icon"
                   buttonStyle={{paddingHorizontal: theme.spacing.s6, minWidth: 80}}
                 />
-              </View>
+              </View> */}
             </View>
           </View>
 
@@ -661,15 +671,17 @@ export default function AppSettings() {
 
           {/* App Settings Section */}
           <View style={themed($settingsContainer)}>
-            {settingsLoading && (!serverAppInfo?.settings || typeof serverAppInfo.settings === "undefined") ? (
-              <SettingsSkeleton />
-            ) : processedSettings.length > 0 ? (
-              processedSettings.map(({setting, isFirst, isLast}, index) =>
-                renderSetting(setting, isFirst, isLast, index),
-              )
-            ) : (
+            {
+              settingsLoading && (!serverAppInfo?.settings || typeof serverAppInfo.settings === "undefined") ? (
+                <SettingsSkeleton />
+              ) : processedSettings.length > 0 ? (
+                processedSettings.map(({setting, isFirst, isLast}, index) =>
+                  renderSetting(setting, isFirst, isLast, index),
+                )
+              ) : null /* (
               <Text style={themed($noSettingsText)}>{translate("appSettings:noSettings")}</Text>
-            )}
+            ) */
+            }
           </View>
 
           {/* Additional Information Section */}
@@ -695,8 +707,8 @@ export default function AppSettings() {
                     appInfo?.type === "standard"
                       ? translate("appSettings:foreground")
                       : appInfo?.type === "background"
-                      ? translate("appSettings:background")
-                      : "—",
+                        ? translate("appSettings:background")
+                        : "—",
                 },
                 {
                   label: translate("appSettings:packageName"),
@@ -711,7 +723,7 @@ export default function AppSettings() {
             label={translate("appSettings:uninstall")}
             preset="destructive"
             onPress={() => {
-              if (serverAppInfo?.uninstallable) {
+              if (serverAppInfo?.uninstallable && !SYSTEM_APPS.includes(packageName)) {
                 handleUninstallApp()
               } else {
                 showAlert(translate("appSettings:cannotUninstall"), translate("appSettings:cannotUninstallMessage"), [
@@ -719,7 +731,7 @@ export default function AppSettings() {
                 ])
               }
             }}
-            disabled={!serverAppInfo?.uninstallable}
+            disabled={!serverAppInfo?.uninstallable || SYSTEM_APPS.includes(packageName)}
           />
 
           {/* Bottom safe area padding */}

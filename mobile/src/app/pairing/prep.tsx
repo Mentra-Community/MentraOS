@@ -1,7 +1,7 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
 import CoreModule from "core"
-import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -13,13 +13,11 @@ import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermi
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import {Spacer} from "@/components/ui/Spacer"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {useAppletStatusStore} from "@/stores/applets"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
-  const {theme} = useAppTheme()
   const {deviceModel} = route.params as {deviceModel: string}
   const {goBack, push, clearHistoryAndGoHome} = useNavigationHistory()
 
@@ -367,20 +365,54 @@ export default function PairingPrepScreen() {
     )
   }
 
-  // show a coming soon message:
   const G2PairingGuide = () => {
+    const {theme} = useAppTheme()
+
     return (
-      <View className="flex-1 flex-col justify-center items-center">
-        <Text text="Coming soon" className="text-3xl font-bold text-secondary-foreground text-center" />
+      <View className="flex-1 flex-col justify-start mt-6">
+        <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
+          <Image
+            source={require("../../../assets/glasses/even_realities_g2/even_realities_g2.png")}
+            resizeMode="contain"
+            className="w-50 h-25"
+          />
+          <Icon name="chevron-down" size={36} color={theme.colors.text} />
+          <Image
+            source={require("../../../assets/guide/image_g1_pair.png")}
+            resizeMode="contain"
+            className="w-62 h-38"
+          />
+        </View>
+
+        <View style={{justifyContent: "flex-start", flexDirection: "column"}}>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text
+            className="text-lg text-secondary-foreground"
+            text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app"
+          />
+          <Text
+            className="text-lg text-secondary-foreground"
+            text="2. Place your G2 in the charging case with the lid open."
+          />
+        </View>
       </View>
     )
   }
 
   const G2Buttons = () => {
+    const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
     return (
-      <View className="gap-4">
-        <Button tx="common:back" onPress={() => goBack()} />
-      </View>
+      <>
+        <View className="gap-4">
+          <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
+          <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
+        </View>
+        <GlassesTroubleshootingModal
+          isVisible={showTroubleshootingModal}
+          onClose={() => setShowTroubleshootingModal(false)}
+          deviceModel={deviceModel}
+        />
+      </>
     )
   }
 
@@ -426,12 +458,6 @@ export default function PairingPrepScreen() {
         onLeftPress={goBack}
         RightActionComponent={<MentraLogoStandalone />}
       />
-      <Spacer height={theme.spacing.s6} />
-      {/* <ScrollView style={{marginRight: -theme.spacing.s6, paddingRight: theme.spacing.s6}}> */}
-      {/* </ScrollView> */}
-
-      {/* <PairingGuide model={deviceModel} /> */}
-      {/* <PairingOptions model={deviceModel} continueFn={advanceToPairing} /> */}
       {renderGuide()}
       {renderButtons()}
     </Screen>

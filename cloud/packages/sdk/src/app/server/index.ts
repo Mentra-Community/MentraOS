@@ -1,16 +1,21 @@
 /**
- * 🚀 App Server Module
+ * App Server Module
  *
  * Creates and manages a server for Apps in the MentraOS ecosystem.
  * Handles webhook endpoints, session management, and cleanup.
+ *
+ * Now built on Hono + Bun for better performance and developer experience.
  */
-import express, { type Express } from "express";
-import path from "path";
 import fs from "fs";
-import { AppSession } from "../session/index";
-import { createAuthMiddleware } from "../webview";
-import { newSDKUpdate } from "../../constants/log-messages/updates";
+import path from "path";
 
+import { Hono } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
+import { serveStatic } from "hono/bun";
+import { Logger } from "pino";
+
+import { getDistTag } from "../../constants/log-messages/updates";
+import { createLogger } from "../../logging/logger";
 import {
   WebhookRequest,
   WebhookResponse,
@@ -18,29 +23,31 @@ import {
   StopWebhookRequest,
   ToolCall,
   WebhookRequestType,
+  AuthVariables,
 } from "../../types";
 
-import { Logger } from "pino";
-import { logger as rootLogger } from "../../logging/logger";
-import axios from "axios";
-import { PhotoData } from "../../types/photo-data";
+import { AppSession } from "../session/index";
+import { createAuthMiddleware } from "../webview";
+
+// Import PhotoData type for pending photo requests
+import type { PhotoData } from "../../types/photo-data";
 
 export const GIVE_APP_CONTROL_OF_TOOL_RESPONSE: string = "GIVE_APP_CONTROL_OF_TOOL_RESPONSE";
 
 /**
- * Pending photo request stored at AppServer level
+ * Pending photo request stored at AppServer level for reconnection resilience.
  * This allows O(1) lookup when photo uploads arrive via HTTP,
  * and survives session reconnections.
  * See: cloud/issues/019-sdk-photo-request-architecture
  */
-export interface PendingPhotoRequest {
+interface PendingPhotoRequest {
   userId: string;
   sessionId: string;
   session: AppSession;
   resolve: (photo: PhotoData) => void;
   reject: (error: Error) => void;
   timestamp: number;
-  timeoutId?: NodeJS.Timeout;
+  timeoutId?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -86,10 +93,14 @@ export interface AppServerConfig {
   appInstructions?: string;
 }
 
+// Type for Hono app with auth variables
+type AppHono = Hono<{ Variables: AuthVariables }>;
+
 /**
  * 🎯 App Server Implementation
  *
- * Base class for creating App servers. Handles:
+ * Base class for creating App servers, now extending Hono for a modern API.
+ * Handles:
  * - 🔄 Session lifecycle management
  * - 📡 Webhook endpoints for MentraOS Cloud
  * - 📂 Static file serving
@@ -99,6 +110,13 @@ export interface AppServerConfig {
  * @example
  * ```typescript
  * class MyAppServer extends AppServer {
+ *   constructor(config: AppServerConfig) {
+ *     super(config)
+ *
+ *     // Add custom API routes (Hono syntax)
+ *     this.get("/api/custom", (c) => c.json({ message: "Hello!" }))
+ *   }
+ *
  *   protected async onSession(session: AppSession, sessionId: string, userId: string) {
  *     // Handle new user sessions here
  *     session.events.onTranscription((data) => {
@@ -110,23 +128,18 @@ export interface AppServerConfig {
  * const server = new MyAppServer({
  *   packageName: 'org.example.myapp',
  *   apiKey: 'your_api_key',
- *   publicDir: "/public",
  * });
  *
  * await server.start();
  * ```
  */
-export class AppServer {
-  /** Express app instance */
-  private app: Express;
+export class AppServer extends Hono<{ Variables: AuthVariables }> {
+  /** Server configuration */
+  protected config: AppServerConfig;
   /** Map of active user sessions by sessionId */
   private activeSessions = new Map<string, AppSession>();
   /** Map of active user sessions by userId */
   private activeSessionsByUserId = new Map<string, AppSession>();
-  /** Array of cleanup handlers to run on shutdown */
-  private cleanupHandlers: Array<() => void> = [];
-  /** App instructions string shown to the user */
-  private appInstructions: string | null = null;
   /**
    * Pending photo requests by requestId - owned by AppServer for HTTP endpoint access.
    * This is the single source of truth for pending photo requests.
@@ -137,10 +150,16 @@ export class AppServer {
    * See: cloud/issues/019-sdk-photo-request-architecture
    */
   private pendingPhotoRequests = new Map<string, PendingPhotoRequest>();
+  /** Array of cleanup handlers to run on shutdown */
+  private cleanupHandlers: Array<() => void> = [];
+  /** App instructions string shown to the user */
+  private appInstructions: string | null = null;
 
   public readonly logger: Logger;
 
-  constructor(private config: AppServerConfig) {
+  constructor(config: AppServerConfig) {
+    super(); // Initialize Hono
+
     // Set defaults and merge with provided config
     this.config = {
       port: 7010,
@@ -150,32 +169,23 @@ export class AppServer {
       ...config,
     };
 
-    this.logger = rootLogger.child({
+    this.logger = createLogger().child({
       app: this.config.packageName,
       packageName: this.config.packageName,
       service: "app-server",
     });
 
-    // Initialize Express app
-    this.app = express();
-    this.app.use(express.json());
-
-    const cookieParser = require("cookie-parser");
-    this.app.use(
-      cookieParser(this.config.cookieSecret || `AOS_${this.config.packageName}_${this.config.apiKey.substring(0, 8)}`),
-    );
-
     // Apply authentication middleware
-    this.app.use(
+    this.use(
+      "*",
       createAuthMiddleware({
         apiKey: this.config.apiKey,
         packageName: this.config.packageName,
         getAppSessionForUser: (userId: string) => {
           return this.activeSessionsByUserId.get(userId) || null;
         },
-        cookieSecret:
-          this.config.cookieSecret || `AOS_${this.config.packageName}_${this.config.apiKey.substring(0, 8)}`,
-      }) as any,
+        cookieSecret: this.config.cookieSecret || this.config.apiKey, // Default to apiKey for simplicity
+      }),
     );
 
     this.appInstructions = (config as any).appInstructions || null;
@@ -191,10 +201,22 @@ export class AppServer {
     this.setupShutdown();
   }
 
-  // Expose Express app for custom routes.
-  // This is useful for adding custom API routes or middleware.
-  public getExpressApp(): Express {
-    return this.app;
+  /**
+   * @deprecated Use `this.get()`, `this.post()`, etc. directly since AppServer now extends Hono
+   * This method is kept for backward compatibility during migration.
+   */
+  public getExpressApp(): AppHono {
+    console.warn(
+      "DEPRECATION: getExpressApp() is deprecated. AppServer now extends Hono - use this.get(), this.post(), etc. directly.",
+    );
+    return this as AppHono;
+  }
+
+  /**
+   * Get the Hono app instance (returns this since AppServer extends Hono)
+   */
+  public getHonoApp(): AppHono {
+    return this as AppHono;
   }
 
   /**
@@ -207,9 +229,7 @@ export class AppServer {
    * @param userId - User's identifier
    */
   protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
-    this.logger.info(`🚀 Starting new session handling for session ${sessionId} and user ${userId}`);
-    // Core session handling logic (onboarding removed)
-    this.logger.info(`✅ Session handling completed for session ${sessionId} and user ${userId}`);
+    this.logger.debug({ sessionId, userId }, "Session handler started");
   }
 
   /**
@@ -248,78 +268,87 @@ export class AppServer {
   }
 
   /**
-   * 🚀 Start the Server
-   * Starts listening for incoming connections and webhook calls.
+   * 🚀 Initialize the App
+   * Sets up logging and checks SDK version.
+   * After calling this, use Bun.serve() with app.fetch to start the server.
    *
-   * @returns Promise that resolves when server is ready
+   * @example
+   * ```typescript
+   * const app = new MyAppServer({ ... })
+   * await app.start()
+   *
+   * Bun.serve({
+   *   port: 3333,
+   *   routes: { "/*": indexHtml },
+   *   fetch: app.fetch,
+   * })
+   * ```
+   *
+   * @returns Promise that resolves when initialization is complete
    */
-  public start(): Promise<void> {
-    return new Promise((resolve) => {
-      this.app.listen(this.config.port, async () => {
-        this.logger.info(`🎯 App server running at http://localhost:${this.config.port}`);
-        if (this.config.publicDir) {
-          this.logger.info(`📂 Serving static files from ${this.config.publicDir}`);
-        }
+  public async start(): Promise<void> {
+    this.logger.info(`App server running on port ${this.config.port}`);
 
-        // 🔑 Grab SDK version
-        try {
-          // Look for the actual installed @mentra/sdk package.json in node_modules
-          const sdkPkgPath = path.resolve(process.cwd(), "node_modules/@mentra/sdk/package.json");
-
-          let currentVersion = "unknown";
-
-          if (fs.existsSync(sdkPkgPath)) {
-            const sdkPkg = JSON.parse(fs.readFileSync(sdkPkgPath, "utf-8"));
-
-            // Get the actual installed version
-            currentVersion = sdkPkg.version || "not-found"; // located in the node module
-          } else {
-            this.logger.debug({ sdkPkgPath }, "No @mentra/sdk package.json found at path");
-          }
-
-          // this.logger.debug(`Developer is using SDK version: ${currentVersion}`);
-
-          // Fetch latest SDK version from the API endpoint
-          let latest: string | null = null;
-          try {
-            const cloudHost = "api.mentra.glass";
-            const response = await axios.get(
-              `https://${cloudHost}/api/sdk/version`,
-              { timeout: 3000 }, // 3 second timeout
-            );
-            if (response.data && response.data.success && response.data.data) {
-              latest = response.data.data.latest;
-            }
-          } catch {
-            this.logger.debug(
-              "Failed to fetch latest SDK version - skipping version check (offline or API unavailable)",
-            );
-          }
-
-          if (currentVersion === "not-found") {
-            this.logger.warn(
-              `⚠️ @mentra/sdk not found in your project dependencies. Please install it with: npm install @mentra/sdk`,
-            );
-          } else if (latest && latest !== currentVersion) {
-            this.logger.warn(newSDKUpdate(latest));
-          }
-        } catch (err) {
-          this.logger.error(err, "Version check failed");
-        }
-
-        resolve();
-      });
-    });
+    // Check for SDK updates (non-blocking)
+    await this.checkSDKVersion();
   }
 
   /**
-   * 🛑 Stop the Server
+   * Check and log SDK version (dist-tag aware).
+   * Hits npm registry directly — no dependency on our backend.
+   */
+  private async checkSDKVersion(): Promise<void> {
+    try {
+      const sdkPkgPath = path.resolve(process.cwd(), "node_modules/@mentra/sdk/package.json");
+
+      let currentVersion = "unknown";
+
+      if (fs.existsSync(sdkPkgPath)) {
+        const sdkPkg = JSON.parse(fs.readFileSync(sdkPkgPath, "utf-8"));
+        currentVersion = sdkPkg.version || "not-found";
+      } else {
+        this.logger.debug({ sdkPkgPath }, "No @mentra/sdk package.json found at path");
+      }
+
+      // Determine which dist-tag (release track) the dev is on
+      const distTag = getDistTag(currentVersion);
+
+      // Fetch latest version for this track directly from npm registry
+      let latest: string | null = null;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(`https://registry.npmjs.org/@mentra/sdk/${distTag}`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (response.ok) {
+          const data = (await response.json()) as { version: string };
+          latest = data.version;
+        }
+      } catch {
+        this.logger.debug("Failed to check npm for SDK updates — skipping (offline or timeout)");
+      }
+
+      if (currentVersion === "not-found") {
+        this.logger.warn(
+          "@mentra/sdk not found in your project dependencies. Install it with: bun install @mentra/sdk",
+        );
+      } else if (latest && latest !== currentVersion) {
+        this.logger.warn(`SDK update available: ${currentVersion} → ${latest} — bun install @mentra/sdk@${distTag}`);
+      }
+    } catch (err) {
+      this.logger.debug(err, "Version check failed");
+    }
+  }
+
+  /**
+   * Stop the Server
    * Gracefully shuts down the server and cleans up all sessions.
    */
   public async stop(): Promise<void> {
-    this.logger.info("\n🛑 Shutting down...");
+    this.logger.info("Shutting down...");
     await this.cleanup();
-    process.exit(0);
   }
 
   /**
@@ -344,7 +373,7 @@ export class AppServer {
   }
 
   /**
-   * 🧹 Add Cleanup Handler
+   * Add Cleanup Handler
    * Register a function to be called during server shutdown.
    *
    * @param handler - Function to call during cleanup
@@ -353,88 +382,184 @@ export class AppServer {
     this.cleanupHandlers.push(handler);
   }
 
+  // =====================================
+  // 📸 Photo Request Management APIs
+  // =====================================
+
   /**
-   * 🎯 Setup Webhook Endpoint
+   * Register a pending photo request.
+   * Called by CameraModule when a photo is requested.
+   * Stores the request at AppServer level for O(1) lookup when HTTP response arrives.
+   *
+   * @param requestId - Unique identifier for this photo request
+   * @param request - Request details including session, resolve/reject callbacks
+   */
+  registerPhotoRequest(requestId: string, request: Omit<PendingPhotoRequest, "timeoutId">): void {
+    // Set timeout at AppServer level (single source of truth)
+    const timeoutMs = 30000; // 30 seconds
+    const timeoutId = setTimeout(() => {
+      const pending = this.pendingPhotoRequests.get(requestId);
+      if (pending) {
+        pending.reject(new Error("Photo request timed out"));
+        this.pendingPhotoRequests.delete(requestId);
+        this.logger.warn({ requestId }, "Photo request timed out");
+      }
+    }, timeoutMs);
+
+    this.pendingPhotoRequests.set(requestId, {
+      ...request,
+      timeoutId,
+    });
+
+    this.logger.debug({ requestId, userId: request.userId, sessionId: request.sessionId }, "Photo request registered");
+  }
+
+  /**
+   * Get a pending photo request by ID.
+   *
+   * @param requestId - The request ID to look up
+   * @returns The pending request, or undefined if not found
+   */
+  getPhotoRequest(requestId: string): PendingPhotoRequest | undefined {
+    return this.pendingPhotoRequests.get(requestId);
+  }
+
+  /**
+   * Complete a photo request (success or error).
+   * Clears the timeout and removes from the pending map.
+   *
+   * @param requestId - The request ID to complete
+   * @returns The pending request that was completed, or undefined if not found
+   */
+  completePhotoRequest(requestId: string): PendingPhotoRequest | undefined {
+    const pending = this.pendingPhotoRequests.get(requestId);
+    if (pending) {
+      if (pending.timeoutId) {
+        clearTimeout(pending.timeoutId);
+      }
+      this.pendingPhotoRequests.delete(requestId);
+      this.logger.debug({ requestId }, "Photo request completed");
+    }
+    return pending;
+  }
+
+  /**
+   * Clean up all pending photo requests for a session.
+   * Called when a session permanently disconnects.
+   *
+   * @param sessionId - The session ID to clean up requests for
+   */
+  cleanupPhotoRequestsForSession(sessionId: string): void {
+    let cleanedCount = 0;
+    for (const [requestId, pending] of this.pendingPhotoRequests) {
+      if (pending.sessionId === sessionId) {
+        if (pending.timeoutId) {
+          clearTimeout(pending.timeoutId);
+        }
+        pending.reject(new Error("Session ended"));
+        this.pendingPhotoRequests.delete(requestId);
+        cleanedCount++;
+        this.logger.debug({ requestId, sessionId }, "Photo request cleaned up (session ended)");
+      }
+    }
+    if (cleanedCount > 0) {
+      this.logger.debug({ sessionId, cleanedCount }, "Cleaned up photo requests for ended session");
+    }
+  }
+
+  /**
+   * Setup Webhook Endpoint
    * Creates the webhook endpoint that MentraOS Cloud calls to start new sessions.
    */
   private setupWebhook(): void {
-    if (!this.config.webhookPath) {
-      this.logger.error("❌ Webhook path not set");
-      throw new Error("Webhook path not set");
-    }
+    const webhookPath = this.config.webhookPath || "/webhook";
 
-    this.app.post(this.config.webhookPath, async (req, res) => {
+    this.post(webhookPath, async (c) => {
       try {
-        const webhookRequest = req.body as WebhookRequest;
+        const webhookRequest = (await c.req.json()) as WebhookRequest;
 
         // Handle session request
         if (webhookRequest.type === WebhookRequestType.SESSION_REQUEST) {
-          await this.handleSessionRequest(webhookRequest, res);
+          return this.handleSessionRequest(webhookRequest as SessionWebhookRequest, c);
         }
         // Handle stop request
         else if (webhookRequest.type === WebhookRequestType.STOP_REQUEST) {
-          await this.handleStopRequest(webhookRequest, res);
+          return this.handleStopRequest(webhookRequest as StopWebhookRequest, c);
         }
         // Unknown webhook type
         else {
-          this.logger.error("❌ Unknown webhook request type");
-          res.status(400).json({
-            status: "error",
-            message: "Unknown webhook request type",
-          } as WebhookResponse);
+          this.logger.error("Unknown webhook request type");
+          return c.json(
+            {
+              status: "error",
+              message: "Unknown webhook request type",
+            } as WebhookResponse,
+            400,
+          );
         }
       } catch (error) {
-        this.logger.error(error, "❌ Error handling webhook: " + (error as Error).message);
-        res.status(500).json({
-          status: "error",
-          message: "Error handling webhook: " + (error as Error).message,
-        } as WebhookResponse);
+        this.logger.error(error, "Error handling webhook");
+        return c.json(
+          {
+            status: "error",
+            message: "Error handling webhook: " + (error as Error).message,
+          } as WebhookResponse,
+          500,
+        );
       }
     });
   }
 
   /**
-   * 🛠️ Setup Tool Call Endpoint
+   * Setup Tool Call Endpoint
    * Creates a /tool endpoint for handling tool calls from MentraOS Cloud.
    */
   private setupToolCallEndpoint(): void {
-    this.app.post("/tool", async (req, res) => {
+    this.post("/tool", async (c) => {
       try {
-        const toolCall = req.body as ToolCall;
+        const toolCall = (await c.req.json()) as ToolCall;
         if (this.activeSessionsByUserId.has(toolCall.userId)) {
           toolCall.activeSession = this.activeSessionsByUserId.get(toolCall.userId) || null;
         } else {
           toolCall.activeSession = null;
         }
-        this.logger.info({ body: req.body }, `🔧 Received tool call: ${toolCall.toolId}`);
+        this.logger.debug({ toolId: toolCall.toolId }, "Tool call received");
+
         // Call the onToolCall handler and get the response
         const response = await this.onToolCall(toolCall);
 
         // Send back the response if one was provided
         if (response !== undefined) {
-          res.json({ status: "success", reply: response });
+          return c.json({ status: "success", reply: response });
         } else {
-          res.json({ status: "success", reply: null });
+          return c.json({ status: "success", reply: null });
         }
       } catch (error) {
-        this.logger.error(error, "❌ Error handling tool call:");
-        res.status(500).json({
-          status: "error",
-          message: error instanceof Error ? error.message : "Unknown error occurred calling tool",
-        });
+        this.logger.error(error, "Error handling tool call");
+        return c.json(
+          {
+            status: "error",
+            message: error instanceof Error ? error.message : "Unknown error occurred calling tool",
+          },
+          500,
+        );
       }
     });
-    this.app.get("/tool", async (req, res) => {
-      res.json({ status: "success", reply: "Hello, world!" });
+
+    this.get("/tool", async (c) => {
+      return c.json({ status: "success", reply: "Hello, world!" });
     });
   }
 
   /**
    * Handle a session request webhook
    */
-  private async handleSessionRequest(request: SessionWebhookRequest, res: express.Response): Promise<void> {
+  private async handleSessionRequest(
+    request: SessionWebhookRequest,
+    c: Context<{ Variables: AuthVariables }>,
+  ): Promise<Response> {
     const { sessionId, userId, mentraOSWebsocketUrl, augmentOSWebsocketUrl } = request;
-    this.logger.info({ userId }, `🗣️ Received session request for user ${userId}, session ${sessionId}\n\n`);
+    this.logger.debug({ userId, sessionId }, "Session request received");
 
     // Check for existing session (user might be switching clouds)
     // If an existing session exists, we need to clean it up properly to avoid:
@@ -443,41 +568,35 @@ export class AppServer {
     // See: cloud/issues/018-app-disconnect-resurrection
     const existingSession = this.activeSessions.get(sessionId);
     if (existingSession) {
-      this.logger.info(
-        { sessionId, userId },
-        `🔄 Existing session found for ${sessionId} - sending OWNERSHIP_RELEASE and disconnecting before new connection`,
-      );
+      this.logger.debug({ sessionId, userId }, "Existing session found — releasing ownership before reconnect");
 
       try {
         // Send OWNERSHIP_RELEASE to tell the old cloud not to resurrect this app
         // The old cloud will mark the app as DORMANT instead of trying to restart it
         await existingSession.releaseOwnership("switching_clouds");
       } catch (error) {
-        this.logger.warn(
-          { error, sessionId },
-          `⚠️ Failed to send OWNERSHIP_RELEASE to old session - continuing anyway`,
-        );
+        this.logger.warn({ error, sessionId }, "Failed to release ownership on old session — continuing");
       }
 
       try {
         // Disconnect the old session explicitly
         existingSession.disconnect();
       } catch (error) {
-        this.logger.warn({ error, sessionId }, `⚠️ Failed to disconnect old session - continuing anyway`);
+        this.logger.warn({ error, sessionId }, "Failed to disconnect old session — continuing");
       }
 
       // Remove from maps immediately (don't wait for cleanup handler)
       this.activeSessions.delete(sessionId);
       this.activeSessionsByUserId.delete(userId);
 
-      this.logger.info({ sessionId, userId }, `✅ Old session cleaned up, proceeding with new connection`);
+      this.logger.debug({ sessionId, userId }, "Old session cleaned up, proceeding with new connection");
     }
 
     // Create new App session
     const session = new AppSession({
       packageName: this.config.packageName,
       apiKey: this.config.apiKey,
-      mentraOSWebsocketUrl: mentraOSWebsocketUrl || augmentOSWebsocketUrl, // The websocket URL for the specific MentraOS server that this userSession is connecting to.
+      mentraOSWebsocketUrl: mentraOSWebsocketUrl || augmentOSWebsocketUrl,
       appServer: this,
       userId,
     });
@@ -496,37 +615,29 @@ export class AppServer {
 
       // Handle different disconnect info formats (string or object)
       if (typeof info === "string") {
-        this.logger.info(`👋 Session ${sessionId} disconnected: ${info}`);
+        this.logger.debug({ sessionId }, `Session disconnected: ${info}`);
         reason = info;
         // String-only disconnects are typically temporary (e.g., "WebSocket closed")
         isPermanent = false;
       } else {
-        // It's an object with detailed disconnect information
-        this.logger.info(
-          `👋 Session ${sessionId} disconnected: ${info.message} (code: ${info.code}, reason: ${info.reason})`,
-        );
+        this.logger.debug({ sessionId, code: info.code }, `Session disconnected: ${info.message}`);
         reason = info.reason || info.message;
 
-        // Check if this is a user session end event
-        // This happens when the UserSession is disposed after 1 minute grace period
         if (info.sessionEnded === true) {
-          this.logger.info(`🛑 User session ended for session ${sessionId}, calling onStop`);
+          this.logger.debug({ sessionId }, "User session ended, calling onStop");
           isPermanent = true;
 
-          // Call onStop with session end reason
-          // This allows apps to clean up resources when the user's session ends
           this.onStop(sessionId, userId, "User session ended").catch((error) => {
-            this.logger.error(error, `❌ Error in onStop handler for session end:`);
+            this.logger.error(error, "Error in onStop handler for session end");
           });
         }
         // Check if this is a permanent disconnection after exhausted reconnection attempts
         else if (info.permanent === true) {
-          this.logger.info(`🛑 Permanent disconnection detected for session ${sessionId}, calling onStop`);
+          this.logger.debug({ sessionId }, "Permanent disconnection, calling onStop");
           isPermanent = true;
 
-          // Call onStop with a reconnection failure reason
           this.onStop(sessionId, userId, `Connection permanently lost: ${info.reason}`).catch((error) => {
-            this.logger.error(error, `❌ Error in onStop handler for permanent disconnection:`);
+            this.logger.error(error, "Error in onStop handler for permanent disconnection");
           });
         }
         // Check if this is a clean WebSocket closure (1000/1001) that won't trigger reconnection
@@ -534,14 +645,12 @@ export class AppServer {
         // AppSession skips reconnection for these codes, so we must treat them as permanent
         // to avoid zombie sessions in activeSessions map
         else if (info.wasClean === true || info.code === 1000 || info.code === 1001) {
-          this.logger.info(
-            `🛑 Clean WebSocket closure for session ${sessionId} (code: ${info.code}), treating as permanent`,
-          );
+          this.logger.debug({ sessionId, code: info.code }, "Clean WebSocket closure, treating as permanent");
           isPermanent = true;
 
           // Call onStop for clean disconnects too
           this.onStop(sessionId, userId, `Clean disconnect: ${reason}`).catch((error) => {
-            this.logger.error(error, `❌ Error in onStop handler for clean disconnect:`);
+            this.logger.error(error, "Error in onStop handler for clean disconnect");
           });
         }
       }
@@ -563,7 +672,7 @@ export class AppServer {
         if (this.activeSessions.get(sessionId) === session) {
           this.activeSessions.delete(sessionId);
         } else {
-          this.logger.debug({ sessionId }, `🔄 Session ${sessionId} cleanup skipped - a newer session has taken over`);
+          this.logger.debug({ sessionId }, "Session cleanup skipped — a newer session has taken over");
         }
         if (this.activeSessionsByUserId.get(userId) === session) {
           this.activeSessionsByUserId.delete(userId);
@@ -574,15 +683,12 @@ export class AppServer {
       } else {
         // Temporary disconnect - session stays in maps for reconnection
         // Photo requests remain pending and can still be fulfilled
-        this.logger.debug(
-          { sessionId, reason },
-          `🔄 Temporary disconnect for session ${sessionId}, keeping in maps for reconnection`,
-        );
+        this.logger.debug({ sessionId, reason }, "Temporary disconnect, keeping session for reconnection");
       }
     });
 
     const cleanupError = session.events.onError((error) => {
-      this.logger.error(error, `❌ [Session ${sessionId}] Error:`);
+      this.logger.error(error, "Session error");
     });
 
     // Start the session
@@ -591,45 +697,54 @@ export class AppServer {
       this.activeSessions.set(sessionId, session);
       this.activeSessionsByUserId.set(userId, session);
       await this.onSession(session, sessionId, userId);
-      res.status(200).json({ status: "success" } as WebhookResponse);
+      return c.json({ status: "success" } as WebhookResponse);
     } catch (error) {
-      this.logger.error(error, "❌ Failed to connect:");
+      this.logger.error(error, "Failed to connect session");
       cleanupDisconnect();
       cleanupError();
-      res.status(500).json({
-        status: "error",
-        message: "Failed to connect",
-      } as WebhookResponse);
+      return c.json(
+        {
+          status: "error",
+          message: "Failed to connect",
+        } as WebhookResponse,
+        500,
+      );
     }
   }
 
   /**
    * Handle a stop request webhook
    */
-  private async handleStopRequest(request: StopWebhookRequest, res: express.Response): Promise<void> {
+  private async handleStopRequest(
+    request: StopWebhookRequest,
+    c: Context<{ Variables: AuthVariables }>,
+  ): Promise<Response> {
     const { sessionId, userId, reason } = request;
-    this.logger.info(`\n\n🛑 Received stop request for user ${userId}, session ${sessionId}, reason: ${reason}\n\n`);
+    this.logger.debug({ sessionId, userId, reason }, "Stop request received");
 
     try {
       await this.onStop(sessionId, userId, reason);
-      res.status(200).json({ status: "success" } as WebhookResponse);
+      return c.json({ status: "success" } as WebhookResponse);
     } catch (error) {
-      this.logger.error(error, "❌ Error handling stop request:");
-      res.status(500).json({
-        status: "error",
-        message: "Failed to process stop request",
-      } as WebhookResponse);
+      this.logger.error(error, "Error handling stop request");
+      return c.json(
+        {
+          status: "error",
+          message: "Failed to process stop request",
+        } as WebhookResponse,
+        500,
+      );
     }
   }
 
   /**
-   * ❤️ Setup Health Check Endpoint
+   * Setup Health Check Endpoint
    * Creates a /health endpoint for monitoring server status.
    */
   private setupHealthCheck(): void {
     if (this.config.healthCheck) {
-      this.app.get("/health", (req, res) => {
-        res.json({
+      this.get("/health", (c) => {
+        return c.json({
           status: "healthy",
           app: this.config.packageName,
           activeSessions: this.activeSessions.size,
@@ -639,39 +754,37 @@ export class AppServer {
   }
 
   /**
-   * ⚙️ Setup Settings Endpoint
+   * Setup Settings Endpoint
    * Creates a /settings endpoint that the MentraOS Cloud can use to update settings.
    */
   private setupSettingsEndpoint(): void {
-    this.app.post("/settings", async (req, res) => {
+    this.post("/settings", async (c) => {
       try {
-        const { userIdForSettings, settings } = req.body;
+        const { userIdForSettings, settings } = await c.req.json();
 
         if (!userIdForSettings || !Array.isArray(settings)) {
-          return res.status(400).json({
-            status: "error",
-            message: "Missing userId or settings array in request body",
-          });
+          return c.json(
+            {
+              status: "error",
+              message: "Missing userId or settings array in request body",
+            },
+            400,
+          );
         }
 
-        this.logger.info(`⚙️ Received settings update for user ${userIdForSettings}`);
+        this.logger.debug({ userId: userIdForSettings }, "Settings update received");
 
         // Find all active sessions for this user
         const userSessions: AppSession[] = [];
 
-        // Look through all active sessions
         this.activeSessions.forEach((session, _sessionId) => {
-          // Check if the session has this userId (not directly accessible)
-          // We're relying on the webhook handler to have already verified this
           if (session.userId === userIdForSettings) {
             userSessions.push(session);
           }
         });
 
         if (userSessions.length === 0) {
-          this.logger.warn(`⚠️ No active sessions found for user ${userIdForSettings}`);
-        } else {
-          this.logger.info(`🔄 Updating settings for ${userSessions.length} active sessions`);
+          this.logger.debug({ userId: userIdForSettings }, "No active sessions for settings update");
         }
 
         // Update settings for all of the user's sessions
@@ -684,35 +797,38 @@ export class AppServer {
           await (this as any).onSettingsUpdate(userIdForSettings, settings);
         }
 
-        res.json({
+        return c.json({
           status: "success",
           message: "Settings updated successfully",
           sessionsUpdated: userSessions.length,
         });
       } catch (error) {
-        this.logger.error(error, "❌ Error handling settings update:");
-        res.status(500).json({
-          status: "error",
-          message: "Internal server error processing settings update",
-        });
+        this.logger.error(error, "Error handling settings update");
+        return c.json(
+          {
+            status: "error",
+            message: "Internal server error processing settings update",
+          },
+          500,
+        );
       }
     });
   }
 
   /**
-   * 📂 Setup Static File Serving
-   * Configures Express to serve static files from the specified directory.
+   * Setup Static File Serving
+   * Configures Hono to serve static files from the specified directory.
    */
   private setupPublicDir(): void {
     if (this.config.publicDir) {
       const publicPath = path.resolve(this.config.publicDir);
-      this.app.use(express.static(publicPath));
-      this.logger.info(`📂 Serving static files from ${publicPath}`);
+      this.use("/*", serveStatic({ root: publicPath }));
+      this.logger.debug({ publicPath }, "Serving static files");
     }
   }
 
   /**
-   * 🛑 Setup Shutdown Handlers
+   * Setup Shutdown Handlers
    * Registers process signal handlers for graceful shutdown.
    */
   private setupShutdown(): void {
@@ -737,11 +853,11 @@ export class AppServer {
    * See: cloud/issues/023-disposed-appsession-resurrection-bug
    */
   private async cleanup(): Promise<void> {
-    this.logger.info(`🔧 [LOCAL SDK] cleanup() called - NOT sending OWNERSHIP_RELEASE`);
+    this.logger.debug("Cleanup started — not releasing ownership (cloud will resurrect)");
     // Close all active sessions WITHOUT releasing ownership
     // This allows the cloud to resurrect apps when we come back up
     for (const [sessionId, session] of this.activeSessions) {
-      this.logger.info(`👋 Closing session ${sessionId} (no ownership release - cloud will resurrect)`);
+      this.logger.debug({ sessionId }, "Closing session");
       try {
         // Just disconnect, don't release ownership
         // The cloud will enter grace period and then resurrect via webhook
@@ -770,65 +886,51 @@ export class AppServer {
    * Creates a /photo-upload endpoint for receiving photos directly from ASG glasses
    */
   private setupPhotoUploadEndpoint(): void {
-    const multer = require("multer");
-
-    // Configure multer for handling multipart form data
-    const upload = multer({
-      storage: multer.memoryStorage(),
-      limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
-      },
-      fileFilter: (req: any, file: any, cb: any) => {
-        // Accept image files only
-        if (file.mimetype && file.mimetype.startsWith("image/")) {
-          cb(null, true);
-        } else {
-          cb(new Error("Only image files are allowed"), false);
-        }
-      },
-    });
-
-    this.app.post("/photo-upload", upload.single("photo"), async (req: any, res: any) => {
+    this.post("/photo-upload", async (c) => {
       try {
-        const { requestId, type, success, errorCode, errorMessage } = req.body;
-        const photoFile = req.file;
+        // Parse multipart form data
+        const body = await c.req.parseBody();
+        const requestId = body.requestId as string;
+        const type = body.type as string;
+        const errorCode = body.errorCode as string;
+        const errorMessage = body.errorMessage as string;
+        const photoFile = body.photo as File | undefined;
 
-        this.logger.info(
-          { requestId, type, success, errorCode },
-          `📸 Received photo response: ${requestId} (type: ${type})`,
-        );
+        // Defensive parsing: photo file presence is the primary success indicator
+        // The success field may be undefined/missing from some clients
+        const hasPhotoFile = !!photoFile;
+        const successValue = typeof body.success === "string" ? body.success : undefined;
+        const isExplicitError = type === "photo_error" || successValue === "false";
+
+        this.logger.debug({ requestId, type, hasPhotoFile, isExplicitError }, "Photo response received");
 
         if (!requestId) {
           this.logger.error("No requestId in photo response");
-          return res.status(400).json({
-            success: false,
-            error: "No requestId provided",
-          });
+          return c.json({ success: false, error: "No requestId provided" }, 400);
         }
 
-        // Direct O(1) lookup from AppServer's pending photo requests map
-        // This is the new architecture that survives session reconnections
-        // See: cloud/issues/019-sdk-photo-request-architecture
+        // Complete the request (O(1) lookup and cleanup)
         const pending = this.completePhotoRequest(requestId);
         if (!pending) {
-          this.logger.warn(
+          this.logger.debug(
             { requestId, pendingCount: this.pendingPhotoRequests.size },
-            "📸 No pending request found for photo (may have timed out or session ended)",
+            "No pending request found for photo (may have timed out or session ended)",
           );
-          return res.status(404).json({
-            success: false,
-            error: "No pending request found for this photo (may have timed out or session ended)",
-          });
+          return c.json(
+            { success: false, error: "No pending request found for this photo (may have timed out or session ended)" },
+            404,
+          );
         }
 
-        // Handle error response (no photo file, but has error info)
-        if (type === "photo_error" || success === false) {
-          const errorMsg = errorMessage || "Unknown error occurred";
-          this.logger.info({ requestId, errorCode, errorMessage: errorMsg }, "📸 Photo error received");
-          pending.reject(new Error(`Photo capture failed: ${errorMsg} (code: ${errorCode || "UNKNOWN_ERROR"})`));
+        // Handle error response: only if explicitly marked as error AND no photo file
+        if (isExplicitError && !hasPhotoFile) {
+          this.logger.warn(
+            { requestId, errorCode, errorMessage },
+            `Photo capture failed: ${errorCode} - ${errorMessage}`,
+          );
+          pending.reject(new Error(`${errorCode || "UNKNOWN_ERROR"}: ${errorMessage || "Unknown error"}`));
 
-          // Respond to ASG client
-          return res.json({
+          return c.json({
             success: true,
             requestId,
             message: "Photo error received successfully",
@@ -837,146 +939,47 @@ export class AppServer {
 
         // Handle successful photo upload
         if (!photoFile) {
-          this.logger.error({ requestId }, "No photo file in successful upload");
-          pending.reject(new Error("No photo file provided for successful upload"));
-          return res.status(400).json({
-            success: false,
-            error: "No photo file provided for successful upload",
-          });
+          const errorMsg = "No photo file in upload (and no explicit error reported)";
+          this.logger.error({ requestId, bodyKeys: Object.keys(body) }, errorMsg);
+          pending.reject(new Error(errorMsg));
+          return c.json({ success: false, error: errorMsg }, 400);
         }
 
-        // Create photo data object and resolve the promise
-        const photoData: PhotoData = {
-          buffer: photoFile.buffer,
-          mimeType: photoFile.mimetype,
-          filename: photoFile.originalname || "photo.jpg",
+        // Read file buffer
+        const buffer = Buffer.from(await photoFile.arrayBuffer());
+
+        this.logger.debug({ requestId, size: photoFile.size }, "Photo received");
+
+        // Deliver photo data to the original requester
+        pending.resolve({
+          buffer,
+          mimeType: photoFile.type,
+          filename: photoFile.name || "photo.jpg",
           requestId,
           size: photoFile.size,
           timestamp: new Date(),
-        };
+        });
 
-        this.logger.info(
-          { requestId, size: photoFile.size, mimeType: photoFile.mimetype },
-          "📸 Photo received successfully, resolving promise",
-        );
-        pending.resolve(photoData);
-
-        // Respond to ASG client
-        res.json({
+        return c.json({
           success: true,
           requestId,
           message: "Photo received successfully",
         });
       } catch (error) {
-        this.logger.error(error, "❌ Error handling photo response");
-        res.status(500).json({
-          success: false,
-          error: "Internal server error processing photo response",
-        });
+        this.logger.error(error, "Error handling photo response");
+        return c.json({ success: false, error: "Internal server error processing photo response" }, 500);
       }
     });
   }
 
-  // =====================================
-  // 📸 Photo Request Management APIs
-  // =====================================
-
   /**
-   * Register a pending photo request.
-   * Called by CameraModule when a photo is requested.
-   * Stores the request at AppServer level for O(1) lookup when HTTP response arrives.
-   *
-   * @param requestId - Unique identifier for this photo request
-   * @param request - Request details including session, resolve/reject callbacks
-   */
-  registerPhotoRequest(requestId: string, request: Omit<PendingPhotoRequest, "timeoutId">): void {
-    // Set timeout at AppServer level (single source of truth)
-    const timeoutMs = 30000; // 30 seconds
-    const timeoutId = setTimeout(() => {
-      const pending = this.pendingPhotoRequests.get(requestId);
-      if (pending) {
-        pending.reject(new Error("Photo request timed out"));
-        this.pendingPhotoRequests.delete(requestId);
-        this.logger.warn({ requestId }, "📸 Photo request timed out");
-      }
-    }, timeoutMs);
-
-    this.pendingPhotoRequests.set(requestId, {
-      ...request,
-      timeoutId,
-    });
-
-    this.logger.debug(
-      { requestId, userId: request.userId, sessionId: request.sessionId },
-      "📸 Photo request registered at AppServer level",
-    );
-  }
-
-  /**
-   * Get a pending photo request by ID.
-   *
-   * @param requestId - The request ID to look up
-   * @returns The pending request, or undefined if not found
-   */
-  getPhotoRequest(requestId: string): PendingPhotoRequest | undefined {
-    return this.pendingPhotoRequests.get(requestId);
-  }
-
-  /**
-   * Complete a photo request (success or error).
-   * Clears the timeout and removes from the pending map.
-   *
-   * @param requestId - The request ID to complete
-   * @returns The pending request that was completed, or undefined if not found
-   */
-  completePhotoRequest(requestId: string): PendingPhotoRequest | undefined {
-    const pending = this.pendingPhotoRequests.get(requestId);
-    if (pending) {
-      if (pending.timeoutId) {
-        clearTimeout(pending.timeoutId);
-      }
-      this.pendingPhotoRequests.delete(requestId);
-      this.logger.debug({ requestId }, "📸 Photo request completed");
-    }
-    return pending;
-  }
-
-  /**
-   * Clean up all pending photo requests for a session.
-   * Called when a session permanently disconnects.
-   *
-   * @param sessionId - The session ID to clean up requests for
-   */
-  cleanupPhotoRequestsForSession(sessionId: string): void {
-    let cleanedCount = 0;
-    for (const [requestId, pending] of this.pendingPhotoRequests) {
-      if (pending.sessionId === sessionId) {
-        if (pending.timeoutId) {
-          clearTimeout(pending.timeoutId);
-        }
-        pending.reject(new Error("Session ended"));
-        this.pendingPhotoRequests.delete(requestId);
-        cleanedCount++;
-        this.logger.debug({ requestId, sessionId }, "📸 Photo request cleaned up (session ended)");
-      }
-    }
-    if (cleanedCount > 0) {
-      this.logger.info({ sessionId, cleanedCount }, "📸 Cleaned up photo requests for ended session");
-    }
-  }
-
-  /**
-   * 🔐 Setup Mentra Auth Redirect Endpoint
+   * Setup Mentra Auth Redirect Endpoint
    * Creates a /mentra-auth endpoint that redirects to the MentraOS OAuth flow.
    */
   private setupMentraAuthRedirect(): void {
-    this.app.get("/mentra-auth", (req, res) => {
-      // Redirect to the account.mentra.glass OAuth flow with the app's package name
+    this.get("/mentra-auth", (c) => {
       const authUrl = `https://account.mentra.glass/auth?packagename=${encodeURIComponent(this.config.packageName)}`;
-
-      this.logger.info(`🔐 Redirecting to MentraOS OAuth flow: ${authUrl}`);
-
-      res.redirect(302, authUrl);
+      return c.redirect(authUrl, 302);
     });
   }
 }
@@ -984,35 +987,16 @@ export class AppServer {
 /**
  * @deprecated Use `AppServerConfig` instead. `TpaServerConfig` is deprecated and will be removed in a future version.
  * This is an alias for backward compatibility only.
- *
- * @example
- * ```typescript
- * // ❌ Deprecated - Don't use this
- * const config: TpaServerConfig = { ... };
- *
- * // ✅ Use this instead
- * const config: AppServerConfig = { ... };
- * ```
  */
 export type TpaServerConfig = AppServerConfig;
 
 /**
  * @deprecated Use `AppServer` instead. `TpaServer` is deprecated and will be removed in a future version.
  * This is an alias for backward compatibility only.
- *
- * @example
- * ```typescript
- * // ❌ Deprecated - Don't use this
- * class MyServer extends TpaServer { ... }
- *
- * // ✅ Use this instead
- * class MyServer extends AppServer { ... }
- * ```
  */
 export class TpaServer extends AppServer {
   constructor(config: TpaServerConfig) {
     super(config);
-    // Emit a deprecation warning to help developers migrate
     console.warn(
       "⚠️  DEPRECATION WARNING: TpaServer is deprecated and will be removed in a future version. " +
         "Please use AppServer instead. " +

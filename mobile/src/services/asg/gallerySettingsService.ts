@@ -2,6 +2,7 @@ import {storage} from "@/utils/storage/storage"
 
 export interface GallerySettings {
   autoSaveToCameraRoll: boolean
+  imageProcessingEnabled: boolean
 }
 
 export class GallerySettingsService {
@@ -9,6 +10,7 @@ export class GallerySettingsService {
   private readonly SETTINGS_KEY = "gallery_settings"
   private readonly DEFAULT_SETTINGS: GallerySettings = {
     autoSaveToCameraRoll: true, // Default ON
+    imageProcessingEnabled: true, // Lens coefficients calibrated from chessboard photos
   }
 
   private constructor() {}
@@ -48,6 +50,15 @@ export class GallerySettingsService {
 
   async setAutoSaveToCameraRoll(enabled: boolean): Promise<void> {
     await this.updateSettings({autoSaveToCameraRoll: enabled})
+  }
+
+  async getImageProcessingEnabled(): Promise<boolean> {
+    const settings = await this.getSettings()
+    return settings.imageProcessingEnabled
+  }
+
+  async setImageProcessingEnabled(enabled: boolean): Promise<void> {
+    await this.updateSettings({imageProcessingEnabled: enabled})
   }
 }
 

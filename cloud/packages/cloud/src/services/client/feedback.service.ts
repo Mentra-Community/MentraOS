@@ -1,13 +1,19 @@
 // services/client/feedback.service.ts
 // Business logic for managing user feedback
+//
+// This service handles feature requests and legacy bug reports (old clients).
+// New clients should use POST /api/incidents for bug reports instead.
 
 import { Feedback } from "../../models/feedback.model";
 import { emailService } from "../email/resend.service";
 import { slackService } from "../notifications/slack.service";
-import type { FeedbackData } from "../../types/feedback.types";
+import type { FeedbackData, PhoneStateSnapshot, FeedbackResponse } from "../../types/feedback.types";
+import { logger as rootLogger } from "../logging/pino-logger";
+
+const logger = rootLogger.child({ service: "feedback.service" });
 
 // Re-export for consumers who import from this service
-export type { FeedbackData } from "../../types/feedback.types";
+export type { FeedbackData, PhoneStateSnapshot, FeedbackResponse } from "../../types/feedback.types";
 
 const ADMIN_EMAILS = process.env.ADMIN_EMAILS || "isaiah@mentra.glass";
 const admins = [...ADMIN_EMAILS.split(",").map(e => e.trim())];
@@ -153,12 +159,17 @@ function escapeHtml(text: string): string {
 
 /**
  * Submit user feedback.
- * Accepts either legacy string format or new structured format.
+ * Handles feature requests and legacy bug reports from old clients.
+ * New clients should use POST /api/incidents for bug reports.
+ *
+ * This endpoint sends email + Slack notifications but does NOT create incidents.
+ * For the full incident flow (cloud logs, Linear tickets, etc.), use /api/incidents.
  */
 export async function submitFeedback(
   email: string,
   feedback: string | FeedbackData,
-) {
+  _phoneState?: PhoneStateSnapshot,
+): Promise<FeedbackResponse> {
   // Determine if this is legacy (string) or new (object) format
   const isStructured = typeof feedback === "object";
 
@@ -166,10 +177,15 @@ export async function submitFeedback(
   const feedbackString = isStructured ? JSON.stringify(feedback) : feedback;
 
   // Save feedback to database
-  const newFeedback = await Feedback.create({
+  await Feedback.create({
     email,
     feedback: feedbackString,
   });
+
+  logger.info(
+    { userId: email, type: isStructured ? feedback.type : "legacy" },
+    "Feedback submitted",
+  );
 
   // Format for email
   const emailHtml = isStructured
@@ -187,5 +203,7 @@ export async function submitFeedback(
     slackService.notifyUserFeedbackLegacy(email, feedback).catch(() => {});
   }
 
-  return newFeedback;
+  return {
+    success: true,
+  };
 }

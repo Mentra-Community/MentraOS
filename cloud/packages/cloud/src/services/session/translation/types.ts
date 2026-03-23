@@ -9,8 +9,6 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // Environment variables for provider configuration
-export const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY || "";
-export const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "";
 export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || "";
 export const SONIOX_ENDPOINT = process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
 export const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v4";
@@ -20,11 +18,6 @@ export const ALIBABA_WORKSPACE = process.env.ALIBABA_WORKSPACE || "";
 export const ALIBABA_DASHSCOPE_API_KEY = process.env.ALIBABA_DASHSCOPE_API_KEY || "";
 
 // Log warning if environment variables are not set
-if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
-  console.warn(
-    "[TranslationManager] Warning: Azure Speech environment variables not set (AZURE_SPEECH_KEY, AZURE_SPEECH_REGION)",
-  );
-}
 if (!SONIOX_API_KEY) {
   console.warn("[TranslationManager] Warning: Soniox environment variable not set (SONIOX_API_KEY)");
 }
@@ -43,7 +36,6 @@ export enum TranslationStreamState {
 }
 
 export enum TranslationProviderType {
-  AZURE = "azure",
   SONIOX = "soniox",
   ALIBABA = "alibaba",
 }
@@ -58,7 +50,6 @@ export interface TranslationConfig {
     fallbackProvider: TranslationProviderType;
   };
 
-  azure: AzureTranslationConfig;
   soniox: SonioxTranslationConfig;
   alibaba: AlibabaTranslationConfig;
 
@@ -73,13 +64,6 @@ export interface TranslationConfig {
     maxStreamRetries: number;
     retryDelayMs: number;
   };
-}
-
-export interface AzureTranslationConfig {
-  key: string;
-  region: string;
-  endpoint?: string;
-  maxConnections?: number;
 }
 
 export interface SonioxTranslationConfig {
@@ -301,12 +285,6 @@ export const DEFAULT_TRANSLATION_CONFIG: TranslationConfig = {
   providers: {
     defaultProvider: TranslationProviderType.SONIOX,
     fallbackProvider: TranslationProviderType.SONIOX,
-  },
-
-  azure: {
-    key: AZURE_SPEECH_KEY,
-    region: AZURE_SPEECH_REGION,
-    endpoint: process.env.AZURE_TRANSLATION_ENDPOINT,
   },
 
   soniox: {

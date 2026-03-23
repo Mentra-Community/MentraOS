@@ -18,6 +18,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
 
+import com.dev.api.DevApi;
 import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
@@ -210,9 +211,18 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.d(TAG, "🔧 Initializing service container");
             initializeServiceContainer();
 
+            // Apply saved camera FOV on start (K900) so last user choice survives reboot
+            applySavedCameraFovOnStart();
+
             // Initialize WiFi debouncing
             Log.d(TAG, "📶 Initializing WiFi debouncing");
             initializeWifiDebouncing();
+
+            // Enable 5 GHz WiFi scanning after a short delay so system UI / WiFi stack is ready
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                Log.d(TAG, "📶 Enabling 5 GHz Hotspot scan via SysControl");
+                SysControl.setHotspot5G(this, true);
+            }, 3000);
 
             // Register receivers
             Log.d(TAG, "📻 Registering broadcast receivers");
@@ -553,7 +563,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                       ", StreamingManager: " + (streamingManager != null ? "valid" : "null") +
                       ", CommandProcessor: " + (commandProcessor != null ? "valid" : "null"));
 
-
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing service container", e);
             try {
@@ -586,6 +595,34 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.d(TAG, "✅ WiFi debouncing initialized successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing WiFi debouncing", e);
+        }
+    }
+
+    /**
+     * Apply saved camera FOV on service start (K900). Ensures last user-chosen FOV is applied after reboot.
+     * No-op on non-K900 devices (UnsatisfiedLinkError from libxydev).
+     */
+    private void applySavedCameraFovOnStart() {
+        try {
+            if (serviceContainer == null || serviceContainer.getServiceManager() == null) {
+                return;
+            }
+            var asgSettings = serviceContainer.getServiceManager().getAsgSettings();
+            if (asgSettings == null) {
+                return;
+            }
+            int fov = asgSettings.getCameraFov();
+            int roiPosition = asgSettings.getCameraRoiPosition();
+            try {
+                DevApi.setCameraFov(fov, roiPosition);
+                SysControl.restartCameraHal(this);
+                CameraRestartCooldown.setCooldown();
+                Log.d(TAG, "Applied saved camera FOV on start: fov=" + fov + ", roi_position=" + roiPosition);
+            } catch (UnsatisfiedLinkError e) {
+                Log.d(TAG, "libxydev not available (non-K900?), skipping apply saved FOV");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not apply saved camera FOV on start", e);
         }
     }
 
@@ -808,10 +845,16 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         Log.d(TAG, "📋 Data preview: " + new String(data, 0, Math.min(data.length, 100)) + 
                   (data.length > 100 ? "..." : ""));
 
+        // BLE/serial can deliver data before getInterfaceReferences() runs (e.g. right after
+        // MY_PACKAGE_REPLACED when the service is still in onCreate). Guard to avoid NPE.
+        final CommandProcessor processor = commandProcessor;
+        if (processor == null) {
+            Log.w(TAG, "⚠️ CommandProcessor not yet initialized - dropping " + data.length
+                    + " bytes (interface refs not yet obtained)");
+            return;
+        }
         try {
-            // Delegate JSON parsing and processing to CommandProcessor
-            Log.d(TAG, "🔄 Delegating data processing to CommandProcessor");
-            commandProcessor.processCommand(data);
+            processor.processCommand(data);
             Log.d(TAG, "✅ Data processing delegated successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error processing received data", e);

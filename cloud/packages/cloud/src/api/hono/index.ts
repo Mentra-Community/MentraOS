@@ -10,7 +10,7 @@ export {
   clientAppsApi,
   deviceStateApi,
   feedbackApi,
-  livekitApi,
+  incidentLogsApi,
   locationApi,
   minVersionApi,
   notificationsApi,
@@ -25,7 +25,10 @@ export { sdkVersionApi, simpleStorageApi, systemAppApi } from "./sdk";
 export { publicPermissionsApi } from "./public";
 
 // Console APIs (developer console)
-export { consoleAccountApi, consoleOrgsApi, consoleAppsApi, cliKeysApi } from "./console";
+export { consoleAccountApi, consoleOrgsApi, consoleAppsApi, cliKeysApi, consoleIncidentsApi } from "./console";
+
+// Agent APIs (coding agents)
+export { agentIncidentsApi } from "./agent";
 
 // Store APIs (MentraOS Store website)
 export { storeAppsApi, storeAuthApi, storeUserApi } from "./store";

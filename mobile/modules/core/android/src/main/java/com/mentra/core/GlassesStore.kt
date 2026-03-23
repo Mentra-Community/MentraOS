@@ -58,12 +58,10 @@ object GlassesStore {
         store.set("core", "pending_wearable", "")
         store.set("core", "device_name", "")
         store.set("core", "device_address", "")
-        store.set("core", "offline_mode", false)
         store.set("core", "screen_disabled", false)
         store.set("core", "preferred_mic", "auto")
         store.set("core", "power_saving_mode", false)
         store.set("core", "always_on_status_bar", false)
-        store.set("core", "enforce_local_transcription", false)
         store.set("core", "sensing_enabled", true)
         store.set("core", "metric_system", false)
         store.set("core", "brightness", 50)
@@ -78,6 +76,7 @@ object GlassesStore {
         store.set("core", "button_photo_size", "medium")
         store.set("core", "button_camera_led", true)
         store.set("core", "button_max_recording_time", 10)
+        store.set("core", "camera_fov", mapOf("fov" to 118, "roi_position" to 0))
         store.set("core", "button_video_width", 1280)
         store.set("core", "button_video_height", 720)
         store.set("core", "button_video_fps", 30)
@@ -85,6 +84,10 @@ object GlassesStore {
         store.set("core", "lc3_frame_size", 60)
         store.set("core", "auth_email", "")
         store.set("core", "auth_token", "")
+        store.set("core", "should_send_pcm", false)
+        store.set("core", "should_send_lc3", false)
+        store.set("core", "should_send_transcript", false)
+        store.set("core", "bypass_vad", false)
     }
 
     fun get(category: String, key: String): Any? {
@@ -139,7 +142,6 @@ object GlassesStore {
             }
             "core" to "brightness" -> {
                 val b = (value as? Number)?.toInt()  ?: 50
-                Bridge.log("Yayyieeeeee yashhhh, brightness: ${value} ${b}")
                 val auto = (store.get("core", "auto_brightness") as? Boolean) ?: true
                 CoroutineScope(Dispatchers.Main).launch {
                     CoreManager.getInstance().sgc?.setBrightness(b, auto)
@@ -167,8 +169,8 @@ object GlassesStore {
                 }
             }
             "core" to "dashboard_height", "core" to "dashboard_depth" -> {
-                val h = (store.get("core", "dashboard_height") as? Int) ?: 4
-                val d = (store.get("core", "dashboard_depth") as? Int) ?: 5
+                val h = (store.get("core", "dashboard_height") as? Number)?.toInt() ?: 4
+                val d = (store.get("core", "dashboard_depth") as? Number)?.toInt() ?: 5
                 CoroutineScope(Dispatchers.Main).launch {
                     CoreManager.getInstance().sgc?.setDashboardPosition(h, d)
                 }
@@ -202,6 +204,9 @@ object GlassesStore {
             "core" to "button_max_recording_time" -> {
                 CoreManager.getInstance().sgc?.sendButtonMaxRecordingTime()
             }
+            "core" to "camera_fov" -> {
+                CoreManager.getInstance().sgc?.sendCameraFovSetting()
+            }
             "core" to "button_video_width",
             "core" to "button_video_height",
             "core" to "button_video_fps" -> {
@@ -210,53 +215,28 @@ object GlassesStore {
             "core" to "preferred_mic" -> {
                 (value as? String)?.let { mic ->
                     apply("core", "micRanking", MicMap.map[mic] ?: MicMap.map["auto"]!!)
-                    CoreManager.getInstance()
-                            .setMicState(
-                                    (store.get("core", "should_send_pcm_data") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "should_send_transcript") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "bypass_vad") as? Boolean) ?: true
-                            )
-                }
-            }
-            "core" to "offline_mode" -> {
-                (value as? Boolean)?.let { offline ->
-                    // set should_send_transcript to true if offline_mode is true && running is true, otherwise false
-                    val shouldSendTranscript = offline && (store.get("core", "offline_captions_running") as? Boolean) ?: false
-                    CoreManager.getInstance()
-                            .setMicState(
-                                    (store.get("core", "should_send_pcm_data") as? Boolean)
-                                            ?: false,
-                                    shouldSendTranscript,
-                                    (store.get("core", "bypass_vad") as? Boolean) ?: true
-                            )
+                    CoreManager.getInstance().setMicState()
                 }
             }
             "core" to "offline_captions_running" -> {
                 (value as? Boolean)?.let { running ->
                     Bridge.log("GlassesStore: offline_captions_running changed to $running")
-                    // When offline captions are enabled, start the microphone for local transcription
-                    // When disabled, stop the microphone
-                    // set should_send_transcript to true if offline_mode is true && running is true, otherwise false
-                    val shouldSendTranscript = (store.get("core", "offline_mode") as? Boolean) ?: false && running
-                    CoreManager.getInstance().setMicState(
-                        (store.get("core", "should_send_pcm_data") as? Boolean) ?: false,
-                        shouldSendTranscript,
-                        (store.get("core", "bypass_vad") as? Boolean) ?: true
-                    )
+                    CoreManager.getInstance().setMicState()
                 }
             }
-            "core" to "enforce_local_transcription" -> {
-                (value as? Boolean)?.let { enabled ->
-                    CoreManager.getInstance()
-                            .setMicState(
-                                    (store.get("core", "should_send_pcm_data") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "should_send_transcript") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "bypass_vad") as? Boolean) ?: true
-                            )
+            "core" to "should_send_pcm" -> {
+                (value as? Boolean)?.let { pcm ->
+                    CoreManager.getInstance().setMicState()
+                }
+            }
+            "core" to "should_send_lc3" -> {
+                (value as? Boolean)?.let { lc3 ->
+                    CoreManager.getInstance().setMicState()
+                }
+            }
+            "core" to "should_send_transcript" -> {
+                (value as? Boolean)?.let { transcript ->
+                    CoreManager.getInstance().setMicState()
                 }
             }
             "core" to "default_wearable" -> {

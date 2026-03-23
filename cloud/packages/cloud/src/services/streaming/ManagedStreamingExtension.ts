@@ -15,11 +15,7 @@ import {
 } from "@mentra/sdk";
 import UserSession from "../session/UserSession";
 import { CloudflareStreamService } from "./CloudflareStreamService";
-import {
-  StreamRegistry,
-  ManagedStreamState,
-  StreamState,
-} from "./StreamRegistry";
+import { StreamRegistry, ManagedStreamState, StreamState } from "./StreamRegistry";
 import { StreamLifecycleController } from "./StreamLifecycleController";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 
@@ -38,8 +34,7 @@ export class ManagedStreamingExtension {
   private stateManager: StreamRegistry;
 
   // Per-stream lifecycle controllers keyed by streamId
-  private lifecycleControllers: Map<string, StreamLifecycleController> =
-    new Map();
+  private lifecycleControllers: Map<string, StreamLifecycleController> = new Map();
 
   // Polling intervals for URL discovery
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map(); // userId -> interval
@@ -66,10 +61,7 @@ export class ManagedStreamingExtension {
   /**
    * Start or join a managed stream
    */
-  async startManagedStream(
-    userSession: UserSession,
-    request: ManagedStreamRequest,
-  ): Promise<string> {
+  async startManagedStream(userSession: UserSession, request: ManagedStreamRequest): Promise<string> {
     const {
       packageName,
       quality,
@@ -78,6 +70,7 @@ export class ManagedStreamingExtension {
       audio,
       stream: streamOptions,
       restreamDestinations,
+      sound: appSound,
     } = request;
     const userId = userSession.userId;
 
@@ -99,13 +92,9 @@ export class ManagedStreamingExtension {
       throw new Error(`App ${packageName} is not running`);
     }
 
-    const validation = ConnectionValidator.validateForHardwareRequest(
-      userSession,
-      "stream",
-    );
+    const validation = ConnectionValidator.validateForHardwareRequest(userSession, "stream");
     if (!validation.valid) {
-      const connectionStatus =
-        ConnectionValidator.getConnectionStatus(userSession);
+      const connectionStatus = ConnectionValidator.getConnectionStatus(userSession);
       this.logger.error(
         {
           userId,
@@ -116,17 +105,13 @@ export class ManagedStreamingExtension {
         },
         "Managed stream request blocked by connection validator",
       );
-      const error = new Error(
-        validation.error ||
-          "Cannot process stream request - connection validation failed",
-      );
+      const error = new Error(validation.error || "Cannot process stream request - connection validation failed");
       (error as any).code = validation.errorCode;
       throw error;
     }
 
     // WiFi validation for glasses that require it
-    const wifiValidation =
-      ConnectionValidator.validateWifiForOperation(userSession);
+    const wifiValidation = ConnectionValidator.validateWifiForOperation(userSession);
     if (!wifiValidation.valid) {
       this.logger.error(
         {
@@ -137,18 +122,13 @@ export class ManagedStreamingExtension {
         },
         "Managed stream request blocked - WiFi required",
       );
-      const error = new Error(
-        wifiValidation.error || "WiFi connection required for streaming",
-      );
+      const error = new Error(wifiValidation.error || "WiFi connection required for streaming");
       (error as any).code = wifiValidation.errorCode;
       throw error;
     }
 
     // Check WebSocket connection
-    if (
-      !userSession.websocket ||
-      userSession.websocket.readyState !== WebSocket.OPEN
-    ) {
+    if (!userSession.websocket || userSession.websocket.readyState !== WebSocket.OPEN) {
       throw new Error("Glasses WebSocket not connected");
     }
 
@@ -197,10 +177,7 @@ export class ManagedStreamingExtension {
     }
 
     // Create new Cloudflare live input
-    this.logger.debug(
-      { userId, packageName },
-      "📡 Creating new Cloudflare live input",
-    );
+    this.logger.debug({ userId, packageName }, "📡 Creating new Cloudflare live input");
 
     let liveInput;
     try {
@@ -226,8 +203,7 @@ export class ManagedStreamingExtension {
           userId,
           packageName,
           error: {
-            message:
-              cfError instanceof Error ? cfError.message : "Unknown error",
+            message: cfError instanceof Error ? cfError.message : "Unknown error",
             stack: cfError instanceof Error ? cfError.stack : undefined,
             fullError: JSON.stringify(cfError, null, 2),
           },
@@ -238,10 +214,7 @@ export class ManagedStreamingExtension {
     }
 
     // Create managed stream state
-    this.logger.debug(
-      { userId, packageName },
-      "📊 Creating managed stream state",
-    );
+    this.logger.debug({ userId, packageName }, "📊 Creating managed stream state");
     const managedStream = this.stateManager.createOrJoinManagedStream({
       userId,
       appId: packageName,
@@ -254,11 +227,12 @@ export class ManagedStreamingExtension {
     lifecycle.setActive(true);
 
     // Wait for Cloudflare live input to fully initialize
-    this.logger.info(
-      { userId, packageName },
-      "⏳ Waiting 3 seconds for Cloudflare live input to initialize",
-    );
+    this.logger.info({ userId, packageName }, "⏳ Waiting 3 seconds for Cloudflare live input to initialize");
     //await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // Flash is always on (privacy indicator for bystanders), sound is app-controlled via SDK
+    const flash = true;
+    const sound = appSound ?? true;
 
     // Send start command to glasses with Cloudflare RTMP URL
     const startMessage: StartRtmpStream = {
@@ -270,6 +244,8 @@ export class ManagedStreamingExtension {
       video: video || {},
       audio: audio || {},
       stream: streamOptions || {},
+      flash,
+      sound,
       timestamp: new Date(),
     };
 
@@ -316,32 +292,20 @@ export class ManagedStreamingExtension {
   /**
    * Stop managed stream for a specific app
    */
-  async stopManagedStream(
-    userSession: UserSession,
-    request: ManagedStreamStopRequest,
-  ): Promise<void> {
+  async stopManagedStream(userSession: UserSession, request: ManagedStreamStopRequest): Promise<void> {
     const { packageName } = request;
     const userId = userSession.userId;
 
-    this.logger.info(
-      { userId, packageName },
-      "Stopping managed stream for app",
-    );
+    this.logger.info({ userId, packageName }, "Stopping managed stream for app");
 
     const stream = this.stateManager.getStreamState(userId);
     if (!stream || stream.type !== "managed") {
-      this.logger.warn(
-        { userId, packageName },
-        "No managed stream found to stop",
-      );
+      this.logger.warn({ userId, packageName }, "No managed stream found to stop");
       return;
     }
 
     // Remove this app as a viewer
-    const shouldCleanup = this.stateManager.removeViewerFromManagedStream(
-      userId,
-      packageName,
-    );
+    const shouldCleanup = this.stateManager.removeViewerFromManagedStream(userId, packageName);
 
     // Notify app that stream is stopping
     await this.sendManagedStreamStatus(
@@ -369,10 +333,7 @@ export class ManagedStreamingExtension {
    * Handle RTMP stream status from glasses
    * @returns true if handled by managed streaming, false otherwise
    */
-  async handleStreamStatus(
-    userSession: UserSession,
-    status: RtmpStreamStatus,
-  ): Promise<boolean> {
+  async handleStreamStatus(userSession: UserSession, status: RtmpStreamStatus): Promise<boolean> {
     const { streamId, status: glassesStatus } = status;
 
     // Check if this is a managed stream by stream ID
@@ -432,9 +393,7 @@ export class ManagedStreamingExtension {
 
     // Send status to all viewers
     const messageForViewers =
-      mappedStatus === "error"
-        ? status.errorDetails || "Stream error reported by glasses"
-        : undefined;
+      mappedStatus === "error" ? status.errorDetails || "Stream error reported by glasses" : undefined;
 
     for (const appId of stream.activeViewers) {
       await this.sendManagedStreamStatus(
@@ -467,35 +426,28 @@ export class ManagedStreamingExtension {
    */
   private async updateStreamUrls(stream: ManagedStreamState): Promise<void> {
     try {
-      const streamDetails = await this.cloudflareService.getStreamDetails(
-        stream.cfLiveInputId,
-      );
+      const streamDetails = await this.cloudflareService.getStreamDetails(stream.cfLiveInputId);
 
       if (streamDetails) {
         let updated = false;
 
-        if (
-          streamDetails.playback?.hls &&
-          streamDetails.playback.hls !== stream.hlsUrl
-        ) {
+        if (streamDetails.playback?.hls && streamDetails.playback.hls !== stream.hlsUrl) {
           stream.hlsUrl = streamDetails.playback.hls;
           updated = true;
         }
 
-        if (
-          streamDetails.playback?.dash &&
-          streamDetails.playback.dash !== stream.dashUrl
-        ) {
+        if (streamDetails.playback?.dash && streamDetails.playback.dash !== stream.dashUrl) {
           stream.dashUrl = streamDetails.playback.dash;
           updated = true;
         }
 
         // Get preview URL and player URL
         const previewUrl = streamDetails.preview;
-        const playerUrl = this.cloudflareService.getEmbedUrl(
-          stream.cfLiveInputId,
-          { autoplay: true, muted: true, controls: true },
-        );
+        const playerUrl = this.cloudflareService.getEmbedUrl(stream.cfLiveInputId, {
+          autoplay: true,
+          muted: true,
+          controls: true,
+        });
         const thumbnailUrl = streamDetails.thumbnail;
 
         if (updated || previewUrl || thumbnailUrl) {
@@ -612,17 +564,12 @@ export class ManagedStreamingExtension {
     try {
       const stream = this.stateManager.getStreamByStreamId(streamId);
       if (!stream || stream.type !== "managed") {
-        this.logger.warn(
-          { streamId },
-          "Stream not found or not a managed stream",
-        );
+        this.logger.warn({ streamId }, "Stream not found or not a managed stream");
         return null;
       }
 
       // Get details from Cloudflare
-      const streamDetails = await this.cloudflareService.getStreamDetails(
-        stream.cfLiveInputId,
-      );
+      const streamDetails = await this.cloudflareService.getStreamDetails(stream.cfLiveInputId);
 
       if (!streamDetails) {
         // Return what we have locally
@@ -714,9 +661,7 @@ export class ManagedStreamingExtension {
       }
 
       // Check per-app limit
-      const appOutputCount = stream.outputs.filter(
-        (o) => o.addedBy === packageName,
-      ).length;
+      const appOutputCount = stream.outputs.filter((o) => o.addedBy === packageName).length;
       if (appOutputCount >= MAX_OUTPUTS_PER_APP) {
         return {
           success: false,
@@ -736,10 +681,7 @@ export class ManagedStreamingExtension {
 
       // Create output via Cloudflare
       try {
-        const cfOutputs = await this.cloudflareService.createOutputs(
-          stream.cfLiveInputId,
-          [destination],
-        );
+        const cfOutputs = await this.cloudflareService.createOutputs(stream.cfLiveInputId, [destination]);
 
         if (cfOutputs.length === 0) {
           throw new Error("No output created");
@@ -786,10 +728,7 @@ export class ManagedStreamingExtension {
         return {
           success: false,
           error: "CLOUDFLARE_ERROR",
-          message:
-            cfError instanceof Error
-              ? cfError.message
-              : "Failed to create output",
+          message: cfError instanceof Error ? cfError.message : "Failed to create output",
         };
       }
     } catch (error) {
@@ -841,9 +780,7 @@ export class ManagedStreamingExtension {
       }
 
       // Find the output
-      const outputIndex = stream.outputs.findIndex(
-        (o) => o.cfOutputId === outputId,
-      );
+      const outputIndex = stream.outputs.findIndex((o) => o.cfOutputId === outputId);
       if (outputIndex === -1) {
         return {
           success: false,
@@ -865,10 +802,7 @@ export class ManagedStreamingExtension {
 
       // Remove from Cloudflare
       try {
-        await this.cloudflareService.deleteOutput(
-          stream.cfLiveInputId,
-          outputId,
-        );
+        await this.cloudflareService.deleteOutput(stream.cfLiveInputId, outputId);
       } catch (cfError) {
         this.logger.error(
           {
@@ -920,9 +854,7 @@ export class ManagedStreamingExtension {
   /**
    * Notify all viewers when outputs change
    */
-  private async notifyOutputsChanged(
-    stream: ManagedStreamState,
-  ): Promise<void> {
+  private async notifyOutputsChanged(stream: ManagedStreamState): Promise<void> {
     const userSession = this.getUserSession(stream.userId);
     if (!userSession) return;
 
@@ -946,20 +878,12 @@ export class ManagedStreamingExtension {
   /**
    * Start polling for playback URLs after stream creation
    */
-  private startPlaybackUrlPolling(
-    userId: string,
-    packageName: string,
-    managedStream: ManagedStreamState,
-  ): void {
+  private startPlaybackUrlPolling(userId: string, packageName: string, managedStream: ManagedStreamState): void {
     const pollInterval = setInterval(async () => {
       try {
         // Check if stream is still active
         const currentStream = this.stateManager.getStreamState(userId);
-        if (
-          !currentStream ||
-          currentStream.type !== "managed" ||
-          currentStream.streamId !== managedStream.streamId
-        ) {
+        if (!currentStream || currentStream.type !== "managed" || currentStream.streamId !== managedStream.streamId) {
           clearInterval(pollInterval);
           return;
         }
@@ -982,9 +906,7 @@ export class ManagedStreamingExtension {
 
         if (isLive) {
           // Now get the actual stream details to retrieve the correct URLs
-          const streamDetails = await this.cloudflareService.getStreamDetails(
-            managedStream.cfLiveInputId,
-          );
+          const streamDetails = await this.cloudflareService.getStreamDetails(managedStream.cfLiveInputId);
 
           let hlsUrl = managedStream.hlsUrl;
           let dashUrl = managedStream.dashUrl;
@@ -1036,10 +958,11 @@ export class ManagedStreamingExtension {
           }
 
           // Get player URL for embedding
-          const playerUrl = this.cloudflareService.getEmbedUrl(
-            managedStream.cfLiveInputId,
-            { autoplay: true, muted: true, controls: true },
-          );
+          const playerUrl = this.cloudflareService.getEmbedUrl(managedStream.cfLiveInputId, {
+            autoplay: true,
+            muted: true,
+            controls: true,
+          });
 
           // Send status update to all apps viewing this stream
           for (const appId of managedStream.activeViewers) {
@@ -1115,10 +1038,7 @@ export class ManagedStreamingExtension {
 
     const appWs = userSession.appWebsockets.get(packageName);
     if (!appWs || appWs.readyState !== WebSocket.OPEN) {
-      this.logger.warn(
-        { packageName },
-        "App WebSocket not available for status update",
-      );
+      this.logger.warn({ packageName }, "App WebSocket not available for status update");
       // Clear last sent status for this app since connection is gone
       const statusKey = `${streamId}:${packageName}`;
       this.lastSentStatus.delete(statusKey);
@@ -1166,8 +1086,7 @@ export class ManagedStreamingExtension {
         lastStatus.dashUrl === statusMessage.dashUrl &&
         lastStatus.webrtcUrl === statusMessage.webrtcUrl &&
         lastStatus.message === statusMessage.message &&
-        JSON.stringify(lastStatus.outputs) ===
-          JSON.stringify(statusMessage.outputs);
+        JSON.stringify(lastStatus.outputs) === JSON.stringify(statusMessage.outputs);
 
       if (isDuplicate) {
         this.logger.debug(
@@ -1208,10 +1127,7 @@ export class ManagedStreamingExtension {
     return UserSession.getById(userId) || undefined;
   }
 
-  private ensureLifecycle(
-    userSession: UserSession,
-    stream: ManagedStreamState,
-  ): StreamLifecycleController {
+  private ensureLifecycle(userSession: UserSession, stream: ManagedStreamState): StreamLifecycleController {
     let lifecycle = this.lifecycleControllers.get(stream.streamId);
     if (lifecycle) {
       return lifecycle;
@@ -1227,13 +1143,10 @@ export class ManagedStreamingExtension {
         keepAliveIntervalMs: KEEP_ALIVE_INTERVAL_MS,
         ackTimeoutMs: ACK_TIMEOUT_MS,
         maxMissedAcks: MAX_MISSED_ACKS,
-        shouldSendKeepAlive: () =>
-          !!userSession.websocket &&
-          userSession.websocket.readyState === WebSocket.OPEN,
+        shouldSendKeepAlive: () => !!userSession.websocket && userSession.websocket.readyState === WebSocket.OPEN,
       },
       {
-        sendKeepAlive: (ackId) =>
-          this.sendKeepAliveMessage(userSession, stream.streamId, ackId),
+        sendKeepAlive: (ackId) => this.sendKeepAliveMessage(userSession, stream.streamId, ackId),
         onTimeout: () => this.onLifecycleTimeout(userSession, stream),
         onKeepAliveSent: (ackId) => {
           this.logger.debug(
@@ -1266,15 +1179,8 @@ export class ManagedStreamingExtension {
     return lifecycle;
   }
 
-  private async sendKeepAliveMessage(
-    userSession: UserSession,
-    streamId: string,
-    ackId: string,
-  ): Promise<void> {
-    if (
-      !userSession.websocket ||
-      userSession.websocket.readyState !== WebSocket.OPEN
-    ) {
+  private async sendKeepAliveMessage(userSession: UserSession, streamId: string, ackId: string): Promise<void> {
+    if (!userSession.websocket || userSession.websocket.readyState !== WebSocket.OPEN) {
       this.logger.warn(
         { streamId, sessionId: userSession.sessionId },
         "Cannot send keep-alive because WebSocket is not open",
@@ -1291,10 +1197,7 @@ export class ManagedStreamingExtension {
     userSession.websocket.send(JSON.stringify(message));
   }
 
-  private async onLifecycleTimeout(
-    userSession: UserSession,
-    stream: ManagedStreamState,
-  ): Promise<void> {
+  private async onLifecycleTimeout(userSession: UserSession, stream: ManagedStreamState): Promise<void> {
     this.logger.error(
       { userId: stream.userId, streamId: stream.streamId },
       "Managed stream timed out after missed keep-alive ACKs",
@@ -1333,10 +1236,7 @@ export class ManagedStreamingExtension {
     stream: ManagedStreamState,
     options?: { status?: ManagedStreamStatus["status"]; message?: string },
   ): Promise<void> {
-    this.logger.info(
-      { userId, streamId: stream.streamId },
-      "Cleaning up managed stream",
-    );
+    this.logger.info({ userId, streamId: stream.streamId }, "Cleaning up managed stream");
 
     this.disposeLifecycle(stream.streamId);
 
@@ -1347,13 +1247,7 @@ export class ManagedStreamingExtension {
     const viewers = Array.from(stream.activeViewers);
     for (const viewerPackage of viewers) {
       try {
-        await this.sendManagedStreamStatus(
-          userSession,
-          viewerPackage,
-          stream.streamId,
-          status,
-          message,
-        );
+        await this.sendManagedStreamStatus(userSession, viewerPackage, stream.streamId, status, message);
       } catch (error) {
         this.logger.warn(
           { streamId: stream.streamId, viewerPackage, error },

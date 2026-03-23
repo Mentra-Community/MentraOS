@@ -1,0 +1,36 @@
+# Available runners configured by board.cmake.
+runners:
+- nrfutil
+- nrfjprog
+- jlink
+
+# Default flash runner if --runner is not given.
+flash-runner: nrfutil
+
+# Default debug runner if --runner is not given.
+debug-runner: jlink
+
+# Common runner configuration values.
+config:
+  board_dir: /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk
+  # Build outputs:
+  elf_file: zephyr.elf
+  hex_file: zephyr.hex
+  bin_file: zephyr.bin
+  # Host tools:
+  gdb: /opt/nordic/ncs/toolchains/ef4fc6722e/opt/zephyr-sdk/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb
+  openocd: /opt/homebrew/bin/openocd
+  openocd_search:
+    - /opt/nordic/ncs/toolchains/ef4fc6722e/opt/zephyr-sdk/sysroots/arm64-pokysdk-linux/usr/share/openocd/scripts
+
+# Runner specific arguments
+args:
+  nrfutil:
+    - --ext-mem-config-file=/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/support/nrf5340dk_qspi_nrfutil_config.json
+  nrfjprog:
+    []
+
+  jlink:
+    - --dt-flash=y
+    - --device=nrf5340_xxaa_app
+    - --speed=4000

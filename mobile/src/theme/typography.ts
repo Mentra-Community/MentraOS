@@ -14,21 +14,21 @@ import {
   // RedHatDisplay_500Medium_Italic as redHatDisplayMediumItalic,
   // RedHatDisplay_600SemiBold_Italic as redHatDisplaySemiBoldItalic,
 } from "@expo-google-fonts/red-hat-display"
-import {
-  SpaceGrotesk_300Light as spaceGroteskLight,
-  SpaceGrotesk_400Regular as spaceGroteskRegular,
-  SpaceGrotesk_500Medium as spaceGroteskMedium,
-  SpaceGrotesk_600SemiBold as spaceGroteskSemiBold,
-  SpaceGrotesk_700Bold as spaceGroteskBold,
-} from "@expo-google-fonts/space-grotesk"
+// import {
+//   SpaceGrotesk_300Light as spaceGroteskLight,
+//   SpaceGrotesk_400Regular as spaceGroteskRegular,
+//   SpaceGrotesk_500Medium as spaceGroteskMedium,
+//   SpaceGrotesk_600SemiBold as spaceGroteskSemiBold,
+//   SpaceGrotesk_700Bold as spaceGroteskBold,
+// } from "@expo-google-fonts/space-grotesk"
 import {Platform} from "react-native"
 
 export const customFontsToLoad = {
-  spaceGroteskLight,
-  spaceGroteskRegular,
-  spaceGroteskMedium,
-  spaceGroteskSemiBold,
-  spaceGroteskBold,
+  // spaceGroteskLight,
+  // spaceGroteskRegular,
+  // spaceGroteskMedium,
+  // spaceGroteskSemiBold,
+  // spaceGroteskBold,
   glassesMirror: require("@assets/fonts/glassesmirror.ttf"),
   tablerIcons: require("@assets/icons/tabler/tabler-icons.ttf"),
   redHatDisplayLight,
@@ -43,14 +43,14 @@ export const customFontsToLoad = {
 }
 
 const fonts = {
-  spaceGrotesk: {
-    // Cross-platform Google font.
-    light: "spaceGroteskLight",
-    normal: "spaceGroteskRegular",
-    medium: "spaceGroteskMedium",
-    semibold: "spaceGroteskSemiBold",
-    bold: "spaceGroteskBold",
-  },
+  // spaceGrotesk: {
+  //   // Cross-platform Google font.
+  //   light: "spaceGroteskLight",
+  //   normal: "spaceGroteskRegular",
+  //   medium: "spaceGroteskMedium",
+  //   semibold: "spaceGroteskSemiBold",
+  //   bold: "spaceGroteskBold",
+  // },
   sfProRounded: {
     // SF Pro Rounded - the cool robot font
     light: Platform.select({ios: "SF Pro Rounded", android: "sans-serif-light"}),
@@ -106,7 +106,7 @@ export const typography = {
   /**
    * An alternate font used for perhaps titles and stuff.
    */
-  secondary: fonts.spaceGrotesk,
+  // secondary: fonts.spaceGrotesk,
   /**
    * Lets get fancy with a monospace font!
    */

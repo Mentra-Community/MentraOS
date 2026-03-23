@@ -26,7 +26,7 @@ function createToken(
 
 **Parameters:**
 - `payload`: The data to include in the token payload (excluding auto-generated fields)
-- `config`: [Configuration](/reference/token-utils#tokenconfig) containing the secret key and optional expiration
+- `config`: [Configuration](/app-devs/reference/token-utils#tokenconfig) containing the secret key and optional expiration
 
 **Returns:** The signed JWT token string
 
@@ -168,7 +168,7 @@ interface TokenConfig {
 
 ## Token Usage in AppServer
 
-The [`AppServer`](/reference/app-server) class includes a protected method for generating tokens:
+The [`AppServer`](/app-devs/reference/app-server) class includes a protected method for generating tokens:
 
 ```typescript
 protected generateToken(
@@ -178,7 +178,7 @@ protected generateToken(
 ): string
 ```
 
-This method is available when you extend the [`AppServer`](/reference/app-server) class and is useful for generating tokens within webhook handlers.
+This method is available when you extend the [`AppServer`](/app-devs/reference/app-server) class and is useful for generating tokens within webhook handlers.
 
 ## Common Token Usage Patterns
 

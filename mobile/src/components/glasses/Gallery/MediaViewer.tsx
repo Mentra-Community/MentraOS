@@ -13,7 +13,7 @@ interface MediaViewerProps {
   photos?: PhotoInfo[] // Array of all photos for swiping
   initialIndex?: number // Starting index in photos array
   onClose: () => void
-  onShare?: () => void
+  onShare?: (photo: PhotoInfo) => void
   onDelete?: () => void
 }
 

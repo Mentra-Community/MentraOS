@@ -1,0 +1,50 @@
+@import "tailwindcss";
+@import "./styles/theme.css";
+
+/* Photo appear animation */
+@keyframes photo-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.animate-photo-in {
+  animation: photo-appear 0.4s ease-out forwards;
+}
+
+/* Slide down for new items */
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-slide-down {
+  animation: slide-down 0.3s ease-out forwards;
+}
+
+/* Shimmer animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+.animate-shimmer {
+  animation: shimmer 2s linear infinite;
+}
+
+/* Safe area for bottom navigation */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}

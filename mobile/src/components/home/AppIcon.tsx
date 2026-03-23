@@ -7,7 +7,6 @@ import {withUniwind} from "uniwind"
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ClientAppletInterface} from "@/stores/applets"
-import {SETTINGS, useSetting} from "@/stores/settings"
 
 // Helper to extract style properties for width/height override
 const extractStyleProps = (style: StyleProp<ViewStyle>): Partial<ViewStyle> => {
@@ -23,22 +22,22 @@ interface AppIconProps {
   app: ClientAppletInterface
   onClick?: () => void
   style?: StyleProp<ViewStyle>
+  disableLoader?: boolean
 }
 
-const AppIcon = ({app, onClick, style}: AppIconProps) => {
+const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   const {theme} = useAppTheme()
-  const [enableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const WrapperComponent = onClick ? TouchableOpacity : View
   const flatStyle = extractStyleProps(style)
 
   const iconSize = {
     width: flatStyle?.width ?? 64,
     height: flatStyle?.height ?? 64,
-    borderRadius: flatStyle?.borderRadius ?? theme.spacing.s4,
+    borderRadius: flatStyle?.borderRadius ?? theme.spacing.s3,
   }
 
   return (
-    <View className="items-center">
+    <View className={`items-center ${app.compatibility?.isCompatible ? "" : "opacity-50"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
@@ -46,50 +45,28 @@ const AppIcon = ({app, onClick, style}: AppIconProps) => {
         accessibilityLabel={onClick ? `Launch ${app.name}` : undefined}
         accessibilityRole={onClick ? "button" : undefined}
         className="overflow-hidden">
-        {enableSquircles ? (
-          <SquircleView
-            cornerSmoothing={100}
-            preserveSmoothing={true}
-            style={{
-              overflow: "hidden",
-              alignItems: "center",
-              justifyContent: "center",
-              ...iconSize,
-            }}>
-            {app.loading && (
-              <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
-                <ActivityIndicator size="large" color={theme.colors.palette.white} />
-              </View>
-            )}
-            <Image
-              source={app.logoUrl}
-              style={{width: "100%", height: "100%", resizeMode: "cover"}}
-              contentFit="cover"
-              transition={200}
-              cachePolicy="memory-disk"
-            />
-          </SquircleView>
-        ) : (
-          <>
-            {app.loading && (
-              <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
-                <ActivityIndicator size="large" color={theme.colors.palette.white} />
-              </View>
-            )}
-            <Image
-              source={app.logoUrl}
-              style={{
-                borderRadius: 60,
-                width: flatStyle?.width ?? 64,
-                height: flatStyle?.height ?? 64,
-                resizeMode: "cover",
-              }}
-              contentFit="cover"
-              transition={200}
-              cachePolicy="memory-disk"
-            />
-          </>
-        )}
+        <SquircleView
+          cornerSmoothing={100}
+          preserveSmoothing={true}
+          style={{
+            overflow: "hidden",
+            alignItems: "center",
+            justifyContent: "center",
+            ...iconSize,
+          }}>
+          {app.loading && !disableLoader && (
+            <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
+              <ActivityIndicator size="large" color={theme.colors.palette.white} />
+            </View>
+          )}
+          <Image
+            source={app.logoUrl}
+            style={{width: "100%", height: "100%", resizeMode: "cover"}}
+            contentFit="cover"
+            transition={200}
+            cachePolicy="memory-disk"
+          />
+        </SquircleView>
       </WrapperComponent>
       {!app.healthy && (
         <View className="absolute -right-1 -top-1 bg-primary-foreground border-primary-foreground border-1 rounded-full">

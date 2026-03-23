@@ -132,10 +132,26 @@ async function resolveOrgForWrite(user: UserI, opts?: { orgId?: string }): Promi
   }
   // Mandatory bootstrap if user has no orgs/defaultOrg
   const personalOrgId = await OrganizationService.createPersonalOrg(user);
+
+  // Use atomic $addToSet + $set instead of user.save() to avoid
+  // Mongoose VersionError when concurrent requests (findOrCreateUser,
+  // getConsoleAccount, validateSupabaseToken) modify the same user
+  // document simultaneously.
+  await User.updateOne(
+    { _id: user._id },
+    {
+      $addToSet: { organizations: personalOrgId },
+      $set: { defaultOrg: personalOrgId },
+    },
+  );
+
+  // Update the in-memory object so downstream code sees the change
   if (!user.organizations) user.organizations = [];
-  user.organizations.push(personalOrgId);
+  if (!user.organizations.some((id: any) => id.toString() === personalOrgId.toString())) {
+    user.organizations.push(personalOrgId);
+  }
   user.defaultOrg = personalOrgId;
-  await user.save();
+
   return personalOrgId;
 }
 

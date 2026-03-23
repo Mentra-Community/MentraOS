@@ -271,17 +271,30 @@ export class SubscriptionManager {
       if (app) {
         const { allowed, rejected } = SimplePermissionChecker.filterSubscriptions(app, processed);
         if (rejected.length > 0) {
-          this.logger.warn(
+          // Log at error level — a rejected subscription is a data-loss event.
+          // Include the app's actual permissions so we can diagnose *why* it was
+          // rejected without needing to query the DB separately. (Fix 044-1)
+          this.logger.error(
             {
               userId: this.userSession.userId,
               packageName,
               rejectedCount: rejected.length,
               rejected,
+              appPermissions: app.permissions?.map((p: { type: string }) => p.type) ?? [],
+              requestedSubscriptions: processed,
             },
-            "Rejected subscriptions due to missing permissions",
+            "Rejected subscriptions due to missing permissions — app data stream interrupted",
           );
         }
         allowedProcessed = allowed;
+      } else {
+        // App document not found in DB — allow all subscriptions but log it.
+        // This can happen if an app connects before its manifest is registered,
+        // or if the App collection is out of sync with the running apps.
+        this.logger.warn(
+          { packageName, userId: this.userSession.userId },
+          "App document not found in DB during permission check — allowing all requested subscriptions",
+        );
       }
     } catch (error) {
       this.logger.error({ packageName, error }, "Error validating subscriptions; continuing with all requested");

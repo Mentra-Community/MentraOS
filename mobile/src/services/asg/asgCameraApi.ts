@@ -5,7 +5,8 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
-import {PhotoInfo, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
+import {PhotoInfo, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
+import {BackgroundTimer} from "@/utils/timers"
 
 import {localStorageService} from "./localStorageService"
 
@@ -24,7 +25,7 @@ export class AsgCameraApiClient {
 
   private createTimeoutSignal(timeoutMs: number): AbortSignal {
     const controller = new AbortController()
-    setTimeout(() => controller.abort(), timeoutMs)
+    BackgroundTimer.setTimeout(() => controller.abort(), timeoutMs)
     return controller.signal
   }
 
@@ -68,7 +69,7 @@ export class AsgCameraApiClient {
     if (timeSinceLastRequest < minDelay) {
       const delay = minDelay - timeSinceLastRequest
       console.log(`[ASG Camera API] Rate limiting: waiting ${delay}ms`)
-      await new Promise((resolve) => setTimeout(resolve, delay))
+      await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, delay))
     }
 
     this.lastRequestTime = Date.now()
@@ -115,9 +116,11 @@ export class AsgCameraApiClient {
       console.log(`[ASG Camera API] Making fetch request to: ${url}`)
       console.log(`[ASG Camera API] Headers being sent:`, headers)
 
+      // N4: Add 30s timeout to all fetch calls in makeRequest
       const response = await fetch(url, {
         headers,
         ...options,
+        signal: options?.signal || this.createTimeoutSignal(30000),
       })
 
       const duration = Date.now() - startTime
@@ -134,9 +137,10 @@ export class AsgCameraApiClient {
 
         // Handle rate limiting with retry
         if (response.status === 429 && retries > 0) {
-          const retryDelay = Math.pow(2, 6 - retries) * 1000 // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+          // N3: Cap individual retry delay at 10s
+          const retryDelay = Math.min(Math.pow(2, 6 - retries) * 1000, 10000)
           console.log(`[ASG Camera API] Rate limited, retrying in ${retryDelay}ms (${retries} retries left)`)
-          await new Promise((resolve) => setTimeout(resolve, retryDelay))
+          await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, retryDelay))
           return this.makeRequest<T>(endpoint, options, retries - 1)
         }
 
@@ -510,14 +514,14 @@ export class AsgCameraApiClient {
       console.log(`[ASG Camera API] Checking server reachability...`)
       // Use a simple HEAD request to check reachability
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 3000) // 3 second timeout
+      const timeoutId = BackgroundTimer.setTimeout(() => controller.abort(), 3000) // 3 second timeout
 
       const response = await fetch(`${this.baseUrl}/api/health`, {
         method: "HEAD",
         signal: controller.signal,
       })
 
-      clearTimeout(timeoutId)
+      BackgroundTimer.clearTimeout(timeoutId)
       console.log(`[ASG Camera API] Server is reachable`)
       return response.ok
     } catch (error) {
@@ -561,7 +565,9 @@ export class AsgCameraApiClient {
   ): Promise<{
     status: string
     data: {
+      api_version?: number
       client_id: string
+      captures?: CaptureGroup[]
       changed_files: PhotoInfo[]
       deleted_files: string[]
       server_time: number
@@ -585,7 +591,9 @@ export class AsgCameraApiClient {
     return response as {
       status: string
       data: {
+        api_version?: number
         client_id: string
+        captures?: CaptureGroup[]
         changed_files: PhotoInfo[]
         deleted_files: string[]
         server_time: number
@@ -596,7 +604,9 @@ export class AsgCameraApiClient {
   }
 
   /**
-   * Batch sync files from server with controlled concurrency
+   * Batch sync files from server with controlled concurrency.
+   * Used by the legacy executeDownload path for old asg_client firmware
+   * that doesn't send api_version=2.
    */
   async batchSyncFiles(
     files: PhotoInfo[],
@@ -608,6 +618,7 @@ export class AsgCameraApiClient {
       fileProgress?: number,
       downloadedFile?: PhotoInfo,
     ) => void,
+    abortSignal?: AbortSignal,
   ): Promise<{
     downloaded: PhotoInfo[]
     failed: string[]
@@ -621,8 +632,7 @@ export class AsgCameraApiClient {
 
     // Process files in parallel batches for better performance
     // Use controlled concurrency to avoid overwhelming the network
-    const CONCURRENCY_LIMIT = 1 // Process 3 files simultaneously
-    const deletePromises: Promise<void>[] = [] // Track delete operations for cleanup
+    const CONCURRENCY_LIMIT = 1
 
     // Process files in batches
     for (let i = 0; i < files.length; i += CONCURRENCY_LIMIT) {
@@ -644,11 +654,16 @@ export class AsgCameraApiClient {
           console.log(`[ASG Camera API] Downloading file ${globalIndex + 1}/${files.length}: ${file.name}`)
 
           // Download file with progress tracking
-          const fileData = await this.downloadFile(file.name, includeThumbnails, (fileProgress) => {
-            if (onProgress) {
-              onProgress(globalIndex + 1, files.length, file.name, fileProgress)
-            }
-          })
+          const fileData = await this.downloadFile(
+            file.name,
+            includeThumbnails,
+            (fileProgress) => {
+              if (onProgress) {
+                onProgress(globalIndex + 1, files.length, file.name, fileProgress)
+              }
+            },
+            abortSignal,
+          )
 
           // Combine file info with downloaded file paths
           const downloadedFile = {
@@ -665,24 +680,15 @@ export class AsgCameraApiClient {
             onProgress(globalIndex + 1, files.length, file.name, 100, downloadedFile)
           }
 
-          // Schedule delete operation (non-blocking)
-          const deletePromise = this.deleteFilesFromServer([file.name])
-            .then((deleteResult) => {
-              if (deleteResult.deleted.length > 0) {
-                console.log(`[ASG Camera API] Successfully deleted ${file.name} from glasses`)
-              } else if (deleteResult.failed.length > 0) {
-                console.warn(`[ASG Camera API] Failed to delete ${file.name} from glasses, but keeping downloaded file`)
-              }
-            })
-            .catch((deleteError) => {
-              // Log the error but don't fail the sync - the file was downloaded successfully
-              console.warn(`[ASG Camera API] Error deleting ${file.name} from glasses (non-fatal):`, deleteError)
-            })
-
-          deletePromises.push(deletePromise)
+          // Don't delete from glasses here — deletion is deferred until after
+          // processing completes (in mediaProcessingQueue) to avoid data loss on crash.
 
           return {downloadedFile, fileSize: file.size}
-        } catch (error) {
+        } catch (error: any) {
+          // Re-throw cancellation so it terminates the entire batch
+          if (error?.message === "Sync cancelled") {
+            throw error
+          }
           console.error(`[ASG Camera API] Failed to download ${file.name}:`, error)
           return {error: file.name}
         }
@@ -704,19 +710,149 @@ export class AsgCameraApiClient {
       // Small delay between batches to prevent overwhelming the server
       if (i + CONCURRENCY_LIMIT < files.length) {
         console.log(`[ASG Camera API] Waiting 300ms between batches`)
-        await new Promise((resolve) => setTimeout(resolve, 300))
+        await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 300))
       }
     }
-
-    // Wait for all delete operations to complete (non-blocking for sync completion)
-    Promise.all(deletePromises).catch((error) => {
-      console.warn(`[ASG Camera API] Some delete operations failed:`, error)
-    })
 
     console.log(
       `[ASG Camera API] Batch sync completed: ${results.downloaded.length} downloaded, ${results.failed.length} failed`,
     )
     return results
+  }
+
+  /**
+   * Download all files in a capture group sequentially.
+   * Reports aggregate byte progress across all files in the group.
+   */
+  async downloadCapture(
+    capture: CaptureGroup,
+    onProgress?: (bytesDownloaded: number, totalBytes: number) => void,
+    abortSignal?: AbortSignal,
+  ): Promise<{captureDir: string; primaryPath: string; bracketPaths: string[]; sidecarPath?: string}> {
+    const captureDir = localStorageService.getPhotoFilePath(capture.capture_id)
+    console.log(`[ASG Camera API] downloadCapture: ${capture.capture_id} (${capture.files.length} files) -> ${captureDir}`)
+
+    // Ensure capture directory exists
+    const dirExists = await RNFS.exists(captureDir)
+    if (!dirExists) {
+      await RNFS.mkdir(captureDir)
+      console.log(`[ASG Camera API] downloadCapture: created dir ${captureDir}`)
+    }
+
+    let primaryPath = ""
+    const bracketPaths: string[] = []
+    let sidecarPath: string | undefined
+
+    let totalBytesDownloaded = 0
+    const totalBytes = capture.total_size
+
+    // Sort files: brackets first, then primary, then sidecar
+    // This ensures brackets are available before merge runs on the primary
+    const sortedFiles = [...capture.files].sort((a, b) => {
+      const order = {bracket: 0, primary: 1, sidecar: 2}
+      return (order[a.role] ?? 1) - (order[b.role] ?? 1)
+    })
+
+    for (const file of sortedFiles) {
+      // Derive local filename: use leaf of path if folder-based, otherwise full name
+      const leafName = file.name.includes("/") ? file.name.split("/").pop()! : file.name
+      const localFilePath = `${captureDir}/${leafName}`
+
+      const isVideo = file.name.match(/\.(mp4|mov|avi|webm|mkv)$/i)
+      const downloadEndpoint = isVideo ? "download" : "photo"
+      const downloadUrl = `${this.baseUrl}/api/${downloadEndpoint}?file=${encodeURIComponent(file.name)}`
+
+      console.log(`[ASG Camera API] downloadCapture: downloading ${file.name} (${file.role}) -> ${localFilePath}`)
+
+      try {
+        // Throttle progress: only fire when bytesWritten changes meaningfully
+        let lastReportedBytes = -1
+        const {jobId, promise: dlPromise} = RNFS.downloadFile({
+          fromUrl: downloadUrl,
+          toFile: localFilePath,
+          headers: {
+            Accept: "*/*",
+            "User-Agent": "MentraOS-Mobile/1.0",
+          },
+          connectionTimeout: 300000,
+          readTimeout: 300000,
+          backgroundTimeout: 600000,
+          progressDivider: 5,
+          progressInterval: 250,
+          progress: (res: {bytesWritten: number}) => {
+            const currentBytes = totalBytesDownloaded + (res.bytesWritten || 0)
+            if (onProgress && currentBytes !== lastReportedBytes) {
+              lastReportedBytes = currentBytes
+              onProgress(currentBytes, totalBytes)
+            }
+          },
+        })
+
+        // Wire up abort signal via polling (safe for all Hermes versions)
+        let abortPollTimer: number | undefined
+        if (abortSignal) {
+          if (abortSignal.aborted) {
+            RNFS.stopDownload(jobId)
+            throw new Error("Sync cancelled")
+          }
+          abortPollTimer = BackgroundTimer.setInterval(() => {
+            if (abortSignal.aborted) {
+              RNFS.stopDownload(jobId)
+            }
+          }, 500)
+        }
+
+        let downloadResult
+        try {
+          downloadResult = await dlPromise
+        } finally {
+          if (abortPollTimer !== undefined) BackgroundTimer.clearInterval(abortPollTimer)
+        }
+
+        if (downloadResult.statusCode !== 200) {
+          await RNFS.unlink(localFilePath).catch(() => {})
+          throw new Error(`HTTP ${downloadResult.statusCode}`)
+        }
+
+        // Check if aborted after completion
+        if (abortSignal?.aborted) {
+          await RNFS.unlink(localFilePath).catch(() => {})
+          throw new Error("Sync cancelled")
+        }
+
+        console.log(`[ASG Camera API] downloadCapture: completed ${file.name} (${file.size} bytes)`)
+      } catch (dlErr: any) {
+        // S2: Clean up partial file on failure
+        await RNFS.unlink(localFilePath).catch(() => {})
+        const errMsg = dlErr?.message || dlErr?.toString?.() || JSON.stringify(dlErr)
+        console.error(`[ASG Camera API] downloadCapture: FAILED ${file.name}: ${errMsg}`)
+        throw new Error(`Failed to download ${file.name}: ${errMsg}`)
+      }
+
+      totalBytesDownloaded += file.size
+
+      if (file.role === "primary") {
+        primaryPath = localFilePath
+      } else if (file.role === "bracket") {
+        bracketPaths.push(localFilePath)
+      } else if (file.role === "sidecar") {
+        sidecarPath = localFilePath
+      }
+    }
+
+    // C3: If no file was marked as primary, fall back to first downloaded file
+    if (primaryPath === "" && sortedFiles.length > 0) {
+      const leafName = sortedFiles[0].name.includes("/") ? sortedFiles[0].name.split("/").pop()! : sortedFiles[0].name
+      primaryPath = `${captureDir}/${leafName}`
+      console.warn(`[ASG Camera API] downloadCapture: No primary file found, falling back to ${primaryPath}`)
+    }
+
+    // Report final progress
+    if (onProgress) {
+      onProgress(totalBytes, totalBytes)
+    }
+
+    return {captureDir, primaryPath, bracketPaths, sidecarPath}
   }
 
   /**
@@ -790,6 +926,7 @@ export class AsgCameraApiClient {
     filename: string,
     includeThumbnail: boolean = false,
     onProgress?: (progress: number) => void,
+    abortSignal?: AbortSignal,
   ): Promise<{
     filePath: string
     thumbnailPath?: string
@@ -802,6 +939,15 @@ export class AsgCameraApiClient {
       const localFilePath = localStorageService.getPhotoFilePath(filename)
       const localThumbnailPath = includeThumbnail ? localStorageService.getThumbnailFilePath(filename) : undefined
 
+      // Ensure parent directory exists (for folder-based capture paths like IMG_xxx/base.jpg)
+      if (filename.includes("/")) {
+        const parentDir = localFilePath.substring(0, localFilePath.lastIndexOf("/"))
+        const parentExists = await RNFS.exists(parentDir)
+        if (!parentExists) {
+          await RNFS.mkdir(parentDir)
+        }
+      }
+
       // Determine if this is a video file based on extension
       const isVideo = filename.match(/\.(mp4|mov|avi|webm|mkv)$/i)
 
@@ -813,7 +959,12 @@ export class AsgCameraApiClient {
       console.log(`[ASG Camera API] Downloading ${isVideo ? "video" : "photo"} from: ${downloadUrl}`)
       console.log(`[ASG Camera API] Saving to: ${localFilePath}`)
 
-      const downloadResult = await RNFS.downloadFile({
+      // Track content length from begin callback for post-download validation
+      let expectedContentLength = 0
+      // Throttle progress: only call onProgress when percentage actually changes
+      let lastReportedProgress = -1
+
+      const {jobId, promise: downloadPromise} = RNFS.downloadFile({
         fromUrl: downloadUrl,
         toFile: localFilePath,
         headers: {
@@ -823,9 +974,10 @@ export class AsgCameraApiClient {
         connectionTimeout: 300000, // 5 minutes for connection establishment
         readTimeout: 300000, // 5 minutes for data reading
         backgroundTimeout: 600000, // 10 minutes for background downloads (iOS)
-        progressDivider: 1, // Get progress updates every 1% instead of 10%
+        progressDivider: 5, // Fire progress every 5% to reduce event frequency
         progressInterval: 250, // Update progress every 250ms max
         begin: (res) => {
+          expectedContentLength = res.contentLength || 0
           console.log(`[ASG Camera API] Download started for ${filename}, size: ${res.contentLength}`)
         },
         progress: (res) => {
@@ -840,21 +992,67 @@ export class AsgCameraApiClient {
             percentage = Math.max(0, Math.min(100, percentage))
           }
 
-          // Call the progress callback if provided - now reports all progress
-          if (onProgress) {
+          // Only call onProgress when percentage actually changes (throttle)
+          if (onProgress && percentage !== lastReportedProgress) {
+            lastReportedProgress = percentage
             onProgress(percentage)
           }
 
-          // Log less frequently to avoid spam, but UI gets all updates
+          // Log every 10%
           if (percentage % 10 === 0) {
-            // Log every 10%
             console.log(`[ASG Camera API] Download progress ${filename}: ${percentage}%`)
           }
         },
-      }).promise
+      })
+
+      // Wire up abort signal to stop download via polling (safe for all Hermes versions)
+      let abortPollTimer: number | undefined
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          RNFS.stopDownload(jobId)
+          throw new Error("Sync cancelled")
+        }
+        abortPollTimer = BackgroundTimer.setInterval(() => {
+          if (abortSignal.aborted) {
+            RNFS.stopDownload(jobId)
+          }
+        }, 500)
+      }
+
+      let downloadResult
+      try {
+        downloadResult = await downloadPromise
+      } finally {
+        if (abortPollTimer !== undefined) BackgroundTimer.clearInterval(abortPollTimer)
+      }
 
       if (downloadResult.statusCode !== 200) {
+        // S2: Clean up partial file on HTTP error
+        await RNFS.unlink(localFilePath).catch(() => {})
         throw new Error(`Failed to download ${filename}: HTTP ${downloadResult.statusCode}`)
+      }
+
+      // Check if download was aborted after completion
+      if (abortSignal?.aborted) {
+        await RNFS.unlink(localFilePath).catch(() => {})
+        throw new Error("Sync cancelled")
+      }
+
+      // N1: Validate file size after download
+      if (expectedContentLength > 0) {
+        try {
+          const stat = await RNFS.stat(localFilePath)
+          if (stat.size !== expectedContentLength) {
+            console.error(
+              `[ASG Camera API] File size mismatch for ${filename}: expected ${expectedContentLength}, got ${stat.size}`,
+            )
+            await RNFS.unlink(localFilePath).catch(() => {})
+            throw new Error(`File size mismatch for ${filename}: expected ${expectedContentLength}, got ${stat.size}`)
+          }
+        } catch (statError: any) {
+          if (statError?.message?.includes("File size mismatch")) throw statError
+          console.warn(`[ASG Camera API] Could not validate file size for ${filename}:`, statError)
+        }
       }
 
       console.log(`[ASG Camera API] Successfully downloaded ${filename} to filesystem`)
@@ -956,6 +1154,9 @@ export class AsgCameraApiClient {
       }
     } catch (error) {
       console.error(`[ASG Camera API] Error downloading file ${filename}:`, error)
+      // S2: Clean up partial file on any failure
+      const localFilePath = localStorageService.getPhotoFilePath(filename)
+      await RNFS.unlink(localFilePath).catch(() => {})
       throw error
     }
   }

@@ -1,0 +1,37 @@
+# Local development scripts - don't push to GitHub
+quick_*.sh
+
+# Build artifacts
+build/
+*.hex
+*.bin
+*.elf
+
+# IDE and editor files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# VS Code workspace files (keep these local to avoid branch switching issues)
+*.code-workspace
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Local configuration
+local_config.h
+
+# MCUboot signing key (do not commit)
+sysbuild/private.pem

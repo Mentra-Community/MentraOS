@@ -41,6 +41,7 @@ const initialState: GlassesStore = {
   micEnabled: false,
   connectionState: "disconnected",
   btcConnected: false,
+  signalStrength: -1,
   // device info
   deviceModel: "",
   androidVersion: "",
@@ -76,6 +77,11 @@ const initialState: GlassesStore = {
   otaProgress: null,
   otaInProgress: false,
   mtkUpdatedThisSession: false,
+  // ring:
+  controllerConnected: false,
+  controllerFullyBooted: false,
+  controllerBatteryLevel: -1,
+  controllerSignalStrength: -1,
 }
 
 export const useGlassesStore = create<GlassesState>()(
@@ -120,11 +126,22 @@ export const useGlassesStore = create<GlassesState>()(
     setOtaUpdateAvailable: (info: OtaUpdateInfo | null) => set({otaUpdateAvailable: info}),
 
     setOtaProgress: (progress: OtaProgress | null) =>
-      set((_state) => {
-        // Auto-detect otaInProgress from status
+      set((state) => {
         const otaInProgress = progress !== null && progress.status !== "FINISHED" && progress.status !== "FAILED"
         console.log("🔍 GLASSES STORE: setOtaProgress called with:", JSON.stringify(progress))
         console.log("🔍 GLASSES STORE: otaInProgress =", otaInProgress)
+
+        // Never allow progress to regress within the same stage+currentUpdate
+        if (
+          progress &&
+          state.otaProgress &&
+          progress.stage === state.otaProgress.stage &&
+          progress.currentUpdate === state.otaProgress.currentUpdate &&
+          progress.progress < state.otaProgress.progress
+        ) {
+          return {otaProgress: {...progress, progress: state.otaProgress.progress}, otaInProgress}
+        }
+
         return {otaProgress: progress, otaInProgress}
       }),
 

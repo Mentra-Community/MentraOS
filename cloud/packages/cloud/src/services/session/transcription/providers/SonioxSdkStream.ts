@@ -101,6 +101,26 @@ export class SonioxSdkStream implements StreamInstance {
   // Track last emitted interim text to avoid duplicate callbacks.
   private lastEmittedInterimText = "";
 
+  // ── Auto-pause / keepalive (Fix 044-3) ──────────────────────────────
+  // When Mentra Live glasses' hardware VAD suppresses audio during silence,
+  // the cloud stops sending audio to Soniox but the stream stays open.
+  // Without keepalive, Soniox times out after ~20s → 408 → full teardown.
+  //
+  // The Soniox SDK provides session.pause() which:
+  //   1. Auto-finalizes pending tokens (so new speech starts fresh)
+  //   2. Auto-sends keepalive messages (preventing 408 timeout)
+  //   3. Drops any audio sent while paused (so we must resume before sending)
+  //
+  // We detect audio gaps (2s of silence) and pause the session. On the next
+  // writeAudio() call, we resume before sending the audio chunk.
+  private gapCheckInterval: NodeJS.Timeout | null = null;
+  private lastAudioWriteTime: number = Date.now();
+  private pausedForGap = false;
+
+  // Gap detection configuration
+  private static readonly GAP_CHECK_INTERVAL_MS = 1000; // Check every 1s
+  private static readonly AUDIO_GAP_THRESHOLD_MS = 2000; // 2s of no audio → pause
+
   // ── Stable-prefix accumulation ──────────────────────────────────────
   // The SDK's rolling window compacts (prunes) finalized tokens mid-
   // utterance, causing result.tokens to lose earlier text. To prevent
@@ -200,6 +220,9 @@ export class SonioxSdkStream implements StreamInstance {
         "✅ Soniox SDK stream connected and ready",
       );
 
+      // Start gap detection that auto-pauses during silence (Fix 044-3)
+      this.startGapDetection();
+
       this.callbacks.onReady?.();
     });
 
@@ -213,6 +236,7 @@ export class SonioxSdkStream implements StreamInstance {
 
   async writeAudio(data: ArrayBuffer): Promise<boolean> {
     this.lastActivity = Date.now();
+    this.lastAudioWriteTime = Date.now();
     this.metrics.audioChunksReceived++;
 
     if (this.state !== StreamState.READY && this.state !== StreamState.ACTIVE) {
@@ -223,6 +247,23 @@ export class SonioxSdkStream implements StreamInstance {
     if (this.session.state !== "connected") {
       this.metrics.audioDroppedCount++;
       return false;
+    }
+
+    // Resume from auto-pause before sending audio (Fix 044-3).
+    // The SDK drops audio while paused, so we MUST resume first.
+    if (this.pausedForGap) {
+      try {
+        this.session.resume();
+        this.pausedForGap = false;
+        // Reset utterance tracking so new speech starts clean
+        this.stablePrefixText = "";
+        this.prevWindowFinalLen = 0;
+        this.lastEmittedInterimText = "";
+        this.logger.debug({ streamId: this.id }, "Resumed Soniox session — audio incoming after gap");
+      } catch (error) {
+        this.logger.warn({ error, streamId: this.id }, "Error resuming Soniox session after gap");
+        // Continue anyway — sendAudio might still work
+      }
     }
 
     try {
@@ -275,10 +316,66 @@ export class SonioxSdkStream implements StreamInstance {
     }
   }
 
+  /**
+   * Start the gap detection interval that auto-pauses the Soniox session
+   * when no audio has arrived for AUDIO_GAP_THRESHOLD_MS. The SDK's pause()
+   * handles keepalive and finalization automatically. (Fix 044-3)
+   *
+   * On the next writeAudio() call, the session is resumed before sending.
+   */
+  private startGapDetection(): void {
+    this.stopGapDetection();
+    this.lastAudioWriteTime = Date.now();
+    this.pausedForGap = false;
+
+    this.gapCheckInterval = setInterval(() => {
+      if (this.disposed || (this.state !== StreamState.READY && this.state !== StreamState.ACTIVE)) {
+        return;
+      }
+
+      if (this.session.state !== "connected") {
+        return;
+      }
+
+      // Already paused — SDK is sending keepalive automatically, nothing to do
+      if (this.pausedForGap) {
+        return;
+      }
+
+      const silenceDuration = Date.now() - this.lastAudioWriteTime;
+
+      if (silenceDuration >= SonioxSdkStream.AUDIO_GAP_THRESHOLD_MS) {
+        try {
+          this.session.pause();
+          this.pausedForGap = true;
+          this.logger.debug(
+            { streamId: this.id, silenceDuration },
+            "Auto-paused Soniox session — no audio for 2s (SDK handles keepalive + finalize)",
+          );
+        } catch (error) {
+          this.logger.warn({ error, streamId: this.id }, "Error pausing Soniox session for gap");
+        }
+      }
+    }, SonioxSdkStream.GAP_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the gap detection interval.
+   */
+  private stopGapDetection(): void {
+    if (this.gapCheckInterval) {
+      clearInterval(this.gapCheckInterval);
+      this.gapCheckInterval = null;
+    }
+  }
+
   async close(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
     this.state = StreamState.CLOSING;
+
+    // Stop gap detection interval (Fix 044-3)
+    this.stopGapDetection();
 
     try {
       // Graceful shutdown: finish() waits for remaining results, then closes.
@@ -545,6 +642,7 @@ export class SonioxSdkStream implements StreamInstance {
   }
 
   private handleError(error: Error): void {
+    this.stopGapDetection(); // Clean up gap detection on error (Fix 044-3)
     this.state = StreamState.ERROR;
     this.lastError = error;
     this.metrics.errorCount++;

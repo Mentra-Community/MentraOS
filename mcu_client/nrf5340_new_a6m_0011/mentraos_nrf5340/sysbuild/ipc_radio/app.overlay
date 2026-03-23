@@ -1,0 +1,25 @@
+/ {
+	// chosen {
+	// 	nordic,pm-ext-flash = &mx25r64;
+	// };
+	/delete-node/ aliases;
+};
+/delete-node/ &button0;
+/delete-node/ &button1;
+/delete-node/ &button2;
+/delete-node/ &button3;
+/delete-node/ &led0;
+/delete-node/ &led1;
+/delete-node/ &led2;
+/delete-node/ &led3;
+
+// &gpio1 {
+// 	sense-edge-mask = <0xffffffff>;
+// };
+// &gpio0 {
+// 	sense-edge-mask = <0xffffffff>;
+// };
+
+&uart0 {
+	status = "disabled";
+};

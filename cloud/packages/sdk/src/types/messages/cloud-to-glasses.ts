@@ -2,6 +2,7 @@
 
 import { Layout } from "../layouts";
 import { CloudToGlassesMessageType, ResponseTypes, UpdateTypes } from "../message-types";
+import { CameraRoiPosition } from "./app-to-cloud";
 
 import { BaseMessage } from "./base";
 // import { UserSession } from "../user-session";
@@ -99,8 +100,10 @@ export interface PhotoRequestToGlasses extends BaseMessage {
   size?: "small" | "medium" | "large" | "full";
   /** Image compression level: none, medium, or heavy */
   compress?: "none" | "medium" | "heavy";
-  /** Silent mode: disables LED flash and shutter sound when true. Cloud-controlled based on packageName. */
-  silent?: boolean;
+  /** Controls front-facing privacy flash LED. Cloud-controlled based on packageName. */
+  flash?: boolean;
+  /** Controls shutter/video sounds. */
+  sound?: boolean;
 }
 
 /**
@@ -120,6 +123,17 @@ export interface RgbLedControlToGlasses extends BaseMessage {
   ontime?: number;
   offtime?: number;
   count?: number;
+}
+
+/**
+ * Camera FOV set request to glasses/mobile
+ */
+export interface CameraFovSetToGlasses extends BaseMessage {
+  type: CloudToGlassesMessageType.CAMERA_FOV_SET;
+  requestId: string;
+  appId: string;
+  fov: number;
+  roiPosition: CameraRoiPosition;
 }
 
 // TODO(isaiah): Deprecated, remove this after new mobile client refactor complete, and we migrate to SettingsStateChange.
@@ -168,6 +182,10 @@ export interface StartRtmpStream extends BaseMessage {
   video?: any; // Video configuration
   audio?: any; // Audio configuration
   stream?: any; // Stream configuration
+  /** Controls front-facing privacy flash LED. Cloud-controlled. */
+  flash?: boolean;
+  /** Controls stream start/stop sounds. */
+  sound?: boolean;
 }
 
 /**
@@ -260,6 +278,7 @@ export type CloudToGlassesMessage =
   | MicrophoneStateChange
   | PhotoRequestToGlasses
   | RgbLedControlToGlasses
+  | CameraFovSetToGlasses
   | AudioPlayRequestToGlasses
   | AudioStopRequestToGlasses
   | SettingsUpdate

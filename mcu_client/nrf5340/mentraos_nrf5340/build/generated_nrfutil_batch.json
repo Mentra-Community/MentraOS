@@ -1,0 +1,24 @@
+{
+  "nrfutil_device_version": "2.12.5",
+  "family": "NRF53_FAMILY",
+  "operations": [
+    {
+      "core": "NRFDL_DEVICE_CORE_APPLICATION",
+      "operation": {
+        "chip_erase_mode": "ERASE_RANGES_TOUCHED_BY_FIRMWARE",
+        "firmware": {
+          "file": "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/merged.hex"
+        },
+        "type": "program",
+        "verify": "VERIFY_READ"
+      }
+    },
+    {
+      "core": "NRFDL_DEVICE_CORE_APPLICATION",
+      "operation": {
+        "option": "RESET_PIN",
+        "type": "reset"
+      }
+    }
+  ]
+}

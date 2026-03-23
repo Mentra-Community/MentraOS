@@ -91,7 +91,7 @@ export default function WebsocketStatus() {
     return (
       <TouchableOpacity
         onPress={() => {
-          push("/settings/transcription")
+          push("/miniapps/settings/transcription")
         }}>
         <View
           className={`flex-row items-center self-center align-middle justify-center py-1 px-2 rounded-full bg-destructive`}>

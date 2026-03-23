@@ -75,7 +75,7 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, silent _: Bool) {
+    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, sound _: Bool) {
         Bridge.log("requestPhoto")
     }
 
@@ -103,7 +103,7 @@ class Simulated: SGCManager {
         Bridge.log("saveBufferVideo")
     }
 
-    func startVideoRecording(requestId _: String, save _: Bool, silent _: Bool) {
+    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {
         Bridge.log("startVideoRecording")
     }
 
@@ -127,6 +127,10 @@ class Simulated: SGCManager {
 
     func sendButtonCameraLedSetting() {
         Bridge.log("sendButtonCameraLedSetting")
+    }
+
+    func sendCameraFovSetting() {
+        Bridge.log("sendCameraFovSetting")
     }
 
     func sendButtonMaxRecordingTime() {}
@@ -219,6 +223,10 @@ class Simulated: SGCManager {
         Bridge.log("cleanup")
     }
 
+    func ping() {
+        Bridge.log("ping")
+    }
+
     // MARK: - Network Management
 
     func requestWifiScan() {
@@ -260,4 +268,6 @@ class Simulated: SGCManager {
     func requestVersionInfo() {
         Bridge.log("requestVersionInfo - not supported on Simulated")
     }
+
+    func sendIncidentId(_: String) {}
 }

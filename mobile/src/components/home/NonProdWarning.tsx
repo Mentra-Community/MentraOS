@@ -50,7 +50,7 @@ export default function NonProdWarning() {
   //     <TouchableOpacity
   //       style={styles.settingsButton}
   //       onPress={() => {
-  //         push("/settings/developer")
+  //         push("/miniapps/settings/developer")
   //       }}>
   //       <Text style={styles.settingsButtonTextBlue}>Settings</Text>
   //     </TouchableOpacity>
@@ -68,7 +68,7 @@ export default function NonProdWarning() {
           {
             text: translate("settings:feedback"),
             onPress: () => {
-              push("/settings/feedback")
+              push("/miniapps/settings/feedback")
             },
           },
           {text: translate("common:ok"), onPress: () => {}},
@@ -90,7 +90,7 @@ export default function NonProdWarning() {
                 {
                   text: translate("settings:feedback"),
                   onPress: () => {
-                    push("/settings/feedback")
+                    push("/miniapps/settings/feedback")
                   },
                 },
                 {text: translate("common:ok"), onPress: () => {}},
@@ -105,7 +105,7 @@ export default function NonProdWarning() {
         {
           text: translate("settings:developerSettings"),
           onPress: () => {
-            push("/settings/developer")
+            push("/miniapps/settings/developer")
           },
         },
         {text: translate("common:ok"), onPress: () => {}},

@@ -412,6 +412,7 @@ const AppStoreMobile: React.FC = () => {
       style={{
         backgroundColor: "var(--bg-primary)",
         color: "var(--text-primary)",
+        paddingTop: isWebView ? 25 : undefined,
       }}>
       {/* Header */}
       <Header

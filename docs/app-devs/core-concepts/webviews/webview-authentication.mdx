@@ -41,12 +41,23 @@ Webview authentication lets your web application identify MentraOS users without
 2. The MentraOS SDK middleware automatically exchanges this token for the user's ID
 3. Your webview can then provide a personalized experience based on the user's identity
 
-### When a user opens your website through their browser on their phone or computer:
+### When a user opens your website in a regular browser (not the MentraOS app):
 
-1. You can redirect them to the MentraOS OAuth flow by redirecting them to the `/mentra-auth` endpoint.
-2. The MentraOS OAuth flow will redirect them back to your website's main webview url, with a token in the query parameters.
-3. The MentraOS SDK will automatically exchange this token for the user's ID.
-4. Your webview can then provide a personalized experience based on the user's identity.
+<Tip>
+**Want to let users access your app from a regular browser?** Have them visit:
+
+`https://account.mentra.glass/auth?packagename=your.package.name`
+
+They'll sign in with their Mentra account and be redirected to your app automatically.
+</Tip>
+
+Here's what happens under the hood:
+
+1. Your app detects the user isn't authenticated (no `authUserId` on the request).
+2. You redirect them to `/mentra-auth`, which the SDK handles automatically.
+3. The user is sent to `account.mentra.glass/auth?packagename=your.package.name` — a consent screen where they sign in with their Mentra account (email, Google, or Apple) and authorize your app.
+4. After the user clicks "Allow", they are redirected back to your app's webview URL with a signed token (`aos_signed_user_token`) in the query parameters.
+5. The SDK middleware automatically validates this token and sets `req.authUserId`.
 
 ## How It Works
 
@@ -100,9 +111,11 @@ app.get("/webview", (req: AuthenticatedRequest, res) => {
 })
 ```
 
-### 4. Redirect to the MentraOS OAuth flow if the user isn't logged in automatically
+### 4. Handle unauthenticated users with the OAuth flow
 
-If the user isn't logged in automatically, you can redirect them to the MentraOS OAuth flow by redirecting them to the `/mentra-auth` endpoint.
+If the user opens your webview in a regular browser (not through the MentraOS app), they won't have a token automatically. The SDK provides a built-in `/mentra-auth` route that redirects users to the Mentra OAuth consent screen.
+
+Add a "Sign in with Mentra" button to your unauthenticated view:
 
 ```html
 <a href="/mentra-auth">
@@ -113,6 +126,28 @@ If the user isn't logged in automatically, you can redirect them to the MentraOS
 <img src="https://account.mentra.glass/sign-in-mentra.png" alt="Sign in with Mentra" width="140" height="50" />
 
 You can use the "Sign in with Mentra" image as the login button: `https://account.mentra.glass/sign-in-mentra.png`
+
+## How the OAuth consent screen works
+
+When a user clicks "Sign in with Mentra", they are redirected to:
+
+```
+https://account.mentra.glass/auth?packagename=your.package.name
+```
+
+This is the Mentra OAuth consent screen. Here's what happens:
+
+1. **Sign in**: If the user isn't already signed in to their Mentra account, they are prompted to sign in (email, Google, or Apple).
+2. **Consent**: The user sees your app's name, icon, and description, and is asked to authorize the app to access their basic profile.
+3. **Redirect**: After the user clicks "Allow", they are redirected back to your app's **Webview URL** (configured in the Developer Console) with a signed token appended:
+   ```
+   https://your-app.com/webview?aos_signed_user_token=eyJ...&source=oauth
+   ```
+4. **Token validation**: The SDK middleware automatically validates the token and sets `req.authUserId` on all subsequent requests.
+
+<Note>
+The token issued during the OAuth flow expires after 10 minutes. After that, the user will need to re-authenticate. The SDK handles this automatically when the user returns through the MentraOS app.
+</Note>
 
 ## Common Use Cases
 
@@ -125,4 +160,4 @@ Webview authentication enables:
 
 ## React Webviews
 
-If you want to build your frontend webview using React, see the [React Webviews](/react-webviews) guide.
+If you want to build your frontend webview using React, see the [React Webviews](/app-devs/core-concepts/webviews/react-webviews) guide.

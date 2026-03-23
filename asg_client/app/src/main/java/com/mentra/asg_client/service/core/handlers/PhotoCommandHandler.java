@@ -74,13 +74,11 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean save = data.optBoolean("save", false);
             String size = data.optString("size", "medium");
             String compress = data.optString("compress", "none"); // Default to none (no compression)
-            // silent: true = no sound/LED, false (default) = normal behavior with sound/LED
-            boolean silent = data.optBoolean("silent", false);
-            boolean enableLed = !silent; // Convert to internal enableLed (inverted logic)
+            boolean flash = data.optBoolean("flash", true);
+            boolean sound = data.optBoolean("sound", true);
 
-            // Generate file path using base class functionality
-            String fileName = generateUniqueFilename("IMG_", ".jpg");
-            String photoFilePath = generateFilePath(packageName, fileName);
+            // Generate file path with capture directory using base class functionality
+            String photoFilePath = generateCaptureFilePath(packageName, "IMG_", ".jpg");
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
                 return false;
@@ -131,9 +129,17 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
+            // CAPTURE CHECK: Reject if another photo capture is already in progress
+            if (captureService.isCapturingPhoto()) {
+                Log.w(TAG, "🚫 Photo request rejected - capture already in progress");
+                logCommandResult("take_photo", false, "Photo capture in progress - request rejected");
+                captureService.sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo capture is in progress");
+                return false;
+            }
+
             // Process photo capture based on transfer method
             boolean success = processPhotoCapture(captureService, photoFilePath, requestId, webhookUrl, authToken,
-                                                 bleImgId, save, size, transferMethod, enableLed, compress);
+                                                 bleImgId, save, size, transferMethod, flash, sound, compress);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             return success;
 
@@ -156,27 +162,28 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      * @param save Whether to save the photo
      * @param size Photo size
      * @param transferMethod Transfer method
-     * @param enableLed Whether to enable LED
+     * @param flash Whether to enable privacy flash LED
+     * @param sound Whether to enable shutter sound
      * @param compress Compression level
      * @return true if successful, false otherwise
      */
     private boolean processPhotoCapture(MediaCaptureService captureService, String photoFilePath,
                                       String requestId, String webhookUrl, String authToken, String bleImgId,
-                                      boolean save, String size, String transferMethod, boolean enableLed, String compress) {
+                                      boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress) {
         Log.d(TAG, "789789Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, enableLed);
+                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound);
                 return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, enableLed, compress);
+                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress);
                 return true;
             default:
-                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, enableLed, compress);
+                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress);
                 return true;
         }
     }

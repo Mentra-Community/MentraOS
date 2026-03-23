@@ -1,0 +1,66 @@
+services:
+  # Cloud service - handles its own SDK building
+  cloud:
+    stop_grace_period: 10s
+    init: true
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          memory: 256M
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.dev
+    ports:
+      - "8002:80"
+      - "8000:8000/udp"
+    environment:
+      - HOST=0.0.0.0
+      - SERVICE_NAME=cloud
+      - CONTAINER_ENVIRONMENT=true
+      - CLOUD_HOST_NAME=cloud
+      - LIVEKIT_GRPC_SOCKET=/var/run/livekit/bridge.sock
+      - LIVEKIT_PCM_ENDIAN=off
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+      - app_node_modules:/app/node_modules
+      - bun_cache:/root/.bun
+      - livekit_socket:/var/run/livekit
+    command: bash -c "bun install && cd packages/cloud && bun run dev"
+    tty: true
+    stdin_open: true
+    depends_on:
+      - livekit-bridge
+
+  # LiveKit gRPC Bridge service
+  livekit-bridge:
+    build:
+      context: ./packages/cloud-livekit-bridge
+      dockerfile: Dockerfile
+    environment:
+      - PORT=9090
+      - LOG_LEVEL=debug
+      - LIVEKIT_URL=${LIVEKIT_URL}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_GRPC_SOCKET=/var/run/livekit/bridge.sock
+      - BETTERSTACK_SOURCE_TOKEN=${BETTERSTACK_SOURCE_TOKEN}
+      - BETTERSTACK_INGESTING_HOST=s1311181.eu-nbg-2.betterstackdata.com
+    volumes:
+      - livekit_socket:/var/run/livekit
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "test", "-S", "/var/run/livekit/bridge.sock"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  app_node_modules:
+  bun_cache:
+  livekit_socket:

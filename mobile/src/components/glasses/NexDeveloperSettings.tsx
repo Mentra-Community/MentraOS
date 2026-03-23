@@ -429,7 +429,7 @@ export default function NexDeveloperSettings() {
             <RouteButton
               label={translate("settings:screenSettings")}
               subtitle={translate("settings:screenDescription")}
-              onPress={() => push("/settings/position")}
+              onPress={() => push("/miniapps/settings/position")}
             />
           </View>
         )}

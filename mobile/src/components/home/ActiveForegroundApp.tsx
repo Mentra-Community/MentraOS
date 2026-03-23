@@ -120,7 +120,7 @@ const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   // borderWidth: 2,
   // borderColor: colors.border,
   borderRadius: spacing.s4,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   paddingHorizontal: spacing.s2,
 })
 

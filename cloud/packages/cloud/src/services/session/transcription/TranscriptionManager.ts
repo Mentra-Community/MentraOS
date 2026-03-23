@@ -20,7 +20,6 @@ import { PosthogService } from "../../logging/posthog.service";
 import UserSession from "../UserSession";
 
 import { AlibabaTranscriptionProvider } from "./providers/AlibabaTranscriptionProvider";
-import { AzureTranscriptionProvider } from "./providers/AzureTranscriptionProvider";
 import { SonioxTranscriptionProvider } from "./providers/SonioxTranscriptionProvider";
 import { ProviderSelector } from "./ProviderSelector";
 import {
@@ -206,7 +205,6 @@ export class TranscriptionManager {
             "Forced finalization of Soniox transcription tokens",
           );
         }
-        // Azure doesn't need forced finalization as it sends final results immediately
         // Other providers can be added here as needed
       } catch (error) {
         this.logger.warn(
@@ -986,22 +984,6 @@ export class TranscriptionManager {
         providerErrors.push({ provider: "Alibaba", error: error as Error });
       }
 
-      // Try to initialize Azure provider
-      try {
-        if (this.IS_CHINA) {
-          this.logger.info("Azure provider not initialized for China");
-        } else {
-          const azureProvider = new AzureTranscriptionProvider(this.config.azure, this.logger);
-          await azureProvider.initialize();
-          this.providers.set(ProviderType.AZURE, azureProvider);
-          availableProviders.push(ProviderType.AZURE);
-          this.logger.info("Azure provider initialized successfully");
-        }
-      } catch (error) {
-        this.logger.error(error, "Failed to initialize Azure provider");
-        providerErrors.push({ provider: "Azure", error: error as Error });
-      }
-
       // Try to initialize Soniox provider
       try {
         if (this.IS_CHINA) {
@@ -1027,8 +1009,6 @@ export class TranscriptionManager {
           {
             providerErrors,
             config: {
-              azureHasKey: !!this.config.azure.key,
-              azureRegion: this.config.azure.region,
               sonioxHasKey: !!this.config.soniox.apiKey,
               sonioxEndpoint: this.config.soniox.endpoint,
             },
@@ -1299,16 +1279,10 @@ export class TranscriptionManager {
 
     // Smart provider cycling based on error type and current provider
     if (currentProvider === ProviderType.SONIOX) {
-      // Soniox failed - check if we should retry Soniox or immediately switch to Azure
+      // Soniox failed - check if we should retry Soniox or try another provider
       if (this.isSonioxRateLimit(error)) {
-        // Rate limit - immediately try Azure
-        this.logger.info(
-          { subscription, error: error.message },
-          "Soniox rate limit detected - falling back to Azure immediately",
-        );
-        if (await this.trySpecificProvider(subscription, ProviderType.AZURE)) {
-          return; // Success with Azure
-        }
+        // Rate limit - log and fall through to retry logic
+        this.logger.info({ subscription, error: error.message }, "Soniox rate limit detected");
       } else if (this.isRetryableError(error)) {
         // Other retryable Soniox errors - retry Soniox first
         this.logger.info({ subscription, error: error.message }, "Retrying Soniox for retryable error");
@@ -1316,20 +1290,8 @@ export class TranscriptionManager {
         return;
       }
 
-      // If we reach here, either:
-      // 1. Rate limit and Azure failed, OR
-      // 2. Non-retryable Soniox error
-      // Try Azure as fallback
-      this.logger.info({ subscription }, "Trying Azure as fallback after Soniox failure");
-      if (await this.trySpecificProvider(subscription, ProviderType.AZURE)) {
-        return; // Success with Azure
-      }
-    } else if (currentProvider === ProviderType.AZURE) {
-      // Azure failed - cycle back to Soniox since it's preferred
-      this.logger.info({ subscription }, "Azure failed - cycling back to preferred Soniox provider");
-      if (await this.trySpecificProvider(subscription, ProviderType.SONIOX)) {
-        return; // Success with Soniox
-      }
+      // If we reach here, Soniox failed (rate limit or non-retryable error)
+      // No Azure fallback available — will fall through to retry/give-up logic below
     }
 
     // If we reach here, both providers have been tried and failed

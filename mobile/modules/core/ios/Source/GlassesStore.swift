@@ -42,10 +42,14 @@ class GlassesStore {
         store.set("glasses", "hotspotPassword", "")
         store.set("glasses", "hotspotGatewayIp", "")
         store.set("glasses", "bluetoothName", "")
+        store.set("glasses", "controllerConnected", false)
+        store.set("glasses", "signalStrength", -1)
+        store.set("glasses", "ringSignalStrength", -1)
 
         // CORE STATE:
         store.set("core", "systemMicUnavailable", false)
         store.set("core", "searching", false)
+        store.set("core", "searchingController", false)
         store.set("core", "micEnabled", false)
         store.set("core", "currentMic", "")
         store.set("core", "searchResults", [])
@@ -59,12 +63,10 @@ class GlassesStore {
         store.set("core", "pending_wearable", "")
         store.set("core", "device_name", "")
         store.set("core", "device_address", "")
-        store.set("core", "offline_mode", false)
         store.set("core", "screen_disabled", false)
         store.set("core", "preferred_mic", "auto")
         store.set("core", "power_saving_mode", false)
         store.set("core", "always_on_status_bar", false)
-        store.set("core", "enforce_local_transcription", false)
         store.set("core", "sensing_enabled", true)
         store.set("core", "metric_system", false)
         store.set("core", "brightness", 50)
@@ -79,6 +81,7 @@ class GlassesStore {
         store.set("core", "button_photo_size", "medium")
         store.set("core", "button_camera_led", true)
         store.set("core", "button_max_recording_time", 10)
+        store.set("core", "camera_fov", ["fov": 118, "roi_position": 0])
         store.set("core", "button_video_width", 1280)
         store.set("core", "button_video_height", 720)
         store.set("core", "button_video_fps", 30)
@@ -86,6 +89,10 @@ class GlassesStore {
         store.set("core", "lc3_frame_size", 60)
         store.set("core", "auth_email", "")
         store.set("core", "auth_token", "")
+        store.set("core", "should_send_pcm", false)
+        store.set("core", "should_send_lc3", false)
+        store.set("core", "should_send_transcript", false)
+        store.set("core", "bypass_vad", false)
     }
 
     func get(_ category: String, _ key: String) -> Any? {
@@ -113,6 +120,14 @@ class GlassesStore {
                 }
                 // we shouldn't call store.set in this function as this is only intended for side-effects, not driving state updates
             }
+        case ("glasses", "controllerFullyBooted"):
+            if let ready = value as? Bool {
+                if ready {
+                    CoreManager.shared.handleControllerReady()
+                } else {
+                    CoreManager.shared.handleControllerDisconnected()
+                }
+            }
 
         case ("glasses", "headUp"):
             if let headUp = value as? Bool {
@@ -138,7 +153,7 @@ class GlassesStore {
             Task {
                 CoreManager.shared.sgc?.setBrightness(b, autoMode: auto)
                 CoreManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
-                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+                try? await Task.sleep(nanoseconds: 800_000_000)  // 0.8 seconds
                 CoreManager.shared.sgc?.clearDisplay()
             }
 
@@ -152,7 +167,7 @@ class GlassesStore {
                     CoreManager.shared.sgc?.sendTextWall(
                         auto ? "Enabled auto brightness" : "Disabled auto brightness"
                     )
-                    try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+                    try? await Task.sleep(nanoseconds: 800_000_000)  // 0.8 seconds
                     CoreManager.shared.sgc?.clearDisplay()
                 }
             }
@@ -191,52 +206,37 @@ class GlassesStore {
         case ("core", "button_max_recording_time"):
             CoreManager.shared.sgc?.sendButtonMaxRecordingTime()
 
+        case ("core", "camera_fov"):
+            CoreManager.shared.sgc?.sendCameraFovSetting()
+
         case ("core", "button_video_width"), ("core", "button_video_height"),
-             ("core", "button_video_fps"):
+            ("core", "button_video_fps"):
             CoreManager.shared.sgc?.sendButtonVideoRecordingSettings()
 
         case ("core", "preferred_mic"):
             if let mic = value as? String {
                 apply("core", "micRanking", MicMap.map[mic] ?? MicMap.map["auto"]!)
-                CoreManager.shared.setMicState(
-                    store.get("core", "should_send_pcm_data") as? Bool ?? false,
-                    store.get("core", "should_send_transcript") as? Bool ?? false,
-                    store.get("core", "bypass_vad") as? Bool ?? true
-                )
-            }
-
-        case ("core", "offline_mode"):
-            if let offline = value as? Bool {
-                // set should_send_transcript to true if offline_mode is true && running is true, otherwise false
-                let shouldSendTranscript = offline && (store.get("core", "offline_captions_running") as? Bool) ?? false
-                CoreManager.shared.setMicState(
-                    store.get("core", "should_send_pcm_data") as? Bool ?? false,
-                    store.get("core", "should_send_transcript") as? Bool ?? false,
-                    store.get("core", "bypass_vad") as? Bool ?? true
-                )
+                CoreManager.shared.setMicState()
             }
 
         case ("core", "offline_captions_running"):
             if let running = value as? Bool {
-                Bridge.log("GlassesStore: offline_captions_running changed to \(running)")
-                // When offline captions are enabled, start the microphone for local transcription
-                // When disabled, stop the microphone
-                // set should_send_transcript to true if offline_mode is true && running is true, otherwise false
-                let shouldSendTranscript = (store.get("core", "offline_mode") as? Bool) ?? false && running
-                CoreManager.shared.setMicState(
-                    store.get("core", "should_send_pcm_data") as? Bool ?? false,
-                    shouldSendTranscript,
-                    store.get("core", "bypass_vad") as? Bool ?? true
-                )
+                CoreManager.shared.setMicState()
             }
 
-        case ("core", "enforce_local_transcription"):
-            if let enabled = value as? Bool {
-                CoreManager.shared.setMicState(
-                    store.get("core", "should_send_pcm_data") as? Bool ?? false,
-                    store.get("core", "should_send_transcript") as? Bool ?? false,
-                    store.get("core", "bypass_vad") as? Bool ?? true
-                )
+        case ("core", "should_send_pcm"):
+            if let pcm = value as? Bool {
+                CoreManager.shared.setMicState()
+            }
+
+        case ("core", "should_send_lc3"):
+            if let lc3 = value as? Bool {
+                CoreManager.shared.setMicState()
+            }
+
+        case ("core", "should_send_transcript"):
+            if let transcript = value as? Bool {
+                CoreManager.shared.setMicState()
             }
 
         case ("core", "default_wearable"):

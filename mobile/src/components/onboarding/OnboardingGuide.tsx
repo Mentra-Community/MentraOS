@@ -1,7 +1,7 @@
 import {Image, ImageSource} from "expo-image"
 import {useVideoPlayer, VideoView, VideoSource, VideoPlayer} from "expo-video"
 import {useState, useCallback, useEffect, useMemo, useRef} from "react"
-import {View, ViewStyle, ActivityIndicator, Platform, Animated} from "react-native"
+import {View, ViewStyle, ActivityIndicator, Platform, Animated, ScrollView} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Text, Button, Header, Icon} from "@/components/ignite"
@@ -887,7 +887,7 @@ export function OnboardingGuide({
     // }
 
     return (
-      <View id="step-content" className="flex mb-4 h-34 gap-3 w-full justify-start">
+      <View id="step-content" className="flex mb-4 h-34 pt-3 gap-3 w-full justify-start">
         {step.title && (
           <Text
             className={`${
@@ -978,7 +978,7 @@ export function OnboardingGuide({
             onLeftPress={handleClose}
           />
         )}
-        <View id="top">
+        <ScrollView id="top" className="flex-1 -mx-6 px-6">
           {showContent && renderStepContent()}
           <View className="-mx-6">
             <Animated.View
@@ -999,7 +999,7 @@ export function OnboardingGuide({
           <View className="flex-shrink">{renderStepCheck()}</View>
           {renderBullets()}
           {renderNumberedBullets()}
-        </View>
+        </ScrollView>
 
         <View id="bottom" className={`flex justify-end flex-shrink min-h-12`}>
           {!hasStarted && (

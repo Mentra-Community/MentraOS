@@ -594,6 +594,7 @@ extension MentraLive: CBCentralManagerDelegate {
         if let name = peripheral.name {
             UserDefaults.standard.set(name, forKey: PREFS_DEVICE_NAME)
             Bridge.log("Saved device name for future reconnection: \(name)")
+            GlassesStore.shared.apply("glasses", "bluetoothName", name)
         }
 
         // Audio Pairing: Setup Bluetooth audio after BLE connection
@@ -888,6 +889,11 @@ class MentraLive: NSObject, SGCManager {
     func setBrightness(_: Int, autoMode _: Bool) {}
     func clearDisplay() {}
     func sendTextWall(_: String) {}
+    func ping() {
+        Bridge.log("LIVE: ping()")
+        keepAwake()
+    }
+
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
@@ -1004,6 +1010,7 @@ class MentraLive: NSObject, SGCManager {
 
     // BLE Properties
     private var centralManager: CBCentralManager?
+
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
@@ -1228,9 +1235,9 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, silent: Bool
+        compress: String?, flash: Bool, sound: Bool
     ) {
-        Bridge.log("Requesting photo: \(requestId) for app: \(appId), silent: \(silent)")
+        Bridge.log("Requesting photo: \(requestId) for app: \(appId), flash: \(flash), sound: \(sound)")
 
         var json: [String: Any] = [
             "type": "take_photo",
@@ -1274,8 +1281,8 @@ class MentraLive: NSObject, SGCManager {
         // Add compress parameter
         json["compress"] = compress ?? "none"
 
-        // silent mode: disables shutter sound and privacy LED
-        json["silent"] = silent
+        json["flash"] = flash
+        json["sound"] = sound
 
         Bridge.log("Using auto transfer mode with BLE fallback ID: \(bleImgId)")
 
@@ -1878,6 +1885,11 @@ class MentraLive: NSObject, SGCManager {
                 totalSize: totalSize
             )
 
+        case "ota_start_ack":
+            // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
+            Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
+            Bridge.sendOtaStartAck()
+
         case "ota_progress":
             // Process OTA progress update from glasses
             let stage = json["stage"] as? String ?? "download"
@@ -2196,6 +2208,11 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendIncidentId(_ incidentId: String) {
+        Bridge.log("LIVE: Sending incidentId to glasses for log upload: \(incidentId)")
+        sendJson(["type": "upload_incident_logs", "incidentId": incidentId], wakeUp: true)
+    }
+
     func forgetWifiNetwork(_ ssid: String) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)")
 
@@ -2249,6 +2266,17 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func keepAwake() {
+        Bridge.log("LIVE: 📱 Sending keep_awake command to glasses")
+
+        let json: [String: Any] = [
+            "type": "keep_awake",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
     // MARK: - Message Handlers
 
     private func handleGlassesReady() {
@@ -2278,7 +2306,9 @@ class MentraLive: NSObject, SGCManager {
         if micIntentEnabled {
             if BLOCK_AUDIO_DUPLEX, let monitor = phoneAudioMonitor, monitor.isPlaying() {
                 micSuspendedForAudio = true
-                Bridge.log("LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending")
+                Bridge.log(
+                    "LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending"
+                )
             } else {
                 micSuspendedForAudio = false
                 Bridge.log("LIVE: 🎤 Restoring mic state after reconnect")
@@ -3883,6 +3913,9 @@ extension MentraLive {
         // Send button camera LED setting
         sendButtonCameraLedSetting()
 
+        // Send camera FOV setting (K900 / Mentra Live)
+        sendCameraFovSetting()
+
         // Send gallery mode state (camera app running status)
         sendGalleryMode()
     }
@@ -3972,9 +4005,31 @@ extension MentraLive {
         sendJson(json, wakeUp: true)
     }
 
-    func startVideoRecording(requestId: String, save: Bool, silent: Bool) {
+    func sendCameraFovSetting() {
+        let settings = GlassesStore.shared.get("core", "camera_fov") as? [String: Any] ?? ["fov": 118, "roi_position": 0]
+        let fov = settings["fov"] as? Int ?? 118
+        let roiPosition = settings["roi_position"] as? Int ?? 0
+
+        Bridge.log("Sending camera FOV setting: fov=\(fov), roi_position=\(roiPosition)")
+
+        guard connectionState == ConnTypes.CONNECTED else {
+            Bridge.log("Cannot send camera FOV setting - not connected")
+            return
+        }
+
+        let json: [String: Any] = [
+            "type": "camera_fov_setting",
+            "params": [
+                "fov": fov,
+                "roi_position": roiPosition,
+            ],
+        ]
+        sendJson(json, wakeUp: true)
+    }
+
+    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool) {
         startVideoRecording(
-            requestId: requestId, save: save, silent: silent, width: 0, height: 0, fps: 0
+            requestId: requestId, save: save, flash: flash, sound: sound, width: 0, height: 0, fps: 0
         )
     }
 
@@ -3998,10 +4053,10 @@ extension MentraLive {
     }
 
     func startVideoRecording(
-        requestId: String, save: Bool, silent: Bool, width: Int, height: Int, fps: Int
+        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int
     ) {
         Bridge.log(
-            "Starting video recording on glasses: requestId=\(requestId), save=\(save), silent=\(silent), resolution=\(width)x\(height)@\(fps)fps"
+            "Starting video recording on glasses: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps"
         )
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -4013,7 +4068,8 @@ extension MentraLive {
             "type": "start_video_recording",
             "request_id": requestId,
             "save": save,
-            "silent": silent,
+            "flash": flash,
+            "sound": sound,
         ]
 
         // Add video settings if provided

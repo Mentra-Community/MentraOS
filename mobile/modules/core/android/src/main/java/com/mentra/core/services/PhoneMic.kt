@@ -211,8 +211,6 @@ class PhoneMic private constructor(private val context: Context) {
                     "MIC: Already recording with different mode ($currentMicMode), stopping first"
             )
             stopRecording()
-            // Brief delay to ensure clean stop
-            Thread.sleep(50)
         }
 
         // Check permissions
@@ -580,7 +578,16 @@ class PhoneMic private constructor(private val context: Context) {
                     val audioBuffer = ShortArray(bufferSize / 2)
 
                     while (isRecording.get()) {
-                        val readResult = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: 0
+                        // Capture local reference to avoid use-after-free if cleanUpRecording()
+                        // releases the AudioRecord while we're in read()
+                        val record = audioRecord ?: break
+
+                        val readResult = try {
+                            record.read(audioBuffer, 0, audioBuffer.size)
+                        } catch (e: Exception) {
+                            Bridge.log("MIC: AudioRecord.read() exception: ${e.message}")
+                            break
+                        }
 
                         if (readResult > 0) {
                             // Convert short array to byte array (16-bit PCM)
@@ -593,6 +600,10 @@ class PhoneMic private constructor(private val context: Context) {
 
                             // Send PCM data to CoreManager
                             CoreManager.getInstance().handlePcm(pcmData)
+                        } else if (readResult < 0) {
+                            // AudioRecord error (ERROR, ERROR_INVALID_OPERATION, ERROR_BAD_VALUE, ERROR_DEAD_OBJECT)
+                            Bridge.log("MIC: AudioRecord.read() returned error: $readResult")
+                            break
                         }
                     }
                 }
@@ -605,17 +616,28 @@ class PhoneMic private constructor(private val context: Context) {
     private fun cleanUpRecording() {
         isRecording.set(false)
 
-        // Stop recording thread
-        recordingThread?.interrupt()
+        // Wait for recording thread to finish BEFORE touching audioRecord
+        // This prevents use-after-free where read() races with release()
+        recordingThread?.let { thread ->
+            thread.interrupt()
+            try {
+                thread.join(1000) // Wait up to 1 second for thread to finish
+            } catch (e: InterruptedException) {
+                Bridge.log("MIC: Interrupted while waiting for recording thread to finish")
+                Thread.currentThread().interrupt()
+            }
+        }
         recordingThread = null
 
-        // Stop and release AudioRecord
+        // NOW safe to stop and release - recording thread is no longer reading
         audioRecord?.let { record ->
             try {
                 // Unregister session ID
                 ourAudioSessionIds.remove(record.audioSessionId)
 
-                record.stop()
+                if (record.state == AudioRecord.STATE_INITIALIZED) {
+                    record.stop()
+                }
                 record.release()
             } catch (e: Exception) {
                 Bridge.log("MIC: Error cleaning up AudioRecord: ${e.message}")

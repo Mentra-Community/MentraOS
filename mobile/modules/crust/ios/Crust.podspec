@@ -20,6 +20,9 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
 
+  # iOS frameworks required for media processing
+  s.frameworks = 'AVFoundation', 'Photos', 'CoreImage', 'CoreGraphics', 'UIKit'
+
   # Swift/Objective-C compatibility
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

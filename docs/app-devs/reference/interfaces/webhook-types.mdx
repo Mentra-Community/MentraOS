@@ -31,7 +31,7 @@ interface BaseWebhookRequest extends BaseMessage {
 
 ## SessionWebhookRequest
 
-Webhook sent to initiate a new App session. Handled by [`AppServer.onSession`](/reference/app-server#onsession-protected).
+Webhook sent to initiate a new App session. Handled by [`AppServer.onSession`](/app-devs/reference/app-server#onsession-protected).
 
 ```typescript
 interface SessionWebhookRequest extends BaseWebhookRequest {
@@ -55,11 +55,11 @@ interface SessionWebhookRequest extends BaseWebhookRequest {
 }
 ```
 
-When this webhook is received, your [`AppServer.onSession`](/reference/app-server#onsession-protected) method is called with a new [`AppSession`](/reference/app-session) instance, the `sessionId`, and the `userId`.
+When this webhook is received, your [`AppServer.onSession`](/app-devs/reference/app-server#onsession-protected) method is called with a new [`AppSession`](/app-devs/reference/app-session) instance, the `sessionId`, and the `userId`.
 
 ## StopWebhookRequest
 
-Webhook sent to request stopping a App session. Handled by [`AppServer.onStop`](/reference/app-server#onstop-protected).
+Webhook sent to request stopping a App session. Handled by [`AppServer.onStop`](/app-devs/reference/app-server#onstop-protected).
 
 ```typescript
 interface StopWebhookRequest extends BaseWebhookRequest {
@@ -83,7 +83,7 @@ interface StopWebhookRequest extends BaseWebhookRequest {
 }
 ```
 
-When this webhook is received, your [`AppServer.onStop`](/reference/app-server#onstop-protected) method is called with the `sessionId`, `userId`, and `reason`.
+When this webhook is received, your [`AppServer.onStop`](/app-devs/reference/app-server#onstop-protected) method is called with the `sessionId`, `userId`, and `reason`.
 
 ## ServerRegistrationWebhookRequest
 
@@ -240,9 +240,9 @@ function processWebhook(request: WebhookRequest): WebhookResponse {
 
 ## Webhook Flow
 
-1. **Registration**: When your [`AppServer`](/reference/app-server) starts, it is registered with MentraOS Cloud.
-2. **Server Registration Confirmation**: MentraOS Cloud sends a [`SERVER_REGISTRATION`](/reference/enums#webhookrequesttype) webhook to confirm registration.
-3. **Heartbeat**: MentraOS Cloud periodically sends [`SERVER_HEARTBEAT`](/reference/enums#webhookrequesttype) webhooks to check if your server is still running.
-4. **Session Initialization**: When a user starts your App, MentraOS Cloud sends a [`SESSION_REQUEST`](/reference/enums#webhookrequesttype) webhook.
-5. **Session Termination**: When a user stops your App or there's a system issue, a [`STOP_REQUEST`](/reference/enums#webhookrequesttype) webhook is sent.
-6. **Session Recovery**: If MentraOS Cloud restarts or detects a potential disconnection, it may send a [`SESSION_RECOVERY`](/reference/enums#webhookrequesttype) webhook.
+1. **Registration**: When your [`AppServer`](/app-devs/reference/app-server) starts, it is registered with MentraOS Cloud.
+2. **Server Registration Confirmation**: MentraOS Cloud sends a [`SERVER_REGISTRATION`](/app-devs/reference/enums#webhookrequesttype) webhook to confirm registration.
+3. **Heartbeat**: MentraOS Cloud periodically sends [`SERVER_HEARTBEAT`](/app-devs/reference/enums#webhookrequesttype) webhooks to check if your server is still running.
+4. **Session Initialization**: When a user starts your App, MentraOS Cloud sends a [`SESSION_REQUEST`](/app-devs/reference/enums#webhookrequesttype) webhook.
+5. **Session Termination**: When a user stops your App or there's a system issue, a [`STOP_REQUEST`](/app-devs/reference/enums#webhookrequesttype) webhook is sent.
+6. **Session Recovery**: If MentraOS Cloud restarts or detects a potential disconnection, it may send a [`SESSION_RECOVERY`](/app-devs/reference/enums#webhookrequesttype) webhook.

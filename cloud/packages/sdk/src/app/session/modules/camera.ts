@@ -15,6 +15,8 @@ import {
   isRtmpStreamStatus,
   ManagedStreamStatus,
   StreamStatusCheckResponse,
+  CameraFovSetRequest,
+  CameraRoiPosition,
 } from "../../../types";
 import { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "../../../types/rtmp-stream";
 import { StreamType } from "../../../types/streams";
@@ -42,6 +44,8 @@ export interface PhotoRequestOptions {
   size?: "small" | "medium" | "large" | "full";
   /** Image compression level for upload optimization. Defaults to "none". */
   compress?: "none" | "medium" | "heavy";
+  /** Controls shutter sound. Defaults to true if omitted. */
+  sound?: boolean;
 }
 
 /**
@@ -56,7 +60,21 @@ export interface RtmpStreamOptions {
   audio?: AudioConfig;
   /** Optional stream configuration settings */
   stream?: StreamConfig;
+  /** Controls stream start/stop sounds. Defaults to true if omitted. */
+  sound?: boolean;
 }
+
+/**
+ * Options for setting the camera FOV and ROI position
+ */
+export interface CameraFovOptions {
+  /** Field of view in degrees (82-118). 118 means full sensor, no crop. */
+  fov: number;
+  /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
+  roiPosition?: CameraRoiPosition;
+}
+
+const VALID_ROI_POSITIONS: CameraRoiPosition[] = ["center", "top", "bottom"];
 
 /**
  * 📷 Camera Module Implementation
@@ -176,6 +194,7 @@ export class CameraModule {
           authToken: options?.authToken,
           size: options?.size || "medium",
           compress: options?.compress || "none",
+          sound: options?.sound,
         };
 
         // Send request to cloud
@@ -243,13 +262,13 @@ export class CameraModule {
    * @deprecated Photo requests are now managed at AppServer level. This method delegates to AppServer.
    *
    * @param requestId - The request ID to cancel
-   * @returns true if the request was cancelled, false if it wasn't found
+   * @returns true if the request was found and cancelled
    */
   cancelPhotoRequest(requestId: string): boolean {
     const pending = this.session.appServer.completePhotoRequest(requestId);
     if (pending) {
       pending.reject(new Error("Photo request cancelled"));
-      this.logger.info({ requestId }, `📸 Photo request cancelled`);
+      this.logger.debug({ requestId }, "Photo request cancelled");
       return true;
     }
     return false;
@@ -264,8 +283,61 @@ export class CameraModule {
   cancelAllPhotoRequests(): number {
     // Photo request cleanup is now handled by AppServer.cleanupPhotoRequestsForSession()
     // which is called when the session permanently disconnects
-    this.logger.debug(`📸 cancelAllPhotoRequests called - cleanup now happens at AppServer level`);
+    this.logger.debug("cancelAllPhotoRequests called — cleanup now happens at AppServer level");
     return 0;
+  }
+
+  // =====================================
+  // 🔭 FOV / ROI Control
+  // =====================================
+
+  /**
+   * 🔭 Set the camera field-of-view and ROI crop position
+   *
+   * Fire-and-forget: the promise resolves once the message is sent.
+   * The phone applies the setting and pushes it to the glasses over BLE.
+   *
+   * @param options - FOV (82-118) and optional ROI position
+   *
+   * @example
+   * ```typescript
+   * // Narrow crop, looking at the top of the frame
+   * await session.camera.setFov({ fov: 92, roiPosition: "top" });
+   *
+   * // Full sensor, no crop (roiPosition is ignored)
+   * await session.camera.setFov({ fov: 118 });
+   * ```
+   */
+  async setFov(options: CameraFovOptions): Promise<void> {
+    const { fov } = options;
+    let roiPosition: CameraRoiPosition = options.roiPosition ?? "center";
+
+    if (fov < 82 || fov > 118) {
+      throw new Error(`fov must be between 82 and 118, got ${fov}`);
+    }
+
+    if (!VALID_ROI_POSITIONS.includes(roiPosition)) {
+      throw new Error(`roiPosition must be one of ${VALID_ROI_POSITIONS.join(", ")}, got "${roiPosition}"`);
+    }
+
+    if (fov === 118) {
+      roiPosition = "center";
+    }
+
+    const requestId = `cam_fov_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    const message: CameraFovSetRequest = {
+      type: AppToCloudMessageType.CAMERA_FOV_SET,
+      packageName: this.packageName,
+      sessionId: this.sessionId,
+      requestId,
+      fov,
+      roiPosition,
+      timestamp: new Date(),
+    };
+
+    this.session.sendMessage(message);
+    this.logger.info({ fov, roiPosition, requestId }, "🔭 Camera FOV set request sent");
   }
 
   // =====================================
@@ -316,6 +388,7 @@ export class CameraModule {
       video: options.video,
       audio: options.audio,
       stream: options.stream,
+      sound: options.sound,
       timestamp: new Date(),
     };
 
@@ -678,4 +751,4 @@ export class CameraModule {
 }
 
 // Re-export types for convenience
-export { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler };
+export type { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler };

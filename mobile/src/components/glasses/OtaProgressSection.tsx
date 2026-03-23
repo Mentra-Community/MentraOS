@@ -12,12 +12,12 @@ interface OtaProgressSectionProps {
 export default function OtaProgressSection({otaProgress}: OtaProgressSectionProps) {
   const {theme, themed} = useAppTheme()
 
-  // Show the component if there's OTA progress data
-  if (!otaProgress) {
+  // Show the component only if there's meaningful OTA progress data
+  const download = otaProgress?.download
+  const installation = otaProgress?.installation
+  if (!otaProgress || (!download && !installation)) {
     return null
   }
-
-  const {download, installation} = otaProgress
 
   const getStatusText = (status: string) => {
     switch (status) {

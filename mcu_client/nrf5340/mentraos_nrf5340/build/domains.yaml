@@ -1,0 +1,12 @@
+default: mentraos_nrf5340
+build_dir: /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build
+domains:
+  - name: mentraos_nrf5340
+    build_dir: /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/mentraos_nrf5340
+  - name: mcuboot
+    build_dir: /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/mcuboot
+  - name: ipc_radio
+    build_dir: /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/ipc_radio
+flash_order:
+  - ipc_radio
+  - mentraos_nrf5340

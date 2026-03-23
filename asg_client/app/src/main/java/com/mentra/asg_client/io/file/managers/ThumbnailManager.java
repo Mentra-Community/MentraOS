@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.file.managers;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.MediaMetadataRetriever;
 
 import com.mentra.asg_client.logging.Logger;
@@ -10,9 +11,14 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
- * Manages video thumbnail generation and caching.
+ * Manages thumbnail generation and caching for both videos and images.
  * Follows Single Responsibility Principle by handling only thumbnail operations.
  */
 public class ThumbnailManager {
@@ -50,71 +56,214 @@ public class ThumbnailManager {
             logger.warn(TAG, "Video file is null or doesn't exist");
             return null;
         }
-        
+
         // Check if it's actually a video file
         if (!isVideoFile(videoFile.getName())) {
             logger.debug(TAG, "File is not a video: " + videoFile.getName());
             return null;
         }
-        
+
         // Generate thumbnail filename
         String thumbnailFileName = generateThumbnailFileName(videoFile);
         File thumbnailFile = new File(thumbnailDirectory, thumbnailFileName);
-        
+
         // Check if thumbnail already exists and is newer than video file
         if (thumbnailFile.exists() && thumbnailFile.lastModified() >= videoFile.lastModified()) {
             logger.debug(TAG, "Using existing thumbnail: " + thumbnailFileName);
             return thumbnailFile;
         }
-        
+
         // Create new thumbnail
         logger.info(TAG, "Creating thumbnail for video: " + videoFile.getName());
-        return createThumbnail(videoFile, thumbnailFile);
+        return createVideoThumbnail(videoFile, thumbnailFile);
+    }
+
+    /**
+     * Get or create thumbnail for an image file (JPEG, PNG, etc.)
+     * Scales down the image to thumbnail size for efficient transfer during sync.
+     * @param imageFile The image file
+     * @return Thumbnail file or null if failed
+     */
+    public File getOrCreateImageThumbnail(File imageFile) {
+        if (imageFile == null || !imageFile.exists()) {
+            logger.warn(TAG, "Image file is null or doesn't exist");
+            return null;
+        }
+
+        // Generate thumbnail filename
+        String thumbnailFileName = generateThumbnailFileName(imageFile);
+        File thumbnailFile = new File(thumbnailDirectory, thumbnailFileName);
+
+        // Check if thumbnail already exists and is newer than source file
+        if (thumbnailFile.exists() && thumbnailFile.lastModified() >= imageFile.lastModified()) {
+            logger.debug(TAG, "Using existing image thumbnail: " + thumbnailFileName);
+            return thumbnailFile;
+        }
+
+        // Create new thumbnail
+        logger.info(TAG, "Creating thumbnail for image: " + imageFile.getName());
+        return createImageThumbnail(imageFile, thumbnailFile);
     }
     
+    /**
+     * Create a thumbnail for an image file using BitmapFactory
+     * @param imageFile The image file
+     * @param thumbnailFile The target thumbnail file
+     * @return Thumbnail file or null if failed
+     */
+    private File createImageThumbnail(File imageFile, File thumbnailFile) {
+        try {
+            // First decode just the dimensions to calculate sample size
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(imageFile.getAbsolutePath(), options);
+
+            if (options.outWidth <= 0 || options.outHeight <= 0) {
+                logger.error(TAG, "Failed to decode image dimensions: " + imageFile.getName());
+                return null;
+            }
+
+            // Calculate inSampleSize for efficient memory usage
+            options.inSampleSize = calculateInSampleSize(options, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+            options.inJustDecodeBounds = false;
+
+            // Decode the image with downsampling
+            Bitmap bitmap = BitmapFactory.decodeFile(imageFile.getAbsolutePath(), options);
+            if (bitmap == null) {
+                logger.error(TAG, "Failed to decode image: " + imageFile.getName());
+                return null;
+            }
+
+            // Scale to exact thumbnail dimensions with OOM protection
+            Bitmap thumbnail;
+            try {
+                thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
+            } catch (OutOfMemoryError oom) {
+                logger.error(TAG, "OOM scaling image thumbnail, retrying with higher inSampleSize");
+                bitmap.recycle();
+                options.inSampleSize *= 4;
+                bitmap = BitmapFactory.decodeFile(imageFile.getAbsolutePath(), options);
+                if (bitmap == null) return null;
+                try {
+                    thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
+                } catch (OutOfMemoryError oom2) {
+                    logger.error(TAG, "OOM on second attempt, giving up");
+                    bitmap.recycle();
+                    return null;
+                }
+            }
+
+            // Compress and save
+            try (FileOutputStream fos = new FileOutputStream(thumbnailFile)) {
+                thumbnail.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_QUALITY, fos);
+            }
+
+            // Clean up bitmaps
+            if (bitmap != thumbnail) {
+                bitmap.recycle();
+            }
+            thumbnail.recycle();
+
+            logger.info(TAG, "Image thumbnail created successfully: " + thumbnailFile.getName() +
+                           " (" + thumbnailFile.length() + " bytes)");
+            return thumbnailFile;
+
+        } catch (Exception e) {
+            logger.error(TAG, "Error creating image thumbnail for " + imageFile.getName() + ": " + e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Calculate optimal inSampleSize for BitmapFactory decoding.
+     * This avoids loading the full-resolution image into memory.
+     */
+    private static int calculateInSampleSize(BitmapFactory.Options options, int reqWidth, int reqHeight) {
+        final int height = options.outHeight;
+        final int width = options.outWidth;
+        int inSampleSize = 1;
+
+        if (height > reqHeight || width > reqWidth) {
+            final int halfHeight = height / 2;
+            final int halfWidth = width / 2;
+
+            while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                inSampleSize *= 2;
+            }
+        }
+
+        return inSampleSize;
+    }
+
     /**
      * Create a thumbnail for a video file
      * @param videoFile The video file
      * @param thumbnailFile The target thumbnail file
      * @return Thumbnail file or null if failed
      */
-    private File createThumbnail(File videoFile, File thumbnailFile) {
+    private File createVideoThumbnail(File videoFile, File thumbnailFile) {
         MediaMetadataRetriever retriever = null;
-        
+
         try {
             retriever = new MediaMetadataRetriever();
             retriever.setDataSource(videoFile.getAbsolutePath());
-            
-            // Extract frame at 1 second or first available frame
-            Bitmap bitmap = retriever.getFrameAtTime(1000000); // 1 second in microseconds
-            if (bitmap == null) {
-                // Try to get the first frame
-                bitmap = retriever.getFrameAtTime();
+
+            // Extract frame with timeout to prevent hangs on corrupted videos
+            final MediaMetadataRetriever finalRetriever = retriever;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<Bitmap> future = executor.submit(() -> {
+                Bitmap frame = finalRetriever.getFrameAtTime(1000000); // 1 second in microseconds
+                if (frame == null) {
+                    frame = finalRetriever.getFrameAtTime();
+                }
+                return frame;
+            });
+            Bitmap bitmap;
+            try {
+                bitmap = future.get(10, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                logger.error(TAG, "getFrameAtTime timed out after 10s for: " + videoFile.getName());
+                bitmap = null;
+            } catch (Exception e) {
+                logger.error(TAG, "getFrameAtTime failed for " + videoFile.getName() + ": " + e.getMessage(), e);
+                bitmap = null;
+            } finally {
+                executor.shutdownNow();
             }
-            
+
             if (bitmap == null) {
                 logger.error(TAG, "Failed to extract frame from video: " + videoFile.getName());
                 return null;
             }
-            
-            // Resize bitmap to thumbnail size
-            Bitmap thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
-            
+
+            // Resize bitmap to thumbnail size with OOM protection
+            Bitmap thumbnail;
+            try {
+                thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
+            } catch (OutOfMemoryError oom) {
+                logger.error(TAG, "OOM scaling video thumbnail, retrying with smaller source");
+                bitmap.recycle();
+                // Re-extract at lower resolution is not straightforward for video frames,
+                // so just return null on OOM
+                return null;
+            }
+
             // Compress and save
             try (FileOutputStream fos = new FileOutputStream(thumbnailFile)) {
                 thumbnail.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_QUALITY, fos);
             }
-            
+
             // Clean up bitmaps
             if (bitmap != thumbnail) {
                 bitmap.recycle();
             }
             thumbnail.recycle();
-            
-            logger.info(TAG, "Thumbnail created successfully: " + thumbnailFile.getName() + 
+
+            logger.info(TAG, "Thumbnail created successfully: " + thumbnailFile.getName() +
                            " (" + thumbnailFile.length() + " bytes)");
             return thumbnailFile;
-            
+
         } catch (Exception e) {
             logger.error(TAG, "Error creating thumbnail for " + videoFile.getName() + ": " + e.getMessage(), e);
             return null;
@@ -263,37 +412,37 @@ public class ThumbnailManager {
      * @return true if thumbnail was deleted or didn't exist, false if deletion failed
      */
     public boolean deleteThumbnailForVideo(File videoFile) {
-        if (videoFile == null) {
-            logger.warn(TAG, "Cannot delete thumbnail for null video file");
-            return true; // Not an error if file is null
+        return deleteThumbnailForFile(videoFile);
+    }
+
+    /**
+     * Delete thumbnail for a specific file (video or image)
+     * @param mediaFile The file whose thumbnail should be deleted
+     * @return true if thumbnail was deleted or didn't exist, false if deletion failed
+     */
+    public boolean deleteThumbnailForFile(File mediaFile) {
+        if (mediaFile == null) {
+            logger.warn(TAG, "Cannot delete thumbnail for null file");
+            return true;
         }
-        
-        // Check if it's actually a video file
-        if (!isVideoFile(videoFile.getName())) {
-            logger.debug(TAG, "File is not a video, no thumbnail to delete: " + videoFile.getName());
-            return true; // Not an error if not a video
-        }
-        
-        // Generate the thumbnail filename for this video
-        String thumbnailFileName = generateThumbnailFileName(videoFile);
+
+        String thumbnailFileName = generateThumbnailFileName(mediaFile);
         File thumbnailFile = new File(thumbnailDirectory, thumbnailFileName);
-        
-        // Check if thumbnail exists
+
         if (!thumbnailFile.exists()) {
-            logger.debug(TAG, "Thumbnail doesn't exist for video: " + videoFile.getName());
-            return true; // Success - thumbnail doesn't exist
+            logger.debug(TAG, "Thumbnail doesn't exist for: " + mediaFile.getName());
+            return true;
         }
-        
-        // Try to delete the thumbnail
+
         boolean deleted = thumbnailFile.delete();
         if (deleted) {
-            logger.info(TAG, "Deleted thumbnail for video: " + videoFile.getName() + 
+            logger.info(TAG, "Deleted thumbnail for: " + mediaFile.getName() +
                           " (thumbnail: " + thumbnailFileName + ")");
         } else {
-            logger.error(TAG, "Failed to delete thumbnail for video: " + videoFile.getName() + 
+            logger.error(TAG, "Failed to delete thumbnail for: " + mediaFile.getName() +
                            " (thumbnail: " + thumbnailFileName + ")");
         }
-        
+
         return deleted;
     }
 } 

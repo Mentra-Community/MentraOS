@@ -190,7 +190,7 @@ export default function StoreUrl() {
 }
 
 const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s4,
   paddingHorizontal: spacing.s6,
   paddingVertical: spacing.s4,

@@ -1,5 +1,7 @@
 package com.mentra.core
 
+import android.net.wifi.WifiManager
+import android.os.Build
 import com.mentra.core.services.NotificationListener
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -31,6 +33,8 @@ class CoreModule : Module() {
             "compatible_glasses_search_stop",
             "heartbeat_sent",
             "heartbeat_received",
+            "send_command_to_ble",
+            "receive_command_from_ble",
             "swipe_volume_status",
             "switch_status",
             "rgb_led_control_response",
@@ -43,7 +47,8 @@ class CoreModule : Module() {
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
-            "mic_data",
+            "mic_pcm",
+            "mic_lc3",
             "rtmp_stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
@@ -84,6 +89,24 @@ class CoreModule : Module() {
 
         Function("update") { category: String, values: Map<String, Any> ->
             values.forEach { (key, value) -> GlassesStore.apply(category, key, value) }
+            // Persist auth_token to SharedPreferences so MentraLive.getCoreToken() finds it
+            // (bridge may run this after glasses_ready; prefs survive retries and next connection)
+            if (category == "core") {
+                values["auth_token"]?.let { token ->
+                    val len = (token as? String)?.length ?: 0
+                    android.util.Log.d("CoreModule", "update(core) auth_token received, len=$len")
+                    if (token is String && token.isNotEmpty()) {
+                        val ctx = appContext.reactContext ?: appContext.currentActivity
+                        ctx?.let {
+                            it.getSharedPreferences("augmentos_auth_prefs", android.content.Context.MODE_PRIVATE)
+                                .edit()
+                                .putString("core_token", token)
+                                .apply()
+                            android.util.Log.d("CoreModule", "Persisted core_token to SharedPreferences, len=${token.length}")
+                        }
+                    }
+                }
+            }
         }
 
         // MARK: - Display Commands
@@ -118,6 +141,14 @@ class CoreModule : Module() {
 
         AsyncFunction("showDashboard") { coreManager?.showDashboard() }
 
+        AsyncFunction("ping") { coreManager?.ping() }
+
+        // MARK: - Incident Reporting
+
+        AsyncFunction("sendIncidentId") { incidentId: String ->
+            coreManager?.sendIncidentId(incidentId)
+        }
+
         // MARK: - WiFi Commands
 
         AsyncFunction("requestWifiScan") { coreManager?.requestWifiScan() }
@@ -132,6 +163,25 @@ class CoreModule : Module() {
             coreManager?.setHotspotState(enabled)
         }
 
+        AsyncFunction("logCurrentWifiFrequency") {
+            val ctx = appContext.reactContext ?: appContext.currentActivity ?: return@AsyncFunction null
+            val wifiManager = ctx.applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as? WifiManager
+            if (wifiManager == null) {
+                val unavailableMsg = "NATIVE: 📶 WiFi frequency: WifiManager unavailable"
+                android.util.Log.d("CoreModule", unavailableMsg)
+                Bridge.log(unavailableMsg)
+                return@AsyncFunction null
+            }
+            val info = wifiManager.connectionInfo
+            val freqMhz = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) info.frequency else -1
+            val is5Ghz = freqMhz >= 5000
+            val frequencyMsg =
+                "NATIVE: 📶 Current WiFi frequency: ${freqMhz} MHz, 5 GHz: $is5Ghz (SSID: ${info.ssid?.trim('\"') ?: "unknown"})"
+            android.util.Log.d("CoreModule", frequencyMsg)
+            Bridge.log(frequencyMsg)
+            null
+        }
+
         // MARK: - Gallery Commands
 
         AsyncFunction("queryGalleryStatus") { coreManager?.queryGalleryStatus() }
@@ -143,7 +193,8 @@ class CoreModule : Module() {
                 webhookUrl: String,
                 authToken: String,
                 compress: String,
-                silent: Boolean ->
+                flash: Boolean,
+                sound: Boolean ->
             coreManager?.photoRequest(
                     requestId,
                     appId,
@@ -151,7 +202,8 @@ class CoreModule : Module() {
                     webhookUrl,
                     authToken,
                     compress,
-                    silent
+                    flash,
+                    sound
             )
         }
 
@@ -179,8 +231,8 @@ class CoreModule : Module() {
             coreManager?.saveBufferVideo(requestId, durationSeconds)
         }
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, silent: Boolean ->
-            coreManager?.startVideoRecording(requestId, save, silent)
+        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, flash: Boolean, sound: Boolean ->
+            coreManager?.startVideoRecording(requestId, save, flash, sound)
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
@@ -205,7 +257,7 @@ class CoreModule : Module() {
                 sendPcmData: Boolean,
                 sendTranscript: Boolean,
                 bypassVad: Boolean ->
-            coreManager?.setMicState(sendPcmData, sendTranscript, bypassVad)
+            coreManager?.setMicState()
         }
 
         AsyncFunction("restartTranscriber") { coreManager?.restartTranscriber() }
@@ -274,6 +326,12 @@ class CoreModule : Module() {
             com.mentra.core.stt.STTTools.extractTarBz2(sourcePath, destinationPath)
         }
 
+        // MARK: - Beta Build Detection (TestFlight on iOS; TODO: Google Play Beta on Android)
+
+        AsyncFunction("isBetaBuild") {
+            false
+        }
+
         // MARK: - Android-specific Commands
 
         AsyncFunction("getInstalledApps") {
@@ -323,10 +381,27 @@ class CoreModule : Module() {
                     context.getSystemService(android.content.Context.LOCATION_SERVICE) as
                             android.location.LocationManager
             // Check if either GPS or Network location provider is enabled
-            locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+            val providerEnabled = locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
                     locationManager.isProviderEnabled(
                             android.location.LocationManager.NETWORK_PROVIDER
                     )
+            if (!providerEnabled) {
+                // Fallback: check the system-level location toggle directly.
+                // GPS_PROVIDER/NETWORK_PROVIDER can report disabled on devices without
+                // Google Play Services or without a GPS chip, even when location is toggled on.
+                // isLocationEnabled requires API 28+; on older devices just trust the provider check.
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    val systemEnabled = locationManager.isLocationEnabled
+                    if (systemEnabled) {
+                        android.util.Log.w("CoreModule", "Location providers (GPS/Network) report disabled but system location toggle is ON. Device may lack GMS or GPS hardware.")
+                    }
+                    systemEnabled
+                } else {
+                    false
+                }
+            } else {
+                true
+            }
         }
 
         AsyncFunction("openLocationSettings") {

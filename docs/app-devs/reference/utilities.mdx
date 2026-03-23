@@ -191,7 +191,7 @@ These utility functions help work with language-specific streams and stream type
 
 #### ExtendedStreamType
 
-Represents either a standard [`StreamType`](/reference/enums#streamtype) enum value or a language-specific stream string.
+Represents either a standard [`StreamType`](/app-devs/reference/enums#streamtype) enum value or a language-specific stream string.
 
 ```typescript
 type ExtendedStreamType = StreamType | string;
@@ -282,7 +282,7 @@ session.subscribe(streamId);
 
 ### isValidStreamType()
 
-Checks if a value is either a valid [`StreamType`](/reference/enums#streamtype) enum member or a valid language-specific stream string.
+Checks if a value is either a valid [`StreamType`](/app-devs/reference/enums#streamtype) enum member or a valid language-specific stream string.
 
 ```typescript
 function isValidStreamType(subscription: ExtendedStreamType): boolean
@@ -306,7 +306,7 @@ if (isValidStreamType("transcription:en-US")) {
 
 ### getBaseStreamType()
 
-Extracts the base [`StreamType`](/reference/enums#streamtype) enum value from an [`ExtendedStreamType`](#extendedstreamtype).
+Extracts the base [`StreamType`](/app-devs/reference/enums#streamtype) enum value from an [`ExtendedStreamType`](#extendedstreamtype).
 
 ```typescript
 function getBaseStreamType(
@@ -317,7 +317,7 @@ function getBaseStreamType(
 **Parameters:**
 - `subscription`: The [`ExtendedStreamType`](#extendedstreamtype) value
 
-**Returns:** The base [`StreamType`](/reference/enums#streamtype), or `null` if invalid
+**Returns:** The base [`StreamType`](/app-devs/reference/enums#streamtype), or `null` if invalid
 
 **Example:**
 ```typescript

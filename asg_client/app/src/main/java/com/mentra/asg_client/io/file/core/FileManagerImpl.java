@@ -279,7 +279,7 @@ public class FileManagerImpl implements FileManager {
             
             // Recursively collect all files from package directory and subdirectories
             List<FileMetadata> metadataList = new ArrayList<>();
-            int totalFiles = collectFilesRecursively(packageDir, packageName, metadataList);
+            int totalFiles = collectFilesRecursively(packageDir, packageDir, packageName, metadataList);
             
             operationLogger.logOperation("LIST", packageName, null, metadataList.size(), true);
             Log.d(TAG, "✅ File listing completed - " + metadataList.size() + " files found in " + totalFiles + " locations");
@@ -298,27 +298,28 @@ public class FileManagerImpl implements FileManager {
     /**
      * Recursively collect all files from a directory and its subdirectories
      * @param directory The directory to scan
+     * @param rootDir The root package directory (for computing relative paths)
      * @param packageName The package name for metadata
      * @param metadataList The list to populate with file metadata
      * @return Total number of files found
      */
-    private int collectFilesRecursively(File directory, String packageName, List<FileMetadata> metadataList) {
+    private int collectFilesRecursively(File directory, File rootDir, String packageName, List<FileMetadata> metadataList) {
         if (!directory.exists() || !directory.isDirectory()) {
             return 0;
         }
-        
+
         int fileCount = 0;
         File[] items = directory.listFiles();
-        
+
         if (items != null) {
             for (File item : items) {
                 if (item.isFile()) {
                     // Add file to metadata list
                     String mimeType = new MimeTypeRegistry().getMimeType(item.getName());
-                    String relativePath = getRelativePath(directory, item);
-                    
+                    String relativePath = getRelativePath(rootDir, item);
+
                     metadataList.add(new FileMetadata(
-                        relativePath, // Use relative path as filename to preserve directory structure
+                        relativePath, // Use relative path from package root to preserve directory structure
                         item.getAbsolutePath(),
                         item.length(),
                         item.lastModified(),
@@ -326,16 +327,16 @@ public class FileManagerImpl implements FileManager {
                         packageName
                     ));
                     fileCount++;
-                    
+
                     Log.d(TAG, "📄 Found file: " + relativePath + " (" + item.length() + " bytes)");
                 } else if (item.isDirectory()) {
                     // Recursively scan subdirectory
                     Log.d(TAG, "📁 Scanning subdirectory: " + item.getName());
-                    fileCount += collectFilesRecursively(item, packageName, metadataList);
+                    fileCount += collectFilesRecursively(item, rootDir, packageName, metadataList);
                 }
             }
         }
-        
+
         return fileCount;
     }
     
@@ -487,15 +488,15 @@ public class FileManagerImpl implements FileManager {
         try {
             String lockInfo = lockManager.getLockInfo(packageName);
             Log.d(TAG, "📋 Lock status before acquisition: " + lockInfo);
-            
+
             int expiredLocksReleased = lockManager.releaseExpiredLocks(packageName);
             if (expiredLocksReleased > 0) {
                 Log.w(TAG, "🧹 Released " + expiredLocksReleased + " expired locks before cleanup");
             }
-            
+
             lock = lockManager.acquireWriteLock(packageName, lockTimeoutMs, "FILE_CLEANUP");
             long lockAcquisitionTime = System.currentTimeMillis() - lockStartTime;
-            
+
             if (lock != null) {
                 Log.d(TAG, "✅ Write lock acquired successfully in " + lockAcquisitionTime + "ms");
                 if (lockAcquisitionTime > 1000) {
@@ -504,7 +505,7 @@ public class FileManagerImpl implements FileManager {
             } else {
                 Log.e(TAG, "❌ Failed to acquire write lock within " + lockTimeoutMs + "ms timeout");
                 Log.d(TAG, "🏁 cleanupOldFiles() completed - Lock acquisition timeout");
-                
+
                 // Log all active lock holders for debugging
                 Map<String, ?> allHolders = lockManager.getAllLockHolders();
                 if (!allHolders.isEmpty()) {
@@ -513,28 +514,51 @@ public class FileManagerImpl implements FileManager {
                         Log.w(TAG, "  " + entry.getKey() + " -> " + entry.getValue());
                     }
                 }
-                
+
                 // Log detailed lock statistics
                 String lockStats = lockManager.getLockStatistics(packageName);
                 Log.w(TAG, "📊 Lock Statistics:\n" + lockStats);
-                
+
                 // Try emergency lock release for this specific package
                 Log.w(TAG, "🚨 Attempting emergency lock release for package: " + packageName);
                 int forceReleased = lockManager.forceReleaseAllLocks(packageName);
                 if (forceReleased > 0) {
                     Log.w(TAG, "⚠️ Force released " + forceReleased + " locks for package: " + packageName);
                     Log.w(TAG, "⚠️ This may indicate a deadlock or stuck operation");
-                    
+
                     // Log updated statistics after force release
                     String updatedStats = lockManager.getLockStatistics(packageName);
                     Log.w(TAG, "📊 Updated Lock Statistics:\n" + updatedStats);
                 }
-                
+
                 return 0;
             }
+
+            // Proceed with cleanup while holding the write lock
+            // Get package directory
+            File packageDir = directoryManager.getPackageDirectory(packageName);
+            if (!packageDir.exists() || !packageDir.isDirectory()) {
+                Log.w(TAG, "⚠️ Package directory does not exist: " + packageDir.getAbsolutePath());
+                return 0;
+            }
+
+            Log.d(TAG, "📁 Scanning directory: " + packageDir.getAbsolutePath());
+
+            // Calculate cutoff time
+            long cutoffTime = System.currentTimeMillis() - maxAgeMs;
+            Log.d(TAG, "⏰ Cutoff time: " + new java.util.Date(cutoffTime));
+
+            // Recursively scan and clean up old files
+            int deletedCount = 0;
+            long totalDeletedSize = 0;
+
+            deletedCount = cleanupFilesRecursively(packageDir, packageName, cutoffTime, totalDeletedSize);
+
+            Log.i(TAG, "✅ Cleanup completed: " + deletedCount + " files deleted, " + totalDeletedSize + " bytes freed");
+            return deletedCount;
+
         } catch (Exception e) {
-            Log.e(TAG, "💥 Exception during write lock acquisition for package: " + packageName, e);
-            Log.d(TAG, "🏁 cleanupOldFiles() completed - Lock acquisition exception");
+            Log.e(TAG, "💥 Exception during file cleanup for package: " + packageName, e);
             return 0;
         } finally {
             if (lock != null) {
@@ -548,35 +572,6 @@ public class FileManagerImpl implements FileManager {
             } else {
                 Log.w(TAG, "⚠️ Cannot release write lock - lock is null");
             }
-        }
-        
-        // Proceed with cleanup under lock
-        try {
-            // Get package directory
-            File packageDir = directoryManager.getPackageDirectory(packageName);
-            if (!packageDir.exists() || !packageDir.isDirectory()) {
-                Log.w(TAG, "⚠️ Package directory does not exist: " + packageDir.getAbsolutePath());
-                return 0;
-            }
-            
-            Log.d(TAG, "📁 Scanning directory: " + packageDir.getAbsolutePath());
-            
-            // Calculate cutoff time
-            long cutoffTime = System.currentTimeMillis() - maxAgeMs;
-            Log.d(TAG, "⏰ Cutoff time: " + new java.util.Date(cutoffTime));
-            
-            // Recursively scan and clean up old files
-            int deletedCount = 0;
-            long totalDeletedSize = 0;
-            
-            deletedCount = cleanupFilesRecursively(packageDir, packageName, cutoffTime, totalDeletedSize);
-            
-            Log.i(TAG, "✅ Cleanup completed: " + deletedCount + " files deleted, " + totalDeletedSize + " bytes freed");
-            return deletedCount;
-            
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Exception during file cleanup for package: " + packageName, e);
-            return 0;
         }
     }
     

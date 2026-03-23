@@ -1,11 +1,11 @@
 import {TabList, Tabs, TabSlot, TabTrigger, TabTriggerSlotProps} from "expo-router/ui"
 import {Pressable, View} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
 
 import {Icon, IconTypes, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 type TabButtonProps = TabTriggerSlotProps & {
   iconName: IconTypes
@@ -15,7 +15,7 @@ type TabButtonProps = TabTriggerSlotProps & {
 
 export default function Layout() {
   const {theme} = useAppTheme()
-  const {bottom} = useSafeAreaInsets()
+  const {bottom} = useSaferAreaInsets()
   const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
 
   function TabButton({iconName, iconNameFilled, isFocused, label, ...props}: TabButtonProps) {

@@ -6,6 +6,7 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo} from "@/types/asg"
+import {BackgroundTimer} from "@/utils/timers"
 import {storage} from "@/utils/storage"
 
 export interface DownloadedFile {
@@ -18,6 +19,8 @@ export interface DownloadedFile {
   thumbnailPath?: string // Path to thumbnail file
   downloaded_at: number
   glassesModel?: string // Model of glasses that captured this media
+  duration?: number // Video duration in milliseconds
+  capture_id?: string // Capture folder name (when synced via capture-aware pipeline)
 }
 
 interface SyncState {
@@ -271,13 +274,12 @@ export class LocalStorageService {
         }
 
         // Delete metadata - need to get raw data to maintain relative paths
-        const res = storage.load(this.DOWNLOADED_FILES_KEY)
+        const res = storage.load<Record<string, DownloadedFile>>(this.DOWNLOADED_FILES_KEY)
         if (res.is_error()) {
           console.error("Error loading downloaded files:", res.error)
           return false
         }
-        const rawFiles = files.value
-        // @ts-ignore
+        const rawFiles = res.value
         delete rawFiles[fileName]
         await storage.save(this.DOWNLOADED_FILES_KEY, rawFiles)
         return true
@@ -308,6 +310,7 @@ export class LocalStorageService {
       thumbnailPath: thumbnailPath,
       downloaded_at: Date.now(),
       glassesModel: glassesModel || photoInfo.glassesModel,
+      duration: photoInfo.duration,
     }
   }
 
@@ -344,6 +347,7 @@ export class LocalStorageService {
       filePath: downloadedFile.filePath,
       glassesModel: downloadedFile.glassesModel,
       thumbnailPath: thumbnailUrl, // Use the file:// URL version for thumbnailPath
+      duration: downloadedFile.duration,
     }
   }
 
@@ -380,19 +384,19 @@ export class LocalStorageService {
    * Clear all downloaded files (both metadata and actual files)
    */
   async clearAllFiles(): Promise<void> {
-    // Get all files before clearing
-    const files = await this.getDownloadedFiles()
-
-    // Delete each file from filesystem
-    for (const fileName in files) {
-      const file = files[fileName]
-      if (file.filePath && (await RNFS.exists(file.filePath))) {
-        await RNFS.unlink(file.filePath)
+    // Nuke the entire photos directory (includes thumbnails subdirectory)
+    // This is more reliable than deleting individual files, which can miss orphaned thumbnails
+    try {
+      if (await RNFS.exists(this.ASG_PHOTOS_DIR)) {
+        await RNFS.unlink(this.ASG_PHOTOS_DIR)
+        console.log("[LocalStorage] Deleted entire photos directory")
       }
-      if (file.thumbnailPath && (await RNFS.exists(file.thumbnailPath))) {
-        await RNFS.unlink(file.thumbnailPath)
-      }
+    } catch (error) {
+      console.error("[LocalStorage] Error deleting photos directory:", error)
     }
+
+    // Recreate empty directories
+    await this.initializeDirectories()
 
     // Clear metadata
     const res = await storage.remove(this.DOWNLOADED_FILES_KEY)
@@ -400,7 +404,7 @@ export class LocalStorageService {
       console.error("[LocalStorage] Error clearing downloaded files:", res.error)
       throw res.error
     }
-    console.log("[LocalStorage] Cleared all downloaded files")
+    console.log("[LocalStorage] Cleared all downloaded files and thumbnails")
   }
 
   // ============================================
@@ -443,14 +447,11 @@ export class LocalStorageService {
    * Update the current index of the sync queue (called after each file completes)
    */
   async updateSyncQueueIndex(newIndex: number): Promise<void> {
-    try {
-      const queue = await this.getSyncQueue()
-      if (queue) {
-        queue.currentIndex = newIndex
-        await this.saveSyncQueue(queue)
-      }
-    } catch (error) {
-      console.error("[LocalStorage] Error updating sync queue index:", error)
+    // S6: Let errors propagate — caller uses .catch() for non-critical updates
+    const queue = await this.getSyncQueue()
+    if (queue) {
+      queue.currentIndex = newIndex
+      await this.saveSyncQueue(queue)
     }
   }
 
@@ -458,15 +459,23 @@ export class LocalStorageService {
    * Clear sync queue (called on sync complete or cancel)
    */
   async clearSyncQueue(): Promise<void> {
-    try {
-      const res = await storage.remove(this.SYNC_QUEUE_KEY)
-      if (res.is_error()) {
-        console.error("[LocalStorage] Error clearing sync queue:", res.error)
+    // S6: Retry up to 3 times to ensure queue is cleared
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await storage.remove(this.SYNC_QUEUE_KEY)
+        if (res.is_error()) {
+          console.error(`[LocalStorage] Error clearing sync queue (attempt ${attempt}/3):`, res.error)
+          if (attempt < 3) continue
+          return
+        }
+        console.log("[LocalStorage] Cleared sync queue")
         return
+      } catch (error) {
+        console.error(`[LocalStorage] Error clearing sync queue (attempt ${attempt}/3):`, error)
+        if (attempt < 3) {
+          await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 100))
+        }
       }
-      console.log("[LocalStorage] Cleared sync queue")
-    } catch (error) {
-      console.error("[LocalStorage] Error clearing sync queue:", error)
     }
   }
 

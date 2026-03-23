@@ -32,7 +32,7 @@
   "homepage": "https://github.com/fossephate/core#readme",
   "dependencies": {},
   "devDependencies": {
-    "expo-module-scripts": "^5.0.7"
+    "expo-module-scripts": "^55.0.2"
   },
   "peerDependencies": {
     "expo": "*",

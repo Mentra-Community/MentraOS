@@ -15,6 +15,8 @@ interface LoginUIProps {
   logoUrl?: string
   /** Site name to display below logo (e.g., "Developer Portal") */
   siteName: string
+  /** Optional custom heading that replaces "Welcome to the Mentra {siteName}" */
+  heading?: string
   /** Optional message to display (e.g., for invites) */
   message?: string
   /** Redirect path after successful authentication */
@@ -30,6 +32,7 @@ interface LoginUIProps {
 export const LoginUI: React.FC<LoginUIProps> = ({
   logoUrl = IMAGES.iconOnly,
   siteName,
+  heading,
   message,
   redirectTo,
   emailRedirectPath,
@@ -122,11 +125,11 @@ export const LoginUI: React.FC<LoginUIProps> = ({
 
           {/* Site name / Welcome message */}
           <p className="text-xl text-secondary-foreground text-center mb-4">
-            Welcome to the Mentra {siteName}
+            {heading || `Welcome to the Mentra ${siteName}`}
           </p>
 
-          {/* Invite message if present */}
-          {message && (
+          {/* Invite message if present (hidden when custom heading is used) */}
+          {!heading && message && (
             <p className="text-sm text-accent bg-accent/10 p-3 rounded-lg mb-6 text-center">
               {message}
             </p>

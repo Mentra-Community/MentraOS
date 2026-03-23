@@ -1,0 +1,139 @@
+diff --git a/common/rnexecutorch/models/speech_to_text/SpeechToText.cpp b/common/rnexecutorch/models/speech_to_text/SpeechToText.cpp
+index 6299c9c4004becaff3255b3851d12879ce9d361c..7a7c426650d92a13e28c185ccfeba586a18be6a9 100644
+--- a/common/rnexecutorch/models/speech_to_text/SpeechToText.cpp
++++ b/common/rnexecutorch/models/speech_to_text/SpeechToText.cpp
+@@ -44,9 +44,10 @@ SpeechToText::decode(std::span<uint64_t> tokens,
+ }
+ 
+ std::vector<char> SpeechToText::transcribe(std::span<float> waveform,
+-                                           std::string languageOption) const {
++                                           std::string languageOption,
++                                           std::string task) const {
+   std::vector<Segment> segments =
+-      this->asr->transcribe(waveform, DecodingOptions(languageOption));
++      this->asr->transcribe(waveform, DecodingOptions(languageOption, task));
+   std::string transcription;
+ 
+   size_t transcriptionLength = 0;
+@@ -72,7 +73,8 @@ size_t SpeechToText::getMemoryLowerBound() const noexcept {
+ }
+ 
+ void SpeechToText::stream(std::shared_ptr<jsi::Function> callback,
+-                          std::string languageOption) {
++                          std::string languageOption,
++                          std::string task) {
+   if (this->isStreaming) {
+     throw RnExecutorchError(RnExecutorchErrorCode::StreamingInProgress,
+                             "Streaming is already in progress!");
+@@ -98,7 +100,7 @@ void SpeechToText::stream(std::shared_ptr<jsi::Function> callback,
+       continue;
+     }
+     ProcessResult res =
+-        this->processor->processIter(DecodingOptions(languageOption));
++        this->processor->processIter(DecodingOptions(languageOption, task));
+ 
+     nativeCallback({res.committed.begin(), res.committed.end()},
+                    {res.nonCommitted.begin(), res.nonCommitted.end()}, false);
+diff --git a/common/rnexecutorch/models/speech_to_text/SpeechToText.h b/common/rnexecutorch/models/speech_to_text/SpeechToText.h
+index e206f6ca7fbe4bed5f0082b1f17b6a7fa1070c0c..b01edce2bd8a6f66dfaee0b7f2cede15f7a5f4f4 100644
+--- a/common/rnexecutorch/models/speech_to_text/SpeechToText.h
++++ b/common/rnexecutorch/models/speech_to_text/SpeechToText.h
+@@ -24,13 +24,15 @@ public:
+       "Registered non-void function")]] std::shared_ptr<OwningArrayBuffer>
+   decode(std::span<uint64_t> tokens, std::span<float> encoderOutput) const;
+   [[nodiscard("Registered non-void function")]] std::vector<char>
+-  transcribe(std::span<float> waveform, std::string languageOption) const;
++  transcribe(std::span<float> waveform, std::string languageOption,
++             std::string task = "transcribe") const;
+ 
+   size_t getMemoryLowerBound() const noexcept;
+ 
+   // Stream
+   void stream(std::shared_ptr<jsi::Function> callback,
+-              std::string languageOption);
++              std::string languageOption,
++              std::string task = "transcribe");
+   void streamStop();
+   void streamInsert(std::span<float> waveform);
+ 
+diff --git a/common/rnexecutorch/models/speech_to_text/asr/ASR.cpp b/common/rnexecutorch/models/speech_to_text/asr/ASR.cpp
+index 64c63e5182968a32242d6644123ffd507cf656ce..e3889255a17bea84faa1e3e30479c87d211f19a8 100644
+--- a/common/rnexecutorch/models/speech_to_text/asr/ASR.cpp
++++ b/common/rnexecutorch/models/speech_to_text/asr/ASR.cpp
+@@ -27,7 +27,7 @@ ASR::getInitialSequence(const DecodingOptions &options) const {
+   if (options.language.has_value()) {
+     uint64_t langToken =
+         this->tokenizer->tokenToId("<|" + options.language.value() + "|>");
+-    uint64_t taskToken = this->tokenizer->tokenToId("<|transcribe|>");
++    uint64_t taskToken = this->tokenizer->tokenToId("<|" + options.task + "|>");
+     seq.push_back(langToken);
+     seq.push_back(taskToken);
+   }
+diff --git a/common/rnexecutorch/models/speech_to_text/types/DecodingOptions.h b/common/rnexecutorch/models/speech_to_text/types/DecodingOptions.h
+index c351ddc554afbb4bf14e33c62382f3265297ede8..ee8f41c78fd9ad20b74c616ac6eb125323b95233 100644
+--- a/common/rnexecutorch/models/speech_to_text/types/DecodingOptions.h
++++ b/common/rnexecutorch/models/speech_to_text/types/DecodingOptions.h
+@@ -6,10 +6,13 @@
+ namespace rnexecutorch::models::speech_to_text::types {
+ 
+ struct DecodingOptions {
+-  explicit DecodingOptions(const std::string &language)
+-      : language(language.empty() ? std::nullopt : std::optional(language)) {}
++  explicit DecodingOptions(const std::string &language,
++                           const std::string &task = "transcribe")
++      : language(language.empty() ? std::nullopt : std::optional(language)),
++        task(task) {}
+ 
+   std::optional<std::string> language;
++  std::string task = "transcribe";
+ };
+ 
+ } // namespace rnexecutorch::models::speech_to_text::types
+diff --git a/src/modules/natural_language_processing/SpeechToTextModule.ts b/src/modules/natural_language_processing/SpeechToTextModule.ts
+index 4b4f196df18c781ad2f278d0ba62795fc6e51072..02cbc23915af04c3c1a2715c58e2bf41d93e9851 100644
+--- a/src/modules/natural_language_processing/SpeechToTextModule.ts
++++ b/src/modules/natural_language_processing/SpeechToTextModule.ts
+@@ -109,7 +109,8 @@ export class SpeechToTextModule {
+     this.validateOptions(options);
+     const transcriptionBytes = await this.nativeModule.transcribe(
+       waveform,
+-      options.language || ''
++      options.language || '',
++      options.task || 'transcribe'
+     );
+     return this.textDecoder.decode(new Uint8Array(transcriptionBytes));
+   }
+@@ -156,7 +157,8 @@ export class SpeechToTextModule {
+             }
+             wake();
+           },
+-          options.language || ''
++          options.language || '',
++          options.task || 'transcribe'
+         );
+         finished = true;
+         wake();
+@@ -210,5 +212,11 @@ export class SpeechToTextModule {
+         'Model is multilingual, provide a language'
+       );
+     }
++    if (options.task === 'translate' && !this.modelConfig.isMultilingual) {
++      throw new RnExecutorchError(
++        RnExecutorchErrorCode.InvalidConfig,
++        'Translation requires a multilingual model'
++      );
++    }
+   }
+ }
+diff --git a/src/types/stt.ts b/src/types/stt.ts
+index ece8d60200c9c49d7648aaae0aabec161345d362..1ed6aba68f04b39eab396f1726f262ec758f1cf6 100644
+--- a/src/types/stt.ts
++++ b/src/types/stt.ts
+@@ -195,6 +195,7 @@ export type SpeechToTextLanguage =
+  */
+ export interface DecodingOptions {
+   language?: SpeechToTextLanguage;
++  task?: 'transcribe' | 'translate';
+ }
+ 
+ /**

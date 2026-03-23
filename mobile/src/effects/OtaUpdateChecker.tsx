@@ -7,7 +7,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
-import { BackgroundTimer } from "@/utils/timers"
+import {BackgroundTimer} from "@/utils/timers"
 
 export interface VersionInfo {
   versionCode: number
@@ -338,6 +338,7 @@ export function OtaUpdateChecker() {
   const glassesWifiConnected = useGlassesStore((state) => state.wifiConnected)
   const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
   const besFwVersion = useGlassesStore((state) => state.besFwVersion)
+  const otaUpdateAvailable = useGlassesStore((state) => state.otaUpdateAvailable)
 
   // Keep a ref of the current pathname so async callbacks can check it
   const pathnameRef = useRef(pathname)
@@ -354,6 +355,7 @@ export function OtaUpdateChecker() {
     updates: string[]
   } | null>(null)
   const otaCheckTimeoutRef = useRef<number | null>(null)
+  const cacheReadyFallbackTimeoutRef = useRef<number | null>(null)
 
   // Reset OTA check flag when glasses disconnect (allows fresh check on reconnect)
   useEffect(() => {
@@ -371,6 +373,11 @@ export function OtaUpdateChecker() {
       if (otaCheckTimeoutRef.current) {
         BackgroundTimer.clearTimeout(otaCheckTimeoutRef.current)
         otaCheckTimeoutRef.current = null
+      }
+      // Clear fallback timeout - prefetch is irrelevant after disconnect
+      if (cacheReadyFallbackTimeoutRef.current) {
+        BackgroundTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
+        cacheReadyFallbackTimeoutRef.current = null
       }
       // Clear MTK session flag on disconnect (glasses rebooted, new version now active)
       const mtkWasUpdated = useGlassesStore.getState().mtkUpdatedThisSession
@@ -417,34 +424,54 @@ export function OtaUpdateChecker() {
     if (besFwVersion) last.bes = besFwVersion
   }, [buildNumber, mtkFwVersion, besFwVersion])
 
-  // Effect to show install prompt when WiFi connects after pending update
+  // Show pending update alert when user navigates back to /home.
+  // Covers the case where the 3-min fallback timer fired while user was away,
+  // or glasses never sent the cache-ready signal.
+  const wasAwayFromHomeRef = useRef(false)
+  useEffect(() => {
+    if (pathname !== "/home") {
+      wasAwayFromHomeRef.current = true
+      return
+    }
+    // Only fire when RETURNING to home, not on the initial render
+    if (!wasAwayFromHomeRef.current) return
+    wasAwayFromHomeRef.current = false
+
+    if (!glassesConnected) return
+    const pending = pendingUpdate.current
+    if (!pending) return
+
+    // Last-moment imperative check: reactive glassesConnected can be stale if
+    // disconnect and navigation happen in the same render cycle.
+    if (!useGlassesStore.getState().connected) return
+
+    console.log("OTA: User returned to home with pending update - showing alert")
+    const deviceName = defaultWearable || "Glasses"
+    const updateCount = pending.updates.length
+    const updateMessage = superMode
+      ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
+      : updateCount === 1
+        ? "1 update available"
+        : `${updateCount} updates available`
+    pendingUpdate.current = null
+
+    showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
+      {text: translate("ota:updateLater"), style: "cancel"},
+      {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
+    ])
+  }, [pathname, glassesConnected, defaultWearable, superMode, push])
+
+  // Effect to show install prompt ONLY when glasses report cache-ready update on WiFi
   useEffect(() => {
     if (pathname !== "/home") return
     if (!glassesConnected) return // Verify glasses still connected
     if (!glassesWifiConnected) return
-    if (!pendingUpdate.current) return
+    if (!otaUpdateAvailable?.available || !otaUpdateAvailable.updates?.length) return
     // Last-moment check: never show Mentra Live update alert when disconnected
     if (!useGlassesStore.getState().connected) return
 
-    const {updates, latestVersionInfo} = pendingUpdate.current
-
-    // Validate that pending updates are still needed by checking if versions have changed
-    // If the user just completed OTA updates, pendingUpdate may be stale
-    const currentBuild = useGlassesStore.getState().buildNumber
-    const currentBuildNum = currentBuild ? parseInt(currentBuild, 10) : 0
-    const pendingBuildNum = latestVersionInfo?.versionCode || 0
-
-    // If current build >= pending version, APK update was applied - pendingUpdate is stale
-    if (currentBuildNum >= pendingBuildNum && pendingBuildNum > 0) {
-      console.log(
-        `OTA: Current build (${currentBuildNum}) >= pending (${pendingBuildNum}) - clearing stale pendingUpdate`,
-      )
-      pendingUpdate.current = null
-      return
-    }
-
     const deviceName = defaultWearable || "Glasses"
-    // Super mode shows technical details (APK, MTK, BES), normal mode shows simple count
+    const updates = otaUpdateAvailable.updates || []
     const updateCount = updates.length
     const updateMessage = superMode
       ? `Updates available: ${updates.join(", ").toUpperCase()}`
@@ -452,10 +479,17 @@ export function OtaUpdateChecker() {
         ? "1 update available"
         : `${updateCount} updates available`
 
-    console.log("OTA: WiFi connected - showing pending OTA update prompt")
+    console.log("OTA: Glasses cache-ready update available - showing install prompt")
 
-    // Clear pending update before showing alert to prevent re-triggering
+    // Glasses delivered the cache-ready signal - cancel the phone-side fallback timer
+    if (cacheReadyFallbackTimeoutRef.current) {
+      BackgroundTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
+      cacheReadyFallbackTimeoutRef.current = null
+    }
     pendingUpdate.current = null
+
+    // Clear store signal before showing alert to prevent immediate re-triggering
+    useGlassesStore.getState().setOtaUpdateAvailable(null)
 
     showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
       {
@@ -464,7 +498,7 @@ export function OtaUpdateChecker() {
       },
       {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
     ])
-  }, [glassesConnected, glassesWifiConnected, pathname, defaultWearable, push])
+  }, [glassesConnected, glassesWifiConnected, pathname, defaultWearable, otaUpdateAvailable, push, superMode])
 
   // Main OTA check effect
   useEffect(() => {
@@ -568,6 +602,37 @@ export function OtaUpdateChecker() {
             return
           }
 
+          // When glasses already have WiFi, the glasses-side prefetch owns the install flow.
+          // Cache the result as a fallback in case the prefetch fails silently — if it does,
+          // pendingUpdate is populated and the next home-screen visit will surface the alert.
+          // The install alert itself is driven by the cache-ready signal (existing effect above).
+          if (useGlassesStore.getState().wifiConnected) {
+            pendingUpdate.current = {latestVersionInfo, updates: filteredUpdates}
+            console.log("OTA: Update found, glasses on WiFi - cached as fallback for silent prefetch failure")
+            // Start a 3-minute fallback timer. If the glasses never send the cache-ready signal
+            // (silent prefetch failure), escalate to showing the alert directly.
+            if (cacheReadyFallbackTimeoutRef.current) {
+              BackgroundTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
+            }
+            cacheReadyFallbackTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+              cacheReadyFallbackTimeoutRef.current = null
+              const pending = pendingUpdate.current
+              if (!pending) return // prefetch succeeded and was already handled
+              if (pathnameRef.current !== "/home") return // user not on home - leave for later visit
+              if (!useGlassesStore.getState().connected) return // stale, glasses gone
+              console.log("OTA: cache-ready signal not received within timeout - showing fallback alert")
+              const deviceName = defaultWearable || "Glasses"
+              const updateCount = pending.updates.length
+              const updateMessage = updateCount === 1 ? "1 update available" : `${updateCount} updates available`
+              pendingUpdate.current = null
+              showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
+                {text: translate("ota:updateLater"), style: "cancel"},
+                {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
+              ])
+            }, 180_000)
+            return
+          }
+
           // Only show update alert on the homepage - user may have navigated away during async check
           if (pathnameRef.current !== "/home") {
             console.log(`OTA: update found but not on homepage (${pathnameRef.current}) - caching for later`)
@@ -585,38 +650,23 @@ export function OtaUpdateChecker() {
               ? "1 update available"
               : `${updateCount} updates available`
 
-          // Get current WiFi status from store (not stale closure from effect start)
-          const currentWifiConnected = useGlassesStore.getState().wifiConnected
-          console.log(`OTA: showing alert - WiFi connected: ${currentWifiConnected}, updates: ${updateList}`)
+          // No WiFi path: prompt user to connect/setup WiFi.
+          console.log("OTA: Update available and glasses are not on WiFi - prompting WiFi setup")
+          pendingUpdate.current = {latestVersionInfo, updates: filteredUpdates}
 
-          if (currentWifiConnected) {
-            // WiFi connected - go to OTA check screen to confirm and start update
-            showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
-              {
-                text: translate("ota:updateLater"),
-                style: "cancel",
+          const wifiMessage = superMode
+            ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
+            : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
+          showAlert(translate("ota:updateAvailable", {deviceName}), wifiMessage, [
+            {
+              text: translate("ota:updateLater"),
+              style: "cancel",
+              onPress: () => {
+                pendingUpdate.current = null // Clear pending on dismiss
               },
-              {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
-            ])
-          } else {
-            // No WiFi - cache the update info and prompt to connect
-            console.log("OTA: Update available but WiFi not connected - caching for later")
-            pendingUpdate.current = {latestVersionInfo, updates: filteredUpdates}
-
-            const wifiMessage = superMode
-              ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
-              : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
-            showAlert(translate("ota:updateAvailable", {deviceName}), wifiMessage, [
-              {
-                text: translate("ota:updateLater"),
-                style: "cancel",
-                onPress: () => {
-                  pendingUpdate.current = null // Clear pending on dismiss
-                },
-              },
-              {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
-            ])
-          }
+            },
+            {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
+          ])
         })
         .catch((error) => {
           console.log(`OTA: check failed with error: ${error?.message || error}`)
@@ -630,7 +680,17 @@ export function OtaUpdateChecker() {
         otaCheckTimeoutRef.current = null
       }
     }
-  }, [glassesConnected, buildNumber, mtkFwVersion, besFwVersion, glassesWifiConnected, defaultWearable, pathname, push])
+  }, [
+    glassesConnected,
+    buildNumber,
+    mtkFwVersion,
+    besFwVersion,
+    glassesWifiConnected,
+    defaultWearable,
+    pathname,
+    push,
+    superMode,
+  ])
 
   return null
 }

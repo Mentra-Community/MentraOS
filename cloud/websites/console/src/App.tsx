@@ -20,6 +20,8 @@ import AdminPanel from "./pages/AdminPanel"
 import NotFound from "./pages/NotFound"
 import CLIKeys from "./pages/CLIKeys"
 import StoreGuidelines from "./pages/StoreGuidelines"
+import IncidentsList from "./pages/IncidentsList"
+import IncidentDetail from "./pages/IncidentDetail"
 import {AuthProvider, useAuth, ForgotPasswordPage, ResetPasswordPage, Spinner} from "@mentra/shared"
 import {OrganizationProvider} from "./context/OrganizationContext"
 import {useAccountStore} from "./stores/account.store"
@@ -227,6 +229,24 @@ const AppShell: React.FC = () => {
           element={
             <ProtectedRoute requireAdmin={true}>
               <AdminPanel />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin/incidents"
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <IncidentsList />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin/incidents/:incidentId"
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <IncidentDetail />
             </ProtectedRoute>
           }
         />

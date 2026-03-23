@@ -200,7 +200,14 @@ public class SysControl {
         
         Log.d(TAG, "Sent WiFi disable broadcast");
     }
-    
+
+    public static void setHotspot5G(Context context, boolean enable) {
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "hotspot_wifi5g");
+        nn.putExtra("value", enable ? 1: 0);
+        sendBroadcast(context, nn);
+    }
+
     public static void connectToWifi(Context context, String ssid, String password) {
         if (ssid == null || ssid.isEmpty()) {
             Log.e(TAG, "Cannot connect to WiFi with empty SSID");
@@ -452,6 +459,21 @@ public class SysControl {
         nn.putExtra("value", enable ? "1": "0");
         sendBroadcast(context, nn);
         Log.d(TAG, "✅ EIS property broadcast sent");
+    }
+
+    /**
+     * Restart the camera HAL so it picks up a new FOV/ROI value written via DevApi.setCameraFov.
+     * Sends the same K900 SystemUI broadcast as K900Server_mentra (ctl.restart / camerahalserver).
+     * @param context Application context
+     */
+    public static void restartCameraHal(Context context) {
+        Log.d(TAG, "Restarting camera HAL (ctl.restart / camerahalserver)");
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "setProperty");
+        nn.putExtra("name", "ctl.restart");
+        nn.putExtra("value", "camerahalserver");
+        sendBroadcast(context, nn);
+        Log.d(TAG, "Camera HAL restart broadcast sent");
     }
     
     /**

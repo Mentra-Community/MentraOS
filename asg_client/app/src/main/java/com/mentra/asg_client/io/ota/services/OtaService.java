@@ -19,7 +19,6 @@ import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
-import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.SysControl;
@@ -221,18 +220,12 @@ public class OtaService extends Service {
                 updateNotification("MTK firmware updated successfully");
                 Log.i(TAG, "📱 MTK system SUCCESS received - staged for next reboot");
 
-                // Send FINISHED to phone now that MTK install is complete
+                // Send FINISHED to phone now that MTK install is complete.
+                // The phone UI will show "completed" and let the user tap Continue,
+                // which re-checks for remaining updates (e.g. BES) and starts a new round.
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
-
-                    // Auto-trigger pending BES update if queued
-                    // BES power-cycle will also apply the staged MTK A/B slot switch
-                    if (otaHelper.hasPendingBesUpdate()) {
-                        Log.i(TAG, "📱 Starting pending BES update after MTK complete");
-                        otaHelper.startPendingBesUpdate();
-                    } else {
-                        Log.i(TAG, "📱 No pending BES update - user must reboot to apply MTK");
-                    }
+                    Log.i(TAG, "📱 MTK complete - phone will re-check for remaining updates");
                 }
 
                 // Send broadcast to notify app that MTK update is complete
@@ -243,6 +236,7 @@ public class OtaService extends Service {
                 // Send FAILED to phone so user knows something went wrong
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FAILED", 0, event.getMessage());
+                    otaHelper.clearCachedArtifactsForType("mtk");
                 }
                 break;
         }
@@ -282,6 +276,7 @@ public class OtaService extends Service {
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
                     otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
+                    otaHelper.clearCachedArtifactsForType("bes");
                 }
                 break;
         }
@@ -293,33 +288,10 @@ public class OtaService extends Service {
      */
     private void cleanupOldFirmwareFiles() {
         try {
-            java.io.File mtkFile = new java.io.File(OtaConstants.MTK_FIRMWARE_PATH);
-            if (mtkFile.exists()) {
-                boolean deleted = mtkFile.delete();
-                Log.i(TAG, "Cleaned up old MTK firmware file: " + (deleted ? "success" : "failed"));
-            }
-
-            java.io.File mtkBackup = new java.io.File(OtaConstants.MTK_BACKUP_PATH);
-            if (mtkBackup.exists()) {
-                boolean deleted = mtkBackup.delete();
-                Log.i(TAG, "Cleaned up old MTK backup file: " + (deleted ? "success" : "failed"));
-            }
-
-            // Skip BES firmware cleanup if OTA is in progress
-            if (BesOtaManager.isBesOtaInProgress) {
-                Log.d(TAG, "Skipping BES firmware cleanup - OTA in progress");
+            if (otaHelper != null) {
+                otaHelper.pruneInvalidCachedArtifactsOnStartup();
             } else {
-                java.io.File besFile = new java.io.File(OtaConstants.BES_FIRMWARE_PATH);
-                if (besFile.exists()) {
-                    boolean deleted = besFile.delete();
-                    Log.i(TAG, "Cleaned up old BES firmware file: " + (deleted ? "success" : "failed"));
-                }
-
-                java.io.File besBackup = new java.io.File(OtaConstants.BES_BACKUP_PATH);
-                if (besBackup.exists()) {
-                    boolean deleted = besBackup.delete();
-                    Log.i(TAG, "Cleaned up old BES backup file: " + (deleted ? "success" : "failed"));
-                }
+                Log.w(TAG, "OtaHelper unavailable for cache pruning on startup");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error cleaning up old firmware files", e);
@@ -349,10 +321,8 @@ public class OtaService extends Service {
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
 
                 if (otaHelper != null) {
-                    Log.i(TAG, "📱 Triggering OTA check (first boot or update from old version)");
-                    // Use startOtaFromPhone() to properly set isPhoneInitiatedOta flag,
-                    // otherwise startVersionCheck() aborts when AUTONOMOUS_OTA_ENABLED=false
-                    otaHelper.startOtaFromPhone();
+                    Log.i(TAG, "📱 Triggering background OTA pre-download check (first boot or update from old version)");
+                    otaHelper.startVersionCheck(this);
                 }
             } else if (currentVersion > previousVersion) {
                 // ASG client was updated - auto-trigger OTA check for MTK/BES
@@ -360,10 +330,8 @@ public class OtaService extends Service {
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
 
                 if (otaHelper != null) {
-                    Log.i(TAG, "📱 Auto-resuming OTA check for MTK/BES updates");
-                    // Use startOtaFromPhone() to properly set isPhoneInitiatedOta flag,
-                    // otherwise startVersionCheck() aborts when AUTONOMOUS_OTA_ENABLED=false
-                    otaHelper.startOtaFromPhone();
+                    Log.i(TAG, "📱 Auto-resuming background OTA pre-download check for MTK/BES updates");
+                    otaHelper.startVersionCheck(this);
                 }
             } else {
                 Log.d(TAG, "ASG version unchanged (" + currentVersion + ") - no auto-resume needed");

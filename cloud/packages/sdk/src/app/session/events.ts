@@ -2,6 +2,7 @@
  * 🎮 Event Manager Module
  */
 import EventEmitter from "events";
+import type { Logger } from "pino";
 import {
   StreamType,
   ExtendedStreamType,
@@ -126,24 +127,27 @@ export class EventManager {
   private handlers: Map<EventType, Set<Handler<unknown>>>;
   private lastLanguageTranscriptioCleanupHandler: () => void;
   private lastLanguageTranslationCleanupHandler: () => void;
+  private logger: Logger;
 
   constructor(
     private subscribe: (type: ExtendedStreamType) => void,
     private unsubscribe: (type: ExtendedStreamType) => void,
     private packageName: string,
     private baseUrl: string,
+    logger: Logger,
   ) {
     this.emitter = new EventEmitter();
     this.handlers = new Map();
     this.lastLanguageTranscriptioCleanupHandler = () => {};
     this.lastLanguageTranslationCleanupHandler = () => {};
+    this.logger = logger;
   }
 
   // Convenience handlers for common event types
 
   onTranscription(handler: Handler<TranscriptionData>) {
     // Only make the API call if we have a base URL (server-side environment)
-    microPhoneWarnLog(this.baseUrl, this.packageName, this.onTranscription.name);
+    microPhoneWarnLog(this.baseUrl, this.packageName, this.onTranscription.name, this.logger);
 
     return this.addHandler(createTranscriptionStream("en-US"), handler);
   }
@@ -195,7 +199,7 @@ export class EventManager {
     targetLanguage: string,
     handler: Handler<TranslationData>,
   ): () => void {
-    microPhoneWarnLog(this.baseUrl || "", this.packageName, this.ontranslationForLanguage.name);
+    microPhoneWarnLog(this.baseUrl || "", this.packageName, this.ontranslationForLanguage.name, this.logger);
     if (!isValidLanguageCode(sourceLanguage)) {
       throw new Error(`Invalid source language code: ${sourceLanguage}`);
     }
@@ -247,7 +251,7 @@ export class EventManager {
   }
 
   onVoiceActivity(handler: Handler<Vad>) {
-    microPhoneWarnLog(this.baseUrl || "", this.packageName, this.onVoiceActivity.name);
+    microPhoneWarnLog(this.baseUrl || "", this.packageName, this.onVoiceActivity.name, this.logger);
     return this.addHandler(StreamType.VAD, handler);
   }
 
@@ -361,7 +365,7 @@ export class EventManager {
           }
         }
       } catch (error: unknown) {
-        console.error(`Error in onSettingChange handler for key "${key}":`, error);
+        this.logger.debug({ key, error }, `Error in onSettingChange handler for key "${key}"`);
       }
     };
 
@@ -382,7 +386,7 @@ export class EventManager {
   on<T extends ExtendedStreamType>(type: T, handler: Handler<EventData<T>>): () => void {
     // Check permissions for specific stream types
     if (type === StreamType.CALENDAR_EVENT) {
-      calendarWarnLog(this.baseUrl, this.packageName, "on");
+      calendarWarnLog(this.baseUrl, this.packageName, "on", this.logger);
     }
     return this.addHandler(type, handler);
   }
@@ -479,17 +483,14 @@ export class EventManager {
   emit<T extends EventType>(event: T, data: EventData<T>): void {
     try {
       // Emit to EventEmitter handlers (system events)
-      // console.log(`#### Emitting to ${event}`);
       this.emitter.emit(event, data);
 
       // Emit to stream handlers if applicable
       const handlers = this.handlers.get(event);
-      // console.log(`#### Handlers: ${JSON.stringify(handlers)}`);
 
       if (handlers) {
         // Create array of handlers to prevent modification during iteration
         const handlersArray = Array.from(handlers);
-        // console.log(`((())) HandlersArray: ${JSON.stringify(handlersArray)}`);
 
         // Execute each handler in isolated try/catch to prevent one handler
         // from crashing the entire App
@@ -497,8 +498,11 @@ export class EventManager {
           try {
             (handler as Handler<EventData<T>>)(data);
           } catch (handlerError: unknown) {
-            // Log the error but don't let it propagate
-            console.error(`Error in handler for event '${String(event)}':`, handlerError);
+            // Log at debug — the error event (emitted below) is the primary output path
+            this.logger.debug(
+              { event: String(event), error: handlerError },
+              `Error in handler for event '${String(event)}'`,
+            );
 
             // Emit an error event for tracking purposes
             if (event !== "error") {
@@ -510,9 +514,16 @@ export class EventManager {
           }
         });
       }
+
+      // Fallback: if this is an error event and nobody is listening, log it.
+      // This prevents errors from being silently swallowed when dev has no onError handler.
+      if (event === "error" && this.emitter.listenerCount("error") === 0 && (!handlers || handlers.size === 0)) {
+        const error = data as unknown as Error;
+        this.logger.error(error?.message ?? String(data));
+      }
     } catch (emitError: unknown) {
       // Catch any errors in the emission process itself
-      console.error(`Fatal error emitting event '${String(event)}':`, emitError);
+      this.logger.debug({ event: String(event), error: emitError }, `Fatal error emitting event '${String(event)}'`);
 
       // Try to emit an error event if we're not already handling an error
       if (event !== "error") {
@@ -520,9 +531,9 @@ export class EventManager {
           const errorMessage = emitError instanceof Error ? emitError.message : String(emitError);
 
           this.emitter.emit("error", new Error(`Event emission error for '${String(event)}': ${errorMessage}`));
-        } catch (nestedError) {
-          // If even this fails, just log it - nothing more we can do
-          console.error("Failed to emit error event:", nestedError);
+        } catch {
+          // If even this fails, log it — nothing more we can do
+          this.logger.debug("Failed to emit error event after emission failure");
         }
       }
     }

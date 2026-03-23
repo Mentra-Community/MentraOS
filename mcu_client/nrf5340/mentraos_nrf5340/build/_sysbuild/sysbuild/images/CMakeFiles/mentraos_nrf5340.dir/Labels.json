@@ -1,0 +1,43 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/CMakeFiles/mentraos_nrf5340"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/CMakeFiles/mentraos_nrf5340.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/CMakeFiles/mentraos_nrf5340-complete.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-build.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-configure.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-download.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-install.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-mkdir.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-patch.rule"
+		},
+		{
+			"file" : "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"mentraos_nrf5340"
+		],
+		"name" : "mentraos_nrf5340"
+	}
+}

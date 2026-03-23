@@ -1,10 +1,28 @@
-import mantle from "./MantleManager"
+import {Linking} from "react-native"
+import Share from "react-native-share"
+import * as Clipboard from "expo-clipboard"
+import {File, Paths} from "expo-file-system"
 import CoreModule from "core"
 
+type MiniAppMessageType =
+  | "core_fn"
+  | "request_mic_audio"
+  | "request_transcription"
+  | "display_event"
+  | "button_click"
+  | "page_ready"
+  | "custom_action"
+  | "share"
+  | "open_url"
+  | "copy_clipboard"
+  | "download"
+  | "queue_display_event"
+
 export interface MiniAppMessage {
-  type: string
+  type: MiniAppMessageType
   payload?: any
   timestamp?: number
+  requestId?: string
 }
 
 class MiniComms {
@@ -37,16 +55,16 @@ class MiniComms {
   // Send message to WebView
   public sendToMiniApp(packageName: string, message: MiniAppMessage) {
     if (!this.messageHandlers[packageName]) {
-      console.warn("SUPERCOMMS: No WebView message handler registered")
+      console.warn("MINICOM: No WebView message handler registered")
       return
     }
 
     try {
       const jsonMessage = JSON.stringify(message)
       this.messageHandlers[packageName](jsonMessage)
-      console.log(`SUPERCOMMS: Sent to WebView: ${message.type}`)
+      console.log(`MINICOM: Sent to WebView: ${message.type}`)
     } catch (error) {
-      console.error(`SUPERCOMMS: Error sending to WebView:`, error)
+      console.error(`MINICOM: Error sending to WebView:`, error)
     }
   }
 
@@ -54,23 +72,23 @@ class MiniComms {
   public handleRawMessageFromMiniApp(packageName: string, stringified: string) {
     try {
       const message: MiniAppMessage = JSON.parse(stringified)
-      console.log(`SUPERCOMMS: Received from MiniApp: ${message.type} from ${packageName}`)
+      console.log(`MINICOM: Received from MiniApp: ${message.type} from ${packageName}`)
 
-      // Handle specific message types
-      // this.handleMessageFromMiniApp(packageName, message)
+      this.handleMessageFromMiniApp(packageName, message)
     } catch (error) {
-      console.error(`SUPERCOMMS: Error parsing WebView message:`, error)
+      console.error(`MINICOM: Error parsing WebView message:`, error)
     }
   }
 
   private handleCoreFn(message: MiniAppMessage) {
     const {fn, args} = message.payload
-    console.log(`SUPERCOMMS: Core function:`, fn, args)
-    CoreModule[fn](...args)
+    console.log(`MINICOM: Core function:`, fn, args)
+    // @ts-ignore
+    CoreModule[fn]({...args})
   }
 
   private handleButtonClick(message: MiniAppMessage) {
-    console.log(`SUPERCOMMS: Button clicked:`, message.payload)
+    console.log(`MINICOM: Button clicked:`, message.payload)
 
     // Send a response back to WebView
     // this.sendToMiniApp({
@@ -85,7 +103,7 @@ class MiniComms {
   }
 
   private handlePageReady(_message: MiniAppMessage) {
-    console.log(`SUPERCOMMS: Page is ready`)
+    console.log(`MINICOM: Page is ready`)
 
     // // Send initial data to WebView
     // this.sendToWebView({
@@ -99,7 +117,115 @@ class MiniComms {
   }
 
   private handleCustomAction(_message: MiniAppMessage) {
-    console.log(`SUPERCOMMS: Custom action:`, _message.payload)
+    console.log(`MINICOM: Custom action:`, _message.payload)
+  }
+
+  private async handleShare(packageName: string, message: MiniAppMessage) {
+    const {text, title, base64, mimeType, filename, url} = message.payload || {}
+    try {
+      if (base64) {
+        // File share via base64 — write to temp file then share
+        const tempFile = new File(Paths.cache, filename || "shared_file")
+        tempFile.write(base64, {encoding: "base64"})
+        await Share.open({
+          url: tempFile.uri,
+          type: mimeType || "application/octet-stream",
+          filename: filename,
+          title: title,
+        })
+      } else if (url) {
+        await Share.open({url, title, message: text})
+      } else {
+        await Share.open({message: text || "", title})
+      }
+      this.sendResponse(packageName, message.requestId, {success: true})
+    } catch (error: any) {
+      // react-native-share throws when user dismisses the share sheet
+      if (error?.message?.includes("User did not share")) {
+        this.sendResponse(packageName, message.requestId, {success: false, cancelled: true})
+      } else {
+        console.error("MINICOM: Share error:", error)
+        this.sendResponse(packageName, message.requestId, {success: false, error: error?.message})
+      }
+    }
+  }
+
+  private async handleOpenUrl(_packageName: string, message: MiniAppMessage) {
+    const {url} = message.payload || {}
+    if (!url || typeof url !== "string") {
+      console.warn("MINICOM: open_url missing url")
+      return
+    }
+    // Block dangerous schemes
+    if (url.startsWith("javascript:") || url.startsWith("file:")) {
+      console.warn("MINICOM: open_url blocked dangerous scheme:", url)
+      return
+    }
+    try {
+      await Linking.openURL(url)
+    } catch (error) {
+      console.error("MINICOM: open_url error:", error)
+    }
+  }
+
+  private async handleCopyClipboard(packageName: string, message: MiniAppMessage) {
+    const {text} = message.payload || {}
+    if (typeof text !== "string") {
+      console.warn("MINICOM: copy_clipboard missing text")
+      return
+    }
+    try {
+      await Clipboard.setStringAsync(text)
+      this.sendResponse(packageName, message.requestId, {success: true})
+    } catch (error: any) {
+      console.error("MINICOM: clipboard error:", error)
+      this.sendResponse(packageName, message.requestId, {success: false, error: error?.message})
+    }
+  }
+
+  private async handleDownload(packageName: string, message: MiniAppMessage) {
+    const {base64, url, mimeType, filename} = message.payload || {}
+    const name = filename || "download"
+    try {
+      let file: File
+      if (base64) {
+        file = new File(Paths.cache, name)
+        file.write(base64, {encoding: "base64"})
+      } else if (url) {
+        file = await File.downloadFileAsync(url, new File(Paths.cache, name), {idempotent: true})
+      } else {
+        console.warn("MINICOM: download missing base64 or url")
+        return
+      }
+      // Open share sheet so user can choose where to save
+      await Share.open({
+        url: file.uri,
+        type: mimeType || "application/octet-stream",
+        filename: name,
+      })
+      this.sendResponse(packageName, message.requestId, {success: true, filePath: file.uri})
+    } catch (error: any) {
+      if (error?.message?.includes("User did not share")) {
+        this.sendResponse(packageName, message.requestId, {success: true, cancelled: true})
+      } else {
+        console.error("MINICOM: download error:", error)
+        this.sendResponse(packageName, message.requestId, {success: false, error: error?.message})
+      }
+    }
+  }
+
+  private handleRequestTranscription(packageName: string, message: MiniAppMessage) {
+
+    // composer
+
+  }
+
+  private sendResponse(packageName: string, requestId: string | undefined, result: any) {
+    if (!requestId) return
+    this.sendToMiniApp(packageName, {
+      type: "bridge_response" as MiniAppMessageType,
+      payload: {requestId, ...result},
+    })
   }
 
   // process the message from the mini app
@@ -108,7 +234,9 @@ class MiniComms {
       case "core_fn":
         this.handleCoreFn(message)
         break
-      case "request_mic":
+      case "queue_display_event":
+        break
+      case "request_mic_audio":
         // this.handleRequestAudio(message)
         break
       case "request_transcription":
@@ -120,20 +248,28 @@ class MiniComms {
       case "button_click":
         this.handleButtonClick(message)
         break
-
       case "page_ready":
         this.handlePageReady(message)
         break
-
       case "custom_action":
         this.handleCustomAction(message)
         break
-
+      case "share":
+        this.handleShare(packageName, message)
+        break
+      case "open_url":
+        this.handleOpenUrl(packageName, message)
+        break
+      case "copy_clipboard":
+        this.handleCopyClipboard(packageName, message)
+        break
+      case "download":
+        this.handleDownload(packageName, message)
+        break
       default:
-        console.log(`SUPERCOMMS: Unknown message type: ${message.type}`)
+        console.log(`MINICOM: Unknown message type: ${message.type}`)
     }
   }
-
 }
 
 const miniComms = MiniComms.getInstance()

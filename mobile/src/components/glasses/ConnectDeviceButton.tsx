@@ -1,4 +1,4 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
 import CoreModule from "core"
 import {ActivityIndicator, View} from "react-native"
 
@@ -46,7 +46,7 @@ export const ConnectDeviceButton = () => {
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await CoreModule.disconnect()
+      await CoreModule.disconnectController()
     } else {
       await connectGlasses()
     }
@@ -69,10 +69,11 @@ export const ConnectDeviceButton = () => {
   if (isSearching) {
     return (
       <View style={{flexDirection: "row", gap: theme.spacing.s2}}>
-        <Button compactIcon preset="alternate" onPress={handleConnectOrDisconnect}>
+        {/* <Button compactIcon preset="alternate" onPress={handleConnectOrDisconnect}>
           <Icon name="x" size={20} color={theme.colors.foreground} />
-        </Button>
+        </Button> */}
         <Button
+          onPress={handleConnectOrDisconnect}
           flex
           compact
           LeftAccessory={() => <ActivityIndicator size="small" color={theme.colors.foreground} />}
@@ -89,6 +90,88 @@ export const ConnectDeviceButton = () => {
         preset="primary"
         onPress={handleConnectOrDisconnect}
         tx="home:connectGlasses"
+        disabled={isSearching}
+      />
+    )
+  }
+
+  return null
+}
+
+export const ConnectControllerButton = () => {
+  const {theme} = useAppTheme()
+  const {push} = useNavigationHistory()
+  const [defaultController] = useSetting(SETTINGS.default_controller.key)
+  const controllerConnected = useGlassesStore((state) => state.controllerConnected)
+  const isSearching = useCoreStore((state) => state.searchingController)
+
+  if (controllerConnected) {
+    return null
+  }
+
+  const connectController = async () => {
+    if (!defaultController) {
+      push("/pairing/select-glasses-model")
+      return
+    }
+
+    try {
+      // Check that Bluetooth and Location are enabled/granted
+      const requirementsCheck = await checkConnectivityRequirementsUI()
+
+      if (!requirementsCheck) {
+        return
+      }
+
+      await CoreModule.connectDefaultController()
+    } catch (err) {
+      console.error("connect to glasses error:", err)
+      showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
+    }
+  }
+
+  // New handler: if already connecting, pressing the button calls disconnect.
+  const handleConnectOrDisconnect = async () => {
+    if (isSearching) {
+      await CoreModule.disconnect()
+    } else {
+      await connectController()
+    }
+  }
+
+  // Debug the conditional logic
+  const defaultControllerNull = defaultController == null
+  const defaultControllerStringNull = defaultController == "null"
+  const defaultControllerEmpty = defaultController === ""
+
+  if (defaultControllerNull || defaultControllerStringNull || defaultControllerEmpty) {
+    return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairController" />
+  }
+
+  if (isSearching) {
+    return (
+      <View style={{flexDirection: "row", gap: theme.spacing.s2}}>
+        {/* <Button compactIcon preset="alternate" onPress={handleConnectOrDisconnect}>
+          <Icon name="x" size={20} color={theme.colors.foreground} />
+        </Button> */}
+        <Button
+          onPress={handleConnectOrDisconnect}
+          flex
+          compact
+          LeftAccessory={() => <ActivityIndicator size="small" color={theme.colors.primary_foreground} />}
+          tx="home:connectingController"
+        />
+      </View>
+    )
+  }
+
+  if (!controllerConnected) {
+    return (
+      <Button
+        compact
+        preset="primary"
+        onPress={handleConnectOrDisconnect}
+        tx="home:connectController"
         disabled={isSearching}
       />
     )

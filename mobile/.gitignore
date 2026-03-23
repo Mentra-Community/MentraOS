@@ -98,3 +98,5 @@ expo-env.d.ts
 pnpm-lock.yaml
 
 .env.local
+
+.model-cache/

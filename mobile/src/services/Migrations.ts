@@ -1,6 +1,7 @@
 import {AsyncResult, result as Res} from "typesafe-ts"
 
 import {storage} from "@/utils/storage"
+import {useSettingsStore} from "@/stores/settings"
 
 interface Migration {
   version: number // the version this migration brings you TO
@@ -10,12 +11,13 @@ interface Migration {
 // this entire list will be run on a fresh install
 // migrations must be idempotent and safe to run multiple times!!!
 const migrations: Migration[] = [
-  // {
-  //   version: 1,
-  //   run: async () => {
-  //     // migrates from 0 → 1
-  //   }
-  // },
+  {
+    version: 1,
+    run: async () => {
+      // migrates from 0 → 1 turns on the new app switcher ui!
+      useSettingsStore.getState().setSetting("app_switcher_ui", true)
+    },
+  },
   // {
   //   version: 2,
   //   run: async () => {
@@ -47,19 +49,22 @@ const init = async () => {
   // no version is set, so we need to set it
   let res = await storage.save(migration_version_key, 0)
   if (res.is_error()) {
-    console.error("Failed to set migration version", res.error)
+    console.error("MIGRATE: Failed to set migration version", res.error)
     return
   }
 }
 
 export const migrate = async () => {
-  const storedVersionRes = await storage.load<number>("migrationVersion")
-  if (storedVersionRes.is_error()) {
-    await init()
-    return
-  }
+  const storedVersionRes = await storage.load<number>(migration_version_key)
+  let storedVersion: number
 
-  const storedVersion = storedVersionRes.value
+  if (storedVersionRes.is_error()) {
+    // fresh install — initialize at version 0 and run all migrations
+    await init()
+    storedVersion = 0
+  } else {
+    storedVersion = storedVersionRes.value
+  }
 
   if (storedVersion === current_version) {
     // we are up to date, no migrations needed
@@ -70,13 +75,13 @@ export const migrate = async () => {
     // we are behind, we need to migrate
     let res = await runMigrations(storedVersion)
     if (res.is_error()) {
-      console.error("Failed to migrate", res.error)
+      console.error("MIGRATE: Failed to migrate", res.error)
       return
     }
     // we successfully migrated, so we need to set the new version
     res = await storage.save(migration_version_key, current_version)
     if (res.is_error()) {
-      console.error("Failed to set migration version", res.error)
+      console.error("MIGRATE: Failed to set migration version", res.error)
       return
     }
     return

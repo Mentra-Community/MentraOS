@@ -1,6 +1,6 @@
 import CoreModule from "core"
 
-import {push} from "@/contexts/NavigationRef"
+import {push} from "@/contexts/NavigationHistoryContext"
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import displayProcessor from "@/services/DisplayProcessor"
 import mantle from "@/services/MantleManager"
@@ -13,7 +13,7 @@ import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import restComms from "@/services/RestComms"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
-import { throttle } from "@/utils/timers"
+import {throttle} from "@/utils/timers"
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -323,19 +323,19 @@ class SocketComms {
     const udpHost = msg.udpHost || msg.udp_host
     const udpPort = msg.udpPort || msg.udp_port || 8000
 
-    console.log("SOCKET: connection_ack UDP fields:", {
-      udpHost: msg.udpHost,
-      udp_host: msg.udp_host,
-      udpPort: msg.udpPort,
-      udp_port: msg.udp_port,
-      resolvedHost: udpHost,
-      resolvedPort: udpPort,
-      hasEncryption: !!msg.udpEncryption,
-      allKeys: Object.keys(msg),
-    })
+    // console.log("SOCKET: connection_ack UDP fields:", {
+    //   udpHost: msg.udpHost,
+    //   udp_host: msg.udp_host,
+    //   udpPort: msg.udpPort,
+    //   udp_port: msg.udp_port,
+    //   resolvedHost: udpHost,
+    //   resolvedPort: udpPort,
+    //   hasEncryption: !!msg.udpEncryption,
+    //   allKeys: Object.keys(msg),
+    // })
 
     if (udpHost) {
-      console.log(`SOCKET: UDP endpoint found, configuring with ${udpHost}:${udpPort}`)
+      // console.log(`SOCKET: UDP endpoint found, configuring with ${udpHost}:${udpPort}`)
       udp.configure(udpHost, udpPort, this.userid)
 
       // Configure encryption if server provided a key
@@ -396,11 +396,11 @@ class SocketComms {
       return
     }
 
-    console.log(
-      `SOCKET: Audio format configured successfully: ${audioFormat}${
-        bypassEncoding ? " (raw PCM)" : `, ${frameSizeBytes} bytes/frame`
-      }`,
-    )
+    // console.log(
+    //   `SOCKET: Audio format configured successfully: ${audioFormat}${
+    //     bypassEncoding ? " (raw PCM)" : `, ${frameSizeBytes} bytes/frame`
+    //   }`,
+    // )
   }
 
   private refreshAppletsThrottled = throttle(() => {
@@ -451,7 +451,12 @@ class SocketComms {
       }
     }
 
-    CoreModule.setMicState(shouldSendPcmData, shouldSendTranscript, bypassVad)
+    CoreModule.update("core", {
+      // should_send_pcm: shouldSendPcmData,
+      should_send_lc3: shouldSendPcmData,// online apps always want lc3
+      should_send_transcript: shouldSendTranscript,
+      bypass_vad: bypassVad,
+    })
   }
 
   public handle_display_event(msg: any) {
@@ -516,16 +521,17 @@ class SocketComms {
     const size = msg.size ?? "medium"
     const authToken = msg.authToken ?? ""
     const compress = msg.compress ?? "none"
-    const silent = msg.silent ?? true
+    const flash = msg.flash ?? true
+    const sound = msg.sound ?? true
     console.log(
-      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} silent: ${silent}`,
+      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} flash: ${flash} sound: ${sound}`,
     )
     if (!requestId || !appId) {
       console.log("Invalid photo request: missing requestId or appId")
       return
     }
-    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, silent
-    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, silent)
+    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound
+    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
   }
 
   private handle_start_rtmp_stream(msg: any) {
@@ -567,8 +573,9 @@ class SocketComms {
     console.log(`SOCKET: Received START_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const videoRequestId = msg.requestId || `video_${Date.now()}`
     const save = msg.save !== false
-    const silent = msg.silent ?? false
-    CoreModule.startVideoRecording(videoRequestId, save, silent)
+    const flash = msg.flash ?? true
+    const sound = msg.sound ?? true
+    CoreModule.startVideoRecording(videoRequestId, save, flash, sound)
   }
 
   private handle_stop_video_recording(msg: any) {
@@ -597,6 +604,15 @@ class SocketComms {
       coerceNumber(msg.offtime, 0),
       coerceNumber(msg.count, 1),
     )
+  }
+
+  private handle_camera_fov_set(msg: any) {
+    const ROI_MAP: Record<string, number> = {center: 0, bottom: 1, top: 2}
+    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(82, msg.fov)) : 118
+    const roiStr: string = msg.roiPosition ?? "center"
+    const numericRoi = ROI_MAP[roiStr] ?? 0
+    console.log(`SOCKET: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
+    useSettingsStore.getState().setSetting(SETTINGS.camera_fov.key, {fov, roi_position: numericRoi}, false)
   }
 
   private handle_show_wifi_setup(msg: any) {
@@ -672,7 +688,7 @@ class SocketComms {
     audioPlaybackService.stopForApp(appId)
   }
 
-  private handle_ping(msg: any) {
+  private handle_ping(_msg: any) {
     ws.sendText(JSON.stringify({type: "pong"}))
   }
 
@@ -761,6 +777,10 @@ class SocketComms {
 
       case "rgb_led_control":
         this.handle_rgb_led_control(msg)
+        break
+
+      case "camera_fov_set":
+        this.handle_camera_fov_set(msg)
         break
 
       case "show_wifi_setup":

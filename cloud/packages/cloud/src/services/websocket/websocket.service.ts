@@ -83,13 +83,9 @@ export class WebSocketService {
         timestamp: new Date(),
       };
       userSession.websocket.send(JSON.stringify(appStartedMessage));
-      logger.info(
-        `Sent app_started message to ${userSession.userId} for app ${packageName}`,
-      );
+      logger.info(`Sent app_started message to ${userSession.userId} for app ${packageName}`);
     } else {
-      logger.warn(
-        `Cannot send app_started message: WebSocket not ready for user ${userSession.userId}`,
-      );
+      logger.warn(`Cannot send app_started message: WebSocket not ready for user ${userSession.userId}`);
     }
   }
 
@@ -104,13 +100,9 @@ export class WebSocketService {
         timestamp: new Date(),
       };
       userSession.websocket.send(JSON.stringify(appStoppedMessage));
-      logger.info(
-        `Sent app_stopped message to ${userSession.userId} for app ${packageName}`,
-      );
+      logger.info(`Sent app_stopped message to ${userSession.userId} for app ${packageName}`);
     } else {
-      logger.warn(
-        `Cannot send app_stopped message: WebSocket not ready for user ${userSession.userId}`,
-      );
+      logger.warn(`Cannot send app_stopped message: WebSocket not ready for user ${userSession.userId}`);
     }
   }
 
@@ -122,10 +114,7 @@ export class WebSocketService {
   setupWebSocketServers(server: Server): void {
     server.on("upgrade", (request, socket, head) => {
       try {
-        const url = new URL(
-          request.url || "",
-          `http://${request.headers.host}`,
-        );
+        const url = new URL(request.url || "", `http://${request.headers.host}`);
 
         // Log detailed information about the upgrade request
         logger.debug(
@@ -136,12 +125,9 @@ export class WebSocketService {
               origin: request.headers.origin,
               upgrade: request.headers.upgrade,
               connection: request.headers.connection,
-              secWebSocketKey:
-                request.headers["sec-websocket-key"]?.substring(0, 10) + "...",
+              secWebSocketKey: request.headers["sec-websocket-key"]?.substring(0, 10) + "...",
               secWebSocketVersion: request.headers["sec-websocket-version"],
-              authorization: request.headers.authorization
-                ? "Present"
-                : "Missing",
+              authorization: request.headers.authorization ? "Present" : "Missing",
               sessionId: request.headers["x-session-id"] || "N/A",
               userId: request.headers["x-user-id"] || "N/A",
             },
@@ -158,14 +144,10 @@ export class WebSocketService {
             // Extract JWT token from Authorization header for glasses
             const queryParams = url.searchParams;
             const coreTokenQueryParam = queryParams.get("token");
-            const coreToken =
-              request.headers.authorization?.split(" ")[1] ||
-              coreTokenQueryParam;
+            const coreToken = request.headers.authorization?.split(" ")[1] || coreTokenQueryParam;
             logger.debug(
               { feature: "websocket" },
-              `Glasses core token: ${
-                coreToken ? coreToken.substring(0, 10) + "..." : "None"
-              }`,
+              `Glasses core token: ${coreToken ? coreToken.substring(0, 10) + "..." : "None"}`,
             );
 
             if (!coreToken) {
@@ -194,20 +176,6 @@ export class WebSocketService {
 
               // Attach the userId to the request for use by the handler
               (request as any).userId = userId;
-
-              // Check for LiveKit preference in headers
-              const livekitQueryParam = queryParams.get("livekit");
-              const livekitHeader = request.headers["livekit"];
-              const livekitPreference =
-                livekitHeader === "true" || livekitQueryParam === "true";
-              (request as any).livekitRequested = livekitPreference;
-
-              if (livekitPreference) {
-                logger.info(
-                  { userId, feature: "livekit" },
-                  "Client requested LiveKit transport",
-                );
-              }
 
               // If validation successful, proceed with connection
               this.glassesWss.handleUpgrade(request, socket, head, (ws) => {
@@ -273,10 +241,7 @@ export class WebSocketService {
 
               try {
                 // Verify and extract JWT payload
-                const payload = jwt.verify(
-                  appJwt,
-                  AUGMENTOS_AUTH_JWT_SECRET,
-                ) as {
+                const payload = jwt.verify(appJwt, AUGMENTOS_AUTH_JWT_SECRET) as {
                   packageName: string;
                   apiKey: string;
                 };
@@ -313,10 +278,7 @@ export class WebSocketService {
                   socket.destroy();
                   return;
                 } else {
-                  logger.error(
-                    { error: jwtError, request },
-                    "Error verifying App JWT token",
-                  );
+                  logger.error({ error: jwtError, request }, "Error verifying App JWT token");
                 }
 
                 // For other types of errors, continue without failing

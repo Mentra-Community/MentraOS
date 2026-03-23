@@ -188,7 +188,7 @@ const $input: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
   flex: 1,
   fontSize: 16,
   color: colors.text,
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
@@ -199,7 +199,7 @@ const $input: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
 })
 
 const $decrementButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,
@@ -210,7 +210,7 @@ const $decrementButton: ThemedStyle<ViewStyle> = ({colors}) => ({
 })
 
 const $incrementButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.backgroundAlt,
+  backgroundColor: colors.primary_foreground,
   borderWidth: 1,
   borderColor: colors.border,
   borderRadius: 6,

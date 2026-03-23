@@ -61,7 +61,7 @@ export const BackgroundAppsGrid = () => {
       return
     }
 
-    startApplet(app.packageName)
+    startApplet(app)
   }
 
   const renderItem = useCallback(

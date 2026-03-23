@@ -1,0 +1,48 @@
+
+description: A6N SPI display controller
+
+compatible: "zephyr,custom-a6n"
+
+include: [spi-device.yaml, display-controller.yaml]
+
+properties:
+  left_cs-gpios:
+    type: phandle-array
+    required: true
+    description: left_cs GPIO pin
+
+  right_cs-gpios:
+    type: phandle-array
+    required: true
+    description: right_cs GPIO pin
+
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: Reset GPIO pin
+
+  vcom-gpios:
+    type: phandle-array
+    required: true
+    description: vcom GPIO pin
+
+  v1_8-gpios:
+    type: phandle-array
+    required: true
+    description: v1_8 GPIO pin
+
+  v0_9-gpios:
+    type: phandle-array
+    required: true
+    description: v0_9 GPIO pin
+
+  width:
+    type: int
+    required: true
+    description: Display width in pixels
+  
+  height:
+    type: int
+    required: true
+    description: Display height in pixels
+  

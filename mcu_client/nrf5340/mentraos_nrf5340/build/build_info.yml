@@ -1,0 +1,30 @@
+cmake:
+  application:
+    source-dir: /opt/nordic/ncs/v3.0.0/zephyr/share/sysbuild
+  board:
+    name: nrf5340dk
+    path:
+     - /opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk
+    qualifiers: nrf5340/cpuapp/ns
+    revision: 
+  images:
+   - name: mentraos_nrf5340
+     source-dir: /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340
+     type: MAIN
+   - name: mcuboot
+     source-dir: /opt/nordic/ncs/v3.0.0/bootloader/mcuboot/boot/zephyr/
+     type: BOOTLOADER
+   - name: ipc_radio
+     source-dir: 
+  kconfig:
+    files:
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/empty.conf
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/sysbuild.conf
+    user-files:
+     - /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/sysbuild.conf
+  sysbuild: true
+version: 0.1.0
+west:
+  command: /opt/nordic/ncs/toolchains/ef4fc6722e/bin/west build --build-dir /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build /Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340 --pristine --board nrf5340dk/nrf5340/cpuapp/ns --sysbuild -- -DCONF_FILE=prj.conf -DEXTRA_DTC_OVERLAY_FILE=npm1300_config.overlay
+  topdir: /opt/nordic/ncs/v3.0.0
+  version: 1.2.0

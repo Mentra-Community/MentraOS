@@ -207,8 +207,8 @@ public class AsgClientServiceManager {
             Log.d(TAG, "MFNR enabled: " + asgSettings.isMfnrEnabled());
 
             // Explicitly enable ZSL and MFNR for enhanced photo quality
-            asgSettings.setZslEnabled(false);
-            asgSettings.setMfnrEnabled(false);
+            asgSettings.setZslEnabled(true);
+            asgSettings.setMfnrEnabled(true);
             Log.d(TAG, "✅ Settings initialized successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing settings", e);
@@ -261,7 +261,7 @@ public class AsgClientServiceManager {
                 try {
                     ComManager comManager = k900Manager.getComManager();
                     if (comManager != null) {
-                        besOtaManager = new BesOtaManager(comManager);
+                        besOtaManager = new BesOtaManager(comManager, context);
                         BesOtaManager.setInstance(besOtaManager);
                         comManager.registerOtaListener(besOtaManager);
                         Log.i(TAG, "✅ BES OTA Manager initialized and registered");
@@ -467,6 +467,12 @@ public class AsgClientServiceManager {
                     }
                 });
                 Log.d(TAG, "📡 Picture request listener set");
+
+                // Wire active recording provider so sync/download skip in-progress videos
+                if (mediaCaptureService != null) {
+                    cameraServer.setActiveRecordingProvider(mediaCaptureService::getActiveRecordingCaptureId);
+                    Log.d(TAG, "📡 Active recording provider set on camera server");
+                }
 
                 serverManager.registerServer("camera", cameraServer);
                 Log.d(TAG, "📝 Camera server registered with server manager");

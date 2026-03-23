@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Home, Package, Building2, Users, Terminal, ClipboardCheck, FileText, Cpu, User } from "lucide-react";
+import { Home, Package, Building2, Users, Terminal, ClipboardCheck, FileText, Cpu, User, AlertTriangle } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -182,16 +182,28 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             </Link>
 
             {isAdmin && (
-              <Link
-                to="/admin"
-                className={`flex items-center px-3 py-2 text-sm font-medium rounded-md ${
-                  isActivePath("/admin")
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                }`}>
-                <Cpu className="mr-3 h-5 w-5" />
-                Admin Panel
-              </Link>
+              <>
+                <Link
+                  to="/admin"
+                  className={`flex items-center px-3 py-2 text-sm font-medium rounded-md ${
+                    currentPath === "/admin"
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}>
+                  <Cpu className="mr-3 h-5 w-5" />
+                  Admin Panel
+                </Link>
+                <Link
+                  to="/admin/incidents"
+                  className={`flex items-center px-3 py-2 text-sm font-medium rounded-md ${
+                    currentPath.startsWith("/admin/incidents")
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}>
+                  <AlertTriangle className="mr-3 h-5 w-5" />
+                  Incidents
+                </Link>
+              </>
             )}
           </nav>
 

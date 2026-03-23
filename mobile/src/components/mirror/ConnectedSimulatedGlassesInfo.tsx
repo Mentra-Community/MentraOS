@@ -8,6 +8,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
+import GlassView from "@/components/ui/GlassView"
 
 export default function ConnectedSimulatedGlassesInfo({
   style,
@@ -18,7 +19,7 @@ export default function ConnectedSimulatedGlassesInfo({
   mirrorStyle?: ViewStyle
   showHeader?: boolean
 }) {
-  const {themed, theme} = useAppTheme()
+  const {theme} = useAppTheme()
   const [permission, requestPermission] = useCameraPermissions()
   const {push} = useNavigationHistory()
 
@@ -70,11 +71,15 @@ export default function ConnectedSimulatedGlassesInfo({
   }
 
   return (
-    <View className="bg-primary-foreground py-2 px-3" style={style}>
+    <GlassView className="bg-primary-foreground py-2 px-3" style={style}>
       {showHeader && (
         <View className="flex-row justify-between items-center mb-4">
           <Text className="font-semibold text-secondary-foreground text-lg" tx="home:simulatedGlasses" />
-          <Button flex={false} flexContainer={false} preset="alternate" onPress={() => push("/settings/glasses")}>
+          <Button
+            flex={false}
+            flexContainer={false}
+            preset="alternate"
+            onPress={() => push("/miniapps/settings/glasses")}>
             <Icon name="settings" size={24} color={theme.colors.secondary_foreground} />
           </Button>
         </View>
@@ -85,6 +90,6 @@ export default function ConnectedSimulatedGlassesInfo({
           <Icon name="fullscreen" size={24} color={theme.colors.secondary_foreground} />
         </TouchableOpacity>
       </View>
-    </View>
+    </GlassView>
   )
 }

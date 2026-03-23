@@ -293,25 +293,36 @@ UserSchema.index({ email: 1, runningApps: 1 }, { unique: true });
 // Install / uninstall.
 // Add methods for managing installed apps
 UserSchema.methods.installApp = async function (this: UserI, packageName: string): Promise<void> {
-  if (!this.isAppInstalled(packageName)) {
-    if (!this.installedApps) {
-      this.installedApps = [];
-    }
-    this.installedApps.push({
-      packageName,
-      installedDate: new Date(),
-    });
-    await this.save();
+  const User = this.constructor as any;
+  const now = new Date();
+  const result = await User.updateOne(
+    {
+      "_id": this._id,
+      "installedApps.packageName": { $ne: packageName },
+    },
+    {
+      $push: {
+        installedApps: { packageName, installedDate: now },
+      },
+    },
+  );
+
+  if (result.modifiedCount > 0) {
+    // Update in-memory state to match DB
+    if (!this.installedApps) this.installedApps = [];
+    this.installedApps.push({ packageName, installedDate: now });
   }
 };
 
 UserSchema.methods.uninstallApp = async function (this: UserI, packageName: string): Promise<void> {
-  if (this.isAppInstalled(packageName)) {
-    if (!this.installedApps) {
-      this.installedApps = [];
+  const User = this.constructor as any;
+  const result = await User.updateOne({ _id: this._id }, { $pull: { installedApps: { packageName } } });
+
+  if (result.modifiedCount > 0) {
+    // Update in-memory state to match DB
+    if (this.installedApps) {
+      this.installedApps = this.installedApps.filter((app) => app.packageName !== packageName);
     }
-    this.installedApps = this.installedApps.filter((app) => app.packageName !== packageName);
-    await this.save();
   }
 };
 
@@ -359,7 +370,14 @@ UserSchema.methods.removeRunningApp = async function (this: UserI, appName: stri
       // If it's a version conflict, retry
       if (error.name === "VersionError") {
         logger.warn(
-          `Version conflict in removeRunningApp for user ${this.email}, app ${appName}, attempt ${attempt + 1}/${maxRetries}`,
+          {
+            userId: this._id?.toString(),
+            email: this.email,
+            appName,
+            attempt: attempt + 1,
+            maxRetries,
+          },
+          `VersionError in removeRunningApp for user ${this.email}, app ${appName}, attempt ${attempt + 1}/${maxRetries}`,
         );
         if (attempt < maxRetries - 1) {
           // Wait a bit before retrying (exponential backoff)
@@ -451,80 +469,46 @@ UserSchema.methods.isAppRunning = function (this: UserI, appName: string): boole
 
 // Update last active timestamp for an app
 UserSchema.methods.updateAppLastActive = async function (this: UserI, packageName: string): Promise<void> {
-  const maxRetries = 3;
-  let lastError: any;
+  const User = this.constructor as any;
 
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      // Re-fetch the user document to get the latest version
-      const freshUser = await (this.constructor as any).findOne({
-        _id: this._id,
-      });
-      if (!freshUser) {
-        throw new Error(`User ${this.email} not found during updateAppLastActive`);
-      }
+  // First, try atomic $set on the existing subdocument — no VersionError possible
+  const result = await User.updateOne(
+    { "_id": this._id, "installedApps.packageName": packageName },
+    { $set: { "installedApps.$.lastActiveAt": new Date() } },
+  );
 
-      if (!freshUser.installedApps) {
-        freshUser.installedApps = [];
-      }
-
-      const app = freshUser.installedApps.find((app: any) => app.packageName === packageName);
-
-      if (app) {
-        // App exists in list, update timestamp
-        app.lastActiveAt = new Date();
-        await freshUser.save();
-        return;
-      } else {
-        // Check if this is a pre-installed app that's missing from user's list
-        try {
-          const { getPreInstalledForThisServer } = require("../services/core/app.service");
-          const serverPreInstalled = getPreInstalledForThisServer();
-
-          if (serverPreInstalled.includes(packageName)) {
-            // Auto-add missing pre-installed app with current timestamp
-            freshUser.installedApps.push({
-              packageName,
-              installedDate: new Date(),
-              lastActiveAt: new Date(),
-            });
-            await freshUser.save();
-            logger.info(`Auto-added missing pre-installed app ${packageName} for user ${freshUser.email}`);
-            return;
-          }
-          // If not pre-installed, silently ignore (app might be starting before installation completes)
-          return;
-        } catch (error) {
-          {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error(err, "Error checking pre-installed apps in updateAppLastActive:");
-          }
-          // Don't fail the operation if checking pre-installed apps fails
-          return;
-        }
-      }
-    } catch (error: any) {
-      lastError = error;
-
-      // If it's a version conflict, retry
-      if (error.name === "VersionError") {
-        logger.warn(
-          `Version conflict in updateAppLastActive for user ${this.email}, app ${packageName}, attempt ${attempt + 1}/${maxRetries}`,
-        );
-        if (attempt < maxRetries - 1) {
-          // Wait a bit before retrying (exponential backoff)
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 50));
-          continue;
-        }
-      }
-
-      // For other errors or max retries reached, throw
-      throw error;
-    }
+  if (result.modifiedCount > 0 || result.matchedCount > 0) {
+    return; // App found and updated (or already up-to-date)
   }
 
-  // If we get here, all retries failed
-  throw lastError;
+  // App not in installedApps — check if it's a pre-installed app that should be auto-added
+  try {
+    const { getPreInstalledForThisServer } = require("../services/core/app.service");
+    const serverPreInstalled = getPreInstalledForThisServer();
+
+    if (serverPreInstalled.includes(packageName)) {
+      // Atomic auto-add missing pre-installed app — no VersionError possible
+      const now = new Date();
+      await User.updateOne(
+        {
+          "_id": this._id,
+          "installedApps.packageName": { $ne: packageName },
+        },
+        {
+          $push: {
+            installedApps: { packageName, installedDate: now, lastActiveAt: now },
+          },
+        },
+      );
+      logger.info(`Auto-added missing pre-installed app ${packageName} for user ${this.email}`);
+      return;
+    }
+    // If not pre-installed, silently ignore (app might be starting before installation completes)
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    logger.error(err, "Error checking pre-installed apps in updateAppLastActive:");
+    // Don't fail the operation if checking pre-installed apps fails
+  }
 };
 
 // --- Glasses Model Methods ---
@@ -585,9 +569,22 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
       // Check if the user already has organizations
       if (!user.organizations || user.organizations.length === 0) {
         const personalOrgId = await OrganizationService.createPersonalOrg(user);
+
+        // Use atomic $addToSet + $set instead of user.save() to avoid
+        // Mongoose VersionError when concurrent requests (getConsoleAccount,
+        // validateSupabaseToken, frontend ensurePersonalOrg) all try to
+        // modify the same user document simultaneously.
+        await this.updateOne(
+          { _id: user._id },
+          {
+            $addToSet: { organizations: personalOrgId },
+            $set: { defaultOrg: personalOrgId },
+          },
+        );
+
+        // Update the in-memory object so downstream code sees the change
         user.organizations = [personalOrgId];
         user.defaultOrg = personalOrgId;
-        await user.save();
       }
     } catch (error) {
       console.error(error, "Error creating user");
@@ -608,16 +605,29 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
     );
 
     if (missingPreInstalled.length > 0) {
-      if (!user.installedApps) user.installedApps = [];
+      const now = new Date();
 
+      // Use atomic $push with $ne guard per app — eliminates VersionError entirely.
+      // Each op is idempotent: concurrent findOrCreateByEmail calls won't duplicate.
       for (const packageName of missingPreInstalled) {
-        user.installedApps.push({
-          packageName,
-          installedDate: new Date(),
-          // Don't set lastActiveAt initially
-        });
+        await this.updateOne(
+          {
+            "_id": user._id,
+            "installedApps.packageName": { $ne: packageName },
+          },
+          {
+            $push: {
+              installedApps: { packageName, installedDate: now },
+            },
+          },
+        );
       }
-      await user.save();
+
+      // Re-fetch to update in-memory state so downstream code sees the change
+      const freshUser = await this.findOne({ _id: user._id });
+      if (freshUser) {
+        user.installedApps = freshUser.installedApps;
+      }
 
       if (isNewUser) {
         logger.info(`Auto-installed ${missingPreInstalled.length} pre-installed apps for new user: ${email}`);
@@ -646,27 +656,24 @@ UserSchema.statics.findOrCreateUser = async function (email: string): Promise<Us
         .filter((pkg) => pkg.length > 0);
 
       if (packagesToDelete.length > 0 && user.installedApps) {
-        const deletedApps: string[] = [];
+        const toDelete = packagesToDelete.filter((pkg: string) =>
+          user.installedApps?.some((app: any) => app.packageName === pkg),
+        );
 
-        // Filter out apps that should be deleted
-        user.installedApps = user.installedApps.filter((app: any) => {
-          const shouldDelete = packagesToDelete.includes(app.packageName);
-          if (shouldDelete) {
-            deletedApps.push(app.packageName);
-          }
-          return !shouldDelete;
-        });
+        if (toDelete.length > 0) {
+          // Atomic $pull — no VersionError possible
+          await this.updateOne({ _id: user._id }, { $pull: { installedApps: { packageName: { $in: toDelete } } } });
 
-        // Only save if we actually deleted something
-        if (deletedApps.length > 0) {
-          await user.save();
+          // Update in-memory state
+          user.installedApps = user.installedApps.filter((app: any) => !toDelete.includes(app.packageName));
+
           logger.info(
             {
               email,
-              deletedApps,
-              deletedCount: deletedApps.length,
+              deletedApps: toDelete,
+              deletedCount: toDelete.length,
             },
-            `Auto-deleted ${deletedApps.length} app(s) for user: ${email}`,
+            `Auto-deleted ${toDelete.length} app(s) for user: ${email}`,
           );
         }
       }
@@ -793,29 +800,37 @@ UserSchema.statics.ensurePersonalOrg = async function (user: UserI): Promise<Typ
   // Check if user has any organizations
   if (user.organizations && user.organizations.length > 0) {
     // User has organizations but no default, set the first one as default
-    user.defaultOrg = user.organizations[0];
-    await user.save();
-    return user.defaultOrg;
+    // Use atomic update to avoid Mongoose VersionError when concurrent
+    // requests (findOrCreateUser, getConsoleAccount, validateSupabaseToken)
+    // modify the same user document simultaneously.
+    const firstOrgId = user.organizations[0];
+    await this.updateOne({ _id: user._id }, { $set: { defaultOrg: firstOrgId } });
+    user.defaultOrg = firstOrgId;
+    return firstOrgId;
   }
 
   // Create a personal organization for this user
   const personalOrgId = await OrganizationService.createPersonalOrg(user);
 
-  // Update user object with the new org
+  // Use atomic $addToSet + $set instead of user.save() to avoid
+  // Mongoose VersionError when concurrent requests modify the same
+  // user document simultaneously.
+  await this.updateOne(
+    { _id: user._id },
+    {
+      $addToSet: { organizations: personalOrgId },
+      $set: { defaultOrg: personalOrgId },
+    },
+  );
+
+  // Update the in-memory object so downstream code sees the change
   if (!user.organizations) {
     user.organizations = [];
   }
-
-  // Add to organizations array if not already present
   if (!user.organizations.some((orgId) => orgId.toString() === personalOrgId.toString())) {
     user.organizations.push(personalOrgId);
   }
-
-  // Set as default org
   user.defaultOrg = personalOrgId;
-
-  // Save the updated user
-  await user.save();
 
   return personalOrgId;
 };

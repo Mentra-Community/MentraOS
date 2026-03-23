@@ -15,6 +15,7 @@ export enum HardwareType {
   BUTTON = "BUTTON",
   LIGHT = "LIGHT",
   WIFI = "WIFI",
+  EXIST = "EXIST",
 }
 
 /**
@@ -35,4 +36,8 @@ export enum DeviceTypes {
   Z100 = "Vuzix Z100",
   NEX = "Mentra Display",
   FRAME = "Brilliant Frame",
+}
+
+export enum ControllerTypes {
+  R1 = "Even Realities R1",
 }

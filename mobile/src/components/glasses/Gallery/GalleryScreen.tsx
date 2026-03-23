@@ -21,7 +21,6 @@ import {
   ViewStyle,
 } from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 import {useShallow} from "zustand/react/shallow"
 
@@ -29,6 +28,7 @@ import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
+import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
@@ -39,10 +39,11 @@ import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
+import Share from "react-native-share"
 import showAlert from "@/utils/AlertUtils"
-// import {shareFile} from "@/utils/FileUtils"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 // @ts-ignore
 const ShimmerPlaceholder = createShimmerPlaceholder(LinearGradient)
@@ -52,6 +53,14 @@ const TIMING = {
   PROGRESS_RING_DISPLAY_MS: 3000, // How long to show completed/failed progress rings
   ALERT_DELAY_MS: 100, // Delay before showing alerts to allow UI to settle
 } as const
+
+/** Format video duration in milliseconds to m:ss display string */
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`
+}
 
 interface GalleryItem {
   id: string
@@ -64,7 +73,7 @@ interface GalleryItem {
 export function GalleryScreen() {
   const {goBack, push} = useNavigationHistory()
   const {theme, themed} = useAppTheme()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
 
   // Column calculation - 3 per row like Google Photos / Apple Photos
   const screenWidth = Dimensions.get("window").width
@@ -83,6 +92,8 @@ export function GalleryScreen() {
   const completedFiles = useGallerySyncStore((state) => state.completedFiles)
   const totalFiles = useGallerySyncStore((state) => state.totalFiles)
   const failedFiles = useGallerySyncStore((state) => state.failedFiles)
+  const processingFiles = useGallerySyncStore((state) => state.processingFiles)
+  const processedFiles = useGallerySyncStore((state) => state.processedFiles)
   const syncQueue = useGallerySyncStore((state) => state.queue)
   const glassesGalleryStatus = useGallerySyncStore(
     useShallow((state) => ({
@@ -105,7 +116,7 @@ export function GalleryScreen() {
     Map<
       string,
       {
-        status: "pending" | "downloading" | "completed" | "failed"
+        status: "pending" | "downloading" | "processing" | "completed" | "failed"
         progress: number
       }
     >
@@ -275,6 +286,7 @@ export function GalleryScreen() {
   useEffect(() => {
     if (syncState !== "syncing") {
       // Clear photo sync states when not syncing (after a delay to show completion)
+      // But only if processing queue is also empty
       if (syncState === "complete" || syncState === "cancelled" || syncState === "error") {
         setTimeout(() => {
           setPhotoSyncStates(new Map())
@@ -283,42 +295,52 @@ export function GalleryScreen() {
       return
     }
 
-    // Update the current file's progress
-    if (currentFile) {
-      setPhotoSyncStates((prev) => {
-        const newStates = new Map(prev)
+    setPhotoSyncStates((prev) => {
+      const newStates = new Map(prev)
 
-        // If current file is at 100%, remove it immediately (no green ring)
+      // Update current downloading file
+      if (currentFile) {
         if (currentFileProgress >= 100) {
+          // Download done — will transition to processing via processingFiles
           newStates.delete(currentFile)
         } else {
-          // Set current file as downloading if not complete
           newStates.set(currentFile, {
             status: "downloading",
             progress: currentFileProgress,
           })
         }
+      }
 
-        // Remove completed files from sync states immediately (no green ring)
-        for (let i = 0; i < completedFiles; i++) {
-          const completedFileName = syncQueue[i]?.name
-          if (completedFileName) {
-            newStates.delete(completedFileName)
-          }
+      // Remove completed files (fully processed)
+      for (let i = 0; i < completedFiles; i++) {
+        const completedFileName = syncQueue[i]?.name
+        if (completedFileName && !processingFiles.has(completedFileName)) {
+          newStates.delete(completedFileName)
         }
+      }
 
-        // Mark failed files
-        for (const failedFileName of failedFiles) {
-          newStates.set(failedFileName, {
-            status: "failed",
+      // Mark files currently being processed
+      for (const processingFileName of processingFiles) {
+        // Don't overwrite download state (it's still downloading)
+        if (processingFileName !== currentFile) {
+          newStates.set(processingFileName, {
+            status: "processing",
             progress: 0,
           })
         }
+      }
 
-        return newStates
-      })
-    }
-  }, [syncState, currentFile, currentFileProgress, completedFiles, failedFiles, syncQueue])
+      // Mark failed files
+      for (const failedFileName of failedFiles) {
+        newStates.set(failedFileName, {
+          status: "failed",
+          progress: 0,
+        })
+      }
+
+      return newStates
+    })
+  }, [syncState, currentFile, currentFileProgress, completedFiles, failedFiles, processingFiles, syncQueue])
 
   // Reload photos when sync completes to populate downloadedPhotos state
   // This ensures all photos (old + new) are visible in the gallery
@@ -398,67 +420,64 @@ export function GalleryScreen() {
     [isSelectionMode, photoSyncStates, togglePhotoSelection],
   )
 
-  // Handle photo sharing
-  // const handleSharePhoto = async (photo: PhotoInfo) => {
-  //   if (!photo) {
-  //     console.error("No photo provided to share")
-  //     return
-  //   }
+  // Handle photo sharing — copies to cache dir for Android FileProvider compatibility
+  const handleSharePhoto = async (photo: PhotoInfo) => {
+    if (!photo) {
+      console.error("No photo provided to share")
+      return
+    }
 
-  //   try {
-  //     const shareUrl = photo.is_video && photo.download ? photo.download : photo.url
-  //     let filePath = ""
+    try {
+      // Resolve the local file path
+      let filePath = ""
+      if (photo.filePath) {
+        filePath = photo.filePath.startsWith("file://") ? photo.filePath.replace("file://", "") : photo.filePath
+      } else if (photo.download?.startsWith("file://")) {
+        filePath = photo.download.replace("file://", "")
+      }
 
-  //     if (shareUrl?.startsWith("file://")) {
-  //       filePath = shareUrl.replace("file://", "")
-  //     } else if (photo.filePath) {
-  //       filePath = photo.filePath.startsWith("file://") ? photo.filePath.replace("file://", "") : photo.filePath
-  //     } else {
-  //       const mediaType = photo.is_video ? "video" : "photo"
-  //       setSelectedPhoto(null)
-  //       setTimeout(() => {
-  //         showAlert("Info", `Please sync this ${mediaType} first to share it`, [{text: translate("common:ok")}])
-  //       }, TIMING.ALERT_DELAY_MS)
-  //       return
-  //     }
+      if (!filePath) {
+        const mediaType = photo.is_video ? "video" : "photo"
+        showAlert("Info", `Please sync this ${mediaType} first to share it`, [{text: translate("common:ok")}])
+        return
+      }
 
-  //     if (!filePath) {
-  //       console.error("No valid file path found")
-  //       setSelectedPhoto(null)
-  //       setTimeout(() => {
-  //         showAlert("Error", "Unable to share this photo", [{text: translate("common:ok")}])
-  //       }, TIMING.ALERT_DELAY_MS)
-  //       return
-  //     }
+      // Verify file exists
+      const exists = await RNFS.exists(filePath)
+      if (!exists) {
+        showAlert("Error", "File not found. It may have been deleted.", [{text: translate("common:ok")}])
+        return
+      }
 
-  //     let shareMessage = photo.is_video ? "Check out this video" : "Check out this photo"
-  //     if (photo.glassesModel) {
-  //       shareMessage += ` taken with ${photo.glassesModel}`
-  //     }
-  //     shareMessage += "!"
+      // Copy to cache dir so react-native-share's FileProvider can access it
+      // (files in DocumentDirectoryPath aren't exposed by RNShareFileProvider)
+      const cacheDir = `${RNFS.CachesDirectoryPath}/share`
+      await RNFS.mkdir(cacheDir)
+      const basename = filePath.split("/").pop() || photo.name
+      const cachePath = `${cacheDir}/${basename}`
+      // Remove stale cache copy if it exists from a previous share
+      await RNFS.unlink(cachePath).catch(() => {})
+      await RNFS.copyFile(filePath, cachePath)
 
-  //     const mimeType = photo.mime_type || (photo.is_video ? "video/mp4" : "image/jpeg")
-  //     await shareFile(filePath, mimeType, "Share Photo", shareMessage)
-  //     console.log("Share completed successfully")
-  //   } catch (error) {
-  //     if (error instanceof Error && error.message?.includes("FileProvider")) {
-  //       setSelectedPhoto(null)
-  //       setTimeout(() => {
-  //         showAlert(
-  //           "Sharing Not Available",
-  //           "File sharing will work after the next app build. For now, you can find your photos in the AugmentOS folder.",
-  //           [{text: translate("common:ok")}],
-  //         )
-  //       }, TIMING.ALERT_DELAY_MS)
-  //     } else {
-  //       console.error("Error sharing photo:", error)
-  //       setSelectedPhoto(null)
-  //       setTimeout(() => {
-  //         showAlert("Error", "Failed to share photo", [{text: translate("common:ok")}])
-  //       }, TIMING.ALERT_DELAY_MS)
-  //     }
-  //   }
-  // }
+      const mimeType = photo.mime_type || (photo.is_video ? "video/mp4" : "image/jpeg")
+
+      await Share.open({
+        url: `file://${cachePath}`,
+        type: mimeType,
+        filename: photo.name,
+      })
+
+      // Clean up cache copy after share sheet closes
+      RNFS.unlink(cachePath).catch(() => {})
+    } catch (error: any) {
+      // react-native-share throws when user dismisses the share sheet — that's normal
+      if (error?.message?.includes("User did not share")) {
+        return
+      }
+      console.error("Error sharing photo:", error)
+      showAlert("Error", "Failed to share. Please try again.", [{text: translate("common:ok")}])
+    }
+  }
 
   // Handle sync button press - delegate to service
   const handleSyncPress = () => {
@@ -531,6 +550,55 @@ export function GalleryScreen() {
         },
       },
     ])
+  }
+
+  // Handle sharing multiple selected photos/videos
+  const handleShareSelectedPhotos = async () => {
+    if (selectedPhotos.size === 0) return
+
+    try {
+      const photosToShare = allPhotos
+        .filter((p) => p.photo && selectedPhotos.has(p.photo.name))
+        .map((p) => p.photo!)
+      const shareUrls: string[] = []
+      const cacheDir = `${RNFS.CachesDirectoryPath}/share`
+      await RNFS.mkdir(cacheDir)
+
+      for (const photo of photosToShare) {
+        let filePath = ""
+        if (photo.filePath) {
+          filePath = photo.filePath.startsWith("file://") ? photo.filePath.replace("file://", "") : photo.filePath
+        } else if (photo.download?.startsWith("file://")) {
+          filePath = photo.download.replace("file://", "")
+        }
+        if (!filePath) continue
+
+        const exists = await RNFS.exists(filePath)
+        if (!exists) continue
+
+        const basename = filePath.split("/").pop() || photo.name
+        const cachePath = `${cacheDir}/${basename}`
+        await RNFS.unlink(cachePath).catch(() => {})
+        await RNFS.copyFile(filePath, cachePath)
+        shareUrls.push(`file://${cachePath}`)
+      }
+
+      if (shareUrls.length === 0) {
+        showAlert("Info", "No files available to share. Please sync first.", [{text: translate("common:ok")}])
+        return
+      }
+
+      await Share.open({urls: shareUrls})
+
+      // Clean up cache copies
+      for (const url of shareUrls) {
+        RNFS.unlink(url.replace("file://", "")).catch(() => {})
+      }
+    } catch (error: any) {
+      if (error?.message?.includes("User did not share")) return
+      console.error("Error sharing selected photos:", error)
+      showAlert("Error", "Failed to share. Please try again.", [{text: translate("common:ok")}])
+    }
   }
 
   // Initial mount - load gallery data
@@ -801,7 +869,8 @@ export function GalleryScreen() {
     syncState === "requesting_hotspot" ||
     syncState === "connecting_wifi" ||
     syncState === "syncing" ||
-    syncState === "complete"
+    syncState === "complete" ||
+    syncState === "error"
 
   const renderStatusBar = () => {
     if (!shouldShowSyncButton) return null
@@ -860,6 +929,27 @@ export function GalleryScreen() {
                 <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
                 <Text style={themed($syncButtonText)}>Preparing sync...</Text>
               </View>
+            )
+          }
+          // Show processing status when all downloads are done but processing is still running
+          if (completedFiles >= totalFiles && processingFiles.size > 0) {
+            const totalToProcess = processedFiles + processingFiles.size
+            return (
+              <>
+                <Text style={themed($syncButtonText)}>
+                  Processing {processedFiles + 1} of {totalToProcess} items
+                </Text>
+                <View style={themed($syncButtonProgressBar)}>
+                  <View
+                    style={[
+                      themed($syncButtonProgressFill),
+                      {
+                        width: `${Math.round((processedFiles / totalToProcess) * 100)}%`,
+                      },
+                    ]}
+                  />
+                </View>
+              </>
             )
           }
           return (
@@ -971,7 +1061,11 @@ export function GalleryScreen() {
           )}
           {item.photo.is_video && !isSelectionMode && (
             <View style={themed($videoIndicator)}>
-              <Icon name="video" size={14} color="white" />
+              {item.photo.duration ? (
+                <Text style={$videoDurationText}>{formatDuration(item.photo.duration)}</Text>
+              ) : (
+                <Icon name="video" size={14} color="white" />
+              )}
             </View>
           )}
           {isSelectionMode &&
@@ -986,11 +1080,30 @@ export function GalleryScreen() {
             ))}
           {(() => {
             const syncStateForItem = photoSyncStates.get(item.photo.name)
+            if (!syncStateForItem) return null
+
+            if (syncStateForItem.status === "processing") {
+              return (
+                <View style={themed($progressRingOverlay)}>
+                  <View
+                    style={{
+                      justifyContent: "center",
+                      alignItems: "center",
+                      width: 50,
+                      height: 50,
+                      backgroundColor: "rgba(0,0,0,0.4)",
+                      borderRadius: 25,
+                    }}>
+                    <Icon name="sparkles" size={24} color={theme.colors.primary} />
+                  </View>
+                </View>
+              )
+            }
+
             if (
-              syncStateForItem &&
-              (syncStateForItem.status === "pending" ||
-                syncStateForItem.status === "downloading" ||
-                syncStateForItem.status === "failed")
+              syncStateForItem.status === "pending" ||
+              syncStateForItem.status === "downloading" ||
+              syncStateForItem.status === "failed"
             ) {
               const isFailed = syncStateForItem.status === "failed"
 
@@ -1040,6 +1153,7 @@ export function GalleryScreen() {
         title={isSelectionMode ? "" : "Glasses Gallery"}
         leftIcon={isSelectionMode ? undefined : "chevron-left"}
         onLeftPress={isSelectionMode ? undefined : () => goBack()}
+        safeAreaEdges={[]}
         LeftActionComponent={
           isSelectionMode ? (
             <TouchableOpacity onPress={() => exitSelectionMode()}>
@@ -1052,18 +1166,28 @@ export function GalleryScreen() {
         }
         RightActionComponent={
           isSelectionMode ? (
-            <TouchableOpacity
-              onPress={() => {
-                if (selectedPhotos.size > 0) {
-                  handleDeleteSelectedPhotos()
-                }
-              }}
-              disabled={selectedPhotos.size === 0}>
-              <View style={themed($deleteButton)}>
-                <Icon name="trash" size={20} color={theme.colors.text} />
-                <Text style={themed($deleteButtonText)}>Delete</Text>
-              </View>
-            </TouchableOpacity>
+            <View style={{flexDirection: "row", alignItems: "center", gap: 16}}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (selectedPhotos.size > 0) {
+                    handleDeleteSelectedPhotos()
+                  }
+                }}
+                disabled={selectedPhotos.size === 0}
+                hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+                <Icon name="trash" size={22} color={theme.colors.text} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (selectedPhotos.size > 0) {
+                    handleShareSelectedPhotos()
+                  }
+                }}
+                disabled={selectedPhotos.size === 0}
+                hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+                <MaterialCommunityIcons name="share-variant" size={22} color={theme.colors.text} />
+              </TouchableOpacity>
+            </View>
           ) : (
             <TouchableOpacity onPress={() => push("/asg/gallery-settings")} style={themed($settingsButton)}>
               <Icon name="settings" size={24} color={theme.colors.text} />
@@ -1163,7 +1287,7 @@ export function GalleryScreen() {
                   console.log("[GalleryScreen] 🎬 MediaViewer closed by user")
                   setSelectedPhoto(null)
                 }}
-                // onShare={() => selectedPhoto && handleSharePhoto(selectedPhoto)}
+                onShare={handleSharePhoto}
               />
             )
           })()}
@@ -1249,6 +1373,13 @@ const $videoIndicator: ThemedStyle<ViewStyle> = ({spacing}) => ({
   shadowRadius: 2,
   elevation: 3,
 })
+
+const $videoDurationText: TextStyle = {
+  color: "white",
+  fontSize: 11,
+  fontWeight: "600",
+  fontVariant: ["tabular-nums"],
+}
 
 const $progressRingOverlay: ThemedStyle<ViewStyle> = () => ({
   position: "absolute",

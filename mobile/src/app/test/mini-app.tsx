@@ -30,7 +30,9 @@ export default function MiniApp() {
         onLeftPress={() => goBack()}
         style={{height: 44}}
       />
-      <View className="flex-1">{htmlContent && <LocalMiniApp html={htmlContent} packageName={"com.mentra.test"} />}</View>
+      <View className="flex-1">
+        {htmlContent && <LocalMiniApp html={htmlContent} packageName={"com.mentra.test"} />}
+      </View>
     </Screen>
   )
 }

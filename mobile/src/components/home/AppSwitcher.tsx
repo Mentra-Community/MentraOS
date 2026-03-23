@@ -1,5 +1,5 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {View, Dimensions, Pressable, Image, TouchableOpacity, Platform} from "react-native"
+import React, {RefObject, useCallback, useEffect, useRef, useState} from "react"
+import {View, Dimensions, Pressable, Image, Platform} from "react-native"
 import {Text} from "@/components/ignite/"
 import Animated, {
   useSharedValue,
@@ -11,20 +11,24 @@ import Animated, {
   useDerivedValue,
   SharedValue,
   useAnimatedReaction,
+  useAnimatedProps,
 } from "react-native-reanimated"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import {runOnJS, scheduleOnRN} from "react-native-worklets"
 import {
   ClientAppletInterface,
   getLastOpenTime,
-  setLastOpenTime,
+  saveLastOpenTime,
   useActiveApps,
   useAppletStatusStore,
 } from "@/stores/applets"
 import AppIcon from "@/components/home/AppIcon"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {BlurView} from "expo-blur"
+import GlassView from "@/components/ui/GlassView"
+import {hapticBuzz} from "@/utils/utils"
 
 const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get("window")
 const CARD_WIDTH = SCREEN_WIDTH * 0.67
@@ -107,20 +111,24 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
   const composedGesture = Gesture.Exclusive(panGesture, tapGesture)
 
+  let cardWidth = CARD_WIDTH + CARD_SPACING
+
   const cardAnimatedStyle = useAnimatedStyle(() => {
     let animIndex = animatedIndex.value
 
-    let cardWidth = CARD_WIDTH + CARD_SPACING
     // let stat = -animIndex * cardWidth
     // let stat = -index * cardWidth // use real index for stat!!
     let stat = 0
 
-    let howFar = SCREEN_WIDTH / 4
+    // let howFar = SCREEN_WIDTH / 4
     let lin = translateX.value / cardWidth + animIndex
     if (lin < 0) {
       lin = 0
     }
-    let power = Math.pow(lin, 1.7) * howFar
+    let howFar = SCREEN_WIDTH / 2 - cardWidth / 2
+    let power = Math.pow(lin, 2) * howFar
+    // let howFar = 50
+    // let power = (Math.pow(lin+0.3, 4.3) / 60) * howFar
     let res = stat + power
 
     let howFarPercent = (1 / (howFar / SCREEN_WIDTH)) * howFar
@@ -129,6 +137,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
     // account for scaling of the card:
     let offset = (1 - scale) * cardWidth
     // res = res - offset * animIndex
+    res = res - offset
     // scale = 1
 
     return {
@@ -137,8 +146,28 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
     }
   })
 
+  const titleAnimatedStyle = useAnimatedStyle(() => {
+    let animIndex = animatedIndex.value
+    let lin = translateX.value / cardWidth + animIndex
+    if (lin < 0) {
+      lin = 0
+    }
+    // let howFar = 50
+    // let power = (Math.pow(lin, 4.3) / 60) * howFar
+    let howFar = SCREEN_WIDTH / 2 - cardWidth / 2
+    let power = Math.pow(lin, 2) * howFar
+    let howFarPercent = (1 / (howFar / SCREEN_WIDTH)) * howFar
+    let linearProgress = power / howFarPercent
+    // linear transform linearProgress so that if (linearProgress < 0.5) we start fading out:
+    linearProgress = interpolate(linearProgress, [0, 0.1], [0, 1], Extrapolation.CLAMP)
+    return {
+      opacity: linearProgress,
+    }
+  })
+
   // debug sort order:
   // console.log("packageName", app.packageName, "index", index)
+  const insets = useSaferAreaInsets()
 
   return (
     <GestureDetector gesture={composedGesture}>
@@ -147,7 +176,8 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
         style={[
           {
             width: CARD_WIDTH,
-            height: CARD_HEIGHT, // - 16,
+            // height: CARD_HEIGHT + (12 * 4) - (insets.top * 1/0.67), // - 16,
+            height: CARD_HEIGHT,
             // zIndex: -index,// to reverse stack order
             position: "absolute",
             left: 0,
@@ -155,27 +185,31 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           },
           cardAnimatedStyle,
         ]}>
-        <View className="flex-1 rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground">
-          <View className="pl-6 h-12 gap-2 justify-start w-full flex-row items-center bg-primary-foreground">
-            <AppIcon app={app} style={{width: 32, height: 32, borderRadius: 8}} />
+        <View className="pl-6 h-12 gap-3 justify-start w-full flex-row items-center">
+          <AppIcon app={app} className="w-8 h-8 rounded-lg" />
+          <Animated.View style={titleAnimatedStyle}>
             <Text className="text-foreground text-md font-medium text-center" numberOfLines={1}>
               {app.name}
             </Text>
-          </View>
-
+          </Animated.View>
+        </View>
+        <View
+          className="flex-1 rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
+          style={{
+            boxShadow: "0px 8px 32px 0px rgba(0, 0, 0, 0.2)",
+          }}>
           {!app.screenshot && (
             <View className="flex-1 items-center justify-center">
-              <AppIcon app={app} style={{width: 48, height: 48}} />
+              <AppIcon app={app} className="w-12 h-12" />
             </View>
           )}
 
           {app.screenshot && (
-            <View className="flex-1 items-center justify-center">
+            <View className="flex-1 items-center justify-end" style={{overflow: "hidden"}}>
               <Image
                 source={{uri: app.screenshot}}
                 className="w-full h-full"
-                style={{resizeMode: "cover"}}
-                blurRadius={3}
+                style={{resizeMode: "cover", height: "100%"}}
               />
             </View>
           )}
@@ -192,6 +226,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
 interface AppSwitcherProps {
   swipeProgress: SharedValue<number>
+  blurTargetRef: RefObject<View | null>
 }
 
 // for testing:
@@ -215,17 +250,23 @@ interface AppSwitcherProps {
 //   })
 // }
 
-export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
+const AnimatedBlurView = Animated.createAnimatedComponent(BlurView)
+
+export default function AppSwitcher({swipeProgress, blurTargetRef}: AppSwitcherProps) {
   const translateX = useSharedValue(0)
   const offsetX = useSharedValue(0)
   const targetIndex = useSharedValue(0)
   const prevTranslationX = useSharedValue(0)
   const openX = useSharedValue(-1)
   const {push} = useNavigationHistory()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   let directApps = useActiveApps()
   let [apps, setApps] = useState<ClientAppletInterface[]>([])
   const prevAppsLength = useRef(0)
+  const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
+  const [androidBlur] = useSetting(SETTINGS.android_blur.key)
+  const [showNoAppsMessage, setShowNoAppsMessage] = useState(true)
+  const dotsPanGestureRef = useRef(Gesture.Pan())
 
   // for testing:
   //   apps = [...DUMMY_APPS, ...apps]
@@ -250,6 +291,10 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
         })
         .map((entry) => entry.app)
       setApps(sortedApps)
+      // let index = apps.length - 1
+      // setTimeout(() => {
+      //   runOnJS(goToIndex)(index)
+      // }, 100)
       // setApps(directApps)
     }
     sortApps()
@@ -277,6 +322,10 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
     opacity: swipeProgress.value,
   }))
 
+  const blurAnimatedProps = useAnimatedProps(() => ({
+    intensity: interpolate(swipeProgress.value, [0, 1], [0, 50], Extrapolation.CLAMP),
+  }))
+
   const containerStyle = useAnimatedStyle(() => {
     return {
       transform: [{translateY: 100 * (1 - swipeProgress.value)}],
@@ -294,13 +343,31 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
   const parentContainerStyle = useAnimatedStyle(() => {
     if (Platform.OS === "android") {
       return {
-        pointerEvents: swipeProgress.value == 1 ? "auto" : "none",
+        pointerEvents: swipeProgress.value > 0.98 ? "auto" : "none",
       }
     }
     return {}
   })
 
+  const blurStyle = useAnimatedStyle(() => {
+    return {
+      pointerEvents: swipeProgress.value > 0.98 ? "auto" : "none",
+    }
+  })
+
+  // useAnimatedReaction(
+  //   () => swipeProgress.value > 0.99,
+  //   (isOpen, wasOpen) => {
+  //     if (isOpen !== wasOpen) {
+  //       setTimeout(() => {
+  //         runOnJS(setBlurPointerEvents)(isOpen ? "auto" : "none")
+  //       }, 250)
+  //     }
+  //   },
+  // )
+
   const panGesture = Gesture.Pan()
+    .requireExternalGestureToFail(dotsPanGestureRef)
     .activeOffsetX([-10, 10])
     .onStart(() => {
       offsetX.value = translateX.value
@@ -416,21 +483,89 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
       })
     })
 
+  const dotsPanGesture = Gesture.Pan()
+    .withRef(dotsPanGestureRef)
+    .activateAfterLongPress(200)
+    .activeOffsetX([-5, 5])
+    .onStart(() => {
+      offsetX.value = translateX.value
+      scheduleOnRN(hapticBuzz)
+    })
+    .onUpdate((event) => {
+      const cardWidth = CARD_WIDTH + CARD_SPACING
+      const sensitivity = 5
+      const raw = offsetX.value - event.translationX * sensitivity
+      const snappedIndex = Math.round(-raw / cardWidth)
+      const clamped = Math.max(-1, Math.min(snappedIndex, apps.length - 2))
+      // check if we're moving to a new index:
+      if (clamped !== targetIndex.value) {
+        targetIndex.value = clamped
+        scheduleOnRN(hapticBuzz)
+      }
+      translateX.value = withSpring(-clamped * cardWidth, {
+        damping: 200,
+        stiffness: 800,
+      })
+    })
+    .onEnd((event) => {
+      const cardWidth = CARD_WIDTH + CARD_SPACING
+      const velocity = event.velocityX * 3
+
+      let newTarget = Math.round(-translateX.value / cardWidth)
+      newTarget = Math.max(-1, Math.min(newTarget, apps.length - 2))
+
+      targetIndex.value = newTarget
+
+      translateX.value = withSpring(-newTarget * cardWidth, {
+        damping: 4000,
+        stiffness: 200,
+        velocity: velocity,
+      })
+    })
+
+  // useEffect(() => {
+  //   let sub = setInterval(() => {
+  //     console.log("springing!!!@!!!")
+  //     let cardWidth = CARD_WIDTH + CARD_SPACING
+  //     let newTarget = Math.round(-translateX.value / cardWidth) - 1
+  //     translateX.value = withSpring(-newTarget * cardWidth, {
+  //       damping: 4000,
+  //       stiffness: 200,
+  //     })
+  //     // openX.value = withSpring(0, {damping: 200, stiffness: 500, overshootClamping: false})
+  //     // console.log("translateX.value", translateX.value)
+  //   }, 4000)
+  //   return () => clearInterval(sub)
+  // }, [])
+
   const handleDismiss = useCallback(
     (packageName: string) => {
       let lastApp = apps[apps.length - 1]
       // Adjust if we were on the last card
       if (lastApp.packageName === packageName) {
-        setTimeout(() => {
-          runOnJS(goToIndex)(apps.length - 2)
-        }, 100)
-      }
+        // let cardWidth = CARD_WIDTH + CARD_SPACING
+        // let newTarget = Math.round(-translateX.value / cardWidth) - 1
+        // // console.log("newTarget", newTarget)
+        // console.log("newTarget", -newTarget * cardWidth)
+        // translateX.value = withSpring(-newTarget * cardWidth, {
+        //   damping: 1000,
+        //   stiffness: 350,
+        //   overshootClamping: true,
+        // })
 
-      setTimeout(() => {
-        useAppletStatusStore.getState().stopApplet(packageName)
-      }, 100)
+        let index = apps.length - 2
+        goToIndex(index)
+      }
+      // setTimeout(() => {
+      useAppletStatusStore.getState().stopApplet(packageName)
+      // }, 100)
+
+      // auto-close if there are no more apps left:
+      if (apps.length === 1) {
+        handleClose()
+      }
     },
-    [apps.length],
+    [apps.length, translateX.value, apps],
   )
 
   const goToIndex = useCallback(
@@ -441,7 +576,7 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
       targetIndex.value = clamped
       let target = -clamped * cardWidth
       if (instant) {
-        translateX.value = withTiming(target, {duration: 100})
+        translateX.value = withTiming(target, {duration: 10})
       } else {
         translateX.value = withSpring(target, {
           damping: 1000,
@@ -464,10 +599,10 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
 
     // Handle offline apps - navigate directly to React Native route
     if (applet.offline && applet.offlineRoute) {
-      setLastOpenTime(applet.packageName)
+      saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
     } else if (applet.webviewUrl && applet.healthy) {
-      setLastOpenTime(applet.packageName)
+      saveLastOpenTime(applet.packageName)
       push("/applet/webview", {
         webviewURL: applet.webviewUrl,
         appName: applet.name,
@@ -475,14 +610,14 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
         transition: "fade",
       })
     } else if (applet.local) {
-      setLastOpenTime(applet.packageName)
+      saveLastOpenTime(applet.packageName)
       push("/applet/local", {
         packageName: applet.packageName,
         appName: applet.name,
         transition: "fade",
       })
     } else {
-      setLastOpenTime(applet.packageName)
+      saveLastOpenTime(applet.packageName)
       push("/applet/settings", {
         packageName: applet.packageName,
         appName: applet.name,
@@ -498,7 +633,8 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
     swipeProgress.value = withSpring(0, {damping: 20, stiffness: 300, overshootClamping: true})
     // do after we have closed the swipe progress:
     setTimeout(() => {
-      goToIndex(apps.length, true)
+      swipeProgress.value = 0
+      // goToIndex(apps.length - 1, true)
     }, 250)
   }, [apps.length])
 
@@ -510,25 +646,64 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
         if (apps.length > 1) {
           runOnJS(goToIndex)(apps.length - 1, true)
         }
-        openX.value = withSpring(0, {damping: 200, stiffness: 500, overshootClamping: false})
+        openX.value = withSpring(0, {damping: 200, stiffness: 1000, overshootClamping: true})
         // }, 200)
         // scheduleOnRN(() => {setIsOpen(true)})
       } else if (previous !== null && current == 0 && previous > 0) {
         openX.value = -1
         // scheduleOnRN(() => {setIsOpen(false)})
       }
+      if (previous !== null && current > 0 && previous == 0) {
+        // console.log("just opened")
+        runOnJS(goToIndex)(apps.length - 1, true)
+        runOnJS(setBlurPointerEvents)("auto")
+        if (apps.length > 0) {
+          runOnJS(setShowNoAppsMessage)(false)
+        }
+      }
+      if (previous !== null && current == 0 && previous > 0) {
+        // console.log("just closed")
+        runOnJS(setBlurPointerEvents)("none")
+        runOnJS(setShowNoAppsMessage)(true)
+      }
     },
   )
 
+  const renderBackground = () => {
+    // doesn't work yet on android for some reason :(
+    if (Platform.OS === "android" /*&& !androidBlur*/) {
+      return (
+        <Animated.View className="absolute inset-0 bg-black/75" style={backdropStyle}>
+          <Pressable className="flex-1" onPress={handleClose} />
+        </Animated.View>
+      )
+    }
+    return (
+      <AnimatedBlurView
+        animatedProps={blurAnimatedProps}
+        // pointerEvents={blurPointerEvents}
+        pointerEvents={blurPointerEvents}
+        className="absolute inset-0"
+        style={blurStyle}
+        blurMethod="dimezisBlurViewSdk31Plus"
+        blurReductionFactor={7}
+        // blurTarget={blurTargetRef}// doesn't work yet on android for some reason :(
+      >
+        <Pressable className="flex-1" onPress={handleClose} />
+      </AnimatedBlurView>
+    )
+  }
+
   return (
     <Animated.View
-      className="absolute -mx-6 inset-0"
+      className="absolute inset-0"
       pointerEvents="box-none"
       style={[{paddingBottom: insets.bottom}, parentContainerStyle]}>
       {/* Blurred Backdrop */}
-      <Animated.View className="absolute inset-0 bg-black/70" style={backdropStyle}>
-        <Pressable className="flex-1" onPress={handleClose} />
-      </Animated.View>
+      {/* <Animated.View className="absolute inset-0 bg-black/70" style={backdropStyle}> */}
+      {/* <AnimatedBlurView animatedProps={blurAnimatedProps} className="absolute inset-0" style={[{pointerEvents: blurPointerEvents}]}> */}
+      {/* <AnimatedBlurView animatedProps={blurAnimatedProps} className="absolute inset-0" style={[blurStyle, {pointerEvents: blurPointerEvents}]}> */}
+      {renderBackground()}
 
       {/* Main Container */}
       <Animated.View className="flex-1 justify-center" style={containerStyle}>
@@ -536,10 +711,10 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
           <Text className="text-white/50 text-sm font-medium" tx="appSwitcher:swipeUpToClose" />
         </View> */}
 
-        {apps.length == 0 && (
+        {apps.length == 0 && showNoAppsMessage && (
           <View className="flex-1 items-center justify-center">
-            <Text className="text-white text-[22px] font-semibold mb-2" tx="appSwitcher:noAppsOpen" />
-            <Text className="text-white/50 text-base" tx="appSwitcher:yourRecentlyUsedAppsWillAppearHere" />
+            <Text className="text-foreground text-[22px] font-semibold mb-2" tx="appSwitcher:noAppsOpen" />
+            <Text className="text-muted-foreground text-base" tx="appSwitcher:yourRecentlyUsedAppsWillAppearHere" />
           </View>
         )}
 
@@ -565,11 +740,15 @@ export default function AppSwitcher({swipeProgress}: AppSwitcherProps) {
         </GestureDetector>
 
         {apps.length > 0 && (
-          <View className="flex-row justify-center items-center gap-1.5 mb-5">
-            {apps.map((_, index) => (
-              <PageDot key={index} index={index} activeIndex={activeIndex} />
-            ))}
-          </View>
+          <GestureDetector gesture={dotsPanGesture}>
+            <GlassView
+              transparent={false}
+              className="mb-5 px-4 py-2 rounded-full mx-auto bg-black/30 items-center justify-center gap-1.5 flex-row">
+              {apps.map((_, index) => (
+                <PageDot key={index} index={index} activeIndex={activeIndex} />
+              ))}
+            </GlassView>
+          </GestureDetector>
         )}
 
         {/* test button to switch active index */}

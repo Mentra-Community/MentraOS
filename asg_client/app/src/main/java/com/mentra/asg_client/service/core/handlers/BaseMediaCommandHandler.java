@@ -126,8 +126,32 @@ public abstract class BaseMediaCommandHandler implements ICommandHandler {
     }
     
     /**
+     * Generate a capture directory with base file inside it.
+     * Creates a folder like IMG_20250302_143022_456/ with base.jpg inside.
+     *
+     * @param packageName The package name
+     * @param prefix File prefix (e.g., "IMG_", "VID_")
+     * @param extension File extension (e.g., ".jpg", ".mp4")
+     * @return Full file path to base file inside capture directory, or null if failed
+     */
+    protected String generateCaptureFilePath(String packageName, String prefix, String extension) {
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
+        int randomSuffix = (int)(Math.random() * 1000);
+        String captureDir = prefix + timeStamp + "_" + randomSuffix;
+        File packageDir = getPackageDirectory(packageName);
+        if (packageDir == null) {
+            return null;
+        }
+        File captureDirFile = new File(packageDir, captureDir);
+        captureDirFile.mkdirs();
+        String filePath = new File(captureDirFile, "base" + extension).getAbsolutePath();
+        Log.d(TAG, "Generated capture file path: " + filePath);
+        return filePath;
+    }
+
+    /**
      * Log command processing result.
-     * 
+     *
      * @param commandType The command type
      * @param success Whether the command was successful
      * @param errorMessage Error message if failed

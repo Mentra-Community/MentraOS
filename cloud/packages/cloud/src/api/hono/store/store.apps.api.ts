@@ -5,6 +5,7 @@
  */
 
 import { Hono } from "hono";
+import { Capabilities } from "@mentra/sdk";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import type { AppEnv, AppContext } from "../../../types/hono";
 import { User } from "../../../models/user.model";
@@ -13,6 +14,8 @@ import { clientAuth, requireUser, optionalClientAuth } from "../middleware/clien
 import storeService from "../../../services/core/store.service";
 import { batchEnrichAppsWithProfiles } from "../../../services/core/app-enrichment.service";
 import { HardwareCompatibilityService } from "../../../services/session/HardwareCompatibilityService";
+import { getCapabilitiesForModel } from "../../../config/hardware-capabilities";
+import * as UserSettingsService from "../../../services/client/user-settings.service";
 
 const logger = rootLogger.child({ service: "store.apps.api" });
 
@@ -41,6 +44,58 @@ app.post("/uninstall/:packageName", clientAuth, requireUser, uninstallApp);
 // Dynamic route must come LAST (catches everything else)
 // Uses optionalClientAuth to enrich with compatibility info if authenticated
 app.get("/:packageName", optionalClientAuth, getAppDetails);
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Resolve device capabilities and model name for a user.
+ *
+ * Priority 1: Live UserSession on this backend instance.
+ *   The session model can be set via WS glasses_connection_state or the
+ *   device-state REST endpoint — neither of which persists to the DB. So the
+ *   session may know the device even when default_wearable is absent from DB.
+ *
+ * Priority 2: Persisted default_wearable from UserSettings DB.
+ *   Works cross-backend (e.g. user connected to dev backend, store hitting
+ *   prod backend — prod has no UserSession for that user, so falls through here).
+ *
+ * isConnected always reflects live WS state regardless of which path resolved
+ * the capabilities.
+ */
+async function resolveDeviceInfo(email: string): Promise<{
+  capabilities: Capabilities | null;
+  deviceName: string | null;
+  isConnected: boolean;
+}> {
+  const userSession = UserSession.getById(email);
+  const isConnected = userSession?.deviceManager.isGlassesConnected ?? false;
+
+  // Priority 1: live session (same backend instance)
+  if (userSession) {
+    const model = userSession.deviceManager.getModel();
+    const capabilities = userSession.getCapabilities();
+    if (model && capabilities) {
+      return { capabilities, deviceName: model, isConnected };
+    }
+  }
+
+  // Priority 2: persisted default_wearable — reliable cross-backend fallback
+  try {
+    const defaultWearable = await UserSettingsService.getUserSetting(email, "default_wearable");
+    if (defaultWearable && typeof defaultWearable === "string") {
+      const capabilities = getCapabilitiesForModel(defaultWearable);
+      if (capabilities) {
+        return { capabilities, deviceName: defaultWearable, isConnected };
+      }
+    }
+  } catch (e) {
+    logger.warn({ email, error: e }, "Failed to fetch default_wearable from user settings");
+  }
+
+  return { capabilities: null, deviceName: null, isConnected };
+}
 
 // ============================================================================
 // Handlers
@@ -88,11 +143,7 @@ async function getPublishedAppsForUser(c: AppContext) {
     const appsWithStatus = await storeService.getPublishedAppsForUser(user);
     const enrichedApps = await batchEnrichAppsWithProfiles(appsWithStatus);
 
-    // Get device capabilities from user session (if connected)
-    const userSession = UserSession.getById(email);
-    const capabilities = userSession?.getCapabilities() ?? null;
-    const deviceName = userSession?.deviceManager.getModel() ?? null;
-    const isConnected = userSession?.deviceManager.isGlassesConnected ?? false;
+    const { capabilities, deviceName, isConnected } = await resolveDeviceInfo(email);
 
     // Add compatibility info to each app
     const appsWithCompatibility = enrichedApps.map((app) => ({
@@ -181,14 +232,10 @@ async function getAppDetails(c: AppContext) {
 
     const email = c.get("email");
     if (email) {
-      const userSession = UserSession.getById(email);
-      if (userSession) {
-        const capabilities = userSession.getCapabilities();
+      const { capabilities, deviceName, isConnected } = await resolveDeviceInfo(email);
+      if (capabilities) {
         compatibility = HardwareCompatibilityService.checkCompatibility(enrichedApp, capabilities);
-        deviceInfo = {
-          connected: userSession.deviceManager.isGlassesConnected,
-          modelName: userSession.deviceManager.getModel(),
-        };
+        deviceInfo = { connected: isConnected, modelName: deviceName };
       }
     }
 
@@ -234,12 +281,8 @@ async function searchApps(c: AppContext) {
 
     const email = c.get("email");
     if (email) {
-      const userSession = UserSession.getById(email);
-      if (userSession) {
-        const capabilities = userSession.getCapabilities();
-        const deviceName = userSession.deviceManager.getModel();
-        const isConnected = userSession.deviceManager.isGlassesConnected;
-
+      const { capabilities, deviceName, isConnected } = await resolveDeviceInfo(email);
+      if (capabilities) {
         appsWithCompatibility = enrichedApps.map((app) => ({
           ...app,
           compatibility: HardwareCompatibilityService.checkCompatibility(app, capabilities),

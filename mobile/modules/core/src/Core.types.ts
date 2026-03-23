@@ -171,9 +171,16 @@ export type WsBinEvent = {
   base64: string
 }
 
-export type MicDataEvent = {
-  type: "mic_data"
-  base64: string
+export type MicPcmEvent = {
+  type: "mic_pcm"
+  // base64: string
+  pcm: ArrayBuffer
+}
+
+export type MicLc3Event = {
+  type: "mic_lc3"
+  // base64: string
+  lc3: ArrayBuffer
 }
 
 export type RtmpStreamStatusEvent = {
@@ -211,6 +218,11 @@ export type OtaProgressEvent = {
   error_message?: string
 }
 
+export type OtaStartAckEvent = {
+  type: "ota_start_ack"
+  timestamp: number
+}
+
 // Union type of all core events
 export type CoreEvent = Parameters<CoreModuleEvents[keyof CoreModuleEvents]>[0]
 
@@ -244,12 +256,14 @@ export type CoreModuleEvents = {
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   ws_text: (event: WsTextEvent) => void
   ws_bin: (event: WsBinEvent) => void
-  mic_data: (event: MicDataEvent) => void
+  mic_pcm: (event: MicPcmEvent) => void
+  mic_lc3: (event: MicLc3Event) => void
   rtmp_stream_status: (event: RtmpStreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
   ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_progress: (event: OtaProgressEvent) => void
+  ota_start_ack: (event: OtaStartAckEvent) => void
 }
 
 export type GlassesConnectionState = "disconnected" | "connected" | "connecting"
@@ -283,6 +297,7 @@ export interface GlassesStatus {
   micEnabled: boolean
   connectionState: string
   btcConnected: boolean
+  signalStrength: number
   // device info
   deviceModel: string
   androidVersion: string
@@ -317,6 +332,11 @@ export interface GlassesStatus {
   otaUpdateAvailable: OtaUpdateInfo | null
   otaProgress: OtaProgress | null
   otaInProgress: boolean
+  // ring info
+  controllerConnected: boolean
+  controllerFullyBooted: boolean
+  controllerBatteryLevel: number
+  controllerSignalStrength: number
 }
 
 export type MicRanking = "auto" | "phone" | "glasses" | "bluetooth"
@@ -331,11 +351,14 @@ export interface WifiSearchResult {
   ssid: string
   requiresPassword: boolean
   signalStrength: number
+  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170–5825. Omitted if unknown. */
+  frequency?: number
 }
 
 export interface CoreStatus {
   // state:
   searching: boolean
+  searchingController: boolean
   systemMicUnavailable: boolean
   micRanking: MicRanking[]
   currentMic: MicRanking | null

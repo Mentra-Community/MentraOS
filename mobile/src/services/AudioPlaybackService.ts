@@ -1,5 +1,5 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
-import CoreModule from "modules/core"
+import CoreModule from "core"
 import {BackgroundTimer} from "@/utils/timers"
 
 interface AudioPlayRequest {

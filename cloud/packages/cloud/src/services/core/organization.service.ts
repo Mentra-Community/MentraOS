@@ -1,9 +1,5 @@
 import { Types } from "mongoose";
-import {
-  Organization,
-  OrganizationI,
-  OrgMember,
-} from "../../models/organization.model";
+import { Organization, OrganizationI, OrgMember } from "../../models/organization.model";
 import { User, UserI } from "../../models/user.model";
 import { InviteService } from "./invite.service";
 
@@ -30,14 +26,22 @@ class ApiError extends Error {
  */
 async function generateSlug(name: string): Promise<string> {
   // Convert to lowercase and replace non-alphanumeric characters with hyphens
-  let slug = name
+  let baseSlug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, ""); // Remove leading and trailing hyphens
 
   // Ensure slug is not empty
-  if (!slug) {
-    slug = "org";
+  if (!baseSlug) {
+    baseSlug = "org";
+  }
+
+  // Check for uniqueness; append a random suffix if the slug already exists
+  let slug = baseSlug;
+  const existing = await Organization.findOne({ slug }).lean();
+  if (existing) {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    slug = `${baseSlug}-${suffix}`;
   }
 
   return slug;
@@ -53,8 +57,38 @@ export class OrganizationService {
    * @returns The ID of the created organization
    */
   public static async createPersonalOrg(user: UserI): Promise<Types.ObjectId> {
+    // Idempotency check: if the user already admins at least one org, return it.
+    // We check for admin role specifically — being a regular member of someone
+    // else's org doesn't mean the user can create apps there (they'd get 403s).
+    // This also correctly handles personal orgs after the user invites others
+    // (the user is still an admin regardless of member count).
+    const existingOrg = await Organization.findOne({
+      members: { $elemMatch: { user: user._id, role: "admin" } },
+    }).lean();
+    if (existingOrg) {
+      return existingOrg._id as Types.ObjectId;
+    }
+
     const personalOrgName = `${user.profile?.company || user.email.split("@")[0]}'s Org`;
-    const slug = await generateSlug(personalOrgName);
+
+    // Build slug inline instead of calling generateSlug() — we need a
+    // deterministic suffix derived from the user's _id so that concurrent
+    // createPersonalOrg calls for the SAME user produce the same slug.
+    // Same slug → E11000 on the unique index → caught below.
+    // Different users get different suffixes (different ObjectIds).
+    const baseSlug =
+      personalOrgName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "org";
+
+    const userSuffix = user._id.toString().slice(-8);
+    let slug = baseSlug;
+
+    const existingSlug = await Organization.findOne({ slug }).lean();
+    if (existingSlug) {
+      slug = `${baseSlug}-${userSuffix}`;
+    }
 
     // Create personal organization with user as owner
     const org = new Organization({
@@ -78,8 +112,30 @@ export class OrganizationService {
       ],
     });
 
-    await org.save();
-    return org._id;
+    try {
+      await org.save();
+      return org._id;
+    } catch (error: any) {
+      if (error?.code === 11000) {
+        // Case 1: Same-user race — a concurrent call created the org with
+        // the same deterministic slug. Look it up by admin membership and return it.
+        const raceOrg = await Organization.findOne({
+          members: { $elemMatch: { user: user._id, role: "admin" } },
+        }).lean();
+        if (raceOrg) {
+          return raceOrg._id as Types.ObjectId;
+        }
+
+        // Case 2: Different-user hash collision — two different users whose
+        // ObjectId last-8-chars match AND who share the same name prefix
+        // (≈1 in 4 billion). Fall back to a random suffix.
+        const randomSuffix = Math.random().toString(36).slice(2, 8);
+        org.slug = `${baseSlug}-${userSuffix}-${randomSuffix}`;
+        await org.save();
+        return org._id;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -88,10 +144,7 @@ export class OrganizationService {
    * @param creatorUser - The user creating the organization
    * @returns The created organization document
    */
-  public static async createOrg(
-    name: string,
-    creatorUser: UserI,
-  ): Promise<OrganizationI> {
+  public static async createOrg(name: string, creatorUser: UserI): Promise<OrganizationI> {
     const slug = await generateSlug(name);
 
     const org = new Organization({
@@ -109,13 +162,28 @@ export class OrganizationService {
       ],
     });
 
-    await org.save();
+    try {
+      await org.save();
+    } catch (error: any) {
+      // Handle duplicate slug race condition: another request inserted the same
+      // slug between generateSlug's uniqueness check and our save. Retry once
+      // with a fresh random suffix.
+      if (error?.code === 11000) {
+        const baseSlug =
+          name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "") || "org";
+        const suffix = Math.random().toString(36).slice(2, 8);
+        org.slug = `${baseSlug}-${suffix}`;
+        await org.save();
+      } else {
+        throw error;
+      }
+    }
 
     // Add org to user's organizations list
-    await User.updateOne(
-      { _id: creatorUser._id },
-      { $addToSet: { organizations: org._id } },
-    );
+    await User.updateOne({ _id: creatorUser._id }, { $addToSet: { organizations: org._id } });
 
     return org;
   }
@@ -125,9 +193,7 @@ export class OrganizationService {
    * @param id - Organization ID
    * @returns The organization document with populated members
    */
-  public static async getOrgById(
-    id: string | Types.ObjectId,
-  ): Promise<OrganizationI | null> {
+  public static async getOrgById(id: string | Types.ObjectId): Promise<OrganizationI | null> {
     return Organization.findById(id)
       .populate("members.user", "email displayName profile.avatar")
       .populate("pendingInvites.invitedBy", "email displayName")
@@ -139,9 +205,7 @@ export class OrganizationService {
    * @param userId - User ID
    * @returns Array of organizations
    */
-  public static async listUserOrgs(
-    userId: string | Types.ObjectId,
-  ): Promise<OrganizationI[]> {
+  public static async listUserOrgs(userId: string | Types.ObjectId): Promise<OrganizationI[]> {
     return Organization.find({
       "members.user": userId,
     }).exec();
@@ -163,10 +227,7 @@ export class OrganizationService {
     // Verify user has admin rights
     const hasPermission = await this.isOrgAdmin(actorUser, id);
     if (!hasPermission) {
-      throw new ApiError(
-        403,
-        "Insufficient permissions to update organization",
-      );
+      throw new ApiError(403, "Insufficient permissions to update organization");
     }
 
     // Prevent updating sensitive fields
@@ -175,16 +236,7 @@ export class OrganizationService {
     delete sanitizedPatch.members;
     delete sanitizedPatch.slug;
 
-    // If name is being updated, generate new slug
-    if (sanitizedPatch.name) {
-      sanitizedPatch.slug = await generateSlug(sanitizedPatch.name);
-    }
-
-    const org = await Organization.findByIdAndUpdate(
-      id,
-      { $set: sanitizedPatch },
-      { new: true, runValidators: true },
-    );
+    const org = await Organization.findByIdAndUpdate(id, { $set: sanitizedPatch }, { new: true, runValidators: true });
 
     if (!org) {
       throw new ApiError(404, "Organization not found");
@@ -232,38 +284,25 @@ export class OrganizationService {
       const memberUser = member.user as any;
       return (
         memberUser &&
-        ((memberUser.email &&
-          memberUser.email.toLowerCase() === lowerCaseEmail) ||
+        ((memberUser.email && memberUser.email.toLowerCase() === lowerCaseEmail) ||
           (typeof memberUser === "string" && memberUser.toString() === email))
       );
     });
 
     if (existingMember) {
-      throw new ApiError(
-        400,
-        `User is already a member of this organization: ${org.id}`,
-      );
+      throw new ApiError(400, `User is already a member of this organization: ${org.id}`);
     }
 
     // Check for existing pending invites
-    const existingPendingInvite = org.pendingInvites.find(
-      (invite) => invite.email.toLowerCase() === lowerCaseEmail,
-    );
+    const existingPendingInvite = org.pendingInvites.find((invite) => invite.email.toLowerCase() === lowerCaseEmail);
 
     if (existingPendingInvite) {
       // Remove the old pending invite to replace with new one
-      org.pendingInvites = org.pendingInvites.filter(
-        (invite) => invite.email.toLowerCase() !== lowerCaseEmail,
-      );
+      org.pendingInvites = org.pendingInvites.filter((invite) => invite.email.toLowerCase() !== lowerCaseEmail);
     }
 
     // Use InviteService to generate a token and send invitation email
-    const { token } = await InviteService.generate(
-      orgId,
-      email,
-      role,
-      inviterUser,
-    );
+    const { token } = await InviteService.generate(orgId, email, role, inviterUser);
 
     // Add to pending invites
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
@@ -290,11 +329,7 @@ export class OrganizationService {
    * @param actorUser - User performing the resend
    * @throws ApiError if user lacks permission or invite not found
    */
-  public static async resendInvite(
-    orgId: string | Types.ObjectId,
-    email: string,
-    actorUser: UserI,
-  ): Promise<void> {
+  public static async resendInvite(orgId: string | Types.ObjectId, email: string, actorUser: UserI): Promise<void> {
     // Check if user has admin rights
     const hasPermission = await this.isOrgAdmin(actorUser, orgId);
     if (!hasPermission) {
@@ -313,9 +348,7 @@ export class OrganizationService {
 
     // Find the pending invite
     const lowerCaseEmail = email.toLowerCase();
-    const inviteIndex = org.pendingInvites.findIndex(
-      (invite) => invite.email.toLowerCase() === lowerCaseEmail,
-    );
+    const inviteIndex = org.pendingInvites.findIndex((invite) => invite.email.toLowerCase() === lowerCaseEmail);
 
     if (inviteIndex === -1) {
       throw new ApiError(404, "Pending invitation not found");
@@ -325,10 +358,7 @@ export class OrganizationService {
 
     // Check if invite is expired
     if (new Date() > invite.expiresAt) {
-      throw new ApiError(
-        400,
-        "Invitation has expired. Please create a new invitation.",
-      );
+      throw new ApiError(400, "Invitation has expired. Please create a new invitation.");
     }
 
     // Get organization details for the email
@@ -348,18 +378,11 @@ export class OrganizationService {
    * @param actorUser - User performing the rescind
    * @throws ApiError if user lacks permission or invite not found
    */
-  public static async rescindInvite(
-    orgId: string | Types.ObjectId,
-    email: string,
-    actorUser: UserI,
-  ): Promise<void> {
+  public static async rescindInvite(orgId: string | Types.ObjectId, email: string, actorUser: UserI): Promise<void> {
     // Check if user has admin rights
     const hasPermission = await this.isOrgAdmin(actorUser, orgId);
     if (!hasPermission) {
-      throw new ApiError(
-        403,
-        "Insufficient permissions to rescind invitations",
-      );
+      throw new ApiError(403, "Insufficient permissions to rescind invitations");
     }
 
     const org = await this.getOrgById(orgId);
@@ -375,9 +398,7 @@ export class OrganizationService {
     // Find and remove the pending invite
     const lowerCaseEmail = email.toLowerCase();
     const originalLength = org.pendingInvites.length;
-    org.pendingInvites = org.pendingInvites.filter(
-      (invite) => invite.email.toLowerCase() !== lowerCaseEmail,
-    );
+    org.pendingInvites = org.pendingInvites.filter((invite) => invite.email.toLowerCase() !== lowerCaseEmail);
 
     if (org.pendingInvites.length === originalLength) {
       throw new ApiError(404, "Pending invitation not found");
@@ -392,10 +413,7 @@ export class OrganizationService {
    * @param user - User accepting the invite
    * @returns The updated organization
    */
-  public static async acceptInvite(
-    token: string,
-    user: UserI,
-  ): Promise<OrganizationI> {
+  public static async acceptInvite(token: string, user: UserI): Promise<OrganizationI> {
     console.log("[organization.service] Starting acceptInvite process", {
       userEmail: user.email,
     });
@@ -413,10 +431,7 @@ export class OrganizationService {
           tokenEmail: tokenData.email,
           userEmail: user.email,
         });
-        throw new ApiError(
-          403,
-          "Invite token was issued for a different email address",
-        );
+        throw new ApiError(403, "Invite token was issued for a different email address");
       }
 
       // Get the organization
@@ -435,27 +450,19 @@ export class OrganizationService {
       });
 
       // Check if already a member - by ID or by email
-      const isMemberById = org.members.some(
-        (m) => m.user.toString() === user._id.toString(),
-      );
+      const isMemberById = org.members.some((m) => m.user.toString() === user._id.toString());
 
       const isMemberByEmail = org.members.some((m) => {
         const memberUser = m.user as any; // Handle both populated and reference cases
-        return (
-          memberUser.email &&
-          memberUser.email.toLowerCase() === user.email.toLowerCase()
-        );
+        return memberUser.email && memberUser.email.toLowerCase() === user.email.toLowerCase();
       });
 
       if (isMemberById || isMemberByEmail) {
-        console.warn(
-          "[organization.service] User is already a member of this organization",
-          {
-            userId: user._id.toString(),
-            userEmail: user.email,
-            orgId: org._id.toString(),
-          },
-        );
+        console.warn("[organization.service] User is already a member of this organization", {
+          userId: user._id.toString(),
+          userEmail: user.email,
+          orgId: org._id.toString(),
+        });
 
         // Return the org anyway, treating this as a successful operation
         // This prevents error messages when users click an invite link multiple times
@@ -465,22 +472,14 @@ export class OrganizationService {
       // Check if the pending invite still exists
       const lowerCaseEmail = user.email.toLowerCase();
       const pendingInviteIndex =
-        org.pendingInvites?.findIndex(
-          (invite) => invite.email.toLowerCase() === lowerCaseEmail,
-        ) ?? -1;
+        org.pendingInvites?.findIndex((invite) => invite.email.toLowerCase() === lowerCaseEmail) ?? -1;
 
       if (pendingInviteIndex === -1) {
-        console.error(
-          "[organization.service] Pending invite not found - may have already been accepted",
-          {
-            userEmail: user.email,
-            orgId: org._id.toString(),
-          },
-        );
-        throw new ApiError(
-          400,
-          "This invitation has already been accepted or is no longer valid",
-        );
+        console.error("[organization.service] Pending invite not found - may have already been accepted", {
+          userEmail: user.email,
+          orgId: org._id.toString(),
+        });
+        throw new ApiError(400, "This invitation has already been accepted or is no longer valid");
       }
 
       const pendingInvite = org.pendingInvites[pendingInviteIndex];
@@ -495,13 +494,10 @@ export class OrganizationService {
       }
 
       // Add member and remove pending invite atomically
-      console.log(
-        "[organization.service] Adding user to organization and removing pending invite",
-        {
-          userId: user._id.toString(),
-          role: tokenData.role,
-        },
-      );
+      console.log("[organization.service] Adding user to organization and removing pending invite", {
+        userId: user._id.toString(),
+        role: tokenData.role,
+      });
 
       org.members.push({
         user: user._id,
@@ -514,9 +510,7 @@ export class OrganizationService {
 
       // Save both changes atomically
       await org.save();
-      console.log(
-        "[organization.service] Organization saved with new member and pending invite removed",
-      );
+      console.log("[organization.service] Organization saved with new member and pending invite removed");
 
       // Add org to user's organizations
       console.log("[organization.service] Adding org to user.organizations", {
@@ -531,9 +525,7 @@ export class OrganizationService {
       }
 
       // Check if org is already in the user's organizations
-      const orgAlreadyInUserOrgs = user.organizations.some(
-        (orgId) => orgId.toString() === org._id.toString(),
-      );
+      const orgAlreadyInUserOrgs = user.organizations.some((orgId) => orgId.toString() === org._id.toString());
 
       if (!orgAlreadyInUserOrgs) {
         user.organizations.push(org._id);
@@ -542,9 +534,7 @@ export class OrganizationService {
           updatedOrgs: user.organizations.map((o) => o.toString()),
         });
       } else {
-        console.warn(
-          "[organization.service] Organization was already in user.organizations array, skipping update",
-        );
+        console.warn("[organization.service] Organization was already in user.organizations array, skipping update");
       }
 
       return org;
@@ -573,14 +563,11 @@ export class OrganizationService {
     // Verify user has admin rights
     const hasPermission = await this.isOrgAdmin(actorUser, orgId);
     if (!hasPermission) {
-      console.error(
-        "[organization.service] User does not have admin rights to remove members",
-        {
-          actorUserEmail: actorUser.email,
-          orgId,
-          memberId,
-        },
-      );
+      console.error("[organization.service] User does not have admin rights to remove members", {
+        actorUserEmail: actorUser.email,
+        orgId,
+        memberId,
+      });
       throw new ApiError(403, "Insufficient permissions to remove members");
     }
 
@@ -593,9 +580,7 @@ export class OrganizationService {
     }
 
     // Find the member to remove
-    const targetMemberIdx = org.members.findIndex(
-      (m) => m.user._id.toString() === memberId.toString(),
-    );
+    const targetMemberIdx = org.members.findIndex((m) => m.user._id.toString() === memberId.toString());
     if (targetMemberIdx === -1) {
       console.error("[organization.service] Member not found in organization", {
         orgId,
@@ -610,17 +595,11 @@ export class OrganizationService {
     if (targetMember.role === "admin") {
       const adminCount = org.members.filter((m) => m.role === "admin").length;
       if (adminCount <= 1) {
-        console.error(
-          "[organization.service] Cannot remove the last admin of an organization",
-          {
-            orgId,
-            memberId,
-          },
-        );
-        throw new ApiError(
-          400,
-          "Cannot remove the last admin of an organization",
-        );
+        console.error("[organization.service] Cannot remove the last admin of an organization", {
+          orgId,
+          memberId,
+        });
+        throw new ApiError(400, "Cannot remove the last admin of an organization");
       }
     }
 
@@ -639,10 +618,7 @@ export class OrganizationService {
 
     try {
       // Remove org from user's organizations list
-      await User.updateOne(
-        { _id: memberId },
-        { $pull: { organizations: org._id } },
-      );
+      await User.updateOne({ _id: memberId }, { $pull: { organizations: org._id } });
     } catch (error: any) {
       console.error("[organization.service] Error removing org from user", {
         memberId,
@@ -666,13 +642,10 @@ export class OrganizationService {
           });
         } else {
           user.defaultOrg = undefined;
-          console.warn(
-            "[organization.service] Removed user default org as part of removing member",
-            {
-              memberId,
-              orgId,
-            },
-          );
+          console.warn("[organization.service] Removed user default org as part of removing member", {
+            memberId,
+            orgId,
+          });
           await user.save();
         }
       }
@@ -704,10 +677,7 @@ export class OrganizationService {
     // Verify user has admin rights
     const hasPermission = await this.isOrgAdmin(actorUser, orgId);
     if (!hasPermission) {
-      throw new ApiError(
-        403,
-        "Insufficient permissions to change member roles",
-      );
+      throw new ApiError(403, "Insufficient permissions to change member roles");
     }
 
     const org = await this.getOrgById(orgId);
@@ -716,9 +686,7 @@ export class OrganizationService {
     }
 
     // Find target member
-    const targetMemberIdx = org.members.findIndex(
-      (m) => m.user._id.toString() === memberId.toString(),
-    );
+    const targetMemberIdx = org.members.findIndex((m) => m.user._id.toString() === memberId.toString());
 
     if (targetMemberIdx === -1) {
       throw new ApiError(404, "Member not found in organization");
@@ -730,10 +698,7 @@ export class OrganizationService {
     if (currentRole === "admin" && newRole !== "admin") {
       const adminCount = org.members.filter((m) => m.role === "admin").length;
       if (adminCount <= 1) {
-        throw new ApiError(
-          400,
-          "Cannot demote the last admin of an organization",
-        );
+        throw new ApiError(400, "Cannot demote the last admin of an organization");
       }
     }
 
@@ -750,12 +715,9 @@ export class OrganizationService {
    * @param orgId - Organization ID
    * @returns Whether the user is a member
    */
-  public static async isOrgMember(
-    user: UserI,
-    orgId: string | Types.ObjectId,
-  ): Promise<boolean> {
+  public static async isOrgMember(user: UserI, orgId: string | Types.ObjectId): Promise<boolean> {
     const org = await Organization.findOne({
-      _id: orgId,
+      "_id": orgId,
       "members.user": user._id,
     });
 
@@ -768,14 +730,11 @@ export class OrganizationService {
    * @param orgId - Organization ID
    * @returns Whether the user is an admin
    */
-  public static async isOrgAdmin(
-    user: UserI,
-    orgId: string | Types.ObjectId,
-  ): Promise<boolean> {
+  public static async isOrgAdmin(user: UserI, orgId: string | Types.ObjectId): Promise<boolean> {
     const org = await Organization.findOne({
-      _id: orgId,
+      "_id": orgId,
       "members.user": user._id,
-      members: {
+      "members": {
         $elemMatch: {
           user: user._id,
           role: "admin",
@@ -786,27 +745,18 @@ export class OrganizationService {
     return !!org;
   }
 
-  public static async deleteOrg(
-    orgId: string | Types.ObjectId,
-    actorUser: UserI,
-  ): Promise<void> {
+  public static async deleteOrg(orgId: string | Types.ObjectId, actorUser: UserI): Promise<void> {
     // Verify the actor is an admin of the organization
     const isAdmin = await this.isOrgAdmin(actorUser, orgId);
     if (!isAdmin) {
-      throw new ApiError(
-        403,
-        "Insufficient permissions to delete organization",
-      );
+      throw new ApiError(403, "Insufficient permissions to delete organization");
     }
 
     // Check if the organization has any Apps/apps
     const App = require("../../models/app.model").default;
     const appCount = await App.countDocuments({ organizationId: orgId });
     if (appCount > 0) {
-      throw new ApiError(
-        400,
-        "Organization cannot be deleted while it owns one or more MiniApps",
-      );
+      throw new ApiError(400, "Organization cannot be deleted while it owns one or more MiniApps");
     }
 
     // Fetch the organization with populated members for further checks
@@ -826,8 +776,7 @@ export class OrganizationService {
 
       if (!otherAdminOrg) {
         const memberUser = member.user as any;
-        const email =
-          typeof memberUser === "string" ? memberUser : memberUser.email;
+        const email = typeof memberUser === "string" ? memberUser : memberUser.email;
         throw new ApiError(
           400,
           `Member ${email || userId.toString()} must be an admin of at least one other organization before deletion`,
@@ -848,9 +797,7 @@ export class OrganizationService {
 
       // Remove org from organizations array
       if (user.organizations) {
-        user.organizations = user.organizations.filter(
-          (id) => id.toString() !== org._id.toString(),
-        );
+        user.organizations = user.organizations.filter((id) => id.toString() !== org._id.toString());
       }
 
       // Fix defaultOrg if it was the deleted one
@@ -886,10 +833,7 @@ export class OrganizationService {
 
         // If no admin org found, fall back to first org or undefined
         if (!adminOrgFound) {
-          user.defaultOrg =
-            user.organizations && user.organizations.length > 0
-              ? user.organizations[0]
-              : undefined;
+          user.defaultOrg = user.organizations && user.organizations.length > 0 ? user.organizations[0] : undefined;
         }
       }
 

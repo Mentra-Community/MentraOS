@@ -6,7 +6,7 @@ import { logger } from "./pino-logger";
 // Environment constants (mirroring pino-logger for consistency)
 const NODE_ENV = process.env.NODE_ENV || "development";
 const PORTER_APP_NAME = process.env.PORTER_APP_NAME || "cloud-local";
-const REGION = process.env.REGION || process.env.DEPLOYMENT_REGION || process.env.AZURE_SPEECH_REGION || "";
+const REGION = process.env.REGION || process.env.DEPLOYMENT_REGION || "";
 const DEPLOYMENT_REGION = process.env.DEPLOYMENT_REGION;
 
 // Beta flag - true only when connected to staging environment

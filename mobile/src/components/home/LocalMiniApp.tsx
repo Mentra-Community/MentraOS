@@ -1,5 +1,5 @@
 import {useRef, useEffect} from "react"
-import {View, ActivityIndicator} from "react-native"
+import {Platform, View, ActivityIndicator} from "react-native"
 import {WebView} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
@@ -54,7 +54,7 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
   // Handle messages from WebView
   const handleWebViewMessage = (event: any) => {
     const data = event.nativeEvent.data
-    // miniComms.handleRawMessageFromMiniApp(packageName, data)
+    miniComms.handleRawMessageFromMiniApp(packageName, data)
   }
 
   let source: any = null
@@ -73,6 +73,14 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
       javaScriptEnabled={true}
       domStorageEnabled={true}
       startInLoadingState={true}
+      injectedJavaScriptBeforeContentLoaded={`
+        window.MentraOS = {
+          platform: '${Platform.OS}',
+          capabilities: ['share', 'open_url', 'copy_clipboard', 'download'],
+        };
+        window.receiveNativeMessage = window.receiveNativeMessage || function() {};
+        true;
+      `}
       renderLoading={() => (
         <View className="absolute inset-0 items-center bg-background justify-center">
           <ActivityIndicator size="large" color={theme.colors.foreground} />

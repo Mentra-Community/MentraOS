@@ -19,6 +19,8 @@ import {
   PhotoRequest,
   AudioPlayRequest,
   AudioStopRequest,
+  AudioStreamStart,
+  AudioStreamEnd,
   RtmpStreamRequest,
   RtmpStreamStopRequest,
   ManagedStreamRequest,
@@ -27,6 +29,7 @@ import {
   StreamStatusCheckResponse,
   PermissionType,
   RgbLedControlRequest,
+  CameraFovSetRequest,
   OwnershipReleaseMessage,
   AppStateChange,
 } from "@mentra/sdk";
@@ -98,6 +101,11 @@ export async function handleAppMessage(
         await handleRgbLedControl(appWebsocket, userSession, message as RgbLedControlRequest, logger);
         break;
 
+      // Camera FOV/ROI control
+      case AppToCloudMessageType.CAMERA_FOV_SET:
+        await handleCameraFovSet(appWebsocket, userSession, message as CameraFovSetRequest, logger);
+        break;
+
       // RTMP streaming
       case AppToCloudMessageType.RTMP_STREAM_REQUEST:
         await handleRtmpStreamRequest(appWebsocket, userSession, message as RtmpStreamRequest, logger);
@@ -124,6 +132,15 @@ export async function handleAppMessage(
 
       case AppToCloudMessageType.AUDIO_STOP_REQUEST:
         await handleAudioStopRequest(appWebsocket, userSession, message as AudioStopRequest, logger);
+        break;
+
+      // Audio output streaming
+      case AppToCloudMessageType.AUDIO_STREAM_START:
+        handleAudioStreamStart(appWebsocket, userSession, message as AudioStreamStart, logger);
+        break;
+
+      case AppToCloudMessageType.AUDIO_STREAM_END:
+        await handleAudioStreamEnd(userSession, message as AudioStreamEnd, logger);
         break;
 
       // Managed streaming
@@ -292,6 +309,68 @@ async function handleRgbLedControl(
 }
 
 /**
+ * Handle camera FOV set request
+ */
+async function handleCameraFovSet(
+  appWebsocket: IWebSocket,
+  userSession: UserSession,
+  message: CameraFovSetRequest,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const hasCameraPermission = await checkCameraPermission(message.packageName, userSession, logger);
+    if (!hasCameraPermission) {
+      logger.warn({ packageName: message.packageName }, "Camera FOV set denied: no CAMERA permission");
+      sendError(appWebsocket, AppErrorCode.PERMISSION_DENIED, "Camera permission required to set FOV", logger);
+      return;
+    }
+
+    // Validate FOV and ROI values before forwarding to glasses
+    const SUPPORTED_FOV = [82, 92, 102, 118];
+    const { fov, roiPosition } = message;
+    if (!SUPPORTED_FOV.includes(fov) || roiPosition < 0 || roiPosition > 2) {
+      logger.warn({ fov, roiPosition, packageName: message.packageName }, "Invalid camera FOV/ROI values");
+      sendError(
+        appWebsocket,
+        AppErrorCode.MALFORMED_MESSAGE,
+        `Invalid FOV/ROI: fov must be one of [${SUPPORTED_FOV.join(", ")}], roiPosition must be 0-2`,
+        logger,
+      );
+      return;
+    }
+
+    const glassesFovRequest = {
+      type: CloudToGlassesMessageType.CAMERA_FOV_SET,
+      sessionId: userSession.sessionId,
+      requestId: message.requestId,
+      appId: message.packageName,
+      fov: message.fov,
+      roiPosition: message.roiPosition,
+      timestamp: new Date(),
+    };
+
+    if (userSession.websocket && userSession.websocket.readyState === WebSocketReadyState.OPEN) {
+      userSession.websocket.send(JSON.stringify(glassesFovRequest));
+      metricsService.incrementClientMessagesOut();
+      logger.info(
+        { requestId: message.requestId, fov: message.fov, roiPosition: message.roiPosition },
+        "🔭 Camera FOV set request forwarded to mobile",
+      );
+    } else {
+      sendError(appWebsocket, AppErrorCode.INTERNAL_ERROR, "Glasses not connected", logger);
+    }
+  } catch (e) {
+    logger.error({ e, packageName: message.packageName }, "Error forwarding camera FOV set request");
+    sendError(
+      appWebsocket,
+      AppErrorCode.INTERNAL_ERROR,
+      (e as Error).message || "Failed to forward camera FOV set request",
+      logger,
+    );
+  }
+}
+
+/**
  * Handle RTMP stream request
  */
 async function handleRtmpStreamRequest(
@@ -431,8 +510,6 @@ async function handleAudioPlayRequest(
       userSession.websocket.send(JSON.stringify(glassesAudioRequest));
       metricsService.incrementClientMessagesOut();
       logger.debug(`🔊 Forwarded audio request ${message.requestId} to glasses`);
-      // Disabled: Server-side playback via Go bridge/LiveKit - now handled client-side via expo-av
-      // void userSession.speakerManager.start(message);
     } else {
       userSession.audioPlayRequestMapping.delete(message.requestId);
       sendError(appWebsocket, AppErrorCode.INTERNAL_ERROR, "Glasses not connected", logger);
@@ -471,8 +548,6 @@ async function handleAudioStopRequest(
       userSession.websocket.send(JSON.stringify(glassesAudioStopRequest));
       metricsService.incrementClientMessagesOut();
       logger.debug(`🔇 Forwarded audio stop request from ${message.packageName} to glasses`);
-      // Disabled: Server-side stop via Go bridge/LiveKit - now handled client-side via expo-av
-      // void userSession.speakerManager.stop(message);
     } else {
       sendError(appWebsocket, AppErrorCode.INTERNAL_ERROR, "Glasses not connected", logger);
     }
@@ -696,6 +771,74 @@ function sendError(ws: IWebSocket, code: AppErrorCode, message: string, logger: 
       logger.error(closeError, "Failed to close WebSocket connection");
     }
   }
+}
+
+// ─── Audio Output Streaming ──────────────────────────────────────────────────
+
+/**
+ * Handle AUDIO_STREAM_START from an SDK app.
+ *
+ * Creates an HTTP streaming relay and responds with the relay URL so the SDK
+ * can tell the phone to play it. The cloud does zero transcoding — just pipes
+ * MP3 bytes from the app's WS binary frames to the phone's HTTP response.
+ *
+ * See: cloud/issues/041-sdk-audio-output-streaming/
+ */
+function handleAudioStreamStart(
+  appWebsocket: IWebSocket,
+  userSession: UserSession,
+  message: AudioStreamStart,
+  logger: Logger,
+): void {
+  const { streamId, packageName, contentType } = message;
+
+  const ok = userSession.appAudioStreamManager.createStream(streamId, packageName, contentType || "audio/mpeg");
+
+  if (!ok) {
+    logger.error({ streamId, packageName }, "Failed to create audio stream relay");
+    appWebsocket.send(
+      JSON.stringify({
+        type: CloudToAppMessageType.CONNECTION_ERROR,
+        code: "STREAM_CREATE_FAILED",
+        message: "Failed to create audio stream relay",
+        timestamp: new Date(),
+      }),
+    );
+    return;
+  }
+
+  // Build the relay URL that the phone will GET to receive the audio stream.
+  // Use the cloud's public hostname so the phone can reach it.
+  const cloudHost = process.env.CLOUD_PUBLIC_HOST_NAME || process.env.HOST_NAME || "localhost:8002";
+  const protocol = cloudHost.includes("localhost") ? "http" : "https";
+  const streamUrl = `${protocol}://${cloudHost}/api/audio/stream/${encodeURIComponent(userSession.userId)}/${streamId}`;
+
+  // Store the URL on the stream so the cloud can re-send AUDIO_PLAY_REQUEST
+  // to the phone if ExoPlayer disconnects during a conversational gap.
+  userSession.appAudioStreamManager.setStreamUrl(streamId, streamUrl);
+
+  // Send the relay URL back to the SDK
+  const ready = {
+    type: CloudToAppMessageType.AUDIO_STREAM_READY,
+    streamId,
+    streamUrl,
+    timestamp: new Date(),
+  };
+  appWebsocket.send(JSON.stringify(ready));
+
+  logger.debug({ streamId, packageName, streamUrl }, "Audio stream relay ready");
+}
+
+/**
+ * Handle AUDIO_STREAM_END from an SDK app.
+ *
+ * Gracefully closes the relay — the HTTP response to the phone ends,
+ * ExoPlayer finishes playing any buffered audio, and cleanup runs.
+ */
+async function handleAudioStreamEnd(userSession: UserSession, message: AudioStreamEnd, logger: Logger): Promise<void> {
+  const { streamId, packageName } = message;
+  logger.debug({ streamId, packageName }, "Audio stream end requested");
+  await userSession.appAudioStreamManager.endStream(streamId);
 }
 
 export default handleAppMessage;

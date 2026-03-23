@@ -87,7 +87,8 @@
                 "icon": "browser",
                 "pages": [
                   "app-devs/core-concepts/webviews/react-webviews",
-                  "app-devs/core-concepts/webviews/webview-authentication"
+                  "app-devs/core-concepts/webviews/webview-authentication",
+                  "app-devs/core-concepts/webviews/bridge-api"
                 ]
               },
               "app-devs/core-concepts/permissions",

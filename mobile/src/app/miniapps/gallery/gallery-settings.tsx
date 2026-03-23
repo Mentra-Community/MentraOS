@@ -130,47 +130,55 @@ export default function GallerySettingsScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title="Gallery Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header title={translate("glasses:gallerySettings")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Camera Settings button for glasses with configurable button */}
         {features?.hasButton && (
           <View style={themed($section)}>
-            <RouteButton label={translate("settings:cameraSettings")} onPress={() => push("/settings/camera")} />
+            <RouteButton
+              label={translate("settings:cameraSettings")}
+              onPress={() => push("/miniapps/settings/camera")}
+            />
           </View>
         )}
 
         <View style={themed($sectionCompact)}>
-          <Text style={themed($sectionTitle)}>Automatic Sync</Text>
+          <Text style={themed($sectionTitle)}>{translate("glasses:automaticSync")}</Text>
           <ToggleSetting
-            label="Save to Camera Roll"
+            label={translate("glasses:saveToCameraRoll")}
+            subtitle={translate("glasses:saveToLibraryDescription")}
             value={autoSaveToCameraRoll}
             onValueChange={handleToggleAutoSave}
           />
         </View>
 
-        <Text style={themed($sectionTitle)}>Storage info</Text>
+        <Text style={themed($sectionTitle)}>{translate("glasses:storageInfo")}</Text>
 
         <View style={themed($section)}>
           <InfoCardSection
             items={[
               {
-                label: "Photos on device",
+                label: translate("glasses:photosOnPhone"),
                 value: localPhotoCount.toString(),
               },
               {
-                label: "Videos on device",
+                label: translate("glasses:videosOnPhone"),
                 value: localVideoCount.toString(),
               },
               {
-                label: "Photos on glasses",
+                label: translate("glasses:photosOnGlasses", {
+                  glassesName: defaultWearable || translate("glasses:title"),
+                }),
                 value: glassesPhotoCount > 0 ? glassesPhotoCount.toString() : "—",
               },
               {
-                label: "Videos on glasses",
+                label: translate("glasses:videosOnGlasses", {
+                  glassesName: defaultWearable || translate("glasses:title"),
+                }),
                 value: glassesVideoCount > 0 ? glassesVideoCount.toString() : "—",
               },
               {
-                label: "Storage Used",
+                label: translate("glasses:storageUsed"),
                 value: formatBytes(totalStorageSize),
               },
             ]}

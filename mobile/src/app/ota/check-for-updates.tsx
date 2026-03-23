@@ -11,7 +11,7 @@ import {checkForOtaUpdate, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecke
 import {translate} from "@/i18n/translate"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import { BackgroundTimer } from "@/utils/timers"
+import {BackgroundTimer} from "@/utils/timers"
 
 type CheckState = "checking" | "update_available" | "no_update" | "error"
 
@@ -35,6 +35,7 @@ export default function OtaCheckForUpdatesScreen() {
   const versionInfoTimeoutRef = useRef<number | null>(null)
   const waitStartTimeRef = useRef<number | null>(null)
   const hasInitiatedCheckRef = useRef(false) // Track if we've initiated check for this checkKey
+  const checkCompletedRef = useRef(false) // Guards against stale timeout callbacks firing after check progresses
 
   focusEffectPreventBack()
 
@@ -51,6 +52,7 @@ export default function OtaCheckForUpdatesScreen() {
       }
       waitStartTimeRef.current = null
       hasInitiatedCheckRef.current = false // Reset for fresh check
+      checkCompletedRef.current = false
       setCheckKey((k) => k + 1)
     }, []),
   )
@@ -65,7 +67,6 @@ export default function OtaCheckForUpdatesScreen() {
       // Only apply early-exit conditions on the FIRST check attempt for this checkKey
       // This prevents auto-navigation when WiFi/connection state changes mid-operation
       if (!hasInitiatedCheckRef.current) {
-        // If glasses disconnected or WiFi not connected on initial check, skip immediately
         if (!glassesConnected) {
           console.log("OTA: Glasses not connected - proceeding to next step")
           if (versionInfoTimeoutRef.current) {
@@ -77,13 +78,13 @@ export default function OtaCheckForUpdatesScreen() {
           return
         }
         if (!wifiConnected) {
-          console.log("OTA: WiFi not connected - proceeding to next step")
+          console.log("OTA: WiFi not connected - showing error state")
           if (versionInfoTimeoutRef.current) {
             BackgroundTimer.clearTimeout(versionInfoTimeoutRef.current)
             versionInfoTimeoutRef.current = null
           }
           hasInitiatedCheckRef.current = true
-          handleContinue()
+          setCheckState("error")
           return
         }
       }
@@ -103,6 +104,10 @@ export default function OtaCheckForUpdatesScreen() {
           CoreModule.requestVersionInfo()
 
           versionInfoTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+            if (checkCompletedRef.current) {
+              console.log("OTA: Timeout fired but check already progressed - ignoring stale timeout")
+              return
+            }
             console.log("OTA: Timeout waiting for version_info - proceeding to next step")
             waitStartTimeRef.current = null
             versionInfoTimeoutRef.current = null
@@ -121,7 +126,8 @@ export default function OtaCheckForUpdatesScreen() {
         versionInfoTimeoutRef.current = null
       }
       waitStartTimeRef.current = null
-      hasInitiatedCheckRef.current = true // Mark as initiated before starting check
+      checkCompletedRef.current = true
+      hasInitiatedCheckRef.current = true
 
       const startTime = Date.now()
 
@@ -217,8 +223,23 @@ export default function OtaCheckForUpdatesScreen() {
   }
 
   const handleUpdateNow = () => {
-    console.log("OTA: handleUpdateNow()")
-    // Replace with progress screen to avoid stacking OTA screens
+    const store = useGlassesStore.getState()
+    const otaProgressBefore = store.otaProgress
+    console.log(
+      "OTA_TRACK: navigate_to_progress",
+      JSON.stringify({
+        from: "check-for-updates",
+        action: "clear_otaProgress_then_replace",
+        otaProgressBefore: otaProgressBefore
+          ? {
+              currentUpdate: otaProgressBefore.currentUpdate,
+              status: otaProgressBefore.status,
+              stage: otaProgressBefore.stage,
+            }
+          : null,
+      }),
+    )
+    store.setOtaProgress(null)
     replace("/ota/progress")
   }
 

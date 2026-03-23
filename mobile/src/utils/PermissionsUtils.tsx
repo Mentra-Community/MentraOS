@@ -53,14 +53,14 @@ interface PermissionConfig {
 const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   [PermissionFeatures.BASIC]: {
     name: "Basic Permissions",
-    description: "Basic permissions required for AugmentOS to function",
+    description: "Basic permissions required for Mentra to function",
     ios: [], // Different approach for iOS - we'll handle these individually
     android: [], // Will be set dynamically based on Android version, excluding Bluetooth which is handled in pairing flow
     critical: true, // App can't function without these
   },
   [PermissionFeatures.POST_NOTIFICATIONS]: {
     name: "Notifications",
-    description: "Allow AugmentOS to send you notifications",
+    description: "Allow Mentra to send you notifications",
     ios: ["post_notifications"],
     android:
       typeof Platform.Version === "number" && Platform.Version >= 33
@@ -538,7 +538,7 @@ export const displayCriticalPermissionDeniedWarning = (permissionName: string): 
   return new Promise((resolve) => {
     showAlert(
       `${permissionName} Required`,
-      `AugmentOS needs ${permissionName.toLowerCase()} permissions to function properly. Please grant these permissions to continue.`,
+      `Mentra needs ${permissionName.toLowerCase()} permissions to function properly. Please grant these permissions to continue.`,
       [
         {
           text: "Try Again",

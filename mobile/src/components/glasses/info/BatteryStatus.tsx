@@ -19,6 +19,7 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
   const caseCharging = useGlassesStore((state) => state.caseCharging)
   const caseRemoved = useGlassesStore((state) => state.caseRemoved)
   const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
+  const glassesCharging = useGlassesStore((state) => state.charging)
 
   if (glassesBatteryLevel === undefined || glassesBatteryLevel === -1) {
     return null
@@ -33,13 +34,13 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
               backgroundColor: theme.colors.background,
               flex: 1,
               paddingHorizontal: theme.spacing.s4,
-              paddingRight: 20,
+              paddingRight: theme.spacing.s5,
             }}
             label={translate("deviceSettings:glasses")}
             textStyle={themed($compactTextStyle)}
             iconEnd={
               <View style={themed($compactBatteryValue)}>
-                <Icon name="battery-3" size={16} color={theme.colors.text} />
+                <Icon name={glassesCharging ? "battery-charging" : "battery-3"} size={16} color={theme.colors.text} />
                 <Text style={themed($compactTextStyle)}>{glassesBatteryLevel}%</Text>
               </View>
             }
@@ -54,7 +55,7 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
             textStyle={themed($compactTextStyle)}
             iconEnd={
               <View style={themed($compactBatteryValue)}>
-                <Icon name="battery-3" size={16} color={theme.colors.text} />
+                <Icon name={caseCharging ? "battery-charging" : "battery-3"} size={16} color={theme.colors.text} />
                 <Text style={themed($compactTextStyle)}>{caseBatteryLevel}%</Text>
               </View>
             }
@@ -73,7 +74,7 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
           iconStart={<Icon name="glasses" size={24} color={theme.colors.foreground} />}
           iconEnd={
             <View style={themed($batteryValue)}>
-              <Icon name="battery-3" size={16} color={theme.colors.text} />
+              <Icon name={glassesCharging ? "battery-charging" : "battery-3"} size={16} color={theme.colors.text} />
               <Text style={themed($textStyle)}>{glassesBatteryLevel}%</Text>
             </View>
           }

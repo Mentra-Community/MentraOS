@@ -134,6 +134,30 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [GitHub Project Board - General Tasks](https://github.com/orgs/Mentra-Community/projects/2)
 - [Discord Community](https://discord.gg/5ukNvkEAqT)
 
+## Bug Report Logs
+
+When working on bug reports linked to `console.mentra.glass/admin/incidents/{id}`:
+
+1. Extract the incident ID from the URL
+2. Fetch logs: `./scripts/fetch-incident-logs.sh {incidentId}`
+3. Requires `MENTRA_AGENT_API_KEY` in your environment
+
+The logs JSON contains:
+
+- `phoneLogs` - Last 10 min of mobile app logs
+- `cloudLogs` - Last 10 min of cloud service logs
+- `glassesLogs` - Last 10 min of glasses logs (if available)
+- `appTelemetryLogs` - Logs from third-party apps (if telemetry enabled)
+- `phoneState` - Snapshot of app state at time of report
+- `feedback` - User's bug report description
+
+Example:
+
+```bash
+export MENTRA_AGENT_API_KEY=your-api-key
+./scripts/fetch-incident-logs.sh 550e8400-e29b-41d4-a716-446655440000
+```
+
 ## Additional Documentation
 
 - Architecture specs and design docs: `/docs/`

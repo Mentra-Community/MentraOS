@@ -38,6 +38,8 @@ import type {
   CloudServerWebSocket,
 } from "./types";
 
+import { parseBinaryFrame } from "../session/AppAudioStreamManager";
+
 const logger = rootLogger.child({ service: "bun-websocket" });
 
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
@@ -99,12 +101,7 @@ function handleGlassesUpgrade(req: Request, server: any, url: URL): Response | u
       );
     }
 
-    const livekitRequested = url.searchParams.get("livekit") === "true" || req.headers.get("livekit") === "true";
     const udpEncryptionRequested = url.searchParams.get("udpEncryption") === "true";
-
-    if (livekitRequested) {
-      logger.info({ userId, feature: "livekit" }, "Client requested LiveKit transport");
-    }
 
     if (udpEncryptionRequested) {
       logger.info({ userId, feature: "udp-audio-encryption" }, "Client requested UDP encryption");
@@ -114,7 +111,6 @@ function handleGlassesUpgrade(req: Request, server: any, url: URL): Response | u
       data: {
         type: "glasses",
         userId,
-        livekitRequested,
         udpEncryptionRequested,
       } as GlassesWebSocketData,
     });
@@ -276,27 +272,29 @@ export const websocketHandlers = {
  * Handle glasses WebSocket connection open
  */
 async function handleGlassesOpen(ws: GlassesServerWebSocket): Promise<void> {
-  const { userId, livekitRequested, udpEncryptionRequested } = ws.data;
+  const { userId, udpEncryptionRequested } = ws.data;
 
   try {
     // Create or reconnect user session
     const { userSession, reconnection } = await UserSession.createOrReconnect(ws as any, userId);
 
-    // Store LiveKit preference
-    userSession.livekitRequested = livekitRequested;
-
-    // Initialize UDP encryption if requested
-    if (udpEncryptionRequested) {
+    // Initialize UDP encryption if requested.
+    // On reconnect, skip key generation if encryption is already set up — reuse
+    // the existing key. The mobile gets the same key back in CONNECTION_ACK and
+    // calls setEncryption() idempotently. This eliminates the silence gap caused
+    // by in-flight UDP packets encrypted with the old key failing decryption
+    // during a key transition window. (Fix 044-2)
+    if (udpEncryptionRequested && !userSession.udpAudioManager.encryptionEnabled) {
       userSession.udpAudioManager.initializeEncryption();
     }
 
     userSession.logger.info(
-      { reconnection, livekitRequested, udpEncryptionRequested },
+      { reconnection, udpEncryptionRequested },
       `Glasses WebSocket connection opened for user: ${userId}`,
     );
 
     // Handle connection initialization
-    await handleGlassesConnectionInit(userSession, ws, reconnection, livekitRequested, udpEncryptionRequested);
+    await handleGlassesConnectionInit(userSession, ws, reconnection, udpEncryptionRequested);
 
     // Track connection in analytics
     PosthogService.trackEvent("glasses_connection", userId, {
@@ -317,7 +315,6 @@ async function handleGlassesConnectionInit(
   userSession: UserSession,
   ws: GlassesServerWebSocket,
   reconnection: boolean,
-  livekitRequested: boolean,
   udpEncryptionRequested: boolean,
 ): Promise<void> {
   if (!reconnection) {
@@ -342,28 +339,9 @@ async function handleGlassesConnectionInit(
     });
   }
 
-  // Handle reconnection - check LiveKit bridge status and resurrect dormant apps
+  // Handle reconnection - resurrect dormant apps
   if (reconnection) {
-    try {
-      const hadBridge =
-        typeof userSession.liveKitManager.getBridgeClient === "function" &&
-        !!userSession.liveKitManager.getBridgeClient();
-
-      if (hadBridge || livekitRequested) {
-        const status = await userSession.liveKitManager.getBridgeStatus?.();
-        userSession.logger.info({ feature: "livekit", status, reconnection }, "Reconnect: bridge status");
-
-        if (!status || status.connected === false) {
-          await userSession.liveKitManager.rejoinBridge?.();
-          userSession.logger.info({ feature: "livekit" }, "Reconnect: bridge rejoin attempted");
-        } else {
-          userSession.logger.info({ feature: "livekit" }, "Reconnect: bridge healthy, keeping session");
-        }
-      }
-    } catch (err) {
-      userSession.logger.warn({ feature: "livekit", err }, "Reconnect: bridge status check failed");
-    }
-
+    // Resurrect dormant apps on reconnection
     // Resurrect any apps that went dormant while user was disconnected
     // See AppManager.resurrectDormantApps() for detailed explanation of why
     // we wait for user reconnection before resurrecting
@@ -379,9 +357,6 @@ async function handleGlassesConnectionInit(
       userSession.logger.error({ err }, "Error resurrecting dormant apps after reconnect");
     }
   }
-  // Testing client livekit reconnection logic.
-  // if (reconnection)
-  //   return userSession.logger.warn({ feature: "livekit" }, "Reconnecting, skipping CONNECTION_ACK message");
 
   // Prepare ACK message
   const ackMessage: ConnectionAck = {
@@ -415,29 +390,6 @@ async function handleGlassesConnectionInit(
     }
   }
 
-  // Include LiveKit info if requested
-  if (livekitRequested) {
-    try {
-      const livekitInfo = await userSession.liveKitManager.handleLiveKitInit();
-      if (livekitInfo) {
-        (ackMessage as any).livekit = {
-          url: livekitInfo.url,
-          roomName: livekitInfo.roomName,
-          token: livekitInfo.token,
-        };
-        userSession.logger.info(
-          { url: livekitInfo.url, roomName: livekitInfo.roomName, feature: "livekit" },
-          "Included LiveKit info in CONNECTION_ACK",
-        );
-      }
-    } catch (error) {
-      userSession.logger.warn({ error, feature: "livekit" }, "Failed to initialize LiveKit for CONNECTION_ACK");
-    }
-  }
-
-  // Log when we send CONNECTION_ACK, and if it's a reconnection or not.
-  const _logger = userSession.logger.child({ function: "sendConnectionAck" });
-  _logger.info({ feature: "websocket", ackMessage, reconnection }, "Sending CONNECTION_ACK");
   ws.send(JSON.stringify(ackMessage));
   metricsService.incrementClientMessagesOut();
 }
@@ -484,13 +436,7 @@ async function handleGlassesMessage(ws: GlassesServerWebSocket, message: string 
     // Handle connection init specially (re-init after reconnect)
     if (parsed.type === GlassesToCloudMessageType.CONNECTION_INIT) {
       userSession.logger.info("Received CONNECTION_INIT from glasses");
-      await handleGlassesConnectionInit(
-        userSession,
-        ws,
-        true,
-        userSession.livekitRequested || false,
-        userSession.udpAudioManager.encryptionRequested,
-      );
+      await handleGlassesConnectionInit(userSession, ws, true, userSession.udpAudioManager.encryptionRequested);
       return;
     }
 
@@ -524,6 +470,17 @@ function handleGlassesClose(ws: GlassesServerWebSocket, code: number, reason: st
   logger.info({ userId, code, reason }, "Glasses WebSocket closed");
 
   if (!userSession) {
+    return;
+  }
+
+  // Guard: if the session already has a NEWER WebSocket (from a reconnect that
+  // raced ahead of this close), this close event is for the OLD connection.
+  // Don't mark the session as disconnected — it's actively connected on the new WS.
+  if (userSession.websocket && userSession.websocket !== (ws as any)) {
+    userSession.logger.info(
+      { code, reason },
+      "Glasses connection closed (stale — newer WebSocket already active, ignoring)",
+    );
     return;
   }
 
@@ -619,7 +576,35 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
   const { userId, packageName } = ws.data;
 
   try {
+    // Binary frames are audio stream data — route through the UserSession's manager
+    if (typeof message !== "string" && !isJsonBuffer(message)) {
+      const frame = parseBinaryFrame(message instanceof Buffer ? message : Buffer.from(message));
+      if (frame) {
+        const userSession = UserSession.getById(userId || ws.data.userId);
+        if (userSession) {
+          await userSession.appAudioStreamManager.writeToStream(frame.streamId, frame.audioData);
+        }
+      } else {
+        logger.debug({ userId, packageName, bytes: message.length }, "Unrecognized binary frame from app");
+      }
+      return;
+    }
+
     const parsed = JSON.parse(message.toString()) as AppToCloudMessage;
+
+    // App-level ping from SDK — respond immediately, don't touch session state.
+    // Only new SDK versions (3.x hono+) send these. Old 2.x apps never send pings
+    // so this branch is never hit for legacy apps — fully backwards compatible.
+    // See: cloud/issues/046-sdk-app-ws-liveness
+    if ((parsed as any).type === "ping") {
+      ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
+      return;
+    }
+
+    // App-level pong (future: SDK responding to cloud-initiated ping) — consume silently.
+    if ((parsed as any).type === "pong") {
+      return;
+    }
 
     // Handle CONNECTION_INIT for legacy apps
     if (parsed.type === AppToCloudMessageType.CONNECTION_INIT) {
@@ -692,6 +677,14 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
  * ws.on("close", ...). But Bun's ServerWebSocket doesn't support EventEmitter,
  * so we must explicitly call handleDisconnect here.
  */
+/**
+ * Quick check: does this Buffer look like a JSON text message?
+ * JSON messages always start with '{'. Binary audio frames start with a UUID hex char.
+ */
+function isJsonBuffer(buf: Buffer | Uint8Array): boolean {
+  return buf.length > 0 && buf[0] === 0x7b; // '{' character
+}
+
 function handleAppClose(ws: AppServerWebSocket, code: number, reason: string): void {
   const { userId, packageName } = ws.data;
 

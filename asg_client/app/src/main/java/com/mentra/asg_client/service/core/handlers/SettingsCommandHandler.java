@@ -1,7 +1,11 @@
 package com.mentra.asg_client.service.core.handlers;
 
+import android.content.Context;
 import android.util.Log;
 
+import com.dev.api.DevApi;
+import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
@@ -34,7 +38,8 @@ public class SettingsCommandHandler implements ICommandHandler {
     @Override
     public Set<String> getSupportedCommandTypes() {
         return Set.of("set_photo_mode", "button_video_recording_setting",
-                      "button_max_recording_time", "button_photo_setting", "button_camera_led", "button_mode_setting");
+                      "button_max_recording_time", "button_photo_setting", "button_camera_led", "button_mode_setting",
+                      "camera_fov_setting");
     }
 
     @Override
@@ -53,6 +58,8 @@ public class SettingsCommandHandler implements ICommandHandler {
                     return handleButtonCameraLedSetting(data);
                 case "button_mode_setting":
                     return handleButtonModeSetting(data);
+                case "camera_fov_setting":
+                    return handleCameraFovSetting(data);
                 default:
                     Log.e(TAG, "Unsupported settings command: " + commandType);
                     return false;
@@ -188,6 +195,51 @@ public class SettingsCommandHandler implements ICommandHandler {
         }
     }
     
+    /**
+     * Handle camera FOV setting command (K900). Persists FOV and ROI, applies to hardware, restarts camera HAL.
+     */
+    private boolean handleCameraFovSetting(JSONObject data) {
+        try {
+            JSONObject params = data.optJSONObject("params");
+            if (params == null) {
+                Log.e(TAG, "Missing params in camera_fov_setting");
+                return false;
+            }
+            int fov = params.optInt("fov", 118);
+            int roiPosition = params.optInt("roi_position", 0);
+
+            AsgSettings asgSettings = serviceManager.getAsgSettings();
+            if (asgSettings == null) {
+                Log.e(TAG, "Settings not available for camera_fov_setting");
+                return false;
+            }
+            asgSettings.setCameraFov(fov, roiPosition);
+
+            // Re-read sanitized values — setCameraFov clamps invalid FOV/ROI before persisting
+            fov = asgSettings.getCameraFov();
+            roiPosition = asgSettings.getCameraRoiPosition();
+            Log.d(TAG, "Camera FOV saved: fov=" + fov + ", roi_position=" + roiPosition);
+
+            Context context = serviceManager.getContext();
+            if (context == null) {
+                Log.w(TAG, "Context not available, FOV persisted but not applied to hardware");
+                return true;
+            }
+            try {
+                DevApi.setCameraFov(fov, roiPosition);
+                SysControl.restartCameraHal(context);
+                CameraRestartCooldown.setCooldown();
+                Log.d(TAG, "Camera FOV applied to hardware and HAL restarted");
+            } catch (UnsatisfiedLinkError e) {
+                Log.w(TAG, "libxydev not available (non-K900?), FOV persisted but not applied", e);
+            }
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling camera_fov_setting", e);
+            return false;
+        }
+    }
+
     /**
      * Handle button mode setting command
      * This command allows configuring general button behavior settings

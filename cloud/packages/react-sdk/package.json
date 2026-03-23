@@ -1,6 +1,6 @@
 {
   "name": "@mentra/react",
-  "version": "2.0.2",
+  "version": "2.1.2",
   "description": "React hooks and providers for MentraOS webviews, allowing you to create frontends for smartglasses apps.",
   "author": "Mentra Labs",
   "license": "MIT",
@@ -24,6 +24,10 @@
     "dev": "bun x tsc -p tsconfig.json --watch",
     "lint": "eslint src --ext .ts,.tsx",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "peerDependencies": {
+    "react": ">=19.0.0",
+    "react-dom": ">=19.0.0"
   },
   "devDependencies": {
     "@types/jsrsasign": "^10.5.15",
