@@ -73,6 +73,21 @@ latest_file() {
   adb shell "ls -t '$CAMERA_DIR' 2>/dev/null | head -1" | tr -d '[:space:]'
 }
 
+# Buffer videos are in FILES_BASE/BUFFER_*/base.mp4 (siblings of CAMERA_DIR)
+FILES_BASE="/sdcard/Android/data/$PKG/files"
+
+# Get most recent buffer video path (BUFFER_*/*/base.mp4)
+latest_buffer_video() {
+  adb shell "ls -td $FILES_BASE/BUFFER_* 2>/dev/null | head -1" | tr -d '[:space:]' | sed 's|$|/base.mp4|'
+}
+
+# Count buffer videos
+count_buffer_videos() {
+  local count
+  count=$(adb shell "ls -d $FILES_BASE/BUFFER_* 2>/dev/null | wc -l" | tr -d '[:space:]')
+  echo "${count:-0}"
+}
+
 # Get file size in bytes
 file_size() {
   adb shell "stat -c %s '$1' 2>/dev/null" | tr -d '[:space:]'

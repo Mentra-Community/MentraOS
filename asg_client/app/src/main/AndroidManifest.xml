@@ -137,6 +137,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Debug receiver for OTA version check + download + verify (no install) via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_OTA_CHECK" />
+            </intent-filter>
+        </receiver>
+
         <!-- Debug receiver for injecting commands via adb -->
         <receiver
             android:name="com.mentra.asg_client.receiver.DebugTestReceiver"

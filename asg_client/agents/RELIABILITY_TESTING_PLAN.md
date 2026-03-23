@@ -16,14 +16,14 @@
 ## Phase 1: ADB Scripts (`asg_client/scripts/`)
 
 | Script                 | What it tests                                                                                   |
-| ---------------------- | ----------------------------------------------------------------------------------------------- |
-| `test-photo.sh`        | Trigger photo via ADB, verify JPEG exists + valid header, 10x sequential, low-battery rejection |
-| `test-video.sh`        | Record 5s video, verify MP4 + moov atom, 5x corruption check, buffer record test                |
-| `test-gallery-sync.sh` | Count files before/after photo+video, verify increments                                         |
-| `test-wifi.sh`         | Send WiFi creds, verify connection, ping, disconnect                                            |
-| `test-ota.sh`          | Trigger version check → download → verify checksum (don't install)                              |
-| `test-low-battery.sh`  | Attempt all operations, report what battery level allows/blocks                                 |
-| `test-storage-full.sh` | Fill storage, verify graceful failure, cleanup, verify recovery                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------- | --- |
+| `test-photo.sh`        | Trigger photo via ADB, verify JPEG exists + valid header, 10x sequential, low-battery rejection | ✅  |
+| `test-video.sh`        | Record 5s video, verify MP4 + moov atom, 5x corruption check, buffer record test                | ✅  |
+| `test-gallery-sync.sh` | Count files before/after photo+video, verify increments                                         | ✅  |
+| `test-wifi.sh`         | Send WiFi creds, verify connection, ping, disconnect                                            | ✅  |
+| `test-ota.sh`          | Trigger version check → download → verify checksum (don't install)                              | ✅  |
+| `test-low-battery.sh`  | Attempt all operations, report what battery level allows/blocks                                 | ✅  |
+| `test-storage-full.sh` | Fill storage, verify graceful failure, cleanup, verify recovery                                 | ✅  |
 
 ## Phase 2: StressTestRunner (phone-side, Kotlin)
 

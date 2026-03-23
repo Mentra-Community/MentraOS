@@ -15,7 +15,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
 
-COUNT=3
+COUNT=5
 WIPE=true
 PULL=true
 LOCAL_DIR="$SCRIPT_DIR/../test-output/videos"
@@ -152,7 +152,61 @@ if [ "$PULL" = true ]; then
   open "$LOCAL_DIR" 2>/dev/null || true
 fi
 
-# --- Test 3: Photo during video (should be rejected) ---
+# --- Test 3: Buffer record test ---
+echo ""
+echo "--- Test: Buffer recording (start -> fill -> save -> stop) ---"
+# Ensure no recording is in progress
+BEFORE_BUFFER=$(count_buffer_videos)
+info "Buffer videos before: $BEFORE_BUFFER"
+
+send_command '{"type":"start_buffer_recording"}'
+info "Buffer recording started, filling for 15s..."
+sleep 15
+
+send_command '{"type":"save_buffer_video","requestId":"test_buf_001","duration":10}'
+info "Save buffer command sent, waiting for finalization..."
+sleep 8
+
+send_command '{"type":"stop_buffer_recording"}'
+sleep 2
+
+AFTER_BUFFER=$(count_buffer_videos)
+LATEST_BUF=$(latest_buffer_video)
+info "Buffer videos after: $AFTER_BUFFER"
+
+if [ "$AFTER_BUFFER" -gt "$BEFORE_BUFFER" ] && [ -n "$LATEST_BUF" ]; then
+  pass "Buffer video saved"
+  SIZE=$(file_size "$LATEST_BUF")
+  info "Buffer file: $LATEST_BUF (${SIZE} bytes)"
+
+  if [ "${SIZE:-0}" -gt 10000 ]; then
+    pass "Buffer video has reasonable size"
+  else
+    warn "Buffer video suspiciously small (${SIZE} bytes)"
+  fi
+
+  if is_valid_mp4 "$LATEST_BUF"; then
+    pass "Buffer video has valid MP4 header"
+  else
+    fail "Buffer video missing MP4 header"
+  fi
+
+  if has_moov_atom "$LATEST_BUF"; then
+    pass "Buffer video has moov atom (properly finalized)"
+  else
+    fail "Buffer video missing moov atom (CORRUPTED)"
+  fi
+
+  if [ "$PULL" = true ]; then
+    mkdir -p "$LOCAL_DIR"
+    adb pull "$LATEST_BUF" "$LOCAL_DIR/buffer_test.mp4" 2>/dev/null && \
+      info "Pulled buffer video to: $LOCAL_DIR/buffer_test.mp4"
+  fi
+else
+  fail "No buffer video created (buffering may not be supported on this device)"
+fi
+
+# --- Test 4: Photo during video (should be rejected) ---
 echo ""
 echo "--- Test: Photo during video recording (should be rejected) ---"
 send_command '{"type":"start_video_recording","requestId":"test_reject_vid","save":true}'
@@ -174,9 +228,10 @@ fi
 
 summary
 
-# --- Cleanup prompt (device) ---
+# --- Cleanup prompt (device - regular videos) ---
 echo ""
 TOTAL_VIDEOS=$(count_videos)
+TOTAL_BUFFER=$(count_buffer_videos)
 if [ "$TOTAL_VIDEOS" -gt 0 ]; then
   echo -n "Delete $TOTAL_VIDEOS test videos from glasses? [y/N] "
   read -r REPLY
@@ -185,6 +240,15 @@ if [ "$TOTAL_VIDEOS" -gt 0 ]; then
     info "Deleted videos from glasses"
   else
     info "Videos kept on glasses"
+  fi
+fi
+
+if [ "$TOTAL_BUFFER" -gt 0 ]; then
+  echo -n "Delete $TOTAL_BUFFER buffer test dir(s) from glasses? [y/N] "
+  read -r REPLY
+  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+    adb shell "rm -rf $FILES_BASE/BUFFER_*" 2>/dev/null || true
+    info "Deleted buffer videos from glasses"
   fi
 fi
 

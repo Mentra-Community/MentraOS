@@ -29,10 +29,17 @@ fi
 if [ "$needs_install" = true ]; then
   echo "📦 Installing dependencies..."
   bun install --no-link --ignore-scripts
+  if [ -d "node_modules/bun" ]; then
+    cd node_modules/bun && node install.js && cd /app
+  fi
   mkdir -p node_modules/.cache
   touch "$MARKER"
 else
   echo "📦 Dependencies up to date"
+fi
+
+if [ -d "node_modules/bun" ] && [ ! -f "node_modules/bun/.installed" ]; then
+  cd node_modules/bun && node install.js && touch .installed && cd /app
 fi
 
 # ─── Build workspace packages ─────────────────────────────────────────────────

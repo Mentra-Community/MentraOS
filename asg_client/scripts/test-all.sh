@@ -7,9 +7,10 @@
 #
 # Usage: ./scripts/test-all.sh
 #
-# To include wifi test:  ./scripts/test-all.sh --wifi <ssid> <password>
+# To include wifi test:   ./scripts/test-all.sh --wifi <ssid> <password>
 # To include storage test: ./scripts/test-all.sh --storage
-# To include everything: ./scripts/test-all.sh --all <ssid> <password>
+# To include OTA test:     ./scripts/test-all.sh --ota (requires WiFi)
+# To include everything:  ./scripts/test-all.sh --all <ssid> <password>
 #
 
 set -e
@@ -18,6 +19,7 @@ source "$SCRIPT_DIR/test-helpers.sh"
 
 INCLUDE_WIFI=false
 INCLUDE_STORAGE=false
+INCLUDE_OTA=false
 WIFI_SSID=""
 WIFI_PASS=""
 
@@ -33,9 +35,14 @@ while [[ $# -gt 0 ]]; do
       INCLUDE_STORAGE=true
       shift
       ;;
+    --ota)
+      INCLUDE_OTA=true
+      shift
+      ;;
     --all)
       INCLUDE_WIFI=true
       INCLUDE_STORAGE=true
+      INCLUDE_OTA=true
       WIFI_SSID="$2"
       WIFI_PASS="$3"
       shift 3
@@ -85,6 +92,10 @@ fi
 
 if [ "$INCLUDE_STORAGE" = true ]; then
   run_test "STORAGE FULL TEST" "$SCRIPT_DIR/test-storage-full.sh"
+fi
+
+if [ "$INCLUDE_OTA" = true ]; then
+  run_test "OTA TEST" "$SCRIPT_DIR/test-ota.sh"
 fi
 
 # Final report
