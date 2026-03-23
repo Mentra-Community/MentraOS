@@ -558,11 +558,11 @@ int main(void)
 
     lsm6dsv16x_init();
 
-    err = mos_hinge_fold_service_start(NULL);
-    if (err)
-    {
-        LOG_ERR("Failed to start hinge fold service (err: %d)", err);
-    }
+    // err = mos_hinge_fold_service_start(NULL);
+    // if (err)
+    // {
+    //     LOG_ERR("Failed to start hinge fold service (err: %d)", err);
+    // }
 
     usb_detect_init();
 

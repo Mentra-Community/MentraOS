@@ -102,6 +102,56 @@ config BINFONT_A1_INVERT
 	  When enabled, invert each byte of the A1 bitmap. Try this if 1bpp
 	  text appears faint or blurry (font may use 0=ink vs LVGL 1=ink).
 	  Disable if text becomes inverted or wrong.
+
+config BINFONT_SYNC_LINE_METRICS_MONTSERRAT18
+	bool "Force binfont line_height/base_line to match Montserrat 18 (symbol mix only)"
+	default n
+	depends on LVGL
+	help
+	  When enabled and font_size==18, overrides binfont metrics with Montserrat 18.
+	  Leave disabled for pure Flash text: wrong line box vs glyph ofs_y causes overlap/garbled text.
+
+config BINFONT_GLYPH_DEBUG
+	bool "Verbose binfont glyph / bitmap logging (slow, floods console)"
+	default n
+	depends on LVGL
+
+choice MOS_WELCOME_BINFONT_LANG
+	prompt "Boot default: external flash binfont (before any runtime switch)"
+	default MOS_WELCOME_LANG_EN
+	depends on LVGL
+	help
+	  Initial s_current_language / partition used on first mos_binfont_lvgl_init()
+	  or mos_binfont_get_lvgl_font() lazy load. Runtime mos_font_switch_language()
+	  changes the active font for welcome, BLE text, and display_get_font(); this
+	  choice is not re-applied on each welcome refresh.
+
+config MOS_WELCOME_LANG_EN
+	bool "English (font_storage_en_<size>)"
+
+config MOS_WELCOME_LANG_ZH_CN
+	bool "Simplified Chinese 18pt (font_storage_zh_cn_18)"
+endchoice
+
+config MOS_WELCOME_BINFONT_PT_SIZE
+	int "Boot default English binfont point size"
+	default 18
+	range 16 26
+	depends on LVGL && MOS_WELCOME_LANG_EN
+	help
+	  Used only when MOS_WELCOME_LANG_EN. Must be an even value in 16..26 and match
+	  a flashed font_storage_en_* partition. Invalid values fall back to 18 on first init.
+
+config MOS_DISPLAY_TEXT_PAYLOAD_DIAG
+	bool "DisplayText payload diagnostic log (escaped \\n for support / audits)"
+	default n
+	depends on LVGL
+	help
+	  Logs [TEXT_PAYLOAD] for each BLE DisplayText update: UTF-8 byte length,
+	  LF/CR counts, first LF/CR byte offsets, and an escaped preview where
+	  line breaks appear as \\n. Use to show customers that hard breaks came
+	  from the phone payload; soft wrap-only lines have LF=0 in the string.
+
 endmenu
 
 # Include custom driver module Kconfig (projector display)

@@ -3,171 +3,155 @@
  * @Date         : 2026-02-05 14:53:31
  * @LastEditTime : 2026-02-07 14:59:43
  * @FilePath     : mos_font_storage.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2026 
+ * @Description  :
+ *
+ *  Copyright (c) MentraOS Contributors 2026
  *  SPDX-License-Identifier: Apache-2.0
  */
 
 #include "mos_font_storage.h"
 
-#include <pm_config.h>
-#include <string.h>
-#include <zephyr/device.h>
-#include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/storage/flash_map.h>
 
-// #include <lv_binfont_loader.h>
+#include "mos_binfont_lvgl.h"
 
 LOG_MODULE_REGISTER(mos_font_storage, LOG_LEVEL_INF);
 
-#ifndef PM_QSPI_NOR_BASE_ADDRESS
-#define PM_QSPI_NOR_BASE_ADDRESS 0x10000000u
-#endif
-
-#if defined(CONFIG_FONT_STORAGE_USE_PARTITION_2) && defined(PM_FONT_STORAGE2_ADDRESS)
-#define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE2_ADDRESS)
-#else
-#define FONT_STORAGE_XIP_ADDR (PM_QSPI_NOR_BASE_ADDRESS + PM_FONT_STORAGE_ADDRESS)
-#endif
-
-static lv_font_t *font_handle;
-static void *font_buf;
-static size_t font_size;
-static bool font_loaded;
-
-static bool font_storage_ready(void)
-{
-#if DT_NODE_EXISTS(DT_CHOSEN(nordic_pm_ext_flash))
-    const struct device* dev = DEVICE_DT_GET(DT_CHOSEN(nordic_pm_ext_flash));
-    return device_is_ready(dev);
-#else
-    return false;
-#endif
-}
+static bool font_loaded = false;
 
 int mos_font_storage_load(void)
 {
-    if (font_loaded)
-    {
-        return 0;
-    }
-
-#if defined(CONFIG_FONT_STORAGE_LOAD_AT_RUNTIME)
-    if (!font_storage_ready())
-    {
-        LOG_WRN("font_storage not ready yet (QSPI not initialized)");
-        return -EAGAIN;
-    }
-#endif
-
-#if !LV_USE_FS_MEMFS
-    LOG_ERR("LV_USE_FS_MEMFS disabled; enable CONFIG_LV_USE_FS_MEMFS");
-    return -ENOTSUP;
-#endif
-
-    const struct flash_area* fa;
-#if defined(CONFIG_FONT_STORAGE_USE_PARTITION_2) && defined(PM_FONT_STORAGE2_ID)
-    int ret = flash_area_open(PM_FONT_STORAGE2_ID, &fa);
-#else
-    int ret = flash_area_open(PM_FONT_STORAGE_ID, &fa);
-#endif
-    if (ret != 0)
-    {
-        LOG_ERR("flash_area_open(font_storage) failed: %d", ret);
-        return ret;
-    }
-
-    size_t part_size  = fa->fa_size;
-    size_t configured = (size_t)CONFIG_FONT_STORAGE_FILE_SIZE;
-    size_t size       = configured ? configured : part_size;
-
-    if (size > part_size)
-    {
-        LOG_WRN("Font size (%zu) > partition size (%zu); clamp", size, part_size);
-        size = part_size;
-    }
-
-#if defined(CONFIG_FONT_STORAGE_USE_XIP)
-    font_buf    = (void*)FONT_STORAGE_XIP_ADDR;
-    font_size   = size;
-    font_handle = lv_binfont_create_from_buffer(font_buf, (uint32_t)font_size);
-    flash_area_close(fa);
-    if (!font_handle)
-    {
-        LOG_ERR("lv_binfont_create_from_buffer failed (XIP)");
-        return -EIO;
-    }
-    font_loaded = true;
-    LOG_INF("font_storage loaded via XIP: addr=0x%08x size=%zu", (unsigned int)FONT_STORAGE_XIP_ADDR, font_size);
+    /* Font is now initialized via mos_binfont_lvgl_init().
+     * This API is deprecated and kept only for compatibility.
+     * 现在通过 mos_binfont_lvgl_init() 初始化字体；该函数已废弃，仅保留兼容。 */
+    LOG_WRN("mos_font_storage_load() is deprecated, use mos_binfont_lvgl_init() instead");
     return 0;
-#else
-    if (configured == 0)
-    {
-        flash_area_close(fa);
-        LOG_ERR("CONFIG_FONT_STORAGE_FILE_SIZE not set for RAM load");
-        return -EINVAL;
-    }
-    font_buf = k_malloc(size);
-    if (!font_buf)
-    {
-        flash_area_close(fa);
-        LOG_ERR("k_malloc failed for font size %zu", size);
-        return -ENOMEM;
-    }
-    ret = flash_area_read(fa, 0, font_buf, size);
-    flash_area_close(fa);
-    if (ret != 0)
-    {
-        LOG_ERR("flash_area_read failed: %d", ret);
-        k_free(font_buf);
-        font_buf = NULL;
-        return ret;
-    }
-    font_size   = size;
-    font_handle = lv_binfont_create_from_buffer(font_buf, (uint32_t)font_size);
-    if (!font_handle)
-    {
-        LOG_ERR("lv_binfont_create_from_buffer failed (RAM)");
-        k_free(font_buf);
-        font_buf = NULL;
-        return -EIO;
-    }
-    font_loaded = true;
-    LOG_INF("font_storage loaded into RAM: size=%zu", font_size);
-    return 0;
-#endif
 }
 
 bool mos_font_storage_is_loaded(void)
 {
+    /* Font load state is now managed by mos_binfont_lvgl.
+     * 字体加载状态现在由 mos_binfont_lvgl 管理。 */
     return font_loaded;
 }
 
 void mos_font_storage_unload(void)
 {
-    if (font_handle)
-    {
-        lv_binfont_destroy(font_handle);
-        font_handle = NULL;
-    }
-
-#if !defined(CONFIG_FONT_STORAGE_USE_XIP)
-    if (font_buf)
-    {
-        k_free(font_buf);
-        font_buf = NULL;
-    }
-#endif
-	font_loaded = false;
-	font_size = 0;
+    /* Font resources are now released via mos_binfont_lvgl_deinit().
+     * 字体资源现在通过 mos_binfont_lvgl_deinit() 清理。 */
+    font_loaded = false;
 }
 
 #if defined(CONFIG_LVGL)
-const lv_font_t* mos_font_storage_get_lv_font(void)
+
+/* Font-switch callback management
+ * 字体切换回调管理 */
+#define MAX_FONT_CHANGE_CALLBACKS 5
+
+static mos_font_change_callback_t s_font_change_callbacks[MAX_FONT_CHANGE_CALLBACKS] = {0};
+static int s_callback_count = 0;
+
+int mos_font_register_change_callback(mos_font_change_callback_t callback)
 {
-    return font_loaded ? font_handle : NULL;
+    if (callback == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (s_callback_count >= MAX_FONT_CHANGE_CALLBACKS)
+    {
+        LOG_ERR("Font change callback list full");
+        return -ENOMEM;
+    }
+
+    /* Check whether the callback is already registered.
+     * 检查是否已注册。 */
+    for (int i = 0; i < s_callback_count; i++)
+    {
+        if (s_font_change_callbacks[i] == callback)
+        {
+            LOG_WRN("Font change callback already registered");
+            return 0;
+        }
+    }
+
+    s_font_change_callbacks[s_callback_count++] = callback;
+    LOG_INF("Font change callback registered, total: %d", s_callback_count);
+    return 0;
+}
+
+int mos_font_unregister_change_callback(mos_font_change_callback_t callback)
+{
+    if (callback == NULL)
+    {
+        return -EINVAL;
+    }
+
+    for (int i = 0; i < s_callback_count; i++)
+    {
+        if (s_font_change_callbacks[i] == callback)
+        {
+            /* Remove callback and shift subsequent entries forward.
+             * 移除回调并将后续项前移。 */
+            for (int j = i; j < s_callback_count - 1; j++)
+            {
+                s_font_change_callbacks[j] = s_font_change_callbacks[j + 1];
+            }
+            s_callback_count--;
+            LOG_INF("Font change callback unregistered, total: %d", s_callback_count);
+            return 0;
+        }
+    }
+
+    LOG_WRN("Font change callback not found");
+    return -ENOENT;
+}
+
+static void notify_font_change_callbacks(const lv_font_t *new_font)
+{
+    LOG_INF("Notifying %d font change callbacks", s_callback_count);
+    for (int i = 0; i < s_callback_count; i++)
+    {
+        if (s_font_change_callbacks[i] != NULL)
+        {
+            LOG_INF("Calling font change callback %d", i);
+            s_font_change_callbacks[i](new_font);
+        }
+    }
+}
+
+const lv_font_t *mos_font_storage_get_lvgl_font(void)
+{
+    /* Delegate to binfont_lvgl implementation.
+     * 委托给 binfont_lvgl 实现。 */
+    return mos_binfont_get_lvgl_font();
+}
+
+int mos_font_switch_language(uint8_t language, uint8_t font_size)
+{
+    /* Delegate to binfont_lvgl implementation.
+     * 委托给 binfont_lvgl 实现。 */
+    int ret = mos_binfont_switch_language(language, font_size);
+
+    if (ret == 0)
+    {
+        /* Notify all callbacks after successful font switch.
+         * 字体切换成功后通知所有回调。 */
+        const lv_font_t *new_font = mos_binfont_get_lvgl_font();
+        notify_font_change_callbacks(new_font);
+    }
+
+    return ret;
+}
+
+uint8_t mos_font_get_current_language(void)
+{
+    return mos_binfont_get_current_language();
+}
+
+uint8_t mos_font_get_current_size(void)
+{
+    return mos_binfont_get_current_size();
 }
 #endif

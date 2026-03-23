@@ -21,6 +21,15 @@ typedef enum
     LCD_STATE_ON,
 } display_state_t;
 
+typedef enum
+{
+    DISPLAY_BIZ_LANG_UNKNOWN = 0,
+    DISPLAY_BIZ_LANG_ZH = 1,
+    DISPLAY_BIZ_LANG_EN = 2,
+    DISPLAY_BIZ_LANG_KO = 3,
+    DISPLAY_BIZ_LANG_JA = 4,
+} display_biz_lang_t;
+
 /* 消息队列的命令类型 */
 typedef enum
 {
@@ -43,7 +52,8 @@ typedef enum
     LCD_CMD_CHESS_PATTERN,         // **NEW: Direct A6N chess pattern**
     LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
     LCD_CMD_CLEAR_DISPLAY,         // **NEW: Clear display**
-    LCD_CMD_UPDATE_HEIGHT
+    LCD_CMD_UPDATE_HEIGHT,
+    LCD_CMD_UPDATE_DYNAMIC_FONT     // **NEW: Update dynamic font in LVGL thread**
 } display_cmd_type_t;
 
 /* Display on/off control functions | 显示开关控制函数 */
@@ -92,10 +102,15 @@ typedef struct
     char text[MAX_TEXT_LEN + 1];  // **NEW: XY positioned text content**
 } lcd_xy_text_param_t;
 
-typedef struct 
+typedef struct
 {
     uint16_t height;
 } lcd_height_param_t;
+
+typedef struct
+{
+    const lv_font_t *font_ptr;
+} lcd_font_update_param_t;
 
 typedef union
 {
@@ -106,6 +121,7 @@ typedef union
     lcd_xy_text_param_t xy_text;              // **NEW: XY positioned text parameter**
     lcd_dfu_progress_param_t dfu_progress;    // **NEW: DFU progress bar (show + percent)**
     lcd_height_param_t height;
+    lcd_font_update_param_t font_update;
     // 其它命令参数结构体可继续扩展
 } display_param_u;
 
@@ -126,6 +142,10 @@ void scroll_text_create(lv_obj_t *parent,
 void scroll_text_stop(void);
 
 void display_open(void);
+
+
+int display_set_translation_pair(display_biz_lang_t src_lang, display_biz_lang_t dst_lang);
+void display_get_translation_pair(display_biz_lang_t *src_lang, display_biz_lang_t *dst_lang);
 
 // **NEW: Thread-safe pattern cycling function**
 void display_cycle_pattern(void);

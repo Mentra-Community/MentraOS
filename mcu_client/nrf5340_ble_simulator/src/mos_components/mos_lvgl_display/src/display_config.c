@@ -17,8 +17,10 @@
 #include <zephyr/drivers/display.h>
 #include <zephyr/logging/log.h>
 
+#if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
 #include "mos_font_storage.h"
+#endif
 
 LOG_MODULE_REGISTER(display_config, LOG_LEVEL_DBG);
 
@@ -31,79 +33,80 @@ static bool config_initialized = false;
  */
 static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
     // DISPLAY_TYPE_UNKNOWN - Default fallback
-    [DISPLAY_TYPE_UNKNOWN] = 
-        {.type = DISPLAY_TYPE_UNKNOWN,
-        .name = "Unknown Display",
-        .width = 128,
-        .height = 64,
-        .layout = {.margin_left = 2,
-                    .margin_top = 2,
-                    .padding = 2,
-                    .border_width = 1,
-                    .usable_width = 124,
-                    .usable_height = 60},
-        .fonts = {.primary = &lv_font_montserrat_18,
-                .secondary = &lv_font_montserrat_18,
-                .large = &lv_font_montserrat_18,
-                .cjk = &lv_font_montserrat_18,
-                .line_spacing = 1},
-        .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
-        .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 128},
-        .color_config =
-            {
-                .invert_colors = 0,  // Unknown display uses normal colors
-                .hardware_mirroring = 0  // Unknown display has no mirroring
-            }},
+    [DISPLAY_TYPE_UNKNOWN] = {.type = DISPLAY_TYPE_UNKNOWN,
+                              .name = "Unknown Display",
+                              .width = 128,
+                              .height = 64,
+                              .layout = {.margin_left = 2,
+                                         .margin_top = 2,
+                                         .padding = 2,
+                                         .border_width = 1,
+                                         .usable_width = 124,
+                                         .usable_height = 60},
+                              .fonts = {.primary = &lv_font_montserrat_18,
+                                        .secondary = &lv_font_montserrat_18,
+                                        .large = &lv_font_montserrat_18,
+                                        .cjk = &lv_font_montserrat_18,
+                                        .line_spacing = 1},
+                              .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
+                              .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 128},
+                              .color_config =
+                                  {
+                                      .invert_colors = 0,  // Unknown display uses normal colors
+                                      .hardware_mirroring = 0  // Unknown display has no mirroring
+                                  }},
 
     // DISPLAY_TYPE_DUMMY_640x480 - Large projector/dummy display (limited fonts due to memory)
-    [DISPLAY_TYPE_DUMMY_640x480] =
-        {.type = DISPLAY_TYPE_DUMMY_640x480,
-         .name = "Dummy Display 640x480",
-         .width = 640,
-         .height = 480,
-         .layout = {.margin_left = 100,
-                    .margin_top = 100,
-                    .padding = 10,
-                    .border_width = 2,
-                    .usable_width = 440,
-                    .usable_height = 200},
-         .fonts = {.primary = &lv_font_montserrat_18,
-                   .secondary = &lv_font_montserrat_18,
-                   .large = &lv_font_montserrat_18,
-                   .cjk = &lv_font_montserrat_18,
-                   .line_spacing = 3},
-         .patterns = {.chess_square_size = 40, .bar_thickness = 20, .scroll_speed = 5},
-         .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 512},
-         .color_config =
-             {
-                 .invert_colors = 0,  // Dummy display uses normal colors
-                 .hardware_mirroring = 0  // Dummy display has no mirroring
-             }},
+    [DISPLAY_TYPE_DUMMY_640x480] = {.type = DISPLAY_TYPE_DUMMY_640x480,
+                                    .name = "Dummy Display 640x480",
+                                    .width = 640,
+                                    .height = 480,
+                                    .layout = {.margin_left = 100,
+                                               .margin_top = 100,
+                                               .padding = 10,
+                                               .border_width = 2,
+                                               .usable_width = 440,
+                                               .usable_height = 200},
+                                    .fonts = {.primary = &lv_font_montserrat_18,
+                                              .secondary = &lv_font_montserrat_18,
+                                              .large = &lv_font_montserrat_18,
+                                              .cjk = &lv_font_montserrat_18,
+                                              .line_spacing = 3},
+                                    .patterns = {.chess_square_size = 40, .bar_thickness = 20, .scroll_speed = 5},
+                                    .performance = {.refresh_rate_ms = 16,
+                                                    .animation_enabled = 1,
+                                                    .max_text_length = 512},
+                                    .color_config =
+                                        {
+                                            .invert_colors = 0,  // Dummy display uses normal colors
+                                            .hardware_mirroring = 0  // Dummy display has no mirroring
+                                        }},
 
     // DISPLAY_TYPE_SSD1306_128x64 - Small OLED display
-    [DISPLAY_TYPE_SSD1306_128x64] =
-        {.type = DISPLAY_TYPE_SSD1306_128x64,
-         .name = "SSD1306 OLED 128x64",
-         .width = 128,
-         .height = 64,
-         .layout = {.margin_left = 2,
-                    .margin_top = 2,
-                    .padding = 2,
-                    .border_width = 1,
-                    .usable_width = 124,
-                    .usable_height = 60},
-         .fonts = {.primary = &lv_font_montserrat_18,
-                   .secondary = &lv_font_montserrat_18,
-                   .large = &lv_font_montserrat_18,
-                   .cjk = &lv_font_montserrat_18,
-                   .line_spacing = 1},
-         .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
-         .performance = {.refresh_rate_ms = 16, .animation_enabled = 1, .max_text_length = 128},
-         .color_config =
-             {
-                 .invert_colors = 0,  // SSD1306 works correctly, no inversion needed
-                 .hardware_mirroring = 0  // SSD1306 displays correctly, no mirroring
-             }},
+    [DISPLAY_TYPE_SSD1306_128x64] = {.type = DISPLAY_TYPE_SSD1306_128x64,
+                                     .name = "SSD1306 OLED 128x64",
+                                     .width = 128,
+                                     .height = 64,
+                                     .layout = {.margin_left = 2,
+                                                .margin_top = 2,
+                                                .padding = 2,
+                                                .border_width = 1,
+                                                .usable_width = 124,
+                                                .usable_height = 60},
+                                     .fonts = {.primary = &lv_font_montserrat_18,
+                                               .secondary = &lv_font_montserrat_18,
+                                               .large = &lv_font_montserrat_18,
+                                               .cjk = &lv_font_montserrat_18,
+                                               .line_spacing = 1},
+                                     .patterns = {.chess_square_size = 8, .bar_thickness = 4, .scroll_speed = 2},
+                                     .performance = {.refresh_rate_ms = 16,
+                                                     .animation_enabled = 1,
+                                                     .max_text_length = 128},
+                                     .color_config =
+                                         {
+                                             .invert_colors = 0,  // SSD1306 works correctly, no inversion needed
+                                             .hardware_mirroring = 0  // SSD1306 displays correctly, no mirroring
+                                         }},
 
     // DISPLAY_TYPE_A6N_640x480 - Future A6N projector (limited fonts due to memory)
     [DISPLAY_TYPE_A6N_640x480] = {
@@ -235,9 +238,8 @@ int display_apply_container_config(lv_obj_t *container, lv_obj_t *parent, const 
     lv_obj_set_style_border_width(container, config->layout.border_width, 0);
     lv_obj_set_style_pad_all(container, config->layout.padding, 0);
 
-    LOG_DBG("Applied container config: %dx%d at (%d,%d), border=%d, padding=%d",
-            config->layout.usable_width, config->layout.usable_height,
-            config->layout.margin_left, config->layout.margin_top,
+    LOG_DBG("Applied container config: %dx%d at (%d,%d), border=%d, padding=%d", config->layout.usable_width,
+            config->layout.usable_height, config->layout.margin_left, config->layout.margin_top,
             config->layout.border_width, config->layout.padding);
 
     return 0;
@@ -249,9 +251,55 @@ const lv_font_t *display_get_font(const char *text_type)
 
     if (!text_type)
     {
+        /* Return primary font by default (prefer external Flash font).
+         * 默认返回primary字体（优先使用Flash字体）。 */
+#if defined(CONFIG_LVGL)
+        const lv_font_t *dynamic_font = mos_binfont_get_lvgl_font();
+        if (dynamic_font)
+        {
+            LOG_INF("display_get_font(null): using dynamic font @%p", dynamic_font);
+            return dynamic_font;
+        }
+        LOG_WRN("display_get_font(null): dynamic font not available, using fallback");
+#endif
         return config->fonts.primary;
     }
 
+    if (strcmp(text_type, "gbk") == 0)
+    {
+        /* GBK/CJK path: use external binfont, independent from config->fonts.cjk.
+         * GBK/中文字库使用外置binfont，与 config->fonts.cjk 无关。 */
+#if defined(CONFIG_LVGL)
+        const lv_font_t *ext_font = mos_binfont_get_lvgl_font();
+        if (ext_font)
+        {
+            LOG_INF("display_get_font(gbk): using binfont adapter @%p", ext_font);
+            return ext_font;
+        }
+        LOG_ERR("display_get_font(gbk): binfont init failed - program font hex to font_storage");
+#endif
+        return config->fonts.secondary;
+    }
+
+    /* For primary/secondary/large, prefer external Flash font first.
+     * primary、secondary、large 都优先使用Flash字体。 */
+    if (strcmp(text_type, "primary") == 0 || strcmp(text_type, "secondary") == 0 || strcmp(text_type, "large") == 0)
+    {
+#if defined(CONFIG_LVGL)
+        /* Prefer dynamic font.
+         * 优先使用动态字体。 */
+        const lv_font_t *dynamic_font = mos_binfont_get_lvgl_font();
+        if (dynamic_font)
+        {
+            LOG_INF("display_get_font(%s): using dynamic font @%p", text_type, dynamic_font);
+            return dynamic_font;
+        }
+        LOG_WRN("display_get_font(%s): dynamic font not available, using fallback", text_type);
+#endif
+    }
+
+    /* Fall back to built-in fonts by default.
+     * 默认回退到内置字体。 */
     if (strcmp(text_type, "primary") == 0)
     {
         return config->fonts.primary;
@@ -264,20 +312,9 @@ const lv_font_t *display_get_font(const char *text_type)
     {
         return config->fonts.large;
     }
-    else if (strcmp(text_type, "gbk") == 0)
-    {
-        /* GBK/中文字库：外置 binfont，与 config->fonts.cjk 无关 */
-        const lv_font_t *ext_font = mos_binfont_get_lvgl_font();
-        if (ext_font)
-        {
-            LOG_INF("display_get_font(gbk): using binfont adapter @%p", ext_font);
-            return ext_font;
-        }
-        LOG_ERR("display_get_font(gbk): binfont init failed - program font hex to font_storage");
-        return config->fonts.secondary;
-    }
 
-    // Default fallback
+    /* For unknown type, return primary font.
+     * 未知类型返回primary字体。 */
     return config->fonts.primary;
 }
 
