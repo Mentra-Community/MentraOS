@@ -3,7 +3,8 @@ name: China Cloud Api Deployment (Dev)
 on:
   push:
     branches:
-      - "ya/clean-china-cicd"
+      - dev
+      - ya/make-requested-changes-alibaba
     paths:
       - "cloud/**"
       - ".github/workflows/china-deployment-dev.yml"

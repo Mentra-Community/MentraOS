@@ -184,9 +184,12 @@ class AlibabaTranscriptionStream implements StreamInstance {
       try {
         const wsUrl = this.config.endpoint;
         const headers = {
-          Authorization: `Bearer ${this.config.dashscopeApiKey}`,
+          "Authorization": `Bearer ${this.config.dashscopeApiKey}`,
           "X-DashScope-WorkSpace": this.config.workspace,
-          "X-DashScope-DataInspection": "enable",
+          "X-DashScope-DataInspection": JSON.stringify({
+            input: "cip",
+            output: "cip",
+          }),
         };
         const ws = new WebSocket(wsUrl, { headers });
         this.ws = ws;
