@@ -218,10 +218,7 @@ class AlibabaTranslationStream implements TranslationStreamInstance {
         const headers = {
           "Authorization": `Bearer ${this.config.dashscopeApiKey}`,
           "X-DashScope-WorkSpace": this.config.workspace,
-          "X-DashScope-DataInspection": JSON.stringify({
-            input: "cip",
-            output: "cip",
-          }),
+          "X-DashScope-DataInspection": "enable",
         };
         const ws = new WebSocket(wsUrl, { headers });
         this.ws = ws;
