@@ -9,6 +9,7 @@ import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import GlassView from "@/components/ui/GlassView"
+import {SETTINGS, useSetting} from "@/stores/settings"
 
 export default function ConnectedSimulatedGlassesInfo({
   style,
@@ -22,6 +23,7 @@ export default function ConnectedSimulatedGlassesInfo({
   const {theme} = useAppTheme()
   const [permission, requestPermission] = useCameraPermissions()
   const {push} = useNavigationHistory()
+  const [isChina] = useSetting(SETTINGS.china_deployment.key)
 
   // Function to navigate to fullscreen mode
   const navigateToFullScreen = async () => {
@@ -90,6 +92,11 @@ export default function ConnectedSimulatedGlassesInfo({
           <Icon name="fullscreen" size={24} color={theme.colors.secondary_foreground} />
         </TouchableOpacity>
       </View>
+      {isChina && (
+        <Text style={{fontSize: 11, color: theme.colors.textDim, marginTop: 4, textAlign: "center"}}>
+          本内容由AI生成
+        </Text>
+      )}
     </GlassView>
   )
 }
