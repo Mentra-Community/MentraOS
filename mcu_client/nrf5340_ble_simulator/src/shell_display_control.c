@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -46,6 +47,12 @@
 extern struct k_msgq lvgl_display_msgq;
 
 LOG_MODULE_REGISTER(shell_display, LOG_LEVEL_INF);
+
+/* Software distance mapping model (meters -> stereo offset) */
+#define DISPLAY_DISTANCE_BASE_M       2.5   /* default convergence distance from vendor */
+#define DISPLAY_DISTANCE_NEAR_LIMIT_M 0.5
+#define DISPLAY_DISTANCE_FAR_LIMIT_M  20.0
+#define DISPLAY_DISTANCE_GAIN         12.0  /* tunable gain: higher = stronger depth change */
 
 #ifndef PM_QSPI_NOR_BASE_ADDRESS
 #define PM_QSPI_NOR_BASE_ADDRESS 0x10000000u
@@ -117,12 +124,23 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display text \"MentraOS\" 10 20 14  - Write 'MentraOS' at (10,20) with size 14");
     shell_print(shell, "  display b_t                      - Show binfont test text");
     shell_print(shell, "  display cjk_hex E6B58BE8AF95E4B8ADE69687  - UTF-8 hex text test at (10,10)");
+    shell_print(shell, "  display depth 2                 - One-param depth (near/far)");
+    shell_print(shell, "  display stereo 10 6              - Stereo depth demo (L+, R-)");
     shell_print(shell, "  display clear                    - Clear the screen");
     shell_print(shell, "  display fill                     - Fill screen with white");
     shell_print(shell, "");
     shell_print(shell, "🧩 A6N Register Access:");
     shell_print(shell, "  display read <addr> [mode]       - Read A6N register");
     shell_print(shell, "  display write <addr> <value>     - Write A6N register");
+    shell_print(shell, "  display depth <offset>           - Software depth offset (pixel disparity)");
+    shell_print(shell, "                                   - offset: -16..16, pure software (no shift register write)");
+    shell_print(shell, "  display redraw                   - Full-screen invalidate + refresh");
+    shell_print(shell, "  display redraw_visible            - Current pattern UI only (lighter than redraw)");
+    shell_print(shell, "  display distance <meters>        - Distance control by meters (software mapping)");
+    shell_print(shell, "                                   - example: 0.8 / 2.5 / 5.0 / 10.0");
+    shell_print(shell, "  display stereo <lh> <rh>         - Hardware stereo shift (register)");
+    shell_print(shell, "                                   - lh/rh: left/right H shift only");
+    shell_print(shell, "                                   - mirror is preserved from existing panel setting");
     shell_print(shell, "");
     shell_print(shell, "🌡️  Temperature Control:");
     shell_print(shell, "  display get_temp                  - Read A6N panel temperature (°C)");
@@ -860,6 +878,183 @@ static int cmd_display_write(const struct shell *shell, size_t argc, char **argv
 }
 
 /**
+ * Display stereo shift command
+ * Usage: display stereo <left_h> <right_h>
+ */
+static int cmd_display_stereo(const struct shell *shell, size_t argc, char **argv)
+{
+    if (argc < 3)
+    {
+        shell_error(shell, "Usage: display stereo <left_h> <right_h>");
+        return -EINVAL;
+    }
+
+    char *endptr = NULL;
+    long left_h = strtol(argv[1], &endptr, 10);
+    if (*endptr != '\0' || left_h < 0 || left_h > 16)
+    {
+        shell_error(shell, "❌ Invalid left_h: %s (range: 0..16)", argv[1]);
+        return -EINVAL;
+    }
+
+    long right_h = strtol(argv[2], &endptr, 10);
+    if (*endptr != '\0' || right_h < 0 || right_h > 16)
+    {
+        shell_error(shell, "❌ Invalid right_h: %s (range: 0..16)", argv[2]);
+        return -EINVAL;
+    }
+
+    int ret = a6n_set_stereo_shift((uint8_t)left_h, (uint8_t)right_h);
+    if (ret != 0)
+    {
+        shell_error(shell, "❌ Stereo shift failed: %d", ret);
+        return ret;
+    }
+
+    shell_print(shell, "✅ Stereo shift set: LH=%ld RH=%ld (H-only, mirror preserved)", left_h, right_h);
+    shell_print(shell, "   Tip: near feeling usually uses LH>8 and RH<8.");
+    return 0;
+}
+
+/**
+ * Display one-parameter depth command (pure software mode)
+ * Usage: display depth <offset>
+ *   offset: -16..16, used as software disparity (left=+offset, right=-offset)
+ */
+static int cmd_display_depth(const struct shell *shell, size_t argc, char **argv)
+{
+    if (argc < 2)
+    {
+        shell_error(shell, "Usage: display depth <offset>");
+        return -EINVAL;
+    }
+
+    char *endptr = NULL;
+    long offset = strtol(argv[1], &endptr, 10);
+    if (*endptr != '\0' || offset < -16 || offset > 16)
+    {
+        shell_error(shell, "❌ Invalid offset: %s (range: -16..16)", argv[1]);
+        return -EINVAL;
+    }
+
+    int ret = a6n_set_software_depth_offset((int8_t)offset);
+    if (ret != 0)
+    {
+        shell_error(shell, "❌ Depth apply failed: %d", ret);
+        return ret;
+    }
+
+    display_request_visible_redraw();
+    shell_print(shell, "✅ Software depth set: offset=%ld px (pure software disparity)", offset);
+    shell_print(shell, "   Visible UI refresh queued. Use \"display redraw\" for full screen if needed.");
+    return 0;
+}
+
+/**
+ * Display distance command (software mapping model)
+ * Usage: display distance <meters>
+ *   meters: 0.5..20.0
+ *
+ * Model:
+ *   offset_f = G * (1/d - 1/d0)
+ *   d0 = DISPLAY_DISTANCE_BASE_M (default 2.5m => offset=0)
+ *   G  = DISPLAY_DISTANCE_GAIN
+ */
+static int cmd_display_distance(const struct shell *shell, size_t argc, char **argv)
+{
+    if (argc < 2)
+    {
+        shell_error(shell, "Usage: display distance <meters>");
+        return -EINVAL;
+    }
+
+    char *endptr = NULL;
+    double distance_m = strtod(argv[1], &endptr);
+    if (endptr == argv[1] || *endptr != '\0')
+    {
+        shell_error(shell, "❌ Invalid distance: %s", argv[1]);
+        return -EINVAL;
+    }
+    if (distance_m < DISPLAY_DISTANCE_NEAR_LIMIT_M || distance_m > DISPLAY_DISTANCE_FAR_LIMIT_M)
+    {
+        shell_error(shell, "❌ Distance out of range: %.3f (valid: %.1f..%.1f m)", distance_m,
+                    DISPLAY_DISTANCE_NEAR_LIMIT_M, DISPLAY_DISTANCE_FAR_LIMIT_M);
+        return -EINVAL;
+    }
+
+    /* offset_f > 0 => near, offset_f < 0 => far */
+    double offset_f = DISPLAY_DISTANCE_GAIN * ((1.0 / distance_m) - (1.0 / DISPLAY_DISTANCE_BASE_M));
+
+    long offset_i = (long)((offset_f >= 0.0) ? (offset_f + 0.5) : (offset_f - 0.5));
+    if (offset_i < -16)
+        offset_i = -16;
+    if (offset_i > 16)
+        offset_i = 16;
+
+    int ret = a6n_set_software_depth_offset((int8_t)offset_i);
+    if (ret != 0)
+    {
+        shell_error(shell, "❌ Distance apply failed: %d", ret);
+        return ret;
+    }
+
+    display_request_visible_redraw();
+    shell_print(shell,
+                "✅ Distance set: %.2fm -> sw_offset=%.2f (quantized=%ld px, pure software) (base=%.1fm, gain=%.1f)",
+                distance_m, offset_f, offset_i, DISPLAY_DISTANCE_BASE_M, DISPLAY_DISTANCE_GAIN);
+    shell_print(shell, "   Visible UI refresh queued. Use \"display redraw\" for full screen if needed.");
+    return 0;
+}
+
+/**
+ * Simulate protobuf DisplayDistanceConfig tier mapping locally.
+ *
+ * App 侧约定：distance_cm 字段里直接传档位索引 1/2/3
+ * 1 => offset -16, 2 => offset 0, 3 => offset +16
+ */
+static int cmd_display_distance_tier(const struct shell *shell, size_t argc, char **argv)
+{
+    if (argc < 2)
+    {
+        shell_error(shell, "Usage: display distance_tier <1|2|3>");
+        return -EINVAL;
+    }
+
+    char *endptr = NULL;
+    long v = strtol(argv[1], &endptr, 10);
+    if (*endptr != '\0' || (v != 1L && v != 2L && v != 3L))
+    {
+        shell_error(shell, "❌ Invalid tier: %s (expected 1/2/3)", argv[1]);
+        return -EINVAL;
+    }
+
+    mentraos_ble_DisplayDistanceConfig cfg = {0};
+    cfg.distance_cm = (uint32_t)v;
+
+    protobuf_process_display_distance_config(&cfg);
+    shell_print(shell, "✅ distance_tier=%ld applied (see A6N offset log / errors in console).", v);
+    return 0;
+}
+
+static int cmd_display_redraw(const struct shell *shell, size_t argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    display_request_full_redraw();
+    shell_print(shell, "✅ Full redraw requested (LVGL thread)");
+    return 0;
+}
+
+static int cmd_display_redraw_visible(const struct shell *shell, size_t argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    display_request_visible_redraw();
+    shell_print(shell, "✅ Visible UI redraw requested (LVGL thread)");
+    return 0;
+}
+
+/**
  * A6N temperature reading sequence
  * Returns temperature in Celsius on success, or negative error code on failure
  *
@@ -1325,6 +1520,12 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(pattern, NULL, "Select pattern (0-5): 0=chess, 1=h-zebra, 2=v-zebra, 3=scroll, 4=container, 5=xy",
                   cmd_display_pattern, 2, 0),
     SHELL_CMD_ARG(battery, NULL, "Set battery level & charging: <level> [true/false]", cmd_display_battery, 2, 1),
+    SHELL_CMD_ARG(depth, NULL, "One-param depth: <offset>", cmd_display_depth, 2, 0),
+    SHELL_CMD_ARG(distance, NULL, "Distance by meters: <meters>", cmd_display_distance, 2, 0),
+    SHELL_CMD_ARG(distance_tier, NULL, "Simulate tier: <1|2|3> (protobuf distance)", cmd_display_distance_tier, 2, 0),
+    SHELL_CMD(redraw, NULL, "Force full LVGL screen invalidate + refresh", cmd_display_redraw),
+    SHELL_CMD(redraw_visible, NULL, "Invalidate current pattern UI only", cmd_display_redraw_visible),
+    SHELL_CMD_ARG(stereo, NULL, "Set stereo shift: <left_h> <right_h>", cmd_display_stereo, 3, 0),
     SHELL_CMD(fonts, &sub_fonts, "Font size management", NULL),
     SHELL_CMD(layout, &sub_layout, "Layout and positioning control", NULL),
     SHELL_CMD_ARG(read, NULL, "Read A6N register: <addr> [mode] (hex, e.g. EF, F0, BE)", cmd_display_read, 2, 1),

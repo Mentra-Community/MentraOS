@@ -64,6 +64,8 @@ static bool welcome_screen_active = true;
 static bool welcome_screen_initializing = false;
 static char last_protobuf_text[MAX_TEXT_LEN + 1];
 static bool last_protobuf_text_valid = false;
+static char s_last_welcome_text[160];
+static bool s_last_welcome_text_valid = false;
 
 #if defined(CONFIG_LVGL)
 /* Dynamic-font label list.
@@ -645,6 +647,18 @@ void display_clear_screen(void)
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
+void display_request_full_redraw(void)
+{
+    display_cmd_t cmd = {.type = LCD_CMD_INVALIDATE_FULL_SCREEN};
+    (void)mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+}
+
+void display_request_visible_redraw(void)
+{
+    display_cmd_t cmd = {.type = LCD_CMD_INVALIDATE_VISIBLE_UI};
+    (void)mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+}
+
 void display_send_frame(void *data_ptr)
 {
     // display_cmd_t cmd = {.type = LCD_CMD_DATA, .param = data_ptr};
@@ -1158,11 +1172,8 @@ static void welcome_apply_preferred_font(lv_obj_t *label)
         LOG_WRN("Welcome: binfont lang=%u pt=%u not ready, using built-in secondary @%p", cur_lang, cur_pt,
                 (void *)use);
     }
-    else
-    {
-        LOG_INF("Welcome: binfont lang=%u pt=%u @%p line_h=%d base=%d", cur_lang, cur_pt, (void *)use,
-                (int)use->line_height, (int)use->base_line);
-    }
+    (void)cur_lang;
+    (void)cur_pt;
     if (use != NULL)
     {
         lv_obj_set_style_text_font(label, use, 0);
@@ -1415,6 +1426,42 @@ int display_get_current_pattern(void)
     return current_pattern;
 }
 
+/* lv_obj_del 子控件后，文件内缓存的 lv_obj_t* 全部悬空；必须清零，否则 BLE/protobuf 与 DFU 路径会 UAF。 */
+static void tear_down_screen_child_global_refs(void)
+{
+    k_work_cancel_delayable(&welcome_battery_work);
+
+    if (scrolling_welcome_label != NULL)
+    {
+        lv_anim_del(scrolling_welcome_label, NULL);
+        scrolling_welcome_label = NULL;
+    }
+
+    protobuf_container = NULL;
+    protobuf_label = NULL;
+    protobuf_gbk_container = NULL;
+
+    dfu_status_label = NULL;
+    dfu_progress_bar = NULL;
+    dfu_progress_fill = NULL;
+    dfu_progress_bar_w = 0;
+
+    xy_text_container = NULL;
+    current_xy_text_label = NULL;
+    gbk_test_label = NULL;
+
+#if defined(CONFIG_LVGL)
+    memset(s_dynamic_font_labels, 0, sizeof(s_dynamic_font_labels));
+    s_dynamic_font_label_count = 0;
+#endif
+
+    memset(s_protobuf_gbk_label_pool, 0, sizeof(s_protobuf_gbk_label_pool));
+    s_protobuf_gbk_label_pool_used = 0;
+
+    welcome_screen_active = false;
+    welcome_screen_initializing = false;
+}
+
 static void show_test_pattern(int pattern_id)
 {
     /* 仅由 LVGL 线程调用，无需加锁 / SAFE: Now called only from LVGL thread - no locking needed */
@@ -1430,6 +1477,8 @@ static void show_test_pattern(int pattern_id)
         /* 定期让出 CPU 防止完全阻塞 / Yield CPU periodically to prevent blocking */
         k_yield();
     }
+
+    tear_down_screen_child_global_refs();
 
     lv_obj_set_style_bg_color(screen, display_get_background_color(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
@@ -1458,7 +1507,50 @@ static void show_test_pattern(int pattern_id)
             LOG_ERR("❌ Unknown pattern ID: %d", pattern_id);
             return;
     }
+
+    current_pattern = pattern_id;
 }
+
+/** 仅标脏当前 pattern 下的根容器，用于软件视差等驱动参数变更后“刷新当前画面”而尽量不整屏刷 */
+static void invalidate_current_visible_ui(void)
+{
+    lv_obj_t *screen = lv_screen_active();
+
+    switch (current_pattern)
+    {
+        case 4:
+            if (protobuf_container != NULL)
+            {
+                lv_obj_invalidate(protobuf_container);
+            }
+            if (protobuf_gbk_container != NULL && !lv_obj_has_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN))
+            {
+                lv_obj_invalidate(protobuf_gbk_container);
+            }
+            break;
+        case 5:
+            if (xy_text_container != NULL)
+            {
+                lv_obj_invalidate(xy_text_container);
+            }
+            break;
+        default:
+        {
+            /* 图案 0–3：动态子控件挂在 screen 下，逐个标脏 */
+            uint32_t n = lv_obj_get_child_cnt(screen);
+            for (uint32_t i = 0; i < n; i++)
+            {
+                lv_obj_t *ch = lv_obj_get_child(screen, i);
+                if (ch != NULL)
+                {
+                    lv_obj_invalidate(ch);
+                }
+            }
+            break;
+        }
+    }
+}
+
 void cycle_test_pattern(void)
 {
     /* 防抖：避免快速切换导致冲突 / SAFETY: Prevent rapid cycling that could cause conflicts */
@@ -2274,7 +2366,6 @@ static void update_welcome_label_with_battery(void)
     /* 先确保当前字库已懒加载，再按 mos_binfont_get_current_language() 组欢迎文案 */
     welcome_apply_preferred_font(protobuf_label);
     build_welcome_screen_text(welcome_buf, sizeof(welcome_buf), config);
-    LOG_INF("Welcome text: '%s'", welcome_buf);
 #else
     const char *device_name = get_ble_device_name();
     uint32_t battery_pct = protobuf_get_battery_level();
@@ -2303,8 +2394,17 @@ static void update_welcome_label_with_battery(void)
     }
 #endif
 
+    /* 文案未变化时不重复 set_text / 不刷 INFO 日志，避免欢迎界面日志刷屏 */
+    if (s_last_welcome_text_valid && (strncmp(s_last_welcome_text, welcome_buf, sizeof(s_last_welcome_text)) == 0))
+    {
+        return;
+    }
+
     lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, 80);
     lv_label_set_text(protobuf_label, welcome_buf);
+    strncpy(s_last_welcome_text, welcome_buf, sizeof(s_last_welcome_text) - 1U);
+    s_last_welcome_text[sizeof(s_last_welcome_text) - 1U] = '\0';
+    s_last_welcome_text_valid = true;
 #if defined(CONFIG_LVGL)
     protobuf_container_set_welcome_scroll(true);
 #endif
@@ -2651,7 +2751,11 @@ static void show_gbk_test_text(void)
         }
         lv_obj_set_style_bg_color(gbk_screen, display_get_background_color(), 0);
         lv_obj_set_style_bg_opa(gbk_screen, LV_OPA_COVER, 0);
+    }
 
+    /* show_test_pattern 可能已删掉 gbk_screen 子控件并把 gbk_test_label 置 NULL / May be cleared after pattern switch */
+    if (!gbk_test_label)
+    {
         printk("GBK_TEST: create label\r\n");
         gbk_test_label = lv_label_create(gbk_screen);
         if (!gbk_test_label)
@@ -3009,6 +3113,14 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                 case LCD_CMD_UPDATE_DYNAMIC_FONT:
                     LOG_INF("LCD_CMD_UPDATE_DYNAMIC_FONT - Applying font update in LVGL thread");
                     apply_font_update_in_lvgl_thread(cmd.p.font_update.font_ptr);
+                    break;
+                case LCD_CMD_INVALIDATE_FULL_SCREEN:
+                    lvgl_force_one_refresh = true;
+                    lv_obj_invalidate(lv_screen_active());
+                    break;
+                case LCD_CMD_INVALIDATE_VISIBLE_UI:
+                    lvgl_force_one_refresh = true;
+                    invalidate_current_visible_ui();
                     break;
                 default:
                     break;

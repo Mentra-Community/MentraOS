@@ -52,6 +52,8 @@ typedef enum
     LCD_CMD_CHESS_PATTERN,         // **NEW: Direct A6N chess pattern**
     LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
     LCD_CMD_CLEAR_DISPLAY,         // **NEW: Clear display**
+    LCD_CMD_INVALIDATE_FULL_SCREEN, /* Mark full screen dirty + request one LVGL refresh (thread-safe via msgq) */
+    LCD_CMD_INVALIDATE_VISIBLE_UI, /* Invalidate current pattern roots only (e.g. after software depth) */
     LCD_CMD_UPDATE_HEIGHT,
     LCD_CMD_UPDATE_DYNAMIC_FONT     // **NEW: Update dynamic font in LVGL thread**
 } display_cmd_type_t;
@@ -171,6 +173,12 @@ void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, ui
 
 // **NEW: Clear display function**
 void display_clear_screen(void);
+
+/** After driver-only changes (e.g. software depth), force LVGL to flush the whole screen. Thread-safe. */
+void display_request_full_redraw(void);
+
+/** Mark dirty only the UI roots for the current pattern (less tearing than full screen). Thread-safe. */
+void display_request_visible_redraw(void);
 
 // **NEW: Get current pattern ID for conditional logic**
 int display_get_current_pattern(void);

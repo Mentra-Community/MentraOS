@@ -121,6 +121,8 @@ static const char *protobuf_message_name(uint32_t which_payload)
             return "AutoBrightnessConfig";
         case 45:
             return "DisplayHeightConfig";
+        case 44:
+            return "DisplayDistanceConfig";
         case 46:
             return "ClearDisplay";
         default:
@@ -436,6 +438,13 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
                 if (phone_msg.which_payload == mentraos_ble_PhoneToGlasses_display_height_tag)
                 {
                     protobuf_process_display_height_config(&phone_msg.payload.display_height);
+                }
+                break;
+            case 44:  // display_distance_tag
+                LOG_INF("Processing Display Distance Configuration...");
+                if (phone_msg.which_payload == mentraos_ble_PhoneToGlasses_display_distance_tag)
+                {
+                    protobuf_process_display_distance_config(&phone_msg.payload.display_distance);
                 }
                 break;
 
@@ -957,6 +966,58 @@ void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConf
     LOG_INF("[PROTOBUF] DisplayHeightConfig height=%d", config->height);
 
     display_update_height(config->height);
+}
+
+void protobuf_process_display_distance_config(const mentraos_ble_DisplayDistanceConfig *config)
+{
+    if (!config)
+    {
+        LOG_ERR("Invalid DisplayDistanceConfig pointer");
+        return;
+    }
+
+    /*
+     * App 侧约定：distance_cm 字段里直接传档位索引 1/2/3，
+     * 不再解释为真实“距离厘米”。
+     *
+     * 1 => 第一档：offset -16
+     * 2 => 第二档：offset 0 (默认 2.5m)
+     * 3 => 第三档：offset +16
+     *
+     * 任何其他值都直接报错并返回（保留原样参数，不做兜底猜测）。
+     */
+    const uint32_t v = (uint32_t)config->distance_cm;
+    long offset_i;
+
+    if (v == 1U)
+    {
+        offset_i = -16;
+    }
+    else if (v == 2U)
+    {
+        offset_i = 0;
+    }
+    else if (v == 3U)
+    {
+        offset_i = 16;
+    }
+    else
+    {
+        LOG_ERR("[PROTOBUF] DisplayDistanceConfig invalid tier: distance_cm=%u (expected 1/2/3)", (unsigned int)v);
+        return;
+    }
+
+    LOG_INF("[PROTOBUF] DisplayDistanceConfig tier map: distance_cm=%u -> offset=%ld", (unsigned int)v, offset_i);
+
+    int ret = a6n_set_software_depth_offset((int8_t)offset_i);
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to apply DisplayDistance: offset=%ld ret=%d", offset_i, ret);
+        return;
+    }
+
+    /* Trigger visible redraw only (lighter than full redraw) */
+    display_request_visible_redraw();
 }
 
 void protobuf_process_clear_display(void)

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-07-28 11:31:02
- * @LastEditTime : 2026-01-26 20:11:06
+ * @LastEditTime : 2026-03-25 09:52:59
  * @FilePath     : a6n.c
  * @Description  :
  *
@@ -32,6 +32,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #endif
 const struct device *dev_a6n = DEVICE_DT_GET(DT_INST(0, DT_DRV_COMPAT));
 static K_SEM_DEFINE(a6n_init_sem, 0, 1);
+static volatile int8_t s_software_depth_offset = 0;
 
 /**
  * A6N 显示配置参数 | A6N Display Configuration
@@ -165,6 +166,44 @@ int a6n_set_shift_mirror(uint8_t h_shift, uint8_t v_shift, a6n_mirror_mode_t mir
     return (err1 || err2 || err3 || err4) ? -EIO : 0;
 }
 
+/**
+ * @brief 左右眼独立水平偏移（用于双目视差调节）
+ *        Independent left/right horizontal shift.
+ *
+ * @param left_h_shift   左眼水平平移 (0~16, 8=居中)
+ * @param right_h_shift  右眼水平平移 (0~16, 8=居中)
+ * @return 0 on success, negative errno on failure
+ */
+int a6n_set_stereo_shift(uint8_t left_h_shift, uint8_t right_h_shift)
+{
+    const a6n_config *cfg = dev_a6n->config;
+
+    if (left_h_shift > 16)
+        left_h_shift = 8;
+    if (right_h_shift > 16)
+        right_h_shift = 8;
+    int left_hd = a6n_read_reg(0, 0, A6N_LCD_HD_REG);
+    int right_hd = a6n_read_reg(0, 1, A6N_LCD_HD_REG);
+    uint8_t left_mirror_bit = (left_hd >= 0) ? ((uint8_t)left_hd & 0x80) : 0x00;
+    uint8_t right_mirror_bit = (right_hd >= 0) ? ((uint8_t)right_hd & 0x80) : 0x00;
+
+    if (left_hd < 0 || right_hd < 0)
+    {
+        LOG_WRN("A6N_set_stereo_shift: read HD failed (L=%d R=%d), keep default non-mirror fallback", left_hd, right_hd);
+    }
+
+    uint8_t val_l_h = left_mirror_bit | 0x40 | (left_h_shift & 0x1F);
+    uint8_t val_r_h = right_mirror_bit | 0x40 | (right_h_shift & 0x1F);
+
+    int err1 = write_reg_side(dev_a6n, &cfg->left_cs, A6N_LCD_HD_REG, val_l_h);
+    int err2 = write_reg_side(dev_a6n, &cfg->right_cs, A6N_LCD_HD_REG, val_r_h);
+
+    LOG_INF("A6N_set_stereo_shift: LH=%u RH=%u (mirror preserved) -> HD[L=0x%02X,R=0x%02X]",
+            left_h_shift, right_h_shift, val_l_h, val_r_h);
+
+    return (err1 || err2) ? -EIO : 0;
+}
+
 
 /**
  * send all data via SPI with retries
@@ -227,6 +266,92 @@ static int a6n_transmit_all(const struct device *dev, const uint8_t *data, size_
         }
     }
     return err;
+}
+
+static int a6n_transmit_side(const struct device *dev, const uint8_t *data, size_t size, int retries, bool left_eye)
+{
+    if (!dev || !data || size == 0)
+    {
+        return -EINVAL;
+    }
+
+    int err = -1;
+    const a6n_config *cfg = dev->config;
+    struct spi_buf tx_buf = {
+        .buf = data,
+        .len = size,
+    };
+    struct spi_buf_set tx = {
+        .buffers = &tx_buf,
+        .count   = 1,
+    };
+
+    for (int i = 0; i <= retries; i++)
+    {
+        if (left_eye)
+        {
+            gpio_pin_set_dt(&cfg->left_cs, 0);
+        }
+        else
+        {
+            gpio_pin_set_dt(&cfg->right_cs, 0);
+        }
+
+        k_busy_wait(1);
+        err = spi_write_dt(&cfg->spi, &tx);
+        k_busy_wait(1);
+
+        if (left_eye)
+        {
+            gpio_pin_set_dt(&cfg->left_cs, 1);
+        }
+        else
+        {
+            gpio_pin_set_dt(&cfg->right_cs, 1);
+        }
+
+        if (err == 0)
+        {
+            return 0;
+        }
+        k_msleep(1);
+    }
+    return err;
+}
+
+static uint8_t mono_get_pixel(const uint8_t *row, uint16_t x)
+{
+    return (uint8_t)((row[x >> 3] >> (7U - (x & 0x7U))) & 0x1U);
+}
+
+static void mono_set_pixel(uint8_t *row, uint16_t x, uint8_t bit)
+{
+    uint8_t mask = (uint8_t)(1U << (7U - (x & 0x7U)));
+    if (bit)
+    {
+        row[x >> 3] |= mask;
+    }
+    else
+    {
+        row[x >> 3] &= (uint8_t)(~mask);
+    }
+}
+
+static void mono_shift_row(const uint8_t *src_row, uint16_t width, int16_t dx, uint8_t *dst_row)
+{
+    uint16_t row_bytes = (uint16_t)((width + 7U) / 8U);
+    memset(dst_row, 0xFF, row_bytes); /* default fill as dark/black */
+
+    for (uint16_t x = 0; x < width; x++)
+    {
+        int32_t src_x = (int32_t)x - (int32_t)dx;
+        if (src_x < 0 || src_x >= width)
+        {
+            continue;
+        }
+        uint8_t bit = mono_get_pixel(src_row, (uint16_t)src_x);
+        mono_set_pixel(dst_row, x, bit);
+    }
 }
 /**
  * @brief Switch video format to GRAY16 (4-bit per pixel) via Bank0 register 0xBE.
@@ -392,11 +517,11 @@ static inline void a6m_pack_i1_to_i4_line_lut(const uint8_t *src_row,
 static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t y,
                           const struct display_buffer_descriptor *desc, const void *buf)
 {
-    const a6n_config *cfg    = dev->config;
-    a6n_data         *data   = dev->data;
-    const uint16_t         width  = desc->width;  
-    const uint16_t         height = desc->height;  
-    const uint16_t         pitch  = desc->pitch;  /* 源缓冲每行像素（通常=width）; Source buffer pixels per line (usually = width) */
+    const a6n_config *cfg = dev->config;
+    a6n_data *data = dev->data;
+    const uint16_t width  = desc->width;  
+    const uint16_t height = desc->height;  
+    const uint16_t pitch  = desc->pitch;  /* 源缓冲每行像素（通常=width）; Source buffer pixels per line (usually = width) */
 
     if (x != 0) 
     {
@@ -433,26 +558,58 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
     tx[2] = (uint8_t)((A6N_LCD_CMD_REG >>  8) & 0xFF);
     tx[3] = (uint8_t)( A6N_LCD_CMD_REG        & 0xFF);
 
-    /* 逐行 LUT 转换 → I4 行（不足 320B 的右侧补 0） */
-    // Line-by-line LUT conversion → I4 line (right side of less than 320B is filled with 0)
-    for (uint16_t row = 0; row < height; row++) 
-    {
-        const uint8_t *src_row = src      + (uint32_t)row * src_stride_bytes;
-        uint8_t       *dst_row = dst_base + (uint32_t)row * i4_bytes_per_ln;
-
-        /* 先清整行，确保右侧补零 */
-        // First clear the entire line to ensure that the right side is filled with zeros
-        memset(dst_row, 0x00, i4_bytes_per_ln);
-
-        /* 把本区域 width 像素打包到行左侧（单位：像素），两像素/字节 */
-        // Pack the width pixels of this area to the left side of the line (unit: pixel), two pixels/byte
-        a6m_pack_i1_to_i4_line_lut(src_row, width, dst_row);
-    }
-
     const uint32_t payload_bytes = (uint32_t)height * (uint32_t)i4_bytes_per_ln;
     const uint32_t bytes_to_send = 4U + payload_bytes;
+    int ret = 0;
+    int8_t sw_depth = s_software_depth_offset;
 
-    int ret = a6n_transmit_all(dev, tx, bytes_to_send, 1);
+    if (sw_depth == 0)
+    {
+        /* 逐行 LUT 转换 → I4 行（不足 320B 的右侧补 0） */
+        for (uint16_t row = 0; row < height; row++)
+        {
+            const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
+            uint8_t *dst_row = dst_base + (uint32_t)row * i4_bytes_per_ln;
+            memset(dst_row, 0x00, i4_bytes_per_ln);
+            a6m_pack_i1_to_i4_line_lut(src_row, width, dst_row);
+        }
+        ret = a6n_transmit_all(dev, tx, bytes_to_send, 1);
+    }
+    else
+    {
+        uint8_t shifted_row[(SCREEN_WIDTH + 7U) / 8U];
+        /*
+         * 双目视差: 几何上左眼应略向右、右眼略向左(或相反)才能合像。
+         * 面板侧全程使能水平镜像(MIRROR_HORZ)时，帧缓冲里的“左移/右移”在视网膜上的符号会与直觉相反，
+         * 因此这里对左右眼的 dx 取反，使 display depth 的正负与远近体感一致。
+         */
+        const int16_t dx_left = (int16_t)(-sw_depth);
+        const int16_t dx_right = (int16_t)sw_depth;
+
+        /* Left eye frame */
+        for (uint16_t row = 0; row < height; row++)
+        {
+            const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
+            uint8_t *dst_row = dst_base + (uint32_t)row * i4_bytes_per_ln;
+            memset(dst_row, 0x00, i4_bytes_per_ln);
+            mono_shift_row(src_row, width, dx_left, shifted_row);
+            a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
+        }
+        ret = a6n_transmit_side(dev, tx, bytes_to_send, 1, true);
+        if (ret == 0)
+        {
+            /* Right eye frame */
+            for (uint16_t row = 0; row < height; row++)
+            {
+                const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
+                uint8_t *dst_row = dst_base + (uint32_t)row * i4_bytes_per_ln;
+                memset(dst_row, 0x00, i4_bytes_per_ln);
+                mono_shift_row(src_row, width, dx_right, shifted_row);
+                a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
+            }
+            ret = a6n_transmit_side(dev, tx, bytes_to_send, 1, false);
+        }
+    }
     #if 0//TEST LOG
     const int64_t t0 = k_uptime_get();
     ret              = a6n_transmit_all(dev, tx, bytes_to_send, 1);
@@ -474,6 +631,22 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
     return 0;
 }
 #endif
+
+int a6n_set_software_depth_offset(int8_t offset)
+{
+    if (offset < -16 || offset > 16)
+    {
+        return -EINVAL;
+    }
+    s_software_depth_offset = offset;
+    LOG_INF("A6N software depth offset set: %d px", offset);
+    return 0;
+}
+
+int8_t a6n_get_software_depth_offset(void)
+{
+    return s_software_depth_offset;
+}
 static int a6n_read(struct device *dev, int x, int y, const struct display_buffer_descriptor *desc, void *buf)
 {
     return -ENOTSUP;

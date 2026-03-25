@@ -135,6 +135,7 @@ void protobuf_toggle_charging_state(void);
 uint32_t protobuf_get_brightness_level(void);
 
 void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig *config);
+void protobuf_process_display_distance_config(const mentraos_ble_DisplayDistanceConfig *config);
 
 /**
  * @brief Set brightness level and update LED 3

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-02-05 14:53:31
- * @LastEditTime : 2026-03-23 17:53:04
+ * @LastEditTime : 2026-03-25 14:17:00
  * @FilePath     : mos_binfont_lvgl.c
  * @Description  :
  *
@@ -101,6 +101,47 @@ static const struct flash_area *s_fa;
 static bool s_initialized = false;
 static size_t s_font_size_limit;
 static bool s_use_xip;
+/* Suppress duplicate "adv_w < box_w" warnings for the same glyph after one report.
+ * 抑制同一字形的重复 "adv_w < box_w" 告警，避免日志刷屏。 */
+#define ADV_W_GUARD_WARN_CACHE_SIZE 32
+typedef struct
+{
+    uint32_t unicode;
+    uint16_t glyph_id;
+    uint16_t adv_w;
+    uint16_t min_adv_w;
+    bool valid;
+} adv_guard_warn_cache_t;
+static adv_guard_warn_cache_t s_adv_guard_warn_cache[ADV_W_GUARD_WARN_CACHE_SIZE];
+static uint8_t s_adv_guard_warn_cache_next = 0;
+
+static void adv_guard_warn_cache_reset(void)
+{
+    memset(s_adv_guard_warn_cache, 0, sizeof(s_adv_guard_warn_cache));
+    s_adv_guard_warn_cache_next = 0;
+}
+
+static bool adv_guard_warn_should_log(uint32_t unicode, uint16_t glyph_id, uint16_t adv_w, uint16_t min_adv_w)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(s_adv_guard_warn_cache); i++)
+    {
+        if (s_adv_guard_warn_cache[i].valid && s_adv_guard_warn_cache[i].unicode == unicode
+            && s_adv_guard_warn_cache[i].glyph_id == glyph_id && s_adv_guard_warn_cache[i].adv_w == adv_w
+            && s_adv_guard_warn_cache[i].min_adv_w == min_adv_w)
+        {
+            return false;
+        }
+    }
+
+    adv_guard_warn_cache_t *slot = &s_adv_guard_warn_cache[s_adv_guard_warn_cache_next];
+    slot->unicode = unicode;
+    slot->glyph_id = glyph_id;
+    slot->adv_w = adv_w;
+    slot->min_adv_w = min_adv_w;
+    slot->valid = true;
+    s_adv_guard_warn_cache_next = (uint8_t)((s_adv_guard_warn_cache_next + 1U) % ADV_W_GUARD_WARN_CACHE_SIZE);
+    return true;
+}
 
 /* Boot default language/size comes from Kconfig (prj.conf); runtime changes only via mos_binfont_switch_language().
  * Welcome screen and other UI share one active font; refresh will not force-reset to Kconfig defaults.
@@ -257,7 +298,6 @@ static int mem_read_bits_signed(mem_bit_iter_t *it, int n_bits, int *err)
 #endif
 /* 512 B covers A8 bitmaps up to ~22×23 px; 18 px CJK uses ~324 B */
 #define GLYPH_CACHE_BMP_BYTES 512
-
 typedef struct
 {
     bool valid;
@@ -274,7 +314,7 @@ typedef struct
     uint8_t bmp[GLYPH_CACHE_BMP_BYTES];
 } glyph_cache_t;
 
-static glyph_cache_t s_gcache[GLYPH_CACHE_SLOTS];
+static glyph_cache_t s_gcache[GLYPH_CACHE_SLOTS]; /* LRU cache of decoded glyphs */
 static uint8_t s_gcache_lru; /* monotonic 8-bit counter; wraps are fine */
 static int s_pinned_slot = -1; /* slot in use by the current draw call */
 /* forward declaration: callbacks above need address comparison */
@@ -564,8 +604,7 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
     memset(dsc_out, 0, sizeof(*dsc_out));
 
     /* === Cache hit: zero flash reads === */
-    int cslot = gcache_find(
-        unicode);  // Search by Unicode first to avoid cache miss when one glyph ID maps to multiple Unicode points.
+    int cslot = gcache_find(unicode);  // Search by Unicode first to avoid cache miss when one glyph ID maps to multiple Unicode points.
     if (cslot >= 0)
     {
         glyph_cache_t *e = &s_gcache[cslot];
@@ -680,8 +719,7 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
     else
     {
         uint16_t adv_w_from_glyph = (uint16_t)mem_read_bits(&bit_it, s_font_header.advance_width_bits, &err);
-        if (err)
-            return false;
+        if (err) return false;
         LOG_DBG("U+%04X gid=%u: read adv_w_from_glyph=%u from %u bits", unicode, glyph_id, adv_w_from_glyph,
                 s_font_header.advance_width_bits);
 
@@ -708,11 +746,6 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
         return false;
     }
 
-    /* advance_width_format follows lv_font_conv/lib/font/font.js:
-     * 0 => widthToInt = round(px), glyph stores integer-pixel advance.
-     * 1 => widthToInt = round(px*16), glyph stores FP4 (1/16 pixel) advance.
-     * Wrong interpretation causes huge adv values and broken wrapping.
-     * advance_width_format语义与官方一致，解释错误会导致换行/高度异常。 */
     if (s_font_header.advance_width_format == 1)
     {
         const uint16_t raw_fp4 = adv_w;
@@ -723,9 +756,9 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
         }
         LOG_DBG("U+%04X gid=%u: adv FP4 raw=%u -> px=%u", unicode, glyph_id, (unsigned)raw_fp4, (unsigned)adv_w);
     }
-    /* format=0: already in pixels, no scaling / 已是像素无需缩放 */
-    /* format=2/3: reserved / 预留 */
 
+     /* Maximum guard: advance_width should not be unreasonably larger than font_size (e.g. due to corrupted data)
+      * 最大值防护：advance_width不应远大于font_size（如数据异常导致） */
     {
         const uint16_t max_adv = (uint16_t)(s_font_header.font_size * 6U);
         if (max_adv > 0U && adv_w > max_adv)
@@ -738,10 +771,13 @@ static bool mos_binfont_get_glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t
 
     /* Minimum guard: advance_width should not be smaller than box_w / 最小值防护 */
     uint16_t min_adv_w = box_w;
-    if (adv_w < min_adv_w)
+    if (adv_w < min_adv_w)/* 如果adv_w小于min_adv_w，则设置为min_adv_w*/
     {
-        LOG_WRN("U+%04X gid=%u: adv_w %u < min %u (box_w=%u), setting to %u", unicode, glyph_id, adv_w, min_adv_w,
-                box_w, min_adv_w);
+        if (adv_guard_warn_should_log(unicode, glyph_id, adv_w, min_adv_w))
+        {
+            LOG_WRN("U+%04X gid=%u: adv_w %u < min %u (box_w=%u), setting to %u", unicode, glyph_id, adv_w, min_adv_w,
+                    box_w, min_adv_w);
+        }
         adv_w = min_adv_w;
     }
 
@@ -1215,6 +1251,9 @@ static int mos_binfont_lvgl_init_with_partition(uint8_t partition_id)
         LOG_DBG("Already initialized with partition %d", partition_id);
         return 0;
     }
+
+    /* Switching partitions changes metrics; clear per-glyph warning cache. */
+    adv_guard_warn_cache_reset();
 
     /* If initialized with different partition, clean up first / 不同分区先清理 */
     if (s_initialized)
