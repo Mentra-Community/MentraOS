@@ -7,12 +7,22 @@
  * Compile-time firmware blob switches (set to 1 to include in image):
  * GX8002_FIRMWARE_ENABLE_V09: v09 blob (~97KB FLASH). Default 0 = excluded to save FLASH.
  * GX8002_FIRMWARE_ENABLE_V08: v08 blob (~97KB FLASH). Default 0 = excluded.
+ * GX8002_UPGRADE_ENABLE: generic upgrade switch. Default auto-derived:
+ *   1 when either V09 or V08 is enabled, otherwise 0.
  */
 #ifndef GX8002_FIRMWARE_ENABLE_V09
 #define GX8002_FIRMWARE_ENABLE_V09 0
 #endif
 #ifndef GX8002_FIRMWARE_ENABLE_V08
 #define GX8002_FIRMWARE_ENABLE_V08 0
+#endif
+
+#ifndef GX8002_UPGRADE_ENABLE
+#if GX8002_FIRMWARE_ENABLE_V09 || GX8002_FIRMWARE_ENABLE_V08
+#define GX8002_UPGRADE_ENABLE 1
+#else
+#define GX8002_UPGRADE_ENABLE 0
+#endif
 #endif
 
 // 第1个固件数组（v09）：由 GX8002_FIRMWARE_ENABLE_V09 控制是否编入镜像

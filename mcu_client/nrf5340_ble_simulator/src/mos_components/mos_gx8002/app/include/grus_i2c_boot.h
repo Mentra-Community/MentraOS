@@ -2,6 +2,11 @@
 #define _GRUS_I2C_BOOT_H_
 
 #include <stdint.h>
+#include "gx8002_firmware_data.h"
+
+/* Boot blob follows the generic upgrade switch by default.
+ * Override GX8002_UPGRADE_ENABLE from build flags when needed. */
+#if GX8002_UPGRADE_ENABLE
 
 const uint8_t grus_i2c_boot[] = {
   0x02, 0x80, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00,
@@ -3754,5 +3759,11 @@ const uint8_t grus_i2c_boot[] = {
   0x00, 0x00, 0x00, 0x00
 };
 const uint32_t grus_i2c_boot_len = 44968;
+
+#else
+/* Keep symbols available while excluding the large boot blob from Flash. */
+const uint8_t grus_i2c_boot[] = {0x00};
+const uint32_t grus_i2c_boot_len = 0;
+#endif
 
 #endif /* _GRUS_I2C_BOOT_H_ */

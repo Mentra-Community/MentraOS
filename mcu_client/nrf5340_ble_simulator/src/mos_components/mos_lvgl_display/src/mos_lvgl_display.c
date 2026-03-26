@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-03-23 19:11:35
+ * @LastEditTime : 2026-03-26 16:57:07
  * @FilePath     : mos_lvgl_display.c
  * @Description  :
  *
@@ -258,9 +258,22 @@ static volatile bool lvgl_force_one_refresh = false; /* Force one refresh on nex
 static uint32_t lvgl_min_refresh_ms = 10;
 static volatile bool lvgl_freeze_refresh = false;
 static K_MUTEX_DEFINE(s_pending_protobuf_text_lock);
-static char s_pending_protobuf_text[MAX_TEXT_LEN + 1];
 static bool s_pending_protobuf_text_valid = false;
 static bool s_pending_protobuf_text_notify_pending = false;
+static uint32_t s_pending_protobuf_arrival_ms = 0U;
+static uint32_t s_protobuf_last_apply_ms = 0U;
+static bool s_last_committed_protobuf_text_valid = false;
+
+#define PROTOBUF_TEXT_MAX_CHARS 768U
+#define PROTOBUF_TEXT_THROTTLE_MS 150U
+static char s_pending_protobuf_text_big[PROTOBUF_TEXT_MAX_CHARS];
+static char s_last_committed_protobuf_text_big[PROTOBUF_TEXT_MAX_CHARS];
+/* Throttle validation counters (printed once per second during traffic). */
+static uint32_t s_pt_stats_window_start_ms = 0U;
+static uint32_t s_pt_rx_count = 0U;
+static uint32_t s_pt_commit_count = 0U;
+static uint32_t s_pt_throttle_skip_count = 0U;
+static uint32_t s_pt_dedup_skip_count = 0U;
 
 #define PROTOBUF_GBK_LABEL_POOL_SIZE 256
 static lv_obj_t *s_protobuf_gbk_label_pool[PROTOBUF_GBK_LABEL_POOL_SIZE];
@@ -286,6 +299,8 @@ static struct k_work_delayable welcome_battery_work;
 /* Forward declaration for k_work_init_delayable.
  * 前向声明，供 k_work_init_delayable 使用。 */
 static void welcome_battery_work_handler(struct k_work *work);
+/* Forward declaration for protobuf throttle telemetry helper. */
+static void protobuf_text_log_throttle_stats_if_due(void);
 
 void lv_example_scroll_text(void)
 {
@@ -529,21 +544,37 @@ void display_update_protobuf_text(const char *text_content)
     log_display_text_payload_diag(text_content);
 #endif
 
-    /* Safely copy text with bounds checking.
-     * 安全拷贝文本并做边界检查。 */
+    /* Copy into big pending slot (protobuf-only). */
     size_t text_len = strlen(text_content);
-    if (text_len > MAX_TEXT_LEN)
+    if (text_len >= PROTOBUF_TEXT_MAX_CHARS)
     {
-        text_len = MAX_TEXT_LEN;
-        LOG_WRN("Protobuf text truncated to %d chars", MAX_TEXT_LEN);
+        text_len = PROTOBUF_TEXT_MAX_CHARS - 1U;
+        LOG_WRN("Protobuf text truncated to %u chars", (unsigned int)(PROTOBUF_TEXT_MAX_CHARS - 1U));
     }
 
     bool should_notify = false;
+    s_pt_rx_count++;
+    protobuf_text_log_throttle_stats_if_due();
 
     k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
-    strncpy(s_pending_protobuf_text, text_content, text_len);
-    s_pending_protobuf_text[text_len] = '\0'; /* Ensure NUL termination / 保证 NUL 结尾 */
+    /* De-dupe against pending and last committed to avoid needless wakeups. */
+    if (s_pending_protobuf_text_valid && strcmp(s_pending_protobuf_text_big, text_content) == 0)
+    {
+        s_pt_dedup_skip_count++;
+        k_mutex_unlock(&s_pending_protobuf_text_lock);
+        return;
+    }
+    if (s_last_committed_protobuf_text_valid && strcmp(s_last_committed_protobuf_text_big, text_content) == 0)
+    {
+        s_pt_dedup_skip_count++;
+        k_mutex_unlock(&s_pending_protobuf_text_lock);
+        return;
+    }
+
+    memcpy(s_pending_protobuf_text_big, text_content, text_len);
+    s_pending_protobuf_text_big[text_len] = '\0';
     s_pending_protobuf_text_valid = true;
+    s_pending_protobuf_arrival_ms = k_uptime_get_32();
     if (!s_pending_protobuf_text_notify_pending)
     {
         s_pending_protobuf_text_notify_pending = true;
@@ -2060,7 +2091,7 @@ static bool protobuf_text_take_latest(char *out_text, size_t out_size)
     k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
     if (s_pending_protobuf_text_valid)
     {
-        strncpy(out_text, s_pending_protobuf_text, out_size - 1U);
+        strncpy(out_text, s_pending_protobuf_text_big, out_size - 1U);
         out_text[out_size - 1U] = '\0';
         s_pending_protobuf_text_valid = false;
         has_text = true;
@@ -2069,6 +2100,112 @@ static bool protobuf_text_take_latest(char *out_text, size_t out_size)
     k_mutex_unlock(&s_pending_protobuf_text_lock);
 
     return has_text;
+}
+static bool protobuf_text_peek_latest(char *out_text, size_t out_size, uint32_t *out_arrival_ms)
+{
+    bool has_text = false;
+
+    if (!out_text || out_size == 0U)
+    {
+        return false;
+    }
+
+    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
+    if (s_pending_protobuf_text_valid)
+    {
+        strncpy(out_text, s_pending_protobuf_text_big, out_size - 1U);
+        out_text[out_size - 1U] = '\0';
+        if (out_arrival_ms != NULL)
+        {
+            *out_arrival_ms = s_pending_protobuf_arrival_ms;
+        }
+        has_text = true;
+    }
+    k_mutex_unlock(&s_pending_protobuf_text_lock);
+
+    return has_text;
+}
+
+static bool protobuf_text_should_commit(const char *candidate_text)
+{
+    if (candidate_text == NULL)
+    {
+        return false;
+    }
+    if (!s_last_committed_protobuf_text_valid)
+    {
+        return true;
+    }
+    return (strcmp(candidate_text, s_last_committed_protobuf_text_big) != 0);
+}
+
+
+static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_text_size, bool schedule_retry_if_throttled)
+{
+    uint32_t pending_arrival_ms = 0U;
+    bool has_pending = protobuf_text_peek_latest(latest_text, latest_text_size, &pending_arrival_ms);
+    if (!has_pending)
+    {
+        return false;
+    }
+
+    uint32_t now_ms = k_uptime_get_32();
+    uint32_t elapsed_ms = now_ms - s_protobuf_last_apply_ms;
+    uint32_t age_ms = now_ms - pending_arrival_ms;
+    bool throttle_ready = !s_protobuf_last_apply_ms 
+                        || (elapsed_ms >= PROTOBUF_TEXT_THROTTLE_MS && age_ms >= PROTOBUF_TEXT_THROTTLE_MS);
+
+    if (throttle_ready)
+    {
+        if (protobuf_text_should_commit(latest_text)
+            && protobuf_text_take_latest(latest_text, latest_text_size))
+        {
+            update_protobuf_text_content(latest_text);
+            s_pt_commit_count++;
+            strncpy(s_last_committed_protobuf_text_big, latest_text, PROTOBUF_TEXT_MAX_CHARS - 1U);
+            s_last_committed_protobuf_text_big[PROTOBUF_TEXT_MAX_CHARS - 1U] = '\0';
+            s_last_committed_protobuf_text_valid = true;
+            s_protobuf_last_apply_ms = k_uptime_get_32();
+            return true;
+        }
+
+        s_pt_dedup_skip_count++;
+        return false;
+    }
+
+    s_pt_throttle_skip_count++;
+    if (schedule_retry_if_throttled)
+    {
+        /* No new wakeup may arrive; schedule a retry. */
+        display_cmd_t retry_cmd = {.type = LCD_CMD_UPDATE_PROTOBUF_TEXT};
+        (void)mos_msgq_send(&lvgl_display_msgq, &retry_cmd, (int64_t)PROTOBUF_TEXT_THROTTLE_MS);
+    }
+    return false;
+}
+
+static void protobuf_text_log_throttle_stats_if_due(void)
+{
+    uint32_t now_ms = k_uptime_get_32();
+    if (s_pt_stats_window_start_ms == 0U)
+    {
+        s_pt_stats_window_start_ms = now_ms;
+        return;
+    }
+
+    uint32_t elapsed_ms = now_ms - s_pt_stats_window_start_ms;
+    if (elapsed_ms < 1000U)
+    {
+        return;
+    }
+
+    // LOG_INF("[PT150] rx/s=%u commit/s=%u throttle_skip/s=%u dedup_skip/s=%u window=%ums", s_pt_rx_count,
+    //         s_pt_commit_count, s_pt_throttle_skip_count, s_pt_dedup_skip_count, elapsed_ms);
+
+    s_pt_stats_window_start_ms = now_ms;
+    s_pt_rx_count = 0U;
+    s_pt_commit_count = 0U;
+    s_pt_throttle_skip_count = 0U;
+    s_pt_dedup_skip_count = 0U;
 }
 
 static lv_obj_t *protobuf_gbk_acquire_label(lv_obj_t *parent, size_t index)
@@ -2753,7 +2890,8 @@ static void show_gbk_test_text(void)
         lv_obj_set_style_bg_opa(gbk_screen, LV_OPA_COVER, 0);
     }
 
-    /* show_test_pattern 可能已删掉 gbk_screen 子控件并把 gbk_test_label 置 NULL / May be cleared after pattern switch */
+    /* show_test_pattern 可能已删掉 gbk_screen 子控件并把 gbk_test_label 置 NULL / May be cleared after pattern switch
+     */
     if (!gbk_test_label)
     {
         printk("GBK_TEST: create label\r\n");
@@ -2946,7 +3084,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     break;
                 case LCD_CMD_UPDATE_PROTOBUF_TEXT:
                 {
-                    char latest_text[MAX_TEXT_LEN + 1];
+                    static char latest_text[PROTOBUF_TEXT_MAX_CHARS];
 
                     /* 队列中的 UPDATE_PROTOBUF_TEXT 只作为唤醒事件，正文统一从 pending 槽取最新值。 */
                     display_cmd_t next;
@@ -2958,18 +3096,15 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                         }
                         else
                         {
-                            if (protobuf_text_take_latest(latest_text, sizeof(latest_text)))
-                            {
-                                update_protobuf_text_content(latest_text);
-                            }
+                            (void)protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), false);
                             cmd = next;
+                            protobuf_text_log_throttle_stats_if_due();
                             goto reenter_switch;
                         }
                     }
-                    if (protobuf_text_take_latest(latest_text, sizeof(latest_text)))
-                    {
-                        update_protobuf_text_content(latest_text);
-                    }
+
+                    (void)protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), true);
+                    protobuf_text_log_throttle_stats_if_due();
                     break;
                 }
                 case LCD_CMD_UPDATE_XY_TEXT:
@@ -3016,8 +3151,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     LOG_INF("📱 Welcome screen shown (BLE disconnected)");
                     break;
                 case LCD_CMD_UPDATE_DFU_PROGRESS:
-                    /* 显示/隐藏并更新 DFU 进度条：前景条宽度 = 百分比，随 % 滑动 | Progress bar: fill width = percent
-                     */
+                    // 显示/隐藏并更新 DFU 进度条：前景条宽度 = 百分比，随 % 滑动 | Progress bar: fill width = percent
                     if (dfu_progress_bar != NULL && dfu_progress_fill != NULL)
                     {
                         if (cmd.p.dfu_progress.show)
@@ -3053,11 +3187,12 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     }
                     break;
                 case LCD_CMD_CLEAR_DISPLAY:
-                    /* 正在显示 BLE/文案时不执行硬件清屏，避免"先显示→被 ClearDisplay 擦黑→约 1s 后又显示"的闪烁 */
-                    if (welcome_screen_active)
+                    if (!welcome_screen_active)
                     {
                         a6n_clear_screen(false);
                     }
+                    lvgl_force_one_refresh = true;
+                    lv_obj_invalidate(lv_screen_active());
                     break;
                 case LCD_CMD_CLOSE:
                     if (get_display_onoff())
