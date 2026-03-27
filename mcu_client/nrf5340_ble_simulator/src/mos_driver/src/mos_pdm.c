@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-07-31 10:40:40
- * @LastEditTime : 2026-03-04 16:57:28
+ * @LastEditTime : 2026-03-27 14:08:05
  * @FilePath     : mos_pdm.c
  * @Description  :
  *
@@ -28,6 +28,7 @@ static int16_t        pdm_hw_buf[2][PDM_PCM_FRAME_SAMPLES];
 static uint8_t        pdm_fill_idx = 0;  // 下次填充给 PDM 的 hw buf 索引; next index to fill PDM hw buffer
 static const uint32_t pdm_frame_samples = PDM_PCM_FRAME_SAMPLES;
 static const uint32_t pdm_frame_bytes   = PDM_PCM_FRAME_BYTES;
+/* Default to stereo mixed input: (L + R) / 2. */
 static pdm_channel_t  pdm_current_channel = PDM_CHANNEL_STEREO_MIXED;
 static bool           pdm_initialized     = false;
 static bool           pdm_running         = false;
@@ -35,7 +36,7 @@ static bool           pdm_running         = false;
 static volatile uint8_t fifo_head = 0;  // 写指针（中断用）;write pointer (used in interrupt)
 static volatile uint8_t fifo_tail = 0;  // 读指针（上层用）;read pointer (used in upper layer)
 
-#ifdef CONFIG_NRFX_PDM
+#if defined(CONFIG_NRFX_PDM0) || defined(CONFIG_NRFX_PDM)
 
 //==============================================================================================
 #define NRF_GPIO_PIN_MAP(port, pin) (((port) << 5) | ((pin) & 0x1F))

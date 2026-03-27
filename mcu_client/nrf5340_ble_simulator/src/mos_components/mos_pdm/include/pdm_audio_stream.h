@@ -15,6 +15,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Shell-only path: decode LC3 and play on I2S (local loopback). Set to 1 temporarily for bench debug. */
+#ifndef CONFIG_PDM_SHELL_I2S_LOOPBACK
+#define CONFIG_PDM_SHELL_I2S_LOOPBACK 0
+#endif
+
 /* PDM channel selection for mixer (left/right/stereo-mix) */
 typedef enum
 {
@@ -93,12 +98,15 @@ void pdm_audio_stream_get_stats(uint32_t* frames_captured, uint32_t* frames_enco
  * @brief Enable/disable I2S audio output (loopback playback)
  * 启用/禁用I2S音频输出（环回播放）
  *
+ * When CONFIG_PDM_SHELL_I2S_LOOPBACK is 0, returns -ENOTSUP (no decode/I2S path compiled in).
+ *
  * @param enabled true to enable I2S playback, false to disable
  * @return 0 on success, negative error code on failure
  */
 int  pdm_audio_set_i2s_output(bool enabled);
 bool pdm_audio_get_i2s_output(void);
 
+/** Present for linking; returns -ENOTSUP when CONFIG_PDM_SHELL_I2S_LOOPBACK is 0. */
 int lc3_decoder_start(void);
 int lc3_decoder_stop(void);
 

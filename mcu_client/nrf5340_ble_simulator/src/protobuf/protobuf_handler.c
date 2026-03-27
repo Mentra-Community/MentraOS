@@ -40,6 +40,7 @@
 
 #include "protobuf_handler.h"
 
+#include <errno.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 #include <stdio.h>
@@ -53,10 +54,11 @@
 #include "main.h"
 #include "mos_ble_service.h"
 #include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
-#include "mos_gx8002.h"
-#include "mos_i2s_slave.h"
+// #include "mos_gx8002.h"         // VAD path kept for quick rollback
+// #include "mos_i2s_slave.h"      // VAD path kept for quick rollback
+#include "pdm_audio_stream.h"
 #include "proto/mentraos_ble.pb.h"
-#include "vad_interrupt_handler.h"
+// #include "vad_interrupt_handler.h"  // VAD path kept for quick rollback
 
 LOG_MODULE_REGISTER(protobuf_handler, LOG_LEVEL_DBG);
 
@@ -74,6 +76,8 @@ static bool auto_brightness_enabled = false;
 
 // Audio streaming error counter
 static uint32_t streaming_errors = 0;
+static bool mic_state_applied_valid = false;
+static bool mic_state_applied_enabled = false;
 
 // **NEW: Ping/Pong connectivity monitoring**
 // (Glasses send periodic pings to phone, phone responds with pongs)
@@ -1056,40 +1060,48 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
 
     bool enabled = mic_state->enabled;
 
-    bool was_enabled = vad_interrupt_handler_is_enabled();
-    bool was_streaming = vad_interrupt_handler_is_i2s_active();
-    LOG_INF("[PROTOBUF] MicStateConfig %s->%s i2s=%s", was_enabled ? "ON" : "OFF", enabled ? "ON" : "OFF",
-            was_streaming ? "ACTIVE" : "INACTIVE");
+    if (mic_state_applied_valid && mic_state_applied_enabled == enabled)
+    {
+        return;
+    }
 
-    int ret = 0;
-    vad_interrupt_handler_set_enabled(enabled);
-    if (enabled)
-    {
-        ret = mos_gx8002_vad_int_re_enable();
-    }
-    else
-    {
-        int vad_disable_ret = mos_gx8002_vad_int_disable();
-        int stop_ret = gx8002_i2s_stop();
-        (void)mos_gx8002_disable_i2s(); /* best-effort: GX8002 I2C disable may fail if I2S was never started */
-        if (vad_disable_ret != 0)
-        {
-            ret = vad_disable_ret;
-        }
-        else if (stop_ret != 0)
-        {
-            ret = stop_ret;
-        }
-        /* Do not treat GX8002 I2C disable failure as fatal: local pipeline is already stopped */
-    }
+    // bool was_enabled = vad_interrupt_handler_is_enabled();
+    // bool was_streaming = vad_interrupt_handler_is_i2s_active();
+    // LOG_INF("[PROTOBUF] MicStateConfig %s->%s i2s=%s", was_enabled ? "ON" : "OFF", enabled ? "ON" : "OFF",
+    //         was_streaming ? "ACTIVE" : "INACTIVE");
+    //
+    // int ret = 0;
+    // vad_interrupt_handler_set_enabled(enabled);
+    // if (enabled)
+    // {
+    //     ret = mos_gx8002_vad_int_re_enable();
+    // }
+    // else
+    // {
+    //     int vad_disable_ret = mos_gx8002_vad_int_disable();
+    //     int stop_ret = gx8002_i2s_stop();
+    //     (void)mos_gx8002_disable_i2s(); /* best-effort: GX8002 I2C disable may fail if I2S was never started */
+    //     if (vad_disable_ret != 0)
+    //     {
+    //         ret = vad_disable_ret;
+    //     }
+    //     else if (stop_ret != 0)
+    //     {
+    //         ret = stop_ret;
+    //     }
+    //     /* Do not treat GX8002 I2C disable failure as fatal: local pipeline is already stopped */
+    // }
+
+    int ret = pdm_audio_stream_set_enabled(enabled);
 
     if (ret == 0 || ret == -EALREADY)
     {
-        LOG_INF("[PROTOBUF] MicState applied state=%s", enabled ? "ON" : "OFF");
+        mic_state_applied_valid = true;
+        mic_state_applied_enabled = enabled;
     }
     else
     {
-        LOG_ERR("[PROTOBUF] MicState apply failed err=%d", ret);
+        LOG_ERR("[MIC_CTRL] Apply FAIL req=%s err=%d", enabled ? "ON" : "OFF", ret);
         streaming_errors++;
     }
 }

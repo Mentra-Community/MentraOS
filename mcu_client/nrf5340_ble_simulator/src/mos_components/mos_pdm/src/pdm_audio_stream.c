@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-17 15:30:32
- * @LastEditTime : 2026-03-03 18:05:36
+ * @LastEditTime : 2026-03-27 14:09:41
  * @FilePath     : pdm_audio_stream.c
  * @Description  :
  *
@@ -18,7 +18,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 #include "mos_i2s_master.h"
+#endif
 #include "mos_ble_service.h"
 #include "sw_codec_lc3.h"
 
@@ -27,11 +29,12 @@ int enable_audio_system(bool enable);
 #define TASK_PDM_AUDIO_THREAD_PRIORITY 5
 static bool audio_system_enabled = false;
 
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 /* Runtime control for I2S output (can be toggled via shell) */
-/* 运行时I2S输出控制（可通过shell切换） */
 static bool i2s_output_enabled = false;
+#endif
 
-LOG_MODULE_REGISTER(pdm_audio_stream, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(pdm_audio_stream, LOG_LEVEL_INF);
 extern int ble_send_data(const uint8_t *data, uint16_t len);
 extern uint16_t get_ble_payload_mtu(void);
 // Simple audio streaming state
@@ -41,9 +44,16 @@ static uint32_t streaming_errors   = 0;  /* Count of streaming errors / 流传�
 static uint32_t frames_transmitted = 0;  /* Count of transmitted frames / 已传输帧计数 */
 static uint32_t frames_captured    = 0;  /* Count of captured frames / 已采集帧计数 */
 static uint32_t frames_encoded     = 0;  /* Count of encoded frames / 已编码帧计数 */
-static uint32_t frames_decoded     = 0;  /* Count of decoded frames for I2S / I2S 已解码帧计数 */
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
+static uint32_t frames_decoded = 0; /* LC3 decode frames fed to I2S (loopback only) */
+#endif
+static uint32_t packets_transmitted = 0; /* Count of BLE audio packets / BLE音频包计数 */
+static uint32_t packets_send_fail   = 0; /* Count of BLE send failures / BLE发送失败计数 */
 static uint16_t pcm_bytes_req_enc;
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 static bool lc3_decoder_active = false;
+#endif
+
 // Mock audio processing thread
 static K_THREAD_STACK_DEFINE(audio_thread_stack, 1024 * 4);
 static struct k_thread audio_thread_data;
@@ -150,10 +160,30 @@ static int apply_fade_linear_q15(int16_t *buf, size_t n)
     return 0;
 }
 
-/* ---- 简易滤波器：DC阻断 + 低通平均 ---- */
+/* ---- Mic filter chain: HP -> LP -> noise gate -> makeup gain ---- */
 static int32_t dc_prev_in = 0;
 static int32_t dc_prev_out = 0;
 static int32_t lp_prev_out = 0;
+
+#ifndef MIC_HP_ALPHA_Q15
+/* 0.975 @16kHz -> suppresses <~60Hz rumble/DC drift */
+#define MIC_HP_ALPHA_Q15 31949
+#endif
+
+#ifndef MIC_LP_BETA_Q15
+/* ~0.55 one-pole LP @16kHz -> reduces hiss while keeping speech */
+#define MIC_LP_BETA_Q15 18022
+#endif
+
+#ifndef MIC_NOISE_FLOOR
+/* Gate threshold in PCM LSB units */
+#define MIC_NOISE_FLOOR 900
+#endif
+
+#ifndef MIC_MAKEUP_GAIN_Q15
+/* 1.35x */
+#define MIC_MAKEUP_GAIN_Q15 44237
+#endif
 
 static inline void reset_mic_filters(void)
 {
@@ -164,14 +194,28 @@ static inline void reset_mic_filters(void)
 
 static inline int16_t apply_mic_filters(int16_t sample)
 {
-    const int32_t alpha_q15 = 32512; /* ≈0.995 */
+    const int32_t alpha_q15 = MIC_HP_ALPHA_Q15;
+    const int32_t lp_beta_q15 = MIC_LP_BETA_Q15;
     int32_t x = sample;
-    int32_t y = x - dc_prev_in + ((alpha_q15 * dc_prev_out) >> 15);
+    int32_t hp = x - dc_prev_in + ((alpha_q15 * dc_prev_out) >> 15);
     dc_prev_in = x;
-    dc_prev_out = y;
+    dc_prev_out = hp;
 
-    lp_prev_out += (y - lp_prev_out) >> 3; /* 一阶低通 */
+    lp_prev_out += (int32_t)(((int64_t)lp_beta_q15 * (hp - lp_prev_out)) >> 15);
     int32_t filtered = lp_prev_out;
+
+    int32_t a = (filtered >= 0) ? filtered : -filtered;
+    if (a <= MIC_NOISE_FLOOR)
+    {
+        filtered = 0;
+    }
+    else
+    {
+        int32_t sign = (filtered >= 0) ? 1 : -1;
+        int32_t above = a - MIC_NOISE_FLOOR;
+        int32_t lifted = (int32_t)(((int64_t)above * MIC_MAKEUP_GAIN_Q15) >> 15);
+        filtered = sign * lifted;
+    }
 
     if (filtered > 32767)
     {
@@ -239,17 +283,10 @@ static inline size_t mix_frame_to_mono(const int16_t *input_frame, size_t input_
 
 static inline uint8_t get_frames_per_packet(void)
 {
-    // 可用空间 = MTU - 包头（type+stream_id）;
-    // Available space = MTU - packet header (type + stream_id)
-    uint16_t payload_space = get_ble_payload_mtu() - BLE_AUDIO_HDR_LEN - STREAM_ID_LEN;
-    uint8_t frames = payload_space / LC3_FRAME_LEN;
-    if (frames > MAX_FRAMES_PER_PACKET)
-    {
-        frames = MAX_FRAMES_PER_PACKET;
-    }
-    return frames > 0 ? frames : 1;  // 最少1帧;minimum 1 frame;
+    /* Audio protocol requires fixed 5 LC3 frames per packet (202 bytes total). */
+    return MAX_FRAMES_PER_PACKET;
 }
-void send_lc3_multi_frame_packet(const uint8_t *frames, uint8_t num_frames, uint8_t stream_id)
+static int send_lc3_multi_frame_packet(const uint8_t *frames, uint8_t num_frames, uint8_t stream_id)
 {
     static uint8_t buf[517];
     uint16_t offset = 0;
@@ -262,13 +299,21 @@ void send_lc3_multi_frame_packet(const uint8_t *frames, uint8_t num_frames, uint
     // frames is a continuous data of num_frames * LC3_FRAME_LEN
     memcpy(&buf[offset], frames, num_frames * LC3_FRAME_LEN);
     offset += num_frames * LC3_FRAME_LEN;
-    // LOG_INF("Sending %d frames, total length: %d", num_frames, offset);
     // 实际最大长度不能超过当前协商MTU的payload空间
     // The actual maximum length cannot exceed the payload space of the
     // currently negotiated MTU
     uint16_t notify_len = offset;
-    ble_send_data(buf, notify_len);
-    frames_transmitted += num_frames;
+    int ret = ble_send_data(buf, notify_len);
+    if (ret == 0)
+    {
+        frames_transmitted += num_frames;
+        packets_transmitted++;
+    }
+    else
+    {
+        packets_send_fail++;
+    }
+    return ret;
 }
 
 int user_sw_codec_lc3_init(void)
@@ -285,11 +330,11 @@ int lc3_encoder_start(void)
         LOG_ERR("LC3 encoder initialization failed with error: %d", ret);
         return -1;
     }
-    LOG_INF("LC3 encoder pcm_bytes_req_enc:%d", pcm_bytes_req_enc);
     return 0;
 }
 int lc3_decoder_start(void)
 {
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
     if (lc3_decoder_active)
     {
         LOG_WRN("LC3 decoder already initialized");
@@ -303,8 +348,10 @@ int lc3_decoder_start(void)
         return ret;
     }
     lc3_decoder_active = true;
-    LOG_INF("LC3 decoder initialized successfully");
     return 0;
+#else
+    return -ENOTSUP;
+#endif
 }
 int lc3_encoder_stop(void)
 {
@@ -314,14 +361,13 @@ int lc3_encoder_stop(void)
         LOG_ERR("LC3 encoder uninitialization failed with error: %d", ret);
         return -1;
     }
-    LOG_INF("LC3 encoder uninitialized successfully");
     return 0;
 }
 int lc3_decoder_stop(void)
 {
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
     if (!lc3_decoder_active)
     {
-        LOG_WRN("LC3 decoder already uninitialized");
         return -EALREADY;
     }
 
@@ -332,8 +378,10 @@ int lc3_decoder_stop(void)
         return ret;
     }
     lc3_decoder_active = false;
-    LOG_INF("LC3 decoder uninitialized successfully");
     return 0;
+#else
+    return -ENOTSUP;
+#endif
 }
 // Simple audio processing function
 static void audio_processing_thread(void *p1, void *p2, void *p3)
@@ -342,17 +390,19 @@ static void audio_processing_thread(void *p1, void *p2, void *p3)
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    LOG_INF("🎤 Audio processing thread started");
     int ret;
     int16_t pcm_frame_buffer[PDM_PCM_FRAME_SAMPLES] = {0};
     int16_t pcm_mono_buffer[PDM_PCM_REQ_BUFFER_SIZE] = {0};
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
     int16_t pcm_decode_buffer[PDM_PCM_REQ_BUFFER_SIZE] = {0};
+#endif
     static uint16_t encoded_bytes_written_l;
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
     static uint16_t decoded_bytes_written_l;
+#endif
     uint8_t lc3_frame_buffer[MAX_FRAMES_PER_PACKET][LC3_FRAME_LEN];
     uint8_t frame_count = 0;
     uint8_t max_frames_per_packet;
-    bool frame_loop_logged = false;
     pdm_init();
     user_sw_codec_lc3_init();
 
@@ -418,7 +468,6 @@ static void audio_processing_thread(void *p1, void *p2, void *p3)
                         pending_disable = false;
                         // 避免残留聚包; avoid residual packet aggregation;
                         frame_count = 0;
-                        LOG_INF("⏹️ Audio system stopped after tail drop");
                         continue;
                     }
                 }
@@ -450,15 +499,12 @@ static void audio_processing_thread(void *p1, void *p2, void *p3)
 
                 frames_encoded++; /* Count encoded frames */
 
-                // LOG_INF("LC3 encoding successful, bytes written: %d", encoded_bytes_written_l);
-                // LOG_HEXDUMP_INF(lc3_frame_buffer[frame_count], encoded_bytes_written_l,"Hexdump");
-
-                /* Runtime I2S output control (enabled via shell command) */
-                if (i2s_output_enabled)
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
+                if (i2s_output_enabled && lc3_decoder_active)
                 {
                     ret = sw_codec_lc3_dec_run(lc3_frame_buffer[frame_count], encoded_bytes_written_l,
-                                               PDM_PCM_REQ_BUFFER_SIZE * sizeof(int16_t), 0, pcm_decode_buffer,
-                                               &decoded_bytes_written_l, false);
+                                                 PDM_PCM_REQ_BUFFER_SIZE * sizeof(int16_t), 0, pcm_decode_buffer,
+                                                 &decoded_bytes_written_l, false);
                     if (ret < 0)
                     {
                         LOG_ERR("LC3 decoding failed with error: %d", ret);
@@ -466,29 +512,25 @@ static void audio_processing_thread(void *p1, void *p2, void *p3)
                     }
                     else
                     {
-                        frames_decoded++; /* Count decoded frames */
-                        // LOG_INF("LC3 decoding successful, bytes written: %d", decoded_bytes_written_l);
-                        i2s_pcm_player((void *)pcm_decode_buffer, (int16_t)(decoded_bytes_written_l / sizeof(int16_t)),
-                                       0);
+                        frames_decoded++;
+                        i2s_pcm_player((void *)pcm_decode_buffer,
+                                       (int16_t)(decoded_bytes_written_l / sizeof(int16_t)), 0);
                     }
                 }
+#endif
 
                 uint16_t mtu = get_ble_payload_mtu();
-                if (mtu < (BLE_AUDIO_HDR_LEN + STREAM_ID_LEN + (LC3_FRAME_LEN * MAX_FRAMES_PER_PACKET)))
+                uint16_t min_audio_payload = BLE_AUDIO_HDR_LEN + STREAM_ID_LEN + (LC3_FRAME_LEN * MAX_FRAMES_PER_PACKET);
+                if (mtu < min_audio_payload)
                 {
-                    continue;  // 连 1 帧 LC3 都装不下，跳过； can't even fit 1 LC3 frame, skip
+                    continue;
                 }
                 frame_count++;
                 max_frames_per_packet = get_frames_per_packet();
                 if (frame_count >= max_frames_per_packet)
                 {
-                    send_lc3_multi_frame_packet((uint8_t *)lc3_frame_buffer, frame_count, stream_id);
+                    (void)send_lc3_multi_frame_packet((uint8_t *)lc3_frame_buffer, frame_count, stream_id);
                     frame_count = 0;
-                }
-                if (!frame_loop_logged)
-                {
-                    LOG_INF("audio thread: frame loop active after start (samples=%zu)", frame_samples);
-                    frame_loop_logged = true;
                 }
                 k_sleep(K_MSEC(1));
             }
@@ -497,8 +539,7 @@ static void audio_processing_thread(void *p1, void *p2, void *p3)
         {
             if (audio_system_enabled && !get_ble_connected_status() && mic_phase == MIC_OFF)
             {
-                LOG_INF("BLE disconnected, stopping audio system");
-                enable_audio_system(false);  // Disable audio system if BLE disconnected
+                enable_audio_system(false);
             }
             k_sleep(K_MSEC(10));  // Sleep longer when PDM is disabled
         }
@@ -549,40 +590,35 @@ int enable_audio_system(bool enable)
         lc3_encoder_start();
 
         audio_system_enabled = true;
-        LOG_INF("Started audio streaming (PDM + LC3 encode)");
     }
     else if (enable && audio_system_enabled)  // Already started / 已经启动
     {
-        LOG_WRN("Audio system already started, ignoring duplicate start request");
         return -EALREADY;
     }
     else if (!enable && audio_system_enabled)  // Stop audio system
     {
-        /* Stop I2S and LC3 decoder if they are running / 如果 I2S 和 LC3 解码器在运行则停止 */
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
         extern bool audio_i2s_is_initialized(void);
         extern void audio_i2s_stop(void);
-        extern int lc3_decoder_stop(void);
 
         bool i2s_was_initialized = audio_i2s_is_initialized();
         if (i2s_was_initialized)
         {
             audio_i2s_stop();
         }
-        int dec_ret = lc3_decoder_stop();
-        if (i2s_was_initialized || dec_ret == 0 || dec_ret == -EALREADY)
+        if (lc3_decoder_active)
         {
-            LOG_INF("I2S and LC3 decoder stopped");
+            (void)lc3_decoder_stop();
         }
+#endif
 
         pdm_stop();
         lc3_encoder_stop();
 
         audio_system_enabled = false;
-        LOG_INF("Stopped audio streaming");
     }
     else if (!enable && !audio_system_enabled)  // Already stopped / 已经停止
     {
-        LOG_WRN("Audio system already stopped, ignoring duplicate stop request");
         return -EALREADY;
     }
     return 0;
@@ -591,66 +627,52 @@ int pdm_audio_stream_set_enabled(bool enabled)
 {
     if (!pdm_initialized)
     {
-        LOG_ERR("❌ PDM audio stream not initialized");
         return -ENODEV;
     }
 
     if (enabled)
     {
-        /* Check if already enabled to avoid duplicate operations / 检查是否已启用以避免重复操作 */
         if (pdm_enabled && mic_phase != MIC_OFF)
         {
-            LOG_WRN("PDM audio already enabled, ignoring duplicate request");
             return -EALREADY;
         }
 
-        /* Start audio hardware / 启动音频硬件 */
         int ret = enable_audio_system(true);
         if (ret == -EALREADY)
         {
-            LOG_WRN("Audio system already started, skipping hardware init");
-            /* Don't reset state if hardware already running / 如果硬件已运行则不重置状态 */
             return -EALREADY;
         }
-        else if (ret < 0)
+        if (ret < 0)
         {
-            LOG_ERR("Failed to enable audio system: %d", ret);
             return ret;
         }
 
-        /* Set PDM state for warm-up phase / 设置 PDM 预热阶段状态 */
         pdm_enabled = true;
         pending_disable = false;
         mic_phase = MIC_DROP_WARM;
         drop_samples = MS_TO_SAMPLES(MIC_WARMUP_MS);
 
-        /* Reset statistics / 重置统计数据 */
         frames_transmitted = 0;
         frames_captured = 0;
         frames_encoded = 0;
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
         frames_decoded = 0;
+#endif
         streaming_errors = 0;
+        packets_transmitted = 0;
+        packets_send_fail = 0;
 
-        LOG_INF("Mic enable -> drop warmup %u samples (~%u ms), then start", drop_samples, (unsigned)MIC_WARMUP_MS);
         return 0;
     }
-    else
+
+    if (!pdm_enabled && mic_phase == MIC_OFF)
     {
-        // 关麦：不立停；进入尾巴丢弃，线程丢完后在帧边界真正停
-        // close mic: do not stop immediately; enter tail drop, and actually stop at frame boundary after thread drops
-        if (!pdm_enabled && mic_phase == MIC_OFF)
-        {
-            LOG_INF("ℹ️ PDM already disabled");
-            return 0;
-        }
-        // 先做极短淡出，避免从有声→0 的台阶；淡出结束后在处理线程里切到 MIC_DROP_TAIL
-        // First do a very short fade-out to avoid the step from sound to 0; after the fade-out is over, switch to
-        // MIC_DROP_TAIL in the processing thread
-        start_fade_out();
-        pending_disable = true;
-        LOG_INF("🎤 Mic disable -> fade-out %u ms then drop tail %u ms", (unsigned)MIC_FADE_MS, (unsigned)MIC_TAIL_MS);
         return 0;
     }
+
+    start_fade_out();
+    pending_disable = true;
+    return 0;
 }
 
 pdm_audio_state_t pdm_audio_stream_get_state(void)
@@ -683,6 +705,7 @@ void pdm_audio_stream_get_stats(uint32_t *frames_captured_out, uint32_t *frames_
     }
 }
 
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 /**
  * @brief Enable/disable I2S audio output (loopback playback)
  * 启用/禁用I2S音频输出（环回播放）
@@ -696,7 +719,6 @@ int pdm_audio_set_i2s_output(bool enabled)
 {
     if (enabled == i2s_output_enabled)
     {
-        LOG_INF("I2S loopback output %s (no change)", enabled ? "enabled" : "disabled");
         return 0;
     }
 
@@ -711,17 +733,24 @@ int pdm_audio_set_i2s_output(bool enabled)
     }
     else
     {
-        int ret = lc3_decoder_stop();
-        if (ret < 0 && ret != -EALREADY)
-        {
-            LOG_WRN("LC3 decoder stop returned %d while disabling I2S", ret);
-        }
+        (void)lc3_decoder_stop();
     }
 
     i2s_output_enabled = enabled;
-    LOG_INF("I2S loopback output %s", enabled ? "enabled" : "disabled");
     return 0;
 }
+#else
+bool pdm_audio_get_i2s_output(void)
+{
+    return false;
+}
+
+int pdm_audio_set_i2s_output(bool enabled)
+{
+    ARG_UNUSED(enabled);
+    return -ENOTSUP;
+}
+#endif
 
 int pdm_audio_stream_set_channel(pdm_channel_t channel)
 {
@@ -731,14 +760,7 @@ int pdm_audio_stream_set_channel(pdm_channel_t channel)
         return -ENODEV;
     }
 
-    int ret = pdm_set_channel(channel);
-    if (ret == 0)
-    {
-        const char *ch_name =
-            (channel == PDM_CHANNEL_LEFT) ? "left" : (channel == PDM_CHANNEL_RIGHT ? "right" : "mixed");
-        LOG_INF("PDM channel selection updated to %s", ch_name);
-    }
-    return ret;
+    return pdm_set_channel(channel);
 }
 
 pdm_channel_t pdm_audio_stream_get_channel(void)

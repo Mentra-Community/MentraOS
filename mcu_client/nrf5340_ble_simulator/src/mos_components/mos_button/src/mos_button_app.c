@@ -19,7 +19,8 @@
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/poweroff.h>
 
-#include "mos_gx8002.h"
+// #include "mos_gx8002.h"  // VAD path kept for quick rollback
+#include "pdm_audio_stream.h"
 #include "interrupt_handler.h"
 #include "mos_button.h"
 #include "mos_lsm6dsv16x.h"
@@ -142,7 +143,8 @@ static void button_poll_handler(struct k_work *work)
     if (press_duration >= BUTTON_LONG_PRESS_MS && !peripherals_turned_off)
     {
         LOG_INF("✅ Button long press (2.5s) detected - turning off peripherals");
-        (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control | 禁用GX8002(VAD)电源控制
+        // (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
+        (void)pdm_audio_stream_set_enabled(false);  // Stop PDM mic pipeline before peripheral shutdown
         ear_en_control(false);
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);  // Shutdown OPT3006 | 关闭 OPT3006
         mos_npm1300_ldsw1_disable();
@@ -371,7 +373,8 @@ static int prepare_for_sleep(bool turn_off_peripherals)
     {
         LOG_INF("Turning off peripherals before sleep...");
 
-        (void)mos_gx8002_power_control(false);
+        // (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
+        (void)pdm_audio_stream_set_enabled(false);
         ear_en_control(false);
         /* Disable LDSW1 | 禁用LDSW1 */
 
@@ -389,7 +392,8 @@ static int prepare_for_sleep(bool turn_off_peripherals)
     }
     else
     {
-        (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control | 禁用GX8002(VAD)电源控制
+        // (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
+        (void)pdm_audio_stream_set_enabled(false);  // Stop PDM mic pipeline before peripheral shutdown
     }
 
     /* Ensure all default LOW pins are LOW before sleep | 睡眠前确保所有默认拉低的引脚为低电平 */

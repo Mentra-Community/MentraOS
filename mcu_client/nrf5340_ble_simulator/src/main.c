@@ -34,7 +34,8 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/util.h>  // For ARRAY_SIZE macro
 
-#include "mos_gx8002.h"
+// #include "mos_gx8002.h"  // VAD path kept for quick rollback
+#include "pdm_audio_stream.h"
 #include "interrupt_handler.h"  // Interrupt handler framework
 #include "mos_button_app.h"  // Button application logic
 #include "mos_dfu_progress.h"
@@ -356,7 +357,8 @@ int ble_send_data(const uint8_t *data, uint16_t len)
         int err;
         do
         {
-            err = custom_nus_send(NULL, &data[offset], chunk_len);
+            /* Send on active link to avoid notify-all ambiguity */
+            err = custom_nus_send(current_conn, &data[offset], chunk_len);
             if (err == 0)
                 break;
             LOG_ERR(" Chunk send failed (offset=%u len=%u), retry %d", offset, chunk_len, retry);
@@ -407,6 +409,12 @@ static void num_comp_reply(bool accept)
  */
 #define USER_NODE DT_PATH(zephyr_user)
 static const struct gpio_dt_spec ear_en = GPIO_DT_SPEC_GET(USER_NODE, ear_en_gpios);
+#if DT_NODE_HAS_PROP(USER_NODE, vad_power_gpios)
+static const struct gpio_dt_spec mic_power = GPIO_DT_SPEC_GET(USER_NODE, vad_power_gpios);
+#define MIC_POWER_GPIO_AVAILABLE 1
+#else
+#define MIC_POWER_GPIO_AVAILABLE 0
+#endif
 
 /**
  * @brief Control ear_en on/off | 控制 ear_en 开关
@@ -457,6 +465,29 @@ int init_user_gpio(void)
     {
         LOG_WRN("ear_en GPIO not ready, skipping");
     }
+
+    /* Mic power rail enable for both VAD and PDM paths */
+    if (MIC_POWER_GPIO_AVAILABLE && gpio_is_ready_dt(&mic_power))
+    {
+        err = gpio_pin_configure_dt(&mic_power, GPIO_OUTPUT_ACTIVE);
+        if (err != 0)
+        {
+            LOG_ERR("mic_power GPIO config error: %d", err);
+            return err;
+        }
+        err = gpio_pin_set_dt(&mic_power, 1);
+        if (err != 0)
+        {
+            LOG_ERR("mic_power GPIO set HIGH failed: %d", err);
+            return err;
+        }
+        LOG_INF("mic_power GPIO configured and set to HIGH");
+    }
+    else
+    {
+        LOG_WRN("mic_power GPIO not ready/available, skipping");
+    }
+
     LOG_INF("User GPIOs configured successfully");
     return 0;
 }
@@ -520,7 +551,8 @@ int main(void)
     bt_gatt_cb_register(&gatt_callbacks);
 
     interrupt_handler_init();
-    mos_gx8002_init();
+    // mos_gx8002_init();  // keep old VAD init path as comment
+    pdm_audio_stream_init();
     mos_jlink_usb_switch_app_init();
     mos_npm1300_ldsw1_init();
     mos_npm1300_ldsw1_enable();
@@ -550,8 +582,7 @@ int main(void)
 
     lvgl_display_thread();
 
-    // VAD + I2S pipeline only; no PDM audio stream init here.
-    //  pdm_audio_stream_init(); // PDM音频流初始化
+    /* PDM + LC3 stream initialized above; phone MicState toggles pdm_audio_stream_set_enabled(). */
     protobuf_init_ping_monitoring();
 
     opt3006_initialize();
