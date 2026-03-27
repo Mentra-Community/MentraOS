@@ -61,6 +61,11 @@ class MemoryLeakDetector {
       }
     }, this.leakWarnAfterMs).unref?.();
   }
+
+  /** Number of objects that were disposed but not yet finalized by GC. */
+  getDisposedPendingGCCount(): number {
+    return this.disposedAtByTag.size;
+  }
 }
 
 export const memoryLeakDetector = new MemoryLeakDetector();

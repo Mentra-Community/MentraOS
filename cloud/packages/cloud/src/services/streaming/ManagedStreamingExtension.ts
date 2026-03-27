@@ -42,6 +42,9 @@ export class ManagedStreamingExtension {
   // Track last sent status per stream+app to prevent duplicates
   private lastSentStatus: Map<string, ManagedStreamStatus> = new Map(); // key: `${streamId}:${packageName}`
 
+  private cleanupInterval?: NodeJS.Timeout;
+  private playbackUrlTimeout?: NodeJS.Timeout;
+
   constructor(logger: Logger, streamRegistry: StreamRegistry) {
     this.logger = logger.child({ service: "ManagedStreamingExtension" });
     this.cloudflareService = new CloudflareStreamService(logger);
@@ -50,7 +53,7 @@ export class ManagedStreamingExtension {
     this.logger.info("ManagedStreamingExtension initialized");
 
     // Schedule periodic cleanup
-    setInterval(
+    this.cleanupInterval = setInterval(
       () => {
         this.performCleanup();
       },
@@ -1003,7 +1006,7 @@ export class ManagedStreamingExtension {
     this.pollingIntervals.set(userId, pollInterval);
 
     // Set timeout to stop polling after 60 seconds
-    setTimeout(() => {
+    this.playbackUrlTimeout = setTimeout(() => {
       if (this.pollingIntervals.get(userId) === pollInterval) {
         clearInterval(pollInterval);
         this.pollingIntervals.delete(userId);
@@ -1015,6 +1018,7 @@ export class ManagedStreamingExtension {
           "⏱️ Stopped polling for playback URLs after timeout",
         );
       }
+      this.playbackUrlTimeout = undefined;
     }, 60000);
   }
 
@@ -1311,6 +1315,16 @@ export class ManagedStreamingExtension {
    * Dispose of all resources
    */
   dispose(): void {
+    if (this.playbackUrlTimeout) {
+      clearTimeout(this.playbackUrlTimeout);
+      this.playbackUrlTimeout = undefined;
+    }
+
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = undefined;
+    }
+
     for (const lifecycle of this.lifecycleControllers.values()) {
       lifecycle.dispose();
     }

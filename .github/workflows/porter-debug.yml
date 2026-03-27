@@ -7,6 +7,7 @@ on:
       - cloud/issues-044
       - new-context-soniox
       - cloud/044-ci-build-audit
+      - hotfix/cloud-observability
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

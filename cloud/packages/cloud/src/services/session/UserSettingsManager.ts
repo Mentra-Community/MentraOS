@@ -288,6 +288,8 @@ export class UserSettingsManager {
    */
   dispose(): void {
     this.snapshot = {};
+    this.loaded = true; // Prevent anyone from awaiting a dead manager
+    this.loadPromise = Promise.resolve(); // Release closure that captures this → userSession
   }
 
   private shouldDebug(): boolean {

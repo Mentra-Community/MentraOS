@@ -87,7 +87,7 @@ function handleGlassesUpgrade(req: Request, server: any, url: URL): Response | u
 
   try {
     const payload = jwt.verify(token, AUGMENTOS_AUTH_JWT_SECRET) as any;
-    const userId = payload.email;
+    const userId = payload.email?.toLowerCase();
 
     if (!userId) {
       logger.warn("Glasses upgrade rejected: no userId in token");
@@ -139,7 +139,7 @@ function handleGlassesUpgrade(req: Request, server: any, url: URL): Response | u
  */
 function handleAppUpgrade(req: Request, server: any, _url: URL): Response | undefined {
   const authHeader = req.headers.get("authorization");
-  const userId = req.headers.get("x-user-id") || "";
+  const userId = (req.headers.get("x-user-id") || "").toLowerCase();
   const sessionId = req.headers.get("x-session-id") || "";
 
   let appJwtPayload: { packageName: string; apiKey: string } | undefined;
@@ -612,7 +612,7 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
 
       // Parse session ID to get user ID
       const sessionParts = initMessage.sessionId.split("-");
-      const parsedUserId = sessionParts[0];
+      const parsedUserId = sessionParts[0]?.toLowerCase();
 
       if (sessionParts.length < 2) {
         logger.error({ sessionId: initMessage.sessionId }, "Invalid session ID format");

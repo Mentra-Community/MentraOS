@@ -102,6 +102,16 @@ export class StreamRegistry {
   // Map of cfLiveInputId -> userId for Cloudflare stream lookups
   private cfInputToUser: Map<string, string>;
 
+  /**
+   * Release all state. Called from UserSession.dispose() to allow GC
+   * of the registry and everything it references.
+   */
+  dispose(): void {
+    this.userStreams.clear();
+    this.streamToUser.clear();
+    this.cfInputToUser.clear();
+  }
+
   constructor(logger: Logger) {
     this.logger = logger.child({ service: "StreamRegistry" });
     this.userStreams = new Map();

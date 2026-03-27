@@ -57,6 +57,19 @@ app.post("/apps/:packageName/reject", validateAdminEmail, rejectApp);
 app.get("/memory/now", validateAdminEmail, getMemorySnapshot);
 app.post("/memory/heap-snapshot", validateAdminEmail, takeHeapSnapshotHandler);
 
+// Bun-native heap snapshot — returns JSON directly (loadable in Chrome DevTools → Memory → Load).
+// Lighter than the Node inspector-based POST version above.
+// Save response as .heapsnapshot file, then load in Chrome DevTools Memory tab.
+app.get("/memory/heap-snapshot-bun", validateAdminEmail, (c: AppContext) => {
+  try {
+    const snapshot = Bun.generateHeapSnapshot();
+    return c.json(snapshot);
+  } catch (error) {
+    logger.error(error, "Failed to generate Bun heap snapshot");
+    return c.json({ error: "Failed to generate heap snapshot" }, 500);
+  }
+});
+
 // ============================================================================
 // Middleware
 // ============================================================================

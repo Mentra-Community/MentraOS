@@ -68,6 +68,10 @@ export class TranscriptionManager {
   private DEPLOYMENT_REGION: string = process.env.DEPLOYMENT_REGION || "global";
   private IS_CHINA: boolean = this.DEPLOYMENT_REGION === "china";
 
+  // Disposal State
+  private disposed = false;
+  private pendingTimers = new Set<NodeJS.Timeout>();
+
   // Health Monitoring
   private healthCheckInterval?: NodeJS.Timeout;
 
@@ -845,6 +849,12 @@ export class TranscriptionManager {
    * Dispose of the manager and cleanup resources
    */
   async dispose(): Promise<void> {
+    this.disposed = true;
+    // Clear all pending reconnect/retry timers to release references to this manager
+    for (const timer of this.pendingTimers) {
+      clearTimeout(timer);
+    }
+    this.pendingTimers.clear();
     this.logger.info("Disposing TranscriptionManager");
 
     // Stop health monitoring
@@ -1469,7 +1479,10 @@ export class TranscriptionManager {
   private scheduleStreamReconnect(subscription: ExtendedStreamType, delayMs: number = 1000): void {
     this.logger.info({ subscription, delayMs }, "Scheduling stream reconnect after provider disconnect");
 
-    setTimeout(async () => {
+    const timer = setTimeout(async () => {
+      this.pendingTimers.delete(timer);
+      if (this.disposed) return;
+
       // Double-check subscription is still active
       if (!this.activeSubscriptions.has(subscription)) {
         this.logger.debug({ subscription }, "Subscription no longer active - skipping reconnect");
@@ -1495,6 +1508,7 @@ export class TranscriptionManager {
         // next subscription update handle it to avoid potential infinite loops
       }
     }, delayMs);
+    this.pendingTimers.add(timer);
   }
 
   private scheduleStreamRetry(subscription: ExtendedStreamType, attempt: number, lastError?: Error): void {
@@ -1548,7 +1562,10 @@ export class TranscriptionManager {
       "Scheduling stream retry",
     );
 
-    setTimeout(async () => {
+    const retryTimer = setTimeout(async () => {
+      this.pendingTimers.delete(retryTimer);
+      if (this.disposed) return;
+
       try {
         await this.startStream(subscription);
         this.streamRetryAttempts.delete(subscription); // Success
@@ -1559,6 +1576,7 @@ export class TranscriptionManager {
         this.logger.warn({ subscription, attempt, error }, "Stream retry failed");
       }
     }, delay);
+    this.pendingTimers.add(retryTimer);
   }
 
   private isRetryableError(error: Error): boolean {
