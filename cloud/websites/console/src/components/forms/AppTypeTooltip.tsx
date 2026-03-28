@@ -13,7 +13,7 @@ const AppTypeTooltip: React.FC = () => {
           <div className="space-y-3">
             <div>
               <p className="font-semibold text-link">Standard Apps (Foreground)</p>
-              <p className="text-sm text-whitetext-popover-foreground/80">
+              <p className="text-sm text-white">
                 • Only one standard app can run at a time
                 <br />
                 • Has primary control of the display
@@ -22,7 +22,7 @@ const AppTypeTooltip: React.FC = () => {
             </div>
             <div>
               <p className="font-semibold text-success">Background Apps</p>
-              <p className="text-sm text-white text-popover-foreground/80">
+              <p className="text-sm text-amber-white ">
                 • Multiple background apps can be active simultaneously
                 <br />
                 • Can temporarily take control of the display
