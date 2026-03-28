@@ -3,6 +3,7 @@
 wip/
 old/
 .logs/
+.heap/
 # Ignore the .env file
 .env
 .env.local
