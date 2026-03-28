@@ -16,7 +16,7 @@ export default function MicrophoneScreen() {
       <ScrollView style={{marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}>
         <View className="gap-6 pt-6">
           <MicrophoneSelector />
-          <View style={{paddingHorizontal: 4}}>
+          <View className="px-1">
             <Text
               style={{color: theme.colors.textDim, fontSize: 13, lineHeight: 18}}
               text={translate("microphoneSettings:infoDescription")}

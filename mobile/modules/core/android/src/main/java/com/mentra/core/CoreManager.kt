@@ -26,8 +26,10 @@ import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.mentra.stt.SherpaOnnxTranscriber
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.jvm.JvmStatic
 
 class CoreManager {
@@ -1163,6 +1165,60 @@ class CoreManager {
     fun sendOtaStart() {
         Bridge.log("MAN: 📱 Sending OTA start command to glasses")
         (sgc as? MentraLive)?.sendOtaStart()
+    }
+
+    /**
+     * Read glasses media step volume (0–15) via K900 on Mentra Live only.
+     * Blocks until response, error, or timeout (used from JS AsyncFunction on a worker thread).
+     */
+    fun getGlassesMediaVolumeBlocking(): Map<String, Any> {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        val latch = CountDownLatch(1)
+        var result: Map<String, Any>? = null
+        var error: String? = null
+        live.getGlassesMediaVolume(
+                { m ->
+                    result = m
+                    latch.countDown()
+                },
+                { e ->
+                    error = e
+                    latch.countDown()
+                })
+        val completed = latch.await(5, TimeUnit.SECONDS)
+        if (!completed) {
+            throw IllegalStateException("glasses_volume_timeout")
+        }
+        error?.let {
+            throw IllegalStateException(it)
+        }
+        return result ?: throw IllegalStateException("glasses_volume_empty")
+    }
+
+    /** Set glasses media step volume (0–15) via K900 on Mentra Live only. */
+    fun setGlassesMediaVolumeBlocking(level: Int): Map<String, Any> {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        val latch = CountDownLatch(1)
+        var result: Map<String, Any>? = null
+        var error: String? = null
+        live.setGlassesMediaVolume(
+                level,
+                { m ->
+                    result = m
+                    latch.countDown()
+                },
+                { e ->
+                    error = e
+                    latch.countDown()
+                })
+        val completed = latch.await(5, TimeUnit.SECONDS)
+        if (!completed) {
+            throw IllegalStateException("glasses_volume_timeout")
+        }
+        error?.let {
+            throw IllegalStateException(it)
+        }
+        return result ?: throw IllegalStateException("glasses_volume_empty")
     }
 
     /**

@@ -11,7 +11,6 @@ import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useStat
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import AppIcon from "@/components/home/AppIcon"
 import GlassView from "@/components/ui/GlassView"
-import {translate} from "@/i18n"
 import * as ImageManipulator from "expo-image-manipulator"
 
 interface CapsuleButtonProps {
@@ -73,7 +72,7 @@ export function MiniAppCapsuleMenu({
     }
   }, [onMinusPress])
 
-  const handleExit = async (fromButtonPress?: boolean) => {
+  const handleExit = async (shouldGoBack?: boolean) => {
     try {
       const uri = await captureRef(viewShotRef, {
         format: "jpg",
@@ -97,7 +96,7 @@ export function MiniAppCapsuleMenu({
       console.warn("screenshot failed:", e)
     }
 
-    if (fromButtonPress) {
+    if (shouldGoBack) {
       goBack()
     }
   }
@@ -105,11 +104,9 @@ export function MiniAppCapsuleMenu({
   focusEffectPreventBack(() => {
     // Defer screenshot capture so it doesn't block the navigation animation
     InteractionManager.runAfterInteractions(() => {
-      handleExit()
+      let shouldGoBack = Platform.OS === "android"
+      handleExit(shouldGoBack)
     })
-    if (Platform.OS === "android") {
-      goBack()
-    }
   }, true)
 
   return (

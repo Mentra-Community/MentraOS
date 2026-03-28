@@ -1048,6 +1048,14 @@ class MentraLive: NSObject, SGCManager {
 
     // BES OTA progress tracking - only send to UI on 5% increments
     private var lastBesOtaProgress = -1
+
+    // Glasses media volume (K900 cs_getvol / cs_vol, sr_getvol / sr_vol)
+    private let glassesMediaVolumeLock = NSLock()
+    private var glassesMediaVolumeGetCompletion: ((Result<[String: Any], Error>) -> Void)?
+    private var glassesMediaVolumeSetCompletion: ((Result<[String: Any], Error>) -> Void)?
+    private var glassesMediaVolumeTimeoutWorkItem: DispatchWorkItem?
+    private static let glassesMediaVolumeTimeoutSec: TimeInterval = 2.0
+
     private var connectionTimeoutTimer: Timer?
     private var reconnectionWorkItem: DispatchWorkItem?
 
@@ -2060,6 +2068,12 @@ class MentraLive: NSObject, SGCManager {
                     "🔋 K900 Battery Status - Voltage: \(voltageVolts)V, Level: \(percentage)%")
                 updateBatteryStatus(level: percentage, isCharging: isCharging)
             }
+
+        case "sr_getvol":
+            handleSrGetvol(json)
+
+        case "sr_vol":
+            handleSrVol(json)
 
         case "sr_shut":
             Bridge.log("K900 shutdown command received - glasses shutting down")
@@ -3598,6 +3612,247 @@ extension MentraLive {
         let bytes = [UInt8](data)
         return bytes[0] == K900ProtocolUtils.CMD_START_CODE[0]
             && bytes[1] == K900ProtocolUtils.CMD_START_CODE[1]
+    }
+
+    // MARK: - Glasses media volume (K900)
+
+    private func k900JsonInt(_ json: [String: Any], _ key: String) -> Int? {
+        if let v = json[key] as? Int { return v }
+        if let n = json[key] as? NSNumber { return n.intValue }
+        return nil
+    }
+
+    /// Parse K900 `B` field as dictionary or JSON string.
+    private func k900ParseBody(_ body: Any?) -> [String: Any]? {
+        if let d = body as? [String: Any] { return d }
+        if let s = body as? String,
+           let data = s.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            return obj
+        }
+        return nil
+    }
+
+    private func cancelGlassesMediaVolumeTimeout() {
+        glassesMediaVolumeTimeoutWorkItem?.cancel()
+        glassesMediaVolumeTimeoutWorkItem = nil
+    }
+
+    private func scheduleGlassesMediaVolumeTimeout() {
+        cancelGlassesMediaVolumeTimeout()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.glassesMediaVolumeLock.lock()
+            let getC = self.glassesMediaVolumeGetCompletion
+            let setC = self.glassesMediaVolumeSetCompletion
+            self.glassesMediaVolumeGetCompletion = nil
+            self.glassesMediaVolumeSetCompletion = nil
+            self.glassesMediaVolumeLock.unlock()
+            let err = NSError(
+                domain: "MentraLive",
+                code: -1001,
+                userInfo: [NSLocalizedDescriptionKey: "glasses_volume_timeout"]
+            )
+            if let getC {
+                DispatchQueue.main.async { getC(.failure(err)) }
+            }
+            if let setC {
+                DispatchQueue.main.async { setC(.failure(err)) }
+            }
+        }
+        glassesMediaVolumeTimeoutWorkItem = work
+        bluetoothQueue.asyncAfter(deadline: .now() + Self.glassesMediaVolumeTimeoutSec, execute: work)
+    }
+
+    private func failPendingGlassesVolumeGet(_ error: Error) {
+        cancelGlassesMediaVolumeTimeout()
+        glassesMediaVolumeLock.lock()
+        let c = glassesMediaVolumeGetCompletion
+        glassesMediaVolumeGetCompletion = nil
+        glassesMediaVolumeLock.unlock()
+        if let c {
+            DispatchQueue.main.async { c(.failure(error)) }
+        }
+    }
+
+    private func failPendingGlassesVolumeSet(_ error: Error) {
+        cancelGlassesMediaVolumeTimeout()
+        glassesMediaVolumeLock.lock()
+        let c = glassesMediaVolumeSetCompletion
+        glassesMediaVolumeSetCompletion = nil
+        glassesMediaVolumeLock.unlock()
+        if let c {
+            DispatchQueue.main.async { c(.failure(error)) }
+        }
+    }
+
+    private func handleSrGetvol(_ json: [String: Any]) {
+        let body = k900ParseBody(json["B"])
+        var status = k900JsonInt(json, "S") ?? -1
+        if status < 0, let b = body, let s = k900JsonInt(b, "S") {
+            status = s
+        }
+        let vol = body.flatMap { k900JsonInt($0, "vol") } ?? -1
+
+        glassesMediaVolumeLock.lock()
+        let waiting = glassesMediaVolumeGetCompletion != nil
+        glassesMediaVolumeLock.unlock()
+
+        guard waiting else {
+            Bridge.log("LIVE: sr_getvol received with no pending request (status=\(status), vol=\(vol))")
+            return
+        }
+
+        guard vol >= 0, vol <= 15 else {
+            Bridge.log("LIVE: sr_getvol invalid vol=\(vol)")
+            failPendingGlassesVolumeGet(
+                NSError(
+                    domain: "MentraLive",
+                    code: -1002,
+                    userInfo: [NSLocalizedDescriptionKey: "glasses_volume_invalid_response"]
+                ))
+            return
+        }
+
+        Bridge.log("LIVE: sr_getvol received vol=\(vol) (0-15), statusCode=\(status)")
+
+        cancelGlassesMediaVolumeTimeout()
+        glassesMediaVolumeLock.lock()
+        let c = glassesMediaVolumeGetCompletion
+        glassesMediaVolumeGetCompletion = nil
+        glassesMediaVolumeLock.unlock()
+        if let c {
+            DispatchQueue.main.async {
+                c(.success(["vol": vol, "statusCode": status]))
+            }
+        }
+    }
+
+    private func handleSrVol(_ json: [String: Any]) {
+        let status = k900JsonInt(json, "S") ?? -1
+
+        glassesMediaVolumeLock.lock()
+        let waiting = glassesMediaVolumeSetCompletion != nil
+        glassesMediaVolumeLock.unlock()
+
+        guard waiting else {
+            Bridge.log("LIVE: sr_vol received with no pending request (status=\(status))")
+            return
+        }
+
+        cancelGlassesMediaVolumeTimeout()
+        glassesMediaVolumeLock.lock()
+        let c = glassesMediaVolumeSetCompletion
+        glassesMediaVolumeSetCompletion = nil
+        glassesMediaVolumeLock.unlock()
+        if let c {
+            DispatchQueue.main.async {
+                c(.success(["statusCode": status]))
+            }
+        }
+    }
+
+    private func sendGlassesMediaVolumeGetCommand() -> Bool {
+        let command: [String: Any] = [
+            "C": "cs_getvol",
+            "V": 1,
+            "B": "",
+        ]
+        return sendRawK900Command(command, wakeUp: true)
+    }
+
+    private func sendGlassesMediaVolumeSetCommand(level: Int) -> Bool {
+        let clamped = max(0, min(15, level))
+        do {
+            let bodyData = try JSONSerialization.data(withJSONObject: ["vol": clamped])
+            guard let bodyString = String(data: bodyData, encoding: .utf8) else { return false }
+            let command: [String: Any] = [
+                "C": "cs_vol",
+                "V": 1,
+                "B": bodyString,
+            ]
+            return sendRawK900Command(command, wakeUp: true)
+        } catch {
+            Bridge.log("LIVE: Error encoding cs_vol body: \(error)")
+            return false
+        }
+    }
+
+    /// Read glasses media step volume (0–15) via K900 `cs_getvol` / `sr_getvol`.
+    func getGlassesMediaVolume(completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        glassesMediaVolumeLock.lock()
+        if glassesMediaVolumeGetCompletion != nil || glassesMediaVolumeSetCompletion != nil {
+            glassesMediaVolumeLock.unlock()
+            completion(
+                .failure(
+                    NSError(
+                        domain: "MentraLive",
+                        code: -1003,
+                        userInfo: [NSLocalizedDescriptionKey: "glasses_volume_busy"]
+                    )))
+            return
+        }
+        glassesMediaVolumeGetCompletion = completion
+        glassesMediaVolumeLock.unlock()
+
+        guard connectionState == ConnTypes.CONNECTED, fullyBooted else {
+            failPendingGlassesVolumeGet(
+                NSError(
+                    domain: "MentraLive",
+                    code: -1004,
+                    userInfo: [NSLocalizedDescriptionKey: "glasses_not_ready"]
+                ))
+            return
+        }
+
+        scheduleGlassesMediaVolumeTimeout()
+        if !sendGlassesMediaVolumeGetCommand() {
+            failPendingGlassesVolumeGet(
+                NSError(
+                    domain: "MentraLive",
+                    code: -1005,
+                    userInfo: [NSLocalizedDescriptionKey: "glasses_volume_send_failed"]
+                ))
+        }
+    }
+
+    /// Set glasses media step volume (0–15) via K900 `cs_vol` / `sr_vol`.
+    func setGlassesMediaVolume(level: Int, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        glassesMediaVolumeLock.lock()
+        if glassesMediaVolumeGetCompletion != nil || glassesMediaVolumeSetCompletion != nil {
+            glassesMediaVolumeLock.unlock()
+            completion(
+                .failure(
+                    NSError(
+                        domain: "MentraLive",
+                        code: -1003,
+                        userInfo: [NSLocalizedDescriptionKey: "glasses_volume_busy"]
+                    )))
+            return
+        }
+        glassesMediaVolumeSetCompletion = completion
+        glassesMediaVolumeLock.unlock()
+
+        guard connectionState == ConnTypes.CONNECTED, fullyBooted else {
+            failPendingGlassesVolumeSet(
+                NSError(
+                    domain: "MentraLive",
+                    code: -1004,
+                    userInfo: [NSLocalizedDescriptionKey: "glasses_not_ready"]
+                ))
+            return
+        }
+
+        scheduleGlassesMediaVolumeTimeout()
+        if !sendGlassesMediaVolumeSetCommand(level: level) {
+            failPendingGlassesVolumeSet(
+                NSError(
+                    domain: "MentraLive",
+                    code: -1005,
+                    userInfo: [NSLocalizedDescriptionKey: "glasses_volume_send_failed"]
+                ))
+        }
     }
 
     private func sendRawK900Command(_ command: [String: Any], wakeUp: Bool = false) -> Bool {

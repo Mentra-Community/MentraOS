@@ -316,6 +316,14 @@ public class CoreModule: Module {
             PhoneAudioMonitor.getInstance().setOwnAppAudioPlaying(playing)
         }
 
+        AsyncFunction("getGlassesMediaVolume") { () async throws -> [String: Any] in
+            try await CoreManager.shared.getGlassesMediaVolume()
+        }
+
+        AsyncFunction("setGlassesMediaVolume") { (level: Int) async throws -> [String: Any] in
+            try await CoreManager.shared.setGlassesMediaVolume(level: level)
+        }
+
         // MARK: - RGB LED Control
 
         AsyncFunction("rgbLedControl") {
@@ -338,7 +346,7 @@ public class CoreModule: Module {
 
         // MARK: - Microphone Commands
 
-        AsyncFunction("setMicState") { (sendPcmData: Bool, sendTranscript: Bool, bypassVad: Bool) in
+        AsyncFunction("setMicState") { (_: Bool, _: Bool, _: Bool) in
             await MainActor.run {
                 CoreManager.shared.setMicState()
             }
@@ -384,9 +392,9 @@ public class CoreModule: Module {
 
         AsyncFunction("isBetaBuild") { () -> Bool in
             #if targetEnvironment(simulator)
-            return false
+                return false
             #else
-            return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+                return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
             #endif
         }
 
@@ -420,7 +428,5 @@ public class CoreModule: Module {
         AsyncFunction("getInstalledAppsForNotifications") { () -> [[String: Any]] in
             return []
         }
-
     }
-
 }

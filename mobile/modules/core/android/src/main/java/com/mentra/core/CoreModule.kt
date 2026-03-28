@@ -273,6 +273,16 @@ class CoreModule : Module() {
             com.mentra.core.utils.PhoneAudioMonitor.getInstance(context).setOwnAppAudioPlaying(playing)
         }
 
+        AsyncFunction("getGlassesMediaVolume") {
+            val cm = coreManager ?: throw IllegalStateException("core_manager_null")
+            cm.getGlassesMediaVolumeBlocking()
+        }
+
+        AsyncFunction("setGlassesMediaVolume") { level: Int ->
+            val cm = coreManager ?: throw IllegalStateException("core_manager_null")
+            cm.setGlassesMediaVolumeBlocking(level)
+        }
+
         // MARK: - RGB LED Control
 
         AsyncFunction("rgbLedControl") {

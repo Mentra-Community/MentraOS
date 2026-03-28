@@ -1,6 +1,12 @@
 import {NativeModule, requireNativeModule} from "expo"
 
-import {CoreModuleEvents, GlassesStatus, CoreStatus} from "./Core.types"
+import {
+  CoreModuleEvents,
+  CoreStatus,
+  GlassesMediaVolumeGetResult,
+  GlassesMediaVolumeSetResult,
+  GlassesStatus,
+} from "./Core.types"
 
 type GlassesListener = (changed: Partial<GlassesStatus>) => void
 type CoreListener = (changed: Partial<CoreStatus>) => void
@@ -80,6 +86,11 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Notify native side when our app starts/stops playing audio
   // Used to suspend LC3 mic during audio playback to avoid MCU overload
   setOwnAppAudioPlaying(playing: boolean): Promise<void>
+
+  /** Mentra Live only: K900 `cs_getvol` / `sr_getvol`. */
+  getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
+  /** Mentra Live only: K900 `cs_vol` / `sr_vol`; level clamped 0–15 on native. */
+  setGlassesMediaVolume(level: number): Promise<GlassesMediaVolumeSetResult>
 
   // RGB LED Control
   rgbLedControl(

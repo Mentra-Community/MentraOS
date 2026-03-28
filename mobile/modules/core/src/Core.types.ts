@@ -28,6 +28,17 @@ export type BatteryStatusEvent = {
   timestamp: number
 }
 
+/** K900 `sr_getvol` response (Mentra Live glasses media step volume 0–15). */
+export type GlassesMediaVolumeGetResult = {
+  vol: number
+  statusCode: number
+}
+
+/** K900 `sr_vol` acknowledgment. */
+export type GlassesMediaVolumeSetResult = {
+  statusCode: number
+}
+
 export type LocalTranscriptionEvent = {
   text: string
   isFinal?: boolean
