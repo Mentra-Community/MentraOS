@@ -804,6 +804,8 @@ export class UserSession {
       UserSession.sessions.delete(this.userId);
     }
 
+    const sessionDurationSeconds = this.startTime ? Math.round((Date.now() - this.startTime.getTime()) / 1000) : 0;
+
     this.logger.info(
       {
         disposalReason: this.disconnectedAt ? "grace_period_timeout" : "explicit_disposal",
@@ -813,6 +815,52 @@ export class UserSession {
 
     // Mark disposed for leak detection
     memoryLeakDetector.markDisposed(`UserSession:${this.userId}`);
+
+    // GC after disconnect — force garbage collection and measure how much is freed.
+    // Rate-limited: at most once per 10 seconds across all sessions to avoid
+    // thrashing GC during crash cascades (many sessions disconnecting at once).
+    if (this.userId && UserSession.canRunPostDisconnectGc()) {
+      const gcLogger = rootLogger.child({ service: "gc-after-disconnect" });
+      setTimeout(() => {
+        try {
+          const memBefore = process.memoryUsage();
+          const t0 = performance.now();
+          Bun.gc(true);
+          const gcDurationMs = performance.now() - t0;
+          const memAfter = process.memoryUsage();
+          const freedBytes = memBefore.heapUsed - memAfter.heapUsed;
+
+          gcLogger.info(
+            {
+              feature: "gc-after-disconnect",
+              userId: this.userId,
+              gcDurationMs: Math.round(gcDurationMs * 10) / 10,
+              heapBeforeMB: Math.round(memBefore.heapUsed / 1048576),
+              heapAfterMB: Math.round(memAfter.heapUsed / 1048576),
+              freedMB: Math.round(freedBytes / 1048576),
+              rssMB: Math.round(memAfter.rss / 1048576),
+              sessionDurationSeconds,
+            },
+            `GC after disconnect (${this.userId}): ${gcDurationMs.toFixed(1)}ms, freed ${Math.round(freedBytes / 1048576)}MB`,
+          );
+        } catch (error) {
+          gcLogger.error(error, "GC after disconnect failed");
+        }
+      }, 0);
+    }
+  }
+
+  // Rate limiter for post-disconnect GC: at most once per 10 seconds
+  private static lastPostDisconnectGc: number = 0;
+  private static POST_DISCONNECT_GC_COOLDOWN_MS = 10_000;
+
+  private static canRunPostDisconnectGc(): boolean {
+    const now = Date.now();
+    if (now - UserSession.lastPostDisconnectGc < UserSession.POST_DISCONNECT_GC_COOLDOWN_MS) {
+      return false;
+    }
+    UserSession.lastPostDisconnectGc = now;
+    return true;
   }
 
   /**

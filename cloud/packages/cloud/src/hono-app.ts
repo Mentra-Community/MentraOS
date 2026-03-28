@@ -209,6 +209,7 @@ app.get("/livez", (c) => c.text("ok"));
 // ============================================================================
 
 app.get("/health", (c) => {
+  const t0 = performance.now();
   try {
     const activeSessions = UserSession.getAllSessions();
 
@@ -243,6 +244,18 @@ app.get("/health", (c) => {
       },
       500,
     );
+  } finally {
+    const durationMs = performance.now() - t0;
+    if (durationMs > 50) {
+      logger.warn(
+        {
+          feature: "health-timing",
+          durationMs: Math.round(durationMs * 10) / 10,
+          activeSessions: UserSession.getAllSessions().length,
+        },
+        `Health check slow: ${Math.round(durationMs)}ms`,
+      );
+    }
   }
 });
 

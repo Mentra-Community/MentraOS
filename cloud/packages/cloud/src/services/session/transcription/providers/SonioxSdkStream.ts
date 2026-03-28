@@ -92,6 +92,7 @@ export class SonioxSdkStream implements StreamInstance {
   private session: RealtimeSttSession;
   private utteranceBuffer: RealtimeUtteranceBuffer;
   private disposed = false;
+  private _lastSlowSendWarn: number = 0;
 
   // ── Stored listener references for typed .off() cleanup in close() ──
   private onResult?: (result: RealtimeResult) => void;
@@ -286,7 +287,24 @@ export class SonioxSdkStream implements StreamInstance {
     }
 
     try {
+      const t0 = performance.now();
       this.session.sendAudio(new Uint8Array(data));
+      const sendDurationMs = performance.now() - t0;
+
+      // Log slow Soniox sends — if this blocks >50ms, it's starving the event loop.
+      // Rate-limited: at most one warning per 30 seconds per stream to avoid log flood
+      // (audio sends happen ~50 times/second per session).
+      if (sendDurationMs > 50 && Date.now() - (this._lastSlowSendWarn || 0) > 30_000) {
+        this._lastSlowSendWarn = Date.now();
+        this.logger.warn(
+          {
+            feature: "soniox-timing",
+            durationMs: Math.round(sendDurationMs * 10) / 10,
+            streamId: this.id,
+          },
+          `Soniox send slow: ${Math.round(sendDurationMs)}ms`,
+        );
+      }
 
       this.state = StreamState.ACTIVE;
       this.metrics.audioChunksWritten++;

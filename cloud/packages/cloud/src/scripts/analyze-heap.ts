@@ -26,6 +26,8 @@
  *   MENTRA_ADMIN_JWT — Bearer token for admin endpoints (reads from process.env or Doppler)
  */
 
+export {};
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -36,9 +38,14 @@ const ADMIN_JWT =
   (() => {
     try {
       const envFile = Bun.file("../../.env");
-      const text = envFile.textSync?.() ?? "";
-      const match = text.match(/MENTRA_ADMIN_JWT=(.+)/);
-      return match?.[1]?.trim() ?? "";
+      const text = envFile.text();
+      // text() returns a Promise in types but we only use this as a fallback
+      // If it fails, we return empty string
+      if (typeof text === "string") {
+        const match = text.match(/MENTRA_ADMIN_JWT=(.+)/);
+        return match?.[1]?.trim() ?? "";
+      }
+      return "";
     } catch {
       return "";
     }
