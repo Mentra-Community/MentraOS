@@ -124,6 +124,12 @@ vector:
           strategy: "bearer"
           token: "PLACEHOLDER_SOURCE_TOKEN"
 
+  # Ensure Vector schedules on ALL nodes, including tainted ones.
+  # US Central has 49 nodes but only 36 were covered without this —
+  # cloud-prod was on an uncovered node and logs weren't collected.
+  tolerations:
+    - operator: "Exists"
+
 # The existing better-stack-collector DaemonSet already installs a metrics
 # server on each cluster. Disable it here to avoid conflicts.
 metrics-server:
