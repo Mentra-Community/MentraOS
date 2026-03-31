@@ -48,7 +48,7 @@
     "@types/react": "18.2.79",
     "@types/react-dom": "18.2.25",
     "assemblyai": "^4.9.0",
-    "axios": "^1.8.1",
+    "axios": "1.14.0",
     "dotenv": "^16.5.0",
     "langchain": "^0.3.18",
     "pino": "^9.6.0",

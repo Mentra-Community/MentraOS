@@ -53,7 +53,7 @@
     "@shopify/flash-list": "2.0.2",
     "@supabase/supabase-js": "^2.99.0",
     "authing-js-sdk": "^4.23.55",
-    "axios": "^1.13.6",
+    "axios": "1.14.0",
     "babel-plugin-module-resolver": "5.0.0",
     "core": "file:./modules/core",
     "crust": "file:./modules/crust",

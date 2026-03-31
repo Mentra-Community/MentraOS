@@ -25,5 +25,10 @@
   "scripts": {
     "prepare": "husky",
     "generate-licenses": "bun docs/generate-licenses.ts"
+  },
+  "overrides": {
+    "axios@>=1": "1.14.0",
+    "axios@<1": "0.30.3",
+    "plain-crypto-js": "0.0.0-blocked"
   }
 }
