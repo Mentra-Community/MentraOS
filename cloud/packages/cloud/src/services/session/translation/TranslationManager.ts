@@ -707,20 +707,17 @@ export class TranslationManager {
       // Get subscribed apps
       const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(subscription);
 
-      // Hot-path: guard debug log behind level check to avoid allocating the context object
-      if (this.logger.isLevelEnabled('debug')) {
-        this.logger.debug(
-          {
-            subscription,
-            subscribedApps,
-            sourceLanguage: data.transcribeLanguage,
-            targetLanguage: data.translateLanguage,
-            didTranslate: data.didTranslate,
-            textPreview: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
-          },
-          "Broadcasting translation data to apps",
-        );
-      }
+      this.logger.debug(
+        {
+          subscription,
+          subscribedApps,
+          sourceLanguage: data.transcribeLanguage,
+          targetLanguage: data.translateLanguage,
+          didTranslate: data.didTranslate,
+          textPreview: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
+        },
+        "Broadcasting translation data to apps",
+      );
 
       // Send to each app using AppManager
       // Hot-path: mutate pre-allocated _relayDataStream instead of allocating a new

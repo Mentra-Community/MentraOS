@@ -1909,20 +1909,17 @@ export class TranscriptionManager {
       // Get all apps subscribed to this base language
       const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(effectiveSubscription);
 
-      // Hot-path: guard debug log to avoid allocating the metadata object when debug is disabled
-      if (this.logger.isLevelEnabled('debug')) {
-        this.logger.debug(
-          {
-            subscription,
-            effectiveSubscription,
-            subscribedApps,
-            streamType,
-            dataType: data.type,
-            transcribeLanguage: data.transcribeLanguage,
-          },
-          "Broadcasting transcription data",
-        );
-      }
+      this.logger.debug(
+        {
+          subscription,
+          effectiveSubscription,
+          subscribedApps,
+          streamType,
+          dataType: data.type,
+          transcribeLanguage: data.transcribeLanguage,
+        },
+        "Broadcasting transcription data",
+      );
 
       // Send to each app using APP MANAGER (with resurrection) instead of direct WebSocket
       for (const packageName of subscribedApps) {
@@ -1978,25 +1975,22 @@ export class TranscriptionManager {
         }
       }
 
-      // Hot-path: guard debug log to avoid allocating metadata + string interpolation when debug is disabled
-      if (this.logger.isLevelEnabled('debug')) {
-        this.logger.debug(
-          {
-            subscription,
-            effectiveSubscription,
-            provider: data.provider || "unknown",
-            dataType: data.type,
-            text: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
-            isFinal: data.isFinal,
-            confidence: data.confidence,
-            appsNotified: subscribedApps.length,
-            subscribedApps: Array.from(subscribedApps),
-          },
-          `📝 TRANSCRIPTION: [${data.provider || "unknown"}] ${data.isFinal ? "FINAL" : "interim"} "${
-            data.text || "no text"
-          }" → ${subscribedApps.length} apps`,
-        );
-      }
+      this.logger.debug(
+        {
+          subscription,
+          effectiveSubscription,
+          provider: data.provider || "unknown",
+          dataType: data.type,
+          text: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
+          isFinal: data.isFinal,
+          confidence: data.confidence,
+          appsNotified: subscribedApps.length,
+          subscribedApps: Array.from(subscribedApps),
+        },
+        `📝 TRANSCRIPTION: [${data.provider || "unknown"}] ${data.isFinal ? "FINAL" : "interim"} "${
+          data.text || "no text"
+        }" → ${subscribedApps.length} apps`,
+      );
     } catch (error) {
       this.logger.error(
         {

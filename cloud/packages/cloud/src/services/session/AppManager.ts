@@ -1712,15 +1712,13 @@ export class AppManager {
           // Send message successfully
           websocket.send(JSON.stringify(message));
           metricsService.incrementMiniappMessagesOut();
-          if (this.logger.isLevelEnabled('debug')) {
-            this.logger.debug(
-              {
-                packageName,
-                messageType: message.type || "unknown",
-              },
-              `[AppManager:sendMessageToApp]: Message sent to App ${packageName} for user ${this.userSession.userId}`,
-            );
-          }
+          this.logger.debug(
+            {
+              packageName,
+              messageType: message.type || "unknown",
+            },
+            `[AppManager:sendMessageToApp]: Message sent to App ${packageName} for user ${this.userSession.userId}`,
+          );
 
           return SEND_SUCCESS;
         } catch (sendError) {
