@@ -87,6 +87,16 @@ interface AppMessageResult {
   error?: string;
 }
 
+// ── Hot-path allocation reduction ──────────────────────────────────────────────
+// Pre-allocated, frozen result objects for sendMessageToApp to avoid per-call
+// heap allocations on the hot path.  Reduces GC pressure / heap fragmentation
+// on Bun/JSC where short-lived objects are especially costly.
+const SEND_SUCCESS: Readonly<AppMessageResult> = Object.freeze({ sent: true, resurrectionTriggered: false });
+const SEND_FAIL_STOPPING: Readonly<AppMessageResult> = Object.freeze({ sent: false, resurrectionTriggered: false, error: "App is being stopped" });
+const SEND_FAIL_GRACE: Readonly<AppMessageResult> = Object.freeze({ sent: false, resurrectionTriggered: false, error: "Connection lost, waiting for reconnection" });
+const SEND_FAIL_RESURRECTING: Readonly<AppMessageResult> = Object.freeze({ sent: false, resurrectionTriggered: false, error: "App is restarting" });
+const SEND_FAIL_CONNECTING: Readonly<AppMessageResult> = Object.freeze({ sent: false, resurrectionTriggered: false, error: "App is still connecting" });
+
 export class AppManager {
   private userSession: UserSession;
   private logger: Logger;
@@ -1666,27 +1676,15 @@ export class AppManager {
       const appState = this.getAppConnectionState(packageName);
 
       if (appState === AppSessionState.STOPPING) {
-        return {
-          sent: false,
-          resurrectionTriggered: false,
-          error: "App is being stopped",
-        };
+        return SEND_FAIL_STOPPING;
       }
 
       if (appState === AppSessionState.GRACE_PERIOD) {
-        return {
-          sent: false,
-          resurrectionTriggered: false,
-          error: "Connection lost, waiting for reconnection",
-        };
+        return SEND_FAIL_GRACE;
       }
 
       if (appState === AppSessionState.RESURRECTING) {
-        return {
-          sent: false,
-          resurrectionTriggered: false,
-          error: "App is restarting",
-        };
+        return SEND_FAIL_RESURRECTING;
       }
 
       // Get WebSocket from AppSession (Phase 4d)
@@ -1695,19 +1693,17 @@ export class AppManager {
 
       // If connection is connecting, then we can't send messages yet.
       if (websocket && websocket.readyState === WebSocketReadyState.CONNECTING) {
-        this.logger.warn(
-          {
-            userId: this.userSession.userId,
-            packageName,
-            service: "AppManager",
-          },
-          `App ${packageName} is still connecting, cannot send message yet`,
-        );
-        return {
-          sent: false,
-          resurrectionTriggered: false,
-          error: "App is still connecting",
-        };
+        if (this.logger.isLevelEnabled('debug')) {
+          this.logger.warn(
+            {
+              userId: this.userSession.userId,
+              packageName,
+              service: "AppManager",
+            },
+            `App ${packageName} is still connecting, cannot send message yet`,
+          );
+        }
+        return SEND_FAIL_CONNECTING;
       }
 
       // Check if websocket exists and is ready
@@ -1716,15 +1712,17 @@ export class AppManager {
           // Send message successfully
           websocket.send(JSON.stringify(message));
           metricsService.incrementMiniappMessagesOut();
-          this.logger.debug(
-            {
-              packageName,
-              messageType: message.type || "unknown",
-            },
-            `[AppManager:sendMessageToApp]: Message sent to App ${packageName} for user ${this.userSession.userId}`,
-          );
+          if (this.logger.isLevelEnabled('debug')) {
+            this.logger.debug(
+              {
+                packageName,
+                messageType: message.type || "unknown",
+              },
+              `[AppManager:sendMessageToApp]: Message sent to App ${packageName} for user ${this.userSession.userId}`,
+            );
+          }
 
-          return { sent: true, resurrectionTriggered: false };
+          return SEND_SUCCESS;
         } catch (sendError) {
           const logger = this.logger.child({ packageName });
           const errorMessage = sendError instanceof Error ? sendError.message : String(sendError);
@@ -1746,11 +1744,9 @@ export class AppManager {
 
       // manually trigger handleAppConnectionClosed, which will handle the grace period and resurrection logic.
       await this.handleAppConnectionClosed(packageName, 1069, "Connection not available for messaging");
-      return {
-        sent: false,
-        resurrectionTriggered: true,
-        error: "Connection not available for messaging",
-      };
+      // NOTE: This path returns a fresh object because resurrectionTriggered is true
+      // and the error string is unique to this code-path – not worth a frozen constant.
+      return { sent: false, resurrectionTriggered: true, error: "Connection not available for messaging" };
     } catch (error) {
       const logger = this.logger.child({ packageName });
       const errorMessage = error instanceof Error ? error.message : String(error);

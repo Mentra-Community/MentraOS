@@ -72,6 +72,17 @@ export class TranscriptionManager {
   private disposed = false;
   private pendingTimers = new Set<NodeJS.Timeout>();
 
+  // Hot-path allocation reduction: pre-allocated DataStream template to avoid
+  // per-message heap allocations in relayDataToApps, reducing GC pressure
+  // and heap fragmentation on Bun/JSC.
+  private _relayDataStream: DataStream = {
+    type: CloudToAppMessageType.DATA_STREAM,
+    sessionId: "",
+    streamType: "" as ExtendedStreamType,
+    data: null as any,
+    timestamp: 0 as any,
+  };
+
   // Health Monitoring
   private healthCheckInterval?: NodeJS.Timeout;
 
@@ -1898,17 +1909,20 @@ export class TranscriptionManager {
       // Get all apps subscribed to this base language
       const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(effectiveSubscription);
 
-      this.logger.debug(
-        {
-          subscription,
-          effectiveSubscription,
-          subscribedApps,
-          streamType,
-          dataType: data.type,
-          transcribeLanguage: data.transcribeLanguage,
-        },
-        "Broadcasting transcription data",
-      );
+      // Hot-path: guard debug log to avoid allocating the metadata object when debug is disabled
+      if (this.logger.isLevelEnabled('debug')) {
+        this.logger.debug(
+          {
+            subscription,
+            effectiveSubscription,
+            subscribedApps,
+            streamType,
+            dataType: data.type,
+            transcribeLanguage: data.transcribeLanguage,
+          },
+          "Broadcasting transcription data",
+        );
+      }
 
       // Send to each app using APP MANAGER (with resurrection) instead of direct WebSocket
       for (const packageName of subscribedApps) {
@@ -1922,17 +1936,16 @@ export class TranscriptionManager {
           ? this.findAppTranscriptionSubscription(packageName, data.transcribeLanguage)
           : null;
 
-        const dataStream: DataStream = {
-          type: CloudToAppMessageType.DATA_STREAM,
-          sessionId: appSessionId,
-          streamType: (appSubscription || effectiveSubscription) as ExtendedStreamType,
-          data,
-          timestamp: new Date(),
-        };
+        // Hot-path allocation reduction: mutate pre-allocated template instead of
+        // creating a new object per message to reduce heap fragmentation on Bun/JSC.
+        this._relayDataStream.sessionId = appSessionId;
+        this._relayDataStream.streamType = (appSubscription || effectiveSubscription) as ExtendedStreamType;
+        this._relayDataStream.data = data;
+        this._relayDataStream.timestamp = Date.now() as any;
 
         try {
           // USE APP MANAGER instead of direct WebSocket (restores resurrection)
-          const result = await this.userSession.appManager.sendMessageToApp(packageName, dataStream);
+          const result = await this.userSession.appManager.sendMessageToApp(packageName, this._relayDataStream);
 
           if (!result.sent) {
             this.logger.warn(
@@ -1965,23 +1978,25 @@ export class TranscriptionManager {
         }
       }
 
-      // Enhanced debug logging to show transcription content and provider
-      this.logger.debug(
-        {
-          subscription,
-          effectiveSubscription,
-          provider: data.provider || "unknown",
-          dataType: data.type,
-          text: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
-          isFinal: data.isFinal,
-          confidence: data.confidence,
-          appsNotified: subscribedApps.length,
-          subscribedApps: Array.from(subscribedApps),
-        },
-        `📝 TRANSCRIPTION: [${data.provider || "unknown"}] ${data.isFinal ? "FINAL" : "interim"} "${
-          data.text || "no text"
-        }" → ${subscribedApps.length} apps`,
-      );
+      // Hot-path: guard debug log to avoid allocating metadata + string interpolation when debug is disabled
+      if (this.logger.isLevelEnabled('debug')) {
+        this.logger.debug(
+          {
+            subscription,
+            effectiveSubscription,
+            provider: data.provider || "unknown",
+            dataType: data.type,
+            text: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
+            isFinal: data.isFinal,
+            confidence: data.confidence,
+            appsNotified: subscribedApps.length,
+            subscribedApps: Array.from(subscribedApps),
+          },
+          `📝 TRANSCRIPTION: [${data.provider || "unknown"}] ${data.isFinal ? "FINAL" : "interim"} "${
+            data.text || "no text"
+          }" → ${subscribedApps.length} apps`,
+        );
+      }
     } catch (error) {
       this.logger.error(
         {

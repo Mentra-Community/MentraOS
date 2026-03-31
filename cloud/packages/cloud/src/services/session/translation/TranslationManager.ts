@@ -62,6 +62,19 @@ export class TranslationManager {
   private disposed = false;
   private pendingTimers = new Set<NodeJS.Timeout>();
 
+  /**
+   * Pre-allocated DataStream template for relayDataToApps hot path.
+   * Mutated in-place to avoid per-message heap allocation, reducing GC pressure
+   * and heap fragmentation on Bun/JSC.
+   */
+  private _relayDataStream: DataStream = {
+    type: CloudToAppMessageType.DATA_STREAM,
+    sessionId: "",
+    streamType: "" as ExtendedStreamType,
+    data: null as any,
+    timestamp: 0 as any,
+  };
+
   constructor(
     private userSession: UserSession,
     private config: TranslationConfig = DEFAULT_TRANSLATION_CONFIG,
@@ -694,32 +707,34 @@ export class TranslationManager {
       // Get subscribed apps
       const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(subscription);
 
-      this.logger.debug(
-        {
-          subscription,
-          subscribedApps,
-          sourceLanguage: data.transcribeLanguage,
-          targetLanguage: data.translateLanguage,
-          didTranslate: data.didTranslate,
-          textPreview: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
-        },
-        "Broadcasting translation data to apps",
-      );
+      // Hot-path: guard debug log behind level check to avoid allocating the context object
+      if (this.logger.isLevelEnabled('debug')) {
+        this.logger.debug(
+          {
+            subscription,
+            subscribedApps,
+            sourceLanguage: data.transcribeLanguage,
+            targetLanguage: data.translateLanguage,
+            didTranslate: data.didTranslate,
+            textPreview: data.text ? `"${data.text.substring(0, 100)}${data.text.length > 100 ? "..." : ""}"` : "no text",
+          },
+          "Broadcasting translation data to apps",
+        );
+      }
 
       // Send to each app using AppManager
+      // Hot-path: mutate pre-allocated _relayDataStream instead of allocating a new
+      // object per message to reduce heap fragmentation on Bun/JSC.
       for (const packageName of subscribedApps) {
         const appSessionId = `${this.userSession.sessionId}-${packageName}`;
 
-        const dataStream: DataStream = {
-          type: CloudToAppMessageType.DATA_STREAM,
-          sessionId: appSessionId,
-          streamType: subscription,
-          data,
-          timestamp: new Date(),
-        };
+        this._relayDataStream.sessionId = appSessionId;
+        this._relayDataStream.streamType = subscription;
+        this._relayDataStream.data = data;
+        this._relayDataStream.timestamp = Date.now() as any;
 
         try {
-          const result = await this.userSession.appManager.sendMessageToApp(packageName, dataStream);
+          const result = await this.userSession.appManager.sendMessageToApp(packageName, this._relayDataStream);
 
           if (!result.sent) {
             this.logger.warn(
