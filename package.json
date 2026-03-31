@@ -34,5 +34,19 @@
   "resolutions": {
     "axios": "1.14.0",
     "plain-crypto-js": "0.0.0-blocked"
-  }
+  },
+  "trustedDependencies": [
+    "@firebase/util",
+    "@sentry-internal/node-cpu-profiler",
+    "@sentry/cli",
+    "@swc/core",
+    "bun",
+    "esbuild",
+    "protobufjs",
+    "react-native-inappbrowser-reborn",
+    "react-native-mmkv",
+    "react-native-nitro-bg-timer",
+    "react-native-nitro-modules",
+    "unrs-resolver"
+  ]
 }
