@@ -31,7 +31,7 @@ typedef enum
 /* Audio configuration constants */
 #define PDM_SAMPLE_RATE            16000   // 16 kHz voice optimized
 #define PDM_BIT_DEPTH              16      // PCM bit depth, measured in bits
-#define PDM_CHANNELS               2       // Mono microphone input
+#define PDM_CHANNELS               1       // Mono microphone input
 #define PDM_AUDIO_CHANNELS         PDM_CHANNELS
 #define PDM_FRAME_SIZE_SAMPLES     160     // 10ms frame @ 16kHz
 #define PDM_FRAME_SIZE_BYTES       (PDM_FRAME_SIZE_SAMPLES * 2)  // 16-bit samples
