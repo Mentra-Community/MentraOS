@@ -16,6 +16,7 @@
  * See: cloud/issues/069-ws-disconnect-observability/spike.md
  */
 
+import { heapStats } from "bun:jsc";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { UserSession } from "../session/UserSession";
 import { memoryLeakDetector } from "../debug/MemoryLeakDetector";
@@ -310,6 +311,29 @@ class SystemVitalsLogger {
 
           // Leak indicator
           disposedSessionsPendingGC: memoryLeakDetector.getDisposedPendingGCCount(),
+
+          // Heap object breakdown — shows WHAT is in the heap, not just how much.
+          // Before this, we only had heapUsedMB (a single number). Now we see
+          // the count of every object type: Array, Object, Function, string, Map, etc.
+          // If Arrays triple in an hour but everything else is flat, we know to
+          // grep for unbounded arrays. This replaces guessing with measuring.
+          // ~1ms cost, zero memory overhead. See: bun.com/blog/debugging-memory-leaks
+          ...(() => {
+            try {
+              const stats = heapStats();
+              // Top 15 types by count — captures dominant types without bloating logs
+              const sorted = Object.entries(stats.objectTypeCounts as Record<string, number>)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 15);
+              return {
+                heapObjectCount: stats.objectCount,
+                heapProtectedCount: stats.protectedObjectCount,
+                heapTopTypes: JSON.stringify(Object.fromEntries(sorted)),
+              };
+            } catch {
+              return {};
+            }
+          })(),
 
           // Connection churn — the key evidence for client-side vs server-side disconnects.
           // If disconnects >> reconnects, sessions are being disposed (not surviving grace period).
