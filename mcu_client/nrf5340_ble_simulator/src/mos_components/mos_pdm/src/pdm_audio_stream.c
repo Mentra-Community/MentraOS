@@ -160,30 +160,10 @@ static int apply_fade_linear_q15(int16_t *buf, size_t n)
     return 0;
 }
 
-/* ---- Mic filter chain: HP -> LP -> noise gate -> makeup gain ---- */
+/* ---- Mic filter chain: DC block + simple low-pass ---- */
 static int32_t dc_prev_in = 0;
 static int32_t dc_prev_out = 0;
 static int32_t lp_prev_out = 0;
-
-#ifndef MIC_HP_ALPHA_Q15
-/* 0.975 @16kHz -> suppresses <~60Hz rumble/DC drift */
-#define MIC_HP_ALPHA_Q15 31949
-#endif
-
-#ifndef MIC_LP_BETA_Q15
-/* ~0.55 one-pole LP @16kHz -> reduces hiss while keeping speech */
-#define MIC_LP_BETA_Q15 18022
-#endif
-
-#ifndef MIC_NOISE_FLOOR
-/* Gate threshold in PCM LSB units */
-#define MIC_NOISE_FLOOR 900
-#endif
-
-#ifndef MIC_MAKEUP_GAIN_Q15
-/* 1.35x */
-#define MIC_MAKEUP_GAIN_Q15 44237
-#endif
 
 static inline void reset_mic_filters(void)
 {
@@ -194,28 +174,15 @@ static inline void reset_mic_filters(void)
 
 static inline int16_t apply_mic_filters(int16_t sample)
 {
-    const int32_t alpha_q15 = MIC_HP_ALPHA_Q15;
-    const int32_t lp_beta_q15 = MIC_LP_BETA_Q15;
+    const int32_t alpha_q15 = 32512; /* ~=0.995 */
     int32_t x = sample;
     int32_t hp = x - dc_prev_in + ((alpha_q15 * dc_prev_out) >> 15);
     dc_prev_in = x;
     dc_prev_out = hp;
 
-    lp_prev_out += (int32_t)(((int64_t)lp_beta_q15 * (hp - lp_prev_out)) >> 15);
+    /* One-pole low-pass to smooth high-frequency hiss. */
+    lp_prev_out += (hp - lp_prev_out) >> 3;
     int32_t filtered = lp_prev_out;
-
-    int32_t a = (filtered >= 0) ? filtered : -filtered;
-    if (a <= MIC_NOISE_FLOOR)
-    {
-        filtered = 0;
-    }
-    else
-    {
-        int32_t sign = (filtered >= 0) ? 1 : -1;
-        int32_t above = a - MIC_NOISE_FLOOR;
-        int32_t lifted = (int32_t)(((int64_t)above * MIC_MAKEUP_GAIN_Q15) >> 15);
-        filtered = sign * lifted;
-    }
 
     if (filtered > 32767)
     {
