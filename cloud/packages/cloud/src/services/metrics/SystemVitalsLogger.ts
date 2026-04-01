@@ -330,7 +330,8 @@ class SystemVitalsLogger {
                 heapProtectedCount: stats.protectedObjectCount,
                 heapTopTypes: JSON.stringify(Object.fromEntries(sorted)),
               };
-            } catch {
+            } catch (err) {
+              logger.error(err, "Failed to collect heapStats from bun:jsc");
               return {};
             }
           })(),
