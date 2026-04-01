@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger only — no auto-deploy
   push:
     branches:
-      - hotfix/075-hot-path-allocation
+      - cloud/issues-077-heap-diagnostics
     paths:
       - "cloud/**"
       - ".github/workflows/porter-us-west.yml"
