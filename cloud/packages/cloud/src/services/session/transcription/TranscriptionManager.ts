@@ -75,12 +75,13 @@ export class TranscriptionManager {
   // Hot-path allocation reduction: pre-allocated DataStream template to avoid
   // per-message heap allocations in relayDataToApps, reducing GC pressure
   // and heap fragmentation on Bun/JSC.
+  private _relayTimestamp: Date = new Date();
   private _relayDataStream: DataStream = {
     type: CloudToAppMessageType.DATA_STREAM,
     sessionId: "",
     streamType: "" as ExtendedStreamType,
     data: null as any,
-    timestamp: 0 as any,
+    timestamp: this._relayTimestamp,
   };
 
   // Health Monitoring
@@ -1938,7 +1939,7 @@ export class TranscriptionManager {
         this._relayDataStream.sessionId = appSessionId;
         this._relayDataStream.streamType = (appSubscription || effectiveSubscription) as ExtendedStreamType;
         this._relayDataStream.data = data;
-        this._relayDataStream.timestamp = Date.now() as any;
+        this._relayTimestamp.setTime(Date.now());
 
         try {
           // USE APP MANAGER instead of direct WebSocket (restores resurrection)

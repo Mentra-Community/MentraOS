@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger only — no auto-deploy
   push:
     branches:
-      - cloud/064-bstack-cli
+      - hotfix/075-hot-path-allocation
     paths:
       - "cloud/**"
       - ".github/workflows/porter-us-west.yml"

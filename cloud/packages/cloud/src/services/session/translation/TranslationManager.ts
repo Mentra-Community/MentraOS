@@ -67,12 +67,13 @@ export class TranslationManager {
    * Mutated in-place to avoid per-message heap allocation, reducing GC pressure
    * and heap fragmentation on Bun/JSC.
    */
+  private _relayTimestamp: Date = new Date();
   private _relayDataStream: DataStream = {
     type: CloudToAppMessageType.DATA_STREAM,
     sessionId: "",
     streamType: "" as ExtendedStreamType,
     data: null as any,
-    timestamp: 0 as any,
+    timestamp: this._relayTimestamp,
   };
 
   constructor(
@@ -728,7 +729,7 @@ export class TranslationManager {
         this._relayDataStream.sessionId = appSessionId;
         this._relayDataStream.streamType = subscription;
         this._relayDataStream.data = data;
-        this._relayDataStream.timestamp = Date.now() as any;
+        this._relayTimestamp.setTime(Date.now());
 
         try {
           const result = await this.userSession.appManager.sendMessageToApp(packageName, this._relayDataStream);
