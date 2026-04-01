@@ -27,7 +27,7 @@
     "@tabler/icons-react": "^2.22.0",
     "@tailwindcss/forms": "^0.5.3",
     "@tailwindcss/typography": "^0.5.15",
-    "axios": "^1.4.0",
+    "axios": "1.14.0",
     "browser-fs-access": "^0.35.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

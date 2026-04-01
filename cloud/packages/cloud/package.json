@@ -47,7 +47,7 @@
     "@supabase/supabase-js": "^2.49.1",
     "@types/ali-oss": "^6.16.11",
     "ali-oss": "^6.23.0",
-    "axios": "^1.7.4",
+    "axios": "1.14.0",
     "bun-types": "^1.3.5",
     "dotenv": "^10.0.0",
     "form-data": "^4.0.1",

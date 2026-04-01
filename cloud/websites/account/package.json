@@ -29,7 +29,7 @@
     "@radix-ui/react-use-previous": "1.1.1",
     "@supabase/supabase-js": "^2.49.1",
     "@tailwindcss/vite": "^4.0.8",
-    "axios": "^1.8.1",
+    "axios": "1.14.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.7",
