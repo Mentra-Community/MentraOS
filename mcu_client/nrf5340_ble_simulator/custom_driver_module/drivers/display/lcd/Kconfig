@@ -15,3 +15,12 @@ config CUSTOM_A6N_LOG_LEVEL
     int "Logging level"
     default 3
     range 0 4
+
+config A6N_I1_POLARITY_INVERT
+    bool "Invert 1bpp→4bpp LUT (1=bright, 0=dark) for clearer text"
+    default n
+    help
+      When set, framebuffer bit 1 → bright (0x0F), bit 0 → dark (0x00).
+      When clear (default), bit 0 → bright, bit 1 → dark.
+      Try enabling if 1bpp text appears faint or unclear; then set
+      display_config invert_colors=0 so text uses white (1) in the buffer.

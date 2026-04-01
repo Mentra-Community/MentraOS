@@ -21,7 +21,6 @@
 
 #include "mos_ble_service.h"
 #include "mos_lvgl_display.h"  // Working LVGL display integration
-#include "pdm_audio_stream.h"
 #include "protobuf_handler.h"
 // #include "display/lcd/a6n.h"  // Working A6N driver
 #include <hal/nrf_gpio.h>  // For direct GPIO access
@@ -35,10 +34,13 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/util.h>  // For ARRAY_SIZE macro
 
+// #include "mos_gx8002.h"  // VAD path kept for quick rollback
+#include "pdm_audio_stream.h"
 #include "interrupt_handler.h"  // Interrupt handler framework
 #include "mos_button_app.h"  // Button application logic
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
+#include "mos_hinge_fold.h"
 #include "mos_jlink_usb_switch_app.h"  // J-Link/USB switch application logic
 #include "mos_lsm6dsv16x.h"  // LSM6DSV16X 6-axis IMU sensor
 #include "mos_npm1300_ldsw.h"  // NPM1300 LDSW (load switch) control
@@ -56,8 +58,8 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 static K_SEM_DEFINE(ble_init_ok, 0, 1);
 
-static struct bt_conn* current_conn;
-static struct bt_conn* auth_conn;
+static struct bt_conn *current_conn;
+static struct bt_conn *auth_conn;
 static struct k_work adv_work;
 
 static uint16_t payload_mtu = 20;
@@ -94,7 +96,7 @@ static void setup_dynamic_advertising(void)
     }
 
     // Update the advertising data with the new name
-    ad[1].data = (const uint8_t*)dynamic_device_name;
+    ad[1].data = (const uint8_t *)dynamic_device_name;
     ad[1].data_len = strlen(dynamic_device_name);
 
     // err = bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
@@ -104,12 +106,12 @@ static void setup_dynamic_advertising(void)
     // }
 }
 
-const char* get_ble_device_name(void)
+const char *get_ble_device_name(void)
 {
     return dynamic_device_name;
 }
 
-static void adv_work_handler(struct k_work* work)
+static void adv_work_handler(struct k_work *work)
 {
     // Setup dynamic advertising
     setup_dynamic_advertising();
@@ -133,7 +135,7 @@ bool get_ble_connected_status(void)
 {
     return ble_connected;
 }
-static void connected(struct bt_conn* conn, uint8_t err)
+static void connected(struct bt_conn *conn, uint8_t err)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -149,15 +151,20 @@ static void connected(struct bt_conn* conn, uint8_t err)
     current_conn = bt_conn_ref(conn);
 }
 
-static void disconnected(struct bt_conn* conn, uint8_t reason)
+static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
     LOG_INF("Disconnected: %s, reason 0x%02x %s", addr, reason, bt_hci_err_to_str(reason));
+
+    bool was_connected = get_ble_connected_status();
     set_ble_connected_status(false);
-    display_show_welcome_screen(); /* 断开后自动回到欢迎界面 | Return to welcome screen on disconnect */
+    if (was_connected)
+    {
+        display_show_welcome_screen(); /* 断开后自动回到欢迎界面 | Return to welcome screen on disconnect */
+    }
     if (auth_conn)
     {
         bt_conn_unref(auth_conn);
@@ -178,7 +185,7 @@ static void recycled_cb(void)
 }
 
 #ifdef CONFIG_BT_NUS_SECURITY_ENABLED
-static void security_changed(struct bt_conn* conn, bt_security_t level, enum bt_security_err err)
+static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -205,7 +212,7 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 };
 
 #if defined(CONFIG_BT_NUS_SECURITY_ENABLED)
-static void auth_passkey_display(struct bt_conn* conn, unsigned int passkey)
+static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -214,7 +221,7 @@ static void auth_passkey_display(struct bt_conn* conn, unsigned int passkey)
     LOG_INF("Passkey for %s: %06u", addr, passkey);
 }
 
-static void auth_passkey_confirm(struct bt_conn* conn, unsigned int passkey)
+static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -234,7 +241,7 @@ static void auth_passkey_confirm(struct bt_conn* conn, unsigned int passkey)
     }
 }
 
-static void auth_cancel(struct bt_conn* conn)
+static void auth_cancel(struct bt_conn *conn)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -243,7 +250,7 @@ static void auth_cancel(struct bt_conn* conn)
     LOG_INF("Pairing cancelled: %s", addr);
 }
 
-static void pairing_complete(struct bt_conn* conn, bool bonded)
+static void pairing_complete(struct bt_conn *conn, bool bonded)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -252,7 +259,7 @@ static void pairing_complete(struct bt_conn* conn, bool bonded)
     LOG_INF("Pairing completed: %s, bonded: %d", addr, bonded);
 }
 
-static void pairing_failed(struct bt_conn* conn, enum bt_security_err reason)
+static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -274,7 +281,7 @@ static struct bt_conn_auth_cb conn_auth_callbacks;
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
 #endif
 
-static void bt_receive_cb(struct bt_conn* conn, const uint8_t* const data, uint16_t len)
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
     char addr[BT_ADDR_LE_STR_LEN] = {0};
 
@@ -286,7 +293,8 @@ static void bt_receive_cb(struct bt_conn* conn, const uint8_t* const data, uint1
     protobuf_analyze_message(data, len);
 
     // Generate and send echo response
-    uint8_t echo_buffer[128];
+    static uint8_t echo_buffer[251];
+    memset(echo_buffer, 0, sizeof(echo_buffer));
     int echo_len = protobuf_generate_echo_response(data, len, echo_buffer, sizeof(echo_buffer));
 
     if (echo_len > 0)
@@ -315,7 +323,7 @@ uint16_t get_ble_payload_mtu(void)
 {
     return payload_mtu;
 }
-void mtu_updated(struct bt_conn* conn, uint16_t tx, uint16_t rx)
+void mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
 {
     payload_mtu = bt_gatt_get_mtu(conn) - 3;  // 3 bytes used for Attribute headers.
     LOG_INF("Updated MTU: TX: %d RX: %d bytes", tx, rx);
@@ -329,7 +337,7 @@ static struct bt_gatt_cb gatt_callbacks = {.att_mtu_updated = mtu_updated};
  * @param len Length of the data to send
  * @return 0 on success, -1 on failure
  */
-int ble_send_data(const uint8_t* data, uint16_t len)
+int ble_send_data(const uint8_t *data, uint16_t len)
 {
     if ((!data || len == 0) || !get_ble_connected_status())
     // if ((!data || len == 0))
@@ -349,7 +357,8 @@ int ble_send_data(const uint8_t* data, uint16_t len)
         int err;
         do
         {
-            err = custom_nus_send(NULL, &data[offset], chunk_len);
+            /* Send on active link to avoid notify-all ambiguity */
+            err = custom_nus_send(current_conn, &data[offset], chunk_len);
             if (err == 0)
                 break;
             LOG_ERR(" Chunk send failed (offset=%u len=%u), retry %d", offset, chunk_len, retry);
@@ -381,12 +390,12 @@ static void num_comp_reply(bool accept)
     if (accept)
     {
         bt_conn_auth_passkey_confirm(auth_conn);
-        LOG_INF("Numeric Match, conn %p", (void*)auth_conn);
+        LOG_INF("Numeric Match, conn %p", (void *)auth_conn);
     }
     else
     {
         bt_conn_auth_cancel(auth_conn);
-        LOG_INF("Numeric Reject, conn %p", (void*)auth_conn);
+        LOG_INF("Numeric Reject, conn %p", (void *)auth_conn);
     }
 
     bt_conn_unref(auth_conn);
@@ -399,19 +408,13 @@ static void num_comp_reply(bool accept)
  * @return 0 on success, negative value on error
  */
 #define USER_NODE DT_PATH(zephyr_user)
-static const struct gpio_dt_spec vad_power = GPIO_DT_SPEC_GET(USER_NODE, vad_power_gpios);
-static const struct gpio_dt_spec int4 = GPIO_DT_SPEC_GET(USER_NODE, int4_gpios);
 static const struct gpio_dt_spec ear_en = GPIO_DT_SPEC_GET(USER_NODE, ear_en_gpios);
-/**
- * @brief Control VAD power on/off | 控制VAD电源开关
- * @param enable true to turn on VAD power (HIGH), false to turn off (LOW) |
- * true开启VAD电源（高电平），false关闭（低电平）
- */
-void vad_power_control(bool enable)
-{
-    gpio_pin_set_dt(&vad_power, enable ? 1 : 0);
-    LOG_INF("VAD power %s", enable ? "ON" : "OFF");
-}
+#if DT_NODE_HAS_PROP(USER_NODE, vad_power_gpios)
+static const struct gpio_dt_spec mic_power = GPIO_DT_SPEC_GET(USER_NODE, vad_power_gpios);
+#define MIC_POWER_GPIO_AVAILABLE 1
+#else
+#define MIC_POWER_GPIO_AVAILABLE 0
+#endif
 
 /**
  * @brief Control ear_en on/off | 控制 ear_en 开关
@@ -446,42 +449,6 @@ void configure_default_low_pins(void)
 int init_user_gpio(void)
 {
     int err;
-    const struct gpio_dt_spec* gpios[] = {
-        &vad_power,
-        &int4,
-    };
-    const char* gpio_names[] = {
-        "vad_power (P1.00)",
-        "int4 (P0.22)",
-    };
-
-    /* Initialize all user GPIOs as output, default LOW | 初始化所有用户GPIO为输出，默认低电平 */
-    for (int i = 0; i < ARRAY_SIZE(gpios); i++)
-    {
-        if (!gpio_is_ready_dt(gpios[i]))
-        {
-            LOG_ERR("GPIO port for %s not ready", gpio_names[i]);
-            return -1;
-        }
-
-        /* Configure as output, default LOW | 配置为输出，默认低电平 */
-        err = gpio_pin_configure_dt(gpios[i], GPIO_OUTPUT_INACTIVE);
-        if (err != 0)
-        {
-            LOG_ERR("%s config error: %d", gpio_names[i], err);
-            return err;
-        }
-
-        /* Set to LOW (inactive) | 设置为低电平（非活动）*/
-        err = gpio_pin_set_dt(gpios[i], 0);
-        if (err != 0)
-        {
-            LOG_ERR("Failed to set %s to LOW: %d", gpio_names[i], err);
-            return err;
-        }
-
-        // LOG_DBG("%s configured as output, set to LOW", gpio_names[i]);
-    }
     /* ear_en: configure as output and pull HIGH | ear_en：配置为输出并拉高 */
     if (gpio_is_ready_dt(&ear_en))
     {
@@ -498,6 +465,29 @@ int init_user_gpio(void)
     {
         LOG_WRN("ear_en GPIO not ready, skipping");
     }
+
+    /* Mic power rail enable for both VAD and PDM paths */
+    if (MIC_POWER_GPIO_AVAILABLE && gpio_is_ready_dt(&mic_power))
+    {
+        err = gpio_pin_configure_dt(&mic_power, GPIO_OUTPUT_ACTIVE);
+        if (err != 0)
+        {
+            LOG_ERR("mic_power GPIO config error: %d", err);
+            return err;
+        }
+        err = gpio_pin_set_dt(&mic_power, 1);
+        if (err != 0)
+        {
+            LOG_ERR("mic_power GPIO set HIGH failed: %d", err);
+            return err;
+        }
+        LOG_INF("mic_power GPIO configured and set to HIGH");
+    }
+    else
+    {
+        LOG_WRN("mic_power GPIO not ready/available, skipping");
+    }
+
     LOG_INF("User GPIOs configured successfully");
     return 0;
 }
@@ -514,8 +504,6 @@ int main(void)
     {
         LOG_ERR("Failed to initialize user GPIOs: %d", err);
     }
-
-    vad_power_control(true);  // Enable VAD power by default | 默认启用VAD电源
 
     if (IS_ENABLED(CONFIG_BT_NUS_SECURITY_ENABLED))
     {
@@ -562,10 +550,9 @@ int main(void)
     advertising_start();
     bt_gatt_cb_register(&gatt_callbacks);
 
-    /* Initialize interrupt handler framework early | 早期初始化中断处理框架 */
     interrupt_handler_init();
-
-    /* Initialize J-Link/USB switch application | 初始化J-Link/USB切换应用 */
+    // mos_gx8002_init();  // keep old VAD init path as comment
+    pdm_audio_stream_init();
     mos_jlink_usb_switch_app_init();
     mos_npm1300_ldsw1_init();
     mos_npm1300_ldsw1_enable();
@@ -595,13 +582,18 @@ int main(void)
 
     lvgl_display_thread();
 
-    pdm_audio_stream_init();
-
+    /* PDM + LC3 stream initialized above; phone MicState toggles pdm_audio_stream_set_enabled(). */
     protobuf_init_ping_monitoring();
 
     opt3006_initialize();
 
     lsm6dsv16x_init();
+
+    // err = mos_hinge_fold_service_start(NULL);
+    // if (err)
+    // {
+    //     LOG_ERR("Failed to start hinge fold service (err: %d)", err);
+    // }
 
     usb_detect_init();
 

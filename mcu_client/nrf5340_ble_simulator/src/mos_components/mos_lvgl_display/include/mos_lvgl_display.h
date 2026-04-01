@@ -21,6 +21,15 @@ typedef enum
     LCD_STATE_ON,
 } display_state_t;
 
+typedef enum
+{
+    DISPLAY_BIZ_LANG_UNKNOWN = 0,
+    DISPLAY_BIZ_LANG_ZH = 1,
+    DISPLAY_BIZ_LANG_EN = 2,
+    DISPLAY_BIZ_LANG_KO = 3,
+    DISPLAY_BIZ_LANG_JA = 4,
+} display_biz_lang_t;
+
 /* 消息队列的命令类型 */
 typedef enum
 {
@@ -29,9 +38,11 @@ typedef enum
     LCD_CMD_CLOSE,
     LCD_CMD_TEXT,
     LCD_CMD_DATA,
-    LCD_CMD_CYCLE_PATTERN,  // **NEW: Pattern cycling command**
-    LCD_CMD_UPDATE_PROTOBUF_TEXT,  // **NEW: Update container with protobuf text**
-    LCD_CMD_UPDATE_XY_TEXT,        // **NEW: Pattern 5 XY positioned text**
+    LCD_CMD_CYCLE_PATTERN,           // **NEW: Pattern cycling command**
+    LCD_CMD_UPDATE_PROTOBUF_TEXT,    // **NEW: Update container with protobuf text**
+    LCD_CMD_UPDATE_XY_TEXT,          // **NEW: Pattern 5 XY positioned text**
+    LCD_CMD_GBK_TEST,                // **NEW: Simple GBK test text**
+    LCD_CMD_GBK_CHARS_TEST,          // 中文字库/GBK per-character test
     LCD_CMD_UPDATE_WELCOME_BATTERY,  // **NEW: Refresh welcome label with current battery (60s period)**
     LCD_CMD_SHOW_WELCOME_SCREEN,      // **NEW: Return to welcome screen (e.g. after BLE disconnect)**
     LCD_CMD_UPDATE_DFU_PROGRESS,      // **NEW: Show/update DFU progress bar below battery on welcome screen**
@@ -41,14 +52,17 @@ typedef enum
     LCD_CMD_CHESS_PATTERN,         // **NEW: Direct A6N chess pattern**
     LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
     LCD_CMD_CLEAR_DISPLAY,         // **NEW: Clear display**
-    LCD_CMD_UPDATE_HEIGHT
+    LCD_CMD_INVALIDATE_FULL_SCREEN, /* Mark full screen dirty + request one LVGL refresh (thread-safe via msgq) */
+    LCD_CMD_INVALIDATE_VISIBLE_UI, /* Invalidate current pattern roots only (e.g. after software depth) */
+    LCD_CMD_UPDATE_HEIGHT,
+    LCD_CMD_UPDATE_DYNAMIC_FONT     // **NEW: Update dynamic font in LVGL thread**
 } display_cmd_type_t;
 
 /* Display on/off control functions | 显示开关控制函数 */
 void set_display_onoff(bool state);
 bool get_display_onoff(void);
 
-#define MAX_TEXT_LEN 128
+#define MAX_TEXT_LEN 247
 typedef struct
 {
     char text[MAX_TEXT_LEN + 1];
@@ -90,10 +104,15 @@ typedef struct
     char text[MAX_TEXT_LEN + 1];  // **NEW: XY positioned text content**
 } lcd_xy_text_param_t;
 
-typedef struct 
+typedef struct
 {
     uint16_t height;
 } lcd_height_param_t;
+
+typedef struct
+{
+    const lv_font_t *font_ptr;
+} lcd_font_update_param_t;
 
 typedef union
 {
@@ -104,6 +123,7 @@ typedef union
     lcd_xy_text_param_t xy_text;              // **NEW: XY positioned text parameter**
     lcd_dfu_progress_param_t dfu_progress;    // **NEW: DFU progress bar (show + percent)**
     lcd_height_param_t height;
+    lcd_font_update_param_t font_update;
     // 其它命令参数结构体可继续扩展
 } display_param_u;
 
@@ -125,8 +145,16 @@ void scroll_text_stop(void);
 
 void display_open(void);
 
+
+int display_set_translation_pair(display_biz_lang_t src_lang, display_biz_lang_t dst_lang);
+void display_get_translation_pair(display_biz_lang_t *src_lang, display_biz_lang_t *dst_lang);
+
 // **NEW: Thread-safe pattern cycling function**
 void display_cycle_pattern(void);
+
+// **NEW: Thread-safe GBK test render (no serial input needed)**
+void display_show_gbk_test(void);
+void display_show_gbk_chars_test(void);
 
 static void update_display_height(uint16_t height);
 
@@ -145,6 +173,12 @@ void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, ui
 
 // **NEW: Clear display function**
 void display_clear_screen(void);
+
+/** After driver-only changes (e.g. software depth), force LVGL to flush the whole screen. Thread-safe. */
+void display_request_full_redraw(void);
+
+/** Mark dirty only the UI roots for the current pattern (less tearing than full screen). Thread-safe. */
+void display_request_visible_redraw(void);
 
 // **NEW: Get current pattern ID for conditional logic**
 int display_get_current_pattern(void);

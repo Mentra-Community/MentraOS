@@ -1,6 +1,6 @@
 # Static partition layout (external flash)
 # 静态分区表（外置 Flash）
-# mcuboot_secondary: OTA 备用槽 | font_storage: 中文字库 8MB | user_storage: 用户空间（剩余）
+# mcuboot_secondary / font_storage (中文18pt) / font_storage_en_* (英语各字体大小) / user_storage
 
 mcuboot_secondary:
   address: 0x0
@@ -11,16 +11,66 @@ mcuboot_secondary:
   - mcuboot_primary
   size: 0xf0000
 
-# 中文字库区：8 MB
-font_storage:
+# 简体中文 18pt, 2MB
+font_storage_zh_cn_18:
   address: 0xf0000
-  end_address: 0x8f0000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0x2f0000
   region: external_flash
-  size: 0x800000
+  size: 0x200000
 
-# 用户空间：剩余约 23 MB（0x8f0000 ~ 0x2000000）
+# 英语 16pt, 128KB
+font_storage_en_16:
+  address: 0x2f0000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0x310000
+  region: external_flash
+  size: 0x20000
+
+# 英语 18pt, 128KB
+font_storage_en_18:
+  address: 0x310000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0x330000
+  region: external_flash
+  size: 0x20000
+
+# 英语 20pt, 128KB
+font_storage_en_20:
+  address: 0x330000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0x350000
+  region: external_flash
+  size: 0x20000
+
+# 英语 22pt, 128KB
+font_storage_en_22:
+  address: 0x350000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0x370000
+  region: external_flash
+  size: 0x20000
+
+# 英语 24pt, 128KB
+font_storage_en_24:
+  address: 0x370000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0x390000
+  region: external_flash
+  size: 0x20000
+
+# 英语 26pt, 128KB
+font_storage_en_26:
+  address: 0x390000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0x3b0000
+  region: external_flash
+  size: 0x20000
+
+# user_storage (0x3b0000 ~ 0x2000000)
 user_storage:
-  address: 0x8f0000
+  address: 0x3b0000
+  device: DT_CHOSEN(nordic_pm_ext_flash)
   end_address: 0x2000000
   region: external_flash
-  size: 0x1710000
+  size: 0x1c50000

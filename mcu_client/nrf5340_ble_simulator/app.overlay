@@ -16,12 +16,13 @@
     };
 
     zephyr_user: zephyr,user {
-        imu_int1-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;  // P1.15 for LSM6DSV16X INT1
         jlink_usb_switch-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;  // P1.11 for J-Link/USB switch control
         button-gpios = <&gpio0 23 GPIO_ACTIVE_HIGH>;  // P0.23 for button input
-        vad_power-gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;  // P1.00 for VAD_EN power control
 
-        int4-gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>;     // P0.22 INT4
+        // GX8002 / VAD path disabled - microphone uses PDM (see &pdm0)
+        vad_power-gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;
+        gx8002_vad_int-gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>;
+        vad_voice_detect-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
         ear_en-gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;  // P0.19 for Ear Power Enable
     };
 };
@@ -50,6 +51,21 @@
         };
     };
 
+    i2c0_default: i2c0_default {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SDA, 1, 4)>,
+                    <NRF_PSEL(TWIM_SCL, 1, 5)>;
+            nordic,drive-mode = <NRF_DRIVE_S0D1>;
+        };
+    };
+    i2c0_sleep: i2c0_sleep {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SDA, 1, 4)>,
+                    <NRF_PSEL(TWIM_SCL, 1, 5)>;
+            low-power-enable;
+        };
+    };
+
     i2c2_default: i2c2_default {
         group1 {
             psels = <NRF_PSEL(TWIM_SDA, 0, 31)>,
@@ -61,8 +77,8 @@
     i2c2_sleep: i2c2_sleep {
         group1 {
             psels = <NRF_PSEL(TWIM_SDA, 0, 31)>,
-                    <NRF_PSEL(TWIM_SCL, 0, 30)>; 
-                    low-power-enable;
+                    <NRF_PSEL(TWIM_SCL, 0, 30)>;
+            low-power-enable;
         };
     };
     i2c3_default: i2c3_default {
@@ -81,13 +97,13 @@
         };
     };
 
+    // GX8002 VAD I2S slave pins disabled (was SDIN/SCK_S/LRCK_S on P1.09/P1.08/P1.06).
+    // I2S master below is for optional shell LC3->I2S loopback (mos_i2s_master).
     i2s0_default: i2s0_default {
         group1 {
-            psels = <NRF_PSEL(I2S_SDOUT, 1, 6)>,
-                    <NRF_PSEL(I2S_SCK_M, 1, 7)>,
-                    <NRF_PSEL(I2S_LRCK_M, 1, 8)>;
-            // <NRF_PSEL(I2S_SDIN, 0, 0)>;
-
+            psels = <NRF_PSEL(I2S_SDOUT, 1, 9)>,
+                    <NRF_PSEL(I2S_SCK_M, 1, 8)>,
+                    <NRF_PSEL(I2S_LRCK_M, 1, 6)>;
         };
     };
 };
@@ -95,6 +111,15 @@
 &spi3 {
     status = "disabled";
 };
+
+// I2C0 for GX8002 VAD chip (P1.04 SDA, P1.05 SCL) - disabled
+// &i2c0 {
+//     compatible = "nordic,nrf-twim";
+//     status = "okay";
+//     pinctrl-0 = <&i2c0_default>;
+//     pinctrl-1 = <&i2c0_sleep>;
+//     pinctrl-names = "default", "sleep";
+// };
 
 /* Enable SPI4 with 32MHz capability for A6N */
 &spi4 {
@@ -124,7 +149,7 @@
 
 
 
-/* Enable PDM for microphone audio streaming */
+/* PDM microphone: CLK P0.20, DIN P0.21 */
 &pdm0 {
     status = "okay";
     pinctrl-0 = <&pdm0_default>;
@@ -139,7 +164,7 @@
     pinctrl-0 = <&i2c2_default>;
     pinctrl-1 = <&i2c2_sleep>;
     pinctrl-names = "default", "sleep";
-    
+
     lsm6dsv16x: lsm6dsv16x@6a {
         compatible = "st,lsm6dsv16x";
         reg = <0x6a>; /* AD0 = GND */
@@ -205,12 +230,12 @@ zephyr_udc0: &usbd {
         writeoc = "pp4io";
         /* MX25U256 supports all readoc options */
         readoc = "read4io";
-        sck-frequency = <32000000>;//最高 48Mhz
+        sck-frequency = <8000000>;//最高 48Mhz
         address-size-32;
         enter-4byte-addr = <0xb7>;
         jedec-id = [ c2 25 39  ];
         sfdp-bfp = [ e5 20 fb ff ff ff ff 0f 44 eb 08 6b 08 3b 04 bb fe ff ff ff ff ff 00 ff ff ff 44 eb 0c 20 0f 52 10 d8 00 ff 25 52 dd 00 84 a5 04 e2 44 03 17 38 30 b0 30 b0 f7 bd d5 5c 4a 9e 29 ff f0 50 f9 85  ];
-        size = <0x2000000>;// 32M
+        size = <0x10000000>;// 32MB
         has-dpd;
         t-enter-dpd = <10000>;
         t-exit-dpd = <35000>;

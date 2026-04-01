@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-12-04 19:34:06
- * @LastEditTime : 2026-01-26 10:07:54
+ * @LastEditTime : 2026-03-02 16:13:38
  * @FilePath     : interrupt_handler.c
  * @Description  :
  *
@@ -21,8 +21,8 @@ LOG_MODULE_REGISTER(interrupt_handler, LOG_LEVEL_INF);
 
 // Interrupt processing thread configuration
 #define INTERRUPT_THREAD_STACK_SIZE 2048
-#define INTERRUPT_THREAD_PRIORITY   5
-#define INTERRUPT_QUEUE_SIZE        5
+#define INTERRUPT_THREAD_PRIORITY 5
+#define INTERRUPT_QUEUE_SIZE 5
 
 // Interrupt processing thread
 K_THREAD_STACK_DEFINE(interrupt_thread_stack, INTERRUPT_THREAD_STACK_SIZE);
@@ -34,28 +34,29 @@ K_MSGQ_DEFINE(interrupt_queue, sizeof(interrupt_event_t), INTERRUPT_QUEUE_SIZE, 
 // Interrupt metadata structure
 typedef struct
 {
-    const char* name;         // Interrupt name;; 中断名称
-    const char* description;  // Interrupt description; 中断描述
+    const char *name;  // Interrupt name;; 中断名称
+    const char *description;  // Interrupt description; 中断描述
 } interrupt_metadata_t;
 
 // Interrupt metadata table (static data for each interrupt type)
 static const interrupt_metadata_t interrupt_metadata[INTERRUPT_TYPE_MAX_COUNT] = {
     [INTERRUPT_TYPE_UNKNOWN] = {"UNKNOWN", "Unknown or invalid interrupt"},
 
+    [INTERRUPT_TYPE_VAD_FALLING_EDGE] = {"VAD_FALLING_EDGE", "VAD interrupt falling edge"},
+    [INTERRUPT_TYPE_VAD_TIMEOUT] = {"VAD_TIMEOUT", "VAD timeout event"},
+
     // Button interrupt metadata | 按键中断元数据
-    [INTERRUPT_TYPE_BUTTON_PRESSED]  = {"BUTTON_PRESSED", "Button pressed interrupt (P0.23)"},
+    [INTERRUPT_TYPE_BUTTON_PRESSED] = {"BUTTON_PRESSED", "Button pressed interrupt (P0.23)"},
     [INTERRUPT_TYPE_BUTTON_RELEASED] = {"BUTTON_RELEASED", "Button released interrupt (P0.23)"},
 
 };
 
-
 static interrupt_callback_entry_t callback_registry[INTERRUPT_TYPE_MAX_COUNT];
-static bool                       initialized = false;
-
+static bool initialized = false;
 
 // Interrupt processing thread function
 // Unified interrupt handler - processes all interrupt events from queue
-static void interrupt_thread(void* p1, void* p2, void* p3)
+static void interrupt_thread(void *p1, void *p2, void *p3)
 {
     (void)p1;
     (void)p2;
@@ -73,7 +74,7 @@ static void interrupt_thread(void* p1, void* p2, void* p3)
             LOG_INF("Processing interrupt event: %s", interrupt_metadata[event.event].name);
 
             // Get callback registry entry for this interrupt type
-            interrupt_callback_entry_t* entry = &callback_registry[event.event];
+            interrupt_callback_entry_t *entry = &callback_registry[event.event];
 
             // Check if callback is registered
             if (entry->registered && entry->callback != NULL)
@@ -101,15 +102,21 @@ int interrupt_handler_init(void)
     // Initialize callback registry (clear all entries)
     for (uint32_t i = 0; i < INTERRUPT_TYPE_MAX_COUNT; i++)
     {
-        callback_registry[i].callback    = NULL;
-        callback_registry[i].name        = interrupt_metadata[i].name;
+        callback_registry[i].callback = NULL;
+        callback_registry[i].name = interrupt_metadata[i].name;
         callback_registry[i].description = interrupt_metadata[i].description;
-        callback_registry[i].registered  = false;
+        callback_registry[i].registered = false;
     }
 
     // Start interrupt processing thread
-    k_thread_create(&interrupt_thread_data, interrupt_thread_stack, K_THREAD_STACK_SIZEOF(interrupt_thread_stack),
-                    interrupt_thread, NULL, NULL, NULL, INTERRUPT_THREAD_PRIORITY, 0, K_NO_WAIT);
+    k_thread_create(&interrupt_thread_data, 
+                    interrupt_thread_stack, 
+                    K_THREAD_STACK_SIZEOF(interrupt_thread_stack),
+                    interrupt_thread, 
+                    NULL, NULL, NULL, 
+                    INTERRUPT_THREAD_PRIORITY, 
+                    0, 
+                    K_NO_WAIT);
     k_thread_name_set(&interrupt_thread_data, "process_interrupt");
 
     initialized = true;
@@ -144,7 +151,7 @@ int interrupt_handler_register_callback(interrupt_event_type_t event_type, inter
     }
 
     // Get registry entry
-    interrupt_callback_entry_t* entry = &callback_registry[event_type];
+    interrupt_callback_entry_t *entry = &callback_registry[event_type];
 
     // Check if callback already registered
     if (entry->registered)
@@ -153,7 +160,7 @@ int interrupt_handler_register_callback(interrupt_event_type_t event_type, inter
     }
 
     // Register callback with metadata
-    entry->callback   = callback;
+    entry->callback = callback;
     entry->registered = true;
     // name and description are already set from interrupt_metadata during init
 
@@ -178,7 +185,7 @@ int interrupt_handler_unregister_callback(interrupt_event_type_t event_type, int
     }
 
     // Get registry entry
-    interrupt_callback_entry_t* entry = &callback_registry[event_type];
+    interrupt_callback_entry_t *entry = &callback_registry[event_type];
 
     // Check if callback is registered
     if (!entry->registered)
@@ -195,7 +202,7 @@ int interrupt_handler_unregister_callback(interrupt_event_type_t event_type, int
     }
 
     // Unregister callback
-    entry->callback   = NULL;
+    entry->callback = NULL;
     entry->registered = false;
     // Keep name and description for reference
 
@@ -205,7 +212,7 @@ int interrupt_handler_unregister_callback(interrupt_event_type_t event_type, int
 }
 
 // Send interrupt event to processing queue (called from ISR)
-int interrupt_handler_send_event(interrupt_event_t* event)
+int interrupt_handler_send_event(interrupt_event_t *event)
 {
     if (!initialized)
     {

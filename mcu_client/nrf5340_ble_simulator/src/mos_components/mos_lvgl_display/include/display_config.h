@@ -54,7 +54,7 @@ typedef struct {
         const lv_font_t *primary;     // Main text font
         const lv_font_t *secondary;   // Secondary/smaller font
         const lv_font_t *large;       // Large heading font
-        const lv_font_t *cjk;         // Chinese/Japanese/Korean font (if available)
+        const lv_font_t *cjk;         // 仅配置槽位，display_get_font("gbk") 走 binfont，不用此成员
         uint8_t line_spacing;         // Line spacing between text lines
     } fonts;
     
@@ -110,7 +110,7 @@ int display_apply_container_config(lv_obj_t *container, lv_obj_t *parent, const 
 
 /**
  * @brief Get appropriate font for the current display and text type
- * @param text_type Type of text (primary, secondary, large, cjk)
+ * @param text_type Type of text (primary, secondary, large, gbk)
  * @return Pointer to appropriate font
  */
 const lv_font_t* display_get_font(const char *text_type);

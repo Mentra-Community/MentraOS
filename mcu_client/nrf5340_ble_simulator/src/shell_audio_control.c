@@ -5,12 +5,12 @@
  * 
  * Commands:
  * - audio help        : Show help
- * - audio start       : Start complete audio system (PDM + LC3 + I2S loopback)
+ * - audio start       : Start PDM + LC3 (shell mic test; no I2S unless loopback enabled in build)
  * - audio stop        : Stop complete audio system
  * - audio status      : Show current audio/PDM status
  * 
- * Purpose: Test PDM microphone and audio pipeline without BLE connection
- * When I2S is enabled, audio will be played back via I2S for verification
+ * Purpose: Test PDM microphone + LC3 encode (shell). I2S loopback is optional via
+ * CONFIG_PDM_SHELL_I2S_LOOPBACK (default 0).
  */
 
 #include <zephyr/kernel.h>
@@ -23,7 +23,9 @@
 
 LOG_MODULE_REGISTER(shell_audio, LOG_LEVEL_INF);
 
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 static bool i2s_manual_session = false;
+#endif
 
 static const char *state_to_str(pdm_audio_state_t state)
 {
@@ -64,24 +66,28 @@ static int cmd_audio_help(const struct shell *shell, size_t argc, char **argv)
 
 	shell_print(shell, "");
 	shell_print(shell, "Audio Test Commands:");
-	shell_print(shell, "  audio start               - Start PDM + I2S loopback test");
+	shell_print(shell, "  audio start               - Start PDM + LC3 encode (mic test)");
 	shell_print(shell, "  audio stop                - Stop test and release hardware");
 	shell_print(shell, "  audio status              - Show status and stats");
 	shell_print(shell, "  audio mic <left|right|mix> - Select PDM input channel or stereo mix");
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 	shell_print(shell, "  audio i2s <on|off>        - Enable or disable I2S loopback output");
+#endif
 	shell_print(shell, "  audio help                - Show this help");
 	shell_print(shell, "");
 	shell_print(shell, "Test Flow:");
-	shell_print(shell, "  1. audio start            - Auto init I2S + start loopback");
-	shell_print(shell, "  2. Speak to microphone    - Hear PDM data via I2S");
-	shell_print(shell, "  3. audio status           - Check frame stats");
-	shell_print(shell, "  4. audio stop             - Stop + uninit I2S");
+	shell_print(shell, "  1. audio start            - Start PDM capture + LC3 encode");
+	shell_print(shell, "  2. audio status           - Check frame stats");
+	shell_print(shell, "  3. audio stop             - Stop PDM / release I2S if it was in use");
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
+	shell_print(shell, "Optional (loopback build): audio i2s on — hear mic via I2S speaker");
+#endif
 	shell_print(shell, "");
 	shell_print(shell, "Pipeline:");
-	shell_print(shell, "  Mic -> PDM -> LC3 Encode -> BLE (normal)");
-	shell_print(shell, "           -> LC3 Decode -> I2S -> Speaker (shell test only)");
-	shell_print(shell, "");
-	shell_print(shell, "Note: I2S is for shell test only, not used in normal BLE mode");
+	shell_print(shell, "  Mic -> PDM -> LC3 Encode -> BLE (normal / shell test)");
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
+	shell_print(shell, "       (optional) LC3 Decode -> I2S -> Speaker via `audio i2s on`");
+#endif
 	shell_print(shell, "");
 	return 0;
 }
@@ -91,16 +97,11 @@ static int cmd_audio_start(const struct shell *shell, size_t argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	extern bool audio_i2s_is_initialized(void);
-	extern void audio_i2s_init(void);
-	extern void audio_i2s_start(void);
-	extern void audio_i2s_uninit(void);
-
-	if (audio_i2s_is_initialized())
+	if (pdm_audio_stream_get_state() == PDM_AUDIO_STATE_STREAMING)
 	{
 		shell_print(shell, "");
-		shell_warn(shell, "Audio test system is already running");
-		shell_print(shell, "Use 'audio stop' first to stop current test");
+		shell_warn(shell, "PDM shell test is already running");
+		shell_print(shell, "Use 'audio stop' first");
 		shell_print(shell, "");
 		return 0;
 	}
@@ -121,32 +122,14 @@ static int cmd_audio_start(const struct shell *shell, size_t argc, char **argv)
 		shell_error(shell, "Failed to start PDM audio: %d", ret);
 		return ret;
 	}
-	shell_print(shell, "  PDM audio conversion started");
-
-	if (!audio_i2s_is_initialized())
-	{
-		shell_print(shell, "  Initializing I2S hardware...");
-		audio_i2s_init();
-		shell_print(shell, "  I2S hardware initialized");
-	}
-
-	shell_print(shell, "  Starting I2S playback...");
-	audio_i2s_start();
-	int i2s_ret = pdm_audio_set_i2s_output(true);
-	if (i2s_ret < 0)
-	{
-		shell_error(shell, "  Failed to enable I2S loopback: %d", i2s_ret);
-		audio_i2s_uninit();
-		return i2s_ret;
-	}
-	shell_print(shell, "  I2S loopback started");
+	shell_print(shell, "  PDM capture + LC3 encode started");
 
 	shell_print(shell, "");
-	shell_print(shell, "Audio test system ready");
-	shell_print(shell, "  PDM capture: Active");
-	shell_print(shell, "  LC3 encode/decode: Active");
-	shell_print(shell, "  I2S loopback: Active");
-	shell_print(shell, "Speak to microphone to hear loopback via I2S");
+	shell_print(shell, "Audio test system ready (BLE / encode path active)");
+	shell_print(shell, "  Use audio status for frame counts");
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
+	shell_print(shell, "  Optional: audio i2s on  — local speaker loopback");
+#endif
 	shell_print(shell, "");
 	return 0;
 }
@@ -159,9 +142,10 @@ static int cmd_audio_stop(const struct shell *shell, size_t argc, char **argv)
 	extern bool audio_i2s_is_initialized(void);
 	extern void audio_i2s_uninit(void);
 
+	bool stream_active = (pdm_audio_stream_get_state() == PDM_AUDIO_STATE_STREAMING);
 	bool i2s_initialized = audio_i2s_is_initialized();
 
-	if (!i2s_initialized)
+	if (!stream_active && !i2s_initialized)
 	{
 		shell_print(shell, "");
 		shell_warn(shell, "Audio test system is already stopped");
@@ -172,22 +156,28 @@ static int cmd_audio_stop(const struct shell *shell, size_t argc, char **argv)
 
 	shell_print(shell, "");
 	shell_print(shell, "Stopping audio test system...");
-	shell_print(shell, "  Stopping PDM audio (fade-out + tail drop)...");
-	shell_print(shell, "  Waiting for audio thread to complete stop sequence...");
-	int ret = pdm_audio_stream_set_enabled(false);
-	if (ret == 0)
+
+	if (stream_active)
 	{
-		k_msleep(100);
-		shell_print(shell, "  PDM audio stopped");
-	}
-	else if (ret < 0 && ret != -EALREADY)
-	{
-		shell_error(shell, "  Failed to stop PDM audio: %d", ret);
-		return ret;
+		shell_print(shell, "  Stopping PDM audio (fade-out + tail drop)...");
+		int ret = pdm_audio_stream_set_enabled(false);
+		if (ret == 0)
+		{
+			k_msleep(100);
+			shell_print(shell, "  PDM audio stopped");
+		}
+		else if (ret < 0 && ret != -EALREADY)
+		{
+			shell_error(shell, "  Failed to stop PDM audio: %d", ret);
+			return ret;
+		}
 	}
 
 	if (i2s_initialized)
 	{
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
+		(void)pdm_audio_set_i2s_output(false);
+#endif
 		shell_print(shell, "  Uninitializing I2S hardware...");
 		audio_i2s_uninit();
 		shell_print(shell, "  I2S hardware released");
@@ -271,6 +261,7 @@ static int cmd_audio_mic(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 static int cmd_audio_i2s(const struct shell *shell, size_t argc, char **argv)
 {
 	if (argc != 2)
@@ -361,6 +352,7 @@ static int cmd_audio_i2s(const struct shell *shell, size_t argc, char **argv)
 	shell_print(shell, "I2S loopback %s", enable ? "enabled" : "disabled");
 	return 0;
 }
+#endif
 
 /* Audio control commands / 音频控制命令 */
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_audio,
@@ -369,9 +361,17 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_audio,
 	SHELL_CMD(stop,   NULL, "Stop audio test",    cmd_audio_stop),
 	SHELL_CMD(status, NULL, "Show audio status",  cmd_audio_status),
 	SHELL_CMD(mic,    NULL, "Select mic channel", cmd_audio_mic),
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
 	SHELL_CMD(i2s,    NULL, "Toggle I2S loopback", cmd_audio_i2s),
+#endif
 	SHELL_SUBCMD_SET_END
 );
 
-SHELL_CMD_REGISTER(audio, &sub_audio, "Audio test commands (PDM + I2S loopback)", cmd_audio_help);
+SHELL_CMD_REGISTER(audio, &sub_audio,
+#if CONFIG_PDM_SHELL_I2S_LOOPBACK
+		   "Audio test (PDM + optional I2S loopback)",
+#else
+		   "Audio test (PDM + LC3; no I2S loopback)",
+#endif
+		   cmd_audio_help);
 

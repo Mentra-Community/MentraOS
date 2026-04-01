@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-11-19 20:05:11
- * @LastEditTime : 2026-02-05 10:19:31
+ * @LastEditTime : 2026-03-03 17:36:46
  * @FilePath     : mos_lsm6dsv16x.c
  * @Description  : LSM6DSV16X 6-axis IMU sensor driver wrapper
  *
@@ -13,6 +13,7 @@
 
 #include <hal/nrf_gpio.h>
 #include <math.h>
+#include <stddef.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
@@ -43,17 +44,37 @@ LOG_MODULE_REGISTER(mos_lsm6dsv16x, LOG_LEVEL_INF);
 // WHO_AM_I register | WHO_AM_I寄存器
 #define LSM6DSV16X_REG_WHO_AM_I 0x0F
 #define LSM6DSV16X_WHO_AM_I_VAL 0x70  // Expected value for LSM6DSV16X
+#define LSM6DSV16X_UCF_PAIR_SIZE 2U
 
 // Global sensor device pointer | 全局传感器设备指针
-static const struct device* lsm6dsv16x_dev = NULL;
-static const struct device* i2c_bus = NULL;
+static const struct device *lsm6dsv16x_dev = NULL;
+static const struct device *i2c_bus = NULL;
+static uint16_t lsm6dsv16x_i2c_addr = LSM6DSV16X_I2C_ADDR_0;
+static bool lsm6dsv16x_i2c_addr_valid = false;
 static bool lsm6dsv16x_suspended = false;
 
-/* Shared user node for IMU GPIOs | IMU GPIO 统一使用的 user 节点 */
-#define USER_NODE DT_PATH(zephyr_user)
+static int lsm6dsv16x_ensure_i2c_ready(void)
+{
+    if (i2c_bus == NULL)
+    {
+        i2c_bus = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
+    }
 
-/* IMU INT1 GPIO (interrupt input, e.g. P1.15) | IMU中断GPIO（如P1.15） */
-static const struct gpio_dt_spec imu_int1_gpio = GPIO_DT_SPEC_GET(USER_NODE, imu_int1_gpios);
+    if (i2c_bus == NULL || !device_is_ready(i2c_bus))
+    {
+        return -ENODEV;
+    }
+
+    return 0;
+}
+
+/* IMU INT1 GPIO from sensor node (interrupt input, e.g. P1.15) */
+#if DT_NODE_EXISTS(LSM6DSV16X_NODE) && DT_NODE_HAS_PROP(LSM6DSV16X_NODE, int1_gpios)
+#define LSM6DSV16X_INT1_GPIO_AVAILABLE 1
+static const struct gpio_dt_spec imu_int1_gpio = GPIO_DT_SPEC_GET(LSM6DSV16X_NODE, int1_gpios);
+#else
+#define LSM6DSV16X_INT1_GPIO_AVAILABLE 0
+#endif
 static bool imu_int1_gpio_initialized = false;
 
 int lsm6dsv16x_init(void)
@@ -69,18 +90,25 @@ int lsm6dsv16x_init(void)
     lsm6dsv16x_dev = DEVICE_DT_GET(LSM6DSV16X_NODE);
     if (lsm6dsv16x_dev == NULL || !device_is_ready(lsm6dsv16x_dev))
     {
-        LOG_ERR("❌ LSM6DSV16X device not available or not ready");
+        LOG_ERR("❌ LSM6DSV16X sensor device not available or not ready");
         return -ENODEV;
     }
-    ret = i2c_configure(lsm6dsv16x_dev, I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER);
+    i2c_bus = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
+    if (i2c_bus == NULL || !device_is_ready(i2c_bus))
+    {
+        LOG_ERR("❌ LSM6DSV16X I2C bus not available or not ready");
+        return -ENODEV;
+    }
+
+    ret = i2c_configure(i2c_bus, I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER);
     if (ret != 0)
     {
-        LOG_ERR("❌ Failed to configure I2C bus: %d", ret);
+        LOG_ERR("❌ Failed to configure I2C bus: %d", ret); 
         return ret;
     }
 
     /* Initialize INT1 GPIO | 初始化 INT1 中断引脚 */
-    if (!imu_int1_gpio_initialized)
+    if (LSM6DSV16X_INT1_GPIO_AVAILABLE && !imu_int1_gpio_initialized)
     {
         ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
         if (ret != 0)
@@ -135,7 +163,7 @@ bool lsm6dsv16x_is_ready(void)
 /**
  * @brief Read accelerometer data | 读取加速度计数据
  */
-int lsm6dsv16x_read_accel(float* accel_x, float* accel_y, float* accel_z)
+int lsm6dsv16x_read_accel(float *accel_x, float *accel_y, float *accel_z)
 {
     struct sensor_value accel[3];
     int ret;
@@ -200,7 +228,7 @@ int lsm6dsv16x_read_accel(float* accel_x, float* accel_y, float* accel_z)
 /**
  * @brief Read gyroscope data | 读取陀螺仪数据
  */
-int lsm6dsv16x_read_gyro(float* gyro_x, float* gyro_y, float* gyro_z)
+int lsm6dsv16x_read_gyro(float *gyro_x, float *gyro_y, float *gyro_z)
 {
     struct sensor_value gyro[3];
     int ret;
@@ -267,11 +295,11 @@ int lsm6dsv16x_read_gyro(float* gyro_x, float* gyro_y, float* gyro_z)
  * @note This function fetches data once and reads both channels to avoid duplicate fetches
  * @note 此函数只获取一次数据并读取两个通道，避免重复获取
  */
-int lsm6dsv16x_read_all(float* accel_x, float* accel_y, float* accel_z, float* gyro_x, float* gyro_y, float* gyro_z)
+int lsm6dsv16x_read_all(float *accel_x, float *accel_y, float *accel_z, float *gyro_x, float *gyro_y, float *gyro_z)
 {
     struct sensor_value accel[3];
     struct sensor_value gyro[3];
-    int                 ret;
+    int ret;
 
     if (lsm6dsv16x_dev == NULL)
     {
@@ -370,7 +398,7 @@ int lsm6dsv16x_read_all(float* accel_x, float* accel_y, float* accel_z, float* g
 int lsm6dsv16x_set_accel_odr(uint16_t freq_hz)
 {
     struct sensor_value odr;
-    int                 ret;
+    int ret;
 
     if (lsm6dsv16x_dev == NULL || !device_is_ready(lsm6dsv16x_dev))
     {
@@ -398,7 +426,7 @@ int lsm6dsv16x_set_accel_odr(uint16_t freq_hz)
 int lsm6dsv16x_set_gyro_odr(uint16_t freq_hz)
 {
     struct sensor_value odr;
-    int                 ret;
+    int ret;
 
     if (lsm6dsv16x_dev == NULL || !device_is_ready(lsm6dsv16x_dev))
     {
@@ -426,7 +454,7 @@ int lsm6dsv16x_set_gyro_odr(uint16_t freq_hz)
 int lsm6dsv16x_set_accel_range(uint8_t range_g)
 {
     struct sensor_value range;
-    int                 ret;
+    int ret;
 
     if (lsm6dsv16x_dev == NULL || !device_is_ready(lsm6dsv16x_dev))
     {
@@ -455,7 +483,7 @@ int lsm6dsv16x_set_accel_range(uint8_t range_g)
 int lsm6dsv16x_set_gyro_range(uint16_t range_dps)
 {
     struct sensor_value range;
-    int                 ret;
+    int ret;
 
     if (lsm6dsv16x_dev == NULL || !device_is_ready(lsm6dsv16x_dev))
     {
@@ -480,10 +508,138 @@ int lsm6dsv16x_set_gyro_range(uint16_t range_dps)
 /**
  * @brief Read device ID (WHO_AM_I register) | 读取器件ID（WHO_AM_I寄存器）
  */
-int lsm6dsv16x_read_device_id(uint8_t* device_id)
+int lsm6dsv16x_write_register(uint8_t reg, uint8_t value)
+{
+    uint8_t tx[2] = {reg, value};
+    int ret;
+
+    ret = lsm6dsv16x_ensure_i2c_ready();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!lsm6dsv16x_i2c_addr_valid)
+    {
+        uint8_t device_id = 0;
+
+        ret = lsm6dsv16x_read_device_id(&device_id);
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+
+    ret = i2c_write(i2c_bus, tx, sizeof(tx), lsm6dsv16x_i2c_addr);
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to write reg 0x%02x: %d", reg, ret);
+        return ret;
+    }
+
+    return 0;
+}
+
+int lsm6dsv16x_read_register(uint8_t reg, uint8_t *value)
+{
+    int ret;
+
+    if (value == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = lsm6dsv16x_ensure_i2c_ready();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!lsm6dsv16x_i2c_addr_valid)
+    {
+        uint8_t device_id = 0;
+
+        ret = lsm6dsv16x_read_device_id(&device_id);
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+
+    ret = i2c_write_read(i2c_bus, lsm6dsv16x_i2c_addr, &reg, 1, value, 1);
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to read reg 0x%02x: %d", reg, ret);
+        return ret;
+    }
+
+    return 0;
+}
+
+int lsm6dsv16x_load_ucf(const uint8_t *ucf_data, size_t ucf_size)
+{
+    int ret;
+
+    if (ucf_data == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (ucf_size == 0 || (ucf_size % LSM6DSV16X_UCF_PAIR_SIZE) != 0)
+    {
+        LOG_ERR("Invalid UCF data size: %u", (unsigned int)ucf_size);
+        return -EINVAL;
+    }
+
+    for (size_t i = 0; i < ucf_size; i += LSM6DSV16X_UCF_PAIR_SIZE)
+    {
+        uint8_t reg = ucf_data[i];
+        uint8_t val = ucf_data[i + 1U];
+
+        /* Optional delay marker: {0xFF, ms} */
+        if (reg == 0xFFU)
+        {
+            k_msleep(val);
+            continue;
+        }
+
+        ret = lsm6dsv16x_write_register(reg, val);
+        if (ret != 0)
+        {
+            LOG_ERR("UCF write failed at pair %u (reg=0x%02x, val=0x%02x): %d", (unsigned int)(i / 2U), reg, val, ret);
+            return ret;
+        }
+    }
+
+    LOG_INF("UCF loaded successfully (%u pairs)", (unsigned int)(ucf_size / 2U));
+    return 0;
+}
+
+int lsm6dsv16x_read_mlc_outputs(uint8_t start_reg, uint8_t *out, size_t out_len)
+{
+    int ret;
+
+    if (out == NULL || out_len == 0)
+    {
+        return -EINVAL;
+    }
+
+    for (size_t i = 0; i < out_len; ++i)
+    {
+        ret = lsm6dsv16x_read_register((uint8_t)(start_reg + i), &out[i]);
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
+int lsm6dsv16x_read_device_id(uint8_t *device_id)
 {
     uint8_t reg = LSM6DSV16X_REG_WHO_AM_I;
-    int     ret;
+    int ret;
 
     LOG_INF("========================================");
     LOG_INF("🔍 lsm6dsv16x_read_device_id() called");
@@ -500,14 +656,7 @@ int lsm6dsv16x_read_device_id(uint8_t* device_id)
     if (i2c_bus == NULL)
     {
         LOG_INF("Getting I2C bus device from device tree...");
-        if (lsm6dsv16x_dev != NULL)
-        {
-            i2c_bus = lsm6dsv16x_dev;
-        }
-        else
-        {
-            i2c_bus = DEVICE_DT_GET(LSM6DSV16X_NODE);
-        }
+        i2c_bus = DEVICE_DT_GET(DT_BUS(LSM6DSV16X_NODE));
         if (i2c_bus == NULL)
         {
             LOG_ERR("❌ Failed to get I2C bus device from device tree");
@@ -540,6 +689,8 @@ int lsm6dsv16x_read_device_id(uint8_t* device_id)
         if (*device_id == LSM6DSV16X_WHO_AM_I_VAL)
         {
             LOG_INF("✅ LSM6DSV16X detected at I2C address 0x%02x", LSM6DSV16X_I2C_ADDR_0);
+            lsm6dsv16x_i2c_addr = LSM6DSV16X_I2C_ADDR_0;
+            lsm6dsv16x_i2c_addr_valid = true;
             return 0;
         }
         else
@@ -562,6 +713,8 @@ int lsm6dsv16x_read_device_id(uint8_t* device_id)
         if (*device_id == LSM6DSV16X_WHO_AM_I_VAL)
         {
             LOG_INF("✅ LSM6DSV16X detected at I2C address 0x%02x", LSM6DSV16X_I2C_ADDR_1);
+            lsm6dsv16x_i2c_addr = LSM6DSV16X_I2C_ADDR_1;
+            lsm6dsv16x_i2c_addr_valid = true;
             return 0;  // Success | 成功
         }
         else
@@ -580,7 +733,7 @@ int lsm6dsv16x_read_device_id(uint8_t* device_id)
 /**
  * @brief Get sensor device pointer | 获取传感器设备指针
  */
-const struct device* lsm6dsv16x_get_device(void)
+const struct device *lsm6dsv16x_get_device(void)
 {
     return lsm6dsv16x_dev;
 }
@@ -616,10 +769,13 @@ int lsm6dsv16x_sleep(void)
         return ret;
     }
 
-    ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
-    if (ret != 0)
+    if (LSM6DSV16X_INT1_GPIO_AVAILABLE)
     {
-        LOG_WRN("Failed to pull down IMU INT1 during sleep: %d", ret);
+        ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
+        if (ret != 0)
+        {
+            LOG_WRN("Failed to pull down IMU INT1 during sleep: %d", ret);
+        }
     }
 
     nrf_gpio_cfg_input(I2C2_SCL_PIN, NRF_GPIO_PIN_PULLDOWN);
@@ -661,15 +817,21 @@ int lsm6dsv16x_wake(void)
         return ret;
     }
 
-    ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
-    if (ret != 0)
+    if (LSM6DSV16X_INT1_GPIO_AVAILABLE)
     {
-        LOG_WRN("Failed to restore IMU INT1 pull-down: %d", ret);
+        ret = gpio_pin_configure_dt(&imu_int1_gpio, GPIO_INPUT | GPIO_PULL_DOWN);
+        if (ret != 0)
+        {
+            LOG_WRN("Failed to restore IMU INT1 pull-down: %d", ret);
+        }
     }
-    ret = i2c_configure(i2c_bus, I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER);
-    if (ret != 0)
+    if (i2c_bus != NULL)
     {
-        LOG_WRN("Failed to restore I2C2 configuration: %d", ret);
+        ret = i2c_configure(i2c_bus, I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER);
+        if (ret != 0)
+        {
+            LOG_WRN("Failed to restore I2C2 configuration: %d", ret);
+        }
     }
 
     lsm6dsv16x_suspended = false;

@@ -1,7 +1,14 @@
 /*
- * Copyright (c) MentraOS Contributors 2025
- * SPDX-License-Identifier: Apache-2.0
+ * @Author       : Cole
+ * @Date         : 2026-01-28 14:44:46
+ * @LastEditTime : 2026-02-07 15:00:36
+ * @FilePath     : mos_fuel_gauge.c
+ * @Description  : 
+ * 
+ *  Copyright (c) MentraOS Contributors 2026 
+ *  SPDX-License-Identifier: Apache-2.0
  */
+
 
 #include "mos_fuel_gauge.h"
 #include "protobuf_handler.h"  /* sync SoC & charging to display/BLE */
@@ -17,7 +24,7 @@
 #include <zephyr/logging/log.h>
 #include <errno.h>
 
-LOG_MODULE_REGISTER(mos_fuel_gauge, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(mos_fuel_gauge, LOG_LEVEL_WRN);
 
 /* nPM1300 CHARGER.BCHGCHARGESTATUS register bitmasks / nPM1300充电状态寄存器位掩码 */
 #define NPM1300_CHG_STATUS_COMPLETE_MASK BIT(1)  /* Charge complete / 充电完成 */

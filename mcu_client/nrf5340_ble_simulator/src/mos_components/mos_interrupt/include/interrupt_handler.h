@@ -20,8 +20,11 @@ typedef enum
 {
     INTERRUPT_TYPE_UNKNOWN = 0,  // Unknown/Invalid interrupt
 
+    INTERRUPT_TYPE_VAD_FALLING_EDGE,  // VAD interrupt falling edge
+    INTERRUPT_TYPE_VAD_TIMEOUT,  // VAD timeout event
+
     // Button interrupt types | 按键中断类型
-    INTERRUPT_TYPE_BUTTON_PRESSED,   // Button pressed interrupt | 按键按下中断
+    INTERRUPT_TYPE_BUTTON_PRESSED,  // Button pressed interrupt | 按键按下中断
     INTERRUPT_TYPE_BUTTON_RELEASED,  // Button released interrupt | 按键释放中断
 
     // Add new interrupt types here
@@ -37,21 +40,21 @@ typedef interrupt_type_enum_t interrupt_event_type_t;
 typedef struct
 {
     interrupt_event_type_t event;  // Event type identifier
-    uint64_t               tick;   // Timestamp when interrupt occurred
-    void*                  data;   // Optional event-specific data
+    uint64_t tick;  // Timestamp when interrupt occurred
+    void *data;  // Optional event-specific data
 } interrupt_event_t;
 
 // Interrupt event callback function type
 // Called from interrupt processing thread context
-typedef void (*interrupt_event_callback_t)(interrupt_event_t* event);
+typedef void (*interrupt_event_callback_t)(interrupt_event_t *event);
 
 // Interrupt callback registry entry structure
 typedef struct
 {
-    interrupt_event_callback_t callback;     // Callback function pointer
-    const char*                name;         // Interrupt name (e.g., "KEY_PRESS")
-    const char*                description;  // Interrupt description
-    bool                       registered;   // Registration status
+    interrupt_event_callback_t callback;  // Callback function pointer
+    const char *name;  // Interrupt name (e.g., "KEY_PRESS")
+    const char *description;  // Interrupt description
+    bool registered;  // Registration status
 } interrupt_callback_entry_t;
 
 /**
@@ -94,7 +97,7 @@ int interrupt_handler_unregister_callback(interrupt_event_type_t event_type, int
  * @param event Event to send (will be copied to queue)
  * @return 0 on success, negative error code on failure
  */
-int interrupt_handler_send_event(interrupt_event_t* event);
+int interrupt_handler_send_event(interrupt_event_t *event);
 
 /**
  * @brief Check if interrupt handler is initialized
