@@ -34,8 +34,8 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/util.h>  // For ARRAY_SIZE macro
 
-// #include "mos_gx8002.h"  // VAD path kept for quick rollback
-#include "pdm_audio_stream.h"
+#include "mos_gx8002.h"  // GX8002 VAD path enabled
+// #include "pdm_audio_stream.h"  // PDM path disabled - using GX8002 VAD
 #include "interrupt_handler.h"  // Interrupt handler framework
 #include "mos_button_app.h"  // Button application logic
 #include "mos_dfu_progress.h"
@@ -488,6 +488,11 @@ int init_user_gpio(void)
         LOG_WRN("mic_power GPIO not ready/available, skipping");
     }
 
+    /* PDM path disabled - set CLK(P0.20) and DIN(P0.21) to default GPIO state (input, no pull) */
+    nrf_gpio_cfg_default(NRF_GPIO_PIN_MAP(0, 20));
+    nrf_gpio_cfg_default(NRF_GPIO_PIN_MAP(0, 21));
+    LOG_INF("PDM IOs (P0.20/P0.21) set to default input state");
+
     LOG_INF("User GPIOs configured successfully");
     return 0;
 }
@@ -551,8 +556,8 @@ int main(void)
     bt_gatt_cb_register(&gatt_callbacks);
 
     interrupt_handler_init();
-    // mos_gx8002_init();  // keep old VAD init path as comment
-    pdm_audio_stream_init();
+    mos_gx8002_init();  // GX8002 VAD path enabled
+    // pdm_audio_stream_init();  // PDM path disabled - using GX8002 VAD
     mos_jlink_usb_switch_app_init();
     mos_npm1300_ldsw1_init();
     mos_npm1300_ldsw1_enable();
@@ -582,7 +587,7 @@ int main(void)
 
     lvgl_display_thread();
 
-    /* PDM + LC3 stream initialized above; phone MicState toggles pdm_audio_stream_set_enabled(). */
+    /* GX8002 VAD + LC3 stream initialized above; phone MicState toggles via vad_interrupt_handler. */
     protobuf_init_ping_monitoring();
 
     opt3006_initialize();

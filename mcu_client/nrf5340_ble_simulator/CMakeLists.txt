@@ -18,12 +18,12 @@ include(nanopb)
 add_subdirectory(src/mos_driver)
 add_subdirectory(src/mos_components/mos_ble)
 add_subdirectory(src/mos_components/mos_sysport)
-add_subdirectory(src/mos_components/mos_pdm)
+# add_subdirectory(src/mos_components/mos_pdm)  # PDM mic path disabled - using GX8002 VAD
 add_subdirectory(src/mos_components/mos_battery)
 add_subdirectory(src/mos_components/mos_button)
 add_subdirectory(src/mos_components/mos_hinge_fold)
 add_subdirectory(src/mos_components/mos_interrupt)
-# add_subdirectory(src/mos_components/mos_gx8002)  # VAD/GX8002 off; PDM mic path
+add_subdirectory(src/mos_components/mos_gx8002)  # GX8002 VAD path enabled
 add_subdirectory(src/mos_components/mos_font_storage)
 add_subdirectory(src/mos_components/mos_lvgl_display)
 add_subdirectory(src/mos_components/mos_jlink_usb_switch)
@@ -39,8 +39,8 @@ target_sources(app PRIVATE
     src/shell_display_control.c
     src/shell_opt3006.c
     src/shell_battery_control.c
-    src/shell_audio_control.c
-    # src/shell_gx8002_control.c  # GX8002/VAD shell off with PDM mic
+    # src/shell_audio_control.c  # PDM audio shell disabled - using GX8002 VAD
+    src/shell_gx8002_control.c
     src/shell_lsm6dsv16x.c
     src/shell_jlink_usb_switch.c
     src/shell_npm1300_led.c

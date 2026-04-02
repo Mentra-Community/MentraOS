@@ -35,6 +35,12 @@ static const struct gpio_dt_spec vad_voice_detect = GPIO_DT_SPEC_GET(DT_PATH(zep
 
 static bool vad_int_initialized = false;
 static bool i2s_reception_active = false;
+static int64_t s_vad_trigger_tick = 0;
+
+int64_t vad_get_trigger_tick(void)
+{
+    return s_vad_trigger_tick;
+}
 
 static bool mic_capture_enabled = false;
 static int32_t current_timeout_ms = 0;
@@ -128,6 +134,7 @@ static void vad_timeout_callback(interrupt_event_t *event)
 
     i2s_reception_active = false;
     current_timeout_ms = 0;
+    s_vad_trigger_tick = 0;
     LOG_INF("VAD timeout: stop GX8002 I2S capture");
 }
 
@@ -145,6 +152,7 @@ static void vad_interrupt_callback(interrupt_event_t *event)
     }
 
     LOG_INF("VAD interrupt: falling edge detected, tick=%lld", event->tick);
+    s_vad_trigger_tick = event->tick;
 
     if (!i2s_reception_active)
     {

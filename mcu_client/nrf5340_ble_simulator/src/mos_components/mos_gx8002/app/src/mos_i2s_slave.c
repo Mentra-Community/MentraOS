@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-03-02 15:33:39
- * @LastEditTime : 2026-03-18 16:47:34
+ * @LastEditTime : 2026-04-02 20:06:52
  * @FilePath     : mos_i2s_slave.c
  * @Description  : MOS I2S slave driver - GX8002 VAD path (nRF as I2S slave)
  *
@@ -20,8 +20,7 @@
 #include <zephyr/logging/log.h>
 
 #include "sw_codec_lc3.h"
-
-// #include "pdm_audio_stream.h"  // PDM disabled - using GX8002 VAD
+#include "vad_interrupt_handler.h"
 
 /* Buffer size constant (was from pdm_audio_stream.h) */
 #ifndef PDM_PCM_REQ_BUFFER_SIZE
@@ -110,6 +109,9 @@ static k_tid_t gx8002_audio_worker_tid;
 static bool gx8002_audio_worker_started;
 static bool gx8002_lc3_encoder_ready;
 static uint32_t gx8002_dropped_frames;
+static bool s_first_frame_pending = false;
+static bool s_first_ble_sent_pending = false;
+static int64_t s_last_ble_send_tick = 0;
 
 #define GX8002_DEBUG_MTU_SKIP_LOG_INTERVAL 50U
 
@@ -150,7 +152,21 @@ static void gx8002_send_batched_packet(void)
     int send_ret = ble_send_data(pkt, GX8002_PACKET_TOTAL_LEN);
     if (send_ret == 0)
     {
-        /* sent */
+        int64_t now = k_uptime_get();
+        if (s_first_ble_sent_pending)
+        {
+            int64_t trigger_tick = vad_get_trigger_tick();
+            if (trigger_tick > 0)
+            {
+                LOG_INF("[TIMING] VAD->BLE first 202B packet: %lld ms", now - trigger_tick);
+            }
+            s_first_ble_sent_pending = false;
+        }
+        else if (s_last_ble_send_tick > 0)
+        {
+            // LOG_INF("[TIMING] BLE packet interval: %lld ms", now - s_last_ble_send_tick);
+        }
+        s_last_ble_send_tick = now;
     }
     else
     {
@@ -247,6 +263,17 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
 
     if (p_released != NULL && p_released->p_rx_buffer != NULL)
     {
+        if (s_first_frame_pending)
+        {
+            int64_t trigger_tick = vad_get_trigger_tick();
+            if (trigger_tick > 0)
+            {
+                int64_t now = k_uptime_get();
+                LOG_INF("[TIMING] VAD->I2S first frame: %lld ms", now - trigger_tick);
+            }
+            s_first_frame_pending = false;
+        }
+
         gx8002_raw_i2s_frame_t frame;
         memcpy(frame.words, p_released->p_rx_buffer, sizeof(frame.words));
         if (k_msgq_put(&gx8002_raw_i2s_msgq, &frame, K_NO_WAIT) != 0)
@@ -342,6 +369,9 @@ int gx8002_i2s_start(void)
     current_buffer_index = 0;
     gx8002_dropped_frames = 0;
     gx8002_batch_count = 0;
+    s_first_frame_pending = true;
+    s_first_ble_sent_pending = true;
+    s_last_ble_send_tick = 0;
 
     nrfx_err_t ret = nrfx_i2s_start(&i2s_inst, &i2s_req_buffer[0], 0);
     if (ret != NRFX_SUCCESS)

@@ -19,7 +19,7 @@
         jlink_usb_switch-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;  // P1.11 for J-Link/USB switch control
         button-gpios = <&gpio0 23 GPIO_ACTIVE_HIGH>;  // P0.23 for button input
 
-        // GX8002 / VAD path disabled - microphone uses PDM (see &pdm0)
+        // GX8002 VAD path enabled - microphone uses I2S slave from GX8002 (PDM disabled)
         vad_power-gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;
         gx8002_vad_int-gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>;
         vad_voice_detect-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
@@ -97,13 +97,12 @@
         };
     };
 
-    // GX8002 VAD I2S slave pins disabled (was SDIN/SCK_S/LRCK_S on P1.09/P1.08/P1.06).
-    // I2S master below is for optional shell LC3->I2S loopback (mos_i2s_master).
+    // GX8002 VAD I2S slave pins: SDIN P1.09, SCK_S P1.08, LRCK_S P1.06
     i2s0_default: i2s0_default {
         group1 {
-            psels = <NRF_PSEL(I2S_SDOUT, 1, 9)>,
-                    <NRF_PSEL(I2S_SCK_M, 1, 8)>,
-                    <NRF_PSEL(I2S_LRCK_M, 1, 6)>;
+            psels = <NRF_PSEL(I2S_SDIN, 1, 9)>,
+                    <NRF_PSEL(I2S_SCK_S, 1, 8)>,
+                    <NRF_PSEL(I2S_LRCK_S, 1, 6)>;
         };
     };
 };
@@ -112,14 +111,14 @@
     status = "disabled";
 };
 
-// I2C0 for GX8002 VAD chip (P1.04 SDA, P1.05 SCL) - disabled
-// &i2c0 {
-//     compatible = "nordic,nrf-twim";
-//     status = "okay";
-//     pinctrl-0 = <&i2c0_default>;
-//     pinctrl-1 = <&i2c0_sleep>;
-//     pinctrl-names = "default", "sleep";
-// };
+// I2C0 for GX8002 VAD chip (P1.04 SDA, P1.05 SCL) - enabled
+&i2c0 {
+    compatible = "nordic,nrf-twim";
+    status = "okay";
+    pinctrl-0 = <&i2c0_default>;
+    pinctrl-1 = <&i2c0_sleep>;
+    pinctrl-names = "default", "sleep";
+};
 
 /* Enable SPI4 with 32MHz capability for A6N */
 &spi4 {
@@ -149,13 +148,9 @@
 
 
 
-/* PDM microphone: CLK P0.20, DIN P0.21 */
+/* PDM microphone disabled - GX8002 VAD path uses I2S slave */
 &pdm0 {
-    status = "okay";
-    pinctrl-0 = <&pdm0_default>;
-    pinctrl-names = "default";
-    clock-source = "PCLK32M_HFXO";
-    queue-size = <4>;
+    status = "disabled";
 };
 
 &i2c2 {
@@ -201,9 +196,10 @@ zephyr_udc0: &usbd {
     };
 };
 
+/* I2S0: GX8002 VAD audio input (I2S slave mode) */
 &i2s0 {
     compatible = "nordic,nrf-i2s";
-    status = "disabled";
+    status = "okay";
     pinctrl-0 = <&i2s0_default>;
     pinctrl-names = "default";
     // clock-source = "ACLK";

@@ -13,6 +13,7 @@
 #define _VAD_INTERRUPT_HANDLER_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 
 int vad_interrupt_handler_init(void);
 int vad_interrupt_handler_send_event(void);
@@ -22,5 +23,6 @@ void vad_interrupt_handler_set_enabled(bool enabled);
 bool vad_interrupt_handler_is_enabled(void);
 int vad_voice_detect_set_low(void);
 int vad_voice_detect_set_high(void);
+int64_t vad_get_trigger_tick(void);
 
 #endif /* _VAD_INTERRUPT_HANDLER_H_ */
