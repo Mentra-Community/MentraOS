@@ -220,11 +220,11 @@ switch (type) {
         mMediaCaptureService.takePhotoAndUpload(photoFilePath, requestId);
         break;
 
-    case "start_rtmp_stream":
+    case "start_stream":
         String streamId = dataToProcess.optString("streamId", "");
-        String rtmpUrl = dataToProcess.optString("rtmpUrl", "");
-        RtmpStreamingService.startStreaming(this, rtmpUrl);
-        RtmpStreamingService.startStreamTimeout(streamId);
+        String streamUrl = dataToProcess.optString("streamUrl", "");
+        // Protocol auto-detected from URL scheme (srt://, rtmp://, https://)
+        StreamCommandHandler.handleCommand("start_stream", dataToProcess);
         break;
 
     case "display_text":

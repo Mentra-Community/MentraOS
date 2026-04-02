@@ -127,8 +127,8 @@ const photo = await session.camera.requestPhoto({
 **Start streaming:**
 
 ```typescript
-await session.camera.startStream({
-  rtmpUrl: 'rtmp://live.example.com/stream/key',
+await session.camera.startLocalLivestream({
+  streamUrl: 'srt://live.example.com:4201?streamid=key',
   video: {
     resolution: '1280x720',
     framerate: 30,
@@ -146,7 +146,7 @@ session.logger.info('Stream started');
 **Monitor stream status:**
 
 ```typescript
-session.camera.onStreamStatus((status) => {
+session.camera.onLocalLivestreamStatus((status) => {
   session.logger.info('Stream status:', status.status);
   // status values: 'starting', 'streaming', 'stopped', 'error'
 
@@ -159,7 +159,7 @@ session.camera.onStreamStatus((status) => {
 **Stop streaming:**
 
 ```typescript
-await session.camera.stopStream();
+await session.camera.stopLocalLivestream();
 ```
 
 ### Managed Streaming
@@ -168,7 +168,7 @@ await session.camera.stopStream();
 
 ```typescript
 // Start managed stream
-const result = await session.camera.startManagedStream({
+const result = await session.camera.startLivestream({
   video: {
     resolution: '1920x1080',
     framerate: 30
@@ -179,7 +179,7 @@ session.logger.info('Streaming at:', result.streamUrl);
 session.logger.info('Watch at:', result.viewerUrl);
 
 // Stop managed stream
-await session.camera.stopManagedStream();
+await session.camera.stopLivestream();
 ```
 
 ## LED Control
@@ -451,14 +451,14 @@ class StreamingApp extends AppServer {
     });
 
     // Monitor stream status
-    session.camera.onStreamStatus((status) => {
+    session.camera.onLocalLivestreamStatus((status) => {
       session.dashboard.content.writeToMain(`Stream: ${status.status}`);
     });
   }
 
   private async startRecording(session: AppSession) {
     try {
-      const result = await session.camera.startManagedStream({
+      const result = await session.camera.startLivestream({
         video: { resolution: '1280x720', framerate: 30 }
       });
 
@@ -474,7 +474,7 @@ class StreamingApp extends AppServer {
   }
 
   private async stopRecording(session: AppSession) {
-    await session.camera.stopManagedStream();
+    await session.camera.stopLivestream();
     this.isRecording = false;
 
     session.layouts.showTextWall('Recording stopped');

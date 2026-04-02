@@ -96,6 +96,11 @@ public class Mach1 extends SGCManager {
     private long lastTapTime = 0;
     private int totalDashboardsIdk = 0;
 
+    private boolean hasBattery() {
+        Object level = GlassesStore.INSTANCE.get("glasses", "batteryLevel");
+        return level instanceof Number && ((Number) level).intValue() != -1;
+    }
+
     private void updateConnectionState(String state) {
         boolean isEqual = state.equals(getConnectionState());
         if (isEqual) {
@@ -106,9 +111,14 @@ public class Mach1 extends SGCManager {
         GlassesStore.INSTANCE.apply("glasses", "connectionState", state);
 
         if (state.equals(ConnTypes.CONNECTED)) {
-            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+            // Match iOS: only declare fully booted once we have battery info too
+            if (hasBattery()) {
+                GlassesStore.INSTANCE.apply("glasses", "connected", true);
+                GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+            }
         } else if (state.equals(ConnTypes.DISCONNECTED)) {
             GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
+            GlassesStore.INSTANCE.apply("glasses", "connected", false);
         }
     }
 
@@ -127,17 +137,17 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void startRtmpStream(@NonNull Map<String, Object> message) {
+    public void startStream(@NonNull Map<String, Object> message) {
 
     }
 
     @Override
-    public void stopRtmpStream() {
+    public void stopStream() {
 
     }
 
     @Override
-    public void sendRtmpKeepAlive(@NonNull Map<String, Object> message) {
+    public void sendStreamKeepAlive(@NonNull Map<String, Object> message) {
 
     }
 
@@ -189,6 +199,10 @@ public class Mach1 extends SGCManager {
     @Override
     public void sendButtonCameraLedSetting() {
 
+    }
+
+    @Override
+    public void sendCameraFovSetting() {
     }
 
     @Override
@@ -341,7 +355,7 @@ public class Mach1 extends SGCManager {
 
     @Override
     public void cleanup() {
-
+        destroy();
     }
 
     @Override
@@ -576,9 +590,14 @@ public class Mach1 extends SGCManager {
             return;
         }
         Log.d(TAG, "Ultralite new battery status: " + batteryStatus.getLevel());
-        // Update the class field, not a local variable
         GlassesStore.INSTANCE.apply("glasses", "batteryLevel", batteryStatus.getLevel());
-        updateConnectionState(ConnTypes.CONNECTED);
+
+        // Match iOS: if we're already connected but weren't fully booted yet (waiting
+        // for battery), now that we have battery info we can declare fully booted.
+        if (getConnectionState().equals(ConnTypes.CONNECTED) && !getFullyBooted()) {
+            GlassesStore.INSTANCE.apply("glasses", "connected", true);
+            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+        }
     }
 
 

@@ -10,7 +10,13 @@ public class DevApi {
     private static final int CMD_SET_SCREEN_ON = 102;
     private static final int CMD_SET_MIC_ON = 103;
     private static final int CMD_SET_LED_CONTROL = 104;
-    
+    private static final int CMD_SET_ROI_FOV = 106;
+
+    /** ROI position for camera FOV (matches K900Server_mentra naming) */
+    public static final int ROI_POSITION_CENTER = 0;
+    public static final int ROI_POSITION_BOTTOM = 1;
+    public static final int ROI_POSITION_TOP = 2;
+
     /**
      * Control the recording LED on the K900 glasses
      * @param bOn true to turn LED on, false to turn off
@@ -43,5 +49,15 @@ public class DevApi {
     public static void setLedCustomBright(int percent, int showTime) {
         long v = ((showTime & 0xFFFF) << 8) | (percent & 0xFF);
         XyDev.setLong(CMD_SET_LED_CONTROL, v);
+    }
+
+    /**
+     * Set camera FOV and ROI position (K900 HAL). Caller must call SysControl.restartCameraHal(context) after this.
+     * @param fov FOV value (e.g. 82, 92, 102)
+     * @param roiPosition ROI_POSITION_CENTER, ROI_POSITION_BOTTOM, or ROI_POSITION_TOP
+     */
+    public static void setCameraFov(int fov, int roiPosition) {
+        int v = ((roiPosition & 0xFF) << 8) | (fov & 0xFF);
+        XyDev.setInt(CMD_SET_ROI_FOV, v);
     }
 }

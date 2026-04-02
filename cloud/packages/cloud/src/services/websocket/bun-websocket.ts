@@ -24,7 +24,6 @@ import {
   AppConnectionInit,
 } from "@mentra/sdk";
 
-import { SYSTEM_DASHBOARD_PACKAGE_NAME } from "../core/app.service";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { operationTimers, connectionChurnTracker } from "../metrics/SystemVitalsLogger";
 import { isShuttingDown } from "../shutdown";
@@ -325,13 +324,6 @@ async function handleGlassesConnectionInit(
   udpEncryptionRequested: boolean,
 ): Promise<void> {
   if (!reconnection) {
-    // Start dashboard app
-    try {
-      await userSession.appManager.startApp(SYSTEM_DASHBOARD_PACKAGE_NAME);
-    } catch (error) {
-      userSession.logger.error({ error }, "Error starting dashboard app");
-    }
-
     // Start previously running apps
     try {
       await userSession.appManager.startPreviouslyRunningApps();

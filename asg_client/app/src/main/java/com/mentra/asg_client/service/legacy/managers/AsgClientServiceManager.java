@@ -207,8 +207,8 @@ public class AsgClientServiceManager {
             Log.d(TAG, "MFNR enabled: " + asgSettings.isMfnrEnabled());
 
             // Explicitly enable ZSL and MFNR for enhanced photo quality
-            asgSettings.setZslEnabled(false);
-            asgSettings.setMfnrEnabled(false);
+            asgSettings.setZslEnabled(true);
+            asgSettings.setMfnrEnabled(true);
             Log.d(TAG, "✅ Settings initialized successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing settings", e);
@@ -470,7 +470,7 @@ public class AsgClientServiceManager {
 
                 // Wire active recording provider so sync/download skip in-progress videos
                 if (mediaCaptureService != null) {
-                    cameraServer.setActiveRecordingProvider(mediaCaptureService::getActiveRecordingFileName);
+                    cameraServer.setActiveRecordingProvider(mediaCaptureService::getActiveRecordingCaptureId);
                     Log.d(TAG, "📡 Active recording provider set on camera server");
                 }
 

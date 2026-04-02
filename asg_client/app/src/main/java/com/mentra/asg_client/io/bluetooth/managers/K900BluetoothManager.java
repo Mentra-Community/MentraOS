@@ -129,7 +129,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     @Override
-    public boolean sendData(byte[] data) {
+    protected boolean sendDataInternal(byte[] data) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 K900 BLUETOOTH SEND DATA");
         Log.d(TAG, "📡 =========================================");

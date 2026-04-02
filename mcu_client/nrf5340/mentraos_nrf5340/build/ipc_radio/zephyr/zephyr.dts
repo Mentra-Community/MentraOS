@@ -1,0 +1,450 @@
+/dts-v1/;
+
+/ {
+	#address-cells = < 0x1 >;
+	#size-cells = < 0x1 >;
+	model = "Nordic NRF5340 DK NRF5340 Network";
+	compatible = "nordic,nrf5340-dk-nrf5340-cpunet";
+	chosen {
+		zephyr,bt-hci = &bt_hci_sdc;
+		zephyr,entropy = &rng;
+		zephyr,flash-controller = &flash_controller;
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,uart-mcumgr = &uart0;
+		zephyr,bt-mon-uart = &uart0;
+		zephyr,bt-c2h-uart = &uart0;
+		zephyr,bt-hci-ipc = &ipc0;
+		nordic,802154-spinel-ipc = &ipc0;
+		zephyr,sram = &sram1;
+		zephyr,flash = &flash1;
+		zephyr,code-partition = &slot0_partition;
+		zephyr,ieee802154 = &ieee802154;
+		zephyr,ipc_shm = &sram0_shared;
+	};
+	soc {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x1 >;
+		compatible = "nordic,nrf5340-cpunet-qkaa", "nordic,nrf5340-cpunet", "nordic,nrf53", "simple-bus";
+		interrupt-parent = < &nvic >;
+		ranges;
+		nvic: interrupt-controller@e000e100 {
+			#address-cells = < 0x1 >;
+			compatible = "arm,v8m-nvic";
+			reg = < 0xe000e100 0xc00 >;
+			interrupt-controller;
+			#interrupt-cells = < 0x2 >;
+			arm,num-irq-priority-bits = < 0x3 >;
+			phandle = < 0x1 >;
+		};
+		systick: timer@e000e010 {
+			compatible = "arm,armv8m-systick";
+			reg = < 0xe000e010 0x10 >;
+			status = "disabled";
+		};
+		ficr: ficr@1ff0000 {
+			compatible = "nordic,nrf-ficr";
+			reg = < 0x1ff0000 0x1000 >;
+			#nordic,ficr-cells = < 0x1 >;
+			status = "okay";
+		};
+		uicr: uicr@1ff8000 {
+			compatible = "nordic,nrf-uicr";
+			reg = < 0x1ff8000 0x1000 >;
+			status = "okay";
+		};
+		sram0: memory@20000000 {
+			compatible = "mmio-sram";
+			reg = < 0x20000000 0x80000 >;
+		};
+		sram1: memory@21000000 {
+			compatible = "zephyr,memory-region", "mmio-sram";
+			zephyr,memory-region = "SRAM1";
+			reg = < 0x21000000 0x10000 >;
+		};
+		clock: clock@41005000 {
+			compatible = "nordic,nrf-clock";
+			reg = < 0x41005000 0x1000 >;
+			interrupts = < 0x5 0x1 >;
+			status = "okay";
+		};
+		power: power@41005000 {
+			compatible = "nordic,nrf-power";
+			reg = < 0x41005000 0x1000 >;
+			interrupts = < 0x5 0x1 >;
+			status = "okay";
+			#address-cells = < 0x1 >;
+			#size-cells = < 0x1 >;
+			gpregret1: gpregret1@4100551c {
+				#address-cells = < 0x1 >;
+				#size-cells = < 0x1 >;
+				compatible = "nordic,nrf-gpregret";
+				reg = < 0x4100551c 0x1 >;
+				status = "okay";
+			};
+			gpregret2: gpregret2@41005520 {
+				#address-cells = < 0x1 >;
+				#size-cells = < 0x1 >;
+				compatible = "nordic,nrf-gpregret";
+				reg = < 0x41005520 0x1 >;
+				status = "okay";
+			};
+		};
+		radio: radio@41008000 {
+			compatible = "nordic,nrf-radio";
+			reg = < 0x41008000 0x1000 >;
+			interrupts = < 0x8 0x1 >;
+			status = "okay";
+			dfe-supported;
+			ieee802154-supported;
+			ble-2mbps-supported;
+			ble-coded-phy-supported;
+			ieee802154: ieee802154 {
+				compatible = "nordic,nrf-ieee802154";
+				status = "okay";
+			};
+			bt_hci_sdc: bt_hci_sdc {
+				compatible = "nordic,bt-hci-sdc";
+				status = "okay";
+			};
+			bt_hci_controller: bt_hci_controller {
+				compatible = "zephyr,bt-hci-ll-sw-split";
+				status = "disabled";
+			};
+		};
+		rng: random@41009000 {
+			compatible = "nordic,nrf-rng";
+			reg = < 0x41009000 0x1000 >;
+			interrupts = < 0x9 0x1 >;
+			status = "okay";
+		};
+		gpiote: gpiote0: gpiote@4100a000 {
+			compatible = "nordic,nrf-gpiote";
+			reg = < 0x4100a000 0x1000 >;
+			interrupts = < 0xa 0x5 >;
+			status = "okay";
+			instance = < 0x0 >;
+			phandle = < 0x9 >;
+		};
+		wdt: wdt0: watchdog@4100b000 {
+			compatible = "nordic,nrf-wdt";
+			reg = < 0x4100b000 0x1000 >;
+			interrupts = < 0xb 0x1 >;
+			status = "okay";
+		};
+		timer0: timer@4100c000 {
+			compatible = "nordic,nrf-timer";
+			status = "disabled";
+			reg = < 0x4100c000 0x1000 >;
+			cc-num = < 0x8 >;
+			max-bit-width = < 0x20 >;
+			interrupts = < 0xc 0x1 >;
+			prescaler = < 0x0 >;
+		};
+		ecb: ecb@4100d000 {
+			compatible = "nordic,nrf-ecb";
+			reg = < 0x4100d000 0x1000 >;
+			interrupts = < 0xd 0x1 >;
+			status = "okay";
+		};
+		ccm: ccm@4100e000 {
+			compatible = "nordic,nrf-ccm";
+			reg = < 0x4100e000 0x1000 >;
+			interrupts = < 0xe 0x1 >;
+			length-field-length-8-bits;
+			headermask-supported;
+			status = "okay";
+		};
+		dppic0: dppic: dppic@4100f000 {
+			compatible = "nordic,nrf-dppic";
+			reg = < 0x4100f000 0x1000 >;
+			status = "okay";
+		};
+		temp: temp@41010000 {
+			compatible = "nordic,nrf-temp";
+			reg = < 0x41010000 0x1000 >;
+			interrupts = < 0x10 0x1 >;
+			status = "okay";
+		};
+		rtc0: rtc@41011000 {
+			compatible = "nordic,nrf-rtc";
+			reg = < 0x41011000 0x1000 >;
+			cc-num = < 0x4 >;
+			interrupts = < 0x11 0x1 >;
+			status = "disabled";
+		};
+		mbox: ipc: mbox@41012000 {
+			compatible = "nordic,mbox-nrf-ipc", "nordic,nrf-ipc";
+			reg = < 0x41012000 0x1000 >;
+			tx-mask = < 0xffff >;
+			rx-mask = < 0xffff >;
+			interrupts = < 0x12 0x1 >;
+			#mbox-cells = < 0x1 >;
+			status = "okay";
+			phandle = < 0xc >;
+		};
+		i2c0: arduino_i2c: i2c@41013000 {
+			compatible = "nordic,nrf-twim";
+			#address-cells = < 0x1 >;
+			#size-cells = < 0x0 >;
+			reg = < 0x41013000 0x1000 >;
+			interrupts = < 0x13 0x1 >;
+			easydma-maxcnt-bits = < 0x10 >;
+			status = "disabled";
+			zephyr,pm-device-runtime-auto;
+			pinctrl-0 = < &i2c0_default >;
+			pinctrl-1 = < &i2c0_sleep >;
+			pinctrl-names = "default", "sleep";
+		};
+		spi0: arduino_spi: spi@41013000 {
+			compatible = "nordic,nrf-spim";
+			#address-cells = < 0x1 >;
+			#size-cells = < 0x0 >;
+			reg = < 0x41013000 0x1000 >;
+			interrupts = < 0x13 0x1 >;
+			max-frequency = < 0x7a1200 >;
+			easydma-maxcnt-bits = < 0x10 >;
+			status = "disabled";
+			cs-gpios = < &arduino_header 0x10 0x1 >;
+			pinctrl-0 = < &spi0_default >;
+			pinctrl-1 = < &spi0_sleep >;
+			pinctrl-names = "default", "sleep";
+		};
+		uart0: arduino_serial: uart@41013000 {
+			compatible = "nordic,nrf-uarte";
+			reg = < 0x41013000 0x1000 >;
+			interrupts = < 0x13 0x1 >;
+			status = "disabled";
+			current-speed = < 0x1c200 >;
+			pinctrl-0 = < &uart0_default >;
+			pinctrl-1 = < &uart0_sleep >;
+			pinctrl-names = "default", "sleep";
+		};
+		egu0: egu@41014000 {
+			compatible = "nordic,nrf-egu";
+			reg = < 0x41014000 0x1000 >;
+			interrupts = < 0x14 0x1 >;
+			status = "okay";
+		};
+		rtc1: rtc@41016000 {
+			compatible = "nordic,nrf-rtc";
+			reg = < 0x41016000 0x1000 >;
+			cc-num = < 0x4 >;
+			interrupts = < 0x16 0x1 >;
+			status = "disabled";
+		};
+		timer1: timer@41018000 {
+			compatible = "nordic,nrf-timer";
+			status = "disabled";
+			reg = < 0x41018000 0x1000 >;
+			cc-num = < 0x8 >;
+			max-bit-width = < 0x20 >;
+			interrupts = < 0x18 0x1 >;
+			prescaler = < 0x0 >;
+			phandle = < 0xa >;
+		};
+		timer2: timer@41019000 {
+			compatible = "nordic,nrf-timer";
+			status = "disabled";
+			reg = < 0x41019000 0x1000 >;
+			cc-num = < 0x8 >;
+			max-bit-width = < 0x20 >;
+			interrupts = < 0x19 0x1 >;
+			prescaler = < 0x0 >;
+		};
+		swi0: swi@4101a000 {
+			compatible = "nordic,nrf-swi";
+			reg = < 0x4101a000 0x1000 >;
+			interrupts = < 0x1a 0x1 >;
+			status = "okay";
+		};
+		swi1: swi@4101b000 {
+			compatible = "nordic,nrf-swi";
+			reg = < 0x4101b000 0x1000 >;
+			interrupts = < 0x1b 0x1 >;
+			status = "okay";
+		};
+		swi2: swi@4101c000 {
+			compatible = "nordic,nrf-swi";
+			reg = < 0x4101c000 0x1000 >;
+			interrupts = < 0x1c 0x1 >;
+			status = "okay";
+		};
+		swi3: swi@4101d000 {
+			compatible = "nordic,nrf-swi";
+			reg = < 0x4101d000 0x1000 >;
+			interrupts = < 0x1d 0x1 >;
+			status = "okay";
+		};
+		acl: acl@41080000 {
+			compatible = "nordic,nrf-acl";
+			reg = < 0x41080000 0x1000 >;
+			status = "okay";
+		};
+		flash_controller: flash-controller@41080000 {
+			compatible = "nordic,nrf53-flash-controller";
+			reg = < 0x41080000 0x1000 >;
+			partial-erase;
+			#address-cells = < 0x1 >;
+			#size-cells = < 0x1 >;
+			flash1: flash@1000000 {
+				compatible = "soc-nv-flash";
+				erase-block-size = < 0x800 >;
+				write-block-size = < 0x4 >;
+				reg = < 0x1000000 0x40000 >;
+				partitions {
+					compatible = "fixed-partitions";
+					#address-cells = < 0x1 >;
+					#size-cells = < 0x1 >;
+					boot_partition: partition@0 {
+						label = "mcuboot";
+						reg = < 0x0 0xc000 >;
+					};
+					slot0_partition: partition@c000 {
+						label = "image-0";
+						reg = < 0xc000 0x17000 >;
+					};
+					slot1_partition: partition@23000 {
+						label = "image-1";
+						reg = < 0x23000 0x17000 >;
+					};
+					storage_partition: partition@3a000 {
+						label = "storage";
+						reg = < 0x3a000 0x6000 >;
+					};
+				};
+			};
+		};
+		vmc: vmc@41081000 {
+			compatible = "nordic,nrf-vmc";
+			reg = < 0x41081000 0x1000 >;
+			status = "okay";
+		};
+		gpio0: gpio@418c0500 {
+			compatible = "nordic,nrf-gpio";
+			gpio-controller;
+			reg = < 0x418c0500 0x300 >;
+			#gpio-cells = < 0x2 >;
+			status = "okay";
+			port = < 0x0 >;
+			gpiote-instance = < &gpiote >;
+			phandle = < 0xd >;
+		};
+		gpio1: gpio@418c0800 {
+			compatible = "nordic,nrf-gpio";
+			gpio-controller;
+			reg = < 0x418c0800 0x300 >;
+			#gpio-cells = < 0x2 >;
+			ngpios = < 0x10 >;
+			status = "okay";
+			port = < 0x1 >;
+			gpiote-instance = < &gpiote >;
+			phandle = < 0xe >;
+		};
+	};
+	pinctrl: pin-controller {
+		compatible = "nordic,nrf-pinctrl";
+		uart0_default: uart0_default {
+			phandle = < 0x7 >;
+			group1 {
+				psels = < 0x21 >, < 0x200000b >;
+			};
+			group2 {
+				psels = < 0x1000020 >, < 0x300000a >;
+				bias-pull-up;
+			};
+		};
+		uart0_sleep: uart0_sleep {
+			phandle = < 0x8 >;
+			group1 {
+				psels = < 0x21 >, < 0x1000020 >, < 0x200000b >, < 0x300000a >;
+				low-power-enable;
+			};
+		};
+		i2c0_default: i2c0_default {
+			phandle = < 0x2 >;
+			group1 {
+				psels = < 0xc000022 >, < 0xb000023 >;
+			};
+		};
+		i2c0_sleep: i2c0_sleep {
+			phandle = < 0x3 >;
+			group1 {
+				psels = < 0xc000022 >, < 0xb000023 >;
+				low-power-enable;
+			};
+		};
+		spi0_default: spi0_default {
+			phandle = < 0x5 >;
+			group1 {
+				psels = < 0x400002f >, < 0x600002e >, < 0x500002d >;
+			};
+		};
+		spi0_sleep: spi0_sleep {
+			phandle = < 0x6 >;
+			group1 {
+				psels = < 0x400002f >, < 0x600002e >, < 0x500002d >;
+				low-power-enable;
+			};
+		};
+	};
+	rng_hci: entropy_bt_hci {
+		compatible = "zephyr,bt-hci-entropy";
+		status = "okay";
+	};
+	sw_pwm: sw-pwm {
+		compatible = "nordic,nrf-sw-pwm";
+		status = "disabled";
+		generator = < &timer1 >;
+		clock-prescaler = < 0x0 >;
+		#pwm-cells = < 0x3 >;
+	};
+	cpus {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x0 >;
+		cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-m33";
+			reg = < 0x1 >;
+			#address-cells = < 0x1 >;
+			#size-cells = < 0x1 >;
+			mpu: mpu@e000ed90 {
+				compatible = "arm,armv8m-mpu";
+				reg = < 0xe000ed90 0x40 >;
+			};
+		};
+	};
+	ipc {
+		ipc0: ipc0 {
+			compatible = "zephyr,ipc-openamp-static-vrings";
+			memory-region = < &sram0_shared >;
+			mboxes = < &mbox 0x0 >, < &mbox 0x1 >;
+			mbox-names = "rx", "tx";
+			role = "remote";
+			status = "okay";
+		};
+	};
+	leds {
+		compatible = "gpio-leds";
+	};
+	buttons {
+		compatible = "gpio-keys";
+	};
+	arduino_header: connector {
+		compatible = "arduino-header-r3";
+		#gpio-cells = < 0x2 >;
+		gpio-map-mask = < 0xffffffff 0xffffffc0 >;
+		gpio-map-pass-thru = < 0x0 0x3f >;
+		gpio-map = < 0x0 0x0 &gpio0 0x4 0x0 >, < 0x1 0x0 &gpio0 0x5 0x0 >, < 0x2 0x0 &gpio0 0x6 0x0 >, < 0x3 0x0 &gpio0 0x7 0x0 >, < 0x4 0x0 &gpio0 0x19 0x0 >, < 0x5 0x0 &gpio0 0x1a 0x0 >, < 0x6 0x0 &gpio1 0x0 0x0 >, < 0x7 0x0 &gpio1 0x1 0x0 >, < 0x8 0x0 &gpio1 0x4 0x0 >, < 0x9 0x0 &gpio1 0x5 0x0 >, < 0xa 0x0 &gpio1 0x6 0x0 >, < 0xb 0x0 &gpio1 0x7 0x0 >, < 0xc 0x0 &gpio1 0x8 0x0 >, < 0xd 0x0 &gpio1 0x9 0x0 >, < 0xe 0x0 &gpio1 0xa 0x0 >, < 0xf 0x0 &gpio1 0xb 0x0 >, < 0x10 0x0 &gpio1 0xc 0x0 >, < 0x11 0x0 &gpio1 0xd 0x0 >, < 0x12 0x0 &gpio1 0xe 0x0 >, < 0x13 0x0 &gpio1 0xf 0x0 >, < 0x14 0x0 &gpio1 0x2 0x0 >, < 0x15 0x0 &gpio1 0x3 0x0 >;
+		phandle = < 0x4 >;
+	};
+	reserved-memory {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x1 >;
+		ranges;
+		sram0_shared: memory@20070000 {
+			reg = < 0x20070000 0x10000 >;
+			phandle = < 0xb >;
+		};
+	};
+};

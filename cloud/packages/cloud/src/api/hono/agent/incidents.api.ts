@@ -109,6 +109,9 @@ async function getIncident(c: AppContext) {
  */
 async function getIncidentLogs(c: AppContext) {
   const incidentId = c.req.param("incidentId");
+  if (!incidentId) {
+    return c.json({ error: "Missing incidentId parameter" }, 400);
+  }
 
   try {
     const logs = await incidentStorage.getIncidentLogs(incidentId);

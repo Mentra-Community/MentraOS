@@ -164,8 +164,28 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
 
               {/* Title + Message */}
               <View className="px-6 pt-6 gap-4 self-stretch">
-                <Text style={{color: theme.colors.secondary_foreground, fontSize: 20, alignSelf: "stretch", textAlign: "left"}} weight="semibold">{state.title}</Text>
-                {state.message && <Text style={{color: theme.colors.secondary_foreground, fontSize: 14, fontWeight: "500", alignSelf: "stretch", textAlign: "left"}}>{state.message}</Text>}
+                <Text
+                  style={{
+                    color: theme.colors.secondary_foreground,
+                    fontSize: 20,
+                    alignSelf: "stretch",
+                    textAlign: "left",
+                  }}
+                  weight="semibold">
+                  {state.title}
+                </Text>
+                {state.message && (
+                  <Text
+                    style={{
+                      color: theme.colors.secondary_foreground,
+                      fontSize: 14,
+                      fontWeight: "500",
+                      alignSelf: "stretch",
+                      textAlign: "left",
+                    }}>
+                    {state.message}
+                  </Text>
+                )}
               </View>
 
               {/* Custom content */}

@@ -8,7 +8,7 @@ Mentra Live is an Android-based smart glasses device that:
 
 - Runs a customized Android OS
 - Has WiFi connectivity (no cellular)
-- Supports ADB over WiFi only (no USB ADB)
+- Supports ADB over USB (Infinity Cable) and WiFi
 - Communicates with the MentraOS mobile app via Bluetooth Low Energy
 
 ## Prerequisites
@@ -42,68 +42,42 @@ Mentra Live is an Android-based smart glasses device that:
 
 ## Connecting via ADB
 
-Mentra Live only supports ADB over WiFi. Here's how to connect:
+### USB (Infinity Cable)
+
+Connect your Mentra Live using the **Infinity Cable** (magnetic USB-C clip-on cable). Run `adb devices` to confirm connection. See the [top-level README](../README.md) for build and install scripts.
+
+### WiFi
 
 ```bash
-# Connect to the glasses using the IP from the app
-# The glasses always use port 5555 for ADB
+# Connect using the IP shown in the MentraOS app (Glasses > Local IP Address)
 adb connect [GLASSES_IP]:5555
 
-# Example:
-adb connect 192.168.1.123:5555
-
-# Verify the connection
+# Verify
 adb devices
-# Should show: 192.168.1.123:5555    device
 ```
 
 ### Troubleshooting ADB Connection
-
-If you can't connect:
 
 1. **Verify same network**: Ensure your computer and glasses are on the same WiFi
 2. **Check IP address**: Confirm the IP in the MentraOS app is current
 3. **Restart ADB**: Try `adb kill-server` then `adb start-server`
 4. **Reboot glasses**: Power cycle the Mentra Live if needed
 
-## Building and Installing ASG Client
+## Local Development Server
 
-### 1. Build the APK
-
-```bash
-# Navigate to the asg_client directory
-cd /path/to/asg_client
-
-# Build debug APK
-./gradlew assembleDebug
-
-# The APK will be at:
-# app/build/outputs/apk/debug/app-debug.apk
-```
-
-### 2. Install on Glasses
-
-```bash
-# Make sure you're connected via ADB first
-adb install app/build/outputs/apk/debug/app-debug.apk
-
-# For reinstalling (updating)
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-### 3. Local Development Setup
-
-For testing with a local MentraOS server:
+For testing with a local MentraOS backend:
 
 ```bash
 # Forward the local server port to the glasses
-# This makes localhost:8002 on glasses connect to your computer's port 8002
 adb reverse tcp:8002 tcp:8002
+```
 
-# Now configure your .env file:
-# MENTRAOS_HOST=localhost
-# MENTRAOS_PORT=8002
-# MENTRAOS_SECURE=false
+Then set your `.env`:
+
+```
+MENTRAOS_HOST=localhost
+MENTRAOS_PORT=8002
+MENTRAOS_SECURE=false
 ```
 
 ## Viewing Logs

@@ -250,14 +250,56 @@ Timezone is resolved from: user setting (`userTimezone`) → GPS-derived timezon
 
 `session.display` integrates with `@mentra/display-utils` automatically. The session knows the device profile (G1, Nex, etc.) — developers don't need to manually create toolkits or pick profiles.
 
+### Two-layer wrapping model
+
+Text wrapping in MentraOS happens at two independent layers with different responsibilities:
+
+**Layer 1 — SDK (`session.display.showText`)**: formats for readability.
+
+- Default break mode: **`"word"`** — wraps at word boundaries, hyphenates only when a single word exceeds the line width
+- This is what developers expect. `showText("This is a long sentence")` produces readable word-wrapped output
+- Developer can override with `{ breakMode: "character" }` for dense data / maximum utilisation
+
+**Layer 2 — Mobile `DisplayProcessor`**: safety net for physical fit.
+
+- Default break mode: **`"character-no-hyphen"`** — breaks mid-character without hyphen only when a line is too wide
+- Purpose: ensure text physically fits on the display without changing the developer's intended formatting
+- Preserves explicit `\n` breaks and pre-formatted structure
+- When the SDK wraps first (layer 1), layer 2 becomes a no-op — lines already fit
+
+**Why the defaults differ:**
+
+The `DisplayProcessor`'s `"character-no-hyphen"` is intentionally conservative — it runs on every display event regardless of where it came from (SDK apps, system services, old clients). Changing it to `"word"` would re-flow text that a developer deliberately structured, potentially breaking their layout.
+
+The SDK's `"word"` default is correct for the common developer case: `showText("raw unformatted string")`. The developer is handing the SDK a raw string and expecting it to handle line breaks sensibly.
+
+If a developer pre-formats their text with explicit `\n` breaks and passes it as `string[]` (array), the SDK sends it as-is — skipping layer 1 wrapping entirely — and layer 2 just ensures no line overflows.
+
+```
+Developer calls showText("Some long sentence...")
+  → SDK: word-wrap → ["Some long", "sentence..."]     ← readable
+  → Mobile: character-no-hyphen safety net → no-op    ← already fits
+
+Developer calls showText(["Pre-formatted", "lines"])
+  → SDK: sends as-is (array skips wrapping)
+  → Mobile: character-no-hyphen safety net → no-op    ← already fits
+
+Developer calls showText(dense_data, {breakMode: "character"})
+  → SDK: character-wrap → maximum utilisation
+  → Mobile: safety net → no-op
+```
+
 ### showText accepts `string | string[]`
 
 ```typescript
-// Simple string — auto-wraps for current device
+// Simple string — SDK word-wraps for current device
 session.display.showText("Very long text that will be wrapped automatically")
 
-// Pre-wrapped array — sends as-is
+// Pre-wrapped array — sends as-is, skips SDK wrapping
 session.display.showText(["Line 1", "Line 2", "Line 3"])
+
+// Explicit break mode override
+session.display.showText(denseData, {breakMode: "character"})
 ```
 
 ### wrap() — pure formatting, returns string[]
@@ -277,7 +319,8 @@ session.display.showText(lines.slice(-3)) // show last 3 lines only
 // Options:
 session.display.wrap(text, {maxLines: 5}) // cap at 5 lines
 session.display.wrap(text, {maxLines: 1}) // single line (truncate)
-session.display.wrap(text, {breakMode: "word"}) // word-break
+session.display.wrap(text, {breakMode: "word"}) // explicit word-break (default)
+session.display.wrap(text, {breakMode: "character"}) // max utilisation
 session.display.wrap(text, {width: 0.5}) // 50% of screen width
 ```
 
@@ -303,6 +346,17 @@ session.display.showText(scroll.getViewport().lines)
 ### Architecture
 
 `@mentra/display-utils` stays as a standalone package (cloud and mobile use it directly). `session.display` wraps it with session context so SDK developers don't need to import it or pick profiles manually.
+
+**`display-utils` break modes reference:**
+
+| Mode                    | Behaviour                                              | Use when                                                        |
+| ----------------------- | ------------------------------------------------------ | --------------------------------------------------------------- |
+| `"word"`                | Wrap at word boundaries, hyphenate only if word > line | Default for `session.display.showText` — readable output        |
+| `"character"`           | Break mid-word with hyphen                             | Maximum utilisation, dense data                                 |
+| `"character-no-hyphen"` | Break mid-word, no hyphen                              | Mobile `DisplayProcessor` safety net — preserves dev formatting |
+| `"strict-word"`         | Word boundaries only, long words overflow              | Rare — when overflow is preferable to breaking a word           |
+
+**Note on `ColumnComposer` overflow bug**: there is a known off-by-one pixel issue in `ColumnComposer.mergeColumns()` where `Math.ceil` on space padding can push the right column start past `rightColumnStartPx`, causing the right column to overflow by up to 5px and the last character to wrap onto the next line's left position. Fix tracked in `cloud/issues/047-dashboard-refactor/`. The new system dashboard layout avoids `DoubleTextWall` entirely; the fix is still needed for third-party apps using `showDoubleText`.
 
 ---
 

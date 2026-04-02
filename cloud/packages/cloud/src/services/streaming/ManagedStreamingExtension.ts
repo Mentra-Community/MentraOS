@@ -7,10 +7,10 @@ import {
   ManagedStreamStopRequest,
   ManagedStreamStatus,
   OutputStatus,
-  StartRtmpStream,
-  StopRtmpStream,
-  KeepRtmpStreamAlive,
-  RtmpStreamStatus,
+  StartStream,
+  StopStream,
+  KeepStreamAlive,
+  StreamStatus,
   KeepAliveAck,
 } from "@mentra/sdk";
 import UserSession from "../session/UserSession";
@@ -65,29 +65,24 @@ export class ManagedStreamingExtension {
    * Start or join a managed stream
    */
   async startManagedStream(userSession: UserSession, request: ManagedStreamRequest): Promise<string> {
-    const {
-      packageName,
-      quality,
-      enableWebRTC,
-      video,
-      audio,
-      stream: streamOptions,
-      restreamDestinations,
-      sound: appSound,
-    } = request;
+    const { packageName, video, audio, stream: streamOptions, restreamDestinations, sound: appSound } = request;
     const userId = userSession.userId;
+
+    // Determine streaming mode: WebRTC (default) or SRT (when restreaming)
+    const useWebRTC = !restreamDestinations || restreamDestinations.length === 0;
 
     this.logger.info(
       {
         userId,
         packageName,
-        quality,
-        enableWebRTC,
+        mode: useWebRTC ? "webrtc" : "srt+restream",
         hasVideo: !!video,
         hasAudio: !!audio,
         restreamCount: restreamDestinations?.length || 0,
       },
-      "Starting managed stream request",
+      useWebRTC
+        ? "📡 Starting managed stream in WebRTC mode (WHIP ingest → WHEP playback, low latency)"
+        : "📡 Starting managed stream in SRT mode (SRT ingest → HLS/DASH playback, with RTMP fan-out)",
     );
 
     // Validate app is running
@@ -185,11 +180,9 @@ export class ManagedStreamingExtension {
     let liveInput;
     try {
       liveInput = await this.cloudflareService.createLiveInput(userId, {
-        quality,
-        enableWebRTC,
         enableRecording: true, // Must be true for live playback to work
         requireSignedURLs: false, // Public streams
-        restreamDestinations, // Pass through restream destinations
+        restreamDestinations: useWebRTC ? undefined : restreamDestinations,
       });
 
       this.logger.info(
@@ -231,17 +224,38 @@ export class ManagedStreamingExtension {
 
     // Wait for Cloudflare live input to fully initialize
     this.logger.info({ userId, packageName }, "⏳ Waiting 3 seconds for Cloudflare live input to initialize");
-    //await new Promise((resolve) => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
 
     // Flash is always on (privacy indicator for bystanders), sound is app-controlled via SDK
     const flash = true;
     const sound = appSound ?? true;
 
-    // Send start command to glasses with Cloudflare RTMP URL
-    const startMessage: StartRtmpStream = {
-      type: CloudToGlassesMessageType.START_RTMP_STREAM,
+    // Determine ingest URL based on streaming mode
+    let ingestUrl: string;
+    if (useWebRTC) {
+      if (!liveInput.webrtcPublishUrl) {
+        throw new Error("No WebRTC ingest URL available from Cloudflare");
+      }
+      ingestUrl = liveInput.webrtcPublishUrl;
+      this.logger.info(
+        { userId, packageName, protocol: "WHIP" },
+        "🚀 Streaming via WebRTC (WHIP) — app will receive webrtcUrl for low-latency WHEP playback",
+      );
+    } else {
+      if (!liveInput.srtUrl) {
+        throw new Error("No SRT ingest URL available from Cloudflare");
+      }
+      ingestUrl = liveInput.srtUrl;
+      this.logger.info(
+        { userId, packageName, protocol: "SRT", restreamCount: restreamDestinations?.length || 0 },
+        "🚀 Streaming via SRT — app will receive hlsUrl/dashUrl for HLS/DASH playback (restream destinations active)",
+      );
+    }
+
+    const startMessage: StartStream = {
+      type: CloudToGlassesMessageType.START_STREAM,
       sessionId: userSession.sessionId,
-      rtmpUrl: liveInput.rtmpUrl, // Cloudflare ingest URL
+      streamUrl: ingestUrl,
       appId: "MANAGED_STREAM", // Special app ID for managed streams
       streamId: managedStream.streamId,
       video: video || {},
@@ -262,7 +276,7 @@ export class ManagedStreamingExtension {
           cfLiveInputId: liveInput.liveInputId,
           packageName,
         },
-        "Sent START_RTMP_STREAM for managed stream",
+        "Sent START_STREAM for managed stream",
       );
 
       // Send initial status without URLs (they're not ready yet)
@@ -336,7 +350,7 @@ export class ManagedStreamingExtension {
    * Handle RTMP stream status from glasses
    * @returns true if handled by managed streaming, false otherwise
    */
-  async handleStreamStatus(userSession: UserSession, status: RtmpStreamStatus): Promise<boolean> {
+  async handleStreamStatus(userSession: UserSession, status: StreamStatus): Promise<boolean> {
     const { streamId, status: glassesStatus } = status;
 
     // Check if this is a managed stream by stream ID
@@ -1192,8 +1206,8 @@ export class ManagedStreamingExtension {
       return;
     }
 
-    const message: KeepRtmpStreamAlive = {
-      type: CloudToGlassesMessageType.KEEP_RTMP_STREAM_ALIVE,
+    const message: KeepStreamAlive = {
+      type: CloudToGlassesMessageType.KEEP_STREAM_ALIVE,
       streamId,
       ackId,
     };
@@ -1269,8 +1283,8 @@ export class ManagedStreamingExtension {
 
     // Send stop command to glasses
     if (userSession.websocket?.readyState === WebSocket.OPEN) {
-      const stopMessage: StopRtmpStream = {
-        type: CloudToGlassesMessageType.STOP_RTMP_STREAM,
+      const stopMessage: StopStream = {
+        type: CloudToGlassesMessageType.STOP_STREAM,
         sessionId: userSession.sessionId,
         appId: "MANAGED_STREAM", // Same special app ID used when starting
         streamId: stream.streamId,

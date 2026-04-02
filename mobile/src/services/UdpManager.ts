@@ -173,9 +173,7 @@ class UdpManager {
       // Wait initial delay on first attempt to let server register user
       if (!isRetry) {
         // console.log(`UDP: Waiting ${UDP_INITIAL_DELAY_MS}ms before first probe...`)
-        await new Promise<void>((resolve) =>
-          BackgroundTimer.setTimeout(() => resolve(), UDP_INITIAL_DELAY_MS),
-        )
+        await new Promise<void>((resolve) => BackgroundTimer.setTimeout(() => resolve(), UDP_INITIAL_DELAY_MS))
 
         // Re-check WebSocket after delay
         if (!socketComms.isWebSocketConnected()) {
@@ -425,14 +423,14 @@ class UdpManager {
     return maxFrames * frameSizeBytes
   }
 
-  public sendAudio(pcmData: string): void {
+  public sendAudio(lc3OrPcm: ArrayBuffer): void {
     if (!this.isReady || !this.socket || !this.config) {
       return
     }
 
     try {
       // Decode base64 to bytes
-      const audioBytes = Buffer.from(pcmData, "base64")
+      const audioBytes = Buffer.from(lc3OrPcm, 0, lc3OrPcm.byteLength)
 
       // Get frame-aligned max chunk size
       // If encryption enabled, we need to recalculate alignment after accounting for overhead
@@ -447,16 +445,16 @@ class UdpManager {
       }
 
       // Debug log every 100 packets to confirm audio is flowing
-      const numChunks = Math.ceil(audioBytes.length / maxChunkSize)
-      if (this.sequenceNumber % 100 === 0) {
-        console.log(
-          `UDP: Sending audio #${this.sequenceNumber}, total=${
-            audioBytes.length
-          }bytes, chunks=${numChunks}, maxChunk=${maxChunkSize}, encrypted=${!!this.encryptionConfig} to ${
-            this.config.host
-          }:${this.config.port}`,
-        )
-      }
+      // const numChunks = Math.ceil(audioBytes.length / maxChunkSize)
+      // if (this.sequenceNumber % 100 === 0) {
+      //   console.log(
+      //     `UDP: Sending audio #${this.sequenceNumber}, total=${
+      //       audioBytes.length
+      //     }bytes, chunks=${numChunks}, maxChunk=${maxChunkSize}, encrypted=${!!this.encryptionConfig} to ${
+      //       this.config.host
+      //     }:${this.config.port}`,
+      //   )
+      // }
 
       // Chunk audio data if it exceeds max packet size
       // Chunks are aligned to LC3 frame boundaries to prevent decoder corruption

@@ -263,16 +263,16 @@ const photo = await session.camera.requestPhoto({
 // photo.mimeType is the image format (e.g., "image/jpeg")
 
 // Start RTMP streaming
-const streamResult = await session.camera.startStream({
+const streamResult = await session.camera.startLocalLivestream({
   rtmpUrl: 'rtmp://your-server.com/live/stream-key'
 });
 // Returns { success: boolean, streamId?: string }
 
 // Stop streaming
-await session.camera.stopStream();
+await session.camera.stopLocalLivestream();
 
 // Managed streaming (with HLS/DASH URLs)
-const managedStream = await session.camera.startStream({
+const managedStream = await session.camera.startLivestream({
   managed: true,
   title: 'My Stream'
 });

@@ -25,7 +25,7 @@ import {
 import App from "../../models/app.model";
 import { appCache } from "../core/app-cache.service";
 import { User } from "../../models/user.model";
-import appService from "../core/app.service";
+import appService, { DEPRECATED_APPS } from "../core/app.service";
 import * as developerService from "../core/developer.service";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { metricsService } from "../metrics";
@@ -44,7 +44,7 @@ const CLOUD_PUBLIC_HOST_NAME = process.env.CLOUD_PUBLIC_HOST_NAME; // e.g., "pro
 const CLOUD_LOCAL_HOST_NAME = process.env.CLOUD_LOCAL_HOST_NAME; // e.g., "localhost:8002" | "cloud" | "cloud-debug-cloud.default.svc.cluster.local:80"
 const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET;
 
-const APP_SESSION_TIMEOUT_MS = 5000; // 5 seconds
+const APP_SESSION_TIMEOUT_MS = 6000; // 6 seconds
 
 // Note: Connection states are now managed by AppSession (AppSessionState)
 // The old AppConnectionState enum has been removed in Phase 4b
@@ -551,6 +551,16 @@ export class AppManager {
    */
   async startApp(packageName: string): Promise<AppStartResult> {
     const logger = this.logger.child({ packageName });
+
+    // Block deprecated apps from being started.
+    if (DEPRECATED_APPS.includes(packageName)) {
+      logger.info({ packageName }, `Blocked deprecated app ${packageName} from starting`);
+      return {
+        success: false,
+        error: { stage: "WEBHOOK", message: `App ${packageName} is deprecated and can no longer be started` },
+      };
+    }
+
     logger.info(
       {
         packageName,
@@ -1127,6 +1137,28 @@ export class AppManager {
     try {
       const { packageName, apiKey, sessionId } = initMessage;
 
+      // Reject deprecated apps immediately.
+      if (DEPRECATED_APPS.includes(packageName)) {
+        this.logger.info(
+          { packageName, userId: this.userSession.userId },
+          `Rejected connection from deprecated app ${packageName}`,
+        );
+        try {
+          ws.send(
+            JSON.stringify({
+              type: CloudToAppMessageType.CONNECTION_ERROR,
+              code: "APP_DEPRECATED",
+              message: `App ${packageName} is deprecated and no longer accepted`,
+              timestamp: new Date(),
+            }),
+          );
+        } catch (sendError) {
+          this.logger.error(sendError, `Error sending deprecation error to App ${packageName}:`);
+        }
+        ws.close(1008, "App deprecated");
+        return;
+      }
+
       // Validate the API key
       const isValidApiKey = await developerService.validateApiKey(packageName, apiKey, this.userSession);
 
@@ -1428,7 +1460,25 @@ export class AppManager {
     try {
       // Fetch previously running apps from database
       const user = await User.findOrCreateUser(this.userSession.userId);
-      const previouslyRunningApps = user.runningApps;
+      const allPreviouslyRunning = user.runningApps;
+
+      // Filter out deprecated apps and clean them from the DB.
+      const deprecatedFound = allPreviouslyRunning.filter((pkg) => DEPRECATED_APPS.includes(pkg));
+      const previouslyRunningApps = allPreviouslyRunning.filter((pkg) => !DEPRECATED_APPS.includes(pkg));
+
+      if (deprecatedFound.length > 0) {
+        logger.info(
+          { deprecatedFound, userId: this.userSession.userId },
+          `Removing ${deprecatedFound.length} deprecated app(s) from user's runningApps`,
+        );
+        for (const pkg of deprecatedFound) {
+          try {
+            await user.removeRunningApp(pkg);
+          } catch (err) {
+            logger.warn({ err, packageName: pkg }, `Failed to remove deprecated app from DB`);
+          }
+        }
+      }
 
       if (previouslyRunningApps.length === 0) {
         logger.debug(`No previously running apps for ${this.userSession.userId}`);

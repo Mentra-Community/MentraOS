@@ -27,6 +27,7 @@ export default function SelectGlassesBluetoothScreen() {
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
+  const [devMode] = useSetting(SETTINGS.dev_mode.key)
   const searchResults = useCoreStore((state) => state.searchResults)
   const [rememberedSearchResults, setRememberedSearchResults] = useState<DeviceSearchResult[]>(searchResults)
 
@@ -130,28 +131,34 @@ export default function SelectGlassesBluetoothScreen() {
             text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
           />
 
-          {!rememberedSearchResults || rememberedSearchResults.length === 0 ? (
+          {!rememberedSearchResults ||
+          rememberedSearchResults.filter((r) => r.deviceName !== "NOTREQUIREDSKIP").length === 0 ? (
             <View className="flex-1 justify-center py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4">
               <Group>
-                {rememberedSearchResults.map((res: DeviceSearchResult, index: number) => (
-                  <TouchableOpacity
-                    key={index}
-                    className="h-[50px] flex-row items-center justify-between bg-background px-4 py-3"
-                    onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
-                    <View className="flex-1 px-2.5">
-                      <Text
-                        text={`${deviceModel} - ${filterDeviceName(res.deviceName)}`}
-                        className="flex-wrap text-sm font-semibold"
-                        numberOfLines={2}
-                      />
-                    </View>
-                    <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                  </TouchableOpacity>
-                ))}
+                {rememberedSearchResults
+                  .filter((r) => r.deviceName !== "NOTREQUIREDSKIP")
+                  .map((res: DeviceSearchResult, index: number) => {
+                    let text = `${deviceModel} - ${filterDeviceName(res.deviceName)}`
+                    if (devMode && res.signalStrength) {
+                      text += ` - ${res.signalStrength}`
+                    }
+
+                    return (
+                      <TouchableOpacity
+                        key={index}
+                        className="h-[50px] flex-row items-center justify-between bg-background px-4 py-3"
+                        onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                        <View className="flex-1 px-2.5">
+                          <Text text={text} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
+                        </View>
+                        <Icon name="chevron-right" size={24} color={theme.colors.text} />
+                      </TouchableOpacity>
+                    )
+                  })}
               </Group>
             </ScrollView>
           )}

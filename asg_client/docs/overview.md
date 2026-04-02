@@ -23,7 +23,7 @@ The `AsgClientService` is the main Android service that coordinates all function
 
 3. **Media Management**
    - Triggers photo capture based on button presses
-   - Manages video recording (in development)
+   - Manages video recording
    - Handles RTMP live streaming
    - Queues media for upload when connectivity is available
 
@@ -85,4 +85,3 @@ The client behavior can be configured through various settings:
 1. **Mobile App Integration**: Via BLE using custom GATT characteristics
 2. **Cloud Integration**: Through the mobile app relay
 3. **Hardware Integration**: Via serial/UART communication with MCU
-4. **Web Integration**: Through the built-in web server on port 8089

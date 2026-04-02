@@ -1,0 +1,17 @@
+
+config CUSTOM_HLS12VGA
+    bool "Enable custom HLS12VGA driver"
+    default n
+    depends on DT_HAS_ZEPHYR_CUSTOM_HLS12VGA_ENABLED
+    select SPI 
+    help
+      Driver for HLS12VGA SPI-based display controller.
+
+config CUSTOM_HLS12VGA_INIT_PRIORITY
+    int "Initialization priority"
+    default 60
+
+config CUSTOM_HLS12VGA_LOG_LEVEL
+    int "Logging level"
+    default 3
+    range 0 4

@@ -30,6 +30,9 @@ class AudioPlaybackService {
   // Uses BackgroundTimer to work reliably when app is backgrounded on Android
   private audioStopDebounceTimer: number | null = null
   private static readonly AUDIO_STOP_DEBOUNCE_MS = 500
+  /** If glasses report step volume at or below this, bump to FLOOR before A2DP playback. */
+  private static readonly GLASSES_VOLUME_LOW_THRESHOLD = 2
+  private static readonly GLASSES_VOLUME_FLOOR = 9
 
   private constructor() {}
 
@@ -78,6 +81,32 @@ class AudioPlaybackService {
   }
 
   /**
+   * Mentra Live: raise glasses media volume over BLE when it is very low so A2DP prompts are audible.
+   * Fail-open on unsupported devices, timeouts, or errors.
+   */
+  private async ensureGlassesMediaVolumeForA2dp(): Promise<void> {
+    try {
+      const raw = await CoreModule.getGlassesMediaVolume()
+      const vol = Number(raw.vol)
+      const statusCode = Number(raw.statusCode)
+      if (!Number.isFinite(vol)) {
+        console.log("AUDIO: Received glasses media volume response without numeric vol:", JSON.stringify(raw))
+        return
+      }
+      const k900S = Number.isFinite(statusCode) && statusCode >= 0 ? ` K900_S=${statusCode}` : ""
+      console.log(`AUDIO: Glasses media step volume (wearable knob, 0-15 scale): ${vol}/15.${k900S}`)
+      if (vol > AudioPlaybackService.GLASSES_VOLUME_LOW_THRESHOLD) {
+        return
+      }
+      console.log(`AUDIO: Raising glasses media volume (was ${vol})`)
+      await CoreModule.setGlassesMediaVolume(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.warn("AUDIO: Skipping glasses volume bump:", msg)
+    }
+  }
+
+  /**
    * Play audio from a URL.
    * Returns a promise that resolves with playback result when audio finishes or errors.
    */
@@ -92,6 +121,8 @@ class AudioPlaybackService {
     try {
       // Ensure audio mode is configured for background playback
       await this.ensureAudioModeConfigured()
+
+      await this.ensureGlassesMediaVolumeForA2dp()
 
       // Stop current playback if any (notify previous callback)
       if (stopOtherAudio && this.currentPlayback && !this.currentPlayback.completed) {
@@ -187,6 +218,22 @@ class AudioPlaybackService {
 
       // Notify native that our app stopped playing audio (debounced)
       this.notifyAudioStopDebounced()
+      return
+    }
+
+    // Detect silent playback failures: expo-audio doesn't surface errors to JS,
+    // so when ExoPlayer fails to load/play a URL (network error, HTTP 500, etc.),
+    // the player state goes to "idle" with nothing loaded and no buffering.
+    // We wait 1500ms after play() to avoid false positives during initial load.
+    if (status.playbackState === "idle" && !status.isBuffering && !status.isLoaded) {
+      const elapsedMs = Date.now() - playback.startTime
+      if (elapsedMs > 1500) {
+        console.error(`AUDIO: Playback failed for ${playback.requestId} (player went idle after ${elapsedMs}ms)`)
+        playback.completed = true
+        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null)
+        this.currentPlayback = null
+        this.notifyAudioStopDebounced()
+      }
     }
   }
 

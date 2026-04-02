@@ -33,7 +33,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   const iconSize = {
     width: flatStyle?.width ?? 64,
     height: flatStyle?.height ?? 64,
-    borderRadius: flatStyle?.borderRadius ?? theme.spacing.s4,
+    borderRadius: flatStyle?.borderRadius ?? theme.spacing.s3,
   }
 
   return (

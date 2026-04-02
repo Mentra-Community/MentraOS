@@ -150,7 +150,7 @@ export const simplePushStyle = ({current, next, layouts}: any) => {
     next
       ? next.progress.interpolate({
           inputRange: [0, 1],
-          outputRange: [0, -width/2],
+          outputRange: [0, -width / 2],
           extrapolate: "clamp",
         })
       : 0,
@@ -192,7 +192,7 @@ export const getAnimation = (animation: StackAnimationTypes | "zoom") => {
     case "fade":
       return fadeStyle
     // case "reverse_zoom":
-      // return reverseZoomCardStyleInterpolator
+    // return reverseZoomCardStyleInterpolator
     default:
     case "simple_push":
       return simplePushStyle

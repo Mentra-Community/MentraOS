@@ -176,28 +176,28 @@ async function processIncident(incidentId: string, userId: string): Promise<void
       }
     }
 
-    // 5. Linear ticket creation/deduplication
+    // 5. Linear ticket creation/deduplication — disabled, using incident system + Slack alerts instead
     let linearIssueId: string | undefined;
     let linearIssueUrl: string | undefined;
-    let isNewIssue = true;
+    // let isNewIssue = true;
 
-    if (summary) {
-      try {
-        const linearResult = await createOrUpdateLinearIssue(incidentId, summary, consoleUrl);
-        if (linearResult) {
-          linearIssueId = linearResult.issueId;
-          linearIssueUrl = linearResult.issueUrl;
-          isNewIssue = linearResult.isNewIssue;
-          logger.info({ incidentId, linearIssueId, isNewIssue }, "Linear ticket created/updated");
-        }
-      } catch (err) {
-        logger.error({ incidentId, err }, "Failed to create Linear ticket");
-        errors.push("Linear API failed");
-      }
-    }
+    // if (summary) {
+    //   try {
+    //     const linearResult = await createOrUpdateLinearIssue(incidentId, summary, consoleUrl);
+    //     if (linearResult) {
+    //       linearIssueId = linearResult.issueId;
+    //       linearIssueUrl = linearResult.issueUrl;
+    //       isNewIssue = linearResult.isNewIssue;
+    //       logger.info({ incidentId, linearIssueId, isNewIssue }, "Linear ticket created/updated");
+    //     }
+    //   } catch (err) {
+    //     logger.error({ incidentId, err }, "Failed to create Linear ticket");
+    //     errors.push("Linear API failed");
+    //   }
+    // }
 
-    // 6. Send notifications with Linear link (or console link as fallback)
-    const notificationUrl = linearIssueUrl || consoleUrl;
+    // 6. Send notifications with console link (Linear disabled)
+    const notificationUrl = consoleUrl;
 
     // Slack notification (fire-and-forget)
     slackService
@@ -207,7 +207,7 @@ async function processIncident(incidentId: string, userId: string): Promise<void
         notificationUrl,
         consoleUrl,
         summary?.title,
-        isNewIssue,
+        true, // isNewIssue — always true now since Linear is disabled
         incidentLogs?.feedback,
       )
       .catch((err) => {
@@ -215,13 +215,13 @@ async function processIncident(incidentId: string, userId: string): Promise<void
         errors.push("Slack notification failed");
       });
 
-    // Email notification
-    try {
-      await emailService.sendIncidentNotification(userId, incidentId, notificationUrl, incidentLogs?.feedback, admins);
-    } catch (err) {
-      logger.warn({ incidentId, err }, "Email notification failed");
-      errors.push("Email notification failed");
-    }
+    // Email notification — disabled, using incident system + Slack alerts instead
+    // try {
+    //   await emailService.sendIncidentNotification(userId, incidentId, notificationUrl, incidentLogs?.feedback, admins);
+    // } catch (err) {
+    //   logger.warn({ incidentId, err }, "Email notification failed");
+    //   errors.push("Email notification failed");
+    // }
 
     // 7. Update incident status with Linear info and summary
     const finalStatus = errors.length === 0 ? "complete" : "partial";

@@ -12,7 +12,7 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useRefreshApplets} from "@/stores/applets"
 import {ThemedStyle} from "@/theme"
-import {MiniAppDualButtonHeader} from "@/components/miniapps/DualButton"
+import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 
 export default function AppStoreWeb() {
   const [_webviewLoading, setWebviewLoading] = useState(true)
@@ -171,30 +171,36 @@ export default function AppStoreWeb() {
 
   // If the prefetched WebView is ready, show it in the correct style
   return (
-    <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0" KeyboardAvoidingViewProps={{enabled: false}}>
-      <MiniAppDualButtonHeader packageName="com.mentra.store" viewShotRef={viewShotRef} />
-      <View className="bg-background flex-1">
-        {/* Show the prefetched WebView, but now visible and full size */}
-        <WebView
-          ref={prefetchedWebviewRef}
-          source={{uri: finalUrl}}
-          style={themed($webView)}
-          onLoadStart={() => setWebviewLoading(true)}
-          onLoadEnd={() => {
-            setWebviewLoading(false)
-            setIsAuthReady(true)
-          }}
-          onError={handleError}
-          onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
-          onMessage={handleWebViewMessage}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          startInLoadingState={false}
-          scalesPageToFit={false}
-          bounces={false}
-          scrollEnabled={true}
-          // Inject CSS/JS to disable zoom and selection
-          injectedJavaScript={`
+    <>
+      <MiniAppCapsuleMenu packageName="com.mentra.store" viewShotRef={viewShotRef} />
+      <Screen
+        preset="fixed"
+        safeAreaEdges={["top"]}
+        ref={viewShotRef}
+        className="px-0"
+        KeyboardAvoidingViewProps={{enabled: false}}>
+        <View className="bg-background flex-1">
+          {/* Show the prefetched WebView, but now visible and full size */}
+          <WebView
+            ref={prefetchedWebviewRef}
+            source={{uri: finalUrl}}
+            style={themed($webView)}
+            onLoadStart={() => setWebviewLoading(true)}
+            onLoadEnd={() => {
+              setWebviewLoading(false)
+              setIsAuthReady(true)
+            }}
+            onError={handleError}
+            onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
+            onMessage={handleWebViewMessage}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={false}
+            scalesPageToFit={false}
+            bounces={false}
+            scrollEnabled={true}
+            // Inject CSS/JS to disable zoom and selection
+            injectedJavaScript={`
               document.body.style.userSelect = 'none';
               document.body.style.webkitUserSelect = 'none';
               document.body.style.webkitTouchCallout = 'none';
@@ -211,16 +217,17 @@ export default function AppStoreWeb() {
               
               true;
           `}
-        />
-        {/* Loading overlay - stays visible until store confirms auth ready */}
-        {!isAuthReady && (
-          <View style={themed($loadingOverlay)}>
-            <ActivityIndicator size="large" color={theme.colors.foreground} />
-            <Text text="Loading App Store..." style={themed($loadingText)} />
-          </View>
-        )}
-      </View>
-    </Screen>
+          />
+          {/* Loading overlay - stays visible until store confirms auth ready */}
+          {!isAuthReady && (
+            <View style={themed($loadingOverlay)}>
+              <ActivityIndicator size="large" color={theme.colors.foreground} />
+              <Text text="Loading App Store..." style={themed($loadingText)} />
+            </View>
+          )}
+        </View>
+      </Screen>
+    </>
   )
 }
 

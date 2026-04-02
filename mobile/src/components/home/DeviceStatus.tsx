@@ -1,7 +1,7 @@
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import CoreModule, {GlassesNotReadyEvent} from "core"
 import {useState, useEffect} from "react"
-import {ActivityIndicator, Image, ImageStyle, Linking, TouchableOpacity, View, ViewStyle} from "react-native"
+import {ActivityIndicator, Image, Linking, TouchableOpacity, View, ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import ConnectedSimulatedGlassesInfo from "@/components/mirror/ConnectedSimulatedGlassesInfo"
@@ -10,7 +10,6 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {
@@ -157,18 +156,18 @@ export const DeviceStatus = ({style}: {style?: ViewStyle}) => {
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (
-      <TouchableOpacity onPress={() => push("/miniapps/settings/glasses")}>
-        <GlassView className="bg-primary-foreground px-6 justify-center flex-1 rounded-2xl flex-row min-h-20 h-20">
-          <View className="flex-1 flex-row">
-            <View className="flex-1 self-start justify-center h-full">
-              <Image
-                source={getCurrentGlassesImage()}
-                className="w-full max-w-32 h-20 self-start"
-                style={{resizeMode: "contain"}}
-              />
-            </View>
+      <TouchableOpacity onPress={() => push("/miniapps/settings/glasses")} className="h-28">
+        <GlassView className="bg-primary-foreground px-6 justify-center flex-1 rounded-2xl flex-row gap-2">
+          <View className="flex-1 self-start justify-center h-full">
+            <Image
+              source={getCurrentGlassesImage()}
+              className="w-full max-w-40 h-28 self-start"
+              style={{resizeMode: "contain"}}
+            />
+          </View>
 
-            <View className="justify-between items-end flex-col gap-3 py-2">
+          <View className="w-1/2">
+            <View className="items-end flex-col gap-3 justify-center flex-1">
               <View className="flex-row items-center gap-3">
                 <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
                 <Text className="font-semibold text-secondary-foreground text-end self-end" text={defaultWearable} />
@@ -177,7 +176,7 @@ export const DeviceStatus = ({style}: {style?: ViewStyle}) => {
                 <Button
                   flex
                   compact
-                  // className="w-[80%]"
+                  className="max-h-10"
                   tx="home:connectGlasses"
                   preset="primary"
                   onPress={connectGlasses}
@@ -187,12 +186,16 @@ export const DeviceStatus = ({style}: {style?: ViewStyle}) => {
                 <Button
                   flex
                   compact
-                  className="w-[80%] items-center justify-center"
+                  className="w-[80%] max-h-10 items-center justify-center"
                   preset="alternate"
                   onPress={handleConnectOrDisconnect}>
                   <View className="flex-row items-center gap-2 flex-1">
                     <ActivityIndicator size="small" color={theme.colors.foreground} />
-                    <Text className="text-secondary-foreground" style={{fontSize: 14}} text={translate("common:cancel")} />
+                    <Text
+                      className="text-secondary-foreground"
+                      style={{fontSize: 14}}
+                      text={translate("common:cancel")}
+                    />
                   </View>
                 </Button>
               )}
@@ -204,41 +207,43 @@ export const DeviceStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   return (
-    <TouchableOpacity onPress={() => push("/miniapps/settings/glasses")}>
-      <GlassView className="bg-primary-foreground px-6 py-0 justify-center flex rounded-2xl flex-row h-20">
+    <TouchableOpacity onPress={() => push("/miniapps/settings/glasses")} className="h-28">
+      <GlassView className="bg-primary-foreground px-6 py-0 justify-center flex rounded-2xl flex-row gap-2">
         <View className="flex-1 self-start justify-center h-full">
           <Image
             source={getCurrentGlassesImage()}
-            className="w-full max-w-32 h-20 self-start"
+            className="w-full max-w-40 h-28 self-start"
             style={{resizeMode: "contain"}}
           />
         </View>
 
-        <View className="justify-between items-end flex-col gap-2 py-5">
-          <Text className="font-semibold text-secondary-foreground text-end self-end" text={defaultWearable} />
-          <View className="flex-row items-center gap-3">
-            {batteryLevel !== -1 && (
-              <View className="flex-row items-center gap-1">
-                <Icon
-                  name={charging ? "battery-charging" : (getBatteryIcon(batteryLevel) as any)}
-                  size={18}
-                  color={theme.colors.foreground}
-                />
-                <Text className="text-secondary-foreground text-sm" text={`${batteryLevel}%`} />
-              </View>
-            )}
-            <MicIcon width={18} height={18} />
-            <Icon name="bluetooth-connected" size={18} color={theme.colors.foreground} />
-            {features?.hasWifi &&
-              (wifiConnected ? (
-                <Button compactIcon className="bg-transparent -m-2" onPress={() => push("/wifi/scan")}>
-                  <Icon name="wifi" size={18} color={theme.colors.foreground} />
-                </Button>
-              ) : (
-                <Button compactIcon className="bg-transparent -m-2" onPress={() => push("/wifi/scan")}>
-                  <Icon name="wifi-off" size={18} color={theme.colors.foreground} />
-                </Button>
-              ))}
+        <View className="w-1/2">
+          <View className="items-end flex-col gap-3 justify-center flex-1">
+            <Text className="font-semibold text-secondary-foreground text-base" text={defaultWearable} />
+            <View className="flex-row items-center gap-3">
+              {batteryLevel !== -1 && (
+                <View className="flex-row items-center gap-1">
+                  <Icon
+                    name={charging ? "battery-charging" : (getBatteryIcon(batteryLevel) as any)}
+                    size={22}
+                    color={theme.colors.foreground}
+                  />
+                  <Text className="text-secondary-foreground text-sm" text={`${batteryLevel}%`} />
+                </View>
+              )}
+              <MicIcon width={18} height={18} />
+              <Icon name="bluetooth-connected" size={22} color={theme.colors.foreground} />
+              {features?.hasWifi &&
+                (wifiConnected ? (
+                  <Button compactIcon className="bg-transparent -m-2" onPress={() => push("/wifi/scan")}>
+                    <Icon name="wifi" size={18} color={theme.colors.foreground} />
+                  </Button>
+                ) : (
+                  <Button compactIcon className="bg-transparent -m-2" onPress={() => push("/wifi/scan")}>
+                    <Icon name="wifi-off" size={18} color={theme.colors.foreground} />
+                  </Button>
+                ))}
+            </View>
           </View>
         </View>
       </GlassView>

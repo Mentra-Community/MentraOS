@@ -114,7 +114,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   // } else {
   //   composedGesture = Gesture.Exclusive(panGesture, tapGesture)
   // }
-  
+
   let composedGesture = Gesture.Exclusive(panGesture, tapGesture)
 
   // const bottomPadding = insets.bottom + theme.spacing.s4
@@ -198,7 +198,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
     return (
       <GlassView className={`bg-primary-foreground h-15 rounded-2xl`} style={{marginBottom: bottomPadding}}>
         <TouchableOpacity onPress={onGridButtonPress} className="items-center justify-center w-15 h-15">
-          <Icon name="grid-3x3" color={theme.colors.foreground} size={32} />
+          <Icon name="grid" color={theme.colors.foreground} size={26} />
         </TouchableOpacity>
       </GlassView>
     )
@@ -255,10 +255,10 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
       <GestureDetector gesture={composedGesture}>
         <View className="flex-1" style={{paddingBottom: bottomPadding}}>
           <GlassView
-            className={`bg-primary-foreground flex-1 py-1.5 pl-3 pr-2 rounded-2xl flex-row justify-between items-center min-h-15`}>
+            className={`bg-primary-foreground flex-1 pl-5 pr-1.5 rounded-2xl flex-row justify-between items-center min-h-15`}>
             <Pressable style={({pressed}) => [{opacity: pressed ? 0.7 : 1}]} className="flex-1 flex-row">
               <View className="flex-row flex-1">
-                <View className="flex-col gap-1 flex-1">
+                <View className="flex-col gap-1 flex-1 justify-center">
                   <Text
                     text={translate("home:running").toUpperCase()}
                     className="font-semibold text-secondary-foreground text-sm"
@@ -272,19 +272,24 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
                   )}
                 </View>
 
-                <View className="flex-row items-center">
+                <View className="flex-row">
                   {appsList.slice(0, 9).map((app, index) => {
                     let marginLeft = 0
                     let trueIndex = appsList.length - index
+                    let boxShadow = "-11.428px 0px 11.428px rgba(73, 73, 73, 0.16)"
                     if (index > 0) {
                       marginLeft = -(theme.spacing.s12 - theme.spacing.s5)
                     }
                     if (trueIndex > 6) {
                       marginLeft = -(theme.spacing.s12 - theme.spacing.s1)
+                      boxShadow = ""
+                    }
+                    if (index === 0) {
+                      boxShadow = ""
                     }
                     return (
                       <View key={app.packageName} style={{zIndex: index, marginLeft: marginLeft}}>
-                        <AppIcon app={app} className="w-12 h-12" />
+                        <AppIcon app={app} className="w-12 h-12 rounded-lg" style={{boxShadow: boxShadow}} />
                       </View>
                     )
                   })}

@@ -1,0 +1,254 @@
+# Video Streaming
+
+Stream live video from smart glasses. Supports WebRTC, SRT, and RTMP.
+
+## Quick start
+
+Pick the option that matches what you want to do:
+
+### Get a low-latency stream of the glasses camera in your miniapp
+
+Use a managed stream. Mentra handles the infrastructure — you get a WebRTC URL with sub-second latency.
+
+```typescript
+const urls = await session.camera.startLivestream();
+console.log("Watch at:", urls.webrtcUrl);
+
+// Stop when done
+await session.camera.stopLivestream();
+```
+
+### Stream to a server on your local network
+
+Use an unmanaged stream. Point the glasses directly at your endpoint using SRT, RTMP, or WHIP.
+
+```typescript
+await session.camera.startLocalLivestream({
+  streamUrl: "srt://192.168.1.100:4201?streamid=my-stream",
+});
+
+// Stop when done
+await session.camera.stopLocalLivestream();
+```
+
+### Stream to a public platform like Twitch or YouTube
+
+Use a managed stream with `restreamDestinations`. Mentra relays the video through a stable SRT connection to the cloud, then fans it out to your RTMP destinations. This is more reliable than streaming RTMP directly from the glasses.
+
+```typescript
+const urls = await session.camera.startLivestream({
+  restreamDestinations: [
+    { url: "rtmp://a.rtmp.youtube.com/live2/YOUR-KEY", name: "YouTube" },
+    { url: "rtmp://live.twitch.tv/app/YOUR-KEY", name: "Twitch" },
+  ],
+});
+
+// In this mode you get HLS/DASH URLs instead of WebRTC
+console.log("HLS:", urls.hlsUrl);
+
+await session.camera.stopLivestream();
+```
+
+### Which should I use?
+
+| I want to... | Use |
+|---|---|
+| Process video in my miniapp (CV, AI, etc.) | Managed stream (default) |
+| Stream to my own local server | Unmanaged stream |
+| Go live on YouTube/Twitch/Facebook | Managed stream + `restreamDestinations` |
+| Stream to a remote server I control | Unmanaged stream |
+
+---
+
+## Managed streaming
+
+Managed streaming delegates ingest and playback to the Mentra cloud. Your miniapp gets back playback URLs without managing any infrastructure.
+
+- Requires internet connectivity
+- Non-exclusive camera access — multiple miniapps can share the same stream
+- Playback URLs become usable when status reports `"active"`
+
+By default, managed streams use **WebRTC** for sub-second latency. When `restreamDestinations` are provided, the stream automatically switches to **SRT** ingest with **HLS/DASH** playback (required for RTMP fan-out).
+
+### Status events
+
+Always subscribe to status events before starting a stream. Don't use playback URLs until status is `"active"`.
+
+```typescript
+const unsubscribe = session.camera.onLivestreamStatus((status) => {
+  if (status.status === "active") {
+    console.log("Stream is live!", status.webrtcUrl);
+  } else if (status.status === "error") {
+    console.error("Stream error:", status.message);
+  }
+});
+
+const urls = await session.camera.startLivestream();
+
+// Later
+await session.camera.stopLivestream();
+unsubscribe();
+```
+
+### API reference
+
+```typescript
+// Start
+session.camera.startLivestream(options?: ManagedStreamOptions): Promise<ManagedStreamResult>
+
+// Stop
+session.camera.stopLivestream(): Promise<void>
+
+// Status events
+session.camera.onLivestreamStatus(handler): () => void
+```
+
+```typescript
+interface ManagedStreamOptions {
+  video?: VideoConfig;
+  audio?: AudioConfig;
+  stream?: StreamConfig;
+  restreamDestinations?: { url: string; name?: string }[];
+  sound?: boolean; // play start/stop sounds (default: true)
+}
+
+interface ManagedStreamResult {
+  webrtcUrl?: string;   // low-latency playback (default mode)
+  hlsUrl: string;       // HLS playback (when restreamDestinations provided)
+  dashUrl: string;      // DASH playback (when restreamDestinations provided)
+  previewUrl?: string;  // hosted player page
+  thumbnailUrl?: string;
+  streamId: string;
+}
+```
+
+### Notes
+
+- `error` status is non-recoverable for the current attempt. Retry by calling `startLivestream()` again.
+- Multiple miniapps can call `startLivestream()` and share the same underlying stream. The stream stays alive until all miniapps stop it.
+
+---
+
+## Unmanaged streaming
+
+Unmanaged streaming sends the camera feed directly from the glasses to your endpoint. You control ingest, transcoding, and distribution. The protocol is determined by the URL scheme:
+
+- `srt://` — Low-latency, resilient to packet loss. Recommended.
+- `rtmp://` / `rtmps://` — Widely supported by streaming platforms.
+- `https://` — WHIP (WebRTC ingest). Ultra-low latency.
+
+### Status events
+
+```typescript
+const cleanup = session.camera.onLocalLivestreamStatus((status) => {
+  console.log("Stream status:", status.status);
+  if (status.status === "error") {
+    console.error(status.errorDetails);
+  }
+});
+
+await session.camera.startLocalLivestream({
+  streamUrl: "srt://your-server.com:4201?streamid=my-stream",
+});
+
+// Later
+await session.camera.stopLocalLivestream();
+cleanup();
+```
+
+### API reference
+
+```typescript
+// Start
+session.camera.startLocalLivestream(options: StreamOptions): Promise<void>
+
+// Stop
+session.camera.stopLocalLivestream(): Promise<void>
+
+// Status events
+session.camera.onLocalLivestreamStatus(handler): () => void
+```
+
+```typescript
+interface StreamOptions {
+  streamUrl: string;
+  video?: VideoConfig;
+  audio?: AudioConfig;
+  stream?: StreamConfig;
+  sound?: boolean; // play start/stop sounds (default: true)
+}
+```
+
+### Notes
+
+- Exclusive camera access — blocks other streams while active.
+- Works on local networks (no internet required if your server is reachable).
+- You manage endpoint availability and retries.
+
+---
+
+## Shared types
+
+```typescript
+interface VideoConfig {
+  width?: number;      // e.g., 1280
+  height?: number;     // e.g., 720
+  bitrate?: number;    // bits per second, e.g., 2000000
+  frameRate?: number;  // e.g., 30
+}
+
+interface AudioConfig {
+  bitrate?: number;          // e.g., 128000
+  sampleRate?: number;       // e.g., 44100
+  echoCancellation?: boolean;
+  noiseSuppression?: boolean;
+}
+
+interface StreamConfig {
+  durationLimit?: number; // max duration in seconds
+}
+```
+
+---
+
+## Checking for existing streams
+
+Detect if a stream is already active for the current user. Useful after app restarts or for coordinating between miniapps.
+
+```typescript
+const result = await session.camera.checkExistingStream();
+
+if (!result.hasActiveStream) {
+  await session.camera.startLivestream();
+  return;
+}
+
+if (result.streamInfo?.type === "managed") {
+  console.log("WebRTC:", result.streamInfo.webrtcUrl);
+} else {
+  console.log("Active stream:", result.streamInfo?.streamUrl);
+}
+```
+
+---
+
+## Permissions
+
+All streaming requires the `CAMERA` permission in your app configuration. See [Permissions Guide](/app-devs/core-concepts/permissions).
+
+## FAQ
+
+**How do I know when playback URLs are ready?**
+Subscribe to `onLivestreamStatus` and wait for `status === "active"`.
+
+**Can I stream to YouTube/Twitch AND get a low-latency WebRTC feed?**
+Not currently. Restream destinations require SRT + HLS/DASH mode. WebRTC playback is only available without restream destinations.
+
+**Does managed streaming require internet?**
+Yes. Unmanaged can work on local networks.
+
+**Is managed streaming low-latency?**
+Yes. The default WebRTC mode has sub-second latency. Adding `restreamDestinations` switches to SRT + HLS/DASH which has higher latency.
+
+**Why use managed streaming for Twitch/YouTube instead of just RTMP directly?**
+Managed streaming relays through a stable SRT connection to the cloud first, then fans out via RTMP. This is more reliable than streaming RTMP directly from the glasses over potentially unstable networks.

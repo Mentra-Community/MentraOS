@@ -15,6 +15,8 @@ export default function ScreenSettingsScreen() {
   const [_screenDisabled, setScreenDisabled] = useSetting(SETTINGS.screen_disabled.key)
   const {setEnabled} = useKonamiCode()
 
+  const depthClamped = Math.min(3, Math.max(1, Number(dashboardDepth ?? 2)))
+
   useFocusEffect(
     useCallback(() => {
       setScreenDisabled(true)
@@ -37,9 +39,9 @@ export default function ScreenSettingsScreen() {
         <SliderSetting
           label="Display Depth"
           subtitle="Adjust how far the content appears from you."
-          value={dashboardDepth ?? 5}
+          value={depthClamped}
           min={1}
-          max={5}
+          max={3}
           onValueChange={(_value) => {}}
           onValueSet={setDashboardDepth}
         />

@@ -19,6 +19,7 @@ import mentraos.ble.MentraosBle.MicStateConfig
 import mentraos.ble.MentraosBle.BrightnessConfig
 import mentraos.ble.MentraosBle.AutoBrightnessConfig
 import mentraos.ble.MentraosBle.HeadUpAngleConfig
+import mentraos.ble.MentraosBle.DisplayDistanceConfig
 import mentraos.ble.MentraosBle.DisplayHeightConfig
 import mentraos.ble.MentraosBle.VersionRequest
 
@@ -41,6 +42,10 @@ object NexDisplayConstants {
     const val OLD_FONT_SIZE: Int = 21 // Font size
     const val FONT_DIVIDER: Float = 2.0f
     const val LINES_PER_SCREEN: Int = 5 // Lines per screen
+
+    /** Matches dashboard depth slider in app settings (1-3); values outside range clamp. */
+    const val DASHBOARD_DEPTH_MIN: Int = 1
+    const val DASHBOARD_DEPTH_MAX: Int = 3
 }
 
 object NexBluetoothPacketTypes {
@@ -54,6 +59,18 @@ object NexProtobufUtils {
     private const val TAG = "NexProtobufUtils"
 
     private const val WHITELIST_CMD: Int = 0x04
+
+    /**
+     * Maps dashboard depth to the value Nex firmware expects in [DisplayDistanceConfig.distance_cm].
+     * The protobuf field is still named `distance_cm`, but Nex treats it as a **tier** 1–3, not centimeters.
+     * Keep in sync with iOS `NexDashboardDisplayWire.depthToWireTier`.
+     */
+    fun dashboardDepthToDistanceCm(depth: Int): Int {
+        return depth.coerceIn(
+            NexDisplayConstants.DASHBOARD_DEPTH_MIN,
+            NexDisplayConstants.DASHBOARD_DEPTH_MAX
+        )
+    }
 
     data class AppInfo(
         val id: String,
@@ -269,23 +286,42 @@ object NexProtobufUtils {
         return generateProtobufCommandBytes(phoneToGlasses)
     }
 
-    fun generateDisplayHeightCommandBytes(height: Int, depth: Int): ByteArray {
-        // clamp height to 0-8 and depth to 1-9
+    fun generateDisplayHeightCommandBytes(height: Int): ByteArray {
         val clampedHeight = height.coerceIn(0, 8)
-        val clampedDepth = depth.coerceIn(1, 9)
 
-        Bridge.log("Nex: === SENDING DASHBOARD POSITION COMMAND TO GLASSES ===")
-        Bridge.log("Nex: Dashboard Position - Height: $clampedHeight (0-8), Depth: $clampedDepth (1-9)")
+        Bridge.log("Nex: === SENDING DISPLAY HEIGHT COMMAND TO GLASSES ===")
+        Bridge.log("Nex: Display height: $clampedHeight (0-8)")
         val displayHeightConfig = DisplayHeightConfig.newBuilder()
             .setHeight(clampedHeight)
             .build()
-        
+
         val phoneToGlasses = PhoneToGlasses.newBuilder()
             .setDisplayHeight(displayHeightConfig)
             .build()
-        
-        Bridge.log("Nex: Sent dashboard height/depth command => Height: $clampedHeight, Depth: $clampedDepth")
-        
+
+        Bridge.log("Nex: Sent display height command => Height: $clampedHeight")
+
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    fun generateDisplayDistanceCommandBytes(distanceCm: Int): ByteArray {
+        val tier = distanceCm.coerceIn(
+            NexDisplayConstants.DASHBOARD_DEPTH_MIN,
+            NexDisplayConstants.DASHBOARD_DEPTH_MAX
+        )
+        Bridge.log("Nex: === SENDING DISPLAY DISTANCE COMMAND TO GLASSES ===")
+        Bridge.log("Nex: Display distance tier (distance_cm field): $tier")
+
+        val displayDistanceConfig = DisplayDistanceConfig.newBuilder()
+            .setDistanceCm(tier)
+            .build()
+
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setDisplayDistance(displayDistanceConfig)
+            .build()
+
+        Bridge.log("Nex: Sent display distance command => distance_cm (tier): $tier")
+
         return generateProtobufCommandBytes(phoneToGlasses)
     }
 

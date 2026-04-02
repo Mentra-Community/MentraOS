@@ -7,22 +7,32 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * Handles chunking of large messages that exceed BLE transmission limits.
  * Messages are split at the JSON layer to work within MCU protocol constraints.
+ *
+ * Uses compact keys to minimize overhead per chunk:
+ *   t  = "ck" (chunk type identifier)
+ *   id = chunk session ID
+ *   c  = chunk index (0-based)
+ *   n  = total number of chunks
+ *   d  = chunk data payload
+ *
+ * Each chunk after C-wrapping + K900 framing must fit within the BES2700's
+ * 253-byte BLE write limit. With compact keys, 80 bytes of raw data produces
+ * a final packed size of ~245 bytes worst-case (with heavy JSON escaping).
  */
 public class MessageChunker {
     private static final String TAG = "MessageChunker";
 
-    // Threshold for chunking - accounts for MCU protocol overhead
-    // MTU ~512 - BLE overhead (3) - MCU protocol (7) - C-wrapper (~50) - safety margin
-    private static final int MESSAGE_SIZE_THRESHOLD = 400;
+    // Threshold: if C-wrapped message exceeds this, chunking is triggered.
+    // BES2700 limit is 253 bytes; anything over ~200 bytes packed needs chunking.
+    private static final int MESSAGE_SIZE_THRESHOLD = 200;
 
-    // Maximum size for chunk data content
-    // Account for chunk wrapper overhead (~100 bytes for type, chunkId, indices)
-    private static final int CHUNK_DATA_SIZE = 300;
+    // Maximum raw bytes per chunk. After double JSON escaping + compact envelope
+    // + C-wrapper + K900 framing, 80 bytes stays under the 253-byte BLE limit.
+    private static final int CHUNK_DATA_SIZE = 80;
 
     /**
      * Check if a message needs to be chunked
@@ -45,7 +55,8 @@ public class MessageChunker {
     }
 
     /**
-     * Create chunks from a message that's too large for single transmission
+     * Create chunks from a message that's too large for single transmission.
+     * Uses compact keys to minimize per-chunk overhead.
      * @param originalJson The original JSON string to be sent (before C-wrapping)
      * @param messageId The message ID for ACK tracking (if applicable)
      * @return List of chunk JSON objects ready to be C-wrapped and sent
@@ -59,8 +70,8 @@ public class MessageChunker {
         byte[] messageBytes = originalJson.getBytes();
         int totalBytes = messageBytes.length;
 
-        // Generate unique chunk ID for this message set
-        String chunkId = "chunk_" + messageId + "_" + System.currentTimeMillis();
+        // Compact chunk session ID: messageId_timestamp (no "chunk_" prefix)
+        String chunkId = messageId + "_" + System.currentTimeMillis();
 
         // Calculate total chunks needed
         int totalChunks = (int) Math.ceil((double) totalBytes / CHUNK_DATA_SIZE);
@@ -75,13 +86,13 @@ public class MessageChunker {
             // Extract chunk data as string
             String chunkData = new String(messageBytes, startIndex, chunkLength);
 
-            // Create chunk JSON
+            // Create chunk JSON with compact keys
             JSONObject chunk = new JSONObject();
-            chunk.put("type", "chunked_msg");
-            chunk.put("chunkId", chunkId);
-            chunk.put("chunk", i);
-            chunk.put("total", totalChunks);
-            chunk.put("data", chunkData);
+            chunk.put("t", "ck");
+            chunk.put("id", chunkId);
+            chunk.put("c", i);
+            chunk.put("n", totalChunks);
+            chunk.put("d", chunkData);
 
             // Add message ID to final chunk only for ACK tracking
             if (i == totalChunks - 1 && messageId != -1) {
@@ -97,7 +108,8 @@ public class MessageChunker {
     }
 
     /**
-     * Check if a received message is a chunked message
+     * Check if a received message is a chunked message.
+     * Supports both verbose ("type":"chunked_msg") and compact ("t":"ck") formats.
      * @param json The received JSON object (after C-unwrapping)
      * @return true if this is a chunked message
      */
@@ -106,25 +118,47 @@ public class MessageChunker {
             return false;
         }
 
-        String type = json.optString("type", "");
-        return "chunked_msg".equals(type);
+        String type = json.optString("type", json.optString("t", ""));
+        return "chunked_msg".equals(type) || "ck".equals(type);
     }
 
     /**
-     * Extract chunk information from a chunked message
+     * Extract chunk information from a chunked message.
+     * Supports both verbose and compact key formats.
      */
     public static ChunkInfo getChunkInfo(JSONObject json) throws JSONException {
         if (!isChunkedMessage(json)) {
             return null;
         }
 
-        String chunkId = json.getString("chunkId");
-        int chunkIndex = json.getInt("chunk");
-        int totalChunks = json.getInt("total");
-        String data = json.getString("data");
+        // Support both verbose and compact keys
+        String chunkId = optStringWithFallback(json, "chunkId", "id");
+        int chunkIndex = optIntWithFallback(json, "chunk", "c", -1);
+        int totalChunks = optIntWithFallback(json, "total", "n", -1);
+        String data = optStringWithFallback(json, "data", "d");
         long messageId = json.optLong("mId", -1);
 
+        if (chunkId == null || chunkIndex < 0 || totalChunks < 0 || data == null) {
+            return null;
+        }
+
         return new ChunkInfo(chunkId, chunkIndex, totalChunks, data, messageId);
+    }
+
+    /** Try full key first, then compact key */
+    private static String optStringWithFallback(JSONObject json, String fullKey, String compactKey) {
+        if (json.has(fullKey)) {
+            return json.optString(fullKey, null);
+        }
+        return json.optString(compactKey, null);
+    }
+
+    /** Try full key first, then compact key, then default */
+    private static int optIntWithFallback(JSONObject json, String fullKey, String compactKey, int defaultValue) {
+        if (json.has(fullKey)) {
+            return json.optInt(fullKey, defaultValue);
+        }
+        return json.optInt(compactKey, defaultValue);
     }
 
     /**

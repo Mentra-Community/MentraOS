@@ -27,7 +27,7 @@ export class SimplePermissionChecker {
     // Camera-related streams
     [StreamType.PHOTO_RESPONSE, PermissionType.CAMERA],
     [StreamType.PHOTO_TAKEN, PermissionType.CAMERA],
-    [StreamType.RTMP_STREAM_STATUS, PermissionType.CAMERA],
+    [StreamType.STREAM_STATUS, PermissionType.CAMERA],
     [StreamType.MANAGED_STREAM_STATUS, PermissionType.CAMERA],
 
     // Notification streams

@@ -1,7 +1,6 @@
-import React from "react"
+import React, {createContext, FC, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react"
 import * as SystemUI from "expo-system-ui"
-import {createContext, FC, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react"
-import {Appearance, ColorSchemeName, StyleProp, useColorScheme} from "react-native"
+import {Appearance, ColorSchemeName, Platform, StyleProp, useColorScheme} from "react-native"
 import * as NavigationBar from "expo-navigation-bar"
 
 import {useSetting, SETTINGS} from "@/stores/settings"
@@ -43,8 +42,11 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
       setStatusBarStyle(lightOrDark === "dark" ? "light" : "dark", true)
       let theme = themeNameToTheme(lightOrDark)
       SystemUI.setBackgroundColorAsync(theme.colors.background)
-      NavigationBar.setButtonStyleAsync(lightOrDark === "dark" ? "light" : "dark")
-      NavigationBar.setStyle(lightOrDark == "dark" ? "light" : "dark")
+      if (Platform.OS === "android") {
+        // NavigationBar.setButtonStyleAsync(lightOrDark === "dark" ? "light" : "dark")
+        // NavigationBar.setStyle(lightOrDark == "dark" ? "light" : "dark")
+        NavigationBar.setStyle(lightOrDark)
+      }
     }, 1000)
     setTheme(lightOrDark)
     // until the uniwind bug is fixed we can't set the uniwind theme without breaking the useColorScheme hook:
@@ -76,7 +78,7 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
     }
 
     if (savedTheme !== "system") {
-    //   updateThemeType(savedTheme, true)
+      //   updateThemeType(savedTheme, true)
       return
     }
 

@@ -5,11 +5,13 @@
  * from the download pipeline. Downloads push items here; processing runs independently.
  */
 
+import * as RNFS from "@dr.pogodin/react-native-fs"
 import CrustModule from "crust"
 
 import {asgCameraApi} from "@/services/asg/asgCameraApi"
 import {localStorageService} from "@/services/asg/localStorageService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
+import {BackgroundTimer} from "@/utils/timers"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 const TAG = "[MediaProcessingQueue]"
@@ -50,6 +52,7 @@ class MediaProcessingQueue {
   private queue: ProcessingItem[] = []
   private isRunning = false
   private aborted = false
+  private generation = 0 // C2: incremented on reset() to invalidate stale processLoop()
 
   /** Add an item to the processing queue. Starts processing if not already running. */
   enqueue(item: ProcessingItem): void {
@@ -79,6 +82,7 @@ class MediaProcessingQueue {
     this.queue = []
     this.isRunning = false
     this.aborted = false
+    this.generation++ // C2: invalidate any running processLoop
   }
 
   /** Returns true if there are items queued or currently processing. */
@@ -86,15 +90,20 @@ class MediaProcessingQueue {
     return this.queue.length > 0 || this.isRunning
   }
 
-  /** Returns a promise that resolves when the queue is fully drained. */
-  waitUntilDrained(): Promise<void> {
+  /** Returns a promise that resolves when the queue is fully drained, or rejects on timeout. */
+  waitUntilDrained(timeoutMs: number = 600000): Promise<void> {
     if (!this.hasPending) return Promise.resolve()
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const deadline = Date.now() + timeoutMs
       const check = () => {
         if (!this.hasPending || this.aborted) {
           resolve()
+        } else if (Date.now() >= deadline) {
+          console.error(`${TAG} waitUntilDrained timed out after ${timeoutMs}ms, aborting queue`)
+          this.abort()
+          reject(new Error(`Processing queue timed out after ${timeoutMs / 1000}s`))
         } else {
-          setTimeout(check, 200)
+          BackgroundTimer.setTimeout(check, 200)
         }
       }
       check()
@@ -105,8 +114,9 @@ class MediaProcessingQueue {
   private async processLoop(): Promise<void> {
     if (this.isRunning) return
     this.isRunning = true
+    const myGeneration = this.generation // C2: capture generation to detect reset()
 
-    while (this.queue.length > 0 && !this.aborted) {
+    while (this.queue.length > 0 && !this.aborted && this.generation === myGeneration) {
       const item = this.queue.shift()!
       try {
         await this.processItem(item)
@@ -114,12 +124,18 @@ class MediaProcessingQueue {
         console.error(`${TAG} Error processing ${item.id}:`, error)
       }
 
+      // Exit if generation changed (reset was called during processing)
+      if (this.generation !== myGeneration) break
+
       // Mark processing complete in store
       const store = useGallerySyncStore.getState()
       store.onFileProcessed(item.id)
     }
 
-    this.isRunning = false
+    // Only clear isRunning if this loop owns the current generation
+    if (this.generation === myGeneration) {
+      this.isRunning = false
+    }
   }
 
   /** Process a single item through the full pipeline. */
@@ -180,7 +196,6 @@ class MediaProcessingQueue {
     let localThumbnailPath: string | undefined = item.thumbnailPath
     if (item.thumbnailData && item.captureDir) {
       try {
-        const RNFS = require("@dr.pogodin/react-native-fs")
         const thumbPath = `${item.captureDir}/.thumb.jpg`
         const base64Data = item.thumbnailData.startsWith("data:")
           ? item.thumbnailData.split(",")[1]
@@ -199,6 +214,9 @@ class MediaProcessingQueue {
         console.log(`${TAG} ✅ Saved to camera roll: ${item.id}`)
       } else {
         console.warn(`${TAG} ❌ Failed to save to camera roll: ${item.id}`)
+        // D1: Surface camera roll save failures to the UI
+        const store = useGallerySyncStore.getState()
+        store.onFileFailed(item.id, "camera roll save failed")
       }
     }
 
@@ -221,7 +239,26 @@ class MediaProcessingQueue {
       localThumbnailPath,
       item.glassesModel,
     )
-    await localStorageService.saveDownloadedFile(downloadedFile)
+    try {
+      await localStorageService.saveDownloadedFile(downloadedFile)
+    } catch (metadataError) {
+      // D2: Clean up orphaned file if metadata save fails, then re-throw
+      console.error(`${TAG} Metadata save failed for ${item.id}, cleaning up file:`, metadataError)
+      await RNFS.unlink(filePathToSave).catch(() => {})
+      throw metadataError
+    }
+
+    // S4: Clean up intermediate processing files
+    const intermediates = [
+      item.primaryPath + ".hdr.jpg",
+      item.primaryPath + ".processed.jpg",
+      item.primaryPath + ".stabilized.mp4",
+    ]
+    for (const intermediate of intermediates) {
+      if (intermediate !== filePathToSave) {
+        RNFS.unlink(intermediate).catch(() => {}) // fire-and-forget
+      }
+    }
 
     // 7. Update file in sync queue with local paths for gallery display
     const store = useGallerySyncStore.getState()

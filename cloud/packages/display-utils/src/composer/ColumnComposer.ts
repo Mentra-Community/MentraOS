@@ -249,8 +249,12 @@ export class ColumnComposer {
       return 1;
     }
 
-    // Calculate spaces needed (round up to ensure we reach the target)
-    const spaces = Math.ceil(pixelsNeeded / this.spaceWidthPx);
+    // Calculate spaces needed. Use Math.floor (not Math.ceil) to ensure the
+    // right column never starts past rightColumnStartPx. Rounding up caused
+    // the right column to start 1–5px further right than planned, shrinking
+    // its usable width and causing the last character to wrap onto the next
+    // line's left position.
+    const spaces = Math.max(1, Math.floor(pixelsNeeded / this.spaceWidthPx));
 
     // Cap at a reasonable maximum to prevent runaway spacing
     return Math.min(spaces, 100);

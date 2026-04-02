@@ -4,14 +4,8 @@ on:
   workflow_dispatch: # Manual trigger fallback
   push:
     branches:
-      - cloud/issues-044
-      - new-context-soniox
-      - cloud/044-ci-build-audit
-      - hotfix/cloud-observability
-      - hotfix/crash-diagnostics
-      - cloud/062-mongodb-audit
-      - hotfix/graceful-shutdown
-      - hotfix/remove-forced-gc-add-livez
+      - cloud/issues-047
+      - cloud/issues-048-merge
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

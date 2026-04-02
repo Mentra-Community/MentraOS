@@ -1,5 +1,7 @@
-import {useEffect, useRef, useState, cloneElement, isValidElement} from "react"
-import {View, ViewStyle, PanResponder, LayoutChangeEvent, TextStyle} from "react-native"
+import {useEffect, useRef, useState, useCallback, cloneElement, isValidElement} from "react"
+import {View, ViewStyle, LayoutChangeEvent, TextStyle} from "react-native"
+import {Gesture, GestureDetector} from "react-native-gesture-handler"
+import {runOnJS} from "react-native-reanimated"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -51,35 +53,82 @@ export const ThemedSlider: React.FC<ThemedSliderProps> = ({
     }
   }, [value])
 
-  const computeValueFromPageX = (pageX: number) => {
-    if (sliderWidth === 0) {
-      return value
-    }
-    const relativeX = pageX - sliderPositionRef.current.x
-    const ratio = Math.max(0, Math.min(1, relativeX / sliderWidth))
-    return Math.round(min + ratio * (max - min))
-  }
+  const computeValueFromX = useCallback(
+    (absoluteX: number) => {
+      if (sliderWidth === 0) {
+        return value
+      }
+      const relativeX = absoluteX - sliderPositionRef.current.x
+      const ratio = Math.max(0, Math.min(1, relativeX / sliderWidth))
+      return Math.round(min + ratio * (max - min))
+    },
+    [sliderWidth, min, max, value],
+  )
 
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onPanResponderGrant: (evt) => {
+  const handleBegin = useCallback(
+    (absoluteX: number) => {
       isDraggingRef.current = true
-      const newValue = computeValueFromPageX(evt.nativeEvent.pageX)
+      const newValue = computeValueFromX(absoluteX)
       setInternalValue(newValue)
       onValueChangeRef.current(newValue)
     },
-    onPanResponderMove: (evt) => {
-      const newValue = computeValueFromPageX(evt.nativeEvent.pageX)
+    [computeValueFromX],
+  )
+
+  const handleUpdate = useCallback(
+    (absoluteX: number) => {
+      const newValue = computeValueFromX(absoluteX)
       setInternalValue(newValue)
       onValueChangeRef.current(newValue)
     },
-    onPanResponderRelease: (evt) => {
-      const newValue = computeValueFromPageX(evt.nativeEvent.pageX)
+    [computeValueFromX],
+  )
+
+  const handleEnd = useCallback(
+    (absoluteX: number) => {
+      const newValue = computeValueFromX(absoluteX)
       setInternalValue(newValue)
       onSlidingCompleteRef.current(newValue)
       isDraggingRef.current = false
     },
+    [computeValueFromX],
+  )
+
+  const handleFinalize = useCallback(() => {
+    isDraggingRef.current = false
+  }, [])
+
+  const handleTap = useCallback(
+    (absoluteX: number) => {
+      const newValue = computeValueFromX(absoluteX)
+      setInternalValue(newValue)
+      onValueChangeRef.current(newValue)
+      onSlidingCompleteRef.current(newValue)
+    },
+    [computeValueFromX],
+  )
+
+  const pan = Gesture.Pan()
+    .onBegin((e) => {
+      runOnJS(handleBegin)(e.absoluteX)
+    })
+    .onUpdate((e) => {
+      runOnJS(handleUpdate)(e.absoluteX)
+    })
+    .onEnd((e) => {
+      runOnJS(handleEnd)(e.absoluteX)
+    })
+    .onFinalize(() => {
+      runOnJS(handleFinalize)()
+    })
+    .activeOffsetX([-5, 5])
+    .failOffsetY([-20, 20])
+
+  const tap = Gesture.Tap().onEnd((e) => {
+    runOnJS(handleTap)(e.absoluteX)
   })
+
+  const gesture = Gesture.Race(pan, tap)
 
   const handleLayout = (e: LayoutChangeEvent) => {
     setSliderWidth(e.nativeEvent.layout.width)
@@ -112,23 +161,25 @@ export const ThemedSlider: React.FC<ThemedSliderProps> = ({
       : icon
 
   return (
-    <View ref={containerRef} style={[themed($container), style]} onLayout={handleLayout} {...panResponder.panHandlers}>
-      {/* Inactive track (thin, full width) */}
-      <View style={themed($inactiveTrack)} pointerEvents="none" />
-      {/* Active track (thick, filled portion with rounded ends) */}
-      <View style={[themed($activeTrack), {width: `${fillPercentage}%`}]} pointerEvents="none">
-        <View style={themed($handleContent)}>
-          <Text
-            text={`${internalValue}${suffix}`}
-            style={themed($valueText)}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.5}
-          />
-          {whiteIcon && shouldShowIcon && <View style={themed($iconContainer)}>{whiteIcon}</View>}
+    <GestureDetector gesture={gesture}>
+      <View ref={containerRef} style={[themed($container), style]} onLayout={handleLayout}>
+        {/* Inactive track (thin, full width) */}
+        <View style={themed($inactiveTrack)} pointerEvents="none" />
+        {/* Active track (thick, filled portion with rounded ends) */}
+        <View style={[themed($activeTrack), {width: `${fillPercentage}%`}]} pointerEvents="none">
+          <View style={themed($handleContent)}>
+            <Text
+              text={`${internalValue}${suffix}`}
+              style={themed($valueText)}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.5}
+            />
+            {whiteIcon && shouldShowIcon && <View style={themed($iconContainer)}>{whiteIcon}</View>}
+          </View>
         </View>
       </View>
-    </View>
+    </GestureDetector>
   )
 }
 

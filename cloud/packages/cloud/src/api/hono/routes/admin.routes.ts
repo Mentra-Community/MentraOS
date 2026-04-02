@@ -352,6 +352,9 @@ async function getAppDetail(c: AppContext) {
 async function approveApp(c: AppContext) {
   try {
     const packageName = c.req.param("packageName");
+    if (!packageName) {
+      return c.json({ error: "packageName parameter is required" }, 400);
+    }
     const adminEmail = c.get("email");
     const body = await c.req.json().catch(() => ({}));
     const { notes } = body as { notes?: string };
@@ -416,6 +419,9 @@ async function approveApp(c: AppContext) {
 async function rejectApp(c: AppContext) {
   try {
     const packageName = c.req.param("packageName");
+    if (!packageName) {
+      return c.json({ error: "packageName parameter is required" }, 400);
+    }
     const adminEmail = c.get("email");
     const body = await c.req.json().catch(() => ({}));
     const { notes } = body as { notes?: string };

@@ -23,6 +23,17 @@ struct DeviceTypes {
     private init() {}
 }
 
+struct ControllerTypes {
+    static let R1 = "Even Realities R1"
+
+    static let ALL = [
+        R1
+    ]
+
+    // Private init to prevent instantiation
+    private init() {}
+}
+
 struct ConnTypes {
     static let CONNECTING = "CONNECTING"
     static let CONNECTED = "CONNECTED"
@@ -51,7 +62,9 @@ struct MicTypes {
 
 enum MicMap {
     static var map: [String: [String]] = [
-        "auto": [MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BT, MicTypes.BT_CLASSIC],
+        "auto": [
+            MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BT, MicTypes.BT_CLASSIC,
+        ],
         "glasses": [MicTypes.GLASSES_CUSTOM],
         "phone": [MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM],
         "bluetooth": [MicTypes.BT, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM],

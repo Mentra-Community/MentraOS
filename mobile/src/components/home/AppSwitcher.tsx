@@ -167,6 +167,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
   // debug sort order:
   // console.log("packageName", app.packageName, "index", index)
+  const insets = useSaferAreaInsets()
 
   return (
     <GestureDetector gesture={composedGesture}>
@@ -175,7 +176,8 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
         style={[
           {
             width: CARD_WIDTH,
-            height: CARD_HEIGHT, // - 16,
+            // height: CARD_HEIGHT + (12 * 4) - (insets.top * 1/0.67), // - 16,
+            height: CARD_HEIGHT,
             // zIndex: -index,// to reverse stack order
             position: "absolute",
             left: 0,
@@ -191,7 +193,11 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
             </Text>
           </Animated.View>
         </View>
-        <View className="flex-1 rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground">
+        <View
+          className="flex-1 rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
+          style={{
+            boxShadow: "0px 8px 32px 0px rgba(0, 0, 0, 0.2)",
+          }}>
           {!app.screenshot && (
             <View className="flex-1 items-center justify-center">
               <AppIcon app={app} className="w-12 h-12" />
@@ -199,12 +205,11 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           )}
 
           {app.screenshot && (
-            <View className="flex-1 items-center justify-center">
+            <View className="flex-1 items-center justify-end" style={{overflow: "hidden"}}>
               <Image
                 source={{uri: app.screenshot}}
                 className="w-full h-full"
-                style={{resizeMode: "cover"}}
-                // blurRadius={3}
+                style={{resizeMode: "cover", height: "100%"}}
               />
             </View>
           )}

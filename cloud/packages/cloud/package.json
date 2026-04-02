@@ -11,7 +11,6 @@
     "postbuild": "cp -r src/public dist/public && cp src/services/lc3/liblc3.wasm dist/services/lc3/liblc3.wasm",
     "start": "bun dist/index.js",
     "dev": "bun --watch src/index.ts",
-
     "staging": "NODE_ENV=staging tsx watch src/index.ts",
     "deploy": "bun run build && bun run start",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
@@ -24,12 +23,12 @@
     "verify:permissions": "bun run src/scripts/verify-permissions.ts"
   },
   "author": "Mentra",
-
   "devDependencies": {
     "@types/babel__core": "^7.20.5",
     "@types/bcrypt": "^5.0.0",
     "@types/form-data": "^2.5.0",
     "@types/jsonwebtoken": "^9.0.2",
+    "@types/luxon": "^3.7.1",
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.14",
     "typescript": "^5.8.3"
@@ -38,6 +37,7 @@
     "@aws-sdk/client-s3": "^3.965.0",
     "@linear/sdk": "^75.0.0",
     "@logtail/pino": "^0.5.4",
+    "@mentra/display-utils": "workspace:*",
     "@mentra/sdk": "workspace:*",
     "@mentra/types": "workspace:*",
     "@mentra/utils": "workspace:*",
@@ -54,6 +54,7 @@
     "hono": "^4.11.1",
     "jose": "^6.0.11",
     "jsonwebtoken": "^9.0.1",
+    "luxon": "^3.7.2",
     "mongodb": "^6.13.0",
     "mongoose": "^6.5.2",
     "openai": "^4.28.0",

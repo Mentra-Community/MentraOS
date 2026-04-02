@@ -12,7 +12,7 @@ import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {BackgroundTimer} from "@/utils/timers"
 
@@ -68,7 +68,9 @@ export default function InitScreen() {
 
   const checkCustomUrl = async (): Promise<boolean> => {
     const defaultUrl = SETTINGS[SETTINGS.backend_url.key].defaultValue()
-    const isCustom = backendUrl !== defaultUrl
+    // Read directly from the store to avoid stale React closure values
+    const currentUrl = useSettingsStore.getState().getSetting(SETTINGS.backend_url.key)
+    const isCustom = currentUrl !== defaultUrl
     setIsUsingCustomUrl(isCustom)
     return isCustom
   }

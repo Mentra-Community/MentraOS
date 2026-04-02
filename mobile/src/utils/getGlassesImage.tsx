@@ -41,6 +41,8 @@ export const getGlassesImage = (glasses: string | null) => {
     case "Brilliant Labs Frame":
     case "frame":
       return require("../../assets/glasses/frame.png")
+    case "Even Realities R1":
+      return require("../../assets/glasses/even_realities/r1/ring.png")
     default:
       return require("../../assets/glasses/g1.png")
   }

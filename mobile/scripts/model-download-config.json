@@ -1,0 +1,34 @@
+{
+    "models": [
+      {
+        "category": "tts",
+        "tag": "tts-models",
+        "id": "vits-piper-en_US-lessac-low"
+      },
+      {
+        "category": "stt",
+        "tag": "asr-models",
+        "id": "sherpa-onnx-whisper-tiny"
+      },
+      {
+        "category": "vad",
+        "tag": "asr-models",
+        "id": "silero_vad_v5"
+      },
+      {
+        "category": "diarization",
+        "tag": "speaker-segmentation-models",
+        "id": "sherpa-onnx-reverb-diarization-v1"
+      },
+      {
+        "category": "enhancement",
+        "tag": "speech-enhancement-models",
+        "id": "gtcrn_simple"
+      },
+      {
+        "category": "separation",
+        "tag": "source-separation-models",
+        "id": "sherpa-onnx-spleeter-2stems-fp16"
+      }
+    ]
+  }

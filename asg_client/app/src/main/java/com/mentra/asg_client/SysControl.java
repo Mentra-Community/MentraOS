@@ -200,7 +200,14 @@ public class SysControl {
         
         Log.d(TAG, "Sent WiFi disable broadcast");
     }
-    
+
+    public static void setHotspot5G(Context context, boolean enable) {
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "hotspot_wifi5g");
+        nn.putExtra("value", enable ? 1: 0);
+        sendBroadcast(context, nn);
+    }
+
     public static void connectToWifi(Context context, String ssid, String password) {
         if (ssid == null || ssid.isEmpty()) {
             Log.e(TAG, "Cannot connect to WiFi with empty SSID");
@@ -445,13 +452,35 @@ public class SysControl {
      * @param enable true to enable EIS, false to disable
      */
     public static void setEisEnable(Context context, boolean enable) {
-        Log.d(TAG, "🎥 Setting EIS (vendor.debug.pixsmart.vs) to: " + (enable ? "1" : "0"));
+        Log.d(TAG, "🎥 Setting EIS to: " + (enable ? "ENABLED" : "DISABLED"));
+        // Pixsmart EIS
         Intent nn = new Intent();
         nn.putExtra("cmd", "setProperty");
         nn.putExtra("name", "vendor.debug.pixsmart.vs");
         nn.putExtra("value", enable ? "1": "0");
         sendBroadcast(context, nn);
-        Log.d(TAG, "✅ EIS property broadcast sent");
+        // Morpho video EIS
+        Intent nn2 = new Intent();
+        nn2.putExtra("cmd", "setProperty");
+        nn2.putExtra("name", "vendor.debug.morpho.videoeis.mode");
+        nn2.putExtra("value", enable ? "1": "0");
+        sendBroadcast(context, nn2);
+        Log.d(TAG, "✅ EIS properties set (pixsmart + morpho)");
+    }
+
+    /**
+     * Restart the camera HAL so it picks up a new FOV/ROI value written via DevApi.setCameraFov.
+     * Sends the same K900 SystemUI broadcast as K900Server_mentra (ctl.restart / camerahalserver).
+     * @param context Application context
+     */
+    public static void restartCameraHal(Context context) {
+        Log.d(TAG, "Restarting camera HAL (ctl.restart / camerahalserver)");
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "setProperty");
+        nn.putExtra("name", "ctl.restart");
+        nn.putExtra("value", "camerahalserver");
+        sendBroadcast(context, nn);
+        Log.d(TAG, "Camera HAL restart broadcast sent");
     }
     
     /**

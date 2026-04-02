@@ -42,10 +42,10 @@ public final class ServiceConstants {
     public static final String COMMAND_START_VIDEO_RECORDING = "start_video_recording";
     public static final String COMMAND_STOP_VIDEO_RECORDING = "stop_video_recording";
     public static final String COMMAND_GET_VIDEO_RECORDING_STATUS = "get_video_recording_status";
-    public static final String COMMAND_START_RTMP_STREAM = "start_rtmp_stream";
-    public static final String COMMAND_STOP_RTMP_STREAM = "stop_rtmp_stream";
-    public static final String COMMAND_GET_RTMP_STATUS = "get_rtmp_status";
-    public static final String COMMAND_KEEP_RTMP_STREAM_ALIVE = "keep_rtmp_stream_alive";
+    public static final String COMMAND_START_STREAM = "start_stream";
+    public static final String COMMAND_STOP_STREAM = "stop_stream";
+    public static final String COMMAND_GET_STREAM_STATUS = "get_stream_status";
+    public static final String COMMAND_KEEP_STREAM_ALIVE = "keep_stream_alive";
     public static final String COMMAND_SET_WIFI_CREDENTIALS = "set_wifi_credentials";
     public static final String COMMAND_REQUEST_WIFI_STATUS = "request_wifi_status";
     public static final String COMMAND_REQUEST_WIFI_SCAN = "request_wifi_scan";
@@ -63,7 +63,7 @@ public final class ServiceConstants {
     public static final String RESPONSE_ACK = "ack";
     public static final String RESPONSE_TOKEN_STATUS = "token_status";
     public static final String RESPONSE_VIDEO_RECORDING_STATUS = "video_recording_status";
-    public static final String RESPONSE_RTMP_STATUS = "rtmp_status";
+    public static final String RESPONSE_STREAM_STATUS = "stream_status";
     public static final String RESPONSE_WIFI_STATUS = "wifi_status";
     public static final String RESPONSE_WIFI_SCAN_RESULT = "wifi_scan_result";
     public static final String RESPONSE_PING = "pong";
@@ -122,7 +122,7 @@ public final class ServiceConstants {
     // ---------------------------------------------
     public static final String ERROR_SERVICE_UNAVAILABLE = "service_unavailable";
     public static final String ERROR_MISSING_REQUEST_ID = "missing_request_id";
-    public static final String ERROR_MISSING_RTMP_URL = "missing_rtmp_url";
+    public static final String ERROR_MISSING_STREAM_URL = "missing_stream_url";
     public static final String ERROR_NO_WIFI_CONNECTION = "no_wifi_connection";
     public static final String ERROR_NOT_STREAMING = "not_streaming";
     public static final String ERROR_NOT_RECORDING = "not_recording";

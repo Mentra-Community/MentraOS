@@ -2,19 +2,21 @@
  * 📷 Camera Module
  *
  * Unified camera functionality for App Sessions.
- * Handles both photo requests and RTMP streaming from connected glasses.
+ * Handles photo requests and livestreaming from connected glasses.
  */
 
 import {
   PhotoRequest,
   PhotoData,
   AppToCloudMessageType,
-  RtmpStreamRequest,
-  RtmpStreamStopRequest,
-  RtmpStreamStatus,
-  isRtmpStreamStatus,
+  StreamRequest,
+  StreamStopRequest,
+  StreamStatus,
+  isStreamStatus,
   ManagedStreamStatus,
   StreamStatusCheckResponse,
+  CameraFovSetRequest,
+  CameraRoiPosition,
 } from "../../../types";
 import { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "../../../types/rtmp-stream";
 import { StreamType } from "../../../types/streams";
@@ -47,11 +49,15 @@ export interface PhotoRequestOptions {
 }
 
 /**
- * Configuration options for an RTMP stream
+ * Configuration options for a stream (RTMP, SRT, or WHIP)
  */
-export interface RtmpStreamOptions {
-  /** The RTMP URL to stream to (e.g., rtmp://server.example.com/live/stream-key) */
-  rtmpUrl: string;
+export interface StreamOptions {
+  /** The stream URL to stream to. Supports rtmp://, rtmps://, srt://, and https:// (WHIP) protocols.
+   * @example "rtmp://server.example.com/live/stream-key"
+   * @example "srt://server.example.com:4201?streamid=your-stream-id"
+   * @example "https://server.example.com/whip/endpoint"
+   */
+  streamUrl: string;
   /** Optional video configuration settings */
   video?: VideoConfig;
   /** Optional audio configuration settings */
@@ -63,12 +69,24 @@ export interface RtmpStreamOptions {
 }
 
 /**
+ * Options for setting the camera FOV and ROI position
+ */
+export interface CameraFovOptions {
+  /** Field of view in degrees (82-118). 118 means full sensor, no crop. */
+  fov: number;
+  /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
+  roiPosition?: CameraRoiPosition;
+}
+
+const VALID_ROI_POSITIONS: CameraRoiPosition[] = ["center", "top", "bottom"];
+
+/**
  * 📷 Camera Module Implementation
  *
  * Unified camera management for App Sessions.
  * Provides methods for:
  * - 📸 Requesting photos from glasses
- * - 📹 Starting/stopping RTMP streams
+ * - 📹 Starting/stopping livestreams
  * - 🔍 Monitoring photo and stream status
  * - 🧹 Cleanup and cancellation
  *
@@ -77,16 +95,16 @@ export interface RtmpStreamOptions {
  * // Request a photo
  * const photoData = await session.camera.requestPhoto({ saveToGallery: true });
  *
- * // Start streaming
- * await session.camera.startStream({ rtmpUrl: 'rtmp://example.com/live/key' });
+ * // Start a livestream (managed, WebRTC by default)
+ * const urls = await session.camera.startLivestream();
+ *
+ * // Start a local livestream (unmanaged, to your own server)
+ * await session.camera.startLocalLivestream({ streamUrl: 'srt://192.168.1.100:4201' });
  *
  * // Monitor stream status
- * session.camera.onStreamStatus((status) => {
+ * session.camera.onLocalLivestreamStatus((status) => {
  *   console.log('Stream status:', status.status);
  * });
- *
- * // Stop streaming
- * await session.camera.stopStream();
  * ```
  */
 export class CameraModule {
@@ -103,7 +121,7 @@ export class CameraModule {
   // Streaming functionality
   private isStreaming: boolean = false;
   private currentStreamUrl?: string;
-  private currentStreamState?: RtmpStreamStatus;
+  private currentStreamState?: StreamStatus;
 
   // Managed streaming extension
   private managedExtension: CameraManagedExtension;
@@ -274,38 +292,97 @@ export class CameraModule {
   }
 
   // =====================================
-  // 📹 Streaming Functionality
+  // 🔭 FOV / ROI Control
   // =====================================
 
   /**
-   * 📹 Start an RTMP stream to the specified URL
+   * 🔭 Set the camera field-of-view and ROI crop position
    *
-   * @param options - Configuration options for the stream
+   * Fire-and-forget: the promise resolves once the message is sent.
+   * The phone applies the setting and pushes it to the glasses over BLE.
+   *
+   * @param options - FOV (82-118) and optional ROI position
+   *
+   * @example
+   * ```typescript
+   * // Narrow crop, looking at the top of the frame
+   * await session.camera.setFov({ fov: 92, roiPosition: "top" });
+   *
+   * // Full sensor, no crop (roiPosition is ignored)
+   * await session.camera.setFov({ fov: 118 });
+   * ```
+   */
+  async setFov(options: CameraFovOptions): Promise<void> {
+    const { fov } = options;
+    let roiPosition: CameraRoiPosition = options.roiPosition ?? "center";
+
+    if (fov < 82 || fov > 118) {
+      throw new Error(`fov must be between 82 and 118, got ${fov}`);
+    }
+
+    if (!VALID_ROI_POSITIONS.includes(roiPosition)) {
+      throw new Error(`roiPosition must be one of ${VALID_ROI_POSITIONS.join(", ")}, got "${roiPosition}"`);
+    }
+
+    if (fov === 118) {
+      roiPosition = "center";
+    }
+
+    const requestId = `cam_fov_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    const message: CameraFovSetRequest = {
+      type: AppToCloudMessageType.CAMERA_FOV_SET,
+      packageName: this.packageName,
+      sessionId: this.sessionId,
+      requestId,
+      fov,
+      roiPosition,
+      timestamp: new Date(),
+    };
+
+    this.session.sendMessage(message);
+    this.logger.info({ fov, roiPosition, requestId }, "🔭 Camera FOV set request sent");
+  }
+
+  // =====================================
+  // 📹 Local Livestream (Unmanaged)
+  // =====================================
+
+  /**
+   * 📹 Start a local livestream to your own server (supports SRT, RTMP, WHIP)
+   *
+   * Use this when streaming to a server you control (local network or remote).
+   * For managed streaming with automatic WebRTC playback, use `startLivestream()` instead.
+   *
+   * @param options - Configuration options including the stream URL
    * @returns Promise that resolves when the stream request is sent (not when streaming begins)
    *
    * @example
    * ```typescript
-   * await session.camera.startStream({
-   *   rtmpUrl: 'rtmp://live.example.com/stream/key',
-   *   video: { resolution: '1920x1080', bitrate: 5000 },
-   *   audio: { bitrate: 128 }
+   * await session.camera.startLocalLivestream({
+   *   streamUrl: 'srt://192.168.1.100:4201?streamid=my-stream',
    * });
    * ```
    */
-  async startStream(options: RtmpStreamOptions): Promise<void> {
-    this.logger.info({ rtmpUrl: options.rtmpUrl }, `📹 RTMP stream request starting`);
+  async startLocalLivestream(options: StreamOptions): Promise<void> {
+    this.logger.info({ streamUrl: options.streamUrl }, `📹 Stream request starting`);
 
-    cameraWarnLog(this.session.getHttpsServerUrl?.(), this.packageName, "startStream");
+    cameraWarnLog(this.session.getHttpsServerUrl?.(), this.packageName, "startLocalLivestream");
 
-    if (!options.rtmpUrl) {
-      throw new Error("rtmpUrl is required");
+    if (!options.streamUrl) {
+      throw new Error("streamUrl is required");
+    }
+
+    const url = options.streamUrl;
+    if (!url.startsWith("rtmp://") && !url.startsWith("rtmps://") && !url.startsWith("srt://") && !url.startsWith("https://") && !url.startsWith("http://")) {
+      throw new Error("Invalid stream URL: must start with rtmp://, rtmps://, srt://, https://, or http://");
     }
 
     if (this.isStreaming) {
       this.logger.error(
         {
           currentStreamUrl: this.currentStreamUrl,
-          requestedUrl: options.rtmpUrl,
+          requestedUrl: options.streamUrl,
         },
         `📹 Already streaming error`,
       );
@@ -313,11 +390,11 @@ export class CameraModule {
     }
 
     // Create stream request message
-    const message: RtmpStreamRequest = {
-      type: AppToCloudMessageType.RTMP_STREAM_REQUEST,
+    const message: StreamRequest = {
+      type: AppToCloudMessageType.STREAM_REQUEST,
       packageName: this.packageName,
       sessionId: this.sessionId,
-      rtmpUrl: options.rtmpUrl,
+      streamUrl: options.streamUrl,
       video: options.video,
       audio: options.audio,
       stream: options.stream,
@@ -326,39 +403,39 @@ export class CameraModule {
     };
 
     // Save stream URL for reference
-    this.currentStreamUrl = options.rtmpUrl;
+    this.currentStreamUrl = options.streamUrl;
 
     // Send the request
     try {
       this.session.sendMessage(message);
       this.isStreaming = true;
 
-      this.logger.info({ rtmpUrl: options.rtmpUrl }, `📹 RTMP stream request sent successfully`);
+      this.logger.info({ streamUrl: options.streamUrl }, `📹 Stream request sent successfully`);
       return Promise.resolve();
     } catch (error) {
-      this.logger.error({ error, rtmpUrl: options.rtmpUrl }, `📹 Failed to send RTMP stream request`);
+      this.logger.error({ error, streamUrl: options.streamUrl }, `📹 Failed to send stream request`);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      return Promise.reject(`Failed to request RTMP stream: ${errorMessage}`);
+      return Promise.reject(`Failed to request stream: ${errorMessage}`);
     }
   }
 
   /**
-   * 🛑 Stop the current RTMP stream
+   * 🛑 Stop the current local livestream
    *
    * @returns Promise that resolves when the stop request is sent
    *
    * @example
    * ```typescript
-   * await session.camera.stopStream();
+   * await session.camera.stopLocalLivestream();
    * ```
    */
-  async stopStream(): Promise<void> {
+  async stopLocalLivestream(): Promise<void> {
     this.logger.info(
       {
         isCurrentlyStreaming: this.isStreaming,
         currentStreamUrl: this.currentStreamUrl,
       },
-      `📹 RTMP stream stop request`,
+      `📹 Stream stop request`,
     );
 
     if (!this.isStreaming) {
@@ -368,8 +445,8 @@ export class CameraModule {
     }
 
     // Create stop request message
-    const message: RtmpStreamStopRequest = {
-      type: AppToCloudMessageType.RTMP_STREAM_STOP,
+    const message: StreamStopRequest = {
+      type: AppToCloudMessageType.STREAM_STOP,
       packageName: this.packageName,
       sessionId: this.sessionId,
       streamId: this.currentStreamState?.streamId, // Include streamId if available
@@ -409,7 +486,7 @@ export class CameraModule {
    *
    * @returns The current stream status, or undefined if not available
    */
-  getStreamStatus(): RtmpStreamStatus | undefined {
+  getStreamStatus(): StreamStatus | undefined {
     return this.currentStreamState;
   }
 
@@ -419,7 +496,7 @@ export class CameraModule {
    */
   subscribeToStreamStatusUpdates(): void {
     if (this.session) {
-      this.session.subscribe(StreamType.RTMP_STREAM_STATUS);
+      this.session.subscribe(StreamType.STREAM_STATUS);
     } else {
       this.logger.error("Cannot subscribe to status updates: session reference not available");
     }
@@ -430,18 +507,18 @@ export class CameraModule {
    */
   unsubscribeFromStreamStatusUpdates(): void {
     if (this.session) {
-      this.session.unsubscribe(StreamType.RTMP_STREAM_STATUS);
+      this.session.unsubscribe(StreamType.STREAM_STATUS);
     }
   }
 
   /**
-   * 👂 Listen for stream status updates using the standard event system
+   * 👂 Listen for local livestream status updates
    * @param handler - Function to call when stream status changes
    * @returns Cleanup function to remove the handler
    *
    * @example
    * ```typescript
-   * const cleanup = session.camera.onStreamStatus((status) => {
+   * const cleanup = session.camera.onLocalLivestreamStatus((status) => {
    *   console.log('Stream status:', status.status);
    *   if (status.status === 'error') {
    *     console.error('Stream error:', status.errorDetails);
@@ -452,14 +529,14 @@ export class CameraModule {
    * cleanup();
    * ```
    */
-  onStreamStatus(handler: StreamStatusHandler): () => void {
+  onLocalLivestreamStatus(handler: StreamStatusHandler): () => void {
     if (!this.session) {
       this.logger.error("Cannot listen for status updates: session reference not available");
       return () => {};
     }
 
     this.subscribeToStreamStatusUpdates();
-    return this.session.on(StreamType.RTMP_STREAM_STATUS, handler);
+    return this.session.on(StreamType.STREAM_STATUS, handler);
   }
 
   /**
@@ -479,13 +556,13 @@ export class CameraModule {
     );
 
     // Verify this is a valid stream response
-    if (!isRtmpStreamStatus(message)) {
+    if (!isStreamStatus(message)) {
       this.logger.warn({ message }, `📹 Received invalid stream status message`);
       return;
     }
 
     // Convert to StreamStatus format
-    const status: RtmpStreamStatus = {
+    const status: StreamStatus = {
       type: message.type,
       streamId: message.streamId,
       status: message.status,
@@ -523,69 +600,112 @@ export class CameraModule {
   }
 
   // =====================================
-  // 📹 Managed Streaming Functionality
+  // 📹 Livestream (Managed)
   // =====================================
 
   /**
-   * 📹 Start a managed stream
+   * 📹 Start a livestream
    *
-   * The cloud handles the RTMP endpoint and returns HLS/DASH URLs for viewing.
-   * Multiple apps can consume the same managed stream simultaneously.
+   * Managed by Mentra cloud. Returns playback URLs automatically.
+   * By default uses WebRTC for sub-second latency. If restreamDestinations
+   * are provided, switches to SRT ingest with HLS/DASH playback.
+   * Multiple miniapps can consume the same livestream simultaneously.
    *
-   * @param options - Configuration options for the managed stream
-   * @returns Promise that resolves with viewing URLs when the stream is ready
+   * @param options - Configuration options for the livestream
+   * @returns Promise that resolves with playback URLs when the stream is ready
    *
    * @example
    * ```typescript
-   * const urls = await session.camera.startManagedStream({
-   *   quality: '720p',
-   *   enableWebRTC: true
+   * // Default: WebRTC (low latency)
+   * const urls = await session.camera.startLivestream();
+   * console.log('WebRTC URL:', urls.webrtcUrl);
+   *
+   * // With restream destinations: SRT + HLS/DASH
+   * const urls = await session.camera.startLivestream({
+   *   restreamDestinations: [{ url: 'rtmp://...', name: 'YouTube' }]
    * });
    * console.log('HLS URL:', urls.hlsUrl);
    * ```
    */
-  async startManagedStream(options?: ManagedStreamOptions): Promise<ManagedStreamResult> {
+  async startLivestream(options?: ManagedStreamOptions): Promise<ManagedStreamResult> {
     return this.managedExtension.startManagedStream(options);
   }
 
   /**
-   * 🛑 Stop the current managed stream
+   * 🛑 Stop the current livestream
    *
-   * This will stop streaming for this app only. If other apps are consuming
-   * the same managed stream, it will continue for them.
+   * This will stop streaming for this miniapp only. If other miniapps are consuming
+   * the same livestream, it will continue for them.
    *
    * @returns Promise that resolves when the stop request is sent
    */
-  async stopManagedStream(): Promise<void> {
+  async stopLivestream(): Promise<void> {
     return this.managedExtension.stopManagedStream();
   }
 
   /**
-   * 🔔 Register a handler for managed stream status updates
+   * 🔔 Register a handler for livestream status updates
    *
    * @param handler - Function to call when stream status changes
    * @returns Cleanup function to unregister the handler
    */
-  onManagedStreamStatus(handler: (status: ManagedStreamStatus) => void): () => void {
+  onLivestreamStatus(handler: (status: ManagedStreamStatus) => void): () => void {
     return this.managedExtension.onManagedStreamStatus(handler);
   }
 
   /**
-   * 📊 Check if currently managed streaming
+   * 📊 Check if a livestream is active
    *
-   * @returns true if a managed stream is active
+   * @returns true if a livestream is active
    */
-  isManagedStreamActive(): boolean {
+  isLivestreamActive(): boolean {
     return this.managedExtension.isManagedStreamActive();
   }
 
   /**
-   * 🔗 Get current managed stream URLs
+   * 🔗 Get current livestream URLs
    *
    * @returns Current stream URLs or undefined if not streaming
    */
-  getManagedStreamUrls(): ManagedStreamResult | undefined {
+  getLivestreamUrls(): ManagedStreamResult | undefined {
     return this.managedExtension.getManagedStreamUrls();
+  }
+
+  // =====================================
+  // 🔄 Deprecated aliases (old method names)
+  // =====================================
+
+  /** @deprecated Use `startLivestream()` instead */
+  async startManagedStream(options?: ManagedStreamOptions): Promise<ManagedStreamResult> {
+    return this.startLivestream(options);
+  }
+  /** @deprecated Use `stopLivestream()` instead */
+  async stopManagedStream(): Promise<void> {
+    return this.stopLivestream();
+  }
+  /** @deprecated Use `onLivestreamStatus()` instead */
+  onManagedStreamStatus(handler: (status: ManagedStreamStatus) => void): () => void {
+    return this.onLivestreamStatus(handler);
+  }
+  /** @deprecated Use `isLivestreamActive()` instead */
+  isManagedStreamActive(): boolean {
+    return this.isLivestreamActive();
+  }
+  /** @deprecated Use `getLivestreamUrls()` instead */
+  getManagedStreamUrls(): ManagedStreamResult | undefined {
+    return this.getLivestreamUrls();
+  }
+  /** @deprecated Use `startLocalLivestream()` instead */
+  async startStream(options: StreamOptions): Promise<void> {
+    return this.startLocalLivestream(options);
+  }
+  /** @deprecated Use `stopLocalLivestream()` instead */
+  async stopStream(): Promise<void> {
+    return this.stopLocalLivestream();
+  }
+  /** @deprecated Use `onLocalLivestreamStatus()` instead */
+  onStreamStatus(handler: StreamStatusHandler): () => void {
+    return this.onLocalLivestreamStatus(handler);
   }
 
   /**
@@ -604,7 +724,7 @@ export class CameraModule {
    *   if (streamInfo.streamInfo?.type === 'managed') {
    *     console.log('HLS URL:', streamInfo.streamInfo.hlsUrl);
    *   } else {
-   *     console.log('RTMP URL:', streamInfo.streamInfo.rtmpUrl);
+   *     console.log('Stream URL:', streamInfo.streamInfo.streamUrl);
    *   }
    * }
    * ```
@@ -624,7 +744,7 @@ export class CameraModule {
       thumbnailUrl?: string;
       activeViewers?: number;
       // For unmanaged streams
-      rtmpUrl?: string;
+      streamUrl?: string;
       requestingAppId?: string;
     };
   }> {
@@ -671,7 +791,7 @@ export class CameraModule {
 
     // Stop streaming if active
     if (this.isStreaming) {
-      this.stopStream().catch((error) => {
+      this.stopLocalLivestream().catch((error) => {
         this.logger.error({ error }, "Error stopping stream during cleanup");
       });
     }

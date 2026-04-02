@@ -21,7 +21,7 @@ import {
   LocalTranscription,
   LocationUpdate,
   CalendarEvent,
-  RtmpStreamStatus,
+  StreamStatus,
   KeepAliveAck,
   TouchEvent,
   StreamType,
@@ -95,13 +95,13 @@ export async function handleGlassesMessage(userSession: UserSession, message: Gl
       // - CORE_STATUS_UPDATE (mobile uses REST for settings, device state via GLASSES_CONNECTION_STATE)
 
       // Streaming
-      case GlassesToCloudMessageType.RTMP_STREAM_STATUS: {
-        const status = message as RtmpStreamStatus;
+      case GlassesToCloudMessageType.STREAM_STATUS: {
+        const status = message as StreamStatus;
         // First check if managed streaming extension handles it
         const managedHandled = await userSession.managedStreamingExtension.handleStreamStatus(userSession, status);
         // If not handled by managed streaming, delegate to the unmanaged extension
         if (!managedHandled) {
-          userSession.unmanagedStreamingExtension.handleRtmpStreamStatus(status);
+          userSession.unmanagedStreamingExtension.handleStreamStatus(status);
         }
         break;
       }

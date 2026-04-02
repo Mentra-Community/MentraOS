@@ -14,7 +14,7 @@
 // Enums (runtime values)
 // ============================================================================
 
-export {HardwareType, HardwareRequirementLevel, DeviceTypes} from "./enums"
+export {HardwareType, HardwareRequirementLevel, DeviceTypes, ControllerTypes} from "./enums"
 
 // ============================================================================
 // Hardware types (compile-time only)

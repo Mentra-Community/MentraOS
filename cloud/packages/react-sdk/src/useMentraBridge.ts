@@ -1,10 +1,26 @@
 // react-sdk/src/useMentraBridge.ts
 
+export interface CapsuleMenuRect {
+  /** Distance from the top of the webview content area in px */
+  top: number;
+  /** Distance from the right edge of the screen in px */
+  right: number;
+  /** Bottom edge (top + height) in px */
+  bottom: number;
+  /** Left edge in px */
+  left: number;
+  /** Width of the capsule menu in px */
+  width: number;
+  /** Height of the capsule menu in px */
+  height: number;
+}
+
 declare global {
   interface Window {
     MentraOS?: {
       platform: string;
       capabilities: string[];
+      capsuleMenu: CapsuleMenuRect | null;
     };
     ReactNativeWebView?: {
       postMessage: (message: string) => void;
@@ -61,11 +77,11 @@ function setupResponseListener() {
 
   const originalHandler = window.receiveNativeMessage;
   window.receiveNativeMessage = (message: any) => {
-    if (message?.type === 'bridge_response' && message?.payload?.requestId) {
+    if (message?.type === "bridge_response" && message?.payload?.requestId) {
       const callback = pendingRequests.get(message.payload.requestId);
       if (callback) {
         pendingRequests.delete(message.payload.requestId);
-        const { requestId, ...result } = message.payload;
+        const { requestId: _requestId, ...result } = message.payload;
         callback(result as BridgeResponse);
         return;
       }
@@ -86,19 +102,21 @@ function sendBridgeMessage(type: string, payload: any, onResponse?: ResponseCall
     pendingRequests.set(requestId, onResponse);
   }
 
-  window.ReactNativeWebView.postMessage(JSON.stringify({
-    type,
-    payload,
-    requestId,
-    timestamp: Date.now(),
-  }));
+  window.ReactNativeWebView.postMessage(
+    JSON.stringify({
+      type,
+      payload,
+      requestId,
+      timestamp: Date.now(),
+    }),
+  );
 }
 
 /**
  * Check if the current page is running inside the MentraOS app webview.
  */
 export function isInMentraOS(): boolean {
-  return typeof window !== 'undefined' && !!window.MentraOS;
+  return typeof window !== "undefined" && !!window.MentraOS;
 }
 
 /**
@@ -121,9 +139,9 @@ export function hasCapability(capability: string): boolean {
  */
 export function openUrl(url: string): void {
   if (isInMentraOS()) {
-    sendBridgeMessage('open_url', { url });
+    sendBridgeMessage("open_url", { url });
   } else {
-    window.open(url, '_blank');
+    window.open(url, "_blank");
   }
 }
 
@@ -135,7 +153,7 @@ export function openUrl(url: string): void {
 export async function copyToClipboard(text: string): Promise<boolean> {
   if (isInMentraOS()) {
     return new Promise((resolve) => {
-      sendBridgeMessage('copy_clipboard', { text }, (response) => {
+      sendBridgeMessage("copy_clipboard", { text }, (response) => {
         resolve(response.success);
       });
       // Timeout fallback in case native side doesn't respond
@@ -171,7 +189,7 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 export async function share(options: ShareOptions): Promise<BridgeResponse> {
   if (isInMentraOS()) {
     return new Promise((resolve) => {
-      sendBridgeMessage('share', options, (response) => {
+      sendBridgeMessage("share", options, (response) => {
         resolve(response);
       });
       // Timeout — share sheet might take a while, but don't hang forever
@@ -180,7 +198,7 @@ export async function share(options: ShareOptions): Promise<BridgeResponse> {
   }
 
   // Browser fallback chain: navigator.share -> clipboard
-  if (typeof navigator !== 'undefined' && navigator.share && !options.base64) {
+  if (typeof navigator !== "undefined" && navigator.share && !options.base64) {
     try {
       await navigator.share({
         title: options.title,
@@ -189,7 +207,7 @@ export async function share(options: ShareOptions): Promise<BridgeResponse> {
       });
       return { success: true };
     } catch (e: any) {
-      if (e.name === 'AbortError') {
+      if (e.name === "AbortError") {
         return { success: false, cancelled: true };
       }
       // Fall through to clipboard
@@ -197,13 +215,13 @@ export async function share(options: ShareOptions): Promise<BridgeResponse> {
   }
 
   // Last resort: copy to clipboard
-  const textToCopy = options.text || options.url || '';
+  const textToCopy = options.text || options.url || "";
   if (textToCopy) {
     const copied = await copyToClipboard(textToCopy);
-    return { success: copied, error: copied ? undefined : 'Failed to copy to clipboard' };
+    return { success: copied, error: copied ? undefined : "Failed to copy to clipboard" };
   }
 
-  return { success: false, error: 'Nothing to share' };
+  return { success: false, error: "Nothing to share" };
 }
 
 /**
@@ -220,7 +238,7 @@ export async function share(options: ShareOptions): Promise<BridgeResponse> {
 export async function download(options: DownloadOptions): Promise<BridgeResponse> {
   if (isInMentraOS()) {
     return new Promise((resolve) => {
-      sendBridgeMessage('download', options, (response) => {
+      sendBridgeMessage("download", options, (response) => {
         resolve(response);
       });
       setTimeout(() => resolve({ success: true }), 60000);
@@ -229,13 +247,13 @@ export async function download(options: DownloadOptions): Promise<BridgeResponse
 
   // Browser fallback: create a download link
   try {
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     if (options.base64 && options.mimeType) {
       a.href = `data:${options.mimeType};base64,${options.base64}`;
     } else if (options.url) {
       a.href = options.url;
     } else {
-      return { success: false, error: 'Nothing to download' };
+      return { success: false, error: "Nothing to download" };
     }
     a.download = options.filename;
     document.body.appendChild(a);
@@ -275,4 +293,55 @@ export function useMentraBridge() {
     copyToClipboard,
     download,
   };
+}
+
+/**
+ * Get the bounding rect of the capsule menu (the floating menu/close pill
+ * in the top-right corner of miniapp webviews).
+ *
+ * Returns null when not running inside MentraOS or when the capsule menu
+ * is not present (e.g. non-app-switcher UI mode).
+ *
+ * Similar to WeChat's `wx.getMenuButtonBoundingClientRect()`.
+ *
+ * @example
+ * ```ts
+ * import { getCapsuleMenuRect } from '@mentra/react';
+ *
+ * const rect = getCapsuleMenuRect();
+ * if (rect) {
+ *   console.log(`Capsule is at top=${rect.top}, right=${rect.right}`);
+ * }
+ * ```
+ */
+export function getCapsuleMenuRect(): CapsuleMenuRect | null {
+  return window.MentraOS?.capsuleMenu ?? null;
+}
+
+/**
+ * React hook that provides the capsule menu rect and a convenience
+ * `safeAreaTop` value — the minimum top padding needed so your content
+ * doesn't overlap the capsule menu.
+ *
+ * Outside MentraOS, `rect` is null and `safeAreaTop` is 0, so your
+ * app renders normally with no extra padding.
+ *
+ * @example
+ * ```tsx
+ * import { useCapsuleMenu } from '@mentra/react';
+ *
+ * function MyApp() {
+ *   const { safeAreaTop } = useCapsuleMenu();
+ *   return (
+ *     <div style={{ paddingTop: safeAreaTop }}>
+ *       Your content here
+ *     </div>
+ *   );
+ * }
+ * ```
+ */
+export function useCapsuleMenu(): { rect: CapsuleMenuRect | null; safeAreaTop: number } {
+  const rect = getCapsuleMenuRect();
+  const safeAreaTop = rect ? rect.bottom + 8 : 0;
+  return { rect, safeAreaTop };
 }

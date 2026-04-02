@@ -16,6 +16,8 @@ type MiniAppMessageType =
   | "open_url"
   | "copy_clipboard"
   | "download"
+  | "queue_display_event"
+
 export interface MiniAppMessage {
   type: MiniAppMessageType
   payload?: any
@@ -52,16 +54,16 @@ class MiniComms {
   // Send message to WebView
   public sendToMiniApp(packageName: string, message: MiniAppMessage) {
     if (!this.messageHandlers[packageName]) {
-      console.warn("SUPERCOMMS: No WebView message handler registered")
+      console.warn("MINICOM: No WebView message handler registered")
       return
     }
 
     try {
       const jsonMessage = JSON.stringify(message)
       this.messageHandlers[packageName](jsonMessage)
-      console.log(`SUPERCOMMS: Sent to WebView: ${message.type}`)
+      console.log(`MINICOM: Sent to WebView: ${message.type}`)
     } catch (error) {
-      console.error(`SUPERCOMMS: Error sending to WebView:`, error)
+      console.error(`MINICOM: Error sending to WebView:`, error)
     }
   }
 
@@ -69,22 +71,23 @@ class MiniComms {
   public handleRawMessageFromMiniApp(packageName: string, stringified: string) {
     try {
       const message: MiniAppMessage = JSON.parse(stringified)
-      console.log(`SUPERCOMMS: Received from MiniApp: ${message.type} from ${packageName}`)
+      console.log(`MINICOM: Received from MiniApp: ${message.type} from ${packageName}`)
 
       this.handleMessageFromMiniApp(packageName, message)
     } catch (error) {
-      console.error(`SUPERCOMMS: Error parsing WebView message:`, error)
+      console.error(`MINICOM: Error parsing WebView message:`, error)
     }
   }
 
   private handleCoreFn(message: MiniAppMessage) {
     const {fn, args} = message.payload
-    console.log(`SUPERCOMMS: Core function:`, fn, args)
-    CoreModule[fn](...args)
+    console.log(`MINICOM: Core function:`, fn, args)
+    // @ts-ignore
+    CoreModule[fn]({...args})
   }
 
   private handleButtonClick(message: MiniAppMessage) {
-    console.log(`SUPERCOMMS: Button clicked:`, message.payload)
+    console.log(`MINICOM: Button clicked:`, message.payload)
 
     // Send a response back to WebView
     // this.sendToMiniApp({
@@ -99,7 +102,7 @@ class MiniComms {
   }
 
   private handlePageReady(_message: MiniAppMessage) {
-    console.log(`SUPERCOMMS: Page is ready`)
+    console.log(`MINICOM: Page is ready`)
 
     // // Send initial data to WebView
     // this.sendToWebView({
@@ -113,7 +116,7 @@ class MiniComms {
   }
 
   private handleCustomAction(_message: MiniAppMessage) {
-    console.log(`SUPERCOMMS: Custom action:`, _message.payload)
+    console.log(`MINICOM: Custom action:`, _message.payload)
   }
 
   private async handleShare(packageName: string, message: MiniAppMessage) {
@@ -140,7 +143,7 @@ class MiniComms {
       if (error?.message?.includes("User did not share")) {
         this.sendResponse(packageName, message.requestId, {success: false, cancelled: true})
       } else {
-        console.error("SUPERCOMMS: Share error:", error)
+        console.error("MINICOM: Share error:", error)
         this.sendResponse(packageName, message.requestId, {success: false, error: error?.message})
       }
     }
@@ -149,32 +152,32 @@ class MiniComms {
   private async handleOpenUrl(_packageName: string, message: MiniAppMessage) {
     const {url} = message.payload || {}
     if (!url || typeof url !== "string") {
-      console.warn("SUPERCOMMS: open_url missing url")
+      console.warn("MINICOM: open_url missing url")
       return
     }
     // Block dangerous schemes
     if (url.startsWith("javascript:") || url.startsWith("file:")) {
-      console.warn("SUPERCOMMS: open_url blocked dangerous scheme:", url)
+      console.warn("MINICOM: open_url blocked dangerous scheme:", url)
       return
     }
     try {
       await Linking.openURL(url)
     } catch (error) {
-      console.error("SUPERCOMMS: open_url error:", error)
+      console.error("MINICOM: open_url error:", error)
     }
   }
 
   private async handleCopyClipboard(packageName: string, message: MiniAppMessage) {
     const {text} = message.payload || {}
     if (typeof text !== "string") {
-      console.warn("SUPERCOMMS: copy_clipboard missing text")
+      console.warn("MINICOM: copy_clipboard missing text")
       return
     }
     try {
       await Clipboard.setStringAsync(text)
       this.sendResponse(packageName, message.requestId, {success: true})
     } catch (error: any) {
-      console.error("SUPERCOMMS: clipboard error:", error)
+      console.error("MINICOM: clipboard error:", error)
       this.sendResponse(packageName, message.requestId, {success: false, error: error?.message})
     }
   }
@@ -190,7 +193,7 @@ class MiniComms {
       } else if (url) {
         file = await File.downloadFileAsync(url, new File(Paths.cache, name), {idempotent: true})
       } else {
-        console.warn("SUPERCOMMS: download missing base64 or url")
+        console.warn("MINICOM: download missing base64 or url")
         return
       }
       // Open share sheet so user can choose where to save
@@ -204,10 +207,14 @@ class MiniComms {
       if (error?.message?.includes("User did not share")) {
         this.sendResponse(packageName, message.requestId, {success: true, cancelled: true})
       } else {
-        console.error("SUPERCOMMS: download error:", error)
+        console.error("MINICOM: download error:", error)
         this.sendResponse(packageName, message.requestId, {success: false, error: error?.message})
       }
     }
+  }
+
+  private handleRequestTranscription(packageName: string, message: MiniAppMessage) {
+    // composer
   }
 
   private sendResponse(packageName: string, requestId: string | undefined, result: any) {
@@ -223,6 +230,8 @@ class MiniComms {
     switch (message.type) {
       case "core_fn":
         this.handleCoreFn(message)
+        break
+      case "queue_display_event":
         break
       case "request_mic_audio":
         // this.handleRequestAudio(message)
@@ -255,7 +264,7 @@ class MiniComms {
         this.handleDownload(packageName, message)
         break
       default:
-        console.log(`SUPERCOMMS: Unknown message type: ${message.type}`)
+        console.log(`MINICOM: Unknown message type: ${message.type}`)
     }
   }
 }

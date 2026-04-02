@@ -4,12 +4,14 @@ import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 
 export default function DeviceInfoScreen() {
   const {goBack} = useNavigationHistory()
+  const {theme} = useAppTheme()
 
   // Get all available device info from the glasses store
   const deviceModel = useGlassesStore((state) => state.deviceModel)
@@ -29,7 +31,7 @@ export default function DeviceInfoScreen() {
   return (
     <Screen preset="fixed">
       <Header titleTx="deviceInfo:title" leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView>
+      <ScrollView style={{marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}>
         <View className="flex flex-col gap-6 pt-6">
           {/* Device Identity */}
           <Group title={translate("deviceInfo:deviceIdentity")}>

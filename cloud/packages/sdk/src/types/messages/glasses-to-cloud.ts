@@ -342,10 +342,10 @@ export interface RgbLedControlResponse extends BaseMessage {
 }
 
 /**
- * RTMP stream status update from glasses
+ * Stream status update from glasses
  */
-export interface RtmpStreamStatus extends BaseMessage {
-  type: GlassesToCloudMessageType.RTMP_STREAM_STATUS;
+export interface StreamStatus extends BaseMessage {
+  type: GlassesToCloudMessageType.STREAM_STATUS;
   streamId?: string; // Unique identifier for the stream
   status:
     | "initializing"
@@ -443,7 +443,7 @@ export type GlassesToCloudMessage =
   | PhoneNotificationDismissed
   | MentraosSettingsUpdateRequest
   | CoreStatusUpdate
-  | RtmpStreamStatus
+  | StreamStatus
   | KeepAliveAck
   | PhotoResponse
   | RgbLedControlResponse
@@ -522,8 +522,8 @@ export function isPhoneNotificationDismissed(message: GlassesToCloudMessage): me
   return message.type === GlassesToCloudMessageType.PHONE_NOTIFICATION_DISMISSED;
 }
 
-export function isRtmpStreamStatus(message: GlassesToCloudMessage): message is RtmpStreamStatus {
-  return message.type === GlassesToCloudMessageType.RTMP_STREAM_STATUS;
+export function isStreamStatus(message: GlassesToCloudMessage): message is StreamStatus {
+  return message.type === GlassesToCloudMessageType.STREAM_STATUS;
 }
 
 export function isPhotoResponse(message: GlassesToCloudMessage): message is PhotoResponse {

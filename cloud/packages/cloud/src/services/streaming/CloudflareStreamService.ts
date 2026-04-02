@@ -73,8 +73,6 @@ interface CloudflareLiveInput {
  * Configuration options for creating a live input
  */
 export interface CreateLiveInputConfig {
-  quality?: "720p" | "1080p";
-  enableWebRTC?: boolean;
   enableRecording?: boolean;
   requireSignedURLs?: boolean;
   restreamDestinations?: RestreamDestination[];
@@ -85,10 +83,12 @@ export interface CreateLiveInputConfig {
  */
 export interface LiveInputResult {
   liveInputId: string;
+  srtUrl?: string;
   rtmpUrl: string;
   hlsUrl: string;
   dashUrl: string;
-  webrtcUrl?: string;
+  webrtcUrl?: string; // WHEP playback URL (for viewers)
+  webrtcPublishUrl?: string; // WHIP publish URL (for glasses ingest)
   outputs?: CloudflareOutput[];
 }
 
@@ -203,9 +203,7 @@ export class CloudflareStreamService {
     const _customerSubdomain = process.env.CLOUDFLARE_CUSTOMER_SUBDOMAIN;
 
     if (!accountId || !apiToken) {
-      this.logger.error(
-        "Cloudflare credentials not configured - managed streaming disabled",
-      );
+      this.logger.error("Cloudflare credentials not configured - managed streaming disabled");
       this.enabled = false;
       return;
     }
@@ -215,7 +213,7 @@ export class CloudflareStreamService {
     this.api = axios.create({
       baseURL: `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream`,
       headers: {
-        Authorization: `Bearer ${apiToken}`,
+        "Authorization": `Bearer ${apiToken}`,
         "Content-Type": "application/json",
       },
       timeout: 10000, // 10 second timeout
@@ -280,19 +278,13 @@ export class CloudflareStreamService {
    * Create a new live input for streaming
    * Cloudflare is input-agnostic, so it will accept any bitrate/resolution from Mentra Live glasses
    */
-  async createLiveInput(
-    userId: string,
-    config: CreateLiveInputConfig = {},
-  ): Promise<LiveInputResult> {
+  async createLiveInput(userId: string, config: CreateLiveInputConfig = {}): Promise<LiveInputResult> {
     if (!this.enabled) {
       throw new Error("Managed streaming is not configured");
     }
 
     try {
-      this.logger.debug(
-        { userId, config },
-        "🚀 Starting Cloudflare live input creation",
-      );
+      this.logger.debug({ userId, config }, "🚀 Starting Cloudflare live input creation");
 
       const response = await this.withRetry(async () => {
         // Create live input with proper recording configuration
@@ -322,9 +314,7 @@ export class CloudflareStreamService {
           responseData: JSON.stringify(response.data, null, 2),
           hasResult: !!response.data?.result,
           resultType: typeof response.data?.result,
-          resultKeys: response.data?.result
-            ? Object.keys(response.data.result)
-            : [],
+          resultKeys: response.data?.result ? Object.keys(response.data.result) : [],
         },
         "📥 Cloudflare API response received",
       );
@@ -351,12 +341,14 @@ export class CloudflareStreamService {
           hasRtmps: !!liveInput.rtmps,
           hasPlayback: !!liveInput.playback,
           hasWebRTC: !!liveInput.webRTC,
+          hasSrt: !!liveInput.srt,
+          hasSrtPlayback: !!liveInput.srtPlayback,
           liveInputKeys: Object.keys(liveInput),
         },
         "🔍 Parsing live input data",
       );
 
-      // Check for required fields
+      // Check for required fields (RTMP is still validated as Cloudflare always provides it)
       if (!liveInput.rtmps?.url || !liveInput.rtmps?.streamKey) {
         this.logger.error(
           {
@@ -385,19 +377,43 @@ export class CloudflareStreamService {
         "🎥 Constructed playback URLs for live stream",
       );
 
+      const srtBaseUrl = liveInput.srt?.url;
+      const srtStreamId = liveInput.srt?.streamId;
+      const srtPassphrase = liveInput.srt?.passphrase;
+
+      let srtUrl: string | undefined;
+      if (srtBaseUrl && srtStreamId && srtPassphrase) {
+        srtUrl = `${srtBaseUrl}?streamid=${encodeURIComponent(srtStreamId)}&passphrase=${encodeURIComponent(srtPassphrase)}`;
+      } else if (srtBaseUrl) {
+        this.logger.warn(
+          { hasSrtUrl: true, hasStreamId: !!srtStreamId, hasPassphrase: !!srtPassphrase },
+          "Incomplete SRT credentials from Cloudflare — SRT URL not constructed",
+        );
+      }
+
+      const rtmpUrl = `${liveInput.rtmps.url}${liveInput.rtmps.streamKey}`;
+
+      this.logger.info(
+        {
+          srtUrl,
+          rtmpUrl,
+          hasSrt: !!liveInput.srt,
+        },
+        "Stream ingest URLs constructed",
+      );
+
       const result: LiveInputResult = {
         liveInputId: liveInput.uid,
-        rtmpUrl: `${liveInput.rtmps.url}${liveInput.rtmps.streamKey}`,
+        rtmpUrl,
+        srtUrl,
         hlsUrl: hlsUrl,
         dashUrl: dashUrl,
-        webrtcUrl: liveInput.webRTC?.url,
+        webrtcUrl: liveInput.webRTCPlayback?.url,
+        webrtcPublishUrl: liveInput.webRTC?.url,
       };
 
       // Create outputs if requested
-      if (
-        config.restreamDestinations &&
-        config.restreamDestinations.length > 0
-      ) {
+      if (config.restreamDestinations && config.restreamDestinations.length > 0) {
         this.logger.info(
           {
             liveInputId: liveInput.uid,
@@ -406,10 +422,7 @@ export class CloudflareStreamService {
           "🔄 Creating restream outputs",
         );
 
-        const outputs = await this.createOutputs(
-          liveInput.uid,
-          config.restreamDestinations,
-        );
+        const outputs = await this.createOutputs(liveInput.uid, config.restreamDestinations);
         result.outputs = outputs;
       }
 
@@ -417,7 +430,6 @@ export class CloudflareStreamService {
         {
           userId,
           liveInputId: result.liveInputId,
-          quality: config.quality,
           outputCount: result.outputs?.length || 0,
           result: JSON.stringify(result, null, 2),
         },
@@ -446,10 +458,7 @@ export class CloudflareStreamService {
   /**
    * Create outputs for a live input to restream to other platforms
    */
-  async createOutputs(
-    liveInputId: string,
-    destinations: RestreamDestination[],
-  ): Promise<CloudflareOutput[]> {
+  async createOutputs(liveInputId: string, destinations: RestreamDestination[]): Promise<CloudflareOutput[]> {
     const outputs: CloudflareOutput[] = [];
 
     for (const destination of destinations) {
@@ -463,13 +472,10 @@ export class CloudflareStreamService {
           "📤 Creating output",
         );
 
-        const response = await this.api.post(
-          `/live_inputs/${liveInputId}/outputs`,
-          {
-            url: destination.url,
-            enabled: true,
-          },
-        );
+        const response = await this.api.post(`/live_inputs/${liveInputId}/outputs`, {
+          url: destination.url,
+          enabled: true,
+        });
 
         if (response.data?.result) {
           const output: CloudflareOutput = response.data.result;
@@ -506,9 +512,7 @@ export class CloudflareStreamService {
    */
   async getOutputs(liveInputId: string): Promise<CloudflareOutput[]> {
     try {
-      const response = await this.api.get(
-        `/live_inputs/${liveInputId}/outputs`,
-      );
+      const response = await this.api.get(`/live_inputs/${liveInputId}/outputs`);
       return response.data?.result || [];
     } catch (error) {
       this.logger.error(
@@ -528,10 +532,7 @@ export class CloudflareStreamService {
   async deleteOutput(liveInputId: string, outputId: string): Promise<void> {
     try {
       await this.api.delete(`/live_inputs/${liveInputId}/outputs/${outputId}`);
-      this.logger.info(
-        { liveInputId, outputId },
-        "🗑️ Deleted Cloudflare output",
-      );
+      this.logger.info({ liveInputId, outputId }, "🗑️ Deleted Cloudflare output");
     } catch (error) {
       this.logger.error(
         {
@@ -578,18 +579,11 @@ export class CloudflareStreamService {
 
       return {
         isConnected: currentStatus.state === "connected",
-        connectedAt: currentStatus.connectedAt
-          ? new Date(currentStatus.connectedAt)
-          : undefined,
-        disconnectedAt: currentStatus.disconnectedAt
-          ? new Date(currentStatus.disconnectedAt)
-          : undefined,
+        connectedAt: currentStatus.connectedAt ? new Date(currentStatus.connectedAt) : undefined,
+        disconnectedAt: currentStatus.disconnectedAt ? new Date(currentStatus.disconnectedAt) : undefined,
       };
     } catch (error) {
-      this.logger.error(
-        { error, liveInputId },
-        "Failed to get live input status",
-      );
+      this.logger.error({ error, liveInputId }, "Failed to get live input status");
       return { isConnected: false };
     }
   }
@@ -597,10 +591,7 @@ export class CloudflareStreamService {
   /**
    * Update live input settings
    */
-  async updateLiveInput(
-    liveInputId: string,
-    config: Partial<CreateLiveInputConfig>,
-  ): Promise<void> {
+  async updateLiveInput(liveInputId: string, config: Partial<CreateLiveInputConfig>): Promise<void> {
     try {
       await this.api.put(`/live_inputs/${liveInputId}`, {
         recording: {
@@ -609,10 +600,7 @@ export class CloudflareStreamService {
         },
       });
 
-      this.logger.info(
-        { liveInputId, config },
-        "Updated live input configuration",
-      );
+      this.logger.info({ liveInputId, config }, "Updated live input configuration");
     } catch (error) {
       this.logger.error({ error, liveInputId }, "Failed to update live input");
       throw this.wrapError(error, "Failed to update stream configuration");
@@ -659,8 +647,7 @@ export class CloudflareStreamService {
       for (const stream of allStreams) {
         if (!activeStreamIds.has(stream.id) && !stream.isConnected) {
           // Stream is not in our active set and not connected
-          const ageHours =
-            (Date.now() - stream.createdAt.getTime()) / (1000 * 60 * 60);
+          const ageHours = (Date.now() - stream.createdAt.getTime()) / (1000 * 60 * 60);
 
           if (ageHours > 1) {
             // Older than 1 hour
@@ -671,10 +658,7 @@ export class CloudflareStreamService {
       }
 
       if (cleanedCount > 0) {
-        this.logger.info(
-          { cleanedCount },
-          "Cleaned up orphaned Cloudflare streams",
-        );
+        this.logger.info({ cleanedCount }, "Cleaned up orphaned Cloudflare streams");
       }
     } catch (error) {
       this.logger.error({ error }, "Error during stream cleanup");
@@ -686,11 +670,7 @@ export class CloudflareStreamService {
   /**
    * Retry logic for transient failures
    */
-  private async withRetry<T>(
-    operation: () => Promise<T>,
-    retries = 3,
-    delay = 1000,
-  ): Promise<T> {
+  private async withRetry<T>(operation: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
     for (let i = 0; i < retries; i++) {
       try {
         return await operation();
@@ -700,21 +680,11 @@ export class CloudflareStreamService {
         // Check if retryable
         if (error.response?.status === 429) {
           // Rate limited
-          const retryAfter = parseInt(
-            error.response.headers["retry-after"] || "1",
-          );
-          await new Promise((resolve) =>
-            setTimeout(resolve, retryAfter * 1000),
-          );
-        } else if (
-          error.code === "ECONNABORTED" ||
-          error.code === "ETIMEDOUT" ||
-          error.response?.status >= 500
-        ) {
+          const retryAfter = parseInt(error.response.headers["retry-after"] || "1");
+          await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+        } else if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT" || error.response?.status >= 500) {
           // Network or server errors - exponential backoff
-          await new Promise((resolve) =>
-            setTimeout(resolve, delay * Math.pow(2, i)),
-          );
+          await new Promise((resolve) => setTimeout(resolve, delay * Math.pow(2, i)));
         } else {
           throw error; // Not retryable
         }
@@ -740,11 +710,7 @@ export class CloudflareStreamService {
       const axiosError = error as AxiosError;
       if (axiosError.response?.data) {
         const cfError = axiosError.response.data as any;
-        return new Error(
-          `${message}: ${
-            cfError.errors?.[0]?.message || cfError.message || "Unknown error"
-          }`,
-        );
+        return new Error(`${message}: ${cfError.errors?.[0]?.message || cfError.message || "Unknown error"}`);
       }
     }
     return new Error(`${message}: ${error.message || "Unknown error"}`);
@@ -795,32 +761,23 @@ export class CloudflareStreamService {
    * - https://developers.cloudflare.com/stream/viewing-videos/using-the-stream-player/using-the-player-api/
    */
   getEmbedUrl(streamId: string, options: EmbedPlayerOptions = {}): string {
-    const baseUrl = `https://iframe.videodelivery.net/${encodeURIComponent(
-      streamId,
-    )}`;
+    const baseUrl = `https://iframe.videodelivery.net/${encodeURIComponent(streamId)}`;
 
     const params = new URLSearchParams();
 
     // Boolean options
-    if (typeof options.autoplay === "boolean")
-      params.set("autoplay", String(options.autoplay));
-    if (typeof options.muted === "boolean")
-      params.set("muted", String(options.muted));
-    if (typeof options.controls === "boolean")
-      params.set("controls", String(options.controls));
-    if (typeof options.loop === "boolean")
-      params.set("loop", String(options.loop));
-    if (typeof options.hideUi === "boolean")
-      params.set("hideUi", String(options.hideUi));
+    if (typeof options.autoplay === "boolean") params.set("autoplay", String(options.autoplay));
+    if (typeof options.muted === "boolean") params.set("muted", String(options.muted));
+    if (typeof options.controls === "boolean") params.set("controls", String(options.controls));
+    if (typeof options.loop === "boolean") params.set("loop", String(options.loop));
+    if (typeof options.hideUi === "boolean") params.set("hideUi", String(options.hideUi));
 
     // String options
     if (options.preload) params.set("preload", options.preload);
     if (options.poster) params.set("poster", options.poster);
     if (options.primaryColor) params.set("primaryColor", options.primaryColor);
-    if (options.letterboxColor)
-      params.set("letterboxColor", options.letterboxColor);
-    if (options.defaultTextTrack)
-      params.set("defaultTextTrack", options.defaultTextTrack);
+    if (options.letterboxColor) params.set("letterboxColor", options.letterboxColor);
+    if (options.defaultTextTrack) params.set("defaultTextTrack", options.defaultTextTrack);
     if (options.adUrl) params.set("ad-url", options.adUrl);
     if (options.token) params.set("token", options.token);
 
@@ -833,26 +790,18 @@ export class CloudflareStreamService {
    * This retrieves information about a video that was recorded from a live input
    * or any video uploaded to Cloudflare Stream
    */
-  async getStreamDetails(
-    streamId: string,
-  ): Promise<CloudflareStreamDetails | null> {
+  async getStreamDetails(streamId: string): Promise<CloudflareStreamDetails | null> {
     if (!this.enabled) {
       throw new Error("Cloudflare Stream is not configured");
     }
 
     try {
-      this.logger.debug(
-        { streamId },
-        "📹 Getting stream details from Cloudflare",
-      );
+      this.logger.debug({ streamId }, "📹 Getting stream details from Cloudflare");
 
       const response = await this.api.get(`/${streamId}`);
 
       if (!response.data?.result) {
-        this.logger.warn(
-          { streamId, responseData: response.data },
-          "⚠️ No result in stream details response",
-        );
+        this.logger.warn({ streamId, responseData: response.data }, "⚠️ No result in stream details response");
         return null;
       }
 
@@ -875,10 +824,7 @@ export class CloudflareStreamService {
     } catch (error: any) {
       // Handle 404 as null return
       if (error.response?.status === 404) {
-        this.logger.debug(
-          { streamId },
-          "Stream not found (404) - may not be recorded yet",
-        );
+        this.logger.debug({ streamId }, "Stream not found (404) - may not be recorded yet");
         return null;
       }
 
@@ -899,9 +845,7 @@ export class CloudflareStreamService {
    * Get stream details for a live input's recordings
    * Live inputs can have multiple recordings/videos associated with them
    */
-  async getStreamDetailsForLiveInput(
-    liveInputId: string,
-  ): Promise<CloudflareStreamDetails | null> {
+  async getStreamDetailsForLiveInput(liveInputId: string): Promise<CloudflareStreamDetails | null> {
     if (!this.enabled) {
       throw new Error("Cloudflare Stream is not configured");
     }
@@ -926,19 +870,12 @@ export class CloudflareStreamService {
    * Wait for stream to go live by polling status
    * Returns true when stream is connected/live, false if timeout
    */
-  async waitForStreamLive(
-    liveInputId: string,
-    maxAttempts = 30,
-    delayMs = 2000,
-  ): Promise<boolean> {
+  async waitForStreamLive(liveInputId: string, maxAttempts = 30, delayMs = 2000): Promise<boolean> {
     if (!this.enabled) {
       throw new Error("Managed streaming is not configured");
     }
 
-    this.logger.debug(
-      { liveInputId, maxAttempts, delayMs },
-      "⏳ Waiting for stream to go live",
-    );
+    this.logger.debug({ liveInputId, maxAttempts, delayMs }, "⏳ Waiting for stream to go live");
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
@@ -988,10 +925,7 @@ export class CloudflareStreamService {
       }
     }
 
-    this.logger.warn(
-      { liveInputId, maxAttempts },
-      "⏱️ Timeout waiting for stream to go live",
-    );
+    this.logger.warn({ liveInputId, maxAttempts }, "⏱️ Timeout waiting for stream to go live");
     return false;
   }
 }

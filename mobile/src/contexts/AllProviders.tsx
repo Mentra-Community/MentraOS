@@ -24,6 +24,7 @@ import {KonamiCodeProvider} from "@/utils/dev/konami"
 import ConnectionOverlayProvider from "@/contexts/ConnectionOverlayContext"
 import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {getAnimation, JsStack, NativeJsStack, woltScreenOptions} from "@/components/navigation/JsStack"
+import CoreStatusBar from "@/components/dev/CoreStatusBar"
 // JsStack imports commented out - were used for Android-specific navigation (currently disabled)
 // import {getAnimation, JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 
@@ -138,6 +139,18 @@ export const AllProviders = withWrappers(
         <View className={`h-6 items-center justify-center ${!preventBack ? "bg-green-800" : "bg-red-600"}`}>
           <Text className="text-white text-sm">preventBack: {preventBack ? "true" : "false"}</Text>
         </View>
+        {props.children}
+      </>
+    )
+  },
+  (props) => {
+    const [debugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
+    if (!debugCoreStatusBarEnabled) {
+      return <>{props.children}</>
+    }
+    return (
+      <>
+        <CoreStatusBar />
         {props.children}
       </>
     )

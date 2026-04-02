@@ -77,6 +77,16 @@ async function handlePhoneNotification(c: AppContext) {
     // Relay to all apps subscribed to phone_notification stream
     userSession.relayMessageToApps(notificationMessage);
 
+    // Notify dashboard of new notification
+    userSession.dashboardManager.onNotification({
+      uuid: notificationId,
+      title: title!,
+      content: content!,
+      appName: app,
+      timestamp: timestamp || Date.now(),
+      viewCount: 0,
+    });
+
     return c.json({
       success: true,
       message: "Notification relayed to subscribed apps",
@@ -140,6 +150,9 @@ async function handlePhoneNotificationDismissed(c: AppContext) {
 
     // Relay to all apps subscribed to phone_notification_dismissed stream
     userSession.relayMessageToApps(dismissalMessage);
+
+    // Notify dashboard of dismissed notification
+    userSession.dashboardManager.onNotificationDismissed(notificationId);
 
     return c.json({
       success: true,

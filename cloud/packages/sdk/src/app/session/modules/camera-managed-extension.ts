@@ -19,34 +19,36 @@ import { VideoConfig, AudioConfig, StreamConfig } from "../../../types/rtmp-stre
 import { Logger } from "pino";
 
 /**
- * Configuration options for a managed stream
+ * Configuration options for a managed stream.
+ * By default, managed streams use WebRTC (WHIP ingest → WHEP playback) for low latency.
+ * If restreamDestinations are provided, the stream automatically falls back to
+ * SRT ingest with HLS/DASH playback (required for RTMP fan-out).
  */
 export interface ManagedStreamOptions {
-  /** Stream quality preset */
-  quality?: "720p" | "1080p";
-  /** Enable WebRTC for ultra-low latency viewing */
-  enableWebRTC?: boolean;
   /** Optional video configuration settings */
   video?: VideoConfig;
   /** Optional audio configuration settings */
   audio?: AudioConfig;
   /** Optional stream configuration settings */
   stream?: StreamConfig;
-  /** Optional RTMP destinations to re-stream to (YouTube, Twitch, etc) */
+  /** Optional RTMP destinations to re-stream to (YouTube, Twitch, etc).
+   *  When present, stream uses SRT ingest + HLS/DASH playback instead of WebRTC. */
   restreamDestinations?: RestreamDestination[];
   /** Controls stream start/stop sounds. Defaults to true if omitted. */
   sound?: boolean;
 }
 
 /**
- * Result returned when starting a managed stream
+ * Result returned when starting a managed stream.
+ * In WebRTC mode (default): use webrtcUrl for low-latency playback.
+ * In SRT mode (when restreamDestinations provided): use hlsUrl/dashUrl for playback.
  */
 export interface ManagedStreamResult {
-  /** HLS URL for viewing the stream */
+  /** HLS URL for viewing the stream (functional in SRT mode only) */
   hlsUrl: string;
-  /** DASH URL for viewing the stream */
+  /** DASH URL for viewing the stream (functional in SRT mode only) */
   dashUrl: string;
-  /** WebRTC URL if enabled */
+  /** WebRTC (WHEP) URL for low-latency playback (functional in WebRTC mode, the default) */
   webrtcUrl?: string;
   /** Cloudflare Stream player/preview URL for embedding */
   previewUrl?: string;
@@ -60,27 +62,27 @@ export interface ManagedStreamResult {
  * 📹 Managed Streaming Extension for Camera Module
  *
  * Provides managed streaming capabilities where the cloud handles
- * RTMP endpoints and returns HLS/DASH URLs for viewing.
+ * ingest and returns playback URLs.
  *
  * @example
  * ```typescript
- * // Start a managed stream
- * const urls = await session.camera.startManagedStream({
- *   quality: '720p',
- *   enableWebRTC: true
+ * // Start a livestream (WebRTC by default for low latency)
+ * const urls = await session.camera.startLivestream();
+ * console.log('WebRTC URL:', urls.webrtcUrl);
+ *
+ * // Or with restream destinations (uses SRT + HLS/DASH instead)
+ * const urls = await session.camera.startLivestream({
+ *   restreamDestinations: [{ url: 'rtmp://...', name: 'YouTube' }]
  * });
  * console.log('HLS URL:', urls.hlsUrl);
- * console.log('DASH URL:', urls.dashUrl);
- * console.log('Player URL:', urls.previewUrl);
- * console.log('Thumbnail:', urls.thumbnailUrl);
  *
- * // Monitor managed stream status
- * session.camera.onManagedStreamStatus((status) => {
- *   console.log('Managed stream status:', status.status);
+ * // Monitor livestream status
+ * session.camera.onLivestreamStatus((status) => {
+ *   console.log('Livestream status:', status.status);
  * });
  *
- * // Stop managed stream
- * await session.camera.stopManagedStream();
+ * // Stop livestream
+ * await session.camera.stopLivestream();
  * ```
  */
 export class CameraManagedExtension {
@@ -128,18 +130,18 @@ export class CameraManagedExtension {
    *
    * @example
    * ```typescript
-   * const urls = await session.camera.startManagedStream({
-   *   quality: '1080p',
-   *   enableWebRTC: true,
-   *   video: { fps: 30 },
+   * // Default: WebRTC for low latency
+   * const urls = await session.camera.startLivestream({
+   *   video: { frameRate: 30 },
    *   audio: { sampleRate: 48000 }
    * });
+   * console.log('WebRTC URL:', urls.webrtcUrl);
    *
-   * // Access all available URLs
+   * // With restream: falls back to SRT + HLS/DASH
+   * const urls = await session.camera.startLivestream({
+   *   restreamDestinations: [{ url: 'rtmp://...', name: 'YouTube' }]
+   * });
    * console.log('HLS URL:', urls.hlsUrl);
-   * console.log('DASH URL:', urls.dashUrl);
-   * console.log('Player URL:', urls.previewUrl);  // Embeddable player
-   * console.log('Thumbnail:', urls.thumbnailUrl);
    * ```
    */
   async startManagedStream(options: ManagedStreamOptions = {}): Promise<ManagedStreamResult> {
@@ -159,8 +161,6 @@ export class CameraManagedExtension {
     const request: ManagedStreamRequest = {
       type: AppToCloudMessageType.MANAGED_STREAM_REQUEST,
       packageName: this.packageName,
-      quality: options.quality,
-      enableWebRTC: options.enableWebRTC,
       video: options.video,
       audio: options.audio,
       stream: options.stream,
@@ -248,7 +248,7 @@ export class CameraManagedExtension {
       thumbnailUrl?: string;
       activeViewers?: number;
       // For unmanaged streams
-      rtmpUrl?: string;
+      streamUrl?: string;
       requestingAppId?: string;
     };
   }> {
@@ -317,7 +317,7 @@ export class CameraManagedExtension {
    *
    * @example
    * ```typescript
-   * const cleanup = session.camera.onManagedStreamStatus((status) => {
+   * const cleanup = session.camera.onLivestreamStatus((status) => {
    *   console.log('Status:', status.status);
    *   if (status.status === 'active') {
    *     console.log('Stream is live!');

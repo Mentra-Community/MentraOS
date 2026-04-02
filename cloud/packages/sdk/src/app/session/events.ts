@@ -29,7 +29,7 @@ import {
   isLanguageStream,
   parseLanguageStream,
   CustomMessage,
-  RtmpStreamStatus,
+  StreamStatus,
   PhotoTaken,
   ManagedStreamStatus,
   PhoneNotificationDismissed,
@@ -98,7 +98,7 @@ export interface StreamDataTypes {
   [StreamType.PHONE_NOTIFICATION_DISMISSED]: PhoneNotificationDismissed;
   [StreamType.AUDIO_CHUNK]: AudioChunk;
   [StreamType.VIDEO]: ArrayBuffer;
-  [StreamType.RTMP_STREAM_STATUS]: RtmpStreamStatus;
+  [StreamType.STREAM_STATUS]: StreamStatus;
   [StreamType.MANAGED_STREAM_STATUS]: ManagedStreamStatus;
   [StreamType.VPS_COORDINATES]: VpsCoordinates;
   [StreamType.PHOTO_TAKEN]: PhotoTaken;

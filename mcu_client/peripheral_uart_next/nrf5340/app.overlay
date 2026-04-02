@@ -1,0 +1,95 @@
+/*
+ * Copyright (c) 2022 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/ {
+	chosen {
+		// nordic,nus-uart = &uart0;
+		zephyr,display = &hls12vga;
+	};
+};
+&spi4 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	cs-gpios = <&gpio0 0 GPIO_ACTIVE_HIGH>;
+	pinctrl-0 = <&spi4_default>;
+	pinctrl-1 = <&spi4_sleep>;
+	pinctrl-names = "default", "sleep";
+	hls12vga: hls12vga@0 {
+		compatible = "zephyr,custom-hls12vga";
+		status = "okay";
+		reg = <0>;
+		spi-max-frequency = <32000000>;
+		left_cs-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
+		right_cs-gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio1 01 GPIO_ACTIVE_HIGH>;
+		vcom-gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+		v1_8-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+		v0_9-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+
+		width = <640>;           // 屏幕宽度 (像素)
+		// height = <240>;          // 屏幕高度 (像素)
+		height = <480>;          // 屏幕高度 (像素)
+	};
+};
+
+&pinctrl {
+	spi4_default: spi4_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 0, 8)>,
+			        <NRF_PSEL(SPIM_MISO, 0, 10)>,
+			        <NRF_PSEL(SPIM_MOSI, 0, 9)>;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
+		};
+	};
+	spi4_sleep: spi4_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 0, 8)>,
+			        <NRF_PSEL(SPIM_MISO, 0, 10)>,
+			        <NRF_PSEL(SPIM_MOSI, 0, 9)>;
+			low-power-enable;
+		};
+	};
+};
+
+&uart0 {
+	status = "disabled";
+};
+
+&gpio_fwd {
+	uart {
+		gpios = <&gpio0 11 0>, <&gpio0 10 0>;
+	};
+};
+
+
+/delete-node/ &mx25r64;
+&qspi {
+	status = "okay";
+	pinctrl-0 = <&qspi_default>;
+	pinctrl-1 = <&qspi_sleep>;
+	pinctrl-names = "default", "sleep";
+	mx25u256: mx25u256@0 {
+		compatible = "nordic,qspi-nor";
+		reg = <0>;
+		/* MX25U256 supports only pp and pp4io */
+		writeoc = "pp4io";
+		/* MX25U256 supports all readoc options */
+		readoc = "read4io";
+		sck-frequency = <32000000>;//最高 48Mhz
+		address-size-32;
+		enter-4byte-addr = <0xb7>;
+		jedec-id = [ c2 25 39  ];
+		sfdp-bfp = [ 
+			e5 20 fb ff ff ff ff 0f 44 eb 08 6b 08 3b 04 bb 
+			fe ff ff ff ff ff 00 ff ff ff 44 eb 0c 20 0f 52 
+			10 d8 00 ff 25 52 dd 00 84 a5 04 e2 44 03 17 38 
+			30 b0 30 b0 f7 bd d5 5c 4a 9e 29 ff f0 50 f9 85 ];
+		size = <0x2000000>;// 32M
+		has-dpd;
+		t-enter-dpd = <10000>;
+		t-exit-dpd = <35000>;
+	};
+};

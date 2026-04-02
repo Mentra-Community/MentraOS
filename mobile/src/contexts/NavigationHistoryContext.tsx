@@ -5,6 +5,9 @@ import {CommonActions} from "@react-navigation/native"
 
 import {StackAnimationTypes} from "react-native-screens"
 
+// so we can use this from outside the context:
+import {createRef} from "react"
+
 export type NavigationHistoryPush = (path: string, params?: any) => void
 export type NavigationHistoryReplace = (path: string, params?: any) => void
 export type NavigationHistoryReplaceAll = (path: string, params?: any) => void
@@ -566,9 +569,6 @@ export const focusEffectPreventBack = (backFn?: () => void, iosDontPreventBack?:
     }, [incPreventBack, decPreventBack, backFn]),
   )
 }
-
-// so we can use this from outside the context:
-import {createRef} from "react"
 export const navigationRef = createRef<NavObject>()
 
 export function push(path: string, params?: any) {

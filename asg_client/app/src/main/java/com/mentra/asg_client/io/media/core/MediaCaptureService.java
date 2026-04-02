@@ -19,6 +19,7 @@ import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.io.storage.StorageManager;
 
@@ -428,7 +429,7 @@ public class MediaCaptureService {
 
     /**
      * Static helper for contexts without MediaCaptureService instance.
-     * Used by RtmpCommandHandler and other handlers.
+     * Used by StreamCommandHandler and other handlers.
      */
     public static void playBatteryLowSound(Context context) {
         IHardwareManager hwManager = HardwareManagerFactory.getInstance(context);
@@ -457,6 +458,10 @@ public class MediaCaptureService {
     public void setStateManager(IStateManager stateManager) {
         this.mStateManager = stateManager;
         Log.d(TAG, "✅ StateManager updated for battery monitoring");
+    }
+
+    private boolean shouldSuppressPhotoFeedback() {
+        return CameraRestartCooldown.isActive();
     }
 
     private void playShutterSound() {
@@ -986,14 +991,19 @@ public class MediaCaptureService {
     }
 
     /**
-     * Get the file name (not full path) of the actively recording video, or null if idle.
+     * Get the capture directory name (e.g. "VID_20250322_120000_123") of the actively
+     * recording video, or null if idle. Used by AsgCameraServer to exclude the entire
+     * capture group from sync/download while recording is in progress.
      */
-    public String getActiveRecordingFileName() {
+    public String getActiveRecordingCaptureId() {
         if (!isRecordingVideo || currentVideoPath == null) {
             return null;
         }
+        // currentVideoPath is e.g. /sdcard/.../VID_xxx/base.mp4
+        // We need the parent directory name ("VID_xxx") which is the capture ID
         File f = new File(currentVideoPath);
-        return f.getName();
+        File parentDir = f.getParentFile();
+        return parentDir != null ? parentDir.getName() : f.getName();
     }
 
     /**
@@ -1153,6 +1163,14 @@ public class MediaCaptureService {
             return;
         }
         
+
+        // Check if camera HAL is restarting after FOV change
+        if (CameraRestartCooldown.isActive()) {
+            Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
+            sendPhotoErrorResponse("local", "CAMERA_BUSY", "Camera restarting after FOV change");
+            return;
+        }
+
         // Check if video recording is active - photos cannot interrupt video recording
         if (isRecordingVideo) {
             Log.e(TAG, "Cannot take photo - video recording in progress");
@@ -1225,15 +1243,16 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera init
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_INIT");
 
-        // RGB LED always flashes for photos (user visibility indicator)
-        triggerPhotoFlashLed();
-
-        // flash controls privacy LED, sound controls shutter sound
-        if (enableSound) {
-            playShutterSound();
-        }
-        if (enableFlash) {
-            flashPrivacyLedForPhoto(); // Flash privacy LED
+        // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        if (!shouldSuppressPhotoFeedback()) {
+            // RGB LED always flashes for photos (user visibility indicator)
+            triggerPhotoFlashLed();
+            if (enableSound) {
+                playShutterSound();
+            }
+            if (enableFlash) {
+                flashPrivacyLedForPhoto(); // Flash privacy LED
+            }
         }
 
         // TESTING: Check for fake camera capture failure
@@ -1321,6 +1340,13 @@ public class MediaCaptureService {
             return;
         }
 
+        // Check if camera HAL is restarting after FOV change
+        if (CameraRestartCooldown.isActive()) {
+            Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            return;
+        }
+
         // Check battery level before proceeding
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
@@ -1400,15 +1426,15 @@ public class MediaCaptureService {
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_CAPTURE");
 
         try {
-            // RGB LED always flashes for photos (user visibility indicator)
-            triggerPhotoFlashLed();
-
-            // flash controls privacy LED, sound controls shutter sound
-            if (enableSound) {
-                playShutterSound();
-            }
-            if (enableFlash) {
-                flashPrivacyLedForPhoto(); // Flash privacy LED
+            // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+            if (!shouldSuppressPhotoFeedback()) {
+                triggerPhotoFlashLed();
+                if (enableSound) {
+                    playShutterSound();
+                }
+                if (enableFlash) {
+                    flashPrivacyLedForPhoto();
+                }
             }
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
@@ -2242,6 +2268,13 @@ public class MediaCaptureService {
      * @param compress Compression level (none, medium, heavy)
      */
     public void takePhotoAutoTransfer(String photoFilePath, String requestId, String webhookUrl, String authToken, String bleImgId, boolean save, String size, boolean enableFlash, boolean enableSound, String compress) {
+        // Check if camera HAL is restarting after FOV change
+        if (CameraRestartCooldown.isActive()) {
+            Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            return;
+        }
+
         // Check battery level before proceeding (defense-in-depth)
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
@@ -2286,11 +2319,18 @@ public class MediaCaptureService {
         if (ENABLE_PHOTO_TIMING_LOGS) {
             Log.i(TAG, "⏱️ [TIMING] BLE Photo request START - ID: " + requestId);
         }
-        
+
         // Check if RTMP streaming is active - photos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot take photo - RTMP streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with RTMP streaming");
+            return;
+        }
+
+        // Check if camera HAL is restarting after FOV change
+        if (CameraRestartCooldown.isActive()) {
+            Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
             return;
         }
 
@@ -2349,15 +2389,15 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_CAPTURE");
 
-        // RGB LED always flashes for photos (user visibility indicator)
-        triggerPhotoFlashLed();
-
-        // flash controls privacy LED, sound controls shutter sound
-        if (enableSound) {
-            playShutterSound();
-        }
-        if (enableFlash) {
-            flashPrivacyLedForPhoto(); // Flash privacy LED
+        // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
+        if (!shouldSuppressPhotoFeedback()) {
+            triggerPhotoFlashLed();
+            if (enableSound) {
+                playShutterSound();
+            }
+            if (enableFlash) {
+                flashPrivacyLedForPhoto();
+            }
         }
 
         try {

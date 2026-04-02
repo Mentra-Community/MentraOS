@@ -186,8 +186,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 35
-        versionName "35.0"
+        versionCode 36
+        versionName "36.0"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"
@@ -310,6 +310,7 @@ dependencies {
     // StreamPackLite dependencies
     implementation project(':core')
     implementation project(':extension-rtmp')
+    implementation project(':extension-srt')
 
     // OkHttp for network requests
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'
@@ -322,6 +323,11 @@ dependencies {
 
     // Sentry SDK for error reporting
     implementation 'io.sentry:sentry-android:7.5.0'
+
+    // Google WebRTC for Android (WHIP streaming)
+    // Community-maintained prebuilt of the official Google WebRTC codebase; uses org.webrtc package.
+    // Pinned to M114 (2023) — compiled with Java 11, compatible with this project's Java 17 toolchain.
+    implementation 'io.github.webrtc-sdk:android:114.5735.08.1'
 
     // AndroidX Test dependencies
     androidTestImplementation 'androidx.test:core:1.5.0'

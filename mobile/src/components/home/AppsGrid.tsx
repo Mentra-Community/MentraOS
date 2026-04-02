@@ -18,6 +18,7 @@ import {
   useAppletStatusStore,
   useForegroundApps,
   useStartApplet,
+  useStopApplet,
 } from "@/stores/applets"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -35,6 +36,7 @@ type MasonryAppItem = ClientAppletInterface & {id: string; height: number}
 interface PopoverAction {
   label: string
   icon: string
+  iconSize?: number
   destructive?: boolean
   onPress: () => void
 }
@@ -82,7 +84,7 @@ const AppPopover: React.FC<{
   }
 
   // todo: find out the actual height of the popover via a ref:
-  let popoverHeight = 8 + actions.length * 12 * 4
+  let popoverHeight = 8 + actions.length * 10 * 4
   popoverHeight += 0
   if (showAbove) {
     top = position.y - popoverHeight - 20
@@ -93,22 +95,24 @@ const AppPopover: React.FC<{
       {actions.map((action, index) => (
         <View key={action.label}>
           <Pressable
-            className="flex-row items-center gap-3 px-4 py-3 h-12 active:bg-foreground/10"
+            className="flex-row items-center gap-3 px-4 py-3 h-10 active:bg-foreground/10"
             onPress={() => {
               onClose()
               action.onPress()
             }}>
-            <Icon
-              name={action.icon as any}
-              size={24}
-              color={action.destructive ? theme.colors.destructive : theme.colors.foreground}
-            />
+            <View className="w-5.5 justify-center items-center">
+              <Icon
+                name={action.icon as any}
+                size={action.iconSize ?? 22}
+                color={action.destructive ? theme.colors.destructive : theme.colors.foreground}
+              />
+            </View>
             <Text
               className={`text-[15px] ${action.destructive ? "text-destructive" : "text-foreground"}`}
               text={action.label}
             />
           </Pressable>
-          {index < actions.length - 1 && <View className="h-px bg-white/10 mx-4" />}
+          {index < actions.length - 1 && <View className="h-px bg-primary-foreground/90" />}
         </View>
       ))}
     </View>
@@ -157,6 +161,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
   const {themed, theme} = useAppTheme()
 
   const startApplet = useStartApplet()
+  const stopApplet = useStopApplet()
   const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
   const apps = useForegroundApps()
 
@@ -339,21 +344,31 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
   const popoverActions: PopoverAction[] = useMemo(
     () =>
       [
-        {
-          label: translate("appInfo:open"),
-          icon: "external-link",
+        !liveSelectedApp?.running && {
+          label: translate("appInfo:start"),
+          icon: "play",
           onPress: () => {
             if (liveSelectedApp) {
-              startApplet(liveSelectedApp)
+              startApplet(liveSelectedApp, {skipNavigation: true})
               if (onOpenApp) {
                 onOpenApp?.(liveSelectedApp)
               }
             }
           },
         },
+        liveSelectedApp?.running && {
+          label: translate("appInfo:stop"),
+          icon: "pause",
+          iconSize: 18,
+          onPress: () => {
+            if (liveSelectedApp) {
+              stopApplet(liveSelectedApp.packageName)
+            }
+          },
+        },
         !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
           label: translate("appInfo:settings"),
-          icon: "cog",
+          icon: "exclamation-circle",
           onPress: () => {
             push("/applet/settings", {
               packageName: liveSelectedApp?.packageName,
@@ -363,7 +378,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
         },
         !showAllApps && {
           label: translate("appInfo:remove"),
-          icon: "minus",
+          icon: "circle-minus",
           onPress: () => {
             if (liveSelectedApp) {
               useAppletStatusStore.getState().setHiddenStatus(liveSelectedApp.packageName, true)
@@ -374,7 +389,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
         showAllApps &&
           liveSelectedApp?.hidden && {
             label: translate("appInfo:addToHome"),
-            icon: "home",
+            icon: "plus",
             onPress: () => {
               useAppletStatusStore.getState().setHiddenStatus(liveSelectedApp?.packageName, false)
               if (onAddToHome) {
@@ -393,7 +408,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
           },
         },
       ].filter(Boolean) as PopoverAction[],
-    [liveSelectedApp, startApplet, showAllApps],
+    [liveSelectedApp, startApplet, stopApplet, showAllApps],
   )
 
   const handlePress = async (app: ClientAppletInterface) => {

@@ -41,11 +41,12 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
         snapPoints={snapPoints}
         animateOnMount={false}
         backdropComponent={renderBackdrop}
-        backgroundComponent={(props: any) => <GlassView className="rounded-2xl -mx-px" {...props} />}
+        backgroundComponent={(props: any) => <GlassView className="rounded-3xl -mx-px" {...props} />}
         enablePanDownToClose
         enableDynamicSizing={false}
         backgroundStyle={{backgroundColor: theme.colors.background}}
-        handleIndicatorStyle={{backgroundColor: theme.colors.muted_foreground, width: 100, height: 5}}>
+        handleIndicatorStyle={{backgroundColor: theme.colors.muted_foreground + "40", width: 64, height: 6}}
+        handleStyle={{height: 32 + 6, alignSelf: "center", justifyContent: "center"}}>
         {/* <View className="px-4"> */}
         {/* <View className="gap-4 px-4 mb-2">
             <Text className="text-lg font-bold text-foreground text-center" tx="home:apps" />
@@ -63,15 +64,15 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
         <BottomSheetScrollView>
           <View className="px-6">
             <View className="">
-              <View className="flex-row items-center bg-primary-foreground rounded-xl px-4 py-3 mt-4">
+              <View className="flex-row items-center rounded-2xl px-4 h-12 bg-primary-foreground/40">
                 <Icon name="search" size={20} color={theme.colors.muted_foreground} />
                 <TextInput
                   placeholder={translate("home:search")}
                   placeholderTextColor={theme.colors.muted_foreground}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
-                  className="flex-1 ml-2 text-foreground"
-                  style={{color: theme.colors.foreground}}
+                  className="flex-1 ml-2 text-foreground text-lg"
+                  style={{color: theme.colors.foreground, lineHeight: 21.5}}
                   hitSlop={16}
                 />
                 {searchQuery.length > 0 && (
@@ -80,8 +81,9 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
                   </TouchableOpacity>
                 )}
               </View>
-              <View className="h-px bg-border my-4" />
+              {/* <View className="h-px bg-border my-4" /> */}
             </View>
+            <View className="h-2" />
             <AppsGrid
               showAllApps={true}
               searchQuery={searchQuery}

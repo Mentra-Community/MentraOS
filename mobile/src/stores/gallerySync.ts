@@ -142,7 +142,8 @@ export const useGallerySyncStore = create<GallerySyncState>()(
     setSyncing: (files: PhotoInfo[]) =>
       set({
         syncState: "syncing",
-        queue: files,
+        // C4: Strip thumbnail_data (base64) from store to prevent OOM
+        queue: files.map(({thumbnail_data, ...rest}) => rest),
         queueIndex: 0,
         totalFiles: files.length,
         completedFiles: 0,
@@ -187,11 +188,18 @@ export const useGallerySyncStore = create<GallerySyncState>()(
         currentFileProgress: Math.max(0, Math.min(100, progress)),
       }),
 
-    onFileProgress: (fileName: string, progress: number) =>
+    onFileProgress: (fileName: string, progress: number) => {
+      const state = get()
+      const clampedProgress = Math.max(0, Math.min(100, progress))
+      // Throttle: skip update if same file and same percentage (prevents Zustand flood)
+      if (clampedProgress === state.currentFileProgress && fileName === state.currentFile) {
+        return
+      }
       set({
         currentFile: fileName,
-        currentFileProgress: Math.max(0, Math.min(100, progress)),
-      }),
+        currentFileProgress: clampedProgress,
+      })
+    },
 
     onFileComplete: (_fileName: string) => {
       const state = get()
@@ -273,7 +281,8 @@ export const useGallerySyncStore = create<GallerySyncState>()(
     // Queue management
     setQueue: (files: PhotoInfo[], startIndex: number = 0) =>
       set({
-        queue: files,
+        // C4: Strip thumbnail_data (base64) from store to prevent OOM
+        queue: files.map(({thumbnail_data, ...rest}) => rest),
         queueIndex: startIndex,
         totalFiles: files.length,
         completedFiles: startIndex,

@@ -79,7 +79,7 @@ const location = await session.location.getLatestLocation();
 ```typescript
 // These require CAMERA permission:
 const photo = await session.camera.requestPhoto();
-await session.camera.startStream({ rtmpUrl: 'rtmp://...' });
+await session.camera.startLocalLivestream({ streamUrl: 'srt://...' });
 ```
 
 ### READ_NOTIFICATIONS

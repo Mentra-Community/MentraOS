@@ -81,7 +81,7 @@ import EventEmitter from "events";
 import {
   isPhotoResponse,
   isRgbLedControlResponse,
-  isRtmpStreamStatus,
+  isStreamStatus,
   isManagedStreamStatus,
   isStreamStatusCheckResponse,
   isDeviceStateUpdate,
@@ -1401,11 +1401,11 @@ export class AppSession {
             >;
             this.events.emit(messageStreamType, sanitizedData);
           }
-        } else if (isRtmpStreamStatus(message)) {
+        } else if (isStreamStatus(message)) {
           // Emit as a standard stream event if subscribed (check derived from handlers)
-          const hasRtmpHandler = this.events.getRegisteredStreams().includes(StreamType.RTMP_STREAM_STATUS);
-          if (hasRtmpHandler) {
-            this.events.emit(StreamType.RTMP_STREAM_STATUS, message);
+          const hasStreamHandler = this.events.getRegisteredStreams().includes(StreamType.STREAM_STATUS);
+          if (hasStreamHandler) {
+            this.events.emit(StreamType.STREAM_STATUS, message);
           }
 
           // Update camera module's internal stream state
@@ -2418,6 +2418,6 @@ export { AudioManager } from "./modules/audio";
 export { SimpleStorage } from "./modules/simple-storage";
 
 // Export module types for developers
-export type { PhotoRequestOptions, RtmpStreamOptions } from "./modules/camera";
+export type { PhotoRequestOptions, StreamOptions } from "./modules/camera";
 export type { LedControlOptions } from "./modules/led";
 export type { AudioPlayOptions, AudioPlayResult, SpeakOptions } from "./modules/audio";

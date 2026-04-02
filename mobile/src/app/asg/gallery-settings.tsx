@@ -18,7 +18,7 @@ import showAlert from "@/utils/AlertUtils"
 
 export default function GallerySettingsScreen() {
   const {goBack, push} = useNavigationHistory()
-  const {themed} = useAppTheme()
+  const {theme, themed} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   const [autoSaveToCameraRoll, setAutoSaveToCameraRoll] = useState(true)
@@ -130,11 +130,13 @@ export default function GallerySettingsScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title="Gallery Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <Header title={translate("glasses:gallerySettings")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        style={{marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}>
         {/* Camera Settings button for glasses with configurable button */}
         {features?.hasButton && (
-          <View style={themed($section)}>
+          <View style={[themed($section), {marginTop: theme.spacing.s4}]}>
             <RouteButton
               label={translate("settings:cameraSettings")}
               onPress={() => push("/miniapps/settings/camera")}
@@ -143,37 +145,42 @@ export default function GallerySettingsScreen() {
         )}
 
         <View style={themed($sectionCompact)}>
-          <Text style={themed($sectionTitle)}>Automatic Sync</Text>
+          <Text style={themed($sectionTitle)}>{translate("glasses:automaticSync")}</Text>
           <ToggleSetting
-            label="Save to Camera Roll"
+            label={translate("glasses:saveToCameraRoll")}
+            subtitle={translate("glasses:saveToLibraryDescription")}
             value={autoSaveToCameraRoll}
             onValueChange={handleToggleAutoSave}
           />
         </View>
 
-        <Text style={themed($sectionTitle)}>Storage info</Text>
+        <Text style={themed($sectionTitle)}>{translate("glasses:storageInfo")}</Text>
 
         <View style={themed($section)}>
           <InfoCardSection
             items={[
               {
-                label: "Photos on device",
+                label: translate("glasses:photosOnPhone"),
                 value: localPhotoCount.toString(),
               },
               {
-                label: "Videos on device",
+                label: translate("glasses:videosOnPhone"),
                 value: localVideoCount.toString(),
               },
               {
-                label: "Photos on glasses",
+                label: translate("glasses:photosOnGlasses", {
+                  glassesName: defaultWearable || translate("glasses:title"),
+                }),
                 value: glassesPhotoCount > 0 ? glassesPhotoCount.toString() : "—",
               },
               {
-                label: "Videos on glasses",
+                label: translate("glasses:videosOnGlasses", {
+                  glassesName: defaultWearable || translate("glasses:title"),
+                }),
                 value: glassesVideoCount > 0 ? glassesVideoCount.toString() : "—",
               },
               {
-                label: "Storage Used",
+                label: translate("glasses:storageUsed"),
                 value: formatBytes(totalStorageSize),
               },
             ]}

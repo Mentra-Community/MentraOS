@@ -102,6 +102,9 @@ async function validateAppApiKey(c: AppContext, next: () => Promise<void>) {
  */
 async function addRestreamOutput(c: AppContext) {
   const streamId = c.req.param("streamId");
+  if (!streamId) {
+    return c.json({ error: "MISSING_PARAM", message: "streamId is required" }, 400);
+  }
   const appDoc = (c as any).app as AppI;
   const packageName = appDoc.packageName;
 
@@ -236,6 +239,9 @@ async function addRestreamOutput(c: AppContext) {
 async function removeRestreamOutput(c: AppContext) {
   const streamId = c.req.param("streamId");
   const outputId = c.req.param("outputId");
+  if (!streamId || !outputId) {
+    return c.json({ error: "MISSING_PARAM", message: "streamId and outputId are required" }, 400);
+  }
   const appDoc = (c as any).app as AppI;
   const packageName = appDoc.packageName;
 
@@ -332,6 +338,9 @@ async function removeRestreamOutput(c: AppContext) {
  */
 async function listRestreamOutputs(c: AppContext) {
   const streamId = c.req.param("streamId");
+  if (!streamId) {
+    return c.json({ error: "MISSING_PARAM", message: "streamId is required" }, 400);
+  }
   const appDoc = (c as any).app as AppI;
   const packageName = appDoc.packageName;
 

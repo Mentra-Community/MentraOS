@@ -1,6 +1,8 @@
-import {View, ViewStyle, TextStyle} from "react-native"
+import {ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
+import GlassView from "@/components/ui/GlassView"
+import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 
@@ -8,34 +10,23 @@ import {ThemedStyle} from "@/theme"
 interface InfoCardProps {
   label: string
   value?: string | number | null
-  isFirst?: boolean
-  isLast?: boolean
+  style?: ViewStyle
 }
 
-const InfoCard: React.FC<InfoCardProps> = ({label, value, isFirst, isLast}) => {
-  const {theme, themed} = useAppTheme()
+const InfoCard: React.FC<InfoCardProps> = ({label, value, style}) => {
+  const {themed} = useAppTheme()
 
   if (!label && (value === null || value === undefined || value === "")) {
     return null
   }
 
   return (
-    <View
-      style={[
-        themed($infoCardContainer),
-        {
-          borderTopLeftRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
-          borderTopRightRadius: isFirst ? theme.spacing.s4 : theme.spacing.s1,
-          borderBottomLeftRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
-          borderBottomRightRadius: isLast ? theme.spacing.s4 : theme.spacing.s1,
-          marginBottom: isLast ? 0 : theme.spacing.s2,
-        },
-      ]}>
+    <GlassView className="flex-row justify-between py-5 px-4 bg-primary-foreground" style={style}>
       <Text style={themed($infoCardTitle)} weight="semibold">
         {label}
       </Text>
       <Text style={themed($infoCardValue)}>{String(value)}</Text>
-    </View>
+    </GlassView>
   )
 }
 
@@ -46,8 +37,6 @@ interface InfoCardSectionProps {
 }
 
 const InfoCardSection: React.FC<InfoCardSectionProps> = ({items, style}) => {
-  const {themed} = useAppTheme()
-
   // Filter out empty items
   const validItems = items.filter((item) => item.value !== null && item.value !== undefined && item.value !== "")
 
@@ -56,28 +45,13 @@ const InfoCardSection: React.FC<InfoCardSectionProps> = ({items, style}) => {
   }
 
   return (
-    <View style={themed(style)}>
+    <Group style={style}>
       {validItems.map((item, index) => (
-        <InfoCard
-          key={index}
-          label={item.label}
-          value={item.value}
-          isFirst={index === 0}
-          isLast={index === validItems.length - 1}
-        />
+        <InfoCard key={index} label={item.label} value={item.value} />
       ))}
-    </View>
+    </Group>
   )
 }
-
-const $infoCardContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  backgroundColor: colors.primary_foreground,
-  paddingVertical: 18.5,
-  paddingHorizontal: 16,
-  marginBottom: spacing.s2,
-})
 
 const $infoCardTitle: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.text,

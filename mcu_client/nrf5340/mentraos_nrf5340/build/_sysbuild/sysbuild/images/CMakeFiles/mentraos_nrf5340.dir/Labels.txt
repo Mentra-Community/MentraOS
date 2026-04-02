@@ -1,0 +1,13 @@
+# Target labels
+ mentraos_nrf5340
+# Source files and their labels
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/CMakeFiles/mentraos_nrf5340
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/CMakeFiles/mentraos_nrf5340.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/CMakeFiles/mentraos_nrf5340-complete.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-build.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-configure.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-download.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-install.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-mkdir.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-patch.rule
+/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/build/_sysbuild/sysbuild/images/mentraos_nrf5340-prefix/src/mentraos_nrf5340-stamp/mentraos_nrf5340-update.rule

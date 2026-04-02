@@ -164,6 +164,7 @@ async function downloadAndInstallMiniApp(url: string) {
 class Composer {
   private installedLmas: ClientAppletInterface[] = []
   private refreshNeeded: boolean = false
+  private pcmSub: any = null
 
   private static instance: Composer | null = null
   private constructor() {
@@ -179,10 +180,19 @@ class Composer {
 
   // read local storage to find which mini apps are installed and running
   // if any mini app needs online or offlline transcriptions, we need to feed them the necessary data
-  private initialize() {
+  private async initialize() {
     // update the applets store with the installed mini apps:
     // useAppletStatusStore.getState().setInstalledLmas(this.installedLmas)
     // useAppletStatusStore.getState().refreshApplets()
+  }
+
+  public async fanOutPcm(bytes: Uint8Array) {
+    // let offlineCaptionsRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
+    // let offlineTranslationRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_translation_running.key)
+    // if (offlineCaptionsRunning) {
+    //   // send the pcm to the offline transcription service
+    // }
+    // TODO: fan out the PCM to the mini apps that request it
   }
 
   // download the mini app from the url and unzip it to the app's cache directory/lma/<packageName>
@@ -347,9 +357,15 @@ class Composer {
   //   return Res.try_async(async () => {})
   // }
 
-
   // manage global state for apps and mic data / transcriptions:
-  
+  public async updateOfflineSTT() {
+    // const offlineCaptionsRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
+    // const offlineTranslationRunning = await useSettingsStore
+    //   .getState()
+    //   .getSetting(SETTINGS.offline_translation_running.key)
+    // if (offlineCaptionsRunning) {
+    // }
+  }
 }
 
 const composer = Composer.getInstance()

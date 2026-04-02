@@ -1,894 +1,825 @@
 /**
- * Dashboard Manager
+ * DashboardManager
  *
- * Manages dashboard content and layouts across the system.
- * The dashboard provides contextual information to users through various modes:
- * - Main: Full dashboard experience with comprehensive information
- * - Expanded: More space for App content while maintaining essential info
+ * Cloud-internal service that owns all dashboard data and drives its own
+ * render cycle. The external Dashboard mini-app has been removed — all
+ * data that app used to provide now lives here directly.
+ *
+ * Data sources:
+ *  - Phone notifications  → NotificationService (LLM-ranked)
+ *  - Weather              → weatherService singleton
+ *  - Calendar events      → onCalendarUpdate() called from CalendarManager
+ *  - Third-party widgets  → handleDashboardContentUpdate() from MiniApps
+ *
+ * Render cycle:
+ *  - scheduleUpdate() debounces calls, fires render() after ≥500 ms
+ *  - heartbeatTimer fires scheduleUpdate() every 60 s to keep clock token fresh
  */
+
 import { Logger } from "pino";
+import { DateTime } from "luxon";
 
 import {
-  DashboardMode,
-  Layout,
-  DashboardContentUpdate,
-  DashboardModeChange,
-  DashboardSystemUpdate,
   AppToCloudMessageType,
-  CloudToAppMessageType,
-  LayoutType,
-  ViewType,
+  CalendarEvent,
+  DashboardContentUpdate,
+  DashboardMode,
   DisplayRequest,
+  Layout,
+  LayoutType,
   AppToCloudMessage,
+  ViewType,
 } from "@mentra/sdk";
+import {
+  G1_PROFILE,
+  G2_PROFILE,
+  Z100_PROFILE,
+  NEX_PROFILE,
+  TextMeasurer,
+  TextWrapper,
+} from "@mentra/display-utils";
+import type { DisplayProfile } from "@mentra/display-utils";
 
-import { SYSTEM_DASHBOARD_PACKAGE_NAME } from "../../core/app.service";
-import { WebSocketReadyState } from "../../websocket/types";
-import UserSession from "../UserSession";
+// Internal package name for OS-generated display requests.
+// Matches OS_PACKAGE_NAME in DisplayManager6.1.ts — both must stay in sync.
+const OS_PACKAGE_NAME = "com.mentra.os" as const;
+
+// ---------------------------------------------------------------------------
+// Display profile resolution
+// ---------------------------------------------------------------------------
+// Maps glasses model names (from DeviceManager) to display profiles.
+// Each profile defines display width, max lines, and font glyph widths —
+// all of which affect layout calculations (column spacing, text wrapping).
+//
+// If the connected model is unknown, we fall back to G1_PROFILE (most common).
+// ---------------------------------------------------------------------------
+
+const MODEL_TO_PROFILE: Record<string, DisplayProfile> = {
+  "Even Realities G1": G1_PROFILE,
+  "Even Realities G2": G2_PROFILE,
+  "Mentra Display": NEX_PROFILE,       // Mentra Display = Mentra Nex
+  "Mentra Live": G1_PROFILE,           // Same display as G1
+  "Vuzix Z100": Z100_PROFILE,          // Different display width (390px) and font
+  "Simulated Glasses": G1_PROFILE,
+};
+
+const DEFAULT_PROFILE = G1_PROFILE;
 
 /**
- * Dashboard content from a App
+ * Get the display profile for a glasses model.
+ * Falls back to G1 if model is unknown or null.
  */
-interface AppContent {
+function getProfileForModel(modelName: string | null): DisplayProfile {
+  if (!modelName) return DEFAULT_PROFILE;
+  return MODEL_TO_PROFILE[modelName] ?? DEFAULT_PROFILE;
+}
+
+// ---------------------------------------------------------------------------
+// Header layout constants
+// ---------------------------------------------------------------------------
+// Tokens like $DATE$, $TIME12$, $GBATT$ are resolved by the native display
+// layer at render time — the server never sees the real values. This means
+// we cannot measure the left column accurately from the token text.
+//
+// Instead we compute spacing using a worst-case representative string.
+// The widest possible resolved left column (per font) varies by profile,
+// but the representative string is the same: "◌ 09/30, 12:00 AM, 100%"
+//
+// Digit widths: 1 is narrow, all others are wide (in both G1 and Z100 fonts).
+// AM is wider than PM. 12h clock is wider than 24h (due to AM/PM suffix).
+//
+// Future: date format, clock format become user settings.
+// For now they're constants so the settings system is easy to wire up later.
+// ---------------------------------------------------------------------------
+
+/** Date format for the dashboard header. Future: user setting. */
+const DASHBOARD_DATE_FORMAT: "MM/DD" | "DD/MM" | "Mon DD" | "DD Mon" = "MM/DD";
+
+/** Clock format for the dashboard header. Future: user setting. */
+const DASHBOARD_CLOCK_FORMAT: "12h" | "24h" = "12h";
+
+/**
+ * Worst-case representative string for the left header column.
+ * Used ONLY for pixel measurement — the actual display text uses tokens.
+ * Must be updated if DASHBOARD_DATE_FORMAT or DASHBOARD_CLOCK_FORMAT changes.
+ */
+const HEADER_LEFT_MEASUREMENT_TEXT =
+  DASHBOARD_CLOCK_FORMAT === "12h"
+    ? "◌ 09/30, 12:00 AM, 100%"   // widest 12h (228px on G1, varies by profile)
+    : "◌ 09/30, 00:00, 100%";     // widest 24h (192px on G1, varies by profile)
+
+/**
+ * Pre-computed header metrics per profile. Avoids creating TextMeasurer on every render.
+ * Keyed by profile.id since DisplayProfile objects aren't suitable map keys.
+ */
+const _headerMetricsCache = new Map<string, { leftMaxWidthPx: number; spaceWidthPx: number }>();
+
+function getHeaderMetrics(profile: DisplayProfile): { leftMaxWidthPx: number; spaceWidthPx: number } {
+  let cached = _headerMetricsCache.get(profile.id);
+  if (!cached) {
+    const measurer = new TextMeasurer(profile);
+    cached = {
+      leftMaxWidthPx: measurer.measureText(HEADER_LEFT_MEASUREMENT_TEXT),
+      spaceWidthPx: measurer.measureText(" "),
+    };
+    _headerMetricsCache.set(profile.id, cached);
+  }
+  return cached;
+}
+import { weatherService } from "../../core/WeatherService";
+import UserSession from "../UserSession";
+import { NotificationService, PhoneNotification } from "./NotificationService";
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+/**
+ * Dashboard widget content from a third-party MiniApp.
+ */
+interface DashboardWidget {
   packageName: string;
   content: string | Layout;
   timestamp: Date;
 }
 
-/**
- * System dashboard content by section
- */
-interface SystemContent {
-  topLeft: string;
-  topRight: string;
-  bottomLeft: string;
-  bottomRight: string;
-}
+// ---------------------------------------------------------------------------
+// DashboardManager
+// ---------------------------------------------------------------------------
 
-/**
- * Dashboard manager configuration
- */
-interface DashboardConfig {
-  queueSize?: number;
-  updateIntervalMs?: number;
-  alwaysOnEnabled?: boolean;
-  initialMode?: DashboardMode; // Add initial mode option
-}
-
-/**
- * Dashboard manager implementation for a single user session
- */
 export class DashboardManager {
-  // Dashboard state
-  private currentMode: DashboardMode | "none" = "none";
-  private alwaysOnEnabled = false;
+  // ------------------------------------------------------------------
+  // Third-party widget state
+  // ------------------------------------------------------------------
 
-  // Content queues for each mode
-  private mainContent: Map<string, AppContent> = new Map();
-  private expandedContent: Map<string, AppContent> = new Map();
-  private alwaysOnContent: Map<string, AppContent> = new Map();
+  /** One entry per MiniApp package name — last-write wins. */
+  private mainWidgets: Map<string, DashboardWidget> = new Map();
 
-  // Circular queue tracking for main dashboard
-  private mainContentRotationIndex = 0;
+  /** Circular-queue index for cycling through widgets on heads-up. */
+  private widgetRotationIndex = 0;
 
-  // System dashboard content (managed by system.augmentos.dashboard App)
-  private systemContent: SystemContent = {
-    topLeft: "",
-    topRight: "",
-    bottomLeft: "",
-    bottomRight: "",
-  };
+  // ------------------------------------------------------------------
+  // Cloud-owned data
+  // ------------------------------------------------------------------
 
-  // Configuration
-  private queueSize: number;
-  private updateIntervalMs: number;
-  private updateInterval: NodeJS.Timeout | null = null;
+  private weatherText: string | null = null;
+  private calendarText: string | null = null;
+  private notificationService: NotificationService;
 
-  // Reference to the user session this dashboard belongs to
-  private userSession: UserSession;
+  // ------------------------------------------------------------------
+  // Timers
+  // ------------------------------------------------------------------
 
-  // child logger for this manager
-  private logger: Logger; // = logger.child({ service: 'DashboardManager', sessionId: this.userSession.sessionId });
+  /** 60-second heartbeat — keeps the clock/battery tokens visually fresh. */
+  private heartbeatTimer: NodeJS.Timeout | null = null;
 
   /**
-   * Create a new DashboardManager for a specific user session
-   * @param userSession The user session this dashboard belongs to
-   * @param config Dashboard configuration options
+   * Debounce timer — ensures we don't spam the display pipeline with
+   * back-to-back renders when multiple data sources update at once.
    */
-  constructor(userSession: UserSession, config: DashboardConfig = {}) {
-    // Store reference to user session
+  private updateTimer: NodeJS.Timeout | null = null;
+
+  // ------------------------------------------------------------------
+  // Infrastructure
+  // ------------------------------------------------------------------
+
+  private readonly userSession: UserSession;
+  private readonly logger: Logger;
+
+  // ---------------------------------------------------------------------------
+  // Constructor
+  // ---------------------------------------------------------------------------
+
+  constructor(userSession: UserSession) {
     this.userSession = userSession;
-
-    // Set configuration with defaults
-    this.queueSize = config.queueSize || 5;
-    this.updateIntervalMs = config.updateIntervalMs || 1000 * 45;
-    this.alwaysOnEnabled = config.alwaysOnEnabled || false;
-
-    // Initialize mode to the provided value or default to MAIN
-    this.currentMode = config.initialMode || DashboardMode.MAIN;
-
-    // Start update interval
-    // this.startUpdateInterval();
-
     this.logger = userSession.logger.child({
       service: "DashboardManager",
-      sessionId: this.userSession.sessionId,
+      sessionId: userSession.sessionId,
     });
-    this.logger.info(
-      { mode: this.currentMode },
-      `Dashboard Manager initialized for user ${userSession.userId} with mode: ${this.currentMode}`,
-    );
+    this.notificationService = new NotificationService(this.logger);
+
+    // Heartbeat — fires scheduleUpdate() every 60 s to keep clock token fresh.
+    this.heartbeatTimer = setInterval(() => this.scheduleUpdate(), 60_000);
+
+    this.logger.info({ userId: userSession.userId }, "DashboardManager initialized");
   }
 
-  /**
-   * Start the update interval for dashboard rendering
-   */
-  // private startUpdateInterval(): void {
-  //   // Clear any existing interval
-  //   if (this.updateInterval) {
-  //     clearInterval(this.updateInterval);
-  //   }
-
-  //   // Create new interval for periodic updates
-  //   this.updateInterval = setInterval(() => {
-  //     // Update regular dashboard (main/expanded)
-  //     this.updateDashboard();
-
-  //     // Always update the always-on dashboard if it's enabled
-  //     if (this.alwaysOnEnabled) {
-  //       this.updateAlwaysOnDashboard();
-  //     }
-  //   }, this.updateIntervalMs);
-  // }
+  // ---------------------------------------------------------------------------
+  // Public message routing
+  // ---------------------------------------------------------------------------
 
   /**
-   * Process App message and route to the appropriate handler
-   * This function will be called from WebSocketService
-   * @param message App message
-   * @returns True if the message was handled, false otherwise
+   * Route an incoming AppToCloudMessage to the appropriate handler.
+   * Returns true if the message was a recognised dashboard message.
    */
-  public handleAppMessage(message: AppToCloudMessage): boolean {
-    this.logger.debug({ message }, `Received App message of type ${message.type} for user ${this.userSession.userId}`);
+  public handleMiniAppMessage(message: AppToCloudMessage): boolean {
+    this.logger.debug({ type: message.type }, `Received MiniApp message of type ${message.type}`);
+
     try {
       switch (message.type) {
         case AppToCloudMessageType.DASHBOARD_CONTENT_UPDATE:
           this.handleDashboardContentUpdate(message as DashboardContentUpdate);
           return true;
 
-        case AppToCloudMessageType.DASHBOARD_MODE_CHANGE:
-          this.handleDashboardModeChange(message as DashboardModeChange);
-          return true;
-
-        case AppToCloudMessageType.DASHBOARD_SYSTEM_UPDATE:
-          this.handleDashboardSystemUpdate(message as DashboardSystemUpdate);
-          return true;
-
         default:
           return false; // Not a dashboard message
       }
     } catch (error) {
-      const logger = this.userSession.logger.child({ message });
-      logger.error(
-        error,
-        `Error handling dashboard message of type ${message.type} for user ${this.userSession.userId}`,
+      this.logger.error(
+        { error, messageType: message.type },
+        `Error handling dashboard message of type ${message.type}`,
       );
       return false;
     }
   }
 
   /**
-   * Handle App disconnection to clean up dashboard content
-   * @param packageName App package name
+   * Legacy alias kept for callers that haven't been migrated yet.
+   * @deprecated Use handleMiniAppMessage()
+   */
+  public handleAppMessage(message: AppToCloudMessage): boolean {
+    return this.handleMiniAppMessage(message);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public lifecycle hooks — called by peer managers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Called when a MiniApp disconnects. Removes its widget and re-renders.
+   */
+  public handleMiniAppDisconnected(packageName: string): void {
+    this.cleanupWidgets(packageName);
+    this.logger.info({ packageName }, `Cleaned up dashboard widgets for disconnected MiniApp: ${packageName}`);
+  }
+
+  /**
+   * Legacy alias kept for callers that haven't been migrated yet.
+   * @deprecated Use handleMiniAppDisconnected()
    */
   public handleAppDisconnected(packageName: string): void {
-    // Clean up content when a App disconnects
-    this.cleanupAppContent(packageName);
-    this.logger.info({ packageName }, `Cleaned up dashboard content for disconnected App: ${packageName}`);
+    return this.handleMiniAppDisconnected(packageName);
   }
 
+  // ---------------------------------------------------------------------------
+  // Public data hooks — called from API / manager handlers
+  // ---------------------------------------------------------------------------
+
   /**
-   * Handle head-up gesture to cycle through App content in main dashboard
-   * This method is called from websocket-glasses service when user looks up
+   * Called when the phone delivers a new notification.
    */
-  public onHeadsUp(): void {
-    // Only cycle content if we're in main dashboard mode
-    if (this.currentMode !== DashboardMode.MAIN) {
-      this.logger.debug({ currentMode: this.currentMode }, "Head-up gesture ignored - not in main dashboard mode");
-      return;
-    }
-
-    // Only cycle if we have multiple App content items
-    if (this.mainContent.size <= 1) {
-      this.logger.debug(
-        {
-          contentCount: this.mainContent.size,
-        },
-        "Head-up gesture ignored - not enough App content to cycle",
-      );
-      return;
-    }
-
-    // Advance to next item in circular queue
-    this.mainContentRotationIndex = (this.mainContentRotationIndex + 1) % this.mainContent.size;
-
-    this.logger.info(
-      {
-        newIndex: this.mainContentRotationIndex,
-        totalItems: this.mainContent.size,
-        sessionId: this.userSession.sessionId,
-      },
-      "Head-up gesture triggered - cycling to next App content",
-    );
-
-    // Update the dashboard to show the new content
-    this.updateDashboard();
+  onNotification(notification: PhoneNotification): void {
+    this.logger.info({ uuid: notification.uuid, title: notification.title }, "onNotification called");
+    this.notificationService.add(notification);
+    this.scheduleUpdate();
   }
 
   /**
-   * Handle dashboard content update from a App
-   * @param message Content update message
+   * Called when the user dismisses a notification on their phone.
+   */
+  onNotificationDismissed(notificationId: string): void {
+    this.notificationService.dismiss(notificationId);
+    this.scheduleUpdate();
+  }
+
+  /**
+   * Called when a fresh GPS fix arrives. Fetches weather, then re-renders.
+   */
+  async onLocationUpdate(lat: number, lng: number): Promise<void> {
+    this.logger.info({ lat, lng }, "onLocationUpdate called");
+    try {
+      const summary = await weatherService.getWeather(this.userSession.userId, lat, lng);
+
+      if (summary) {
+        const isMetric = this.userSession.userSettingsManager.getSnapshot()?.metric_system === true;
+        const temp = isMetric ? `${summary.tempC}°C` : `${summary.tempF}°F`;
+        this.weatherText = `${summary.condition}, ${temp}`;
+        this.logger.debug({ weatherText: this.weatherText }, "Weather updated");
+      } else {
+        this.logger.debug({ lat, lng }, "Weather fetch returned null — keeping previous value");
+      }
+    } catch (err) {
+      this.logger.warn({ err, lat, lng }, "onLocationUpdate: weather fetch failed");
+    }
+
+    this.scheduleUpdate();
+  }
+
+  /**
+   * Called when the calendar syncs. Finds the next upcoming event within
+   * 7 days and formats it for the header right slot.
+   */
+  onCalendarUpdate(events: CalendarEvent[]): void {
+    this.logger.info({ eventCount: events.length }, "onCalendarUpdate called");
+
+    // User's IANA timezone — all comparisons are made from the user's perspective.
+    const tz = this.userSession.userTimezone || "UTC";
+    const nowDt = DateTime.now().setZone(tz);
+
+    // Find the first relevant event in the user's timezone:
+    //   • starts in the future, OR started < 1 hour ago and hasn't ended yet
+    //   • within the next 7 days
+    // Helper: detect all-day events. Expo sets allDay on the raw event; after
+    // normalization we also detect it by checking UTC midnight boundaries
+    // (dtStart at 00:00Z and dtEnd exactly 24h/48h/… multiples later).
+    const isEventAllDay = (event: CalendarEvent): boolean => {
+      if ((event as any).allDay === true) return true;
+      const s = DateTime.fromISO(event.dtStart, { zone: "UTC" });
+      const e = event.dtEnd ? DateTime.fromISO(event.dtEnd, { zone: "UTC" }) : null;
+      if (!s.isValid || !e || !e.isValid) return false;
+      const bothMidnight =
+        s.hour === 0 && s.minute === 0 && s.second === 0 && e.hour === 0 && e.minute === 0 && e.second === 0;
+      const spansDays = e.diff(s, "days").days >= 1;
+      return bothMidnight && spansDays;
+    };
+
+    // Helper: for all-day events, the "calendar date" is the UTC date of dtStart
+    // (not shifted to user TZ, since 2026-03-18T00:00Z means "March 18" regardless
+    // of the user being in Pacific where that's 5pm on the 17th).
+    // For timed events, the calendar date is in the user's timezone.
+    const eventCalendarDate = (event: CalendarEvent, allDay: boolean): DateTime => {
+      if (allDay) {
+        // Interpret dtStart in UTC to get the intended calendar date,
+        // then strip the time so hasSame("day") works against user's "today".
+        const utcDt = DateTime.fromISO(event.dtStart, { zone: "UTC" });
+        // Re-create as a date-only in the user's timezone so hasSame comparisons work.
+        return DateTime.fromObject({ year: utcDt.year, month: utcDt.month, day: utcDt.day }, { zone: tz });
+      }
+      return DateTime.fromISO(event.dtStart, { zone: tz });
+    };
+
+    // Relevance check: event starts in the future or started recently and hasn't ended.
+    const isRelevant = (event: CalendarEvent): boolean => {
+      const allDay = isEventAllDay(event);
+      const calDt = eventCalendarDate(event, allDay);
+      if (!calDt.isValid) return false;
+
+      if (allDay) {
+        // All-day events are relevant if their calendar date is today or in the future,
+        // up to 7 days out.
+        return calDt >= nowDt.startOf("day") && calDt <= nowDt.plus({ days: 7 }).endOf("day");
+      }
+
+      const startDt = DateTime.fromISO(event.dtStart, { zone: tz });
+      const endDt = event.dtEnd ? DateTime.fromISO(event.dtEnd, { zone: tz }) : startDt.plus({ hours: 1 });
+      const startsInFuture = startDt > nowDt;
+      const startedRecently = startDt <= nowDt && nowDt.diff(startDt, "hours").hours < 1 && endDt > nowDt;
+      const withinWindow = startDt <= nowDt.plus({ days: 7 });
+      return (startsInFuture || startedRecently) && withinWindow;
+    };
+
+    // Prefer timed events today over all-day events. Strategy:
+    //   1. Find the first relevant timed event.
+    //   2. Find the first relevant all-day event.
+    //   3. If we have a timed event that is today, prefer it. Otherwise fall back
+    //      to whichever is soonest.
+    const firstTimedEvent = events.find((e) => !isEventAllDay(e) && isRelevant(e));
+    const firstAllDayEvent = events.find((e) => isEventAllDay(e) && isRelevant(e));
+
+    let upcoming: CalendarEvent | undefined;
+    if (firstTimedEvent) {
+      const timedDt = DateTime.fromISO(firstTimedEvent.dtStart, { zone: tz });
+      if (timedDt.hasSame(nowDt, "day")) {
+        // A timed event today always wins over an all-day event.
+        upcoming = firstTimedEvent;
+      } else if (firstAllDayEvent) {
+        // Both are future — pick whichever calendar date comes first.
+        const allDayCalDt = eventCalendarDate(firstAllDayEvent, true);
+        upcoming = timedDt <= allDayCalDt ? firstTimedEvent : firstAllDayEvent;
+      } else {
+        upcoming = firstTimedEvent;
+      }
+    } else {
+      upcoming = firstAllDayEvent;
+    }
+
+    if (!upcoming) {
+      this.calendarText = null;
+      this.scheduleUpdate();
+      return;
+    }
+
+    const title = upcoming.title || "Event";
+    const allDay = isEventAllDay(upcoming);
+    const calDt = eventCalendarDate(upcoming, allDay);
+
+    // DST-safe day comparisons using Luxon — server timezone is irrelevant.
+    const isToday = calDt.hasSame(nowDt, "day");
+    const isTomorrow = calDt.hasSame(nowDt.plus({ days: 1 }), "day");
+
+    if (allDay) {
+      // All-day: no time — just context label
+      if (isToday) {
+        this.calendarText = `${title} Today`;
+      } else if (isTomorrow) {
+        this.calendarText = `${title} tmr`;
+      } else {
+        this.calendarText = `${title} ${calDt.toFormat("M/d")}`;
+      }
+    } else {
+      // Timed event: format as "4pm" or "4:30pm"
+      const timeStr = calDt.toFormat(calDt.minute === 0 ? "ha" : "h:mma").toLowerCase();
+
+      if (isToday) {
+        this.calendarText = `${title} @ ${timeStr}`;
+      } else if (isTomorrow) {
+        this.calendarText = `tmr: ${title} @ ${timeStr}`;
+      } else {
+        this.calendarText = `${calDt.toFormat("M/d")}: ${title} @ ${timeStr}`;
+      }
+    }
+
+    this.logger.debug({ calendarText: this.calendarText, allDay, isToday, isTomorrow }, "Calendar updated");
+    this.scheduleUpdate();
+  }
+
+  // ---------------------------------------------------------------------------
+  // MiniApp widget content handling
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Store the latest widget content from a MiniApp.
    */
   public handleDashboardContentUpdate(message: DashboardContentUpdate): void {
     const { packageName, content, modes, timestamp } = message;
 
     this.logger.debug(
-      {
-        modes,
-        timestamp: new Date(timestamp).toISOString(),
-      },
+      { packageName, modes, timestamp },
       `Dashboard content update from ${packageName} for modes [${modes.join(", ")}]`,
     );
 
-    // Track if we need to update the always-on dashboard
-    // const alwaysOnUpdated = false;
-
-    // Add content to each requested mode's queue
-    modes.forEach((mode) => {
-      switch (mode) {
-        case DashboardMode.MAIN:
-          this.mainContent.set(packageName, {
-            packageName,
-            content,
-            timestamp,
-          });
-          break;
-        case DashboardMode.EXPANDED:
-          this.expandedContent.set(packageName, {
-            packageName,
-            content,
-            timestamp,
-          });
-          break;
-        // case DashboardMode.ALWAYS_ON:
-        //   this.alwaysOnContent.set(packageName, { packageName, content, timestamp });
-        //   alwaysOnUpdated = true;
-        //   break;
-      }
-    });
-
-    // Update regular dashboard if content for current mode was updated
-    if (modes.includes(this.currentMode as DashboardMode)) {
-      this.updateDashboard();
-    }
-
-    // Update always-on dashboard separately if its content was updated and it's enabled
-    // if (alwaysOnUpdated && this.alwaysOnEnabled) {
-    //   this.updateAlwaysOnDashboard();
-    // }
-  }
-
-  /**
-   * Handle dashboard mode change from system dashboard App
-   * @param message Mode change message
-   */
-  public handleDashboardModeChange(message: DashboardModeChange): void {
-    const { packageName, mode } = message;
-
-    // Only allow system dashboard to change mode
-    if (packageName !== SYSTEM_DASHBOARD_PACKAGE_NAME) {
-      this.logger.warn({ packageName }, `Unauthorized dashboard mode change attempt from ${packageName}`);
-      return;
-    }
-
-    this.logger.info({ mode }, `Dashboard mode changed to ${mode}`);
-
-    // Update mode
-    this.setDashboardMode(mode);
-  }
-
-  /**
-   * Handle system dashboard content update
-   * @param message System dashboard update message
-   */
-  public handleDashboardSystemUpdate(message: DashboardSystemUpdate): void {
-    const { packageName, section, content } = message;
-    this.logger.debug(
-      {
-        function: "handleDashboardSystemUpdate",
+    // We only track MAIN mode now; other modes are ignored.
+    if (modes.includes(DashboardMode.MAIN)) {
+      this.mainWidgets.set(packageName, {
         packageName,
-        section,
-        contentLength: content?.length || 0,
-      },
-      `System dashboard section update from ${packageName} for section '${section}'`,
-    );
-
-    // Only allow system dashboard to update system sections
-    if (packageName !== SYSTEM_DASHBOARD_PACKAGE_NAME) {
-      this.logger.warn(
-        { packageName, section },
-        `Unauthorized system dashboard update attempt for section ${section} from ${packageName}`,
-      );
-      return;
-    }
-
-    this.logger.debug(
-      { section, contentLength: content?.length || 0 },
-      `System dashboard section '${section}' updated from ${packageName}`,
-    );
-
-    // Update the appropriate section
-    this.systemContent[section] = content;
-
-    // Update the dashboard
-    this.updateDashboard();
-  }
-
-  /**
-   * Update regular dashboard display based on current mode and content
-   */
-  private updateDashboard(): void {
-    this.logger.debug(
-      {
-        sessionId: this.userSession.sessionId,
-        currentMode: this.currentMode,
-        mainContentCount: this.mainContent.size,
-        expandedContentCount: this.expandedContent.size,
-        userTimezone: this.userSession.userTimezone,
-      },
-      "Dashboard update triggered",
-    );
-
-    // Skip if mode is none
-    if (this.currentMode === "none") {
-      this.logger.debug({}, `[${this.userSession.userId}] Dashboard update skipped - mode is none`);
-      return;
-    }
-
-    try {
-      // Generate layout based on current mode
-      let layout: Layout;
-
-      switch (this.currentMode) {
-        case DashboardMode.MAIN:
-          this.logger.debug({}, `[${this.userSession.userId}] Generating MAIN dashboard layout`);
-          layout = this.generateMainLayout();
-          break;
-        case DashboardMode.EXPANDED:
-          this.logger.debug({}, `[${this.userSession.userId}] Generating EXPANDED dashboard layout`);
-          layout = this.generateExpandedLayout();
-          break;
-        default:
-          this.logger.warn({ userId: this.userSession.userId, mode: this.currentMode }, "Unknown dashboard mode");
-          return;
-      }
-
-      // Create a display request for regular dashboard
-      const displayRequest: DisplayRequest = {
-        type: AppToCloudMessageType.DISPLAY_REQUEST,
-        packageName: SYSTEM_DASHBOARD_PACKAGE_NAME,
-        view: ViewType.DASHBOARD,
-        layout,
-        timestamp: new Date(),
-        // We don't set a durationMs to keep it displayed indefinitely
-      };
-
-      // Send the display request using the session's DisplayManager
-      this.sendDisplayRequest(displayRequest);
-    } catch (error) {
-      this.logger.error(error, "Error updating dashboard for user session " + this.userSession.userId);
-    }
-  }
-
-  /**
-   * Send display request to the associated user session
-   * @param displayRequest Display request to send
-   */
-  private sendDisplayRequest(displayRequest: DisplayRequest): void {
-    try {
-      // Add detailed logging to track what we're sending
-      this.logger.debug(
-        {
-          sessionId: this.userSession.sessionId,
-          packageName: displayRequest.packageName,
-          layoutType: displayRequest.layout.layoutType,
-          view: displayRequest.view,
-        },
-        `Sending display request for user: ${this.userSession.userId}, package: ${displayRequest.packageName}, view: ${displayRequest.view}`,
-      );
-
-      // Log the actual content being sent
-      if (displayRequest.layout.layoutType === LayoutType.DOUBLE_TEXT_WALL) {
-        const layout = displayRequest.layout as any;
-        this.logger.debug(
-          {
-            leftSide: layout.topText?.substring(0, 50) + (layout.topText?.length > 50 ? "..." : ""),
-            rightSide: layout.bottomText?.substring(0, 50) + (layout.bottomText?.length > 50 ? "..." : ""),
-          },
-          `Content for DoubleTextWall layout for user: ${this.userSession.userId} package: ${displayRequest.packageName}`,
-        );
-      } else if (displayRequest.layout.layoutType === LayoutType.TEXT_WALL) {
-        const layout = displayRequest.layout as any;
-        this.logger.debug(
-          {
-            text: layout.text?.substring(0, 100) + (layout.text?.length > 100 ? "..." : ""),
-          },
-          "Content for TextWall",
-        );
-      } else if (displayRequest.layout.layoutType === LayoutType.DASHBOARD_CARD) {
-        const layout = displayRequest.layout as any;
-        this.logger.debug(
-          {
-            leftText: layout.leftText?.substring(0, 50) + (layout.leftText?.length > 50 ? "..." : ""),
-            rightText: layout.rightText?.substring(0, 50) + (layout.rightText?.length > 50 ? "..." : ""),
-          },
-          "Content for DashboardCard",
-        );
-      }
-
-      // Use the DisplayManager to send the display request
-      const sent = this.userSession.displayManager.handleDisplayRequest(displayRequest);
-      if (!sent) {
-        this.logger.warn(
-          { displayRequest },
-          `Display request not sent - DisplayManager is not ready for user: ${this.userSession.userId}`,
-        );
-        return;
-      }
-
-      // Log successful sending
-      this.logger.debug(
-        { packageName: displayRequest.packageName },
-        `Display request sent successfully for user: ${this.userSession.userId}, package ${displayRequest.packageName}`,
-      );
-    } catch (error) {
-      const logger = this.userSession.logger.child({
-        displayRequest,
-        packageName: displayRequest.packageName,
+        content,
+        timestamp: timestamp instanceof Date ? timestamp : new Date(timestamp),
       });
-      logger.error(error, "Error sending dashboard display request");
     }
+
+    this.scheduleUpdate();
   }
 
-  /**
-   * Generate layout for main dashboard mode
-   * @returns Layout for main dashboard
-   */
-  private generateMainLayout(): Layout {
-    // Format the top section (combine system info and notifications)
-    const leftText = this.formatSystemLeftSection();
-
-    // Format the bottom section (combine system info and App content)
-    const rightText = this.formatSystemRightSection();
-
-    // Return a DoubleTextWall layout for compatibility with existing system
-    return {
-      layoutType: LayoutType.DOUBLE_TEXT_WALL,
-      topText: leftText,
-      bottomText: rightText,
-    };
-  }
+  // ---------------------------------------------------------------------------
+  // Gesture handler
+  // ---------------------------------------------------------------------------
 
   /**
-   * Format the top section of the dashboard (system info and notifications)
-   * @returns Formatted top section text
+   * Called when the user performs a heads-up gesture. Cycles through widget
+   * rotation and re-renders.
    */
-  private formatSystemLeftSection(): string {
-    // First line: Time and battery status on the same line
-    const systemLine = `${this.systemContent.topLeft}`;
-
-    // If there's notification content, add it after system info
-    if (this.systemContent.bottomLeft) {
-      return `${systemLine}\n${this.systemContent.bottomLeft}`;
+  public onHeadsUp(): void {
+    if (this.mainWidgets.size <= 1) {
+      this.logger.debug({ widgetCount: this.mainWidgets.size }, "Heads-up gesture — not enough widgets to cycle");
+      // Still re-render so the display stays fresh.
+      this.render();
+      return;
     }
 
-    return systemLine;
-  }
-
-  /**
-   * Format the bottom section of the dashboard (system info and App content)
-   * @returns Formatted bottom section text
-   */
-  private formatSystemRightSection(): string {
-    // Get the next App content item using circular rotation for the main dashboard
-    // We only want to show one item at a time, cycling through all available content
-    const appContent = this.getNextMainAppContent();
-
-    // If there's system content for the bottom right, add it before App content
-    // Add topRight system info to the App content.
-    if (this.systemContent.bottomRight) {
-      return appContent
-        ? `${this.systemContent.topRight}\n${this.systemContent.bottomRight}\n\n${appContent}`
-        : `${this.systemContent.topRight}\n${this.systemContent.bottomRight}`;
-    }
-
-    // Add topRight system info to the App content.
-    return `${this.systemContent.topRight}\n${appContent}`;
-  }
-
-  /**
-   * Get the next App content for main dashboard using circular queue rotation
-   * This method implements the circular queue logic for cycling through App content
-   * @returns Next App content string, or empty string if no content available
-   */
-  private getNextMainAppContent(): string {
-    // Get all available App content as an array
-    const contentArray = Array.from(this.mainContent.values());
-
-    // Handle empty case
-    if (contentArray.length === 0) {
-      return "";
-    }
-
-    // Handle single item case - no need to rotate
-    if (contentArray.length === 1) {
-      return this.extractTextFromContent(contentArray[0].content);
-    }
-
-    // Sort by timestamp to ensure consistent ordering (newest first for stable rotation)
-    // Handle both Date objects and timestamp numbers
-    contentArray.sort((a, b) => {
-      const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
-      const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
-      return bTime - aTime;
-    });
-
-    // Use circular queue logic with rotation index
-    const currentIndex = this.mainContentRotationIndex % contentArray.length;
-    const selectedContent = contentArray[currentIndex];
+    this.widgetRotationIndex = (this.widgetRotationIndex + 1) % this.mainWidgets.size;
 
     this.logger.info(
       {
-        totalItems: contentArray.length,
-        currentIndex,
-        selectedPackage: selectedContent.packageName,
-        rotationIndex: this.mainContentRotationIndex,
-        allPackages: contentArray.map((c) => c.packageName),
-        sortedByTimestamp: contentArray.map((c) => ({
-          packageName: c.packageName,
-          timestamp: c.timestamp,
-        })),
+        newIndex: this.widgetRotationIndex,
+        totalWidgets: this.mainWidgets.size,
+        sessionId: this.userSession.sessionId,
       },
-      `🔄 Dashboard rotation: Selected ${selectedContent.packageName} (${currentIndex + 1}/${contentArray.length})`,
+      "Heads-up gesture — cycling to next widget",
     );
 
-    // Extract text content from the selected item
-    return this.extractTextFromContent(selectedContent.content);
+    this.render();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Widget cleanup
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Remove all widget entries for the given MiniApp package and re-render.
+   * (Renamed from cleanupAppContent.)
+   */
+  public cleanupWidgets(packageName: string): void {
+    const hadWidget = this.mainWidgets.has(packageName);
+    const sizeBefore = this.mainWidgets.size;
+
+    this.mainWidgets.delete(packageName);
+
+    // Adjust rotation index so it stays within bounds.
+    if (hadWidget && sizeBefore > 1) {
+      const newSize = this.mainWidgets.size;
+      if (newSize > 0 && this.widgetRotationIndex >= newSize) {
+        this.widgetRotationIndex = 0;
+        this.logger.debug({ packageName, newSize }, "Reset widgetRotationIndex after widget removal");
+      } else if (newSize === 0) {
+        this.widgetRotationIndex = 0;
+      }
+    } else {
+      this.widgetRotationIndex = 0;
+    }
+
+    this.logger.info(
+      {
+        packageName,
+        hadWidget,
+        remainingWidgets: Array.from(this.mainWidgets.keys()),
+      },
+      `Dashboard widgets cleaned up for: ${packageName}`,
+    );
+
+    this.scheduleUpdate();
   }
 
   /**
-   * Extract text content from App content (handles both string and Layout types)
-   * @param content App content (string or Layout)
-   * @returns Extracted text string
+   * Legacy alias.
+   * @deprecated Use cleanupWidgets()
    */
-  private extractTextFromContent(content: string | Layout): string {
+  public cleanupAppContent(packageName: string): void {
+    return this.cleanupWidgets(packageName);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render cycle
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Debounced render trigger.
+   *
+   * If a render is already queued, this is a no-op — let the existing timer
+   * fire. Otherwise, schedule a render after at least 500 ms (or delayMs,
+   * whichever is larger).
+   */
+  private scheduleUpdate(delayMs = 0): void {
+    if (this.updateTimer !== null) {
+      // A render is already queued; nothing to do.
+      return;
+    }
+
+    this.updateTimer = setTimeout(
+      () => {
+        this.updateTimer = null;
+        this.render();
+      },
+      Math.max(delayMs, 500),
+    );
+  }
+
+  /**
+   * Generate the current layout and push it to DisplayManager.
+   * (Renamed from updateDashboard.)
+   */
+  private render(): void {
+    try {
+      const layout = this.generateLayout();
+
+      const displayRequest: DisplayRequest = {
+        type: AppToCloudMessageType.DISPLAY_REQUEST,
+        packageName: OS_PACKAGE_NAME,
+        view: ViewType.DASHBOARD,
+        layout,
+        timestamp: new Date(),
+      };
+
+      const sent = this.userSession.displayManager.handleDisplayRequest(displayRequest);
+
+      if (!sent) {
+        this.logger.warn(
+          { userId: this.userSession.userId },
+          "Dashboard display request was not sent — DisplayManager not ready",
+        );
+      } else {
+        this.logger.debug(
+          { userId: this.userSession.userId, layoutType: layout.layoutType },
+          "Dashboard rendered successfully",
+        );
+      }
+    } catch (error) {
+      this.logger.error({ error, userId: this.userSession.userId }, "Error rendering dashboard");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Layout generation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build the full dashboard Layout.
+   *
+   * Two strategies based on display width:
+   *
+   * **Wide displays** (G1, G2, Mentra Display — 576px, 5 lines):
+   *   Row 1: column-split header  →  "◌ $DATE$, $GBATT$" | weather
+   *   Row 2: calendar event (full width)
+   *   Rows 3-5: notifications + widgets
+   *
+   * **Narrow displays** (Z100/Mach1 — 390px, 7 lines):
+   *   Row 1: "◌ $DATE$, $TIME12$, $GBATT$" (full width)
+   *   Row 2: weather (full width — double column is too tight at 390px)
+   *   Row 3: calendar event (full width)
+   *   Rows 4-7: notifications + widgets
+   *
+   * The Z100 has 7 lines vs G1's 5, so using an extra line for weather is
+   * a better tradeoff than cramming it into a tiny right column where
+   * "Partly Cloudy, 72°F" would overflow.
+   */
+  private generateLayout(): Layout {
+    const headerLeft = this.formatHeaderLeft();
+    const weather = this.weatherText ?? "";
+    const calendar = this.calendarText ?? "";
+    const notifications = this.notificationService.getDisplayText();
+    const widget = this.getNextWidget();
+
+    // Resolve display profile from the currently connected glasses model.
+    const model = this.userSession.deviceManager.getModel();
+    const profile = getProfileForModel(model);
+
+    // Threshold: displays narrower than 500px use stacked layout.
+    // G1/G2/Nex = 576px (wide), Z100/Mach1 = 390px (narrow).
+    const useStackedLayout = profile.displayWidthPx < 500;
+
+    let lines: string[];
+
+    if (useStackedLayout) {
+      // Narrow display: each data element gets its own full-width line.
+      // The Z100 has 7 lines, so we have plenty of vertical space.
+      lines = [
+        headerLeft,
+        weather,
+        calendar,
+        notifications,
+        widget,
+      ];
+    } else {
+      // Wide display: header row uses double-column (date/time | weather).
+      // We can't use ColumnComposer because the left column contains tokens
+      // ($DATE$, $TIME12$, $GBATT$) resolved at display time by the native
+      // layer. The server-side pixel width of "$DATE$" (72px) is totally
+      // different from the resolved "3/30" (44px). Instead we use a
+      // pre-computed worst-case width for pixel-accurate spacing.
+      const composedHeader = weather
+        ? this.composeHeaderRow(headerLeft, weather, profile)
+        : headerLeft;
+
+      lines = [
+        composedHeader,
+        calendar,
+        notifications,
+        widget,
+      ];
+    }
+
+    const text = lines.filter((s) => s.trim().length > 0).join("\n");
+
+    return {
+      layoutType: LayoutType.TEXT_WALL,
+      text,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Header formatters
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Left side of the header row.
+   * Tokens ($DATE$, $GBATT$) are resolved by the native layer at display time —
+   * we do NOT compute time server-side.
+   *
+   * (Renamed from formatSystemLeftSection.)
+   */
+  private formatHeaderLeft(): string {
+    return "◌ $DATE$, $TIME12$, $GBATT$";
+  }
+
+  /**
+   * Compose the header row with correct spacing for token-based left text.
+   *
+   * The left column contains tokens ($DATE$, $TIME12$, $GBATT$) resolved by
+   * the native display layer — the server never sees the actual values.
+   * ColumnComposer can't be used here because it would measure the token text
+   * (288px on G1) instead of the resolved text (≤228px on G1), producing
+   * wrong spacing.
+   *
+   * Instead we pad from the worst-case left width to the display midpoint (50%),
+   * so the weather always starts at the second half of the screen. Different
+   * glasses models have different display widths and fonts, so the spacing is
+   * computed per-profile.
+   */
+  private composeHeaderRow(leftTokenText: string, rightText: string, profile: DisplayProfile): string {
+    const displayWidth = profile.displayWidthPx;
+    const metrics = getHeaderMetrics(profile);
+
+    // Right column starts at the display midpoint (50%).
+    // The left column (date/time/battery) worst case is ~40% of display,
+    // so padding to 50% gives a consistent "second half" start for weather.
+    const midpointPx = Math.floor(displayWidth * 0.5);
+
+    // Pad from worst-case left width to the midpoint
+    const pixelsToPad = Math.max(0, midpointPx - metrics.leftMaxWidthPx);
+    const padSpaces = Math.max(2, Math.floor(pixelsToPad / metrics.spaceWidthPx));
+
+    // Right column gets the second half of the display
+    const rightMaxPx = displayWidth - midpointPx;
+
+    // Truncate right text to fit (single line)
+    const measurer = new TextMeasurer(profile);
+    const wrapper = new TextWrapper(measurer, { breakMode: "character-no-hyphen" });
+    const rightLine = wrapper.wrap(rightText, { maxWidthPx: rightMaxPx, maxLines: 1 }).lines[0] || "";
+
+    return `${leftTokenText}${" ".repeat(padSpaces)}${rightLine}`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Widget rotation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Return the text for the currently-selected widget slot, rotating through
+   * all registered MiniApp widgets.
+   * (Renamed from getNextMainAppContent.)
+   */
+  private getNextWidget(): string {
+    const widgets = Array.from(this.mainWidgets.values());
+
+    if (widgets.length === 0) {
+      return "";
+    }
+
+    if (widgets.length === 1) {
+      return this.extractText(widgets[0].content);
+    }
+
+    // Sort by timestamp descending for consistent ordering.
+    widgets.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+    const index = this.widgetRotationIndex % widgets.length;
+    const selected = widgets[index];
+
+    this.logger.debug(
+      {
+        index,
+        total: widgets.length,
+        selectedPackage: selected.packageName,
+      },
+      `Widget rotation: showing ${selected.packageName} (${index + 1}/${widgets.length})`,
+    );
+
+    return this.extractText(selected.content);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Content extraction
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extract a plain string from either a raw string or a Layout object.
+   * (Renamed from extractTextFromContent.)
+   */
+  private extractText(content: string | Layout): string {
     if (typeof content === "string") {
       return content;
     }
 
-    // Handle Layout content types
     switch (content.layoutType) {
       case LayoutType.TEXT_WALL:
         return content.text || "";
+
       case LayoutType.DOUBLE_TEXT_WALL:
         return [content.topText, content.bottomText].filter(Boolean).join("\n");
+
       case LayoutType.DASHBOARD_CARD:
         return [content.leftText, content.rightText].filter(Boolean).join(" | ");
+
       case LayoutType.REFERENCE_CARD:
         return `${content.title}\n${content.text}`;
+
       default:
         return "";
     }
   }
 
-  /**
-   * Generate layout for expanded dashboard mode
-   * @returns Layout for expanded dashboard
-   */
-  private generateExpandedLayout(): Layout {
-    // For expanded view we use TextWall with manual formatting
-
-    // Create first line with system info (top-left and top-right)
-    const systemInfoLine = `${this.systemContent.topLeft} | ${this.systemContent.topRight}`;
-
-    // Get App content from expanded content queue (only the most recent item)
-    const content = Array.from(this.expandedContent.values())
-      .sort((a, b) => {
-        const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
-        const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
-        return bTime - aTime;
-      })
-      .slice(0, 1)[0];
-
-    // Get text content (will always be a string now)
-    const appContent = content ? (content.content as string) : "";
-
-    // Combine system info and App content with a line break
-    const fullText = appContent
-      ? `${systemInfoLine}\n${appContent}`
-      : `${systemInfoLine}\nNo expanded content available`;
-
-    // Return a TextWall layout for expanded mode
-    return {
-      layoutType: LayoutType.TEXT_WALL,
-      text: fullText,
-    };
-  }
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
 
   /**
-   * Generate layout for always-on dashboard mode
-   * @returns Layout for always-on dashboard
-   */
-  private generateAlwaysOnLayout(): Layout {
-    // For always-on mode, we use a LayoutType.REFERENCE_CARD
-    // I think just the title is used for the persistent display.
-    // This is more compact and suited for persistent display
-
-    // Left side shows essential system info (time)
-    // const leftText = this.systemContent.topLeft; // currently it seems the client already ads this info.
-    // TODO: or if it doesn't we should add the time and battery info before the app content.
-
-    // Right side combines battery status and a single App content item
-    const appContent = this.getCombinedAppContent(this.alwaysOnContent, 1);
-
-    return {
-      layoutType: LayoutType.TEXT_WALL,
-      text: appContent,
-      // title: `${leftText} | ${appContent}`,
-    };
-  }
-
-  /**
-   * Combine App content from a queue into a single string
-   * @param contentQueue Queue of App content
-   * @param limit Optional limit on number of items to include
-   * @returns Combined content string
-   */
-  private getCombinedAppContent(contentQueue: Map<string, AppContent>, limit?: number): string {
-    // Sort by timestamp (newest first)
-    const sortedContent = Array.from(contentQueue.values())
-      .sort((a, b) => {
-        const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime();
-        const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime();
-        return bTime - aTime;
-      })
-      .slice(0, limit || this.queueSize);
-
-    // If no content, return empty string
-    if (sortedContent.length === 0) {
-      return "";
-    }
-
-    // For expanded dashboard, content is now guaranteed to be a string
-    // For main or always-on, we'll still handle the legacy logic
-    if (limit === 1 && sortedContent.length === 1) {
-      const item = sortedContent[0];
-
-      // For expanded content, it will always be a string
-      if (this.currentMode === DashboardMode.EXPANDED) {
-        return item.content as string;
-      }
-
-      // For other modes, continue supporting existing format
-      if (typeof item.content === "string") {
-        return item.content;
-      } else {
-        // For Layout content, extract the text based on the layout type
-        switch (item.content.layoutType) {
-          case LayoutType.TEXT_WALL:
-            return item.content.text || "";
-          case LayoutType.DOUBLE_TEXT_WALL:
-            return [item.content.topText, item.content.bottomText].filter(Boolean).join("\n");
-          case LayoutType.DASHBOARD_CARD:
-            return [item.content.leftText, item.content.rightText].filter(Boolean).join(" | ");
-          case LayoutType.REFERENCE_CARD:
-            return `${item.content.title}\n${item.content.text}`;
-          default:
-            return "";
-        }
-      }
-    }
-
-    // For multiple items, join them with separators
-    // For expanded dashboard, all content will be strings
-    if (this.currentMode === DashboardMode.EXPANDED) {
-      return sortedContent.map((item) => item.content as string).join("\n\n");
-    }
-
-    // For other modes, continue supporting existing format
-    return sortedContent
-      .map((item) => {
-        if (typeof item.content === "string") {
-          return item.content;
-        } else {
-          // For Layout content, extract the text based on the layout type
-          switch (item.content.layoutType) {
-            case LayoutType.TEXT_WALL:
-              return item.content.text || "";
-            case LayoutType.DOUBLE_TEXT_WALL:
-              return [item.content.topText, item.content.bottomText].filter(Boolean).join("\n");
-            case LayoutType.DASHBOARD_CARD:
-              return [item.content.leftText, item.content.rightText].filter(Boolean).join(" | ");
-            case LayoutType.REFERENCE_CARD:
-              return `${item.content.title}\n${item.content.text}`;
-            default:
-              return "";
-          }
-        }
-      })
-      .join("\n\n");
-  }
-
-  /**
-   * Clean up content from a specific App
-   * @param packageName App package name
-   */
-  public cleanupAppContent(packageName: string): void {
-    // Log the current state before cleanup
-    const beforeState = {
-      packageName,
-      hadMainContent: this.mainContent.has(packageName),
-      hadExpandedContent: this.expandedContent.has(packageName),
-      hadAlwaysOnContent: this.alwaysOnContent.has(packageName),
-      mainContentSizeBefore: this.mainContent.size,
-      rotationIndexBefore: this.mainContentRotationIndex,
-      allMainContentPackages: Array.from(this.mainContent.keys()),
-    };
-
-    this.logger.info(beforeState, `🧹 Starting dashboard cleanup for App: ${packageName}`);
-
-    // Check if this App had always-on content
-    const hadAlwaysOnContent = this.alwaysOnContent.has(packageName);
-
-    // Check if this App was in main content and adjust rotation index if needed
-    const hadMainContent = this.mainContent.has(packageName);
-    const mainContentSizeBefore = this.mainContent.size;
-
-    // Remove from all content queues
-    this.mainContent.delete(packageName);
-    this.expandedContent.delete(packageName);
-    this.alwaysOnContent.delete(packageName);
-
-    // Adjust rotation index if we removed main content
-    if (hadMainContent && mainContentSizeBefore > 1) {
-      const newMainContentSize = this.mainContent.size;
-      const oldRotationIndex = this.mainContentRotationIndex;
-
-      // If we removed the currently displayed item or an item before it in the rotation,
-      // we need to adjust the index to prevent out-of-bounds access
-      if (newMainContentSize > 0) {
-        // Reset to 0 if index is now out of bounds, otherwise keep current position
-        if (this.mainContentRotationIndex >= newMainContentSize) {
-          this.mainContentRotationIndex = 0;
-          this.logger.debug(
-            {
-              oldIndex: oldRotationIndex,
-              newIndex: 0,
-              newSize: newMainContentSize,
-              removedPackage: packageName,
-            },
-            "Reset rotation index after App disconnect",
-          );
-        }
-      } else {
-        // No content left, reset index
-        this.mainContentRotationIndex = 0;
-      }
-    }
-
-    // Update the regular dashboard
-    this.updateDashboard();
-
-    // Update the always-on dashboard separately if needed
-    // if (hadAlwaysOnContent && this.alwaysOnEnabled) {
-    //   this.updateAlwaysOnDashboard();
-    // }
-
-    // Log the final state after cleanup
-    const afterState = {
-      packageName,
-      newMainContentSize: this.mainContent.size,
-      rotationIndexAfter: this.mainContentRotationIndex,
-      remainingMainContentPackages: Array.from(this.mainContent.keys()),
-      hadMainContent,
-      hadAlwaysOnContent,
-    };
-
-    this.logger.info(afterState, `✅ Dashboard cleanup completed for App: ${packageName}`);
-  }
-
-  /**
-   * Set the current dashboard mode and notify clients
-   * @param mode New dashboard mode
-   */
-  private setDashboardMode(mode: DashboardMode): void {
-    // Update current mode
-    this.currentMode = mode;
-
-    // Notify Apps of mode change
-    const modeChangeMessage = {
-      type: CloudToAppMessageType.DASHBOARD_MODE_CHANGED,
-      mode,
-      timestamp: new Date(),
-    };
-
-    // Broadcast mode change to all connected Apps
-    this.broadcastToAllApps(modeChangeMessage);
-
-    // Update the dashboard
-    this.updateDashboard();
-  }
-
-  /**
-   * Broadcast a message to all Apps connected to this user session
-   * @param message Message to broadcast
-   */
-  private broadcastToAllApps(message: any): void {
-    try {
-      // Use the appConnections map to send to all connected Apps
-      // this.userSession.appConnections.forEach((ws, packageName) => {
-      this.userSession.appWebsockets.forEach((ws, packageName) => {
-        try {
-          if (ws && ws.readyState === WebSocketReadyState.OPEN) {
-            const appMessage = {
-              ...message,
-              sessionId: `${this.userSession.sessionId}-${packageName}`,
-            };
-            ws.send(JSON.stringify(appMessage));
-          }
-        } catch (error) {
-          const logger = this.userSession.logger.child({
-            packageName,
-            message,
-          });
-          logger.error(error, "Error sending dashboard message to App");
-        }
-      });
-    } catch (error) {
-      this.logger.error(error, "Error broadcasting dashboard message");
-    }
-  }
-
-  /**
-   * Get the current dashboard mode
-   * @returns Current dashboard mode
-   */
-  public getCurrentMode(): DashboardMode | "none" {
-    return this.currentMode;
-  }
-
-  /**
-   * Check if always-on dashboard is enabled
-   * @returns Always-on dashboard state
-   */
-  public isAlwaysOnEnabled(): boolean {
-    return this.alwaysOnEnabled;
-  }
-
-  /**
-   * Clean up resources when shutting down
+   * Clean up all timers and state. Called when the UserSession is torn down.
    */
   public dispose(): void {
-    // Clear update interval
-    if (this.updateInterval) {
-      clearInterval(this.updateInterval);
-      this.updateInterval = null;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
 
-    // Clear all content
-    this.mainContent.clear();
-    this.expandedContent.clear();
-    this.alwaysOnContent.clear();
+    if (this.updateTimer) {
+      clearTimeout(this.updateTimer);
+      this.updateTimer = null;
+    }
 
-    this.logger.info({}, "Dashboard Manager disposed");
+    this.mainWidgets.clear();
+    this.notificationService.dispose();
+
+    this.logger.info({}, "DashboardManager disposed");
   }
 }
+
+export default DashboardManager;

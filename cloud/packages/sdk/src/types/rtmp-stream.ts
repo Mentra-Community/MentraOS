@@ -1,6 +1,6 @@
 // src/types/rtmp-stream.ts
 
-import type { RtmpStreamStatus } from "./messages/glasses-to-cloud";
+import type { StreamStatus } from "./messages/glasses-to-cloud";
 
 /**
  * RTMP Streaming Types
@@ -23,8 +23,8 @@ import type { RtmpStreamStatus } from "./messages/glasses-to-cloud";
  *
  * ```typescript
  * // This does both subscription and event listening in one call
- * const cleanup = session.camera.onStreamStatus((status) => {
- *   console.log('RTMP Status:', status);
+ * const cleanup = session.camera.onLocalLivestreamStatus((status) => {
+ *   console.log('Stream status:', status);
  * });
  *
  * // When done:
@@ -71,4 +71,4 @@ export interface StreamConfig {
 /**
  * Type for stream status event handler
  */
-export type StreamStatusHandler = (status: RtmpStreamStatus) => void;
+export type StreamStatusHandler = (status: StreamStatus) => void;

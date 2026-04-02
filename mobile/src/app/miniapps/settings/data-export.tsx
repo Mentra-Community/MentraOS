@@ -223,7 +223,7 @@ export default function DataExportPage() {
       console.log("DataExport: Data collection completed")
     } catch (error) {
       console.error("DataExport: Error collecting data:", error)
-      showAlert(translate("common:error"), "Failed to collect export data. Please try again.", [
+      showAlert(translate("common:error"), translate("profileSettings:dataExportCollectError"), [
         {text: translate("common:ok")},
       ])
     } finally {
@@ -237,10 +237,14 @@ export default function DataExportPage() {
     setCopying(true)
     try {
       Clipboard.setStringAsync(jsonString)
-      showAlert("Copied!", "Your data has been copied to the clipboard.", [{text: translate("common:ok")}])
+      showAlert(translate("profileSettings:dataExportCopied"), translate("profileSettings:dataExportCopiedMessage"), [
+        {text: translate("common:ok")},
+      ])
     } catch (error) {
       console.error("DataExport: Error copying to clipboard:", error)
-      showAlert(translate("common:error"), "Failed to copy to clipboard.", [{text: translate("common:ok")}])
+      showAlert(translate("common:error"), translate("profileSettings:dataExportCopyError"), [
+        {text: translate("common:ok")},
+      ])
     } finally {
       setCopying(false)
     }
@@ -263,7 +267,9 @@ export default function DataExportPage() {
       }
     } catch (error) {
       console.error("DataExport: Error sharing:", error)
-      showAlert(translate("common:error"), "Failed to share data.", [{text: translate("common:ok")}])
+      showAlert(translate("common:error"), translate("profileSettings:dataExportShareError"), [
+        {text: translate("common:ok")},
+      ])
     } finally {
       setSharing(false)
     }
@@ -279,7 +285,7 @@ export default function DataExportPage() {
   return (
     <Screen preset="fixed" style={themed($container)}>
       <Header
-        title="Data Export"
+        title={translate("profileSettings:dataExportHeader")}
         leftIcon="chevron-left"
         onLeftPress={goBack}
         titleMode="flex"
@@ -290,33 +296,33 @@ export default function DataExportPage() {
         <View style={themed($loadingContainer)}>
           <ActivityIndicator size="large" color={theme.colors.foreground} />
           <Spacer height={theme.spacing.s4} />
-          <Text text="Collecting your data..." style={themed($loadingText)} />
+          <Text text={translate("profileSettings:dataExportCollecting")} style={themed($loadingText)} />
         </View>
       ) : (
         <ScrollView style={themed($contentContainer)} showsVerticalScrollIndicator={false}>
           <Spacer height={theme.spacing.s4} />
 
           {/* Data Summary */}
-          <Group title="Export Summary">
+          <Group title={translate("profileSettings:dataExportSummary")}>
             {exportData && (
               <View style={themed($summaryContent)}>
                 <View style={themed($summaryRow)}>
-                  <Text text="Generated" style={themed($summaryLabel)} />
+                  <Text text={translate("profileSettings:dataExportGenerated")} style={themed($summaryLabel)} />
                   <Text
                     text={new Date(exportData.metadata.exportDate).toLocaleString()}
                     style={themed($summaryValue)}
                   />
                 </View>
                 <View style={themed($summaryRow)}>
-                  <Text text="Size" style={themed($summaryLabel)} />
+                  <Text text={translate("profileSettings:dataExportSize")} style={themed($summaryLabel)} />
                   <Text text={formatDataSize(jsonString)} style={themed($summaryValue)} />
                 </View>
                 <View style={themed($summaryRow)}>
-                  <Text text="Apps" style={themed($summaryLabel)} />
+                  <Text text={translate("profileSettings:dataExportApps")} style={themed($summaryLabel)} />
                   <Text text={String(exportData.installedApps.length)} style={themed($summaryValue)} />
                 </View>
                 <View style={themed($summaryRow)}>
-                  <Text text="Settings" style={themed($summaryLabel)} />
+                  <Text text={translate("profileSettings:dataExportSettings")} style={themed($summaryLabel)} />
                   <Text text={String(Object.keys(exportData.userSettings).length)} style={themed($summaryValue)} />
                 </View>
               </View>
@@ -332,17 +338,17 @@ export default function DataExportPage() {
               preset="alternate"
               disabled={copying || !jsonString}
               onPress={handleCopy}
-              LeftAccessory={() => <Icon name="copy" size={20} color={theme.colors.foreground} />}>
-              <Text text={copying ? "Copying..." : "Copy"} style={themed($buttonText)} />
-            </Button>
+              text={translate(copying ? "profileSettings:dataExportCopying" : "profileSettings:dataExportCopy")}
+              LeftAccessory={() => <Icon name="copy" size={20} color={theme.colors.foreground} />}
+            />
             <Button
               flex
               preset="primary"
               disabled={sharing || !jsonString}
               onPress={handleShare}
-              LeftAccessory={() => <Icon name="share-2" size={20} color={theme.colors.primary_foreground} />}>
-              <Text text={sharing ? "Sharing..." : "Share"} style={themed($buttonTextPrimary)} />
-            </Button>
+              text={translate(sharing ? "profileSettings:dataExportSharing" : "profileSettings:dataExportShare")}
+              LeftAccessory={() => <Icon name="share-2" size={20} color={theme.colors.primary_foreground} />}
+            />
           </View>
 
           <Spacer height={theme.spacing.s6} />
@@ -353,7 +359,7 @@ export default function DataExportPage() {
               style={themed($previewHeader)}
               onPress={() => setPreviewExpanded(!previewExpanded)}
               activeOpacity={0.7}>
-              <Text text="Data Preview" style={themed($previewTitle)} />
+              <Text text={translate("profileSettings:dataExportPreview")} style={themed($previewTitle)} />
               <Icon name={previewExpanded ? "chevron-up" : "chevron-down"} size={24} color={theme.colors.foreground} />
             </TouchableOpacity>
 
@@ -426,18 +432,6 @@ const $summaryValue: ThemedStyle<TextStyle> = ({colors}) => ({
 const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   gap: spacing.s3,
-})
-
-const $buttonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.foreground,
-  fontSize: 14,
-  fontWeight: "500",
-})
-
-const $buttonTextPrimary: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.primary_foreground,
-  fontSize: 14,
-  fontWeight: "500",
 })
 
 const $previewContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({

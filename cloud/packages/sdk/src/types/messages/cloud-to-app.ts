@@ -9,7 +9,7 @@ import type { Capabilities } from "../capabilities";
 import type {
   LocationUpdate,
   CalendarEvent,
-  RtmpStreamStatus,
+  StreamStatus,
   PhotoResponse,
   RgbLedControlResponse,
 } from "./glasses-to-cloud";
@@ -318,7 +318,7 @@ export interface StreamStatusCheckResponse extends BaseMessage {
     thumbnailUrl?: string;
     activeViewers?: number;
     // For unmanaged streams
-    rtmpUrl?: string;
+    streamUrl?: string;
     requestingAppId?: string;
   };
 }
@@ -390,7 +390,7 @@ export type CloudToAppMessage =
   | AppUserLeft
   | AppRoomUpdated
   | AppDirectMessageResponse
-  | RtmpStreamStatus
+  | StreamStatus
   | PhotoResponse
   | RgbLedControlResponse
   | PermissionError
@@ -446,8 +446,8 @@ export function isManagedStreamStatus(message: CloudToAppMessage): message is Ma
   return message.type === CloudToAppMessageType.MANAGED_STREAM_STATUS;
 }
 
-export function isRtmpStreamStatus(message: CloudToAppMessage): message is RtmpStreamStatus {
-  return message.type === GlassesToCloudMessageType.RTMP_STREAM_STATUS;
+export function isStreamStatus(message: CloudToAppMessage): message is StreamStatus {
+  return message.type === GlassesToCloudMessageType.STREAM_STATUS;
 }
 
 export function isPhotoResponse(message: CloudToAppMessage): message is PhotoResponse {

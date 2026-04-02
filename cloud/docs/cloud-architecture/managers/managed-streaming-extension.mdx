@@ -69,7 +69,8 @@ async startManagedStream(
   userSession: UserSession,
   request: ManagedStreamRequest
 ): Promise<string> {
-  const { packageName, quality, enableWebRTC, video, audio } = request;
+  const { packageName, video, audio, restreamDestinations } = request;
+  const useWebRTC = !restreamDestinations || restreamDestinations.length === 0;
   
   // Validation
   if (!userSession.appManager.isAppRunning(packageName)) {
@@ -103,11 +104,9 @@ async startManagedStream(
   
   // Create new Cloudflare live input
   const liveInput = await this.cloudflareService.createLiveInput(userId, {
-    quality,
-    enableWebRTC,
     enableRecording: true,    // Required for playback
     requireSignedURLs: false, // Public streams
-    restreamDestinations
+    restreamDestinations: useWebRTC ? undefined : restreamDestinations
   });
   
   // Create managed stream state

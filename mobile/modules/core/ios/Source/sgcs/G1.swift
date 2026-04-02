@@ -271,8 +271,8 @@ actor ReconnectionManager {
 
 @MainActor
 class G1: NSObject, SGCManager {
-    func sendIncidentId(_ incidentId: String) {}
-    
+    func sendIncidentId(_: String) {}
+
     func sendGalleryMode() {}
 
     func sendButtonMaxRecordingTime(_: Int) {}
@@ -282,11 +282,11 @@ class G1: NSObject, SGCManager {
         compress _: String?, flash _: Bool, sound _: Bool
     ) {}
 
-    func startRtmpStream(_: [String: Any]) {}
+    func startStream(_: [String: Any]) {}
 
-    func stopRtmpStream() {}
+    func stopStream() {}
 
-    func sendRtmpKeepAlive(_: [String: Any]) {}
+    func sendStreamKeepAlive(_: [String: Any]) {}
 
     func startBufferRecording() {}
 
@@ -307,6 +307,8 @@ class G1: NSObject, SGCManager {
     func sendButtonMaxRecordingTime() {}
 
     func sendButtonCameraLedSetting() {}
+
+    func sendCameraFovSetting() {}
 
     func showDashboard() {}
 

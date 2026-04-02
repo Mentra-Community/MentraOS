@@ -3,81 +3,69 @@ package com.mentra.asg_client.service.media.interfaces;
 import org.json.JSONObject;
 
 /**
- * Interface for streaming management (RTMP, video recording, etc.).
- * Follows Interface Segregation Principle by providing focused streaming methods.
+ * Interface for media/streaming management.
+ * Handles RTMP, SRT, and WHIP streaming status reporting over BLE.
  */
 public interface IMediaManager {
 
     /**
-     * Start RTMP streaming
+     * Start streaming (test/dev helper — production starts via StreamCommandHandler)
      */
-    void startRtmpStreaming();
+    void startStreaming();
 
     /**
-     * Stop RTMP streaming
+     * Stop any active stream
      */
-    void stopRtmpStreaming();
+    void stopStreaming();
 
     /**
-     * Send RTMP status response
-     * @param success Success status
-     * @param status Status message
-     * @param details Additional details
+     * Send stream status response over BLE.
+     * Wire type is "stream_status".
+     * @param success Success flag
+     * @param status  Status string (e.g. "streaming", "stopped", "error")
+     * @param details Optional error detail string
      */
-    void sendRtmpStatusResponse(boolean success, String status, String details);
+    void sendStreamStatusResponse(boolean success, String status, String details);
 
     /**
-     * Send RTMP status response with JSON object
-     * @param success Success status
-     * @param statusObject Status JSON object
+     * Send stream status response with a pre-built JSON object over BLE.
+     * @param success      Success flag
+     * @param statusObject Full status JSON object (must include "type" field)
      */
-    void sendRtmpStatusResponse(boolean success, JSONObject statusObject);
+    void sendStreamStatusResponse(boolean success, JSONObject statusObject);
 
     /**
      * Send video recording status response
-     * @param success Success status
-     * @param status Status message
-     * @param details Additional details
      */
     void sendVideoRecordingStatusResponse(boolean success, String status, String details);
 
     /**
      * Send video recording status response with JSON object
-     * @param success Success status
-     * @param statusObject Status JSON object
      */
     void sendVideoRecordingStatusResponse(boolean success, JSONObject statusObject);
 
     /**
      * Send buffer status response
-     * @param success Success status
-     * @param status Status message
-     * @param details Additional details
      */
     void sendBufferStatusResponse(boolean success, String status, String details);
 
     /**
      * Send buffer status response with JSON object
-     * @param success Success status
-     * @param statusObject Status JSON object
      */
     void sendBufferStatusResponse(boolean success, JSONObject statusObject);
 
     /**
-     * Get streaming status callback
-     * @return Streaming status callback
+     * Get the shared streaming status callback instance
      */
     com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback getStreamingStatusCallback();
 
     /**
      * Send keep-alive acknowledgment
-     * @param streamId Stream ID
-     * @param ackId Acknowledgment ID
      */
     void sendKeepAliveAck(String streamId, String ackId);
 
     /**
-     * Clean up resources when the MediaManager is being destroyed
+     * Clean up resources
      */
     void cleanup();
 }

@@ -9,7 +9,7 @@ import {Image} from "expo-image"
 import composer from "@/services/Composer"
 import LocalMiniApp from "@/components/home/LocalMiniApp"
 import {scheduleOnRN} from "react-native-worklets"
-import {MiniAppDualButtonHeader} from "@/components/miniapps/DualButton"
+import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 
 export default function LocalMiniAppPage() {
@@ -65,7 +65,7 @@ export default function LocalMiniAppPage() {
 
   return (
     <Screen preset="fixed" safeAreaEdges={["top"]} KeyboardAvoidingViewProps={{enabled: true}} ref={viewShotRef}>
-      {/* <MiniAppDualButtonHeader
+      {/* <MiniAppCapsuleMenu
         packageName={packageName}
         viewShotRef={viewShotRef}
         onEllipsisPress={() => {

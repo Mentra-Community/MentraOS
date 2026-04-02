@@ -67,7 +67,6 @@ function DeviceSettings() {
   }
 
   const confirmDisconnectGlasses = async () => {
-
     let result = await showAlert({
       title: translate("settings:disconnectGlassesTitle"),
       message: translate("settings:disconnectGlassesConfirm"),
@@ -184,8 +183,16 @@ function DeviceSettings() {
         {defaultWearable && (
           <RouteButton
             icon={<Icon name="unplug" size={24} color={theme.colors.secondary_foreground} />}
-            label={translate("deviceSettings:unpairGlasses")}
+            label={translate("deviceSettings:forgetGlasses")}
             onPress={confirmForgetGlasses}
+          />
+        )}
+
+        {superMode && (
+          <RouteButton
+            icon={<Icon name="bluetooth" size={24} color={theme.colors.secondary_foreground} />}
+            label={translate("deviceSettings:pairController")}
+            onPress={() => push("/pairing/select-controller")}
           />
         )}
       </Group>
@@ -208,6 +215,11 @@ function DeviceSettings() {
             onPress={() => push("/miniapps/settings/device-info")}
           />
         )}
+        <RouteButton
+          icon={<Icon name="microphone" size={24} color={theme.colors.secondary_foreground} />}
+          label={translate("deviceSettings:microphone")}
+          onPress={() => push("/miniapps/settings/microphone")}
+        />
       </Group>
 
       {/* this just gives the user a bit more space to scroll */}
@@ -245,7 +257,7 @@ export default function Glasses() {
         RightActionComponent={glassesComponent}
       />
       <ScrollView
-        style={{marginRight: -theme.spacing.s4, paddingRight: theme.spacing.s4}}
+        style={{marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}
         contentInsetAdjustmentBehavior="automatic">
         {!glassesConnected && <Spacer height={theme.spacing.s6} />}
         {!glassesConnected && <ConnectDeviceButton />}

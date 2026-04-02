@@ -213,7 +213,7 @@ export class WebSocketManager extends EventEmitter {
           brightness,
           auto_brightness: false,
           dashboard_height: 4,
-          dashboard_depth: 5,
+          dashboard_depth: 2,
           head_up_angle: 20,
         },
       },

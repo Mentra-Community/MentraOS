@@ -61,3 +61,7 @@ This removes your custom build and restores the factory app.
 ### Build Notes
 
 Must use Java SDK 17. To set this, in Android Studio, go to Settings > Build, Execution, Deployment > Build Tools > Gradle, go to Gradle JDK and select version 17
+
+### Documentation
+
+See [docs/](docs/README.md) for architecture overview, command API reference, feature docs, and the full Mentra Live setup guide.

@@ -74,6 +74,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.Random;
 import java.security.SecureRandom;
 import java.io.File;
@@ -136,6 +137,10 @@ public class MentraLive extends SGCManager {
     private static final int RECONNECT_SCAN_TIMEOUT_MS = 10000; // 10 seconds for reconnection scans (faster than 60s default)
     private int reconnectAttempts = 0;
     private boolean isReconnecting = false; // Track if we're in reconnection mode
+    /** Timestamp when sr_shut (K900 shutdown) was last received; used to delay first reconnect scan so glasses can reboot. */
+    private long lastShutdownTimeMs = 0;
+    private static final long POST_SHUTDOWN_RECONNECT_DELAY_MS = 10_000; // 10s before first scan after shutdown
+    private static final long SHUTDOWN_RECENT_MS = 45_000; // Consider "recent shutdown" for 45s
 
     // Keep-alive parameters
     private static final int KEEP_ALIVE_INTERVAL_MS = 5000; // 5 seconds
@@ -237,6 +242,15 @@ public class MentraLive extends SGCManager {
     private int fileReadNotificationCount = 0; // Debug counter for FILE_READ notifications
 
     private final Object connectionLock = new Object();
+
+    // Glasses media volume (K900 cs_getvol / cs_vol, sr_getvol / sr_vol)
+    private static final int GLASSES_MEDIA_VOLUME_TIMEOUT_MS = 2000;
+    private final Object glassesMediaVolumeLock = new Object();
+    private Runnable glassesMediaVolumeTimeoutRunnable;
+    private Consumer<Map<String, Object>> pendingGetGlassesVolumeSuccess;
+    private Consumer<String> pendingGetGlassesVolumeError;
+    private Consumer<Map<String, Object>> pendingSetGlassesVolumeSuccess;
+    private Consumer<String> pendingSetGlassesVolumeError;
 
     private static class BlePhotoTransfer {
         String bleImgId;
@@ -879,19 +893,25 @@ public class MentraLive extends SGCManager {
         } 
 
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            Log.e(TAG, "🔌 ❌ RECONNECTION FAILED - Maximum attempts reached (" + MAX_RECONNECT_ATTEMPTS + ")");
-            Bridge.log("LIVE: 🔌 ❌ RECONNECTION FAILED - Gave up after " + MAX_RECONNECT_ATTEMPTS + " attempts");
+            // Keep retrying in cycles until user explicitly forgets/kills the device.
+            Log.w(TAG, "🔌 ♻️ Max reconnect attempts reached - restarting retry cycle");
+            Bridge.log("LIVE: 🔌 ♻️ Max reconnect attempts reached - continuing reconnection cycle");
             reconnectAttempts = 0;
-            isReconnecting = false;
-            return;
         }
 
         // Set reconnecting flag for faster scan timeout
         isReconnecting = true;
 
+        reconnectAttempts++;
         // Calculate delay with exponential backoff
         long delay = Math.min(BASE_RECONNECT_DELAY_MS * (1L << reconnectAttempts), MAX_RECONNECT_DELAY_MS);
-        reconnectAttempts++;
+        // After K900 shutdown, glasses need time to power cycle before they advertise again
+        if (reconnectAttempts == 1 && lastShutdownTimeMs > 0
+                && (System.currentTimeMillis() - lastShutdownTimeMs) < SHUTDOWN_RECENT_MS) {
+            delay = Math.max(delay, POST_SHUTDOWN_RECONNECT_DELAY_MS);
+            Log.i(TAG, "🔌 ⏳ Post-shutdown: waiting " + (POST_SHUTDOWN_RECONNECT_DELAY_MS / 1000) + "s before first reconnect scan");
+            Bridge.log("LIVE: 🔌 ⏳ Post-shutdown: waiting for glasses to reboot before first reconnect scan");
+        }
 
         Log.i(TAG, "🔌 📅 SCHEDULING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
               " in " + delay + "ms (base=" + BASE_RECONNECT_DELAY_MS + "ms, max=" + MAX_RECONNECT_DELAY_MS + "ms, scan_timeout=" + RECONNECT_SCAN_TIMEOUT_MS + "ms)");
@@ -923,8 +943,8 @@ public class MentraLive extends SGCManager {
                         handleReconnection();
                     }
                 } else if (isConnected) {
-                    Log.i(TAG, "🔌 ✅ RECONNECTION SUCCESSFUL - Already connected (attempt " + reconnectAttempts + ")");
-                    Bridge.log("LIVE: 🔌 ✅ Reconnection successful - Already connected");
+                    Log.i(TAG, "🔌 🔗 Reconnect attempt skipped - BLE link already connected (attempt " + reconnectAttempts + ")");
+                    Bridge.log("LIVE: 🔌 🔗 Reconnect attempt skipped - BLE link already connected");
                     reconnectAttempts = 0;
                     isReconnecting = false;
                 } else {
@@ -950,7 +970,7 @@ public class MentraLive extends SGCManager {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Bridge.log("LIVE: 🔌 ✅ RECONNECTION SUCCESSFUL - Connected to GATT server, discovering services...");
+                    Bridge.log("LIVE: 🔌 🔗 BLE GATT link connected - validating services/characteristics...");
                     isConnecting = false;
                     isConnected = true;
                     connectedDevice = gatt.getDevice();
@@ -1003,6 +1023,8 @@ public class MentraLive extends SGCManager {
                     glassesReadyReceived = false;
                     audioConnected = false;
 
+                    notificationsEnabled = false;
+
                     // Notify frontend and backend of disconnection
                     updateConnectionState(ConnTypes.DISCONNECTED);
 
@@ -1046,6 +1068,8 @@ public class MentraLive extends SGCManager {
                 glassesReady = false;
                 glassesReadyReceived = false;
                 audioConnected = false;
+
+                notificationsEnabled = false;
 
                 // Notify frontend and backend of disconnection
                 updateConnectionState(ConnTypes.DISCONNECTED);
@@ -1091,7 +1115,7 @@ public class MentraLive extends SGCManager {
 
                     if (hasRequiredCharacteristics) {
                         // BLE connection established, but we still need to wait for glasses SOC
-                        Bridge.log("LIVE: ✅ Core TX/RX and LC3 TX/RX characteristics found - BLE connection ready");
+                        Bridge.log("LIVE: 🔌 ✅ BLE reconnection fully ready (Core TX/RX + LC3 TX/RX characteristics verified)");
                         Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...");
 
                         // Don't set connected=true here - wait for SOC to be ready (fullyBooted=true)
@@ -2035,9 +2059,9 @@ public class MentraLive extends SGCManager {
             case "ble_photo_ready":
                 processBlePhotoReady(json);
                 break;
-            case "rtmp_stream_status":
-                // Process RTMP streaming status update from ASG client
-                Bridge.log("LIVE: Received RTMP status update from glasses: " + json.toString());
+            case "stream_status":
+                // Process streaming status update from ASG client
+                Bridge.log("LIVE: Received stream status update from glasses: " + json.toString());
 
                 // Check if this is an error status
                 String status = json.optString("status", "");
@@ -2075,7 +2099,7 @@ public class MentraLive extends SGCManager {
                         String key = keys.next();
                         rtmpMap.put(key, json.get(key));
                     }
-                    Bridge.sendRtmpStreamStatus(rtmpMap);
+                    Bridge.sendStreamStatus(rtmpMap);
                 } catch (JSONException e) {
                     Log.e(TAG, "Error converting RTMP status to Map", e);
                 }
@@ -2229,6 +2253,12 @@ public class MentraLive extends SGCManager {
                 } catch (JSONException e) {
                     Log.e(TAG, "Error parsing ota_update_available", e);
                 }
+                break;
+
+            case "ota_start_ack":
+                // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
+                Bridge.log("LIVE: 📱 Received ota_start_ack from glasses");
+                Bridge.sendOtaStartAck();
                 break;
 
             case "ota_progress":
@@ -2870,15 +2900,18 @@ public class MentraLive extends SGCManager {
                 }
                 break;
 
+            case "sr_getvol":
+                handleSrGetvol(json);
+                break;
+
+            case "sr_vol":
+                handleSrVol(json);
+                break;
+
             case "sr_shut":
                 Bridge.log("LIVE: K900 shutdown command received - glasses shutting down");
-                // // Mark as killed to prevent reconnection attempts
-                // isKilled = true;
-                // // Clean disconnect without reconnection
-                // if (bluetoothGatt != null) {
-                //     Bridge.log("LIVE: Disconnecting from glasses due to shutdown");
-                //     bluetoothGatt.disconnect();
-                // }
+                lastShutdownTimeMs = System.currentTimeMillis();
+                reconnectAttempts = 0; // Fresh reconnection budget after power cycle
                 // Notify the system that glasses are intentionally disconnected
                 updateConnectionState(ConnTypes.DISCONNECTED);
                 glassesReady = false;
@@ -3724,7 +3757,7 @@ public class MentraLive extends SGCManager {
     }
 
     @Override
-    public void startRtmpStream(Map<String, Object> message) {
+    public void startStream(Map<String, Object> message) {
         Bridge.log("LIVE: Starting RTMP stream");
 
         try {
@@ -3737,11 +3770,11 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void stopRtmpStream() {
+    public void stopStream() {
         Bridge.log("LIVE: Requesting to stop RTMP stream");
         try {
             JSONObject json = new JSONObject();
-            json.put("type", "stop_rtmp_stream");
+            json.put("type", "stop_stream");
 
             sendJson(json, true);
         } catch (JSONException e) {
@@ -3750,7 +3783,7 @@ public class MentraLive extends SGCManager {
     }
 
     @Override
-    public void sendRtmpKeepAlive(Map<String, Object> message) {
+    public void sendStreamKeepAlive(Map<String, Object> message) {
         Bridge.log("LIVE: Sending RTMP stream keep alive");
 
         try {
@@ -4642,6 +4675,224 @@ public class MentraLive extends SGCManager {
 
         } catch (JSONException e) {
             Log.e(TAG, "Error creating video command", e);
+        }
+    }
+
+    private JSONObject optK900Body(JSONObject json) {
+        if (json == null || !json.has("B")) {
+            return null;
+        }
+        try {
+            Object b = json.get("B");
+            if (b instanceof JSONObject) {
+                return (JSONObject) b;
+            }
+            if (b instanceof String) {
+                return new JSONObject((String) b);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "optK900Body parse error", e);
+        }
+        return null;
+    }
+
+    private void cancelGlassesMediaVolumeTimeoutLocked() {
+        if (glassesMediaVolumeTimeoutRunnable != null) {
+            handler.removeCallbacks(glassesMediaVolumeTimeoutRunnable);
+            glassesMediaVolumeTimeoutRunnable = null;
+        }
+    }
+
+    private void scheduleGlassesMediaVolumeTimeoutLocked() {
+        cancelGlassesMediaVolumeTimeoutLocked();
+        glassesMediaVolumeTimeoutRunnable =
+                () -> {
+                    Consumer<Map<String, Object>> gOk;
+                    Consumer<String> gErr;
+                    Consumer<Map<String, Object>> sOk;
+                    Consumer<String> sErr;
+                    synchronized (glassesMediaVolumeLock) {
+                        gOk = pendingGetGlassesVolumeSuccess;
+                        gErr = pendingGetGlassesVolumeError;
+                        sOk = pendingSetGlassesVolumeSuccess;
+                        sErr = pendingSetGlassesVolumeError;
+                        pendingGetGlassesVolumeSuccess = null;
+                        pendingGetGlassesVolumeError = null;
+                        pendingSetGlassesVolumeSuccess = null;
+                        pendingSetGlassesVolumeError = null;
+                        cancelGlassesMediaVolumeTimeoutLocked();
+                    }
+                    if (gErr != null) {
+                        handler.post(() -> gErr.accept("glasses_volume_timeout"));
+                    }
+                    if (sErr != null) {
+                        handler.post(() -> sErr.accept("glasses_volume_timeout"));
+                    }
+                };
+        handler.postDelayed(glassesMediaVolumeTimeoutRunnable, GLASSES_MEDIA_VOLUME_TIMEOUT_MS);
+    }
+
+    private boolean sendGlassesMediaVolumeGetCommand() {
+        try {
+            JSONObject cmdObject = new JSONObject();
+            cmdObject.put("C", "cs_getvol");
+            cmdObject.put("V", 1);
+            cmdObject.put("B", "");
+            String jsonStr = cmdObject.toString();
+            byte[] packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            jsonStr.getBytes(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING);
+            Bridge.log("LIVE: AUDIO: Sending cs_getvol command: " + jsonStr);
+            queueData(packedData);
+            return true;
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating cs_getvol", e);
+            return false;
+        }
+    }
+
+    private boolean sendGlassesMediaVolumeSetCommand(int level) {
+        int clamped = Math.max(0, Math.min(15, level));
+        try {
+            JSONObject bData = new JSONObject();
+            bData.put("vol", clamped);
+            JSONObject cmdObject = new JSONObject();
+            cmdObject.put("C", "cs_vol");
+            cmdObject.put("V", 1);
+            cmdObject.put("B", bData.toString());
+            String jsonStr = cmdObject.toString();
+            byte[] packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            jsonStr.getBytes(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING);
+            queueData(packedData);
+            return true;
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating cs_vol", e);
+            return false;
+        }
+    }
+
+    private void handleSrGetvol(JSONObject json) {
+        JSONObject body = optK900Body(json);
+        int vol = body != null ? body.optInt("vol", -1) : -1;
+        int status = json.optInt("S", -1);
+        if (status < 0 && body != null) {
+            status = body.optInt("S", -1);
+        }
+
+        Consumer<Map<String, Object>> ok;
+        Consumer<String> err;
+        synchronized (glassesMediaVolumeLock) {
+            if (pendingGetGlassesVolumeSuccess == null) {
+                Bridge.log(
+                        "LIVE: sr_getvol with no pending request (status="
+                                + status
+                                + ", vol="
+                                + vol
+                                + ")");
+                return;
+            }
+            ok = pendingGetGlassesVolumeSuccess;
+            err = pendingGetGlassesVolumeError;
+            pendingGetGlassesVolumeSuccess = null;
+            pendingGetGlassesVolumeError = null;
+            cancelGlassesMediaVolumeTimeoutLocked();
+        }
+
+        if (vol < 0 || vol > 15) {
+            Bridge.log("LIVE: sr_getvol invalid vol=" + vol);
+            if (err != null) {
+                handler.post(() -> err.accept("glasses_volume_invalid_response"));
+            }
+            return;
+        }
+
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("vol", vol);
+        map.put("statusCode", status);
+        Bridge.log("LIVE: sr_getvol received vol=" + vol + " (0-15), statusCode=" + status);
+        if (ok != null) {
+            handler.post(() -> ok.accept(map));
+        }
+    }
+
+    private void handleSrVol(JSONObject json) {
+        int status = json.optInt("S", -1);
+
+        Consumer<Map<String, Object>> ok;
+        synchronized (glassesMediaVolumeLock) {
+            if (pendingSetGlassesVolumeSuccess == null) {
+                Bridge.log("LIVE: sr_vol with no pending request (status=" + status + ")");
+                return;
+            }
+            ok = pendingSetGlassesVolumeSuccess;
+            pendingSetGlassesVolumeSuccess = null;
+            pendingSetGlassesVolumeError = null;
+            cancelGlassesMediaVolumeTimeoutLocked();
+        }
+
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("statusCode", status);
+        if (ok != null) {
+            handler.post(() -> ok.accept(map));
+        }
+    }
+
+    /**
+     * Read glasses media step volume (0–15) via K900 cs_getvol / sr_getvol.
+     */
+    public void getGlassesMediaVolume(
+            Consumer<Map<String, Object>> onSuccess, Consumer<String> onError) {
+        if (!glassesReady || !getConnectionState().equals(ConnTypes.CONNECTED)) {
+            handler.post(() -> onError.accept("glasses_not_ready"));
+            return;
+        }
+        synchronized (glassesMediaVolumeLock) {
+            if (pendingGetGlassesVolumeSuccess != null || pendingSetGlassesVolumeSuccess != null) {
+                handler.post(() -> onError.accept("glasses_volume_busy"));
+                return;
+            }
+            pendingGetGlassesVolumeSuccess = onSuccess;
+            pendingGetGlassesVolumeError = onError;
+            scheduleGlassesMediaVolumeTimeoutLocked();
+        }
+        if (!sendGlassesMediaVolumeGetCommand()) {
+            synchronized (glassesMediaVolumeLock) {
+                pendingGetGlassesVolumeSuccess = null;
+                pendingGetGlassesVolumeError = null;
+                cancelGlassesMediaVolumeTimeoutLocked();
+            }
+            handler.post(() -> onError.accept("glasses_volume_send_failed"));
+        }
+    }
+
+    /**
+     * Set glasses media step volume (0–15) via K900 cs_vol / sr_vol.
+     */
+    public void setGlassesMediaVolume(
+            int level, Consumer<Map<String, Object>> onSuccess, Consumer<String> onError) {
+        if (!glassesReady || !getConnectionState().equals(ConnTypes.CONNECTED)) {
+            handler.post(() -> onError.accept("glasses_not_ready"));
+            return;
+        }
+        synchronized (glassesMediaVolumeLock) {
+            if (pendingGetGlassesVolumeSuccess != null || pendingSetGlassesVolumeSuccess != null) {
+                handler.post(() -> onError.accept("glasses_volume_busy"));
+                return;
+            }
+            pendingSetGlassesVolumeSuccess = onSuccess;
+            pendingSetGlassesVolumeError = onError;
+            scheduleGlassesMediaVolumeTimeoutLocked();
+        }
+        if (!sendGlassesMediaVolumeSetCommand(level)) {
+            synchronized (glassesMediaVolumeLock) {
+                pendingSetGlassesVolumeSuccess = null;
+                pendingSetGlassesVolumeError = null;
+                cancelGlassesMediaVolumeTimeoutLocked();
+            }
+            handler.post(() -> onError.accept("glasses_volume_send_failed"));
         }
     }
 
@@ -5788,6 +6039,9 @@ public class MentraLive extends SGCManager {
         // Send button camera LED setting
         sendButtonCameraLedSetting();
 
+        // Send camera FOV setting (K900 / Mentra Live)
+        sendCameraFovSetting();
+
         // Send gallery mode state (camera app running status)
         sendGalleryMode();
     }
@@ -5836,6 +6090,47 @@ public class MentraLive extends SGCManager {
             sendJson(json, true);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating button camera LED setting message", e);
+        }
+    }
+
+    /**
+     * Send camera FOV setting to glasses (K900 / Mentra Live). Reads fov and roi_position from store.
+     */
+    @Override
+    public void sendCameraFovSetting() {
+        int fov = 118;
+        int roiPosition = 0;
+        try {
+            Object raw = GlassesStore.INSTANCE.get("core", "camera_fov");
+            if (raw instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> map = (java.util.Map<String, Object>) raw;
+                Object f = map.get("fov");
+                Object r = map.get("roi_position");
+                if (f instanceof Number) fov = ((Number) f).intValue();
+                if (r instanceof Number) roiPosition = ((Number) r).intValue();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not read camera_fov from store, using defaults", e);
+        }
+
+        Bridge.log("LIVE: Sending camera FOV setting: fov=" + fov + ", roi_position=" + roiPosition);
+
+        if (!isConnected) {
+            Log.w(TAG, "Cannot send camera FOV setting - not connected");
+            return;
+        }
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "camera_fov_setting");
+            JSONObject params = new JSONObject();
+            params.put("fov", fov);
+            params.put("roi_position", roiPosition);
+            json.put("params", params);
+            sendJson(json, true);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating camera FOV setting message", e);
         }
     }
 

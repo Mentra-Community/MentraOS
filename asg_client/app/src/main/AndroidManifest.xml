@@ -137,6 +137,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- Intent IPC receiver for third-party app commands -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.IntentCommandReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.asg_client.ACTION_SEND_COMMAND" />
+                <action android:name="com.mentra.asg_client.ACTION_REGISTER_LISTENER" />
+                <action android:name="com.mentra.asg_client.ACTION_UNREGISTER_LISTENER" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="com.mentra.asg_client.service.core.AsgClientService"
             android:enabled="true"
@@ -155,6 +167,18 @@
 
         <service
             android:name="com.mentra.asg_client.io.streaming.services.RtmpStreamingService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="camera|microphone" />
+
+        <service
+            android:name="com.mentra.asg_client.io.streaming.services.SrtStreamingService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="camera|microphone" />
+
+        <service
+            android:name="com.mentra.asg_client.io.streaming.services.WhipStreamingService"
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="camera|microphone" />

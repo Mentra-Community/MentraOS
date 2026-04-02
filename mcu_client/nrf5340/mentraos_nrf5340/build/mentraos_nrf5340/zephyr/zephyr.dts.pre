@@ -1,0 +1,1670 @@
+# 0 "/opt/nordic/ncs/v3.0.0/zephyr/misc/empty_file.c"
+# 0 "<built-in>"
+# 0 "<command-line>"
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_nrf5340_cpuapp_ns.dts" 1
+
+
+
+
+
+
+/dts-v1/;
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns_qkaa.dtsi" 1 3 4
+
+
+
+
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/mem.h" 1 3 4
+# 8 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns_qkaa.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns.dtsi" 1 3 4
+# 9 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns.dtsi" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/armv8-m.dtsi" 1 3 4
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/skeleton.dtsi" 1 3 4
+# 9 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/skeleton.dtsi" 3 4
+/ {
+ #address-cells = <1>;
+ #size-cells = <1>;
+ chosen { };
+ aliases { };
+};
+# 4 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/armv8-m.dtsi" 2 3 4
+
+/ {
+ soc {
+  #address-cells = <1>;
+  #size-cells = <1>;
+  compatible = "simple-bus";
+  interrupt-parent = <&nvic>;
+  ranges;
+
+  nvic: interrupt-controller@e000e100 {
+   #address-cells = <1>;
+   compatible = "arm,v8m-nvic";
+   reg = <0xe000e100 0xc00>;
+   interrupt-controller;
+   #interrupt-cells = <2>;
+  };
+
+  systick: timer@e000e010 {
+   compatible = "arm,armv8m-systick";
+   reg = <0xe000e010 0x10>;
+  };
+ };
+};
+# 10 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 1 3 4
+
+
+
+
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/adc.h" 1 3 4
+# 9 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/adc.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/dt-util.h" 1 3 4
+# 19 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/dt-util.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_macro.h" 1 3 4
+# 34 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_macro.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 1 3 4
+# 18 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_loops.h" 1 3 4
+# 1083 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_loops.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_listify.h" 1 3 4
+# 1084 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_loops.h" 2 3 4
+# 19 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 2 3 4
+# 162 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal_is_eq.h" 1 3 4
+# 163 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 2 3 4
+# 193 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal_util_inc.h" 1 3 4
+# 194 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 2 3 4
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal_util_dec.h" 1 3 4
+# 197 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 2 3 4
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal_util_x2.h" 1 3 4
+# 200 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_internal.h" 2 3 4
+# 35 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/sys/util_macro.h" 2 3 4
+# 20 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/dt-util.h" 2 3 4
+# 10 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/adc.h" 2 3 4
+# 8 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/gpio/gpio.h" 1 3 4
+# 9 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/i2c/i2c.h" 1 3 4
+# 10 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/input/input-event-codes.h" 1 3 4
+# 11 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/pinctrl/nrf-pinctrl.h" 1 3 4
+# 12 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/pwm/pwm.h" 1 3 4
+# 13 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/freq.h" 1 3 4
+# 15 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/override.dtsi" 1 3 4
+# 16 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 2 3 4
+# 24 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf_common.dtsi" 3 4
+/ {
+ pinctrl: pin-controller {
+
+
+
+
+  compatible = "nordic,nrf-pinctrl";
+ };
+
+ rng_hci: entropy_bt_hci {
+  compatible = "zephyr,bt-hci-entropy";
+  status = "okay";
+ };
+
+ sw_pwm: sw-pwm {
+  compatible = "nordic,nrf-sw-pwm";
+  status = "disabled";
+  generator = <&timer1>;
+  clock-prescaler = <0>;
+  #pwm-cells = <3>;
+ };
+};
+# 11 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns.dtsi" 2 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v3.h" 1 3 4
+# 10 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v3.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v2.h" 1 3 4
+# 10 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v2.h" 3 4
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc.h" 1 3 4
+# 11 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v2.h" 2 3 4
+# 11 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v3.h" 2 3 4
+# 12 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns.dtsi" 2 3 4
+
+/ {
+ cpus {
+  #address-cells = <1>;
+  #size-cells = <0>;
+
+  cpu@0 {
+   device_type = "cpu";
+   compatible = "arm,cortex-m33f";
+   reg = <0>;
+   #address-cells = <1>;
+   #size-cells = <1>;
+
+   mpu: mpu@e000ed90 {
+    compatible = "arm,armv8m-mpu";
+    reg = <0xe000ed90 0x40>;
+   };
+  };
+ };
+
+ chosen {
+  zephyr,entropy = &psa_rng;
+  zephyr,flash-controller = &flash_controller;
+ };
+
+ soc {
+  sram0: memory@20000000 {
+   compatible = "mmio-sram";
+  };
+
+  peripheral@40000000 {
+   #address-cells = <1>;
+   #size-cells = <1>;
+   ranges = <0x0 0x40000000 0x10000000>;
+
+
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuapp_peripherals.dtsi" 1 3 4
+
+
+
+
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/regulator/nrf5x.h" 1 3 4
+# 8 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuapp_peripherals.dtsi" 2 3 4
+
+dcnf: dcnf@0 {
+ compatible = "nordic,nrf-dcnf";
+ reg = <0x0 0x1000>;
+ status = "okay";
+};
+
+oscillators: clock-controller@4000 {
+ compatible = "nordic,nrf53-oscillators";
+ reg = <0x4000 0x1000>;
+
+ lfxo: lfxo {
+  compatible = "nordic,nrf53-lfxo";
+  #clock-cells = <0>;
+  clock-frequency = <32768>;
+ };
+
+ hfxo: hfxo {
+  compatible = "nordic,nrf53-hfxo";
+  #clock-cells = <0>;
+  clock-frequency = <(((32) * 1000) * 1000)>;
+ };
+};
+
+regulators: regulator@4000 {
+ compatible = "nordic,nrf53x-regulators";
+ reg = <0x4000 0x1000>;
+ status = "okay";
+ #address-cells = <1>;
+ #size-cells = <1>;
+
+ vregmain: regulator@4704 {
+  compatible = "nordic,nrf5x-regulator";
+  reg = <0x4704 0x1>;
+  status = "okay";
+  regulator-name = "VREGMAIN";
+  regulator-initial-mode = <0>;
+ };
+
+ vregradio: regulator@4904 {
+  compatible = "nordic,nrf5x-regulator";
+  reg = <0x4904 0x1>;
+  status = "okay";
+  regulator-name = "VREGRADIO";
+  regulator-initial-mode = <0>;
+ };
+
+ vregh: regulator@4b00 {
+  compatible = "nordic,nrf53x-regulator-hv";
+  reg = <0x4b00 0x44>;
+  status = "disabled";
+  regulator-name = "VREGH";
+ };
+};
+
+clock: clock@5000 {
+ compatible = "nordic,nrf-clock";
+ reg = <0x5000 0x1000>;
+ interrupts = <5 1>;
+ status = "okay";
+};
+
+power: power@5000 {
+ compatible = "nordic,nrf-power";
+ reg = <0x5000 0x1000>;
+ ranges = <0x0 0x5000 0x1000>;
+ interrupts = <5 1>;
+ status = "okay";
+ #address-cells = <1>;
+ #size-cells = <1>;
+
+ gpregret1: gpregret1@51c {
+  #address-cells = <1>;
+  #size-cells = <1>;
+  compatible = "nordic,nrf-gpregret";
+  reg = <0x51c 0x1>;
+  status = "okay";
+ };
+
+ gpregret2: gpregret2@520 {
+  #address-cells = <1>;
+  #size-cells = <1>;
+  compatible = "nordic,nrf-gpregret";
+  reg = <0x520 0x1>;
+  status = "okay";
+ };
+};
+
+reset: reset-controller@5000 {
+ compatible = "nordic,nrf-reset";
+ reg = <0x5000 0x1000>;
+ status = "okay";
+};
+
+ctrlap: ctrlap@6000 {
+ compatible = "nordic,nrf-ctrlapperi";
+ reg = <0x6000 0x1000>;
+ status = "okay";
+};
+
+i2c0: i2c@8000 {
+
+
+
+
+
+ compatible = "nordic,nrf-twim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0x8000 0x1000>;
+ interrupts = <8 1>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+ zephyr,pm-device-runtime-auto;
+};
+
+spi0: spi@8000 {
+
+
+
+
+
+
+ compatible = "nordic,nrf-spim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0x8000 0x1000>;
+ interrupts = <8 1>;
+ max-frequency = <(((8) * 1000) * 1000)>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+};
+
+uart0: uart@8000 {
+ compatible = "nordic,nrf-uarte";
+ reg = <0x8000 0x1000>;
+ interrupts = <8 1>;
+ status = "disabled";
+};
+
+i2c1: i2c@9000 {
+
+
+
+
+
+
+ compatible = "nordic,nrf-twim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0x9000 0x1000>;
+ interrupts = <9 1>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+ zephyr,pm-device-runtime-auto;
+};
+
+spi1: spi@9000 {
+
+
+
+
+
+
+ compatible = "nordic,nrf-spim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0x9000 0x1000>;
+ interrupts = <9 1>;
+ max-frequency = <(((8) * 1000) * 1000)>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+};
+
+uart1: uart@9000 {
+ compatible = "nordic,nrf-uarte";
+ reg = <0x9000 0x1000>;
+ interrupts = <9 1>;
+ status = "disabled";
+};
+
+spi4: spi@a000 {
+ compatible = "nordic,nrf-spim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0xa000 0x1000>;
+ interrupts = <10 1>;
+ max-frequency = <(((32) * 1000) * 1000)>;
+ easydma-maxcnt-bits = <16>;
+ rx-delay-supported;
+ rx-delay = <2>;
+ status = "disabled";
+};
+
+i2c2: i2c@b000 {
+
+
+
+
+
+
+ compatible = "nordic,nrf-twim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0xb000 0x1000>;
+ interrupts = <11 1>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+ zephyr,pm-device-runtime-auto;
+};
+
+spi2: spi@b000 {
+
+
+
+
+
+
+ compatible = "nordic,nrf-spim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0xb000 0x1000>;
+ interrupts = <11 1>;
+ max-frequency = <(((8) * 1000) * 1000)>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+};
+
+uart2: uart@b000 {
+ compatible = "nordic,nrf-uarte";
+ reg = <0xb000 0x1000>;
+ interrupts = <11 1>;
+ status = "disabled";
+};
+
+i2c3: i2c@c000 {
+
+
+
+
+
+
+ compatible = "nordic,nrf-twim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0xc000 0x1000>;
+ interrupts = <12 1>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+ zephyr,pm-device-runtime-auto;
+};
+
+spi3: spi@c000 {
+
+
+
+
+
+
+ compatible = "nordic,nrf-spim";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0xc000 0x1000>;
+ interrupts = <12 1>;
+ max-frequency = <(((8) * 1000) * 1000)>;
+ easydma-maxcnt-bits = <16>;
+ status = "disabled";
+};
+
+uart3: uart@c000 {
+ compatible = "nordic,nrf-uarte";
+ reg = <0xc000 0x1000>;
+ interrupts = <12 1>;
+ status = "disabled";
+};
+
+adc: adc@e000 {
+ compatible = "nordic,nrf-saadc";
+ reg = <0xe000 0x1000>;
+ interrupts = <14 1>;
+ status = "disabled";
+ #io-channel-cells = <1>;
+ zephyr,pm-device-runtime-auto;
+};
+
+timer0: timer@f000 {
+ compatible = "nordic,nrf-timer";
+ status = "disabled";
+ reg = <0xf000 0x1000>;
+ cc-num = <6>;
+ max-bit-width = <32>;
+ interrupts = <15 1>;
+ prescaler = <0>;
+};
+
+timer1: timer@10000 {
+ compatible = "nordic,nrf-timer";
+ status = "disabled";
+ reg = <0x10000 0x1000>;
+ cc-num = <6>;
+ max-bit-width = <32>;
+ interrupts = <16 1>;
+ prescaler = <0>;
+};
+
+timer2: timer@11000 {
+ compatible = "nordic,nrf-timer";
+ status = "disabled";
+ reg = <0x11000 0x1000>;
+ cc-num = <6>;
+ max-bit-width = <32>;
+ interrupts = <17 1>;
+ prescaler = <0>;
+};
+
+rtc0: rtc@14000 {
+ compatible = "nordic,nrf-rtc";
+ reg = <0x14000 0x1000>;
+ cc-num = <4>;
+ interrupts = <20 1>;
+ status = "disabled";
+ clock-frequency = <32768>;
+ prescaler = <1>;
+};
+
+rtc1: rtc@15000 {
+ compatible = "nordic,nrf-rtc";
+ reg = <0x15000 0x1000>;
+ cc-num = <4>;
+ interrupts = <21 1>;
+ status = "disabled";
+ clock-frequency = <32768>;
+ prescaler = <1>;
+};
+
+dppic0: dppic: dppic@17000 {
+ compatible = "nordic,nrf-dppic";
+ reg = <0x17000 0x1000>;
+ status = "okay";
+};
+
+wdt: wdt0: watchdog@18000 {
+ compatible = "nordic,nrf-wdt";
+ reg = <0x18000 0x1000>;
+ interrupts = <24 1>;
+ status = "okay";
+};
+
+wdt1: watchdog@19000 {
+ compatible = "nordic,nrf-wdt";
+ reg = <0x19000 0x1000>;
+ interrupts = <25 1>;
+ status = "disabled";
+};
+
+comp: comparator@1a000 {
+
+
+
+
+ compatible = "nordic,nrf-comp";
+ reg = <0x1a000 0x1000>;
+ interrupts = <26 1>;
+ status = "disabled";
+};
+
+egu0: egu@1b000 {
+ compatible = "nordic,nrf-egu";
+ reg = <0x1b000 0x1000>;
+ interrupts = <27 1>;
+ status = "okay";
+};
+
+egu1: egu@1c000 {
+ compatible = "nordic,nrf-egu";
+ reg = <0x1c000 0x1000>;
+ interrupts = <28 1>;
+ status = "okay";
+};
+
+egu2: egu@1d000 {
+ compatible = "nordic,nrf-egu";
+ reg = <0x1d000 0x1000>;
+ interrupts = <29 1>;
+ status = "okay";
+};
+
+egu3: egu@1e000 {
+ compatible = "nordic,nrf-egu";
+ reg = <0x1e000 0x1000>;
+ interrupts = <30 1>;
+ status = "okay";
+};
+
+egu4: egu@1f000 {
+ compatible = "nordic,nrf-egu";
+ reg = <0x1f000 0x1000>;
+ interrupts = <31 1>;
+ status = "okay";
+};
+
+egu5: egu@20000 {
+ compatible = "nordic,nrf-egu";
+ reg = <0x20000 0x1000>;
+ interrupts = <32 1>;
+ status = "okay";
+};
+
+pwm0: pwm@21000 {
+ compatible = "nordic,nrf-pwm";
+ reg = <0x21000 0x1000>;
+ interrupts = <33 1>;
+ status = "disabled";
+ #pwm-cells = <3>;
+};
+
+pwm1: pwm@22000 {
+ compatible = "nordic,nrf-pwm";
+ reg = <0x22000 0x1000>;
+ interrupts = <34 1>;
+ status = "disabled";
+ #pwm-cells = <3>;
+};
+
+pwm2: pwm@23000 {
+ compatible = "nordic,nrf-pwm";
+ reg = <0x23000 0x1000>;
+ interrupts = <35 1>;
+ status = "disabled";
+ #pwm-cells = <3>;
+};
+
+pwm3: pwm@24000 {
+ compatible = "nordic,nrf-pwm";
+ reg = <0x24000 0x1000>;
+ interrupts = <36 1>;
+ status = "disabled";
+ #pwm-cells = <3>;
+};
+
+pdm0: pdm@26000 {
+ compatible = "nordic,nrf-pdm";
+ reg = <0x26000 0x1000>;
+ interrupts = <38 1>;
+ status = "disabled";
+};
+
+i2s0: i2s@28000 {
+ compatible = "nordic,nrf-i2s";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0x28000 0x1000>;
+ interrupts = <40 1>;
+ status = "disabled";
+};
+
+mbox: ipc: mbox@2a000 {
+ compatible = "nordic,mbox-nrf-ipc", "nordic,nrf-ipc";
+ reg = <0x2a000 0x1000>;
+ tx-mask = <0x0000ffff>;
+ rx-mask = <0x0000ffff>;
+ interrupts = <42 1>;
+ #mbox-cells = <1>;
+ status = "okay";
+};
+
+qspi: qspi@2b000 {
+ compatible = "nordic,nrf-qspi";
+ #address-cells = <1>;
+ #size-cells = <0>;
+ reg = <0x2b000 0x1000>, <0x10000000 0x10000000>;
+ reg-names = "qspi", "qspi_mm";
+ interrupts = <43 1>;
+ status = "disabled";
+};
+
+nfct: nfct@2d000 {
+ compatible = "nordic,nrf-nfct";
+ reg = <0x2d000 0x1000>;
+ interrupts = <45 1>;
+ status = "disabled";
+};
+
+mutex: mutex@30000 {
+ compatible = "nordic,nrf-mutex";
+ reg = <0x30000 0x1000>;
+ status = "okay";
+};
+
+qdec0: qdec@33000 {
+ compatible = "nordic,nrf-qdec";
+ reg = <0x33000 0x1000>;
+ interrupts = <51 1>;
+ status = "disabled";
+};
+
+qdec1: qdec@34000 {
+ compatible = "nordic,nrf-qdec";
+ reg = <0x34000 0x1000>;
+ interrupts = <52 1>;
+ status = "disabled";
+};
+
+usbd: usbd@36000 {
+ compatible = "nordic,nrf-usbd";
+ reg = <0x36000 0x1000>;
+ interrupts = <54 1>;
+ num-bidir-endpoints = <1>;
+ num-in-endpoints = <7>;
+ num-out-endpoints = <7>;
+ num-isoin-endpoints = <1>;
+ num-isoout-endpoints = <1>;
+ status = "disabled";
+};
+
+usbreg: regulator@37000 {
+ compatible = "nordic,nrf-usbreg";
+ reg = <0x37000 0x1000>;
+ interrupts = <55 1>;
+ status = "okay";
+};
+
+flash_controller: flash-controller@39000 {
+ compatible = "nordic,nrf53-flash-controller";
+ reg = <0x39000 0x1000>;
+ partial-erase;
+
+ #address-cells = <1>;
+ #size-cells = <1>;
+
+
+ flash0: flash@0 {
+  compatible = "soc-nv-flash";
+  erase-block-size = <4096>;
+  write-block-size = <4>;
+ };
+};
+
+kmu: kmu@39000 {
+ compatible = "nordic,nrf-kmu";
+ reg = <0x39000 0x1000>;
+ interrupts = <57 1>;
+ status = "okay";
+};
+
+vmc: vmc@81000 {
+ compatible = "nordic,nrf-vmc";
+ reg = <0x81000 0x1000>;
+ status = "okay";
+};
+
+gpio0: gpio@842500 {
+ compatible = "nordic,nrf-gpio";
+ gpio-controller;
+ reg = <0x842500 0x300>;
+ #gpio-cells = <2>;
+ status = "disabled";
+ port = <0>;
+ gpiote-instance = <&gpiote>;
+};
+
+gpio1: gpio@842800 {
+ compatible = "nordic,nrf-gpio";
+ gpio-controller;
+ reg = <0x842800 0x300>;
+ #gpio-cells = <2>;
+ ngpios = <16>;
+ status = "disabled";
+ port = <1>;
+ gpiote-instance = <&gpiote>;
+};
+
+ieee802154: ieee802154 {
+ compatible = "nordic,nrf-ieee802154";
+ status = "disabled";
+};
+# 51 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns.dtsi" 2 3 4
+  };
+
+
+
+
+
+
+  gpiote: gpiote1: gpiote@4002f000 {
+   compatible = "nordic,nrf-gpiote";
+   reg = <0x4002f000 0x1000>;
+   interrupts = <47 5>;
+   status = "disabled";
+   instance = <1>;
+  };
+ };
+
+
+ ipc {
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuapp_ipc.dtsi" 1 3 4
+
+
+
+
+
+
+ipc0: ipc0 {
+ compatible = "zephyr,ipc-openamp-static-vrings";
+ memory-region = <&sram0_shared>;
+ mboxes = <&mbox 0>, <&mbox 1>;
+ mbox-names = "tx", "rx";
+ role = "host";
+ status = "okay";
+
+ bt_hci_ipc0: bt_hci_ipc0 {
+  compatible = "zephyr,bt-hci-ipc";
+  status = "okay";
+ };
+};
+# 70 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns.dtsi" 2 3 4
+ };
+
+ psa_rng: psa-rng {
+  compatible = "zephyr,psa-crypto-rng";
+  status = "okay";
+ };
+};
+
+&nvic {
+ arm,num-irq-priority-bits = <3>;
+};
+
+&systick {
+
+ status = "disabled";
+};
+# 9 "/opt/nordic/ncs/v3.0.0/zephyr/dts/arm/nordic/nrf5340_cpuappns_qkaa.dtsi" 2 3 4
+
+&flash0 {
+ reg = <0x00000000 ((1024) * 1024)>;
+};
+
+&sram0 {
+ reg = <0x20000000 ((512) * 1024)>;
+};
+
+/ {
+ soc {
+  compatible = "nordic,nrf5340-cpuapp-qkaa", "nordic,nrf5340-cpuapp",
+        "nordic,nrf53", "simple-bus";
+ };
+};
+# 9 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_nrf5340_cpuapp_ns.dts" 2
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340_cpuapp_common.dtsi" 1
+
+
+
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_common.dtsi" 1
+
+
+
+
+
+
+/ {
+ leds {
+  compatible = "gpio-leds";
+  led0: led_0 {
+   gpios = <&gpio0 28 (1 << 0)>;
+   label = "Green LED 0";
+  };
+  led1: led_1 {
+   gpios = <&gpio0 29 (1 << 0)>;
+   label = "Green LED 1";
+  };
+  led2: led_2 {
+   gpios = <&gpio0 30 (1 << 0)>;
+   label = "Green LED 2";
+  };
+  led3: led_3 {
+   gpios = <&gpio0 31 (1 << 0)>;
+   label = "Green LED 3";
+  };
+ };
+
+ buttons {
+  compatible = "gpio-keys";
+  button0: button_0 {
+   gpios = <&gpio0 23 ((1 << 4) | (1 << 0))>;
+   label = "Push button 1";
+   zephyr,code = <11>;
+  };
+  button1: button_1 {
+   gpios = <&gpio0 24 ((1 << 4) | (1 << 0))>;
+   label = "Push button 2";
+   zephyr,code = <2>;
+  };
+  button2: button_2 {
+   gpios = <&gpio0 8 ((1 << 4) | (1 << 0))>;
+   label = "Push button 3";
+   zephyr,code = <3>;
+  };
+  button3: button_3 {
+   gpios = <&gpio0 9 ((1 << 4) | (1 << 0))>;
+   label = "Push button 4";
+   zephyr,code = <4>;
+  };
+ };
+
+ arduino_header: connector {
+  compatible = "arduino-header-r3";
+  #gpio-cells = <2>;
+  gpio-map-mask = <0xffffffff 0xffffffc0>;
+  gpio-map-pass-thru = <0 0x3f>;
+  gpio-map = <0 0 &gpio0 4 0>,
+      <1 0 &gpio0 5 0>,
+      <2 0 &gpio0 6 0>,
+      <3 0 &gpio0 7 0>,
+      <4 0 &gpio0 25 0>,
+      <5 0 &gpio0 26 0>,
+      <6 0 &gpio1 0 0>,
+      <7 0 &gpio1 1 0>,
+      <8 0 &gpio1 4 0>,
+      <9 0 &gpio1 5 0>,
+      <10 0 &gpio1 6 0>,
+      <11 0 &gpio1 7 0>,
+      <12 0 &gpio1 8 0>,
+      <13 0 &gpio1 9 0>,
+      <14 0 &gpio1 10 0>,
+      <15 0 &gpio1 11 0>,
+      <16 0 &gpio1 12 0>,
+      <17 0 &gpio1 13 0>,
+      <18 0 &gpio1 14 0>,
+      <19 0 &gpio1 15 0>,
+      <20 0 &gpio1 2 0>,
+      <21 0 &gpio1 3 0>;
+ };
+
+
+ aliases {
+  led0 = &led0;
+  led1 = &led1;
+  led2 = &led2;
+  led3 = &led3;
+  sw0 = &button0;
+  sw1 = &button1;
+  sw2 = &button2;
+  sw3 = &button3;
+  bootloader-led0 = &led0;
+  mcuboot-button0 = &button0;
+  mcuboot-led0 = &led0;
+ };
+};
+# 7 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340_cpuapp_common.dtsi" 2
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340_cpuapp_common-pinctrl.dtsi" 1
+
+
+
+
+
+&pinctrl {
+ i2c1_default: i2c1_default {
+  group1 {
+   psels = <((((((1) * 32U) + (2)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (3)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+  };
+ };
+
+ i2c1_sleep: i2c1_sleep {
+  group1 {
+   psels = <((((((1) * 32U) + (2)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (3)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+
+ uart0_default: uart0_default {
+  group1 {
+   psels = <((((((0) * 32U) + (20)) & 0x1FFU) << 0U) | ((0U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (19)) & 0x1FFU) << 0U) | ((2U & 0xFFU) << 24U))>;
+  };
+  group2 {
+   psels = <((((((0) * 32U) + (22)) & 0x1FFU) << 0U) | ((1U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (21)) & 0x1FFU) << 0U) | ((3U & 0xFFU) << 24U))>;
+   bias-pull-up;
+  };
+ };
+
+ uart0_sleep: uart0_sleep {
+  group1 {
+   psels = <((((((0) * 32U) + (20)) & 0x1FFU) << 0U) | ((0U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (22)) & 0x1FFU) << 0U) | ((1U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (19)) & 0x1FFU) << 0U) | ((2U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (21)) & 0x1FFU) << 0U) | ((3U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+
+ pwm0_default: pwm0_default {
+  group1 {
+   psels = <((((((0) * 32U) + (28)) & 0x1FFU) << 0U) | ((22U & 0xFFU) << 24U))>;
+  };
+ };
+
+ pwm0_sleep: pwm0_sleep {
+  group1 {
+   psels = <((((((0) * 32U) + (28)) & 0x1FFU) << 0U) | ((22U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+
+ qspi_default: qspi_default {
+  group1 {
+   psels = <((((((0) * 32U) + (17)) & 0x1FFU) << 0U) | ((29U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (13)) & 0x1FFU) << 0U) | ((31U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (14)) & 0x1FFU) << 0U) | ((32U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (15)) & 0x1FFU) << 0U) | ((33U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (16)) & 0x1FFU) << 0U) | ((34U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (18)) & 0x1FFU) << 0U) | ((30U & 0xFFU) << 24U))>;
+   nordic,drive-mode = <3U>;
+  };
+ };
+
+ qspi_sleep: qspi_sleep {
+  group1 {
+   psels = <((((((0) * 32U) + (17)) & 0x1FFU) << 0U) | ((29U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (13)) & 0x1FFU) << 0U) | ((31U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (14)) & 0x1FFU) << 0U) | ((32U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (15)) & 0x1FFU) << 0U) | ((33U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (16)) & 0x1FFU) << 0U) | ((34U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+  group2 {
+   psels = <((((((0) * 32U) + (18)) & 0x1FFU) << 0U) | ((30U & 0xFFU) << 24U))>;
+   low-power-enable;
+   bias-pull-up;
+  };
+ };
+
+ uart1_default: uart1_default {
+  group1 {
+   psels = <((((((1) * 32U) + (1)) & 0x1FFU) << 0U) | ((0U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (11)) & 0x1FFU) << 0U) | ((2U & 0xFFU) << 24U))>;
+  };
+  group2 {
+   psels = <((((((1) * 32U) + (0)) & 0x1FFU) << 0U) | ((1U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (10)) & 0x1FFU) << 0U) | ((3U & 0xFFU) << 24U))>;
+   bias-pull-up;
+  };
+ };
+
+ uart1_sleep: uart1_sleep {
+  group1 {
+   psels = <((((((1) * 32U) + (1)) & 0x1FFU) << 0U) | ((0U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (0)) & 0x1FFU) << 0U) | ((1U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (11)) & 0x1FFU) << 0U) | ((2U & 0xFFU) << 24U))>,
+    <((((((0) * 32U) + (10)) & 0x1FFU) << 0U) | ((3U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+
+ spi4_default: spi4_default {
+  group1 {
+   psels = <((((((1) * 32U) + (15)) & 0x1FFU) << 0U) | ((4U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (14)) & 0x1FFU) << 0U) | ((6U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (13)) & 0x1FFU) << 0U) | ((5U & 0xFFU) << 24U))>;
+  };
+ };
+
+ spi4_sleep: spi4_sleep {
+  group1 {
+   psels = <((((((1) * 32U) + (15)) & 0x1FFU) << 0U) | ((4U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (14)) & 0x1FFU) << 0U) | ((6U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (13)) & 0x1FFU) << 0U) | ((5U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+
+};
+# 8 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340_cpuapp_common.dtsi" 2
+
+
+/ {
+
+ chosen {
+  zephyr,console = &uart0;
+  zephyr,shell-uart = &uart0;
+  zephyr,uart-mcumgr = &uart0;
+  zephyr,bt-mon-uart = &uart0;
+  zephyr,bt-c2h-uart = &uart0;
+  zephyr,bt-hci = &bt_hci_ipc0;
+  nordic,802154-spinel-ipc = &ipc0;
+  zephyr,ieee802154 = &ieee802154;
+ };
+
+ pwmleds {
+  compatible = "pwm-leds";
+  pwm_led0: pwm_led_0 {
+   pwms = <&pwm0 0 (((20) * 1000UL) * 1000UL) (1 << 0)>;
+  };
+ };
+
+ arduino_adc: analog-connector {
+  compatible = "arduino,uno-adc";
+  #io-channel-cells = <1>;
+  io-channel-map = <0 &adc 0>,
+     <1 &adc 1>,
+     <2 &adc 2>,
+     <3 &adc 3>,
+     <4 &adc 4>,
+     <5 &adc 5>;
+ };
+
+ gpio_fwd: nrf-gpio-forwarder {
+  compatible = "nordic,nrf-gpio-forwarder";
+  status = "okay";
+  uart {
+   gpios = <&gpio1 1 0>, <&gpio1 0 0>, <&gpio0 11 0>, <&gpio0 10 0>;
+  };
+ };
+
+
+ aliases {
+  pwm-led0 = &pwm_led0;
+  watchdog0 = &wdt0;
+ };
+};
+
+&vregmain {
+ regulator-initial-mode = <1>;
+};
+
+&vregradio {
+ regulator-initial-mode = <1>;
+};
+
+&vregh {
+ status = "okay";
+};
+
+&lfxo {
+ load-capacitors = "internal";
+ load-capacitance-picofarad = <7>;
+};
+
+&adc {
+ status = "okay";
+};
+
+&gpiote {
+ status = "okay";
+};
+
+&gpio0 {
+ status = "okay";
+};
+
+&gpio1 {
+ status = "okay";
+};
+
+&i2c1 {
+ compatible = "nordic,nrf-twim";
+ status = "okay";
+ pinctrl-0 = <&i2c1_default>;
+ pinctrl-1 = <&i2c1_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+
+&uart0 {
+ status = "okay";
+ current-speed = <115200>;
+ pinctrl-0 = <&uart0_default>;
+ pinctrl-1 = <&uart0_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+
+&pwm0 {
+ status = "okay";
+ pinctrl-0 = <&pwm0_default>;
+ pinctrl-1 = <&pwm0_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+
+&qspi {
+ status = "okay";
+ pinctrl-0 = <&qspi_default>;
+ pinctrl-1 = <&qspi_sleep>;
+ pinctrl-names = "default", "sleep";
+ mx25r64: mx25r6435f@0 {
+  compatible = "nordic,qspi-nor";
+  reg = <0>;
+
+  writeoc = "pp4io";
+
+  readoc = "read4io";
+  sck-frequency = <8000000>;
+  jedec-id = [c2 28 17];
+  sfdp-bfp = [
+   e5 20 f1 ff ff ff ff 03 44 eb 08 6b 08 3b 04 bb
+   ee ff ff ff ff ff 00 ff ff ff 00 ff 0c 20 0f 52
+   10 d8 00 ff 23 72 f5 00 82 ed 04 cc 44 83 68 44
+   30 b0 30 b0 f7 c4 d5 5c 00 be 29 ff f0 d0 ff ff
+  ];
+  size = <67108864>;
+  has-dpd;
+  t-enter-dpd = <10000>;
+  t-exit-dpd = <35000>;
+ };
+};
+
+arduino_serial: &uart1 {
+ compatible = "nordic,nrf-uarte";
+ current-speed = <115200>;
+ pinctrl-0 = <&uart1_default>;
+ pinctrl-1 = <&uart1_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+
+arduino_i2c: &i2c1 {};
+
+arduino_spi: &spi4 {
+ compatible = "nordic,nrf-spim";
+ status = "okay";
+ cs-gpios = <&arduino_header 16 (1 << 0)>;
+ pinctrl-0 = <&spi4_default>;
+ pinctrl-1 = <&spi4_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+
+&ieee802154 {
+ status = "okay";
+};
+
+zephyr_udc0: &usbd {
+ compatible = "nordic,nrf-usbd";
+ status = "okay";
+};
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf5340_cpuapp_partition.dtsi" 1 3 4
+# 9 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf5340_cpuapp_partition.dtsi" 3 4
+&flash0 {
+# 27 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf5340_cpuapp_partition.dtsi" 3 4
+ partitions {
+  compatible = "fixed-partitions";
+  #address-cells = <1>;
+  #size-cells = <1>;
+
+  boot_partition: partition@0 {
+   label = "mcuboot";
+   reg = <0x00000000 0x10000>;
+  };
+  slot0_partition: partition@10000 {
+   label = "image-0";
+   reg = <0x00010000 0x40000>;
+  };
+  slot0_ns_partition: partition@50000 {
+   label = "image-0-nonsecure";
+   reg = <0x00050000 0x30000>;
+  };
+  slot1_partition: partition@80000 {
+   label = "image-1";
+   reg = <0x00080000 0x40000>;
+  };
+  slot1_ns_partition: partition@c0000 {
+   label = "image-1-nonsecure";
+   reg = <0x000c0000 0x30000>;
+  };
+  tfm_ps_partition: partition@f0000 {
+   label = "tfm-ps";
+   reg = <0x000f0000 0x00004000>;
+  };
+  tfm_its_partition: partition@f4000 {
+   label = "tfm-its";
+   reg = <0x000f4000 0x00002000>;
+  };
+  tfm_otp_partition: partition@f6000 {
+   label = "tfm-otp";
+   reg = <0x000f6000 0x00002000>;
+  };
+  storage_partition: partition@f8000 {
+   label = "storage";
+   reg = <0x000f8000 0x00008000>;
+  };
+ };
+};
+
+/ {
+# 80 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf5340_cpuapp_partition.dtsi" 3 4
+ reserved-memory {
+  #address-cells = <1>;
+  #size-cells = <1>;
+  ranges;
+
+  sram0_image: image@20000000 {
+
+   reg = <0x20000000 ((448) * 1024)>;
+  };
+
+  sram0_s: image_s@20000000 {
+
+   reg = <0x20000000 0x40000>;
+  };
+
+  sram0_ns: image_ns@20040000 {
+
+   reg = <0x20040000 0x40000>;
+  };
+
+  sram0_ns_app: image_ns_app@20040000 {
+
+   reg = <0x20040000 0x30000>;
+  };
+ };
+};
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf5340_shared_sram_partition.dtsi" 1 3 4
+# 20 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf5340_shared_sram_partition.dtsi" 3 4
+/ {
+ chosen {
+  zephyr,ipc_shm = &sram0_shared;
+ };
+
+ reserved-memory {
+  #address-cells = <1>;
+  #size-cells = <1>;
+  ranges;
+
+  sram0_shared: memory@20070000 {
+
+   reg = <0x20070000 0x10000>;
+  };
+ };
+};
+# 108 "/opt/nordic/ncs/v3.0.0/zephyr/dts/common/nordic/nrf5340_cpuapp_partition.dtsi" 2 3 4
+# 169 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340_cpuapp_common.dtsi" 2
+# 10 "/opt/nordic/ncs/v3.0.0/zephyr/boards/nordic/nrf5340dk/nrf5340dk_nrf5340_cpuapp_ns.dts" 2
+
+/ {
+ model = "Nordic NRF5340 DK NRF5340 Application";
+ compatible = "nordic,nrf5340-dk-nrf5340-cpuapp";
+
+ chosen {
+  zephyr,sram = &sram0_ns_app;
+  zephyr,flash = &flash0;
+  zephyr,code-partition = &slot0_ns_partition;
+ };
+};
+# 0 "<command-line>" 2
+# 1 "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/app.overlay" 1
+# 11 "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/app.overlay"
+/ {
+ chosen {
+  zephyr,display = &hls12vga;
+  nordic,pm-ext-flash = &mx25u256;
+
+ };
+ zephyr,user {
+
+
+
+  gx8002_sda-gpios = <&gpio1 04 (0 << 0)>;
+  gx8002_scl-gpios = <&gpio1 05 (0 << 0)>;
+  gx8002_int4-gpios = <&gpio0 22 (0 << 0)>;
+
+  jsa_1147_sda-gpios = <&gpio1 03 (0 << 0)>;
+  jsa_1147_scl-gpios = <&gpio1 02 (0 << 0)>;
+  jsa_1147_int1-gpios = <&gpio1 13 (0 << 0)>;
+
+  es_power_en-gpios = <&gpio1 00 (0 << 0)>;
+  mic_pwr_en-gpios = <&gpio0 04 (0 << 0)>;
+
+  key1-gpios = <&gpio0 23 (0 << 0)>;
+
+ };
+ /delete-node/ aliases;
+ aliases {
+  myimu6 = &i2c0;
+  myimu3 = &i2c2;
+
+
+  watchdog0 = &wdt0;
+ };
+
+};
+
+
+&pinctrl {
+ spi4_default: spi4_default {
+  group1 {
+   psels = <((((((0) * 32U) + (8)) & 0x1FFU) << 0U) | ((4U & 0xFFU) << 24U))>,
+           <((((((0) * 32U) + (10)) & 0x1FFU) << 0U) | ((6U & 0xFFU) << 24U))>,
+           <((((((0) * 32U) + (9)) & 0x1FFU) << 0U) | ((5U & 0xFFU) << 24U))>;
+   nordic,drive-mode = <8U>;
+  };
+ };
+ spi4_sleep: spi4_sleep {
+  group1 {
+   psels = <((((((0) * 32U) + (8)) & 0x1FFU) << 0U) | ((4U & 0xFFU) << 24U))>,
+           <((((((0) * 32U) + (10)) & 0x1FFU) << 0U) | ((6U & 0xFFU) << 24U))>,
+           <((((((0) * 32U) + (9)) & 0x1FFU) << 0U) | ((5U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+ i2c0_default: i2c0_default {
+  group1 {
+   psels = <((((((0) * 32U) + (31)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+     <((((((0) * 32U) + (30)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+   bias-pull-up;
+   nordic,drive-mode = <6U>;
+  };
+ };
+ i2c0_sleep: i2c0_sleep {
+  group1 {
+   psels = <((((((0) * 32U) + (31)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+     <((((((0) * 32U) + (30)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+ i2c2_default: i2c2_default {
+  group1 {
+   psels = <((((((1) * 32U) + (15)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+     <((((((1) * 32U) + (14)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+   bias-pull-up;
+   nordic,drive-mode = <6U>;
+  };
+ };
+ i2c2_sleep: i2c2_sleep {
+  group1 {
+   psels = <((((((1) * 32U) + (15)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+     <((((((1) * 32U) + (14)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+ i2c3_default: i2c3_default {
+  group1 {
+
+   psels = <((((((1) * 32U) + (04)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+     <((((((1) * 32U) + (05)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+   bias-pull-up;
+   nordic,drive-mode = <6U>;
+  };
+ };
+ i2c3_sleep: i2c3_sleep {
+  group1 {
+   psels = <((((((1) * 32U) + (04)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>,
+     <((((((1) * 32U) + (05)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>;
+   low-power-enable;
+  };
+ };
+
+ pdm0_default_alt: pdm0_default_alt {
+ group1 {
+  psels = <((((((1) * 32U) + (12)) & 0x1FFU) << 0U) | ((20U & 0xFFU) << 24U))>,
+    <((((((1) * 32U) + (11)) & 0x1FFU) << 0U) | ((21U & 0xFFU) << 24U))>;
+
+ };
+ };
+};
+&spi4 {
+ compatible = "nordic,nrf-spim";
+ status = "okay";
+ cs-gpios = <&gpio0 0 (0 << 0)>;
+ pinctrl-0 = <&spi4_default>;
+ pinctrl-1 = <&spi4_sleep>;
+ pinctrl-names = "default", "sleep";
+ hls12vga: hls12vga@0 {
+  compatible = "zephyr,custom-hls12vga";
+  status = "okay";
+  reg = <0>;
+  spi-max-frequency = <32000000>;
+  left_cs-gpios = <&gpio0 11 (0 << 0)>;
+  right_cs-gpios = <&gpio0 12 (0 << 0)>;
+  reset-gpios = <&gpio1 01 (0 << 0)>;
+  vcom-gpios = <&gpio0 7 (0 << 0)>;
+  v1_8-gpios = <&gpio0 6 (0 << 0)>;
+  v0_9-gpios = <&gpio0 5 (0 << 0)>;
+
+  width = <640>;
+
+  height = <480>;
+ };
+};
+&i2c0 {
+ status = "okay";
+ compatible = "nordic,nrf-twim";
+ pinctrl-0 = <&i2c0_default>;
+ pinctrl-1 = <&i2c0_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+&i2c2 {
+ status = "disabled";
+ compatible = "nordic,nrf-twim";
+ pinctrl-0 = <&i2c2_default>;
+ pinctrl-1 = <&i2c2_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+&i2c3 {
+ status = "disabled";
+ compatible = "nordic,nrf-twim";
+ pinctrl-0 = <&i2c3_default>;
+ pinctrl-1 = <&i2c3_sleep>;
+ pinctrl-names = "default", "sleep";
+};
+
+dmic_dev: &pdm0 {
+    status = "okay";
+ compatible = "nordic,nrf-pdm";
+
+ pinctrl-0 = <&pdm0_default_alt>;
+ pinctrl-names = "default";
+
+};
+&gpio1 {
+ sense-edge-mask = <0xffffffff>;
+};
+&gpio0 {
+ sense-edge-mask = <0xffffffff>;
+};
+&nfct {
+ status = "disabled";
+};
+&gpio_fwd {
+
+ /delete-node/ uart;
+};
+
+&pwm0 {
+ status = "disabled";
+};
+&ieee802154 {
+ status = "disabled";
+};
+&uart0 {
+ status = "disabled";
+};
+
+/delete-node/ &button0;
+/delete-node/ &button1;
+/delete-node/ &button2;
+/delete-node/ &button3;
+
+/delete-node/ &led0;
+/delete-node/ &led1;
+/delete-node/ &led2;
+/delete-node/ &led3;
+# 235 "/Users/loayyari/Documents/Github/MentraOS_TESTS/mcu_client/nrf5340/mentraos_nrf5340/app.overlay"
+/delete-node/ &mx25r64;
+&qspi {
+ status = "okay";
+ pinctrl-0 = <&qspi_default>;
+ pinctrl-1 = <&qspi_sleep>;
+ pinctrl-names = "default", "sleep";
+ mx25u256: mx25u256@0 {
+  compatible = "nordic,qspi-nor";
+  reg = <0>;
+
+  writeoc = "pp4io";
+
+  readoc = "read4io";
+  sck-frequency = <32000000>;
+  address-size-32;
+  enter-4byte-addr = <0xb7>;
+  jedec-id = [ c2 25 39 ];
+  sfdp-bfp = [
+   e5 20 fb ff ff ff ff 0f 44 eb 08 6b 08 3b 04 bb
+   fe ff ff ff ff ff 00 ff ff ff 44 eb 0c 20 0f 52
+   10 d8 00 ff 25 52 dd 00 84 a5 04 e2 44 03 17 38
+   30 b0 30 b0 f7 bd d5 5c 4a 9e 29 ff f0 50 f9 85 ];
+  size = <0x2000000>;
+  has-dpd;
+  t-enter-dpd = <10000>;
+  t-exit-dpd = <35000>;
+ };
+};
+# 0 "<command-line>" 2
+# 1 "./npm1300_config.overlay" 1
+
+
+
+
+
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/include/zephyr/dt-bindings/regulator/npm1300.h" 1 3 4
+# 7 "./npm1300_config.overlay" 2
+
+
+&pinctrl {
+    arduino_i2c_default: arduino_i2c_default {
+        group1 {
+            psels = <((((((0) * 32U) + (29)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>,
+                    <((((((1) * 32U) + (10)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>;
+            bias-pull-up;
+        };
+    };
+    arduino_i2c_sleep: arduino_i2c_sleep {
+        group1 {
+            psels = <((((((0) * 32U) + (29)) & 0x1FFU) << 0U) | ((11U & 0xFFU) << 24U))>,
+                    <((((((1) * 32U) + (10)) & 0x1FFU) << 0U) | ((12U & 0xFFU) << 24U))>;
+            low-power-enable;
+        };
+    };
+};
+
+&arduino_i2c {
+    status = "okay";
+    pinctrl-0 = <&arduino_i2c_default>;
+    pinctrl-1 = <&arduino_i2c_sleep>;
+    pinctrl-names = "default", "sleep";
+    clock-frequency = <100000>;
+
+    npm1300_ek_pmic: pmic@6b {
+        compatible = "nordic,npm1300";
+        reg = <0x6b>;
+
+
+        npm1300_ek_gpio: gpio-controller {
+            compatible = "nordic,npm1300-gpio";
+            gpio-controller;
+            #gpio-cells = <2>;
+            ngpios = <5>;
+
+        };
+        npm1300_ek_regulators: regulators {
+            compatible = "nordic,npm1300-regulator";
+
+            npm1300_ek_buck1: BUCK1 {
+                regulator-min-microvolt = <1000000>;
+                regulator-max-microvolt = <3300000>;
+                retention-microvolt = <1200000>;
+            };
+            npm1300_ek_buck2: BUCK2 {
+                regulator-min-microvolt = <1000000>;
+                regulator-max-microvolt = <3300000>;
+                retention-microvolt = <1800000>;
+            };
+
+            npm1300_ek_ldo1: LDO1 {
+                regulator-min-microvolt = <1000000>;
+                regulator-max-microvolt = <3300000>;
+                regulator-initial-mode = <0x03U>;
+                regulator-boot-on;
+            };
+            npm1300_ek_ldo2: LDO2 {
+                regulator-min-microvolt = <1000000>;
+                regulator-max-microvolt = <3300000>;
+                regulator-initial-mode = <0x03U>;
+                regulator-boot-on;
+            };
+
+        };
+
+        npm1300_ek_charger: charger {
+            compatible = "nordic,npm1300-charger";
+            term-microvolt = <4250000>;
+            term-warm-microvolt = <3600000>;
+
+            current-microamp = <800000>;
+
+
+            dischg-limit-microamp = <200000>;
+
+            vbus-limit-microamp = <500000>;
+            thermistor-ohms = <10000>;
+            thermistor-beta = <3380>;
+
+            charging-enable;
+            vbatlow-charge-enable;
+        };
+
+
+        npm1300_ek_leds: leds {
+            compatible = "nordic,npm1300-led";
+            nordic,led0-mode = "error";
+            nordic,led1-mode = "charging";
+            nordic,led2-mode = "host";
+        };
+
+    };
+};
+# 0 "<command-line>" 2
+# 1 "/opt/nordic/ncs/v3.0.0/zephyr/misc/empty_file.c"

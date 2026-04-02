@@ -97,6 +97,7 @@ struct ViewState {
     var coreTokenOwner: String = ""
     var userEmail: String = ""
     var sgc: SGCManager?
+    var controller: ControllerManager?
 
     // state
     // var lastStatusObj: [String: Any] = [:]
@@ -120,6 +121,21 @@ struct ViewState {
     private var deviceAddress: String {
         get { GlassesStore.shared.get("core", "deviceAddress") as? String ?? "" }
         set { GlassesStore.shared.apply("core", "deviceAddress", newValue) }
+    }
+
+    private var defaultController: String {
+        get { GlassesStore.shared.get("core", "default_controller") as? String ?? "" }
+        set { GlassesStore.shared.apply("core", "default_controller", newValue) }
+    }
+
+    private var pendingController: String {
+        get { GlassesStore.shared.get("core", "pending_controller") as? String ?? "" }
+        set { GlassesStore.shared.apply("core", "pending_controller", newValue) }
+    }
+
+    private var controllerDeviceName: String {
+        get { GlassesStore.shared.get("core", "controller_device_name") as? String ?? "" }
+        set { GlassesStore.shared.apply("core", "controller_device_name", newValue) }
     }
 
     private var screenDisabled: Bool {
@@ -167,11 +183,24 @@ struct ViewState {
         set { GlassesStore.shared.apply("core", "bypass_vad", newValue) }
     }
 
-    private var enforceLocalTranscription: Bool {
-        get {
-            GlassesStore.shared.get("core", "enforce_local_transcription") as? Bool ?? false
-        }
-        set { GlassesStore.shared.apply("core", "enforce_local_transcription", newValue) }
+    private var offlineCaptionsRunning: Bool {
+        get { GlassesStore.shared.get("core", "offline_captions_running") as? Bool ?? false }
+        set { GlassesStore.shared.apply("core", "offline_captions_running", newValue) }
+    }
+
+    private var shouldSendPcm: Bool {
+        get { GlassesStore.shared.get("core", "should_send_pcm") as? Bool ?? false }
+        set { GlassesStore.shared.apply("core", "should_send_pcm", newValue) }
+    }
+
+    private var shouldSendLc3: Bool {
+        get { GlassesStore.shared.get("core", "should_send_lc3") as? Bool ?? false }
+        set { GlassesStore.shared.apply("core", "should_send_lc3", newValue) }
+    }
+
+    private var shouldSendTranscript: Bool {
+        get { GlassesStore.shared.get("core", "should_send_transcript") as? Bool ?? false }
+        set { GlassesStore.shared.apply("core", "should_send_transcript", newValue) }
     }
 
     private var metricSystem: Bool {
@@ -185,19 +214,15 @@ struct ViewState {
     }
 
     /// state:
-    private var shouldSendPcmData: Bool {
-        get { GlassesStore.shared.get("core", "shouldSendPcmData") as? Bool ?? false }
-        set { GlassesStore.shared.apply("core", "shouldSendPcmData", newValue) }
-    }
-
-    private var shouldSendTranscript: Bool {
-        get { GlassesStore.shared.get("core", "shouldSendTranscript") as? Bool ?? false }
-        set { GlassesStore.shared.apply("core", "shouldSendTranscript", newValue) }
-    }
 
     private var searching: Bool {
         get { GlassesStore.shared.get("core", "searching") as? Bool ?? false }
         set { GlassesStore.shared.apply("core", "searching", newValue) }
+    }
+
+    private var searchingController: Bool {
+        get { GlassesStore.shared.get("core", "searchingController") as? Bool ?? false }
+        set { GlassesStore.shared.apply("core", "searchingController", newValue) }
     }
 
     private var glassesBtcConnected: Bool {
@@ -342,27 +367,26 @@ struct ViewState {
         }
     }
 
-    /**
-     * Send audio data to cloud via Bridge.
-     * Encodes to LC3 if audioOutputFormat is .lc3, otherwise sends raw PCM.
-     * All audio destined for cloud should go through this function.
-     */
-    private func sendMicData(_ pcmData: Data) {
-        switch audioOutputFormat {
-        case .lc3:
-            guard let lc3Converter = lc3Converter else {
-                Bridge.log("MAN: ERROR - LC3 converter not initialized but format is LC3")
-                return
-            }
-            let frameSize = GlassesStore.shared.get("core", "lc3_frame_size") as! Int
-            let lc3Data = lc3Converter.encode(pcmData, frameSize: frameSize) as Data
-            guard lc3Data.count > 0 else {
-                Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
-                return
-            }
-            Bridge.sendMicData(lc3Data)
-        case .pcm:
-            Bridge.sendMicData(pcmData)
+    private func convertAndsendMicLc3(_ pcmData: Data) {
+        guard let lc3Converter = lc3Converter else {
+            Bridge.log("MAN: ERROR - LC3 converter not initialized but format is LC3")
+            return
+        }
+        let frameSize = GlassesStore.shared.get("core", "lc3_frame_size") as! Int
+        let lc3Data = lc3Converter.encode(pcmData, frameSize: frameSize) as Data
+        guard lc3Data.count > 0 else {
+            Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
+            return
+        }
+        Bridge.sendMicLc3(lc3Data)
+    }
+
+    private func handleSendingPcm(_ pcmData: Data) {
+        if shouldSendPcm {
+            Bridge.sendMicPcm(pcmData)
+        }
+        if shouldSendLc3 {
+            convertAndsendMicLc3(pcmData)
         }
     }
 
@@ -370,7 +394,7 @@ struct ViewState {
         // go through the buffer, popping from the first element in the array (FIFO):
         while !vadBuffer.isEmpty {
             let chunk = vadBuffer.removeFirst()
-            sendMicData(chunk) // Uses our encoder, not Bridge directly
+            handleSendingPcm(chunk)
         }
     }
 
@@ -411,23 +435,19 @@ struct ViewState {
 
     func handlePcm(_ pcmData: Data) {
         // handle incoming PCM data from the microphone manager and feed to the VAD:
+        if bypassVad {
+            handleSendingPcm(pcmData)
+
+            // Send PCM to local transcriber (always needs raw PCM)
+            if shouldSendTranscript || offlineCaptionsRunning {
+                transcriber?.acceptAudio(pcm16le: pcmData)
+            }
+            return
+        }
 
         // feed PCM to the VAD:
         guard let vad = vad else {
             Bridge.log("VAD not initialized")
-            return
-        }
-
-        if bypassVad {
-            // Send audio to cloud (encoding handled by sendMicData)
-            if shouldSendPcmData {
-                sendMicData(pcmData)
-            }
-
-            // Send PCM to local transcriber (always needs raw PCM)
-            if shouldSendTranscript {
-                transcriber?.acceptAudio(pcm16le: pcmData)
-            }
             return
         }
 
@@ -452,13 +472,10 @@ struct ViewState {
             // first send out whatever's in the vadBuffer (if there is anything):
             emptyVadBuffer()
 
-            // Send audio to cloud (encoding handled by sendMicData)
-            if shouldSendPcmData {
-                sendMicData(pcmData)
-            }
+            handleSendingPcm(pcmData)
 
             // Send PCM to local transcriber (always needs raw PCM)
-            if shouldSendTranscript {
+            if shouldSendTranscript || offlineCaptionsRunning {
                 transcriber?.acceptAudio(pcm16le: pcmData)
             }
         } else {
@@ -673,6 +690,24 @@ struct ViewState {
         }
     }
 
+    func initController(_ controllerModel: String) {
+        Bridge.log("MAN: Initializing controller: \(controllerModel)")
+        if controller != nil && controller?.type != controllerModel {
+            Bridge.log("MAN: Controller already initialized, cleaning up previous controller")
+            controller?.cleanup()
+            controller = nil
+        }
+
+        if controller != nil {
+            Bridge.log("MAN: Controller already initialized")
+            return
+        }
+
+        if controllerModel == ControllerTypes.R1 {
+            controller = R1()
+        }
+    }
+
     func sendCurrentState() {
         if screenDisabled {
             return
@@ -808,7 +843,8 @@ struct ViewState {
             Bridge.log("MAN: Device '\(deviceName)' disconnected")
             glassesBtcConnected = false
 
-            let isOtherDeviceConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
+            let isOtherDeviceConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(
+                devicePattern: audioDevicePattern)
             if isOtherDeviceConnected {
                 Bridge.log("MAN: Other device connected, returning")
                 otherBtConnected = true
@@ -875,6 +911,9 @@ struct ViewState {
         defaultWearable = sgc.type
         searching = false
 
+        // Set deviceModel so it flows to RN and cloud alongside connected state
+        GlassesStore.shared.apply("glasses", "deviceModel", sgc.type)
+
         // Show welcome message on first connect for all display glasses
         if shouldSendBootingMessage {
             Task {
@@ -903,6 +942,31 @@ struct ViewState {
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
         //        Bridge.saveSetting("device_address", deviceAddress)
+
+        // Re-apply display height after reconnection
+        let h = GlassesStore.shared.get("core", "dashboard_height") as? Int ?? 4
+        let d = NexDashboardDisplayWire.clampDepthFromStore(GlassesStore.shared.get("core", "dashboard_depth"))
+        sgc.setDashboardPosition(h, d)
+    }
+
+    func handleControllerReady() {
+        guard let controller else {
+            Bridge.log("MAN: Controller is nil, returning")
+            return
+        }
+        Bridge.log("MAN: handleControllerReady(): \(controller.type)")
+
+        pendingController = ""
+        defaultController = controller.type
+        searching = false
+
+        // save the default_controller now that we're connected:
+        Bridge.saveSetting("default_controller", defaultController)
+        Bridge.saveSetting("controller_device_name", controllerDeviceName)
+    }
+
+    func handleControllerDisconnected() {
+        Bridge.log("MAN: Controller disconnected")
     }
 
     private func handleG1Ready() {
@@ -929,7 +993,7 @@ struct ViewState {
 
     func handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
-        // setMicState(shouldSendPcmData, shouldSendTranscript, false)
+        // setMicState(shouldSendPcData, shouldSendTranscript, false)
         // shouldSendBootingMessage = true  // Reset for next first connect
     }
 
@@ -1028,19 +1092,19 @@ struct ViewState {
         sgc?.ping()
     }
 
-    func startRtmpStream(_ message: [String: Any]) {
-        Bridge.log("MAN: startRtmpStream: \(message)")
-        sgc?.startRtmpStream(message)
+    func startStream(_ message: [String: Any]) {
+        Bridge.log("MAN: startStream: \(message)")
+        sgc?.startStream(message)
     }
 
-    func stopRtmpStream() {
-        Bridge.log("MAN: stopRtmpStream")
-        sgc?.stopRtmpStream()
+    func stopStream() {
+        Bridge.log("MAN: stopStream")
+        sgc?.stopStream()
     }
 
-    func keepRtmpStreamAlive(_ message: [String: Any]) {
-        Bridge.log("MAN: sendRtmpKeepAlive: \(message)")
-        sgc?.sendRtmpKeepAlive(message)
+    func keepStreamAlive(_ message: [String: Any]) {
+        Bridge.log("MAN: sendStreamKeepAlive: \(message)")
+        sgc?.sendStreamKeepAlive(message)
     }
 
     func requestWifiScan() {
@@ -1132,19 +1196,10 @@ struct ViewState {
         sgc?.stopVideoRecording(requestId: requestId)
     }
 
-    func setMicState(_ sendPcm: Bool, _ sendTranscript: Bool, _ bypassVadForPCM: Bool) {
-        // If offline captions are running locally, always keep transcript on
-        let offlineCaptionsRunning = GlassesStore.shared.get("core", "offline_captions_running") as? Bool ?? false
-        let effectiveSendTranscript = sendTranscript || offlineCaptionsRunning
-
-        let suffix = (offlineCaptionsRunning && !sendTranscript) ? " (offline captions forced transcript on)" : ""
-        Bridge.log("MAN: setMicState(\(sendPcm),\(effectiveSendTranscript),\(bypassVadForPCM))\(suffix)")
-
-        shouldSendPcmData = sendPcm
-        shouldSendTranscript = effectiveSendTranscript
-        bypassVad = bypassVadForPCM
-
-        micEnabled = shouldSendPcmData || shouldSendTranscript
+    func setMicState() {
+        let willSendPcm = shouldSendPcm || shouldSendLc3
+        let willSendTranscript = shouldSendTranscript || offlineCaptionsRunning
+        micEnabled = willSendPcm || willSendTranscript
         updateMicState()
     }
 
@@ -1166,6 +1221,40 @@ struct ViewState {
             offtime: offtime,
             count: count
         )
+    }
+
+    /// Mentra Live only: K900 `cs_getvol` / `sr_getvol` (step volume 0–15).
+    func getGlassesMediaVolume() async throws -> [String: Any] {
+        guard let live = sgc as? MentraLive else {
+            throw NSError(
+                domain: "CoreManager",
+                code: 100,
+                userInfo: [NSLocalizedDescriptionKey: "unsupported_device"]
+            )
+        }
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<[String: Any], Error>) in
+            live.getGlassesMediaVolume { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    /// Mentra Live only: K900 `cs_vol` / `sr_vol`.
+    func setGlassesMediaVolume(level: Int) async throws -> [String: Any] {
+        guard let live = sgc as? MentraLive else {
+            throw NSError(
+                domain: "CoreManager",
+                code: 100,
+                userInfo: [NSLocalizedDescriptionKey: "unsupported_device"]
+            )
+        }
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<[String: Any], Error>) in
+            live.setGlassesMediaVolume(level: level) { result in
+                continuation.resume(with: result)
+            }
+        }
     }
 
     func photoRequest(
@@ -1199,6 +1288,21 @@ struct ViewState {
         initSGC(defaultWearable)
         searching = true
         sgc?.connectById(deviceName)
+        connectDefaultController()
+    }
+
+    func connectDefaultController() {
+        if defaultController.isEmpty {
+            Bridge.log("MAN: No default controller, returning")
+            return
+        }
+        if controllerDeviceName.isEmpty {
+            Bridge.log("MAN: No controller device name, returning")
+            return
+        }
+        initController(defaultController)
+        searchingController = true
+        controller?.connectById(controllerDeviceName)
     }
 
     func connectByName(_ dName: String) {
@@ -1218,6 +1322,13 @@ struct ViewState {
         if pendingWearable.isEmpty, !defaultWearable.isEmpty {
             Bridge.log("MAN: No pending wearable, using default wearable: \(defaultWearable)")
             pendingWearable = defaultWearable
+        }
+
+        // if the pending wearable is a controller, don't disconnect, use the controller manager to connect
+        if ControllerTypes.ALL.contains(pendingWearable) {
+            controller?.disconnect()
+            controller?.connectById(name)
+            return
         }
 
         Task {
@@ -1243,27 +1354,47 @@ struct ViewState {
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
         searching = false
-        shouldSendPcmData = false
-        shouldSendTranscript = false
-        setMicState(shouldSendPcmData, shouldSendTranscript, bypassVad)
+        micEnabled = false
+        updateMicState()
         shouldSendBootingMessage = true // Reset for next first connect
         GlassesStore.shared.apply("glasses", "fullyBooted", false)
         GlassesStore.shared.apply("glasses", "connected", false)
+        // disconnect the controller as well:
+        searchingController = false
+        GlassesStore.shared.apply("glasses", "controllerConnected", false)
+        controller?.disconnect()
+        controller = nil // Clear the controller reference after disconnect
+    }
+
+    func disconnectController() {
+        searchingController = false
+        GlassesStore.shared.apply("glasses", "controllerConnected", false)
+        controller?.disconnect()
+        controller = nil // Clear the controller reference after disconnect
     }
 
     func forget() {
         Bridge.log("MAN: Forgetting smart glasses")
-
         // Call forget first to stop timers/handlers/reconnect logic
         sgc?.forget()
-
         disconnect()
-
         // Clear state
         defaultWearable = ""
         deviceName = ""
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
+    }
+
+    func forgetController() {
+        Bridge.log("MAN: Forgetting controller")
+        controller?.forget()
+        disconnectController()
+        // Clear state
+        defaultController = ""
+        controllerDeviceName = ""
+        Bridge.saveSetting("controller_device_name", "")
+        Bridge.saveSetting("default_controller", "")
+        GlassesStore.shared.apply("glasses", "controllerConnected", false)
     }
 
     func findCompatibleDevices(_ deviceModel: String) {
@@ -1274,6 +1405,16 @@ struct ViewState {
 
         if DeviceTypes.ALL.contains(deviceModel) {
             pendingWearable = deviceModel
+        }
+
+        if ControllerTypes.ALL.contains(deviceModel) {
+            pendingWearable = deviceModel
+        }
+
+        if ControllerTypes.ALL.contains(deviceModel) {
+            initController(deviceModel)
+            controller?.findCompatibleDevices()
+            return
         }
 
         initSGC(pendingWearable)

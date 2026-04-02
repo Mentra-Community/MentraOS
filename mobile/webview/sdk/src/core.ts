@@ -8,16 +8,12 @@ export class CoreModule {
   /**
    * Display text on the smartglasses
    */
-  displayText(text: string): void
-  displayText(args: DisplayTextArgs): void
-  displayText(textOrArgs: string | DisplayTextArgs): void {
-    const args: DisplayTextArgs = typeof textOrArgs === "string" ? {text: textOrArgs} : textOrArgs
-
+  displayText(text: string): void {
     getBridge().send({
       type: "core_fn",
       payload: {
         fn: "displayText",
-        args,
+        text: text,
       },
     })
   }

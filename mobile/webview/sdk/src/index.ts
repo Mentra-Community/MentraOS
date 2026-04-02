@@ -27,6 +27,7 @@
 import {getBridge, Bridge} from "./bridge"
 import {getCoreModule} from "./core"
 import {getEvents} from "./events"
+import {getSocketBridge, SocketBridge} from "./socket-bridge"
 
 // Export types
 export * from "./types"
@@ -34,10 +35,14 @@ export * from "./types"
 // Export Bridge class
 export {Bridge}
 
+// Export SocketBridge class
+export {SocketBridge}
+
 // Create global instances
 const bridge = getBridge()
 const coreModule = getCoreModule()
 const events = getEvents()
+const socketBridge = getSocketBridge()
 
 /**
  * Global CoreModule instance for easy access
@@ -48,6 +53,20 @@ export const CoreModule = coreModule
  * Global Events instance for easy access
  */
 export const Events = events
+
+/**
+ * Global SocketBridge instance — auto-connects to MiniSockets server
+ *
+ * @example
+ * ```typescript
+ * import { Audio } from '@mentra/webview-sdk'
+ *
+ * Audio.onAudio((buffer: ArrayBuffer) => {
+ *   // process raw audio PCM data
+ * })
+ * ```
+ */
+export const Audio = socketBridge
 
 /**
  * Initialize the SDK
@@ -74,8 +93,10 @@ export function initialize(): void {
 export default {
   CoreModule,
   Events,
+  Audio,
   initialize,
   Bridge,
+  SocketBridge,
 }
 
 // Auto-initialize on import

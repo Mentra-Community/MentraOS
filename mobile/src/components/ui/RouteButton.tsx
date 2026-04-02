@@ -24,7 +24,9 @@ export function StatusCard({label, style, iconStart, iconEnd, textStyle, subtitl
   const {flex, ...restStyle} = (style || {}) as ViewStyle & {flex?: number}
 
   const content = (
-    <GlassView className="bg-primary-foreground px-4 py-3 flex-row justify-between items-center rounded-2xl" style={[restStyle]}>
+    <GlassView
+      className="bg-primary-foreground px-4 py-3 flex-row justify-between items-center rounded-2xl"
+      style={[restStyle]}>
       <View className="flex-row items-center gap-4">
         {iconStart && <View className="justify-center items-center">{iconStart}</View>}
         <View className="gap-1">
@@ -87,8 +89,8 @@ export function RouteButton({
   const labelColor = disabled
     ? theme.colors.muted_foreground
     : isDestructive
-    ? theme.colors.destructive
-    : theme.colors.secondary_foreground
+      ? theme.colors.destructive
+      : theme.colors.secondary_foreground
 
   return (
     <GlassView className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>

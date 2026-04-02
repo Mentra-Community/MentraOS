@@ -89,7 +89,7 @@ public class NordicBluetoothManager extends BaseBluetoothManager {
     }
 
     @Override
-    public boolean sendData(byte[] data) {
+    protected boolean sendDataInternal(byte[] data) {
         if (data == null || data.length == 0) {
             Log.w(TAG, "Attempted to send null or empty data");
             return false;

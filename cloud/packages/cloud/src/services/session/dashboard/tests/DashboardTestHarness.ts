@@ -90,16 +90,16 @@ class MockDisplayManager {
 
 // Mock WebSocket service
 class MockWebSocketService {
-  private appMessageHandlers: Map<string, Function> = new Map();
-  private appDisconnectHandlers: Function[] = [];
+  private appMessageHandlers: Map<string, (...args: unknown[]) => unknown> = new Map();
+  private appDisconnectHandlers: Array<(...args: unknown[]) => unknown> = [];
   private glassesMessages: any[] = [];
   private appMessages: any[] = [];
 
-  registerAppMessageHandler(type: string, handler: Function): void {
+  registerAppMessageHandler(type: string, handler: (...args: unknown[]) => unknown): void {
     this.appMessageHandlers.set(type, handler);
   }
 
-  onAppDisconnected(handler: Function): void {
+  onAppDisconnected(handler: (...args: unknown[]) => unknown): void {
     this.appDisconnectHandlers.push(handler);
   }
 
@@ -146,7 +146,7 @@ class MockWebSocketService {
 }
 
 // Local constant for dashboard package name
-const DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "system.augmentos.dashboard";
+const DASHBOARD_PACKAGE_NAME = "com.mentra.os";
 
 /**
  * Dashboard test harness

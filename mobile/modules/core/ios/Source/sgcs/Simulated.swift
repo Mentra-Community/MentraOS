@@ -7,7 +7,6 @@
 
 @MainActor
 class Simulated: SGCManager {
-    
     init() {
         GlassesStore.shared.apply("glasses", "fullyBooted", true)
         GlassesStore.shared.apply("glasses", "connected", true)
@@ -80,16 +79,16 @@ class Simulated: SGCManager {
         Bridge.log("requestPhoto")
     }
 
-    func startRtmpStream(_: [String: Any]) {
-        Bridge.log("startRtmpStream")
+    func startStream(_: [String: Any]) {
+        Bridge.log("startStream")
     }
 
-    func stopRtmpStream() {
-        Bridge.log("stopRtmpStream")
+    func stopStream() {
+        Bridge.log("stopStream")
     }
 
-    func sendRtmpKeepAlive(_: [String: Any]) {
-        Bridge.log("sendRtmpKeepAlive")
+    func sendStreamKeepAlive(_: [String: Any]) {
+        Bridge.log("sendStreamKeepAlive")
     }
 
     func startBufferRecording() {
@@ -128,6 +127,10 @@ class Simulated: SGCManager {
 
     func sendButtonCameraLedSetting() {
         Bridge.log("sendButtonCameraLedSetting")
+    }
+
+    func sendCameraFovSetting() {
+        Bridge.log("sendCameraFovSetting")
     }
 
     func sendButtonMaxRecordingTime() {}
@@ -265,8 +268,6 @@ class Simulated: SGCManager {
     func requestVersionInfo() {
         Bridge.log("requestVersionInfo - not supported on Simulated")
     }
-    
-    func sendIncidentId(_ incidentId: String) {
-        
-    }
+
+    func sendIncidentId(_: String) {}
 }

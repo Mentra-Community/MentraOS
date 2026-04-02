@@ -18,11 +18,28 @@ extension Data {
     }
 }
 
+/// Nex firmware expects tier 1–3 in protobuf `DisplayDistanceConfig.distance_cm` (name is legacy, not cm).
+/// Keep in sync with `NexProtobufUtils.dashboardDepthToDistanceCm` (Android `NexSGCUtils.kt`).
+enum NexDashboardDisplayWire {
+    static let depthMin = 1
+    static let depthMax = 3
+
+    static func depthToWireTier(_ depth: Int) -> UInt32 {
+        UInt32(min(max(depth, depthMin), depthMax))
+    }
+
+    /// Read an `Any?` value from the store, default to `depthMin`, and clamp to valid range.
+    static func clampDepthFromStore(_ value: Any?) -> Int {
+        let raw = value as? Int ?? depthMin
+        return min(max(raw, depthMin), depthMax)
+    }
+}
+
 @MainActor
 @objc(MentraNexSGC)
 class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCManager {
-    func sendIncidentId(_ incidentId: String) {}
-    
+    func sendIncidentId(_: String) {}
+
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
 
     func setMicEnabled(_: Bool) {}
@@ -32,11 +49,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         compress _: String?, flash _: Bool, sound _: Bool
     ) {}
 
-    func startRtmpStream(_: [String: Any]) {}
+    func startStream(_: [String: Any]) {}
 
-    func stopRtmpStream() {}
+    func stopStream() {}
 
-    func sendRtmpKeepAlive(_: [String: Any]) {}
+    func sendStreamKeepAlive(_: [String: Any]) {}
 
     func startBufferRecording() {}
 
@@ -58,6 +75,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func sendButtonCameraLedSetting() {}
 
+    func sendCameraFovSetting() {}
+
     func setBrightness(_: Int, autoMode _: Bool) {}
 
     func sendDoubleTextWall(_: String, _: String) {}
@@ -68,7 +87,19 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func showDashboard() {}
 
-    func setDashboardPosition(_: Int, _: Int) {}
+    func setDashboardPosition(_ height: Int, _ depth: Int) {
+        // Same order as Android MentraNex: display_height then display_distance.
+        updateGlassesDisplayHeight(height)
+        updateGlassesDisplayDistance(depth: depth)
+    }
+
+    func setDashboardHeightOnly(_ height: Int) {
+        updateGlassesDisplayHeight(height)
+    }
+
+    func setDashboardDepthOnly(_ depth: Int) {
+        updateGlassesDisplayDistance(depth: depth)
+    }
 
     func setHeadUpAngle(_: Int) {}
 
@@ -1073,6 +1104,27 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         let phoneToGlasses = Mentraos_Ble_PhoneToGlasses.with {
             $0.displayHeight = displayHeightConfig
+        }
+
+        let protobufData = try! phoneToGlasses.serializedData()
+        queueDataWithOptimalChunking(protobufData, packetType: PACKET_TYPE_PROTOBUF)
+    }
+
+    private func updateGlassesDisplayDistance(depth: Int) {
+        guard nexReady else {
+            Bridge.log("NEX: Not ready to update display distance. Device not initialized.")
+            return
+        }
+
+        let tier = NexDashboardDisplayWire.depthToWireTier(depth)
+        Bridge.log("NEX: Setting display distance tier \(tier) in distance_cm field (dashboard depth \(depth))")
+
+        let displayDistanceConfig = Mentraos_Ble_DisplayDistanceConfig.with {
+            $0.distanceCm = tier
+        }
+
+        let phoneToGlasses = Mentraos_Ble_PhoneToGlasses.with {
+            $0.displayDistance = displayDistanceConfig
         }
 
         let protobufData = try! phoneToGlasses.serializedData()

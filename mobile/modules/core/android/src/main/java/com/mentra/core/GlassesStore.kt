@@ -1,16 +1,56 @@
 package com.mentra.core
 
+import android.os.Handler
+import android.os.Looper
 import com.mentra.core.utils.DeviceTypes
 import com.mentra.core.utils.MicMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /** Centralized observable state store for glasses and core settings */
 object GlassesStore {
 
     val store = ObservableStore()
+
+    /**
+     * [CoreModule] applies batched `update("core", map)` key-by-key. Post to Main so the store has
+     * the latest value before BLE. Height and depth schedule independently so Nex sends one protobuf per change.
+     */
+    private val dashboardBleHandler = Handler(Looper.getMainLooper())
+    private var pendingDashboardHeightRunnable: Runnable? = null
+    private var pendingDashboardDepthRunnable: Runnable? = null
+
+    /** Same equality rule as [ObservableStore.set] — avoids BLE side effects on no-op applies. */
+    private fun observableStoreWouldHaveSkipped(oldValue: Any?, newValue: Any): Boolean {
+        if (oldValue == null) return false
+        return JSONObject(mapOf("v" to oldValue)).toString() ==
+                JSONObject(mapOf("v" to newValue)).toString()
+    }
+
+    private fun scheduleDashboardHeightToGlasses() {
+        pendingDashboardHeightRunnable?.let { dashboardBleHandler.removeCallbacks(it) }
+        val r = Runnable {
+            pendingDashboardHeightRunnable = null
+            val h = (store.get("core", "dashboard_height") as? Number)?.toInt() ?: 4
+            CoreManager.getInstance().sgc?.setDashboardHeightOnly(h)
+        }
+        pendingDashboardHeightRunnable = r
+        dashboardBleHandler.post(r)
+    }
+
+    private fun scheduleDashboardDepthToGlasses() {
+        pendingDashboardDepthRunnable?.let { dashboardBleHandler.removeCallbacks(it) }
+        val r = Runnable {
+            pendingDashboardDepthRunnable = null
+            val d = (store.get("core", "dashboard_depth") as? Number)?.toInt() ?: 2
+            CoreManager.getInstance().sgc?.setDashboardDepthOnly(d)
+        }
+        pendingDashboardDepthRunnable = r
+        dashboardBleHandler.post(r)
+    }
 
     init {
         // SETTINGS are snake_case
@@ -62,13 +102,12 @@ object GlassesStore {
         store.set("core", "preferred_mic", "auto")
         store.set("core", "power_saving_mode", false)
         store.set("core", "always_on_status_bar", false)
-        store.set("core", "enforce_local_transcription", false)
         store.set("core", "sensing_enabled", true)
         store.set("core", "metric_system", false)
         store.set("core", "brightness", 50)
         store.set("core", "auto_brightness", true)
         store.set("core", "dashboard_height", 4)
-        store.set("core", "dashboard_depth", 5)
+        store.set("core", "dashboard_depth", 2)
         store.set("core", "head_up_angle", 30)
         store.set("core", "contextual_dashboard", true)
         store.set("core", "gallery_mode", false)
@@ -77,6 +116,7 @@ object GlassesStore {
         store.set("core", "button_photo_size", "medium")
         store.set("core", "button_camera_led", true)
         store.set("core", "button_max_recording_time", 10)
+        store.set("core", "camera_fov", mapOf("fov" to 118, "roi_position" to 0))
         store.set("core", "button_video_width", 1280)
         store.set("core", "button_video_height", 720)
         store.set("core", "button_video_fps", 30)
@@ -84,6 +124,10 @@ object GlassesStore {
         store.set("core", "lc3_frame_size", 60)
         store.set("core", "auth_email", "")
         store.set("core", "auth_token", "")
+        store.set("core", "should_send_pcm", false)
+        store.set("core", "should_send_lc3", false)
+        store.set("core", "should_send_transcript", false)
+        store.set("core", "bypass_vad", false)
     }
 
     fun get(category: String, key: String): Any? {
@@ -98,6 +142,9 @@ object GlassesStore {
     fun apply(category: String, key: String, value: Any) {
         val oldValue = store.get(category, key)
         store.set(category, key, value)
+        if (observableStoreWouldHaveSkipped(oldValue, value)) {
+            return
+        }
 
         // Trigger hardware updates based on setting changes
         when (category to key) {
@@ -164,12 +211,11 @@ object GlassesStore {
                     }
                 }
             }
-            "core" to "dashboard_height", "core" to "dashboard_depth" -> {
-                val h = (store.get("core", "dashboard_height") as? Int) ?: 4
-                val d = (store.get("core", "dashboard_depth") as? Int) ?: 5
-                CoroutineScope(Dispatchers.Main).launch {
-                    CoreManager.getInstance().sgc?.setDashboardPosition(h, d)
-                }
+            "core" to "dashboard_height" -> {
+                scheduleDashboardHeightToGlasses()
+            }
+            "core" to "dashboard_depth" -> {
+                scheduleDashboardDepthToGlasses()
             }
             "core" to "head_up_angle" -> {
                 (value as? Int)?.let { angle ->
@@ -200,6 +246,9 @@ object GlassesStore {
             "core" to "button_max_recording_time" -> {
                 CoreManager.getInstance().sgc?.sendButtonMaxRecordingTime()
             }
+            "core" to "camera_fov" -> {
+                CoreManager.getInstance().sgc?.sendCameraFovSetting()
+            }
             "core" to "button_video_width",
             "core" to "button_video_height",
             "core" to "button_video_fps" -> {
@@ -208,40 +257,28 @@ object GlassesStore {
             "core" to "preferred_mic" -> {
                 (value as? String)?.let { mic ->
                     apply("core", "micRanking", MicMap.map[mic] ?: MicMap.map["auto"]!!)
-                    CoreManager.getInstance()
-                            .setMicState(
-                                    (store.get("core", "should_send_pcm_data") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "should_send_transcript") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "bypass_vad") as? Boolean) ?: true
-                            )
+                    CoreManager.getInstance().setMicState()
                 }
             }
             "core" to "offline_captions_running" -> {
                 (value as? Boolean)?.let { running ->
                     Bridge.log("GlassesStore: offline_captions_running changed to $running")
-                    // When offline captions are enabled, start the microphone for local transcription
-                    // When disabled, stop the microphone
-                    // set should_send_transcript to true if running is true, otherwise false
-                    val shouldSendTranscript = running
-                    CoreManager.getInstance().setMicState(
-                        (store.get("core", "should_send_pcm_data") as? Boolean) ?: false,
-                        shouldSendTranscript,
-                        (store.get("core", "bypass_vad") as? Boolean) ?: true
-                    )
+                    CoreManager.getInstance().setMicState()
                 }
             }
-            "core" to "enforce_local_transcription" -> {
-                (value as? Boolean)?.let { enabled ->
-                    CoreManager.getInstance()
-                            .setMicState(
-                                    (store.get("core", "should_send_pcm_data") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "should_send_transcript") as? Boolean)
-                                            ?: false,
-                                    (store.get("core", "bypass_vad") as? Boolean) ?: true
-                            )
+            "core" to "should_send_pcm" -> {
+                (value as? Boolean)?.let { pcm ->
+                    CoreManager.getInstance().setMicState()
+                }
+            }
+            "core" to "should_send_lc3" -> {
+                (value as? Boolean)?.let { lc3 ->
+                    CoreManager.getInstance().setMicState()
+                }
+            }
+            "core" to "should_send_transcript" -> {
+                (value as? Boolean)?.let { transcript ->
+                    CoreManager.getInstance().setMicState()
                 }
             }
             "core" to "default_wearable" -> {

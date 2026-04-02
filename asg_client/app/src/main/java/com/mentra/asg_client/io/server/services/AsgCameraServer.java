@@ -10,7 +10,9 @@ import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManager.FileMetadata;
 import com.mentra.asg_client.io.file.core.FileManager.FileOperationResult;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -38,11 +40,12 @@ public class AsgCameraServer extends AsgServer {
     private static final int DEFAULT_PORT = 8089;
 
     /**
-     * Provider that returns the file name of an actively recording video, or null if idle.
+     * Provider that returns the capture ID (directory name, e.g. "VID_xxx") of an
+     * actively recording video, or null if idle.
      * Used to exclude in-progress recordings from sync and download responses.
      */
     public interface ActiveRecordingProvider {
-        String getActiveRecordingFileName();
+        String getActiveRecordingCaptureId();
     }
 
     // File management system
@@ -213,28 +216,31 @@ public class AsgCameraServer extends AsgServer {
                 return newChunkedResponse(Response.Status.OK, "image/jpeg", new java.io.ByteArrayInputStream(cachedBytes));
             }
 
-            // Read file and cache it
-            logger.debug(TAG, "🖼️ 📖 Reading photo file from disk...");
-            try (FileInputStream fis = new FileInputStream(photoFile)) {
-                byte[] fileData = null;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    fileData = fis.readAllBytes();
-                } else {
-                    fileData = new byte[(int) photoFile.length()];
-                    fis.read(fileData);
-                }
-                logger.debug(TAG, "🖼️ 📖 File read successfully: " + fileData.length + " bytes");
+            // For small files, read into memory and cache; for large files, stream directly
+            long fileLength = photoFile.length();
+            if (fileLength <= MAX_FILE_SIZE) {
+                logger.debug(TAG, "🖼️ 📖 Reading photo file from disk for caching...");
+                try (FileInputStream fis = new FileInputStream(photoFile)) {
+                    byte[] fileData;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        fileData = fis.readAllBytes();
+                    } else {
+                        fileData = new byte[(int) fileLength];
+                        new DataInputStream(fis).readFully(fileData);
+                    }
+                    logger.debug(TAG, "🖼️ 📖 File read successfully: " + fileData.length + " bytes");
 
-                if (fileData.length <= MAX_FILE_SIZE) {
                     logger.debug(TAG, "🖼️ 💾 Caching photo data...");
                     cacheManager.put(cacheKey, fileData, 300000); // Cache for 5 minutes
 
                     logger.debug(TAG, "🖼️ ✅ Serving latest photo: " + latestPhoto.getFileName() + " (" + fileData.length + " bytes)");
                     return newChunkedResponse(Response.Status.OK, "image/jpeg", new java.io.ByteArrayInputStream(fileData));
-                } else {
-                    logger.warn(TAG, "🖼️ ❌ Photo file too large: " + fileData.length + " bytes (max: " + MAX_FILE_SIZE + ")");
-                    return createErrorResponse(Response.Status.PAYLOAD_TOO_LARGE, "Photo file too large");
                 }
+            } else {
+                // Stream large files directly without loading into memory
+                logger.debug(TAG, "🖼️ 📖 Streaming large photo file: " + fileLength + " bytes");
+                BufferedInputStream bis = new BufferedInputStream(new FileInputStream(photoFile), 65536);
+                return newChunkedResponse(Response.Status.OK, "image/jpeg", bis);
             }
         } catch (Exception e) {
             logger.error(TAG, "🖼️ 💥 Error reading latest photo: " + e.getMessage(), e);
@@ -470,19 +476,10 @@ public class AsgCameraServer extends AsgServer {
                 return createErrorResponse(Response.Status.INTERNAL_ERROR, "Failed to generate video thumbnail");
             }
             
-            // Read thumbnail file
-            try (FileInputStream fis = new FileInputStream(thumbnailFile)) {
-                byte[] thumbnailData = null;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    thumbnailData = fis.readAllBytes();
-                } else {
-                    thumbnailData = new byte[(int) thumbnailFile.length()];
-                    fis.read(thumbnailData);
-                }
-                
-                logger.debug(TAG, "🎥 Serving video thumbnail: " + filename + " (" + thumbnailData.length + " bytes)");
-                return newChunkedResponse(Response.Status.OK, "image/jpeg", new java.io.ByteArrayInputStream(thumbnailData));
-            }
+            // Stream thumbnail file directly without loading into memory
+            logger.debug(TAG, "🎥 Streaming video thumbnail: " + filename + " (" + thumbnailFile.length() + " bytes)");
+            BufferedInputStream bis = new BufferedInputStream(new FileInputStream(thumbnailFile), 65536);
+            return newChunkedResponse(Response.Status.OK, "image/jpeg", bis);
         } catch (Exception e) {
             logger.error(TAG, "🎥 Error serving video thumbnail " + filename + ": " + e.getMessage(), e);
             return createErrorResponse(Response.Status.INTERNAL_ERROR, "Error serving video thumbnail");
@@ -493,20 +490,12 @@ public class AsgCameraServer extends AsgServer {
      * Serve image file
      */
     private Response serveImageFile(File imageFile, String filename, String mimeType) {
-        logger.debug(TAG, "🖼️ Reading image file from disk...");
-        
-        try (FileInputStream fis = new FileInputStream(imageFile)) {
-            byte[] fileData = null;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                fileData = fis.readAllBytes();
-            } else {
-                fileData = new byte[(int) imageFile.length()];
-                fis.read(fileData);
-            }
-            logger.debug(TAG, "🖼️ File read successfully: " + fileData.length + " bytes");
+        logger.debug(TAG, "🖼️ Streaming image file: " + filename + " (" + imageFile.length() + " bytes)");
 
-            logger.debug(TAG, "🖼️ Serving image: " + filename + " (" + fileData.length + " bytes)");
-            return newChunkedResponse(Response.Status.OK, mimeType, new java.io.ByteArrayInputStream(fileData));
+        try {
+            // Stream file directly without loading into memory
+            BufferedInputStream bis = new BufferedInputStream(new FileInputStream(imageFile), 65536);
+            return newChunkedResponse(Response.Status.OK, mimeType, bis);
         } catch (Exception e) {
             logger.error(TAG, "🖼️ Error reading image file " + filename + ": " + e.getMessage(), e);
             return createErrorResponse(Response.Status.INTERNAL_ERROR, "Error reading image file");
@@ -1187,12 +1176,17 @@ public class AsgCameraServer extends AsgServer {
     }
 
     /**
-     * @return true if the given file name is the one currently being recorded
+     * @return true if the given file belongs to a capture that is currently being recorded.
+     *         Derives the capture ID from the file name and compares against the active recording.
      */
     private boolean isActiveRecording(String fileName) {
         if (activeRecordingProvider == null || fileName == null) return false;
-        String active = activeRecordingProvider.getActiveRecordingFileName();
-        return active != null && active.equals(fileName);
+        String activeCaptureId = activeRecordingProvider.getActiveRecordingCaptureId();
+        if (activeCaptureId == null) return false;
+        // deriveCaptureId handles both folder-based ("VID_xxx/base.mp4" -> "VID_xxx")
+        // and legacy flat ("VID_xxx.mp4" -> "VID_xxx") paths
+        String fileCaptureId = deriveCaptureId(fileName);
+        return activeCaptureId.equals(fileCaptureId);
     }
 
     /**
@@ -1297,7 +1291,7 @@ public class AsgCameraServer extends AsgServer {
                                                 thumbnailData = fis.readAllBytes();
                                             } else {
                                                 thumbnailData = new byte[(int) thumbnailFile.length()];
-                                                fis.read(thumbnailData);
+                                                new DataInputStream(fis).readFully(thumbnailData);
                                             }
                                             String thumbnailBase64 = android.util.Base64.encodeToString(thumbnailData, android.util.Base64.DEFAULT);
                                             fileInfo.put("thumbnail_data", thumbnailBase64);
@@ -1337,7 +1331,7 @@ public class AsgCameraServer extends AsgServer {
                                                 thumbnailData = fis.readAllBytes();
                                             } else {
                                                 thumbnailData = new byte[(int) thumbnailFile.length()];
-                                                fis.read(thumbnailData);
+                                                new DataInputStream(fis).readFully(thumbnailData);
                                             }
                                             String thumbnailBase64 = android.util.Base64.encodeToString(thumbnailData, android.util.Base64.DEFAULT);
                                             fileInfo.put("thumbnail_data", thumbnailBase64);
@@ -1509,6 +1503,14 @@ public class AsgCameraServer extends AsgServer {
                 return createErrorResponse(Response.Status.BAD_REQUEST, "Files array cannot be empty");
             }
 
+            // OOM protection: limit the number of files in a single batch
+            int MAX_BATCH_FILES = 5;
+            if (filesArray.length() > MAX_BATCH_FILES) {
+                logger.warn(TAG, "📦 Too many files in batch: " + filesArray.length() + " (max: " + MAX_BATCH_FILES + ")");
+                return newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json",
+                    "{\"status\":\"error\",\"error\":\"Too many files in batch. Maximum: " + MAX_BATCH_FILES + "\"}");
+            }
+
             // Process batch download
             List<Map<String, Object>> results = new ArrayList<>();
             int successCount = 0;
@@ -1563,7 +1565,7 @@ public class AsgCameraServer extends AsgServer {
                             fileData = fis.readAllBytes();
                         } else {
                             fileData = new byte[(int) file.length()];
-                            fis.read(fileData);
+                            new DataInputStream(fis).readFully(fileData);
                         }
                     }
 
@@ -1589,7 +1591,7 @@ public class AsgCameraServer extends AsgServer {
                                     thumbnailData = fis.readAllBytes();
                                 } else {
                                     thumbnailData = new byte[(int) thumbnailFile.length()];
-                                    fis.read(thumbnailData);
+                                    new DataInputStream(fis).readFully(thumbnailData);
                                 }
                                 String thumbnailBase64 = android.util.Base64.encodeToString(thumbnailData, android.util.Base64.DEFAULT);
                                 result.put("thumbnail_data", thumbnailBase64);

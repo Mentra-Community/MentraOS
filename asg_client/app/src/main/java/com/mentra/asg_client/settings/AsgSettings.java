@@ -24,6 +24,13 @@ public class AsgSettings {
     private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
+    private static final String KEY_CAMERA_FOV = "camera_fov";
+    private static final String KEY_CAMERA_ROI_POSITION = "camera_roi_position";
+
+    /** Supported FOV values for K900 camera (82, 92, 102, and 118 = No ROI) */
+    private static final int[] SUPPORTED_FOV = {82, 92, 102, 118};
+    private static final int DEFAULT_CAMERA_FOV = 118; // No ROI
+    private static final int DEFAULT_CAMERA_ROI_POSITION = 0; // ROI_POSITION_CENTER
 
     private final SharedPreferences prefs;
     private final Context context;
@@ -148,6 +155,54 @@ public class AsgSettings {
         Log.d(TAG, "Setting button camera LED to: " + enabled);
         // Using commit() for immediate persistence
         prefs.edit().putBoolean(KEY_BUTTON_CAMERA_LED, enabled).commit();
+    }
+
+    /**
+     * Get the camera FOV setting (K900). Supported values: 82, 92, 102, 118 (No ROI).
+     * @return FOV in degrees (default 118 = No ROI)
+     */
+    public int getCameraFov() {
+        int fov = prefs.getInt(KEY_CAMERA_FOV, DEFAULT_CAMERA_FOV);
+        Log.d(TAG, "Retrieved camera FOV: " + fov);
+        return fov;
+    }
+
+    /**
+     * Get the camera ROI position setting (K900). 0=center, 1=bottom, 2=top.
+     * @return ROI position (default 0)
+     */
+    public int getCameraRoiPosition() {
+        int roi = prefs.getInt(KEY_CAMERA_ROI_POSITION, DEFAULT_CAMERA_ROI_POSITION);
+        Log.d(TAG, "Retrieved camera ROI position: " + roi);
+        return roi;
+    }
+
+    /**
+     * Set the camera FOV and ROI position (K900). Caller should apply to hardware and restart camera HAL.
+     * @param fov FOV value (82, 92, 102, or 118 for No ROI; otherwise default 118 is used)
+     * @param roiPosition 0=center, 1=bottom, 2=top (clamped to [0,2]; ignored by HAL when fov is 118)
+     */
+    public void setCameraFov(int fov, int roiPosition) {
+        boolean fovValid = false;
+        for (int supported : SUPPORTED_FOV) {
+            if (fov == supported) {
+                fovValid = true;
+                break;
+            }
+        }
+        if (!fovValid) {
+            Log.w(TAG, "Invalid camera FOV: " + fov + ", using default " + DEFAULT_CAMERA_FOV);
+            fov = DEFAULT_CAMERA_FOV;
+        }
+        if (roiPosition < 0 || roiPosition > 2) {
+            Log.w(TAG, "Invalid camera ROI position: " + roiPosition + ", clamping to [0,2]");
+            roiPosition = Math.max(0, Math.min(2, roiPosition));
+        }
+        Log.d(TAG, "Setting camera FOV to: " + fov + ", ROI position: " + roiPosition);
+        prefs.edit()
+            .putInt(KEY_CAMERA_FOV, fov)
+            .putInt(KEY_CAMERA_ROI_POSITION, roiPosition)
+            .commit();
     }
     
     /**

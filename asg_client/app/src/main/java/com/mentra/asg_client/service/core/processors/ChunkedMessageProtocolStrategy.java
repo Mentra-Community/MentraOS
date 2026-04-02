@@ -25,17 +25,21 @@ public class ChunkedMessageProtocolStrategy implements CommandProtocolDetector.P
             String dataPayload = json.optString("C", "");
             try {
                 JSONObject innerJson = new JSONObject(dataPayload);
-                String type = innerJson.optString("type", "");
-                return "chunked_msg".equals(type);
+                if (isChunkedType(innerJson)) return true;
             } catch (JSONException e) {
                 // Not valid JSON in C field or not chunked message
                 return false;
             }
         }
-        
+
         // Also check direct format (for testing or future use)
-        String type = json.optString("type", "");
-        return "chunked_msg".equals(type);
+        return isChunkedType(json);
+    }
+
+    /** Check for both verbose ("type":"chunked_msg") and compact ("t":"ck") formats */
+    private boolean isChunkedType(JSONObject json) {
+        String type = json.optString("type", json.optString("t", ""));
+        return "chunked_msg".equals(type) || "ck".equals(type);
     }
     
     @Override
@@ -54,12 +58,18 @@ public class ChunkedMessageProtocolStrategy implements CommandProtocolDetector.P
                 Log.d(TAG, "Detected chunked message in direct format");
             }
             
-            // Extract chunk information
-            String chunkId = chunkMessage.getString("chunkId");
-            int chunkIndex = chunkMessage.getInt("chunk");
-            int totalChunks = chunkMessage.getInt("total");
-            String data = chunkMessage.getString("data");
+            // Extract chunk information (supports both verbose and compact keys)
+            String chunkId = optStringFallback(chunkMessage, "chunkId", "id");
+            int chunkIndex = optIntFallback(chunkMessage, "chunk", "c", -1);
+            int totalChunks = optIntFallback(chunkMessage, "total", "n", -1);
+            String data = optStringFallback(chunkMessage, "data", "d");
             long messageId = chunkMessage.optLong("mId", -1);
+
+            if (chunkId == null || chunkIndex < 0 || totalChunks < 0 || data == null) {
+                Log.e(TAG, "Missing required chunk fields");
+                return new CommandProtocolDetector.ProtocolDetectionResult(
+                    CommandProtocolDetector.ProtocolType.UNKNOWN, json, "", -1, false);
+            }
             
             Log.d(TAG, "Processing chunk " + chunkIndex + "/" + (totalChunks - 1) + 
                       " for session " + chunkId + 
@@ -132,5 +142,24 @@ public class ChunkedMessageProtocolStrategy implements CommandProtocolDetector.P
     @Override
     public CommandProtocolDetector.ProtocolType getProtocolType() {
         return CommandProtocolDetector.ProtocolType.JSON_COMMAND;
+    }
+
+    /** Try full key first, then compact key */
+    private static String optStringFallback(JSONObject json, String fullKey, String compactKey) {
+        if (json.has(fullKey)) {
+            return json.optString(fullKey, null);
+        }
+        if (json.has(compactKey)) {
+            return json.optString(compactKey, null);
+        }
+        return null;
+    }
+
+    /** Try full key first, then compact key, then default */
+    private static int optIntFallback(JSONObject json, String fullKey, String compactKey, int defaultValue) {
+        if (json.has(fullKey)) {
+            return json.optInt(fullKey, defaultValue);
+        }
+        return json.optInt(compactKey, defaultValue);
     }
 }

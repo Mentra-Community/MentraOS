@@ -289,9 +289,9 @@ class MentraNex : SGCManager() {
 
     // Camera & Media: Not supported on Nex (No camera)
     override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, sound: Boolean) { Bridge.log("Nex: requestPhoto operation not supported") }
-    override fun startRtmpStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startRtmpStream operation not supported") }
-    override fun stopRtmpStream() { Bridge.log("Nex: stopRtmpStream operation not supported") }
-    override fun sendRtmpKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendRtmpKeepAlive operation not supported") }
+    override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
+    override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }
+    override fun sendStreamKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendStreamKeepAlive operation not supported") }
     override fun startBufferRecording() { Bridge.log("Nex: startBufferRecording operation not supported") }
     override fun stopBufferRecording() { Bridge.log("Nex: stopBufferRecording operation not supported") }
     override fun saveBufferVideo(requestId: String, durationSeconds: Int) { Bridge.log("Nex: saveBufferVideo operation not supported") }
@@ -304,6 +304,8 @@ class MentraNex : SGCManager() {
     override fun sendButtonVideoRecordingSettings() { Bridge.log("Nex: sendButtonVideoRecordingSettings operation not supported") }
     override fun sendButtonMaxRecordingTime() { Bridge.log("Nex: sendButtonMaxRecordingTime operation not supported") }
     override fun sendButtonCameraLedSetting() { Bridge.log("Nex: sendButtonCameraLedSetting operation not supported") }
+
+    override fun sendCameraFovSetting() { Bridge.log("Nex: sendCameraFovSetting operation not supported") }
 
     override fun sendUserEmailToGlasses(email: String) {  Bridge.log("Nex: sendUserEmailToGlasses operation not supported") }
 
@@ -496,9 +498,26 @@ class MentraNex : SGCManager() {
     }
 
     override fun setDashboardPosition(height: Int, depth: Int) {
-        Bridge.log("Nex: setDashboardPosition() - height: " + height + ", depth: " + depth);
-        val cmdBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height, depth)
-        sendDataSequentially(cmdBytes, 10)
+        Bridge.log("Nex: setDashboardPosition() - height: " + height + ", depth: " + depth)
+        // Send display_height then display_distance; adjust order if Nex firmware requires otherwise.
+        val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
+        sendDataSequentially(heightBytes, 10)
+        val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
+        val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
+        sendDataSequentially(distanceBytes, 10)
+    }
+
+    override fun setDashboardHeightOnly(height: Int) {
+        Bridge.log("Nex: setDashboardHeightOnly() - height: $height")
+        val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
+        sendDataSequentially(heightBytes, 10)
+    }
+
+    override fun setDashboardDepthOnly(depth: Int) {
+        Bridge.log("Nex: setDashboardDepthOnly() - depth: $depth")
+        val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
+        val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
+        sendDataSequentially(distanceBytes, 10)
     }
 
     override fun ping() {

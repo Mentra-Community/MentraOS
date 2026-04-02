@@ -1,0 +1,257 @@
+# Video Streaming
+
+The ASG Client supports live video streaming via three protocols: **SRT**, **RTMP/RTMPS**, and **WHIP (WebRTC)**. Protocol selection is automatic based on the stream URL provided by the cloud.
+
+## Overview
+
+Video streaming enables:
+
+- Live video broadcasting from glasses
+- Real-time video analysis by apps
+- Remote assistance scenarios
+- Video recording to cloud servers
+
+## Supported Protocols
+
+| Protocol | URL Scheme | Service Class | Use Case |
+|----------|-----------|---------------|----------|
+| SRT | `srt://` | `SrtStreamingService` | Low-latency, resilient streaming (used by managed streams) |
+| RTMP/RTMPS | `rtmp://`, `rtmps://` | `RtmpStreamingService` | Platform compatibility (YouTube, Twitch) |
+| WHIP | `https://`, `http://` | `WhipStreamingService` | Ultra-low latency WebRTC ingest |
+
+Protocol detection is handled by `StreamCommandHandler.detectProtocol()` based on the URL scheme.
+
+## Stream Commands
+
+The system uses four commands for stream control. These are sent from the phone to the glasses over BLE.
+
+### 1. start_stream
+
+Initiates a stream to the specified URL. The protocol is auto-detected from the URL scheme.
+
+**Command Structure:**
+
+```json
+{
+  "type": "start_stream",
+  "streamUrl": "srt://server.com:4201?streamid=key&passphrase=secret",
+  "streamId": "unique-stream-id",
+  "video": {
+    "width": 1280,
+    "height": 720,
+    "bitrate": 2000000
+  },
+  "audio": {
+    "bitrate": 128000,
+    "sampleRate": 44100
+  }
+}
+```
+
+**Requirements:**
+
+- Active WiFi connection
+- Valid stream URL (srt://, rtmp://, rtmps://, http://, or https://)
+- Sufficient battery level
+- Sufficient bandwidth
+
+**Response:**
+
+```json
+{
+  "type": "stream_status",
+  "status": "initializing",
+  "streamId": "unique-stream-id"
+}
+```
+
+### 2. stop_stream
+
+Terminates the active stream (whichever protocol is running).
+
+**Command Structure:**
+
+```json
+{
+  "type": "stop_stream"
+}
+```
+
+**Response:**
+
+```json
+{
+  "type": "stream_status",
+  "status": "stopped",
+  "streamId": "unique-stream-id"
+}
+```
+
+### 3. keep_stream_alive
+
+Keep-alive mechanism to prevent stream timeout. Must be sent at least every 60 seconds.
+
+**Command Structure:**
+
+```json
+{
+  "type": "keep_stream_alive",
+  "streamId": "unique-stream-id",
+  "ackId": "unique-ack-id"
+}
+```
+
+**ACK Response (from glasses):**
+
+```json
+{
+  "type": "keep_alive_ack",
+  "streamId": "unique-stream-id",
+  "ackId": "unique-ack-id",
+  "timestamp": 1234567890
+}
+```
+
+### 4. get_stream_status
+
+Queries the current streaming status.
+
+**Command Structure:**
+
+```json
+{
+  "type": "get_stream_status"
+}
+```
+
+**Response:**
+
+```json
+{
+  "type": "stream_status",
+  "streaming": true,
+  "reconnecting": false
+}
+```
+
+## Stream Lifecycle
+
+### Starting a Stream
+
+1. **Request received**: Phone sends `start_stream` via BLE
+2. **Battery check**: Verify sufficient battery level
+3. **WiFi check**: Verify WiFi connection is active
+4. **Stop existing**: Any running stream is stopped first
+5. **Protocol detection**: URL scheme determines which service to use
+6. **Stream init**: Initialize encoder and connection for the detected protocol
+7. **Start streaming**: Begin sending video data
+8. **Status updates**: Send status back to phone/cloud
+
+### Keep-Alive Mechanism
+
+The stream has a **60-second timeout** that requires periodic keep-alive messages:
+
+1. **Cloud sends keep-alive** every 15 seconds with unique `ackId`
+2. **Glasses reset timeout** and respond with ACK containing same `ackId`
+3. **If no keep-alive for 60 seconds**, stream automatically stops
+4. **If 3 ACKs are missed**, cloud marks connection as degraded
+
+```
+Cloud -> Glasses: keep_stream_alive (every 15s)
+Glasses -> Cloud: keep_alive_ack (immediate response)
+```
+
+### Stopping a Stream
+
+Streams can stop in three ways:
+
+1. **Explicit stop**: Via `stop_stream` command
+2. **Timeout**: No keep-alive received for 60 seconds
+3. **Error**: Network failure, encoder error, etc.
+
+## Implementation Details
+
+### StreamCommandHandler
+
+Routes commands to the appropriate streaming service based on URL protocol:
+
+```java
+// Protocol detection
+private static Protocol detectProtocol(String url) {
+    if (url.startsWith("srt://")) return Protocol.SRT;
+    if (url.startsWith("rtmp://") || url.startsWith("rtmps://")) return Protocol.RTMP;
+    if (url.startsWith("https://") || url.startsWith("http://")) return Protocol.WHIP;
+    return Protocol.UNKNOWN;
+}
+```
+
+### Streaming Services
+
+All three services share the same `StreamingStatusCallback` interface:
+
+```java
+// SRT
+SrtStreamingService.startStreaming(context, streamUrl, streamId, flash, sound, config);
+
+// RTMP
+RtmpStreamingService.startStreaming(context, streamUrl, streamId, flash, sound, config);
+
+// WHIP (WebRTC)
+WhipStreamingService.startStreaming(context, streamUrl, streamId, flash, sound, config);
+```
+
+Each service supports:
+- `isStreaming()` / `isReconnecting()` — state queries
+- `stopStreaming(context)` — stop and clean up
+- `resetStreamTimeout(streamId)` — keep-alive timeout reset
+- `setStreamingStatusCallback(callback)` — status event reporting
+
+### Status Messages
+
+All services report status through the shared callback:
+
+- `initializing` — Stream setup in progress
+- `streaming` / `active` — Streaming successfully
+- `reconnecting` — Attempting to reconnect after failure
+- `reconnected` — Successfully reconnected
+- `reconnect_failed` — All reconnection attempts exhausted
+- `error` — Stream failed with error details
+- `stopped` — Stream terminated
+- `timeout` — Stream stopped due to keep-alive timeout
+
+## Network Requirements
+
+### Bandwidth
+
+- Minimum: 1 Mbps upload
+- Recommended: 2-3 Mbps upload
+- Adapts bitrate based on connection
+
+### WiFi Stability
+
+- Requires stable WiFi connection
+- Automatic reconnection on brief disconnects
+- Stops on extended network loss
+
+## Debugging
+
+### Log Filters
+
+```bash
+# All streaming logs
+adb logcat | grep -E "StreamCommandHandler|RtmpStreaming|SrtStreaming|WhipStreaming"
+
+# Keep-alive activity
+adb logcat | grep "keep_stream_alive\|keep_alive_ack"
+
+# Stream status
+adb logcat | grep "stream_status"
+```
+
+### Common Issues
+
+1. **Stream stops after ~60 seconds**: Check keep-alive implementation
+2. **ACKs not received**: Verify BLE communication both ways
+3. **Poor quality**: Check WiFi signal strength and bandwidth
+4. **Can't start stream**: Ensure only one stream active at a time
+5. **Unknown protocol**: Verify URL scheme is srt://, rtmp://, rtmps://, http://, or https://

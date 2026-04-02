@@ -19,6 +19,7 @@ export {
   isAppSubscriptionUpdate,
   isDisplayRequest,
   isRgbLedControlRequest,
+  isCameraFovSetRequest,
   isAudioPlayRequest,
   isAudioStopRequest,
   isDashboardContentUpdate,
@@ -26,8 +27,8 @@ export {
   isDashboardSystemUpdate,
   isManagedStreamRequest,
   isManagedStreamStopRequest,
-  isRtmpStreamRequest,
-  isRtmpStreamStopRequest,
+  isStreamRequest,
+  isStreamStopRequest,
   isOwnershipRelease,
   isTelemetryResponse,
   // Export with alias to avoid conflict
@@ -41,8 +42,10 @@ export type {
   AppSubscriptionUpdate,
   PhotoRequest,
   RgbLedControlRequest,
-  RtmpStreamRequest,
-  RtmpStreamStopRequest,
+  CameraFovSetRequest,
+  CameraRoiPosition,
+  StreamRequest,
+  StreamStopRequest,
   AppLocationPollRequest,
   RestreamDestination,
   ManagedStreamRequest,
@@ -66,7 +69,7 @@ export type {
 
 // Export cloud-to-app but exclude the conflicting type guards
 export {
-  // Type guards (excluding isPhotoResponse and isRtmpStreamStatus which conflict)
+  // Type guards (excluding isPhotoResponse and isStreamStatus which conflict)
   isAppConnectionAck,
   isAppConnectionError,
   isAppStopped,
@@ -82,7 +85,7 @@ export {
   // Re-export the cloud-to-app versions of these type guards since they're the ones
   // that should be used when dealing with CloudToAppMessage types
   isPhotoResponse as isPhotoResponseFromCloud,
-  isRtmpStreamStatus as isRtmpStreamStatusFromCloud,
+  isStreamStatus as isStreamStatusFromCloud,
   isRgbLedControlResponse as isRgbLedControlResponseFromCloud,
   isRequestTelemetry,
 } from "./messages/cloud-to-app";

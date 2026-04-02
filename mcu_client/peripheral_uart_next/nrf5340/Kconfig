@@ -1,0 +1,53 @@
+#
+# Copyright (c) 2018 Nordic Semiconductor
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+source "Kconfig.zephyr"
+
+
+menu "Nordic UART BLE GATT service sample"
+
+config BT_NUS_THREAD_STACK_SIZE
+	int "Thread stack size"
+	default 1024
+	help
+	  Stack size used in each of the two threads
+
+config BT_NUS_UART_BUFFER_SIZE
+	int "UART payload buffer element size"
+	default 40
+	help
+	  Size of the payload buffer in each RX and TX FIFO element
+
+config BT_NUS_SECURITY_ENABLED
+	bool "Enable security"
+	default y
+	select BT_SMP
+	help
+	  "Enable BLE security for the UART service"
+
+config BT_NUS_UART_RX_WAIT_TIME
+	int "Timeout for UART RX complete event"
+	default 50000
+	help
+	  Wait for RX complete event time in microseconds
+
+config SETTINGS
+	default y
+
+config ZMS
+	default y if (SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
+
+config NVS
+	default y if !(SOC_FLASH_NRF_RRAM || SOC_FLASH_NRF_MRAM)
+
+config LV_Z_DEMO_BENCHMARK
+	bool "LVGL benchmark demo"
+	select LV_USE_DEMO_BENCHMARK
+	select LV_USE_DEMO_WIDGETS
+	help
+	  Build benchmarking demo application.
+
+endmenu

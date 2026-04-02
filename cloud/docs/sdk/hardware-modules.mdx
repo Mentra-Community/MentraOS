@@ -32,7 +32,7 @@ const photo = await session.camera.requestPhoto({
 
 ```typescript
 // RTMP streaming
-const result = await session.camera.startStream({
+const result = await session.camera.startLocalLivestream({
   rtmpUrl: 'rtmp://your-server.com/live/stream-key'
 });
 
@@ -41,10 +41,10 @@ if (result.success) {
 }
 
 // Stop streaming
-await session.camera.stopStream();
+await session.camera.stopLocalLivestream();
 
 // Managed streaming (creates URLs for viewers)
-const managed = await session.camera.startManagedStream({
+const managed = await session.camera.startLivestream({
   title: 'Live Tour',
   description: 'Walking through the museum'
 });
@@ -56,12 +56,53 @@ console.log(`DASH URL: ${managed.dashUrl}`);
 ### Stream Status
 
 ```typescript
-session.camera.onStreamStatus((status) => {
+session.camera.onLocalLivestreamStatus((status) => {
   console.log(`Stream status: ${status.state}`);
   if (status.error) {
     console.error(`Stream error: ${status.error}`);
   }
 });
+```
+
+### Camera FOV / ROI
+
+Control the camera's field of view and crop region with `session.camera.setFov()`.
+
+The `fov` value (82--118 degrees) directly sets the FOV of the raw image the camera produces -- the crop happens at the sensor level, not in software after capture. At `fov: 118` the camera uses its full sensor with no crop. Values below 118 tell the sensor to apply an ROI (Region of Interest) crop so the output image is that narrower angle. Lower values mean a narrower view (more zoomed in).
+
+`roiPosition` controls where the crop window sits vertically on the sensor: `"top"` shifts it upward, `"bottom"` shifts it downward, and `"center"` keeps it in the middle. This lets apps pan the visible area up or down without the user physically tilting the glasses. At `fov: 118` there is no crop, so `roiPosition` has no effect.
+
+**Output resolution vs. ROI:** The sensor crop gets smaller as FOV decreases, but the **delivered frame often stays at the same output size** (for example **1080p** / 1920×1080 in typical video paths). The pipeline **scales the cropped region up** to that resolution, so the picture stays full-frame and “HD,” but **you are not gaining unlimited real detail** as you zoom in—past roughly **102°**, **angular resolution** (actual sharpness per degree in the scene) **often stops improving**, and at the narrowest FOVs you may see **softer or noisier** results because fewer native sensor samples are stretched across the same pixel grid, in addition to limits from optics and the ISP.
+
+```typescript
+// Narrow the FOV to 92 degrees (defaults to center crop)
+await session.camera.setFov({ fov: 92 });
+
+// Narrow FOV with the crop shifted to the top of the sensor
+await session.camera.setFov({ fov: 92, roiPosition: 'top' });
+
+// Full sensor, no crop
+await session.camera.setFov({ fov: 118 });
+```
+
+**Parameters:**
+
+- `fov` (required) -- number between 82 and 118. The FOV in degrees of the camera output. 118 = full sensor, no crop.
+- `roiPosition` (optional) -- `"center"` | `"top"` | `"bottom"`. Where the crop window sits vertically. Defaults to `"center"`. Ignored when `fov` is 118.
+
+**Behavior notes:**
+
+- Requires `CAMERA` permission.
+- Fire-and-forget: the promise resolves when the message is sent, not when the hardware confirms the change.
+- When `fov` is 118, `roiPosition` is forced to `"center"` internally (no crop means no positioning).
+
+```typescript
+// Error handling
+try {
+  await session.camera.setFov({ fov: 92, roiPosition: 'bottom' });
+} catch (error) {
+  console.error('Failed to set camera FOV:', error);
+}
 ```
 
 ## Audio Module

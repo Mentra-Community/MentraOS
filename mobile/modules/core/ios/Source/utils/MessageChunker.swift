@@ -3,15 +3,26 @@ import Foundation
 /**
  * Handles chunking of large messages that exceed BLE transmission limits.
  * Messages are split at the JSON layer to work within MCU protocol constraints.
+ *
+ * Uses compact keys to minimize overhead per chunk:
+ *   t  = "ck" (chunk type identifier)
+ *   id = chunk session ID
+ *   c  = chunk index (0-based)
+ *   n  = total number of chunks
+ *   d  = chunk data payload
+ *
+ * Each chunk after C-wrapping + K900 framing must fit within the BES2700's
+ * 253-byte BLE write limit. With compact keys, 80 bytes of raw data produces
+ * a final packed size of ~245 bytes worst-case (with heavy JSON escaping).
  */
 class MessageChunker {
-    // Threshold for chunking - accounts for MCU protocol overhead
-    // MTU ~512 - BLE overhead (3) - MCU protocol (7) - C-wrapper (~50) - safety margin
-    private static let MESSAGE_SIZE_THRESHOLD = 400
+    // Threshold: if C-wrapped message exceeds this, chunking is triggered.
+    // BES2700 limit is 253 bytes; anything over ~200 bytes packed needs chunking.
+    private static let MESSAGE_SIZE_THRESHOLD = 200
 
-    // Maximum size for chunk data content
-    // Account for chunk wrapper overhead (~100 bytes for type, chunkId, indices)
-    private static let CHUNK_DATA_SIZE = 300
+    // Maximum raw bytes per chunk. After double JSON escaping + compact envelope
+    // + C-wrapper + K900 framing, 80 bytes stays under the 253-byte BLE limit.
+    private static let CHUNK_DATA_SIZE = 80
 
     /**
      * Check if a message needs to be chunked
@@ -34,7 +45,8 @@ class MessageChunker {
     }
 
     /**
-     * Create chunks from a message that's too large for single transmission
+     * Create chunks from a message that's too large for single transmission.
+     * Uses compact keys to minimize per-chunk overhead.
      * @param originalJson The original JSON string to be sent (before C-wrapping)
      * @param messageId The message ID for ACK tracking (if applicable)
      * @return Array of chunk dictionaries ready to be C-wrapped and sent
@@ -48,8 +60,8 @@ class MessageChunker {
         var chunks: [[String: Any]] = []
         let totalBytes = messageData.count
 
-        // Generate unique chunk ID for this message set
-        let chunkId = "chunk_\(messageId)_\(Int(Date().timeIntervalSince1970 * 1000))"
+        // Compact chunk session ID: messageId_timestamp (no "chunk_" prefix)
+        let chunkId = "\(messageId)_\(Int(Date().timeIntervalSince1970 * 1000))"
 
         // Calculate total chunks needed
         let totalChunks = Int(ceil(Double(totalBytes) / Double(CHUNK_DATA_SIZE)))
@@ -68,13 +80,13 @@ class MessageChunker {
                 continue
             }
 
-            // Create chunk dictionary
+            // Create chunk dictionary with compact keys
             var chunk: [String: Any] = [
-                "type": "chunked_msg",
-                "chunkId": chunkId,
-                "chunk": i,
-                "total": totalChunks,
-                "data": chunkString,
+                "t": "ck",
+                "id": chunkId,
+                "c": i,
+                "n": totalChunks,
+                "d": chunkString,
             ]
 
             // Add message ID to final chunk only for ACK tracking
@@ -91,7 +103,8 @@ class MessageChunker {
     }
 
     /**
-     * Check if a received message is a chunked message
+     * Check if a received message is a chunked message.
+     * Supports both verbose ("type":"chunked_msg") and compact ("t":"ck") formats.
      * @param json The received dictionary (after C-unwrapping)
      * @return true if this is a chunked message
      */
@@ -100,22 +113,24 @@ class MessageChunker {
             return false
         }
 
-        let type = json["type"] as? String ?? ""
-        return type == "chunked_msg"
+        let type = json["type"] as? String ?? json["t"] as? String ?? ""
+        return type == "chunked_msg" || type == "ck"
     }
 
     /**
-     * Extract chunk information from a chunked message
+     * Extract chunk information from a chunked message.
+     * Supports both verbose and compact key formats.
      */
     static func getChunkInfo(_ json: [String: Any]) -> ChunkInfo? {
         guard isChunkedMessage(json) else {
             return nil
         }
 
-        guard let chunkId = json["chunkId"] as? String,
-              let chunkIndex = json["chunk"] as? Int,
-              let totalChunks = json["total"] as? Int,
-              let data = json["data"] as? String
+        // Support both verbose and compact keys
+        guard let chunkId = (json["chunkId"] as? String) ?? (json["id"] as? String),
+              let chunkIndex = (json["chunk"] as? Int) ?? (json["c"] as? Int),
+              let totalChunks = (json["total"] as? Int) ?? (json["n"] as? Int),
+              let data = (json["data"] as? String) ?? (json["d"] as? String)
         else {
             print("MessageChunker: Failed to extract chunk info from JSON")
             return nil

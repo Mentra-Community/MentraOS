@@ -19,6 +19,10 @@ import {
   Share,
   Cog,
   ExternalLink,
+  PlayIcon,
+  PauseIcon,
+  PointerIcon,
+  CircleX,
 } from "lucide-react-native"
 import {
   Image,
@@ -32,7 +36,7 @@ import {
   ViewStyle,
 } from "react-native"
 
-import {ShoppingBagIcon, HomeIcon} from "@/components/icons"
+import {ShoppingBagIcon, HomeIcon, GridIcon} from "@/components/icons"
 import {useAppTheme} from "@/contexts/ThemeContext"
 
 export type IconTypes = keyof typeof iconRegistry
@@ -119,6 +123,7 @@ const lucideIcons = {
   "info": Info,
   // "house": House,
   // custom icons:
+  "grid": GridIcon,
   "shopping-bag": ShoppingBagIcon,
   "shopping-bag-filled": ShoppingBagIcon,
   "house": HomeIcon,
@@ -129,6 +134,10 @@ const lucideIcons = {
   "share": Share,
   "cog": Cog,
   "external-link": ExternalLink,
+  "play": PlayIcon,
+  "pause": PauseIcon,
+  "pointer": PointerIcon,
+  "circle-x": CircleX,
 }
 
 const tablerIcons = {

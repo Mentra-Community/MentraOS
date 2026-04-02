@@ -16,7 +16,6 @@ import {
   GlassesToCloudMessageType,
 } from "@mentra/sdk";
 
-import { SYSTEM_DASHBOARD_PACKAGE_NAME } from "../core/app.service";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { PosthogService } from "../logging/posthog.service";
 import UserSession from "../session/UserSession";
@@ -171,15 +170,7 @@ export class GlassesWebSocketService {
    */
   private async handleConnectionInit(userSession: UserSession, reconnection: boolean): Promise<void> {
     if (!reconnection) {
-      // Start all the apps that the user has running.
-      try {
-        // Start the dashboard app, but let's not add to the user's running apps since it's a system app.
-        // honestly there should be no annyomous users so if it's an anonymous user we should just not start the dashboard
-        await userSession.appManager.startApp(SYSTEM_DASHBOARD_PACKAGE_NAME);
-      } catch (error) {
-        userSession.logger.error({ error }, `Error starting dashboard app`);
-      }
-
+      // Dashboard is now a cloud-internal service (DashboardManager) — no mini app to start.
       // Start all the apps that the user has running.
       try {
         await userSession.appManager.startPreviouslyRunningApps();

@@ -1,8 +1,8 @@
 import {useEffect, useState} from "react"
-import {TouchableOpacity, View} from "react-native"
+import {View} from "react-native"
 
 import AppIcon from "@/components/home/AppIcon"
-import {Text} from "@/components/ignite"
+import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import restComms from "@/services/RestComms"
 import {useAppletStatusStore} from "@/stores/applets"
@@ -108,24 +108,12 @@ export default function MiniappErrorScreen({packageName, appName, message, onRet
         </Text>
       )}
 
-      {/* <TouchableOpacity
+      <Button
+        text="Retry"
+        preset="primary"
         onPress={onRetry}
-        style={{
-          marginTop: theme.spacing.s6,
-          backgroundColor: theme.colors.primary,
-          borderRadius: 8,
-          paddingHorizontal: 24,
-          paddingVertical: 12,
-        }}>
-        <Text
-          style={{
-            fontSize: 16,
-            fontWeight: "600",
-            color: theme.colors.palette.neutral100,
-          }}>
-          Retry
-        </Text>
-      </TouchableOpacity> */}
+        style={{marginTop: theme.spacing.s6, minWidth: 120}}
+      />
     </View>
   )
 }

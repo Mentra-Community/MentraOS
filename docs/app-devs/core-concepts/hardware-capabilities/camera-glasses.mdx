@@ -70,8 +70,8 @@ if (caps.hasCamera) {
 
 ```typescript
 if (caps.camera?.video.canStream) {
-  await session.camera.startStream({
-    rtmpUrl: 'rtmp://live.example.com/stream/key',
+  await session.camera.startLocalLivestream({
+    streamUrl: 'srt://live.example.com:4201?streamid=key',
     video: {
       resolution: '1280x720',
       framerate: 30
@@ -249,7 +249,7 @@ class CameraGlassesApp extends AppServer {
   private async startStreaming(session: AppSession) {
     await session.audio.speak('Starting stream');
 
-    await session.camera.startManagedStream({
+    await session.camera.startLivestream({
       video: {
         resolution: '1280x720',
         framerate: 30

@@ -488,15 +488,15 @@ public class FileManagerImpl implements FileManager {
         try {
             String lockInfo = lockManager.getLockInfo(packageName);
             Log.d(TAG, "📋 Lock status before acquisition: " + lockInfo);
-            
+
             int expiredLocksReleased = lockManager.releaseExpiredLocks(packageName);
             if (expiredLocksReleased > 0) {
                 Log.w(TAG, "🧹 Released " + expiredLocksReleased + " expired locks before cleanup");
             }
-            
+
             lock = lockManager.acquireWriteLock(packageName, lockTimeoutMs, "FILE_CLEANUP");
             long lockAcquisitionTime = System.currentTimeMillis() - lockStartTime;
-            
+
             if (lock != null) {
                 Log.d(TAG, "✅ Write lock acquired successfully in " + lockAcquisitionTime + "ms");
                 if (lockAcquisitionTime > 1000) {
@@ -505,7 +505,7 @@ public class FileManagerImpl implements FileManager {
             } else {
                 Log.e(TAG, "❌ Failed to acquire write lock within " + lockTimeoutMs + "ms timeout");
                 Log.d(TAG, "🏁 cleanupOldFiles() completed - Lock acquisition timeout");
-                
+
                 // Log all active lock holders for debugging
                 Map<String, ?> allHolders = lockManager.getAllLockHolders();
                 if (!allHolders.isEmpty()) {
@@ -514,28 +514,51 @@ public class FileManagerImpl implements FileManager {
                         Log.w(TAG, "  " + entry.getKey() + " -> " + entry.getValue());
                     }
                 }
-                
+
                 // Log detailed lock statistics
                 String lockStats = lockManager.getLockStatistics(packageName);
                 Log.w(TAG, "📊 Lock Statistics:\n" + lockStats);
-                
+
                 // Try emergency lock release for this specific package
                 Log.w(TAG, "🚨 Attempting emergency lock release for package: " + packageName);
                 int forceReleased = lockManager.forceReleaseAllLocks(packageName);
                 if (forceReleased > 0) {
                     Log.w(TAG, "⚠️ Force released " + forceReleased + " locks for package: " + packageName);
                     Log.w(TAG, "⚠️ This may indicate a deadlock or stuck operation");
-                    
+
                     // Log updated statistics after force release
                     String updatedStats = lockManager.getLockStatistics(packageName);
                     Log.w(TAG, "📊 Updated Lock Statistics:\n" + updatedStats);
                 }
-                
+
                 return 0;
             }
+
+            // Proceed with cleanup while holding the write lock
+            // Get package directory
+            File packageDir = directoryManager.getPackageDirectory(packageName);
+            if (!packageDir.exists() || !packageDir.isDirectory()) {
+                Log.w(TAG, "⚠️ Package directory does not exist: " + packageDir.getAbsolutePath());
+                return 0;
+            }
+
+            Log.d(TAG, "📁 Scanning directory: " + packageDir.getAbsolutePath());
+
+            // Calculate cutoff time
+            long cutoffTime = System.currentTimeMillis() - maxAgeMs;
+            Log.d(TAG, "⏰ Cutoff time: " + new java.util.Date(cutoffTime));
+
+            // Recursively scan and clean up old files
+            int deletedCount = 0;
+            long totalDeletedSize = 0;
+
+            deletedCount = cleanupFilesRecursively(packageDir, packageName, cutoffTime, totalDeletedSize);
+
+            Log.i(TAG, "✅ Cleanup completed: " + deletedCount + " files deleted, " + totalDeletedSize + " bytes freed");
+            return deletedCount;
+
         } catch (Exception e) {
-            Log.e(TAG, "💥 Exception during write lock acquisition for package: " + packageName, e);
-            Log.d(TAG, "🏁 cleanupOldFiles() completed - Lock acquisition exception");
+            Log.e(TAG, "💥 Exception during file cleanup for package: " + packageName, e);
             return 0;
         } finally {
             if (lock != null) {
@@ -549,35 +572,6 @@ public class FileManagerImpl implements FileManager {
             } else {
                 Log.w(TAG, "⚠️ Cannot release write lock - lock is null");
             }
-        }
-        
-        // Proceed with cleanup under lock
-        try {
-            // Get package directory
-            File packageDir = directoryManager.getPackageDirectory(packageName);
-            if (!packageDir.exists() || !packageDir.isDirectory()) {
-                Log.w(TAG, "⚠️ Package directory does not exist: " + packageDir.getAbsolutePath());
-                return 0;
-            }
-            
-            Log.d(TAG, "📁 Scanning directory: " + packageDir.getAbsolutePath());
-            
-            // Calculate cutoff time
-            long cutoffTime = System.currentTimeMillis() - maxAgeMs;
-            Log.d(TAG, "⏰ Cutoff time: " + new java.util.Date(cutoffTime));
-            
-            // Recursively scan and clean up old files
-            int deletedCount = 0;
-            long totalDeletedSize = 0;
-            
-            deletedCount = cleanupFilesRecursively(packageDir, packageName, cutoffTime, totalDeletedSize);
-            
-            Log.i(TAG, "✅ Cleanup completed: " + deletedCount + " files deleted, " + totalDeletedSize + " bytes freed");
-            return deletedCount;
-            
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Exception during file cleanup for package: " + packageName, e);
-            return 0;
         }
     }
     

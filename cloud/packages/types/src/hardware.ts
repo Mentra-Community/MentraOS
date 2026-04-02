@@ -4,6 +4,7 @@
 
 import { evenRealitiesG1 } from "./capabilities/even-realities-g1";
 import { evenRealitiesG2 } from "./capabilities/even-realities-g2";
+import { mentraDisplay } from "./capabilities/mentra-display";
 import { mentraLive } from "./capabilities/mentra-live";
 import { simulatedGlasses } from "./capabilities/simulated-glasses";
 import { vuzixZ100 } from "./capabilities/vuzix-z100";
@@ -158,9 +159,11 @@ export interface Capabilities {
 export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [evenRealitiesG1.modelName]: evenRealitiesG1,
   [evenRealitiesG2.modelName]: evenRealitiesG2,
+  [mentraDisplay.modelName]: mentraDisplay,
   [mentraLive.modelName]: mentraLive,
   [simulatedGlasses.modelName]: simulatedGlasses,
   [vuzixZ100.modelName]: vuzixZ100,
+  [DeviceTypes.MACH1]: vuzixZ100, // Mach1 uses same Vuzix Ultralite hardware as Z100
   [none.modelName]: none,
 };
 
@@ -173,4 +176,4 @@ export const getModelCapabilities = (deviceType: DeviceTypes): Capabilities => {
 };
 
 // export * from "./capabilities"
-export { simulatedGlasses, evenRealitiesG1, evenRealitiesG2, mentraLive, vuzixZ100 };
+export { simulatedGlasses, evenRealitiesG1, evenRealitiesG2, mentraLive, vuzixZ100, mentraDisplay };

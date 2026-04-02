@@ -1,0 +1,172 @@
+EMPTY_0:
+  address: 0xfe000
+  end_address: 0x100000
+  placement:
+    after:
+    - nvs_storage
+  region: flash_primary
+  size: 0x2000
+app:
+  address: 0x14000
+  end_address: 0xf8000
+  region: flash_primary
+  size: 0xe4000
+external_flash:
+  address: 0x1ec000
+  end_address: 0x2000000
+  region: external_flash
+  size: 0x1e14000
+littlefs_storage:
+  address: 0xec000
+  end_address: 0x1ec000
+  region: external_flash
+  size: 0x100000
+mcuboot:
+  address: 0x0
+  end_address: 0xc000
+  placement:
+    align:
+      end: 0x1000
+    before:
+    - mcuboot_primary
+  region: flash_primary
+  size: 0xc000
+mcuboot_pad:
+  address: 0xc000
+  end_address: 0xc200
+  placement:
+    align:
+      start: 0x4000
+    before:
+    - mcuboot_primary_app
+  region: flash_primary
+  size: 0x200
+mcuboot_primary:
+  address: 0xc000
+  end_address: 0xf8000
+  orig_span: &id001
+  - mcuboot_pad
+  - tfm
+  - app
+  region: flash_primary
+  size: 0xec000
+  span: *id001
+mcuboot_primary_app:
+  address: 0xc200
+  end_address: 0xf8000
+  orig_span: &id002
+  - app
+  - tfm
+  region: flash_primary
+  size: 0xebe00
+  span: *id002
+mcuboot_secondary:
+  address: 0x0
+  device: DT_CHOSEN(nordic_pm_ext_flash)
+  end_address: 0xec000
+  region: external_flash
+  share_size:
+  - mcuboot_primary
+  size: 0xec000
+mcuboot_sram:
+  address: 0x20000000
+  end_address: 0x20080000
+  orig_span: &id003
+  - rpmsg_nrf53_sram
+  - sram_primary
+  - tfm_sram
+  region: sram_primary
+  size: 0x80000
+  span: *id003
+nonsecure_storage:
+  address: 0xf8000
+  end_address: 0xfe000
+  orig_span: &id004
+  - nvs_storage
+  region: flash_primary
+  size: 0x6000
+  span: *id004
+nvs_storage:
+  address: 0xf8000
+  end_address: 0xfe000
+  inside:
+  - nonsecure_storage
+  placement:
+    align:
+      start: 0x4000
+    before:
+    - end
+  region: flash_primary
+  size: 0x6000
+otp:
+  address: 0xff8100
+  end_address: 0xff83fc
+  region: otp
+  size: 0x2fc
+rpmsg_nrf53_sram:
+  address: 0x20070000
+  end_address: 0x20080000
+  placement:
+    before:
+    - end
+  region: sram_primary
+  size: 0x10000
+sram_nonsecure:
+  address: 0x20008000
+  end_address: 0x20080000
+  orig_span: &id005
+  - sram_primary
+  - rpmsg_nrf53_sram
+  region: sram_primary
+  size: 0x78000
+  span: *id005
+sram_primary:
+  address: 0x20008000
+  end_address: 0x20070000
+  region: sram_primary
+  size: 0x68000
+sram_secure:
+  address: 0x20000000
+  end_address: 0x20008000
+  orig_span: &id006
+  - tfm_sram
+  region: sram_primary
+  size: 0x8000
+  span: *id006
+tfm:
+  address: 0xc200
+  end_address: 0x14000
+  inside:
+  - mcuboot_primary_app
+  placement:
+    before:
+    - app
+  region: flash_primary
+  size: 0x7e00
+tfm_nonsecure:
+  address: 0x14000
+  end_address: 0xf8000
+  orig_span: &id007
+  - app
+  region: flash_primary
+  size: 0xe4000
+  span: *id007
+tfm_secure:
+  address: 0xc000
+  end_address: 0x14000
+  orig_span: &id008
+  - mcuboot_pad
+  - tfm
+  region: flash_primary
+  size: 0x8000
+  span: *id008
+tfm_sram:
+  address: 0x20000000
+  end_address: 0x20008000
+  inside:
+  - sram_secure
+  placement:
+    after:
+    - start
+  region: sram_primary
+  size: 0x8000

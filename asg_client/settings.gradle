@@ -22,3 +22,6 @@ project(':core').projectDir = new File(rootProject.projectDir, 'StreamPackLite/c
 
 include ':extension-rtmp'
 project(':extension-rtmp').projectDir = new File(rootProject.projectDir, 'StreamPackLite/extensions/rtmp')
+
+include ':extension-srt'
+project(':extension-srt').projectDir = new File(rootProject.projectDir, 'StreamPackLite/extensions/srt')

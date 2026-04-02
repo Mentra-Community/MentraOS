@@ -5,6 +5,9 @@ import android.util.Log;
 
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
+import com.mentra.asg_client.receiver.IntentResponseBroadcaster;
+
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -76,6 +79,37 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
         }
     }
     
+    /**
+     * Template method: broadcasts JSON responses to registered intent listeners,
+     * then delegates to the subclass-specific send implementation.
+     */
+    @Override
+    public final boolean sendData(byte[] data) {
+        if (data == null || data.length == 0) {
+            return false;
+        }
+
+        // Try to broadcast JSON responses to intent listeners
+        try {
+            String str = new String(data, "UTF-8");
+            if (str.startsWith("{")) {
+                JSONObject json = new JSONObject(str);
+                IntentResponseBroadcaster.getInstance().broadcastResponse(context, json);
+            }
+        } catch (Exception e) {
+            // Not valid JSON — skip broadcast, still send over BLE
+        }
+
+        return sendDataInternal(data);
+    }
+
+    /**
+     * Subclass-specific send implementation.
+     * @param data The data to send
+     * @return true if the data was sent successfully
+     */
+    protected abstract boolean sendDataInternal(byte[] data);
+
     @Override
     public boolean isConnected() {
         return isConnected;

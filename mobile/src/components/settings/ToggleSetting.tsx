@@ -16,6 +16,7 @@ type ToggleSettingProps = {
   compact?: boolean
   isFirst?: boolean
   isLast?: boolean
+  plain?: boolean // Use plain View instead of GlassView (for when nested inside another GlassView)
 }
 
 const ToggleSetting: React.FC<ToggleSettingProps> = ({
@@ -29,6 +30,7 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
   compact = false,
   isFirst,
   isLast,
+  plain = false,
 }) => {
   const {theme, themed} = useAppTheme()
 
@@ -43,8 +45,10 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
         }
       : undefined
 
+  const Wrapper = plain ? View : GlassView
+
   return (
-    <GlassView
+    <Wrapper
       style={[
         themed($container),
         groupedStyle,
@@ -60,7 +64,7 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
         {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
       <Switch value={value} onValueChange={onValueChange} disabled={disabled} />
-    </GlassView>
+    </Wrapper>
   )
 }
 

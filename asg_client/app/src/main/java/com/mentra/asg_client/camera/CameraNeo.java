@@ -4,6 +4,7 @@ import com.mentra.asg_client.io.media.core.CircularVideoBufferInternal;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
+import com.mentra.asg_client.SysControl;
 
 import android.annotation.SuppressLint;
 import android.app.NotificationChannel;
@@ -262,7 +263,7 @@ public class CameraNeo extends LifecycleService {
     }
 
     // Static callback for photo capture
-    private static PhotoCaptureCallback sPhotoCallback;
+    private static volatile PhotoCaptureCallback sPhotoCallback;
     
     // Photo request queue for rapid capture
     private static class PhotoRequest {
@@ -299,7 +300,7 @@ public class CameraNeo extends LifecycleService {
     private boolean isRecording = false;
     private String currentVideoId;
     private String currentVideoPath;
-    private static VideoRecordingCallback sVideoCallback;
+    private static volatile VideoRecordingCallback sVideoCallback;
     private long recordingStartTime;
     private Timer recordingTimer;
     private Size videoSize; // To store selected video size
@@ -315,7 +316,7 @@ public class CameraNeo extends LifecycleService {
     private Handler segmentSwitchHandler;
     private static final long SEGMENT_DURATION_MS = 5000; // 5 seconds
     private boolean isInBufferMode = false;
-    private static BufferCallback sBufferCallback;
+    private static volatile BufferCallback sBufferCallback;
 
     // Static instance for checking camera status
     private static CameraNeo sInstance;
@@ -659,11 +660,13 @@ public class CameraNeo extends LifecycleService {
                     } else {
                         pendingVideoSettings = null; // Will use defaults
                     }
+                    SysControl.setEisEnable(this, true);
                     setupCameraAndStartRecording(currentVideoId, currentVideoPath);
                     break;
                 case ACTION_STOP_VIDEO_RECORDING:
                     String videoIdToStop = intent.getStringExtra(EXTRA_VIDEO_ID);
                     stopCurrentVideoRecording(videoIdToStop);
+                    SysControl.setEisEnable(this, false);
                     break;
 
                 case ACTION_START_BUFFER:
@@ -1317,6 +1320,10 @@ public class CameraNeo extends LifecycleService {
                 }
                 Log.i(TAG, "📹 TARGET resolution: " + targetVideoWidth + "x" + targetVideoHeight);
                 videoSize = chooseOptimalSize(videoSizes, targetVideoWidth, targetVideoHeight);
+                if (videoSize == null) {
+                    Log.e(TAG, "chooseOptimalSize returned null for video, falling back to first available size");
+                    videoSize = videoSizes[0];
+                }
                 Log.i(TAG, "📹 SELECTED resolution: " + videoSize.getWidth() + "x" + videoSize.getHeight());
 
                 // Warn if we didn't get what we asked for
@@ -1394,6 +1401,10 @@ public class CameraNeo extends LifecycleService {
                     Log.d(TAG, "Button photo - using high quality resolution");
                 }
                 jpegSize = chooseOptimalSize(jpegSizes, desiredW, desiredH);
+                if (jpegSize == null) {
+                    Log.e(TAG, "chooseOptimalSize returned null for JPEG, falling back to first available size");
+                    jpegSize = jpegSizes[0];
+                }
                 Log.d(TAG, "Selected JPEG size: " + jpegSize.getWidth() + "x" + jpegSize.getHeight() +
                           " (requested: " + desiredW + "x" + desiredH + ", isFromSdk: " + pendingIsFromSdk + ")");
 
@@ -2237,8 +2248,12 @@ public class CameraNeo extends LifecycleService {
      * Close camera resources
      */
     private void closeCamera() {
+        boolean lockAcquired = false;
         try {
-            cameraOpenCloseLock.acquire();
+            lockAcquired = cameraOpenCloseLock.tryAcquire(5000, TimeUnit.MILLISECONDS);
+            if (!lockAcquired) {
+                Log.e(TAG, "closeCamera: Failed to acquire lock within 5 seconds, proceeding with cleanup anyway");
+            }
             if (cameraCaptureSession != null) {
                 cameraCaptureSession.close();
                 cameraCaptureSession = null;
@@ -2261,17 +2276,19 @@ public class CameraNeo extends LifecycleService {
             }
             // Reset keep-alive flag when camera is actually closed
             isCameraKeptAlive = false;
-            
+
             // Reset LED state when camera closes (flash already completed automatically)
             if (pendingLedEnabled) {
                 pendingLedEnabled = false;  // Reset LED state
             }
-            
+
             releaseWakeLocks();
         } catch (InterruptedException e) {
             Log.e(TAG, "Interrupted while closing camera", e);
         } finally {
-            cameraOpenCloseLock.release();
+            if (lockAcquired) {
+                cameraOpenCloseLock.release();
+            }
         }
     }
 
@@ -2379,37 +2396,8 @@ public class CameraNeo extends LifecycleService {
             }
         }
         
-        // Fallback to instance queue for legacy compatibility
-        if (!photoRequestQueue.isEmpty() && shotState == ShotState.IDLE) {
-            PhotoRequest nextRequest = photoRequestQueue.poll();
-            if (nextRequest != null) {
-                Log.d(TAG, "Processing queued photo from INSTANCE queue: " + nextRequest.filePath);
-
-                // Update the callback for this request
-                sPhotoCallback = nextRequest.callback;
-
-                // Cancel any pending keep-alive timer
-                cancelKeepAliveTimer();
-
-                // Record start time for e2e timing
-                photoRequestStartTimeMs = nextRequest.timestamp;
-                Log.i(TAG, "📸 PHOTO E2E: Starting queued photo request (legacy) " + nextRequest.requestId);
-
-                // Process the queued request
-                pendingPhotoPath = nextRequest.filePath;
-                pendingRequestedSize = nextRequest.size;
-                pendingIsFromSdk = nextRequest.isFromSdk;
-
-                // Start new capture sequence
-                shotState = ShotState.WAITING_AE;
-                if (backgroundHandler != null) {
-                    backgroundHandler.post(() -> startPrecaptureSequence());
-                } else {
-                    startPrecaptureSequence();
-                }
-            }
-        } else if (photoRequestQueue.isEmpty() && globalRequestQueue.isEmpty()) {
-            // No more requests in either queue, start keep-alive timer
+        // No more requests in global queue, start keep-alive timer
+        if (globalRequestQueue.isEmpty()) {
             startKeepAliveTimer();
         }
     }
@@ -2923,6 +2911,11 @@ public class CameraNeo extends LifecycleService {
      * Simplified photo capture - relies on AE convergence and automatic CONTINUOUS_PICTURE autofocus
      */
     private void capturePhoto() {
+        if (shotState == ShotState.SHOOTING) {
+            Log.d(TAG, "capturePhoto() skipped — another capture already in-flight");
+            return;
+        }
+
         // Check if HDR burst is enabled and we're capturing a button photo (not SDK)
         boolean hdrEnabled = mCameraSettings != null
                 && mCameraSettings.mAsgSettings.isHdrBurstEnabled()

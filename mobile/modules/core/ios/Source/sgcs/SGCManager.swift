@@ -22,9 +22,9 @@ protocol SGCManager {
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
         compress: String?, flash: Bool, sound: Bool
     )
-    func startRtmpStream(_ message: [String: Any])
-    func stopRtmpStream()
-    func sendRtmpKeepAlive(_ message: [String: Any])
+    func startStream(_ message: [String: Any])
+    func stopStream()
+    func sendStreamKeepAlive(_ message: [String: Any])
     func startBufferRecording()
     func stopBufferRecording()
     func saveBufferVideo(requestId: String, durationSeconds: Int)
@@ -38,6 +38,7 @@ protocol SGCManager {
     func sendButtonVideoRecordingSettings()
     func sendButtonMaxRecordingTime()
     func sendButtonCameraLedSetting()
+    func sendCameraFovSetting()
 
     // MARK: - Display Control
 
@@ -48,6 +49,9 @@ protocol SGCManager {
     func displayBitmap(base64ImageData: String) async -> Bool
     func showDashboard()
     func setDashboardPosition(_ height: Int, _ depth: Int)
+    /// Default implementation sends both via [setDashboardPosition]; Nex overrides to one protobuf.
+    func setDashboardHeightOnly(_ height: Int)
+    func setDashboardDepthOnly(_ depth: Int)
 
     // MARK: - Device Control
 
@@ -101,6 +105,18 @@ protocol SGCManager {
 // doesn't seem to work for concurrency reasons :(
 // we can make read-only getters for convienence though:
 extension SGCManager {
+    // MARK: - Dashboard (default: combined wire format; Nex implements single-field)
+
+    func setDashboardHeightOnly(_ height: Int) {
+        let d = GlassesStore.shared.get("core", "dashboard_depth") as? Int ?? 2
+        setDashboardPosition(height, d)
+    }
+
+    func setDashboardDepthOnly(_ depth: Int) {
+        let h = GlassesStore.shared.get("core", "dashboard_height") as? Int ?? 4
+        setDashboardPosition(h, depth)
+    }
+
     // MARK: - Default GlassesStore-backed property implementations
 
     var fullyBooted: Bool { GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }

@@ -37,6 +37,7 @@ let modalRef: {
       icon?: React.ReactNode
     },
   ) => void
+  isVisible: () => boolean
 } | null = null
 
 // Function to register the modal reference
@@ -171,6 +172,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   useEffect(() => {
     // Register the modal functions for global access
     setModalRef({
+      isVisible: () => visible,
       showModal: (title, message, alertButtons = [], opts = {}) => {
         setTitle(title)
         setMessage(message)
@@ -198,7 +200,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     return () => {
       setModalRef(null)
     }
-  }, [])
+  }, [visible])
 
   const handleDismiss = () => {
     // Animate out before hiding (only for new UI)
@@ -306,14 +308,19 @@ export interface ConnectivityAlertOptions extends AlertOptions {
  */
 const showAlert = (title: string, message: string, buttons: AlertButton[] = [], options?: AlertOptions) => {
   if (modalRef) {
-    // because a previous modal might be still fading out
-    setTimeout(() => {
+    const show = () =>
       modalRef?.showModal(title, message, buttons, {
         iconName: options?.iconName,
         iconColor: options?.iconColor,
         iconSize: options?.iconSize,
       })
-    }, 500)
+
+    if (modalRef.isVisible()) {
+      // wait for previous modal fade-out before showing next
+      setTimeout(show, 500)
+    } else {
+      show()
+    }
   } else {
     // Fallback to system alert if modal is not available
     Alert.alert(title, message, buttons, options)

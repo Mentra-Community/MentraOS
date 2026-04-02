@@ -6,6 +6,7 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo} from "@/types/asg"
+import {BackgroundTimer} from "@/utils/timers"
 import {storage} from "@/utils/storage"
 
 export interface DownloadedFile {
@@ -446,14 +447,11 @@ export class LocalStorageService {
    * Update the current index of the sync queue (called after each file completes)
    */
   async updateSyncQueueIndex(newIndex: number): Promise<void> {
-    try {
-      const queue = await this.getSyncQueue()
-      if (queue) {
-        queue.currentIndex = newIndex
-        await this.saveSyncQueue(queue)
-      }
-    } catch (error) {
-      console.error("[LocalStorage] Error updating sync queue index:", error)
+    // S6: Let errors propagate — caller uses .catch() for non-critical updates
+    const queue = await this.getSyncQueue()
+    if (queue) {
+      queue.currentIndex = newIndex
+      await this.saveSyncQueue(queue)
     }
   }
 
@@ -461,15 +459,23 @@ export class LocalStorageService {
    * Clear sync queue (called on sync complete or cancel)
    */
   async clearSyncQueue(): Promise<void> {
-    try {
-      const res = await storage.remove(this.SYNC_QUEUE_KEY)
-      if (res.is_error()) {
-        console.error("[LocalStorage] Error clearing sync queue:", res.error)
+    // S6: Retry up to 3 times to ensure queue is cleared
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await storage.remove(this.SYNC_QUEUE_KEY)
+        if (res.is_error()) {
+          console.error(`[LocalStorage] Error clearing sync queue (attempt ${attempt}/3):`, res.error)
+          if (attempt < 3) continue
+          return
+        }
+        console.log("[LocalStorage] Cleared sync queue")
         return
+      } catch (error) {
+        console.error(`[LocalStorage] Error clearing sync queue (attempt ${attempt}/3):`, error)
+        if (attempt < 3) {
+          await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 100))
+        }
       }
-      console.log("[LocalStorage] Cleared sync queue")
-    } catch (error) {
-      console.error("[LocalStorage] Error clearing sync queue:", error)
     }
   }
 

@@ -1,11 +1,12 @@
 /**
- * Example: Managed RTMP Streaming with Re-streaming to Multiple Platforms
+ * Example: Managed Streaming with Re-streaming to Multiple Platforms
  *
  * This example demonstrates how to use the managed streaming feature with
  * automatic re-streaming to platforms like YouTube, Twitch, and Facebook.
  *
- * The cloud handles all RTMP endpoints and automatically forwards your stream
- * to the specified destinations.
+ * When restreamDestinations are provided, the stream uses SRT ingest with
+ * HLS/DASH playback (required for RTMP fan-out). Without restream destinations,
+ * managed streams default to WebRTC for low latency.
  */
 
 import { AppServer, TpaSession, ManagedStreamStatus, CloudToAppMessageType } from "../";
@@ -23,7 +24,7 @@ class MultiPlatformStreamingApp extends AppServer {
     console.log(`New session started: ${sessionId} for user ${userId}`);
 
     // Subscribe to managed stream status updates
-    const managedStreamCleanup = session.camera.onManagedStreamStatus((status: ManagedStreamStatus) => {
+    const managedStreamCleanup = session.camera.onLivestreamStatus((status: ManagedStreamStatus) => {
       console.log(`Stream status: ${status.status}`);
 
       // Check output statuses
@@ -51,11 +52,8 @@ class MultiPlatformStreamingApp extends AppServer {
       session.layouts.showTextWall("Starting multi-platform stream...");
 
       try {
-        const streamResult = await session.camera.startManagedStream({
-          quality: "720p",
-          enableWebRTC: true,
-
-          // NEW: Add re-streaming destinations
+        // Restream destinations trigger SRT ingest + HLS/DASH playback
+        const streamResult = await session.camera.startLivestream({
           restreamDestinations: [
             {
               url: "rtmp://a.rtmp.youtube.com/live2/YOUR-YOUTUBE-STREAM-KEY",
@@ -90,11 +88,10 @@ class MultiPlatformStreamingApp extends AppServer {
         console.log("Stream ID:", streamResult.streamId);
         console.log("HLS URL:", streamResult.hlsUrl);
         console.log("DASH URL:", streamResult.dashUrl);
-        console.log("WebRTC URL:", streamResult.webrtcUrl);
 
         // The stream is now being:
-        // 1. Sent from glasses to the RTMP relay
-        // 2. Forwarded to Cloudflare for HLS/DASH distribution
+        // 1. Sent from glasses via SRT to Cloudflare
+        // 2. Transcoded for HLS/DASH distribution
         // 3. Re-streamed to YouTube, Twitch, and Facebook automatically
       } catch (error) {
         console.error("Failed to start managed stream:", error);
@@ -108,7 +105,7 @@ class MultiPlatformStreamingApp extends AppServer {
     const disconnectCleanup = session.events.onDisconnected(async () => {
       console.log("Glasses disconnected, stopping stream...");
       try {
-        await session.camera.stopManagedStream();
+        await session.camera.stopLivestream();
       } catch (error) {
         console.error("Error stopping stream:", error);
       }
@@ -128,11 +125,7 @@ app.start().catch(console.error);
 // Important notes:
 //
 // 1. Stream Keys: Replace YOUR-*-STREAM-KEY with actual stream keys from each platform
-// 2. Platform Requirements: Each platform has specific requirements:
-//    - YouTube: Requires 720p+ resolution, 30fps+, 2.5-4 Mbps bitrate
-//    - Twitch: Flexible, but recommends 3-6 Mbps for 1080p
-//    - Facebook: Supports up to 1080p, recommends 4 Mbps
-//
-// 3. The RTMP relay automatically transcodes your stream to meet platform requirements
+// 2. Without restreamDestinations, managed streams use WebRTC (WHIP/WHEP) for low latency
+// 3. With restreamDestinations, streams use SRT ingest + HLS/DASH (required for RTMP fan-out)
 // 4. You can monitor the status of each output in the ManagedStreamStatus updates
 // 5. If an output fails, the main stream and other outputs continue working

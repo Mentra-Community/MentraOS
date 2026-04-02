@@ -22,10 +22,7 @@ function wrapText(text: any, maxLength = 25): string {
       const wrappedLines: string[] = [];
 
       words.forEach((word) => {
-        if (
-          currentLine.length + (currentLine ? 1 : 0) + word.length <=
-          maxLength
-        ) {
+        if (currentLine.length + (currentLine ? 1 : 0) + word.length <= maxLength) {
           currentLine += (currentLine ? " " : "") + word;
         } else {
           if (currentLine) {
@@ -55,14 +52,11 @@ import { logger } from "../../../../services/logging/pino-logger";
 // Configuration
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
 const CLOUD_HOST_NAME = process.env.CLOUD_LOCAL_HOST_NAME || "cloud";
-const PACKAGE_NAME =
-  process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "system.augmentos.dashboard";
+const PACKAGE_NAME = "com.mentra.os";
 const API_KEY = process.env.AUGMENTOS_AUTH_JWT_SECRET;
 
 if (!API_KEY) {
-  logger.error(
-    "API_KEY is not set. Please set the AUGMENTOS_AUTH_JWT_SECRET environment variable.",
-  );
+  logger.error("API_KEY is not set. Please set the AUGMENTOS_AUTH_JWT_SECRET environment variable.");
   process.exit(1);
 }
 
@@ -281,17 +275,12 @@ function formatTimeSection(sessionInfo: SessionInfo): string {
 }
 
 function formatBatterySection(sessionInfo: SessionInfo): string {
-  return typeof sessionInfo.batteryLevel === "number"
-    ? `${sessionInfo.batteryLevel}%`
-    : "$GBATT$";
+  return typeof sessionInfo.batteryLevel === "number" ? `${sessionInfo.batteryLevel}%` : "$GBATT$";
 }
 
 function formatNotificationSection(sessionInfo: SessionInfo): string {
   // Use ranked notifications if available, otherwise use the raw cache
-  const notifications =
-    sessionInfo.phoneNotificationRanking ||
-    sessionInfo.phoneNotificationCache ||
-    [];
+  const notifications = sessionInfo.phoneNotificationRanking || sessionInfo.phoneNotificationCache || [];
 
   if (notifications.length === 0) return "";
 
@@ -300,13 +289,9 @@ function formatNotificationSection(sessionInfo: SessionInfo): string {
 
   // Format differently based on whether we're using ranked or raw notifications
   if (sessionInfo.phoneNotificationRanking) {
-    return topNotifications
-      .map((notification) => wrapText(notification.summary, 25))
-      .join("\n");
+    return topNotifications.map((notification) => wrapText(notification.summary, 25)).join("\n");
   } else {
-    return topNotifications
-      .map((notification) => `${notification.title}: ${notification.content}`)
-      .join("\n");
+    return topNotifications.map((notification) => `${notification.title}: ${notification.content}`).join("\n");
   }
 }
 
@@ -336,10 +321,7 @@ function formatCalendarEvent(event: any): string {
       })
       .replace(" ", "");
 
-    const title =
-      event.title.length > 10
-        ? event.title.substring(0, 10).trim() + "..."
-        : event.title;
+    const title = event.title.length > 10 ? event.title.substring(0, 10).trim() + "..." : event.title;
 
     return `${title} @ ${formattedTime}`;
   } catch (error) {
@@ -362,10 +344,7 @@ function handlePhoneNotification(sessionId: string, data: any): void {
   }
 
   // Check if the app name is blacklisted
-  if (
-    data.app &&
-    notificationAppBlackList.some((app) => data.app.toLowerCase().includes(app))
-  ) {
+  if (data.app && notificationAppBlackList.some((app) => data.app.toLowerCase().includes(app))) {
     logger.debug(`Notification from ${data.app} is blacklisted.`);
     return;
   }
@@ -382,10 +361,7 @@ function handlePhoneNotification(sessionId: string, data: any): void {
   const cache = sessionInfo.phoneNotificationCache;
   if (cache.length > 0) {
     const lastNotification = cache[cache.length - 1];
-    if (
-      lastNotification.title === newNotification.title &&
-      lastNotification.content === newNotification.content
-    ) {
+    if (lastNotification.title === newNotification.title && lastNotification.content === newNotification.content) {
       logger.debug(`Duplicate notification detected. Not adding to cache.`);
       return;
     }
@@ -412,28 +388,19 @@ function handlePhoneNotificationDismissed(sessionId: string, data: any): void {
   }
 
   // Remove the dismissed notification from cache if it exists
-  if (
-    sessionInfo.phoneNotificationCache &&
-    sessionInfo.phoneNotificationCache.length > 0
-  ) {
+  if (sessionInfo.phoneNotificationCache && sessionInfo.phoneNotificationCache.length > 0) {
     const initialCacheSize = sessionInfo.phoneNotificationCache.length;
 
     // Filter out the dismissed notification by matching notificationId
-    sessionInfo.phoneNotificationCache =
-      sessionInfo.phoneNotificationCache.filter(
-        (notification) => notification.uuid !== dismissedNotificationId,
-      );
+    sessionInfo.phoneNotificationCache = sessionInfo.phoneNotificationCache.filter(
+      (notification) => notification.uuid !== dismissedNotificationId,
+    );
 
-    const removedCount =
-      initialCacheSize - sessionInfo.phoneNotificationCache.length;
+    const removedCount = initialCacheSize - sessionInfo.phoneNotificationCache.length;
     if (removedCount > 0) {
-      logger.info(
-        `Removed ${removedCount} dismissed notification(s) from cache for session ${sessionId}`,
-      );
+      logger.info(`Removed ${removedCount} dismissed notification(s) from cache for session ${sessionId}`);
     } else {
-      logger.debug(
-        `No matching notification found in cache for dismissal ID: ${dismissedNotificationId}`,
-      );
+      logger.debug(`No matching notification found in cache for dismissal ID: ${dismissedNotificationId}`);
     }
   }
 
@@ -477,8 +444,7 @@ function handleLocationUpdate(sessionId: string, data: any): void {
   sessionInfo.latestLocation = {
     latitude: lat,
     longitude: lng,
-    timezone:
-      determineTimezone(lat, lng) || sessionInfo.latestLocation?.timezone,
+    timezone: determineTimezone(lat, lng) || sessionInfo.latestLocation?.timezone,
   };
 
   // Update dashboard with location info
@@ -500,10 +466,7 @@ function handleBatteryUpdate(sessionId: string, data: any): void {
   if (!sessionInfo) return;
 
   // Update battery level if it changed
-  if (
-    typeof data.level === "number" &&
-    sessionInfo.batteryLevel !== data.level
-  ) {
+  if (typeof data.level === "number" && sessionInfo.batteryLevel !== data.level) {
     sessionInfo.batteryLevel = data.level;
     updateDashboardSections(sessionId);
   }
@@ -557,10 +520,7 @@ function determineTimezone(lat: number, lng: number): string | undefined {
     // Call tzlookup to get timezone from coordinates
     return tzlookup(lat, lng);
   } catch (error) {
-    logger.error(
-      `Error looking up timezone for lat=${lat}, lng=${lng}:`,
-      error,
-    );
+    logger.error(`Error looking up timezone for lat=${lat}, lng=${lng}:`, error);
     return undefined;
   }
 }

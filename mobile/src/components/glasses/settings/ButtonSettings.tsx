@@ -29,11 +29,14 @@ export function ButtonSettings({enabled, selectedApp, applets, onEnabledChange, 
           label="Default Button Action"
           value={enabled}
           onValueChange={onEnabledChange}
+          plain
           style={{
             paddingHorizontal: 0,
             paddingTop: 0,
             paddingBottom: enabled ? theme.spacing.s3 : 0,
             borderWidth: 0,
+            backgroundColor: "transparent",
+            borderRadius: 0,
           }}
         />
 

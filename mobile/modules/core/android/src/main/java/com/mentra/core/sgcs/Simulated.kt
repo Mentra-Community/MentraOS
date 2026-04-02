@@ -39,16 +39,16 @@ class Simulated : SGCManager() {
         Bridge.log("requestPhoto flash=$flash, sound=$sound")
     }
 
-    override fun startRtmpStream(message: MutableMap<String, Any>) {
-        Bridge.log("startRtmpStream")
+    override fun startStream(message: MutableMap<String, Any>) {
+        Bridge.log("startStream")
     }
 
-    override fun stopRtmpStream() {
-        Bridge.log("stopRtmpStream")
+    override fun stopStream() {
+        Bridge.log("stopStream")
     }
 
-    override fun sendRtmpKeepAlive(message: MutableMap<String, Any>) {
-        Bridge.log("sendRtmpKeepAlive")
+    override fun sendStreamKeepAlive(message: MutableMap<String, Any>) {
+        Bridge.log("sendStreamKeepAlive")
     }
 
     override fun startBufferRecording() {
@@ -90,6 +90,10 @@ class Simulated : SGCManager() {
 
     override fun sendButtonCameraLedSetting() {
         Bridge.log("sendButtonCameraLedSetting")
+    }
+
+    override fun sendCameraFovSetting() {
+        Bridge.log("sendCameraFovSetting")
     }
 
     // Display Control

@@ -1,21 +1,15 @@
 # Camera Module Reference
 
-The Camera Module provides comprehensive camera functionality, including photo capture and both managed and unmanaged RTMP streaming capabilities. It allows apps to request photos from connected smart glasses and stream live camera feeds using two different approaches.
+The Camera Module provides photo capture, managed streaming (cloud-orchestrated HLS/DASH/WebRTC), and unmanaged streaming (direct to your endpoint via SRT, RTMP, or WHIP).
 
 ## Overview
-
-The Camera Module is part of the App Session and provides three main capabilities:
-
-- **Photo Capture**: Request individual photos from smart glasses
-- **Managed Streaming**: Zero-infrastructure streaming with automatic HLS/DASH URLs
-- **Unmanaged Streaming**: Full-control streaming to custom RTMP endpoints
 
 Access the camera module through your app session:
 
 ```typescript
 const photo = await session.camera.requestPhoto();
-const stream = await session.camera.startManagedStream();
-await session.camera.startStream({ rtmpUrl: 'rtmp://example.com/live/key' });
+const stream = await session.camera.startLivestream();
+await session.camera.startLocalLivestream({ streamUrl: 'srt://example.com:4201?streamid=key' });
 ```
 
 ## Photo Functionality
@@ -61,16 +55,6 @@ The `compress` option controls image compression during webhook upload to optimi
 | `"medium"` | 75% scale | 80% quality | ~50-60% smaller | Balanced quality/speed |
 | `"heavy"` | 50% scale | 60% quality | ~75-85% smaller | Slow connections, large photos |
 
-**Example:** A 1440×1080 pixel photo captured at medium size (typical: ~280KB):
-- `"none"`: 1440×1080, full quality → **~280KB**
-- `"medium"`: 1080×810, 80% quality → **~140KB** (50% smaller)
-- `"heavy"`: 720×540, 60% quality → **~70KB** (75% smaller)
-
-For large size photos (3200×2400, typical: ~800KB):
-- `"none"`: 3200×2400, full quality → **~800KB**
-- `"medium"`: 2400×1800, 80% quality → **~400KB**
-- `"heavy"`: 1600×1200, 60% quality → **~200KB**
-
 **Important Notes:**
 - Compression only applies to **webhook uploads** (WiFi/cellular)
 - **BLE transfers** use a different ultra-aggressive compression (AVIF format, 10-15KB) regardless of this setting, controlled by the `size` parameter
@@ -96,8 +80,6 @@ MentraOS uses two different compression algorithms depending on the transfer met
 The system automatically selects the appropriate compression:
 1. First attempts webhook upload (uses `compress` setting)
 2. Falls back to BLE if webhook fails (uses aggressive AVIF compression based on `size`)
-
-This dual approach ensures photos are delivered either with high quality over WiFi or as compressed thumbnails over BLE, depending on available connectivity.
 
 #### Returns
 
@@ -142,13 +124,7 @@ const photoWithSave = await session.camera.requestPhoto({
 // With medium compression (recommended for most use cases)
 const compressedPhoto = await session.camera.requestPhoto({
   size: 'large',
-  compress: 'medium'  // 75% scale, 80% quality - good balance
-});
-
-// With heavy compression (slow connections or very large photos)
-const heavilyCompressed = await session.camera.requestPhoto({
-  size: 'large',
-  compress: 'heavy'  // 50% scale, 60% quality - maximum size reduction
+  compress: 'medium'
 });
 
 // Custom webhook with authentication and compression
@@ -156,20 +132,20 @@ const photoWithWebhook = await session.camera.requestPhoto({
   customWebhookUrl: 'https://my-api.example.com/photo-upload',
   authToken: 'bearer-token-or-api-key',
   size: 'large',
-  compress: 'medium'  // Compress before uploading to custom endpoint
+  compress: 'medium'
 });
 ```
 
 ## Managed Streaming Functionality (Recommended)
 
-Managed streaming provides zero-infrastructure streaming where the cloud handles all RTMP endpoints and returns HLS/DASH URLs for viewing. Multiple apps can access the same managed stream simultaneously.
+Managed streaming provides zero-infrastructure streaming where the cloud handles ingest and returns HLS/DASH URLs for viewing. Multiple apps can access the same managed stream simultaneously.
 
-### startManagedStream()
+### startLivestream()
 
 Start a managed stream with automatic URL generation.
 
 ```typescript
-async startManagedStream(options?: ManagedStreamOptions): Promise<ManagedStreamResult>
+async startLivestream(options?: ManagedStreamOptions): Promise<ManagedStreamResult>
 ```
 
 #### Parameters
@@ -182,18 +158,17 @@ async startManagedStream(options?: ManagedStreamOptions): Promise<ManagedStreamR
 
 ```typescript
 interface ManagedStreamOptions {
-  /** Stream quality preset */
-  quality?: '720p' | '1080p';
-  /** Enable WebRTC for ultra-low latency viewing */
-  enableWebRTC?: boolean;
   /** Optional video configuration settings */
   video?: VideoConfig;
   /** Optional audio configuration settings */
   audio?: AudioConfig;
   /** Optional stream configuration settings */
   stream?: StreamConfig;
-  /** Optional RTMP destinations to re-stream to (e.g., YouTube, Twitch) */
+  /** Optional RTMP destinations to re-stream to (e.g., YouTube, Twitch).
+   *  When present, switches from WebRTC to SRT ingest + HLS/DASH playback. */
   restreamDestinations?: { url: string; name?: string }[];
+  /** Controls stream start/stop sounds. Defaults to true. */
+  sound?: boolean;
 }
 ```
 
@@ -201,15 +176,15 @@ interface ManagedStreamOptions {
 
 ```typescript
 interface ManagedStreamResult {
-  /** HLS URL for viewing the stream */
+  /** HLS URL for viewing (functional in SRT mode, i.e. when restreamDestinations provided) */
   hlsUrl: string;
-  /** DASH URL for viewing the stream */
+  /** DASH URL for viewing (functional in SRT mode, i.e. when restreamDestinations provided) */
   dashUrl: string;
-  /** WebRTC URL if enabled */
+  /** WebRTC (WHEP) URL for low-latency playback (functional in default WebRTC mode) */
   webrtcUrl?: string;
   /** Internal stream ID */
   streamId: string;
-  /** Cloud-hosted preview/player URL (for quick embedding and testing) */
+  /** Cloud-hosted preview/player URL */
   previewUrl?: string;
   /** Thumbnail image URL for previews */
   thumbnailUrl?: string;
@@ -219,33 +194,27 @@ interface ManagedStreamResult {
 #### Example
 
 ```typescript
-// Basic managed streaming
-const result = await session.camera.startManagedStream();
-console.log('HLS URL:', result.hlsUrl);
-console.log('DASH URL:', result.dashUrl);
+// Default: WebRTC for low-latency playback
+const result = await session.camera.startLivestream();
+console.log('WebRTC URL:', result.webrtcUrl);
 
-// Advanced configuration with WebRTC
-const result = await session.camera.startManagedStream({
-  quality: '1080p',
-  enableWebRTC: true,
+// With restream destinations: SRT + HLS/DASH
+const result = await session.camera.startLivestream({
+  restreamDestinations: [
+    { url: 'rtmp://a.rtmp.youtube.com/live2/YOUR-KEY', name: 'YouTube' }
+  ],
   video: { frameRate: 30 },
   audio: { sampleRate: 48000 }
 });
-console.log('WebRTC URL:', result.webrtcUrl); // Low latency option
+console.log('HLS URL:', result.hlsUrl);
 ```
 
-### stopManagedStream()
+### stopLivestream()
 
 Stop the current managed stream.
 
 ```typescript
-async stopManagedStream(): Promise<void>
-```
-
-#### Example
-
-```typescript
-await session.camera.stopManagedStream();
+async stopLivestream(): Promise<void>
 ```
 
 ### checkExistingStream()
@@ -256,43 +225,25 @@ Check if there's an existing active stream (managed or unmanaged) for the curren
 async checkExistingStream(): Promise<StreamCheckResult>
 ```
 
-#### Returns
-
-Returns a `Promise<StreamCheckResult>` with information about any active stream.
-
 #### StreamCheckResult Interface
 
 ```typescript
 interface StreamCheckResult {
-  /** Whether any stream is currently active */
   hasActiveStream: boolean;
-  /** Details about the active stream (if any) */
   streamInfo?: {
-    /** Type of stream - either 'managed' or 'unmanaged' */
     type: 'managed' | 'unmanaged';
-    /** Unique identifier for the stream */
     streamId: string;
-    /** Current status of the stream */
     status: string;
-    /** When the stream was created */
     createdAt: Date;
-    // For managed streams only:
-    /** HLS playback URL */
+    // Managed streams only:
     hlsUrl?: string;
-    /** DASH playback URL */
     dashUrl?: string;
-    /** WebRTC playback URL (if enabled) */
     webrtcUrl?: string;
-    /** Preview/embed URL */
     previewUrl?: string;
-    /** Thumbnail image URL */
     thumbnailUrl?: string;
-    /** Number of active viewers */
     activeViewers?: number;
-    // For unmanaged streams only:
-    /** RTMP destination URL */
-    rtmpUrl?: string;
-    /** ID of the app that requested the stream */
+    // Unmanaged streams only:
+    streamUrl?: string;
     requestingAppId?: string;
   };
 }
@@ -301,52 +252,30 @@ interface StreamCheckResult {
 #### Example
 
 ```typescript
-// Check for existing streams before starting a new one
 const streamCheck = await session.camera.checkExistingStream();
 
 if (streamCheck.hasActiveStream) {
-  console.log(`Found existing ${streamCheck.streamInfo?.type} stream`);
-
   if (streamCheck.streamInfo?.type === 'managed') {
-    // Managed stream is active - can display URLs or join it
     console.log('HLS URL:', streamCheck.streamInfo.hlsUrl);
-    console.log('Active viewers:', streamCheck.streamInfo.activeViewers);
-
-    // Option 1: Display the existing stream info
-    session.layouts.showTextWall(`Stream active.\nHLS: ${streamCheck.streamInfo.hlsUrl}`);
-
-    // Option 2: Join the existing managed stream
-    // (Managed streams support multiple apps)
-    const result = await session.camera.startManagedStream();
+    // Join existing managed stream
+    const result = await session.camera.startLivestream();
   } else {
-    // Unmanaged stream is active - cannot start another
-    console.log('RTMP URL:', streamCheck.streamInfo.rtmpUrl);
-    console.log('Requested by:', streamCheck.streamInfo.requestingAppId);
-
-    session.layouts.showTextWall('⚠️ Another app is currently streaming');
+    console.log('Active stream:', streamCheck.streamInfo?.streamUrl);
+    console.log('Requested by:', streamCheck.streamInfo?.requestingAppId);
   }
 } else {
-  // No active stream, safe to start a new one
-  console.log('No existing stream, starting new...');
-  const result = await session.camera.startManagedStream();
+  const result = await session.camera.startLivestream();
 }
 ```
 
-#### Use Cases
-
-- **Reconnection**: Apps can check for and reconnect to existing streams after restart
-- **Multi-app coordination**: Detect if another app is already streaming
-- **Resource management**: Avoid creating duplicate streams
-- **User experience**: Inform users about existing streams before starting new ones
-
 ### Managed Stream Status Monitoring
 
-#### onManagedStreamStatus()
+#### onLivestreamStatus()
 
 Subscribe to managed stream status updates.
 
 ```typescript
-onManagedStreamStatus(handler: (status: ManagedStreamStatus) => void): () => void
+onLivestreamStatus(handler: (status: ManagedStreamStatus) => void): () => void
 ```
 
 #### ManagedStreamStatus
@@ -367,14 +296,9 @@ interface ManagedStreamStatus {
 #### Example
 
 ```typescript
-// Monitor managed stream status
-const unsubscribe = session.camera.onManagedStreamStatus((status) => {
-  console.log(`Managed stream status: ${status.status}`);
-
+const unsubscribe = session.camera.onLivestreamStatus((status) => {
   if (status.status === 'active') {
-    console.log('Stream is live!');
     console.log(`HLS URL: ${status.hlsUrl}`);
-    console.log(`DASH URL: ${status.dashUrl}`);
   } else if (status.status === 'error') {
     console.error(`Stream error: ${status.message}`);
   }
@@ -384,36 +308,38 @@ const unsubscribe = session.camera.onManagedStreamStatus((status) => {
 unsubscribe();
 ```
 
-## Unmanaged RTMP Streaming Functionality
+## Unmanaged Streaming Functionality
 
-Unmanaged streaming provides full control over RTMP endpoints but requires your own streaming infrastructure. Only one unmanaged stream can be active at a time, and it blocks other apps from using the camera.
+Unmanaged streaming sends the camera feed directly to your ingest endpoint. You choose the protocol via the URL scheme. Only one unmanaged stream can be active at a time, and it blocks other apps from using the camera.
 
-### startStream()
+### startLocalLivestream()
 
-Start an unmanaged RTMP stream to a specific URL.
+Start an unmanaged stream to a specified URL.
 
 ```typescript
-async startStream(options: RtmpStreamOptions): Promise<void>
+async startLocalLivestream(options: StreamOptions): Promise<void>
 ```
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `options` | `RtmpStreamOptions` | Configuration options for the stream |
+| `options` | `StreamOptions` | Configuration options for the stream |
 
-#### RtmpStreamOptions
+#### StreamOptions
 
 ```typescript
-interface RtmpStreamOptions {
-  /** The RTMP URL to stream to (e.g., rtmp://server.example.com/live/stream-key) */
-  rtmpUrl: string;
+interface StreamOptions {
+  /** Stream URL. Supports srt://, rtmp://, rtmps://, and https:// (WHIP) */
+  streamUrl: string;
   /** Optional video configuration settings */
   video?: VideoConfig;
   /** Optional audio configuration settings */
   audio?: AudioConfig;
   /** Optional stream configuration settings */
   stream?: StreamConfig;
+  /** Play start/stop sounds (default: true) */
+  sound?: boolean;
 }
 ```
 
@@ -421,14 +347,10 @@ interface RtmpStreamOptions {
 
 ```typescript
 interface VideoConfig {
-  /** Optional width in pixels (e.g., 1280) */
-  width?: number;
-  /** Optional height in pixels (e.g., 720) */
-  height?: number;
-  /** Optional bitrate in bits per second (e.g., 2000000 for 2 Mbps) */
-  bitrate?: number;
-  /** Optional frame rate in frames per second (e.g., 30) */
-  frameRate?: number;
+  width?: number;      // pixels (e.g., 1280)
+  height?: number;     // pixels (e.g., 720)
+  bitrate?: number;    // bits per second (e.g., 2000000 for 2 Mbps)
+  frameRate?: number;  // fps (e.g., 30)
 }
 ```
 
@@ -436,13 +358,9 @@ interface VideoConfig {
 
 ```typescript
 interface AudioConfig {
-  /** Optional audio bitrate in bits per second (e.g., 128000 for 128 kbps) */
-  bitrate?: number;
-  /** Optional audio sample rate in Hz (e.g., 44100) */
-  sampleRate?: number;
-  /** Optional flag to enable echo cancellation */
+  bitrate?: number;          // bits per second (e.g., 128000 for 128 kbps)
+  sampleRate?: number;       // Hz (e.g., 44100)
   echoCancellation?: boolean;
-  /** Optional flag to enable noise suppression */
   noiseSuppression?: boolean;
 }
 ```
@@ -451,77 +369,70 @@ interface AudioConfig {
 
 ```typescript
 interface StreamConfig {
-  /** Optional maximum duration in seconds (e.g., 1800 for 30 minutes) */
-  durationLimit?: number;
+  durationLimit?: number; // max duration in seconds (e.g., 1800 for 30 min)
 }
 ```
 
 #### Example
 
 ```typescript
-// Basic streaming
-await session.camera.startStream({
-  rtmpUrl: 'rtmp://live.example.com/stream/key'
+// SRT stream
+await session.camera.startLocalLivestream({
+  streamUrl: 'srt://my-server.com:4201?streamid=my-key'
+});
+
+// RTMP stream
+await session.camera.startLocalLivestream({
+  streamUrl: 'rtmp://live.example.com/stream/key'
+});
+
+// WHIP (WebRTC) stream
+await session.camera.startLocalLivestream({
+  streamUrl: 'https://whip.example.com/ingest/endpoint'
 });
 
 // Advanced configuration
-await session.camera.startStream({
-  rtmpUrl: 'rtmp://live.example.com/stream/key',
-  video: {
-    width: 1920,
-    height: 1080,
-    bitrate: 5000000,
-    frameRate: 30
-  },
-  audio: {
-    bitrate: 128000,
-    sampleRate: 44100,
-    echoCancellation: true,
-    noiseSuppression: true
-  },
-  stream: {
-    durationLimit: 1800 // 30 minutes
-  }
+await session.camera.startLocalLivestream({
+  streamUrl: 'srt://my-server.com:4201?streamid=key',
+  video: { width: 1920, height: 1080, bitrate: 5000000, frameRate: 30 },
+  audio: { bitrate: 128000, sampleRate: 44100 },
+  stream: { durationLimit: 1800 }
 });
 ```
 
-### stopStream()
+### stopLocalLivestream()
 
-Stop the current unmanaged RTMP stream.
-
-```typescript
-async stopStream(): Promise<void>
-```
-
-#### Example
+Stop the current unmanaged stream.
 
 ```typescript
-await session.camera.stopStream();
+async stopLocalLivestream(): Promise<void>
 ```
 
 ### Unmanaged Stream Status Monitoring
 
-#### onStreamStatus()
+#### onLocalLivestreamStatus()
 
 Subscribe to unmanaged stream status updates.
 
 ```typescript
-onStreamStatus(handler: StreamStatusHandler): () => void
+onLocalLivestreamStatus(handler: StreamStatusHandler): () => void
 ```
 
 #### StreamStatusHandler
 
 ```typescript
-type StreamStatusHandler = (status: RtmpStreamStatus) => void;
+type StreamStatusHandler = (status: StreamStatus) => void;
 ```
 
-#### RtmpStreamStatus
+#### StreamStatus
 
 ```typescript
-interface RtmpStreamStatus {
+interface StreamStatus {
   type: string;
   streamId?: string;
-  status: 'initializing' | 'connecting' | 'reconnecting' | 'streaming' | 'error' | 'stopped' | 'active' | 'stopping' | 'disconnected' | 'timeout';
+  status: 'initializing' | 'connecting' | 'reconnecting' | 'streaming'
+    | 'error' | 'stopped' | 'active' | 'stopping' | 'disconnected'
+    | 'timeout' | 'reconnected' | 'reconnect_failed';
   errorDetails?: string;
   appId?: string;
   stats?: {
@@ -537,24 +448,17 @@ interface RtmpStreamStatus {
 #### Example
 
 ```typescript
-// Monitor unmanaged stream status
-const unsubscribe = session.camera.onStreamStatus((status) => {
+const unsubscribe = session.camera.onLocalLivestreamStatus((status) => {
   console.log(`Stream status: ${status.status}`);
 
-  if (status.status === 'active') {
-    console.log('Stream is live!');
-    if (status.stats) {
-      console.log(`Bitrate: ${status.stats.bitrate} bps`);
-      console.log(`FPS: ${status.stats.fps}`);
-      console.log(`Duration: ${status.stats.duration}s`);
-      console.log(`Dropped frames: ${status.stats.droppedFrames}`);
-    }
+  if (status.status === 'active' && status.stats) {
+    console.log(`Bitrate: ${status.stats.bitrate} bps`);
+    console.log(`FPS: ${status.stats.fps}`);
   } else if (status.status === 'error') {
     console.error(`Stream error: ${status.errorDetails}`);
   }
 });
 
-// Later, unsubscribe
 unsubscribe();
 ```
 
@@ -562,15 +466,11 @@ unsubscribe();
 
 #### isCurrentlyStreaming()
 
-Check if currently streaming (unmanaged).
-
 ```typescript
 isCurrentlyStreaming(): boolean
 ```
 
 #### getCurrentStreamUrl()
-
-Get the URL of the current unmanaged stream.
 
 ```typescript
 getCurrentStreamUrl(): string | undefined
@@ -578,22 +478,21 @@ getCurrentStreamUrl(): string | undefined
 
 #### getStreamStatus()
 
-Get the current unmanaged stream status.
-
 ```typescript
-getStreamStatus(): RtmpStreamStatus | undefined
+getStreamStatus(): StreamStatus | undefined
 ```
 
 ## Streaming Comparison
 
 | Feature | Managed Streaming | Unmanaged Streaming |
 |---------|------------------|---------------------|
-| **Infrastructure Required** | None | RTMP Server |
-| **Multiple Apps Can Stream** | ✅ Yes | ❌ No (Exclusive) |
-| **Blocks Other Apps** | ❌ No | ✅ Yes |
-| **Viewer URLs Provided** | ✅ HLS/DASH/WebRTC | ❌ You manage |
-| **Best For** | Social media, prototypes, multi-app scenarios | Custom servers, exclusive access |
-| **Requires Internet** | Yes | No |
+| **Infrastructure Required** | None | Your own ingest server |
+| **Protocols** | Cloud-selected (SRT) | SRT, RTMP/RTMPS, WHIP |
+| **Multiple Apps Can Stream** | Yes | No (Exclusive) |
+| **Blocks Other Apps** | No | Yes |
+| **Viewer URLs Provided** | HLS/DASH/WebRTC | You manage |
+| **Best For** | Social media, prototypes, multi-app | Custom servers, exclusive access |
+| **Requires Internet** | Yes | Depends on server location |
 
 ## Error Handling
 
@@ -603,10 +502,9 @@ getStreamStatus(): RtmpStreamStatus | undefined
 - **Cancellation**: Requests can be cancelled manually or during session cleanup
 - **Device Errors**: Camera unavailable or hardware issues
 
-### Unmanaged Stream Errors
+### Stream Errors
 
 - **Already Streaming**: Cannot start while any stream (managed or unmanaged) is active
-- **Invalid URL**: RTMP URL validation failures
-- **Network Issues**: Connection problems to RTMP endpoint
+- **Invalid URL**: URL must start with `srt://`, `rtmp://`, `rtmps://`, `http://`, or `https://`
+- **Network Issues**: Connection problems to ingest endpoint
 - **Device Limitations**: Hardware doesn't support requested configuration
-

@@ -28,10 +28,23 @@ import { appCache } from "./app-cache.service";
 const logger = rootLogger.child({ service: "app.service" });
 
 const APPSTORE_ENABLED = true;
-export const SYSTEM_DASHBOARD_PACKAGE_NAME = process.env.SYSTEM_DASHBOARD_PACKAGE_NAME || "dev.augmentos.dashboard";
+
 export const PRE_INSTALLED = [
   "cloud.augmentos.notify",
   // "cloud.augmentos.mira",
+];
+
+/**
+ * Apps that have been deprecated and should no longer be started or connected.
+ * When encountered in a user's runningApps (from DB), they are skipped and
+ * cleaned up automatically. Inbound WebSocket connections are also rejected.
+ *
+ * This list is checked at the code level so it takes effect per-deployment
+ * without requiring a database migration (important because all environments
+ * share the same DB).
+ */
+export const DEPRECATED_APPS: string[] = [
+  "system.augmentos.dashboard", // Replaced by cloud-internal DashboardManager (issue #047)
 ];
 export const PRE_INSTALLED_DEBUG = [
   // "com.mentra.link",

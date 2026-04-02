@@ -119,8 +119,8 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 2.7.0
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.7.0"')
+    // 2. Update versionName to 2.9.0
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.9.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -202,9 +202,9 @@ function withAndroidManifestModifications(config: any) {
 
     // Remove permissions that Google Play doesn't allow for our use case
     // We only SAVE photos from glasses - we don't need to READ the user's photo library
-    // expo-media-library adds these automatically, but we must remove them for Play Store compliance
+    // expo-media-library and expo-screen-capture add these via their AAR manifests,
+    // so we must remove them AND use tools:node="remove" for Play Store compliance
     // Google's Photo and Video Permissions policy requires apps to use Photo Picker for one-time access
-    // Android 10+ (API 29+) doesn't need any permission to save to MediaStore via ContentResolver
     const permissionsToRemove = [
       "android.permission.READ_MEDIA_IMAGES",
       "android.permission.READ_MEDIA_VIDEO",
@@ -212,21 +212,37 @@ function withAndroidManifestModifications(config: any) {
       "android.permission.ACCESS_MEDIA_LOCATION", // Not needed - we save photos, don't read EXIF from user's library
     ]
 
-    // Filter out permissions we want to remove
-    if (manifest["uses-permission"]) {
-      manifest["uses-permission"] = manifest["uses-permission"].filter(
-        (p: any) => !permissionsToRemove.includes(p.$["android:name"]),
-      )
-    }
-
-    // Remove AD_ID permission via tools:node="remove" so the manifest merger strips it
-    // even when Firebase Analytics adds it via transitive dependencies
+    // Ensure tools namespace is available for manifest merger directives
     if (!manifest.$["xmlns:tools"]) {
       manifest.$["xmlns:tools"] = "http://schemas.android.com/tools"
     }
     if (!manifest["uses-permission"]) {
       manifest["uses-permission"] = []
     }
+
+    // Filter out permissions we want to remove from the Expo-generated manifest
+    manifest["uses-permission"] = manifest["uses-permission"].filter(
+      (p: any) => !permissionsToRemove.includes(p.$["android:name"]),
+    )
+
+    // Also add tools:node="remove" so the Gradle manifest merger strips these
+    // even when libraries (e.g. expo-screen-capture) re-add them via their own AAR manifests
+    permissionsToRemove.forEach((permName) => {
+      const existing = manifest["uses-permission"].find(
+        (p: any) => p.$["android:name"] === permName && p.$["tools:node"] === "remove",
+      )
+      if (!existing) {
+        manifest["uses-permission"].push({
+          $: {
+            "android:name": permName,
+            "tools:node": "remove",
+          },
+        })
+      }
+    })
+
+    // Remove AD_ID permission via tools:node="remove" so the manifest merger strips it
+    // even when Firebase Analytics adds it via transitive dependencies
     const adIdPerm = manifest["uses-permission"].find(
       (p: any) => p.$["android:name"] === "com.google.android.gms.permission.AD_ID",
     )

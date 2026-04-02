@@ -89,7 +89,7 @@ class SocketComms {
     ws.sendText(JSON.stringify(msg))
   }
 
-  public sendRtmpStreamStatus(statusMessage: any) {
+  public sendStreamStatus(statusMessage: any) {
     // Forward the status message directly since it's already in the correct format
     ws.sendText(JSON.stringify(statusMessage))
     console.log("SOCKET: Sent RTMP stream status:", statusMessage)
@@ -451,7 +451,12 @@ class SocketComms {
       }
     }
 
-    CoreModule.setMicState(shouldSendPcmData, shouldSendTranscript, bypassVad)
+    CoreModule.update("core", {
+      // should_send_pcm: shouldSendPcmData,
+      should_send_lc3: shouldSendPcmData, // online apps always want lc3
+      should_send_transcript: shouldSendTranscript,
+      bypass_vad: bypassVad,
+    })
   }
 
   public handle_display_event(msg: any) {
@@ -529,22 +534,22 @@ class SocketComms {
     CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
   }
 
-  private handle_start_rtmp_stream(msg: any) {
-    const rtmpUrl = msg.rtmpUrl || ""
-    if (rtmpUrl) {
-      CoreModule.startRtmpStream(msg)
+  private handle_start_stream(msg: any) {
+    const streamUrl = msg.streamUrl
+    if (streamUrl) {
+      CoreModule.startStream(msg)
     } else {
-      console.log("Invalid RTMP stream request: missing rtmpUrl")
+      console.log("Invalid stream request: missing stream URL")
     }
   }
 
-  private handle_stop_rtmp_stream() {
-    CoreModule.stopRtmpStream()
+  private handle_stop_stream() {
+    CoreModule.stopStream()
   }
 
-  private handle_keep_rtmp_stream_alive(msg: any) {
-    console.log(`SOCKET: Received KEEP_RTMP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
-    CoreModule.keepRtmpStreamAlive(msg)
+  private handle_keep_stream_alive(msg: any) {
+    console.log(`SOCKET: Received KEEP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
+    CoreModule.keepStreamAlive(msg)
   }
 
   private handle_save_buffer_video(msg: any) {
@@ -599,6 +604,15 @@ class SocketComms {
       coerceNumber(msg.offtime, 0),
       coerceNumber(msg.count, 1),
     )
+  }
+
+  private handle_camera_fov_set(msg: any) {
+    const ROI_MAP: Record<string, number> = {center: 0, bottom: 1, top: 2}
+    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(82, msg.fov)) : 118
+    const roiStr: string = msg.roiPosition ?? "center"
+    const numericRoi = ROI_MAP[roiStr] ?? 0
+    console.log(`SOCKET: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
+    useSettingsStore.getState().setSetting(SETTINGS.camera_fov.key, {fov, roi_position: numericRoi}, false)
   }
 
   private handle_show_wifi_setup(msg: any) {
@@ -674,7 +688,7 @@ class SocketComms {
     audioPlaybackService.stopForApp(appId)
   }
 
-  private handle_ping(msg: any) {
+  private handle_ping(_msg: any) {
     ws.sendText(JSON.stringify({type: "pong"}))
   }
 
@@ -729,16 +743,16 @@ class SocketComms {
         this.handle_photo_request(msg)
         break
 
-      case "start_rtmp_stream":
-        this.handle_start_rtmp_stream(msg)
+      case "start_stream":
+        this.handle_start_stream(msg)
         break
 
-      case "stop_rtmp_stream":
-        this.handle_stop_rtmp_stream()
+      case "stop_stream":
+        this.handle_stop_stream()
         break
 
-      case "keep_rtmp_stream_alive":
-        this.handle_keep_rtmp_stream_alive(msg)
+      case "keep_stream_alive":
+        this.handle_keep_stream_alive(msg)
         break
 
       case "start_buffer_recording":
@@ -763,6 +777,10 @@ class SocketComms {
 
       case "rgb_led_control":
         this.handle_rgb_led_control(msg)
+        break
+
+      case "camera_fov_set":
+        this.handle_camera_fov_set(msg)
         break
 
       case "show_wifi_setup":

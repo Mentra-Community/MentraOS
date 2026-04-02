@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import axios from "axios";
 import { User } from "../../../models/user.model";
 import Organization from "../../../models/organization.model";
-import appService, { SYSTEM_DASHBOARD_PACKAGE_NAME } from "../../../services/core/app.service";
+import appService from "../../../services/core/app.service";
 import { isUninstallable } from "../../../services/core/app.service";
 import UserSession from "../../../services/session/UserSession";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
@@ -60,10 +60,10 @@ function cleanAllAppSettings(settings: any[]): AppSetting[] {
 }
 
 /**
- * Normalize app name, handling dashboard alias.
+ * Normalize app name.
  */
 function normalizeAppName(appName: string): string {
-  return appName === "com.augmentos.dashboard" ? SYSTEM_DASHBOARD_PACKAGE_NAME : appName;
+  return appName;
 }
 
 // ============================================================================
@@ -233,7 +233,7 @@ async function getUserAppSettings(c: AppContext) {
     const user = await User.findOrCreateUser(userId);
     let storedSettings = user.getAppSettings(appName);
 
-    if (!storedSettings && appName !== SYSTEM_DASHBOARD_PACKAGE_NAME) {
+    if (!storedSettings) {
       // Get App configuration from database
       const _app = await appService.getApp(appName);
 
@@ -343,7 +343,7 @@ async function updateAppSettings(c: AppContext) {
     const userSession = UserSession.getById(userId);
 
     // If user has active sessions, send them settings updates via WebSocket
-    if (userSession && appName !== SYSTEM_DASHBOARD_PACKAGE_NAME && appName !== "com.augmentos.dashboard") {
+    if (userSession) {
       const settingsUpdate = {
         type: CloudToAppMessageType.SETTINGS_UPDATE,
         packageName: appName,

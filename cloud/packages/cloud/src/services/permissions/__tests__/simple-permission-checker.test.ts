@@ -40,7 +40,7 @@ describe('SimplePermissionChecker', () => {
     it('should return the correct permission for camera streams', () => {
       expect(SimplePermissionChecker.getRequiredPermissionForStream(StreamType.PHOTO_RESPONSE)).toBe(PermissionType.CAMERA);
       expect(SimplePermissionChecker.getRequiredPermissionForStream(StreamType.PHOTO_TAKEN)).toBe(PermissionType.CAMERA);
-      expect(SimplePermissionChecker.getRequiredPermissionForStream(StreamType.RTMP_STREAM_STATUS)).toBe(PermissionType.CAMERA);
+      expect(SimplePermissionChecker.getRequiredPermissionForStream(StreamType.STREAM_STATUS)).toBe(PermissionType.CAMERA);
       expect(SimplePermissionChecker.getRequiredPermissionForStream(StreamType.MANAGED_STREAM_STATUS)).toBe(PermissionType.CAMERA);
     });
 
@@ -163,7 +163,7 @@ describe('SimplePermissionChecker', () => {
         StreamType.BUTTON_PRESS,        // No permission required
         StreamType.AUDIO_CHUNK,         // Has MICROPHONE permission
         StreamType.PHOTO_RESPONSE,      // No CAMERA permission
-        StreamType.RTMP_STREAM_STATUS   // No CAMERA permission
+        StreamType.STREAM_STATUS   // No CAMERA permission
       ];
 
       const { allowed, rejected } = SimplePermissionChecker.filterSubscriptions(app, subscriptions);
@@ -173,7 +173,7 @@ describe('SimplePermissionChecker', () => {
       ]);
       expect(rejected).toEqual([
         { stream: StreamType.PHOTO_RESPONSE, requiredPermission: PermissionType.CAMERA },
-        { stream: StreamType.RTMP_STREAM_STATUS, requiredPermission: PermissionType.CAMERA }
+        { stream: StreamType.STREAM_STATUS, requiredPermission: PermissionType.CAMERA }
       ]);
     });
 
@@ -182,7 +182,7 @@ describe('SimplePermissionChecker', () => {
       const subscriptions = [
         StreamType.PHOTO_RESPONSE,
         StreamType.PHOTO_TAKEN,
-        StreamType.RTMP_STREAM_STATUS,
+        StreamType.STREAM_STATUS,
         StreamType.MANAGED_STREAM_STATUS
       ];
 

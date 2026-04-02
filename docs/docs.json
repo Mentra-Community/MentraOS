@@ -79,7 +79,7 @@
                 "pages": [
                   "app-devs/core-concepts/camera/README",
                   "app-devs/core-concepts/camera/photo-capture",
-                  "app-devs/core-concepts/camera/rtmp-streaming"
+                  "app-devs/core-concepts/camera/streaming"
                 ]
               },
               {
@@ -87,7 +87,8 @@
                 "icon": "browser",
                 "pages": [
                   "app-devs/core-concepts/webviews/react-webviews",
-                  "app-devs/core-concepts/webviews/webview-authentication"
+                  "app-devs/core-concepts/webviews/webview-authentication",
+                  "app-devs/core-concepts/webviews/bridge-api"
                 ]
               },
               "app-devs/core-concepts/permissions",
@@ -166,7 +167,7 @@
                   "os-devs/asg-client/architecture",
                   "os-devs/asg-client/mentra-live",
                   "os-devs/asg-client/button-system",
-                  "os-devs/asg-client/rtmp-streaming"
+                  "os-devs/asg-client/streaming"
                 ]
               }
             ]

@@ -11,6 +11,11 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Manages thumbnail generation and caching for both videos and images.
@@ -129,8 +134,24 @@ public class ThumbnailManager {
                 return null;
             }
 
-            // Scale to exact thumbnail dimensions
-            Bitmap thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
+            // Scale to exact thumbnail dimensions with OOM protection
+            Bitmap thumbnail;
+            try {
+                thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
+            } catch (OutOfMemoryError oom) {
+                logger.error(TAG, "OOM scaling image thumbnail, retrying with higher inSampleSize");
+                bitmap.recycle();
+                options.inSampleSize *= 4;
+                bitmap = BitmapFactory.decodeFile(imageFile.getAbsolutePath(), options);
+                if (bitmap == null) return null;
+                try {
+                    thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
+                } catch (OutOfMemoryError oom2) {
+                    logger.error(TAG, "OOM on second attempt, giving up");
+                    bitmap.recycle();
+                    return null;
+                }
+            }
 
             // Compress and save
             try (FileOutputStream fos = new FileOutputStream(thumbnailFile)) {
@@ -182,41 +203,67 @@ public class ThumbnailManager {
      */
     private File createVideoThumbnail(File videoFile, File thumbnailFile) {
         MediaMetadataRetriever retriever = null;
-        
+
         try {
             retriever = new MediaMetadataRetriever();
             retriever.setDataSource(videoFile.getAbsolutePath());
-            
-            // Extract frame at 1 second or first available frame
-            Bitmap bitmap = retriever.getFrameAtTime(1000000); // 1 second in microseconds
-            if (bitmap == null) {
-                // Try to get the first frame
-                bitmap = retriever.getFrameAtTime();
+
+            // Extract frame with timeout to prevent hangs on corrupted videos
+            final MediaMetadataRetriever finalRetriever = retriever;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<Bitmap> future = executor.submit(() -> {
+                Bitmap frame = finalRetriever.getFrameAtTime(1000000); // 1 second in microseconds
+                if (frame == null) {
+                    frame = finalRetriever.getFrameAtTime();
+                }
+                return frame;
+            });
+            Bitmap bitmap;
+            try {
+                bitmap = future.get(10, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                logger.error(TAG, "getFrameAtTime timed out after 10s for: " + videoFile.getName());
+                bitmap = null;
+            } catch (Exception e) {
+                logger.error(TAG, "getFrameAtTime failed for " + videoFile.getName() + ": " + e.getMessage(), e);
+                bitmap = null;
+            } finally {
+                executor.shutdownNow();
             }
-            
+
             if (bitmap == null) {
                 logger.error(TAG, "Failed to extract frame from video: " + videoFile.getName());
                 return null;
             }
-            
-            // Resize bitmap to thumbnail size
-            Bitmap thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
-            
+
+            // Resize bitmap to thumbnail size with OOM protection
+            Bitmap thumbnail;
+            try {
+                thumbnail = Bitmap.createScaledBitmap(bitmap, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, true);
+            } catch (OutOfMemoryError oom) {
+                logger.error(TAG, "OOM scaling video thumbnail, retrying with smaller source");
+                bitmap.recycle();
+                // Re-extract at lower resolution is not straightforward for video frames,
+                // so just return null on OOM
+                return null;
+            }
+
             // Compress and save
             try (FileOutputStream fos = new FileOutputStream(thumbnailFile)) {
                 thumbnail.compress(Bitmap.CompressFormat.JPEG, THUMBNAIL_QUALITY, fos);
             }
-            
+
             // Clean up bitmaps
             if (bitmap != thumbnail) {
                 bitmap.recycle();
             }
             thumbnail.recycle();
-            
-            logger.info(TAG, "Thumbnail created successfully: " + thumbnailFile.getName() + 
+
+            logger.info(TAG, "Thumbnail created successfully: " + thumbnailFile.getName() +
                            " (" + thumbnailFile.length() + " bytes)");
             return thumbnailFile;
-            
+
         } catch (Exception e) {
             logger.error(TAG, "Error creating thumbnail for " + videoFile.getName() + ": " + e.getMessage(), e);
             return null;

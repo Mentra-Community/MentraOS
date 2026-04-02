@@ -20,7 +20,7 @@ import com.mentra.asg_client.service.core.handlers.VideoCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
 import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PingCommandHandler;
-import com.mentra.asg_client.service.core.handlers.RtmpCommandHandler;
+import com.mentra.asg_client.service.core.handlers.StreamCommandHandler;
 import com.mentra.asg_client.service.core.handlers.WifiCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
@@ -28,6 +28,7 @@ import com.mentra.asg_client.service.core.handlers.KeepAwakeCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
+import com.mentra.asg_client.service.core.handlers.I2SAudioCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UploadIncidentLogsCommandHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
@@ -141,7 +142,7 @@ public class CommandProcessor {
      * Process JSON command by delegating to appropriate handlers.
      * Follows Open/Closed Principle by using registry pattern.
      */
-    private void processJsonCommand(JSONObject json) {
+    public void processJsonCommand(JSONObject json) {
         // processJsonCommand() started
 
         Log.d(TAG, "📊 processJsonCommand() started" + json.toString());
@@ -314,8 +315,8 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new KeepAwakeCommandHandler());
             Log.d(TAG, "✅ Registered KeepAwakeCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new RtmpCommandHandler(context, stateManager, streamingManager));
-            Log.d(TAG, "✅ Registered RtmpCommandHandler");
+            commandHandlerRegistry.registerHandler(new StreamCommandHandler(context, stateManager, streamingManager));
+            Log.d(TAG, "✅ Registered StreamCommandHandler");
 
             commandHandlerRegistry.registerHandler(new WifiCommandHandler(serviceManager, communicationManager, stateManager));
             Log.d(TAG, "✅ Registered WifiCommandHandler");
@@ -358,6 +359,9 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new UploadIncidentLogsCommandHandler(context, configurationManager, k900CommandHandler));
             Log.d(TAG, "✅ Registered UploadIncidentLogsCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new I2SAudioCommandHandler());
+            Log.d(TAG, "✅ Registered I2SAudioCommandHandler");
 
             Log.i(TAG, "✅ Successfully registered " + commandHandlerRegistry.getHandlerCount() + " command handlers");
 
