@@ -28,6 +28,7 @@ add_subdirectory(src/mos_components/mos_font_storage)
 add_subdirectory(src/mos_components/mos_lvgl_display)
 add_subdirectory(src/mos_components/mos_jlink_usb_switch)
 add_subdirectory(src/mos_components/mos_dfu_progress)
+add_subdirectory(src/mos_components/mos_touch)
 add_subdirectory(src/protobuf)
 add_subdirectory(src/proto)
 
@@ -38,6 +39,7 @@ target_sources(app PRIVATE
     src/shell_font_storage.c
     src/shell_display_control.c
     src/shell_opt3006.c
+    src/shell_iqs7211a_control.c
     src/shell_battery_control.c
     src/shell_audio_control.c
     # src/shell_gx8002_control.c  # GX8002/VAD shell off with PDM mic

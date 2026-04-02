@@ -41,11 +41,13 @@
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
 #include "mos_hinge_fold.h"
+#include "mos_iqs7211a.h"
 #include "mos_jlink_usb_switch_app.h"  // J-Link/USB switch application logic
 #include "mos_lsm6dsv16x.h"  // LSM6DSV16X 6-axis IMU sensor
 #include "mos_npm1300_ldsw.h"  // NPM1300 LDSW (load switch) control
 #include "mos_npm1300_led.h"
 #include "mos_opt3006.h"  // OPT3006 ambient light sensor
+#include "mos_touch_app.h"
 #include "mos_usb_detect.h"  // USB cable detection (polling mode)
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
@@ -586,6 +588,8 @@ int main(void)
     protobuf_init_ping_monitoring();
 
     opt3006_initialize();
+
+    mos_touch_app_init();
 
     lsm6dsv16x_init();
 
