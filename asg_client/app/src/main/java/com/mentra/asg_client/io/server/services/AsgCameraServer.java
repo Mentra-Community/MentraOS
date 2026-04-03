@@ -9,6 +9,7 @@ import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManager.FileMetadata;
 import com.mentra.asg_client.io.file.core.FileManager.FileOperationResult;
+import com.mentra.asg_client.utils.CaptureGalleryRules;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -324,17 +325,25 @@ public class AsgCameraServer extends AsgServer {
                 return createErrorResponse(Response.Status.REQUEST_TIMEOUT, "Gallery request timeout");
             }
 
+            Set<String> validCaptureIds = CaptureGalleryRules.validCaptureIds(photoMetadataList);
+            List<FileMetadata> scopedList = new ArrayList<>();
+            for (FileMetadata m : photoMetadataList) {
+                if (CaptureGalleryRules.isFileInValidCapture(m.getFileName(), validCaptureIds)) {
+                    scopedList.add(m);
+                }
+            }
+
             // Sort by modification time (newest first) BEFORE pagination
-            photoMetadataList.sort((a, b) -> Long.compare(b.getLastModified(), a.getLastModified()));
-            
+            scopedList.sort((a, b) -> Long.compare(b.getLastModified(), a.getLastModified()));
+
             // Apply pagination
-            int totalCount = photoMetadataList.size();
+            int totalCount = scopedList.size();
             int endIndex = (limit > 0) ? Math.min(offset + limit, totalCount) : totalCount;
             int actualOffset = Math.min(offset, totalCount);
-            
-            List<FileMetadata> paginatedList = photoMetadataList.subList(actualOffset, endIndex);
+
+            List<FileMetadata> paginatedList = scopedList.subList(actualOffset, endIndex);
             boolean hasMore = endIndex < totalCount;
-            
+
             logger.debug(TAG, "📚 Returning photos " + actualOffset + " to " + endIndex + " of " + totalCount);
 
             List<Map<String, Object>> photos = new ArrayList<>();
@@ -342,8 +351,7 @@ public class AsgCameraServer extends AsgServer {
             long totalSize = 0;
             long paginatedSize = 0;
 
-            // Calculate total size (for all photos)
-            for (FileMetadata metadata : photoMetadataList) {
+            for (FileMetadata metadata : scopedList) {
                 totalSize += metadata.getFileSize();
             }
 
@@ -362,12 +370,12 @@ public class AsgCameraServer extends AsgServer {
                 }
 
                 // Skip IMU sidecar files - they are metadata, not displayable media
-                if (isImuSidecar(photoMetadata.getFileName())) {
+                if (CaptureGalleryRules.isImuSidecar(photoMetadata.getFileName())) {
                     continue;
                 }
 
                 // Skip HDR bracket files - only the merged base file should appear
-                if (isHdrBracket(photoMetadata.getFileName())) {
+                if (CaptureGalleryRules.isHdrBracket(photoMetadata.getFileName())) {
                     continue;
                 }
 
@@ -519,94 +527,6 @@ public class AsgCameraServer extends AsgServer {
                lowerFilename.endsWith(".3gp");
     }
     
-    /**
-     * Derive a capture ID from a filename. Groups related files together.
-     * Examples:
-     *   "IMG_xxx/base.jpg"    -> "IMG_xxx"
-     *   "IMG_xxx/ev-2.jpg"    -> "IMG_xxx"
-     *   "IMG_xxx/imu.json"    -> "IMG_xxx"
-     *   "IMG_xxx.jpg"         -> "IMG_xxx" (legacy flat file)
-     *   "IMG_xxx_ev-2.jpg"    -> "IMG_xxx" (legacy bracket)
-     *   "IMG_xxx.imu.json"    -> "IMG_xxx" (legacy sidecar)
-     *   "VID_xxx/base.mp4"    -> "VID_xxx"
-     */
-    private String deriveCaptureId(String name) {
-        if (name == null) return "unknown";
-
-        // Folder-based: take everything before the first '/'
-        if (name.contains("/")) {
-            return name.substring(0, name.indexOf('/'));
-        }
-
-        // Legacy flat file: strip extension and known suffixes
-        String stem = name;
-
-        // Strip .imu.json first (before generic extension strip)
-        if (stem.toLowerCase().endsWith(".imu.json")) {
-            stem = stem.substring(0, stem.length() - ".imu.json".length());
-            return stem;
-        }
-
-        // Strip file extension
-        int dotIdx = stem.lastIndexOf('.');
-        if (dotIdx > 0) {
-            stem = stem.substring(0, dotIdx);
-        }
-
-        // Strip HDR bracket suffix (e.g. _ev-2, _ev0, _ev2)
-        stem = stem.replaceAll("_ev-?\\d+$", "");
-
-        return stem;
-    }
-
-    /**
-     * Assign a role to a file within a capture group.
-     * @param fileName The full relative filename (e.g. "IMG_xxx/base.jpg" or "IMG_xxx.jpg")
-     * @return "primary", "bracket", or "sidecar"
-     */
-    private String assignFileRole(String fileName) {
-        if (fileName == null) return "primary";
-
-        // Get just the leaf filename
-        String leaf = fileName.contains("/") ? fileName.substring(fileName.lastIndexOf('/') + 1) : fileName;
-        String lower = leaf.toLowerCase();
-
-        // Sidecar files
-        if (lower.equals("imu.json")) return "sidecar";
-
-        // Bracket files (ev-2.jpg, ev0.jpg, ev2.jpg)
-        if (lower.matches("ev-?\\d+\\.jpe?g")) return "bracket";
-
-        // Everything else is primary
-        return "primary";
-    }
-
-    /**
-     * Check if a file is an AVIF transfer artifact that should be excluded from sync
-     * AVIF files are temporary transfer artifacts created during BLE photo transfers
-     * and should not be synced to mobile devices.
-     */
-    /**
-     * Check if a file is an IMU sidecar (sensor data bundled with media capture).
-     * These are metadata files, not displayable media.
-     */
-    private boolean isImuSidecar(String filename) {
-        if (filename == null) return false;
-        String leaf = filename.contains("/") ? filename.substring(filename.lastIndexOf('/') + 1) : filename;
-        return leaf.equalsIgnoreCase("imu.json");
-    }
-
-    /**
-     * Check if a file is an HDR bracket (individual exposure in a burst set).
-     * Only the merged base file should appear in the gallery, not individual brackets.
-     */
-    private boolean isHdrBracket(String filename) {
-        if (filename == null) return false;
-        String leaf = filename.contains("/") ? filename.substring(filename.lastIndexOf('/') + 1) : filename;
-        // Match folder-based bracket files: ev-2.jpg, ev0.jpg, ev2.jpg
-        return leaf.toLowerCase().matches("ev-?\\d+\\.jpe?g");
-    }
-
     private boolean isAvifTransferArtifact(String filename) {
         if (filename == null || filename.isEmpty()) {
             logger.debug(TAG, "🔄 File is null or empty, returning false");
@@ -1039,9 +959,14 @@ public class AsgCameraServer extends AsgServer {
             status.put("cache_size", cacheManager.size());
             status.put("server_url", getServerUrl());
 
-            // File management metrics
+            // File management metrics (only files under captures that have base.jpg / base.mp4)
+            List<FileMetadata> allListed = fileManager.listFiles(fileManager.getDefaultPackageName());
+            Set<String> validIds = CaptureGalleryRules.validCaptureIds(allListed);
+            long validFileCount = allListed.stream()
+                    .filter(m -> CaptureGalleryRules.isFileInValidCapture(m.getFileName(), validIds))
+                    .count();
             status.put("package_name", fileManager.getDefaultPackageName());
-            status.put("total_photos", fileManager.listFiles(fileManager.getDefaultPackageName()).size());
+            status.put("total_photos", validFileCount);
             status.put("package_size", fileManager.getPackageSize(fileManager.getDefaultPackageName()));
             status.put("available_space", fileManager.getAvailableSpace());
             status.put("total_space", fileManager.getTotalSpace());
@@ -1185,7 +1110,7 @@ public class AsgCameraServer extends AsgServer {
         if (activeCaptureId == null) return false;
         // deriveCaptureId handles both folder-based ("VID_xxx/base.mp4" -> "VID_xxx")
         // and legacy flat ("VID_xxx.mp4" -> "VID_xxx") paths
-        String fileCaptureId = deriveCaptureId(fileName);
+        String fileCaptureId = CaptureGalleryRules.deriveCaptureId(fileName);
         return activeCaptureId.equals(fileCaptureId);
     }
 
@@ -1207,6 +1132,9 @@ public class AsgCameraServer extends AsgServer {
 
         Map<String, String> params = session.getParms();
         String lastSyncTimeParam = params.get("last_sync");
+        if (lastSyncTimeParam == null || lastSyncTimeParam.isEmpty()) {
+            lastSyncTimeParam = params.get("last_sync_time");
+        }
         String clientId = params.get("client_id");
         String includeThumbnails = params.get("include_thumbnails");
 
@@ -1234,6 +1162,7 @@ public class AsgCameraServer extends AsgServer {
 
             // Get all files
             List<FileMetadata> allFiles = fileManager.listFiles(fileManager.getDefaultPackageName());
+            Set<String> validCaptureIds = CaptureGalleryRules.validCaptureIds(allFiles);
 
             // Filter files that have changed since last sync
             List<Map<String, Object>> changedFiles = new ArrayList<>();
@@ -1246,6 +1175,11 @@ public class AsgCameraServer extends AsgServer {
                     // Skip files that are actively being recorded (incomplete / corrupted)
                     if (isActiveRecording(fileMetadata.getFileName())) {
                         logger.debug(TAG, "🔄 Skipping active recording: " + fileMetadata.getFileName());
+                        continue;
+                    }
+
+                    if (!CaptureGalleryRules.isFileInValidCapture(fileMetadata.getFileName(), validCaptureIds)) {
+                        logger.debug(TAG, "🔄 Skipping file (no base.jpg/base.mp4 in capture): " + fileMetadata.getFileName());
                         continue;
                     }
 
@@ -1362,7 +1296,7 @@ public class AsgCameraServer extends AsgServer {
             Map<String, List<Map<String, Object>>> captureGroups = new LinkedHashMap<>();
             for (Map<String, Object> fileInfo : changedFiles) {
                 String name = (String) fileInfo.get("name");
-                String captureId = deriveCaptureId(name);
+                String captureId = CaptureGalleryRules.deriveCaptureId(name);
                 captureGroups.computeIfAbsent(captureId, k -> new ArrayList<>()).add(fileInfo);
             }
 
@@ -1395,7 +1329,7 @@ public class AsgCameraServer extends AsgServer {
                     if (modified > captureTimestamp) captureTimestamp = modified;
 
                     // Assign role based on filename
-                    String role = assignFileRole(fileName);
+                    String role = CaptureGalleryRules.assignFileRole(fileName);
 
                     Map<String, Object> captureFile = new HashMap<>();
                     captureFile.put("name", fileName);
@@ -1656,20 +1590,33 @@ public class AsgCameraServer extends AsgServer {
             status.put("server_time", System.currentTimeMillis());
             status.put("server_uptime", System.currentTimeMillis() - getStartTime());
 
-            // File statistics
+            // File statistics (scoped to valid captures only, aligned with gallery_status)
             List<FileMetadata> allFiles = fileManager.listFiles(fileManager.getDefaultPackageName());
-            status.put("total_files", allFiles.size());
-            status.put("total_size", allFiles.stream().mapToLong(FileMetadata::getFileSize).sum());
+            Set<String> syncValidIds = CaptureGalleryRules.validCaptureIds(allFiles);
+            List<FileMetadata> validScoped = new ArrayList<>();
+            for (FileMetadata f : allFiles) {
+                if (CaptureGalleryRules.isFileInValidCapture(f.getFileName(), syncValidIds)) {
+                    validScoped.add(f);
+                }
+            }
+            status.put("total_files", validScoped.size());
+            status.put("total_size", validScoped.stream().mapToLong(FileMetadata::getFileSize).sum());
 
-            // File type breakdown (exclude auxiliary files like HDR brackets and IMU sidecars)
-            long imageCount = allFiles.stream()
-                .filter(f -> !isVideoFile(f.getFileName()))
-                .filter(f -> !isImuSidecar(f.getFileName()))
-                .filter(f -> !isHdrBracket(f.getFileName()))
-                .count();
-            long videoCount = allFiles.stream().filter(f -> isVideoFile(f.getFileName())).count();
-            status.put("image_count", imageCount);
-            status.put("video_count", videoCount);
+            Map<String, List<FileMetadata>> groups = CaptureGalleryRules.groupByCaptureId(validScoped);
+            long photoCaptures = 0;
+            long videoCaptures = 0;
+            for (List<FileMetadata> g : groups.values()) {
+                if (!CaptureGalleryRules.isValidCapture(g)) {
+                    continue;
+                }
+                if (CaptureGalleryRules.classifyValidCaptureKind(g) == CaptureGalleryRules.CaptureMediaKind.VIDEO) {
+                    videoCaptures++;
+                } else {
+                    photoCaptures++;
+                }
+            }
+            status.put("image_count", photoCaptures);
+            status.put("video_count", videoCaptures);
 
             // Thumbnail statistics
             status.put("thumbnail_count", fileManager.getThumbnailManager().getThumbnailCount());
