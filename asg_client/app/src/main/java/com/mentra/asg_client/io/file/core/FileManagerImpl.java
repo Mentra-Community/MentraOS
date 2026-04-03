@@ -169,6 +169,21 @@ public class FileManagerImpl implements FileManager {
             lockManager.releaseWriteLock(lock, packageName);
         }
     }
+
+    @Override
+    public FileOperationResult deleteCaptureDirectory(String packageName, String captureDirectoryName) {
+        Log.d(TAG, "🗑️ deleteCaptureDirectory() called - Package: " + packageName + ", Dir: " + captureDirectoryName);
+        if (!securityManager.validateOperation(packageName, captureDirectoryName, "DELETE")) {
+            Log.w(TAG, "❌ Security validation failed for capture directory deletion");
+            return FileOperationResult.error("Security validation failed");
+        }
+        ReadWriteLock lock = lockManager.acquireWriteLock(packageName);
+        try {
+            return operationsManager.deleteCaptureDirectory(packageName, captureDirectoryName);
+        } finally {
+            lockManager.releaseWriteLock(lock, packageName);
+        }
+    }
     
     @Override
     public FileOperationResult updateFile(String packageName, String fileName, InputStream inputStream, String mimeType) {

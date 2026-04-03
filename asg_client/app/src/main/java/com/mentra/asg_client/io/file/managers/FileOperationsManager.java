@@ -113,6 +113,55 @@ public class FileOperationsManager {
             return FileOperationResult.error("Error deleting file: " + e.getMessage());
         }
     }
+
+    /**
+     * Delete a capture subdirectory and all contents. {@code captureDirectoryName} must be a single path segment.
+     */
+    public FileOperationResult deleteCaptureDirectory(String packageName, String captureDirectoryName) {
+        if (captureDirectoryName == null
+                || captureDirectoryName.isEmpty()
+                || captureDirectoryName.contains("/")
+                || captureDirectoryName.contains("\\")
+                || captureDirectoryName.contains("..")) {
+            return FileOperationResult.error("Invalid capture directory name");
+        }
+        try {
+            File packageDir = new File(baseDirectory, packageName);
+            File dir = new File(packageDir, captureDirectoryName);
+            if (!dir.exists()) {
+                return FileOperationResult.error("Directory not found");
+            }
+            if (!dir.isDirectory()) {
+                return FileOperationResult.error("Not a directory");
+            }
+            String packagePath = packageDir.getCanonicalPath();
+            String dirPath = dir.getCanonicalPath();
+            if (!dirPath.startsWith(packagePath + File.separator) && !dirPath.equals(packagePath)) {
+                logger.error(TAG, "Refusing delete outside package: " + dirPath);
+                return FileOperationResult.error("Path outside package");
+            }
+            deleteRecursive(dir);
+            logger.info(TAG, "Capture directory deleted: " + dir.getAbsolutePath());
+            return FileOperationResult.success("Capture directory deleted", dir.getAbsolutePath());
+        } catch (Exception e) {
+            logger.error(TAG, "Error deleting capture directory: " + captureDirectoryName, e);
+            return FileOperationResult.error("Error deleting directory: " + e.getMessage());
+        }
+    }
+
+    private void deleteRecursive(File f) {
+        if (f.isDirectory()) {
+            File[] children = f.listFiles();
+            if (children != null) {
+                for (File c : children) {
+                    deleteRecursive(c);
+                }
+            }
+        }
+        if (!f.delete()) {
+            logger.warn(TAG, "Failed to delete: " + f.getAbsolutePath());
+        }
+    }
     
     /**
      * Update an existing file in the specified package

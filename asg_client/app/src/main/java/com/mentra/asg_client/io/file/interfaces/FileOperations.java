@@ -34,6 +34,12 @@ public interface FileOperations {
      * @return Operation result
      */
     FileOperationResult deleteFile(String packageName, String fileName);
+
+    /**
+     * Recursively delete a capture directory under the package (single segment name only, e.g. IMG_xxx).
+     * Used for orphan cleanup; must not contain path separators.
+     */
+    FileOperationResult deleteCaptureDirectory(String packageName, String captureDirectoryName);
     
     /**
      * Update an existing file in the specified package
