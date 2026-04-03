@@ -1,5 +1,5 @@
 import {useLocalSearchParams} from "expo-router"
-import {useRef, useState, useEffect} from "react"
+import {useRef, useState, useEffect, useCallback} from "react"
 import {Dimensions, Platform, View} from "react-native"
 import {WebView} from "react-native-webview"
 import Animated, {useSharedValue, useAnimatedStyle, withTiming} from "react-native-reanimated"
@@ -7,7 +7,7 @@ import Animated, {useSharedValue, useAnimatedStyle, withTiming} from "react-nati
 import {Header, Screen, Text} from "@/components/ignite"
 import MiniappErrorScreen from "@/components/miniapps/MiniappErrorScreen"
 import LoadingOverlay from "@/components/ui/LoadingOverlay"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import restComms from "@/services/RestComms"
 import miniComms from "@/services/MiniComms"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
@@ -35,6 +35,29 @@ export default function AppWebView() {
   // Track if the server-side app start failed
   const [appStartFailed, setAppStartFailed] = useState(false)
 
+  // Track whether the WebView has back navigation history
+  const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
+
+  // Allow back to exit if route params are invalid (no X button on that screen)
+  const hasValidParams =
+    typeof webviewURL === "string" && typeof appName === "string" && typeof packageName === "string"
+
+  // Back press handler: navigate within WebView if possible, otherwise do nothing.
+  // Users must press X to exit the miniapp.
+  const handleWebViewBack = useCallback(() => {
+    if (!hasValidParams) {
+      goBack()
+      return
+    }
+    if (webViewCanGoBack && webViewRef.current) {
+      webViewRef.current.goBack()
+    }
+  }, [webViewCanGoBack, hasValidParams, goBack])
+
+  // Prevent iOS swipe-back gesture and intercept Android back button.
+  // Back navigates within the WebView; only X exits the miniapp.
+  focusEffectPreventBack(handleWebViewBack)
+
   // Two conditions for showing the webview content:
   // 1. WebView HTML has loaded (onLoadEnd fired)
   const [isWebViewLoaded, setIsWebViewLoaded] = useState(false)
@@ -54,7 +77,7 @@ export default function AppWebView() {
     opacity: loadingOpacity.value,
   }))
 
-  if (typeof webviewURL !== "string" || typeof appName !== "string" || typeof packageName !== "string") {
+  if (!hasValidParams) {
     return <Text>Missing required parameters</Text>
   }
 
@@ -281,11 +304,21 @@ export default function AppWebView() {
   if (showError) {
     return (
       <>
-        {appSwitcherUi && <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} />}
+        {appSwitcherUi && <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />}
         <Screen preset="fixed" safeAreaEdges={[appSwitcherUi && "top"]} className="px-0">
           {!appSwitcherUi && (
             <View className="px-6">
-              <Header leftIcon="chevron-left" onLeftPress={() => goBack()} title={appName} />
+              <Header
+              leftIcon="chevron-left"
+              onLeftPress={() => {
+                if (webViewCanGoBack && webViewRef.current) {
+                  webViewRef.current.goBack()
+                } else {
+                  goBack()
+                }
+              }}
+              title={appName}
+            />
             </View>
           )}
           <MiniappErrorScreen
@@ -332,7 +365,7 @@ export default function AppWebView() {
 
   return (
     <>
-      {appSwitcherUi && <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} />}
+      {appSwitcherUi && <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />}
       <Screen
         preset="fixed"
         // safeAreaEdges={[appSwitcherUi && "top"]}
@@ -345,7 +378,13 @@ export default function AppWebView() {
           <View className="px-6">
             <Header
               leftIcon="chevron-left"
-              onLeftPress={() => goBack()}
+              onLeftPress={() => {
+                if (webViewCanGoBack && webViewRef.current) {
+                  webViewRef.current.goBack()
+                } else {
+                  goBack()
+                }
+              }}
               title={appName}
               rightIcon="settings"
               onRightPress={() => {
@@ -378,6 +417,7 @@ export default function AppWebView() {
                 scalesPageToFit={false}
                 scrollEnabled={true}
                 bounces={false}
+                onNavigationStateChange={(navState) => setWebViewCanGoBack(navState.canGoBack)}
                 automaticallyAdjustContentInsets={false}
                 contentInsetAdjustmentBehavior="never"
                 injectedJavaScriptBeforeContentLoaded={`

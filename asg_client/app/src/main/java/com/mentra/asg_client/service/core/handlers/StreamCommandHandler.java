@@ -166,6 +166,7 @@ public class StreamCommandHandler implements ICommandHandler {
                     WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
                     Log.d(TAG, "Starting WHIP stream to: " + streamUrl);
                     WhipStreamingService.startStreaming(context, streamUrl, streamId, flash, sound, config);
+                    WhipStreamingService.setStateManager(stateManager);
                     break;
                 }
             }
@@ -271,9 +272,12 @@ public class StreamCommandHandler implements ICommandHandler {
                 }
             }
 
-            if (WhipStreamingService.isStreaming()) {
-                streamingManager.sendKeepAliveAck(streamId, ackId);
-                return true;
+            if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
+                boolean valid = WhipStreamingService.resetStreamTimeout(streamId);
+                if (valid || WhipStreamingService.isStreaming()) {
+                    streamingManager.sendKeepAliveAck(streamId, ackId);
+                    return true;
+                }
             }
 
             Log.w(TAG, "Keep-alive for unknown stream, not currently streaming: " + streamId);

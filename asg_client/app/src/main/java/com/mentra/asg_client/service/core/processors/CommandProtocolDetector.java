@@ -166,14 +166,28 @@ public class CommandProtocolDetector {
             if (json.has("C")) {
                 String dataPayload = json.optString("C", "");
                 try {
-                    new JSONObject(dataPayload); // Test if valid JSON
+                    JSONObject innerJson = new JSONObject(dataPayload);
+                    // Reject chunked messages — ChunkedMessageProtocolStrategy handles these.
+                    // Without this check, chunks get routed as commands with empty type.
+                    String t = innerJson.optString("type", innerJson.optString("t", ""));
+                    if ("chunked_msg".equals(t) || "ck".equals(t)) {
+                        return false;
+                    }
                     return true;
                 } catch (JSONException e) {
                     return false; // Invalid JSON in C field, let K900 strategy handle it
                 }
             }
             // Standard JSON format (no C field)
-            return json.has("type") || json.has("mId");
+            if (json.has("type") || json.has("mId")) {
+                // Also reject direct-format chunks
+                String t = json.optString("type", json.optString("t", ""));
+                if ("chunked_msg".equals(t) || "ck".equals(t)) {
+                    return false;
+                }
+                return true;
+            }
+            return false;
         }
 
         @Override

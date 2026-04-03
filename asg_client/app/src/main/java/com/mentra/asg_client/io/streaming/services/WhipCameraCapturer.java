@@ -65,6 +65,7 @@ public class WhipCameraCapturer implements VideoCapturer {
   private int mSensorOrientation;
   private int mFrameRotation;
   private boolean mIsFrontCamera;
+  private boolean mLoggedFrameSize = false;
 
   @Override
   public void initialize(SurfaceTextureHelper surfaceTextureHelper, Context context,
@@ -111,8 +112,10 @@ public class WhipCameraCapturer implements VideoCapturer {
     }
 
     // Frame rotation = 0 for fixed-landscape devices like glasses.
-    // The texture transform already handles the sensor's physical rotation.
-    // Setting rotation here would cause the encoder to rotate again (double-rotation).
+    // WebRTC's rotation field causes the stack to transpose dimensions (unlike
+    // RTMP's orientationHint which is just metadata). We handle rotation via
+    // GPU texture transform instead, which rotates content in-place without
+    // changing buffer dimensions.
     mFrameRotation = 0;
 
     Log.d(TAG, "Sensor orientation: " + mSensorOrientation
@@ -213,14 +216,19 @@ public class WhipCameraCapturer implements VideoCapturer {
 
       mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
 
-      // Connect SurfaceTextureHelper's frame listener to WebRTC's video pipeline.
-      // Match Camera2Session's approach exactly:
-      // 1. Apply -sensorOrientation rotation to texture transform (GPU-level, no pixel copy)
-      // 2. Set frameRotation metadata for the encoder
+      // Apply GPU-level texture rotation to correct for sensor orientation.
+      // This rotates content in-place without changing buffer dimensions, so
+      // it works correctly at any aspect ratio (including 16:9).
       mSurfaceTextureHelper.startListening(frame -> {
         TextureBufferImpl texBuffer = (TextureBufferImpl) frame.getBuffer();
 
-        // Build transform matrix matching CameraSession.createTextureBufferWithModifiedTransformMatrix
+        if (!mLoggedFrameSize) {
+          mLoggedFrameSize = true;
+          Log.i(TAG, "DIAG: First frame buffer size: " + texBuffer.getWidth() + "x"
+              + texBuffer.getHeight() + " (requested: " + mWidth + "x" + mHeight
+              + ", sensor orientation: " + mSensorOrientation + ")");
+        }
+
         Matrix transformMatrix = new Matrix();
         transformMatrix.preTranslate(0.5f, 0.5f);
         if (mIsFrontCamera) {
@@ -229,7 +237,6 @@ public class WhipCameraCapturer implements VideoCapturer {
         transformMatrix.preRotate(-mSensorOrientation);
         transformMatrix.preTranslate(-0.5f, -0.5f);
 
-        // Apply transform to texture buffer (GPU-level rotation, no pixel copy)
         TextureBufferImpl modifiedBuffer = texBuffer.applyTransformMatrix(
             transformMatrix, texBuffer.getWidth(), texBuffer.getHeight());
 

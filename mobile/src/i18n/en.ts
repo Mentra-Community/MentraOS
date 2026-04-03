@@ -415,7 +415,8 @@ const en = {
     connectToTakePicture: "Connect to take pictures",
     gallerySettings: "Gallery Settings",
     saveToLibrary: "Save to Camera Roll",
-    saveToLibraryDescription: "Automatically save new photos to your phone's camera roll when syncing",
+    saveToLibraryDescription:
+      "Automatically save synced photos and videos to the MentraOS album (iOS) or MentraOS folder in Photos (Android) when syncing",
     deleteAllPhotos: "Delete All Photos",
     deleteAllPhotosDescription: "Remove all photos from device storage (camera roll photos are not affected)",
     galleryStats: "Gallery Statistics",

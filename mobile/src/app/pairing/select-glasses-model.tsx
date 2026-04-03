@@ -23,7 +23,7 @@ import GlassView from "@/components/ui/GlassView"
 export default function SelectGlassesModelScreen() {
   const {theme, themed} = useAppTheme()
   const {push, goBack} = useNavigationHistory()
-  const [devMode] = useSetting(SETTINGS.dev_mode.key)
+  const [superMode] = useSetting(SETTINGS.super_mode.key)
 
   // when this screen is focused, forget any glasses that may be paired:
   useFocusEffect(
@@ -50,8 +50,8 @@ export default function SelectGlassesModelScreen() {
     }
   }
 
-  // Glasses models that should only be visible in dev mode
-  const DEV_MODE_ONLY_MODELS = new Set([DeviceTypes.NEX, DeviceTypes.G2])
+  // Glasses models that should only be visible in super mode
+  const SUPER_MODE_ONLY_MODELS = new Set([DeviceTypes.NEX, DeviceTypes.G2])
 
   // Platform-specific glasses options
   const glassesOptions =
@@ -96,7 +96,7 @@ export default function SelectGlassesModelScreen() {
       <ScrollView className="-mr-4 pr-4 pt-6">
         <View className="flex-col gap-4 pb-8">
           {glassesOptions
-            .filter((glasses) => !DEV_MODE_ONLY_MODELS.has(glasses.deviceModel) || devMode)
+            .filter((glasses) => !SUPER_MODE_ONLY_MODELS.has(glasses.deviceModel) || superMode)
             .map((glasses) => (
               <TouchableOpacity key={glasses.key} onPress={() => triggerGlassesPairingGuide(glasses.deviceModel)}>
                 <GlassView className="bg-primary-foreground flex-col items-center justify-center h-[190px] rounded-2xl overflow-hidden">

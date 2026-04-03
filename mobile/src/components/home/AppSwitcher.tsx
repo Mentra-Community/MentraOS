@@ -1,5 +1,6 @@
 import React, {RefObject, useCallback, useEffect, useRef, useState} from "react"
-import {View, Dimensions, Pressable, Image, Platform} from "react-native"
+import {View, Dimensions, Pressable, Platform} from "react-native"
+import {Image} from "expo-image"
 import {Text} from "@/components/ignite/"
 import Animated, {
   useSharedValue,
@@ -205,11 +206,11 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           )}
 
           {app.screenshot && (
-            <View className="flex-1 items-center justify-end" style={{overflow: "hidden"}}>
+            <View className="flex-1" style={{overflow: "hidden"}}>
               <Image
                 source={{uri: app.screenshot}}
-                className="w-full h-full"
-                style={{resizeMode: "cover", height: "100%"}}
+                style={{width: "100%", height: "100%"}}
+                contentFit="cover"
               />
             </View>
           )}

@@ -44,11 +44,13 @@ export function MiniAppCapsuleMenu({
   viewShotRef,
   onEllipsisPress,
   onMinusPress,
+  onBackPress,
 }: {
   packageName: string
   viewShotRef: React.RefObject<View | null>
   onEllipsisPress?: () => void
   onMinusPress?: () => void
+  onBackPress?: () => void
 }) {
   const {goBack} = useNavigationHistory()
   const insets = useSaferAreaInsets()
@@ -101,13 +103,20 @@ export function MiniAppCapsuleMenu({
     }
   }
 
-  focusEffectPreventBack(() => {
-    // Defer screenshot capture so it doesn't block the navigation animation
-    InteractionManager.runAfterInteractions(() => {
-      let shouldGoBack = Platform.OS === "android"
-      handleExit(shouldGoBack)
-    })
-  }, true)
+  focusEffectPreventBack(
+    onBackPress
+      ? () => {
+          onBackPress()
+        }
+      : () => {
+          // Defer screenshot capture so it doesn't block the navigation animation
+          InteractionManager.runAfterInteractions(() => {
+            let shouldGoBack = Platform.OS === "android"
+            handleExit(shouldGoBack)
+          })
+        },
+    onBackPress ? false : true,
+  )
 
   return (
     <View className="z-2 absolute right-2 items-center justify-end flex-row" style={{top: top}}>
