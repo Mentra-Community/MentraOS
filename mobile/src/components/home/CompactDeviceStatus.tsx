@@ -1,7 +1,17 @@
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import CoreModule, {GlassesNotReadyEvent} from "core"
 import {useState, useEffect} from "react"
-import {ActivityIndicator, Image, ImageStyle, Linking, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {
+  ActivityIndicator,
+  Image,
+  ImageStyle,
+  Linking,
+  Pressable,
+  TextStyle,
+  TouchableOpacity,
+  View,
+  ViewStyle,
+} from "react-native"
 
 import {BatteryStatus} from "@/components/glasses/info/BatteryStatus"
 import {Button, Icon, Text} from "@/components/ignite"
@@ -13,7 +23,7 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesLinkLayerBusy, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
@@ -46,6 +56,7 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   const [isExpanded, setIsExpanded] = useState(false)
   const glassesConnected = useGlassesStore((state) => state.connected)
   const glassesFullyBooted = useGlassesStore((state) => state.fullyBooted)
+  const glassesConnectionState = useGlassesStore((state) => state.connectionState)
   const glassesStyle = useGlassesStore((state) => state.style)
   const color = useGlassesStore((state) => state.color)
   const caseRemoved = useGlassesStore((state) => state.caseRemoved)
@@ -57,6 +68,19 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   const wifiSsid = useGlassesStore((state) => state.wifiSsid)
   const searching = useCoreStore((state) => state.searching)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
+
+  const [wasSearching, setWasSearching] = useState(false)
+  useEffect(() => {
+    if (searching) {
+      setWasSearching(true)
+      return undefined
+    }
+    if (wasSearching) {
+      const timer = setTimeout(() => setWasSearching(false), 500)
+      return () => clearTimeout(timer)
+    }
+    return undefined
+  }, [searching, wasSearching])
 
   // Listen for glasses_not_ready event to know when glasses are actually booting
   useEffect(() => {
@@ -102,10 +126,13 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
     await CoreModule.connectDefault()
   }
 
+  const nativeLinkBusy = isGlassesLinkLayerBusy(glassesConnectionState)
+
   const handleConnectOrDisconnect = async () => {
-    if (searching) {
+    if (searching || nativeLinkBusy) {
       await CoreModule.disconnect()
       setIsCheckingConnectivity(false)
+      setWasSearching(false)
     } else {
       await connectGlasses()
     }
@@ -129,11 +156,12 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
     return image
   }
 
-  let isSearching = searching || isCheckingConnectivity
+  const isSearching = searching || isCheckingConnectivity || wasSearching || nativeLinkBusy
   let connectingText = translate("home:connectingGlasses")
-  // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
     connectingText = "Glasses are booting..."
+  } else if (nativeLinkBusy && !searching) {
+    connectingText = translate("glasses:glassesAreReconnecting")
   }
 
   const handleGetSupport = () => {
@@ -168,6 +196,8 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
           style={{
             flexDirection: "row",
             gap: theme.spacing.s2,
+            alignItems: "stretch",
+            minWidth: 0,
           }}>
           {!isSearching ? (
             <>
@@ -179,15 +209,31 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
               <Button compactIcon flexContainer={false} preset="alternate" onPress={handleConnectOrDisconnect}>
                 <Icon name="x" size={20} color={theme.colors.foreground} />
               </Button>
-              <Button
-                flex
-                compact
-                LeftAccessory={() => (
-                  <ActivityIndicator size="small" color={theme.colors.primary_foreground} style={{marginRight: 8}} />
-                )}
-                text={connectingText}
-                // tx="home:connectingGlasses"
-              />
+              <Pressable
+                onPress={handleConnectOrDisconnect}
+                style={({pressed}) => ({
+                  flex: 1,
+                  minWidth: 0,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  paddingVertical: theme.spacing.s2,
+                  paddingHorizontal: theme.spacing.s4,
+                  borderRadius: 50,
+                  borderWidth: theme.isDark ? 0 : 1,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.background,
+                  opacity: pressed ? 0.9 : 1,
+                })}>
+                <ActivityIndicator size="small" color={theme.colors.foreground} style={{flexShrink: 0}} />
+                <View style={{flex: 1, minWidth: 0}}>
+                  <Text
+                    style={{fontSize: 14, fontWeight: "500", color: theme.colors.secondary_foreground}}
+                    numberOfLines={2}
+                    text={connectingText}
+                  />
+                </View>
+              </Pressable>
             </>
           )}
         </View>
@@ -340,11 +386,6 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
     </View>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({spacing, colors}) => ({
-  backgroundColor: colors.primary_foreground,
-  padding: spacing.s6,
-})
 
 const $imageContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 2,
