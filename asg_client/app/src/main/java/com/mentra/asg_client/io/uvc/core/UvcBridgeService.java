@@ -28,7 +28,11 @@ public class UvcBridgeService extends Service {
   @Override
   public void onCreate() {
     super.onCreate();
-    bridgeManager = new UvcBridgeManager();
+    bridgeManager = UvcRuntimeRegistry.get();
+    if (bridgeManager == null) {
+      bridgeManager = new UvcBridgeManager(getApplicationContext(), new com.mentra.asg_client.io.uvc.sink.UvcSinkFactory(), new UvcDeviceLocator());
+      UvcRuntimeRegistry.set(bridgeManager);
+    }
     createNotificationChannel();
   }
 
@@ -43,8 +47,14 @@ public class UvcBridgeService extends Service {
       case ACTION_START_UVC:
         startForeground(NOTIFICATION_ID, createNotification("UVC bridge active"));
         UvcConfig config = UvcConfig.fromIntent(intent);
-        bridgeManager.start(config);
-        Log.i(TAG, "Start action handled with sink " + config.getSinkType());
+        boolean started = bridgeManager.start(config);
+        if (!started) {
+          UvcBridgeManager.MetricsSnapshot failed = bridgeManager.getMetricsSnapshot();
+          Log.w(TAG, "Start rejected: " + failed.lastErrorCode + " / " + failed.lastErrorMessage);
+          stopForeground(STOP_FOREGROUND_REMOVE);
+        } else {
+          Log.i(TAG, "Start action handled with sink " + config.getSinkType());
+        }
         break;
       case ACTION_STOP_UVC:
         bridgeManager.stop();
@@ -57,9 +67,12 @@ public class UvcBridgeService extends Service {
         Log.i(TAG,
             "status state=" + snapshot.state
                 + " sink=" + snapshot.sinkName
+                + " producer=" + snapshot.producerName
                 + " produced=" + snapshot.producedFrames
                 + " written=" + snapshot.writtenFrames
-                + " dropped=" + snapshot.droppedFrames);
+                + " dropped=" + snapshot.droppedFrames
+                + " errorCode=" + snapshot.lastErrorCode
+                + " errorMessage=" + snapshot.lastErrorMessage);
         break;
       default:
         Log.w(TAG, "Unknown action: " + action);

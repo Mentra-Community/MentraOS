@@ -12,6 +12,10 @@ public class UvcConfig {
   public static final String EXTRA_ALLOW_TEST_SINKS = "uvc_allow_test_sinks";
   public static final String EXTRA_OUTPUT_DIR = "uvc_output_dir";
   public static final String EXTRA_DEVICE_PATH = "uvc_device_path";
+  public static final String EXTRA_PRODUCER_MODE = "uvc_producer_mode";
+  public static final String EXTRA_CAMERA_ID = "uvc_camera_id";
+  public static final String EXTRA_IMAGE_FORMAT = "uvc_image_format";
+  public static final String EXTRA_ENABLE_PREVIEW = "uvc_enable_preview";
 
   private final int fps;
   private final int width;
@@ -20,6 +24,10 @@ public class UvcConfig {
   private final boolean allowTestSinks;
   private final String outputDirectory;
   private final String devicePath;
+  private final UvcProducerMode producerMode;
+  private final String cameraId;
+  private final String imageFormat;
+  private final boolean previewEnabled;
 
   private UvcConfig(Builder builder) {
     this.fps = builder.fps;
@@ -29,6 +37,10 @@ public class UvcConfig {
     this.allowTestSinks = builder.allowTestSinks;
     this.outputDirectory = builder.outputDirectory;
     this.devicePath = builder.devicePath;
+    this.producerMode = builder.producerMode;
+    this.cameraId = builder.cameraId;
+    this.imageFormat = builder.imageFormat;
+    this.previewEnabled = builder.previewEnabled;
   }
 
   public static UvcConfig defaults() {
@@ -46,11 +58,19 @@ public class UvcConfig {
         .setHeight(intent.getIntExtra(EXTRA_HEIGHT, 480))
         .setAllowTestSinks(intent.getBooleanExtra(EXTRA_ALLOW_TEST_SINKS, false))
         .setOutputDirectory(intent.getStringExtra(EXTRA_OUTPUT_DIR))
-        .setDevicePath(intent.getStringExtra(EXTRA_DEVICE_PATH));
+        .setDevicePath(intent.getStringExtra(EXTRA_DEVICE_PATH))
+        .setCameraId(intent.getStringExtra(EXTRA_CAMERA_ID))
+        .setImageFormat(intent.getStringExtra(EXTRA_IMAGE_FORMAT))
+        .setPreviewEnabled(intent.getBooleanExtra(EXTRA_ENABLE_PREVIEW, false));
 
     String sinkTypeRaw = intent.getStringExtra(EXTRA_SINK_TYPE);
     if (sinkTypeRaw != null && !sinkTypeRaw.isEmpty()) {
       builder.setSinkType(SinkType.fromValue(sinkTypeRaw));
+    }
+
+    String producerModeRaw = intent.getStringExtra(EXTRA_PRODUCER_MODE);
+    if (producerModeRaw != null && !producerModeRaw.isEmpty()) {
+      builder.setProducerMode(UvcProducerMode.fromValue(producerModeRaw));
     }
 
     return builder.build();
@@ -84,6 +104,22 @@ public class UvcConfig {
     return devicePath;
   }
 
+  public UvcProducerMode getProducerMode() {
+    return producerMode;
+  }
+
+  public String getCameraId() {
+    return cameraId;
+  }
+
+  public String getImageFormat() {
+    return imageFormat;
+  }
+
+  public boolean isPreviewEnabled() {
+    return previewEnabled;
+  }
+
   public static class Builder {
     private int fps = 15;
     private int width = 640;
@@ -92,6 +128,10 @@ public class UvcConfig {
     private boolean allowTestSinks = false;
     private String outputDirectory = null;
     private String devicePath = null;
+    private UvcProducerMode producerMode = UvcProducerMode.SYNTHETIC;
+    private String cameraId = null;
+    private String imageFormat = "jpeg";
+    private boolean previewEnabled = false;
 
     public Builder setFps(int fps) {
       this.fps = Math.max(1, fps);
@@ -125,6 +165,28 @@ public class UvcConfig {
 
     public Builder setDevicePath(String devicePath) {
       this.devicePath = devicePath;
+      return this;
+    }
+
+    public Builder setProducerMode(UvcProducerMode producerMode) {
+      this.producerMode = producerMode == null ? UvcProducerMode.SYNTHETIC : producerMode;
+      return this;
+    }
+
+    public Builder setCameraId(String cameraId) {
+      this.cameraId = cameraId;
+      return this;
+    }
+
+    public Builder setImageFormat(String imageFormat) {
+      this.imageFormat = imageFormat == null || imageFormat.trim().isEmpty()
+          ? "jpeg"
+          : imageFormat.trim().toLowerCase();
+      return this;
+    }
+
+    public Builder setPreviewEnabled(boolean previewEnabled) {
+      this.previewEnabled = previewEnabled;
       return this;
     }
 

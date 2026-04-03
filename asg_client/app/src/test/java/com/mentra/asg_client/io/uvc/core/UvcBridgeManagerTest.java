@@ -98,6 +98,41 @@ public class UvcBridgeManagerTest {
     Assert.assertEquals(UvcState.IDLE, manager.getState());
   }
 
+  @Test
+  public void cameraModeRejectsStartWhenBusy() {
+    UvcBridgeManager manager = new BusyCameraTestManager(new UvcSinkFactory(true), new UvcDeviceLocator());
+    UvcConfig config = new UvcConfig.Builder()
+        .setProducerMode(com.mentra.asg_client.io.uvc.model.UvcProducerMode.CAMERA2)
+        .setSinkType(SinkType.NULL)
+        .build();
+
+    boolean started = manager.start(config);
+    Assert.assertFalse("Manager should reject Camera2 start while busy", started);
+
+    UvcBridgeManager.MetricsSnapshot snapshot = manager.getMetricsSnapshot();
+    Assert.assertEquals("camera_busy", snapshot.lastErrorCode);
+    Assert.assertEquals(UvcState.IDLE, snapshot.state);
+  }
+
+  @Test
+  public void previewSnapshotPublishesWhenEnabled() throws Exception {
+    UvcBridgeManager manager = new UvcBridgeManager(new UvcSinkFactory(true), new UvcDeviceLocator());
+    UvcConfig config = new UvcConfig.Builder()
+        .setSinkType(SinkType.NULL)
+        .setProducerMode(com.mentra.asg_client.io.uvc.model.UvcProducerMode.SYNTHETIC)
+        .setPreviewEnabled(true)
+        .setAllowTestSinks(true)
+        .build();
+
+    Assert.assertTrue("Manager should start", manager.start(config));
+    Thread.sleep(150);
+    UvcBridgeManager.PreviewFrameSnapshot preview = manager.getPreviewFrameSnapshot();
+    Assert.assertNotNull("Preview snapshot should be available", preview);
+    Assert.assertNotNull("Preview bytes should be available", preview.jpegBytes);
+    Assert.assertTrue("Preview bytes should not be empty", preview.jpegBytes.length > 0);
+    manager.stop();
+  }
+
   private void deleteRecursively(File file) {
     if (file == null || !file.exists()) {
       return;
@@ -111,5 +146,16 @@ public class UvcBridgeManagerTest {
       }
     }
     file.delete();
+  }
+
+  private static class BusyCameraTestManager extends UvcBridgeManager {
+    BusyCameraTestManager(UvcSinkFactory sinkFactory, UvcDeviceLocator deviceLocator) {
+      super(sinkFactory, deviceLocator);
+    }
+
+    @Override
+    protected boolean isCameraBusy() {
+      return true;
+    }
   }
 }
