@@ -12,6 +12,7 @@ import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.network.core.NetworkManagerFactory;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
+import com.mentra.asg_client.io.uvc.core.UvcBridgeManager;
 import com.mentra.asg_client.io.server.core.DefaultServerFactory;
 import com.mentra.asg_client.io.server.managers.AsgServerManager;
 import com.mentra.asg_client.io.server.services.AsgCameraServer;
@@ -43,6 +44,7 @@ public class AsgClientServiceManager {
     private AsgServerManager serverManager;
     private AsgCameraServer cameraServer;
     private BesOtaManager besOtaManager;
+    private UvcBridgeManager uvcBridgeManager;
 
     // State tracking
     private boolean isInitialized = false;
@@ -105,6 +107,9 @@ public class AsgClientServiceManager {
 
             Log.d(TAG, "🌐 Step 6: Initializing camera web server");
             initializeCameraWebServer();
+
+            Log.d(TAG, "🎥 Step 7: Initializing UVC bridge manager");
+            initializeUvcBridgeManager();
 
             isInitialized = true;
             Log.i(TAG, "✅ All service components initialized successfully");
@@ -191,6 +196,13 @@ public class AsgClientServiceManager {
 
         // Media queue manager is stateless
         mediaQueueManager = null;
+
+        if (uvcBridgeManager != null) {
+            Log.d(TAG, "🧹 Stopping UVC bridge manager");
+            uvcBridgeManager.stopSafely();
+            uvcBridgeManager = null;
+            Log.d(TAG, "✅ UVC bridge manager stopped and nullified");
+        }
 
         isInitialized = false;
         Log.i(TAG, "✅ Service components cleaned up successfully");
@@ -423,6 +435,21 @@ public class AsgClientServiceManager {
         Log.d(TAG, "✅ Media capture service initialization completed");
     }
 
+    private void initializeUvcBridgeManager() {
+        if (uvcBridgeManager != null) {
+            Log.d(TAG, "⏭️ UvcBridgeManager already exists - skipping creation");
+            return;
+        }
+
+        try {
+            uvcBridgeManager = new UvcBridgeManager();
+            Log.d(TAG, "✅ UvcBridgeManager created successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error creating UvcBridgeManager", e);
+            throw e;
+        }
+    }
+
     public void initializeCameraWebServer() {
         Log.d(TAG, "🌐 initializeCameraWebServer() started");
         Log.d(TAG, "📊 Web server enabled: " + isWebServerEnabled);
@@ -649,4 +676,8 @@ public class AsgClientServiceManager {
             Log.w(TAG, "⚠️ AsgClientService reference is null - cannot notify about heartbeat");
         }
     }
-} 
+
+    public UvcBridgeManager getUvcBridgeManager() {
+        return uvcBridgeManager;
+    }
+}

@@ -7,6 +7,7 @@ import android.util.Log;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManagerFactory;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.io.uvc.core.UvcBridgeManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -136,6 +137,10 @@ public class ServiceContainer {
      */
     public AsgClientServiceManager getServiceManager() {
         return serviceManager;
+    }
+
+    public UvcBridgeManager getUvcBridgeManager() {
+        return serviceManager.getUvcBridgeManager();
     }
 
     /**
