@@ -3,19 +3,25 @@ package com.mentra.asg_client.io.streaming.services;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Matrix;
+import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.params.StreamConfigurationMap;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
 import android.util.Range;
+import android.util.Size;
 import android.view.Surface;
+import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
+
+import com.mentra.asg_client.service.utils.ServiceUtils;
 
 import org.webrtc.CapturerObserver;
 import org.webrtc.SurfaceTextureHelper;
@@ -23,6 +29,7 @@ import org.webrtc.TextureBufferImpl;
 import org.webrtc.VideoCapturer;
 import org.webrtc.VideoFrame;
 
+import java.util.Arrays;
 import java.util.Collections;
 
 /**
@@ -62,6 +69,8 @@ public class WhipCameraCapturer implements VideoCapturer {
   private int mWidth;
   private int mHeight;
   private int mFps;
+  private int mCaptureWidth;
+  private int mCaptureHeight;
   private int mSensorOrientation;
   private int mFrameRotation;
   private boolean mIsFrontCamera;
@@ -80,6 +89,7 @@ public class WhipCameraCapturer implements VideoCapturer {
     mWidth = width;
     mHeight = height;
     mFps = fps;
+    mLoggedFrameSize = false;
 
     // Low-priority camera thread (matches StreamPackLite CameraExecutorManager)
     mCameraThread = new HandlerThread("WhipCameraThread");
@@ -99,27 +109,32 @@ public class WhipCameraCapturer implements VideoCapturer {
       return;
     }
 
-    // Get sensor orientation and camera facing for texture transform + frame rotation
     try {
       CameraCharacteristics chars = cameraManager.getCameraCharacteristics(cameraId);
-      mSensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION);
+      Integer sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION);
+      mSensorOrientation = sensorOrientation != null ? sensorOrientation : 90;
       Integer facing = chars.get(CameraCharacteristics.LENS_FACING);
       mIsFrontCamera = facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT;
+      Size captureSize = chooseCaptureSize(chars, width, height);
+      mCaptureWidth = captureSize.getWidth();
+      mCaptureHeight = captureSize.getHeight();
+      mSurfaceTextureHelper.setTextureSize(mCaptureWidth, mCaptureHeight);
+      mFrameRotation = getFrameOrientation();
     } catch (CameraAccessException e) {
       Log.w(TAG, "Failed to get camera characteristics", e);
       mSensorOrientation = 90;
       mIsFrontCamera = false;
+      mCaptureWidth = width;
+      mCaptureHeight = height;
+      mSurfaceTextureHelper.setTextureSize(mCaptureWidth, mCaptureHeight);
+      mFrameRotation = 0;
     }
 
-    // Frame rotation = 0 for fixed-landscape devices like glasses.
-    // WebRTC's rotation field causes the stack to transpose dimensions (unlike
-    // RTMP's orientationHint which is just metadata). We handle rotation via
-    // GPU texture transform instead, which rotates content in-place without
-    // changing buffer dimensions.
-    mFrameRotation = 0;
-
-    Log.d(TAG, "Sensor orientation: " + mSensorOrientation
-        + ", isFront: " + mIsFrontCamera + ", frame rotation: " + mFrameRotation);
+    Log.d(TAG, "Requested capture: " + mWidth + "x" + mHeight
+        + ", selected camera size: " + mCaptureWidth + "x" + mCaptureHeight
+        + ", sensor orientation: " + mSensorOrientation
+        + ", isFront: " + mIsFrontCamera
+        + ", frame rotation: " + mFrameRotation);
 
     try {
       cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
@@ -216,9 +231,9 @@ public class WhipCameraCapturer implements VideoCapturer {
 
       mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
 
-      // Apply GPU-level texture rotation to correct for sensor orientation.
-      // This rotates content in-place without changing buffer dimensions, so
-      // it works correctly at any aspect ratio (including 16:9).
+      // Match the stock WebRTC Camera2 session semantics:
+      // 1. Apply a texture transform for sensor/front-camera correction.
+      // 2. Preserve frame rotation metadata so downstream width/height handling stays correct.
       mSurfaceTextureHelper.startListening(frame -> {
         TextureBufferImpl texBuffer = (TextureBufferImpl) frame.getBuffer();
 
@@ -226,19 +241,13 @@ public class WhipCameraCapturer implements VideoCapturer {
           mLoggedFrameSize = true;
           Log.i(TAG, "DIAG: First frame buffer size: " + texBuffer.getWidth() + "x"
               + texBuffer.getHeight() + " (requested: " + mWidth + "x" + mHeight
-              + ", sensor orientation: " + mSensorOrientation + ")");
+              + ", selected camera size: " + mCaptureWidth + "x" + mCaptureHeight
+              + ", sensor orientation: " + mSensorOrientation
+              + ", frame rotation: " + mFrameRotation + ")");
         }
-
-        Matrix transformMatrix = new Matrix();
-        transformMatrix.preTranslate(0.5f, 0.5f);
-        if (mIsFrontCamera) {
-          transformMatrix.preScale(-1f, 1f);
-        }
-        transformMatrix.preRotate(-mSensorOrientation);
-        transformMatrix.preTranslate(-0.5f, -0.5f);
 
         TextureBufferImpl modifiedBuffer = texBuffer.applyTransformMatrix(
-            transformMatrix, texBuffer.getWidth(), texBuffer.getHeight());
+            createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
 
         VideoFrame modifiedFrame = new VideoFrame(
             modifiedBuffer, mFrameRotation, frame.getTimestampNs());
@@ -248,7 +257,7 @@ public class WhipCameraCapturer implements VideoCapturer {
 
       mObserver.onCapturerStarted(true);
       Log.d(TAG, "Camera capture started with power-saving optimizations: "
-          + mWidth + "x" + mHeight + " @" + mFps + "fps");
+          + mCaptureWidth + "x" + mCaptureHeight + " @" + mFps + "fps");
 
     } catch (CameraAccessException e) {
       Log.e(TAG, "Failed to start repeating request", e);
@@ -327,5 +336,111 @@ public class WhipCameraCapturer implements VideoCapturer {
       Log.e(TAG, "Failed to enumerate cameras", e);
       return null;
     }
+  }
+
+  private Matrix createTextureTransformMatrix() {
+    Matrix transformMatrix = new Matrix();
+    transformMatrix.preTranslate(0.5f, 0.5f);
+    if (mIsFrontCamera) {
+      transformMatrix.preScale(-1f, 1f);
+    }
+    transformMatrix.preRotate(-mSensorOrientation);
+    transformMatrix.preTranslate(-0.5f, -0.5f);
+    return transformMatrix;
+  }
+
+  private int getFrameOrientation() {
+    int deviceOrientation = getDeviceOrientationDegrees();
+    if (!mIsFrontCamera) {
+      deviceOrientation = (360 - deviceOrientation) % 360;
+    }
+    return (mSensorOrientation + deviceOrientation) % 360;
+  }
+
+  private int getDeviceOrientationDegrees() {
+    if (ServiceUtils.isK900Device(mContext)) {
+      return ServiceUtils.determineDefaultRotationForDevice(mContext);
+    }
+
+    WindowManager windowManager =
+        (WindowManager) mContext.getSystemService(Context.WINDOW_SERVICE);
+    if (windowManager == null) {
+      return ServiceUtils.determineDefaultRotationForDevice(mContext);
+    }
+
+    switch (windowManager.getDefaultDisplay().getRotation()) {
+      case Surface.ROTATION_90:
+        return 90;
+      case Surface.ROTATION_180:
+        return 180;
+      case Surface.ROTATION_270:
+        return 270;
+      case Surface.ROTATION_0:
+      default:
+        return 0;
+    }
+  }
+
+  private Size chooseCaptureSize(CameraCharacteristics characteristics, int requestedWidth,
+      int requestedHeight) {
+    StreamConfigurationMap configurationMap =
+        characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+    if (configurationMap == null) {
+      Log.w(TAG, "No stream configuration map; using requested size "
+          + requestedWidth + "x" + requestedHeight);
+      return new Size(requestedWidth, requestedHeight);
+    }
+
+    Size[] outputSizes = configurationMap.getOutputSizes(SurfaceTexture.class);
+    if (outputSizes == null || outputSizes.length == 0) {
+      Log.w(TAG, "No SurfaceTexture output sizes; using requested size "
+          + requestedWidth + "x" + requestedHeight);
+      return new Size(requestedWidth, requestedHeight);
+    }
+
+    Size requestedSize = normalizeLandscapeSize(new Size(requestedWidth, requestedHeight));
+    Size bestSize = normalizeLandscapeSize(outputSizes[0]);
+    float requestedAspectRatio = requestedSize.getWidth() / (float) requestedSize.getHeight();
+    long requestedArea = (long) requestedSize.getWidth() * requestedSize.getHeight();
+    double bestAspectDelta = Double.MAX_VALUE;
+    boolean bestMeetsRequestedSize = false;
+    long bestAreaDelta = Long.MAX_VALUE;
+
+    for (Size rawSize : outputSizes) {
+      Size candidate = normalizeLandscapeSize(rawSize);
+      float candidateAspectRatio = candidate.getWidth() / (float) candidate.getHeight();
+      double aspectDelta = Math.abs(candidateAspectRatio - requestedAspectRatio);
+      boolean meetsRequestedSize = candidate.getWidth() >= requestedSize.getWidth()
+          && candidate.getHeight() >= requestedSize.getHeight();
+      long candidateArea = (long) candidate.getWidth() * candidate.getHeight();
+      long areaDelta = Math.abs(candidateArea - requestedArea);
+
+      boolean isBetter = aspectDelta < bestAspectDelta
+          || (Double.compare(aspectDelta, bestAspectDelta) == 0
+              && meetsRequestedSize && !bestMeetsRequestedSize)
+          || (Double.compare(aspectDelta, bestAspectDelta) == 0
+              && meetsRequestedSize == bestMeetsRequestedSize
+              && areaDelta < bestAreaDelta);
+
+      if (isBetter) {
+        bestSize = candidate;
+        bestAspectDelta = aspectDelta;
+        bestMeetsRequestedSize = meetsRequestedSize;
+        bestAreaDelta = areaDelta;
+      }
+    }
+
+    Log.d(TAG, "Available SurfaceTexture sizes: " + Arrays.toString(outputSizes));
+    if (bestAspectDelta > 0.01d) {
+      Log.w(TAG, "Selected camera size " + bestSize.getWidth() + "x" + bestSize.getHeight()
+          + " is not a close aspect-ratio match for requested " + requestedWidth + "x"
+          + requestedHeight);
+    }
+    return bestSize;
+  }
+
+  private Size normalizeLandscapeSize(Size size) {
+    return new Size(Math.max(size.getWidth(), size.getHeight()),
+        Math.min(size.getWidth(), size.getHeight()));
   }
 }
