@@ -314,7 +314,7 @@ const en = {
     connectController: "Connect ring",
     getSupport: "Get support",
     getSupportMessage: "You will be taken to our support page in your browser.",
-    connectingGlasses: "Connecting glasses...",
+    connectingGlasses: "Connecting...",
     connectingController: "Connecting ring...",
     emptyActiveAppListInfo: "Your active apps will appear here.",
     emptyInactiveAppListInfo: "Your inactive apps will appear here.",

@@ -43,6 +43,8 @@ const TIMING = {
   // iOS WiFi connection timing - the system shows a dialog that user must accept
   IOS_WIFI_RETRY_DELAY_MS: 3000, // Wait for user to interact with iOS dialog
   IOS_WIFI_MAX_RETRIES: 5, // Retry multiple times to give user time to accept
+  IOS_WIFI_CONNECT_ATTEMPT_TIMEOUT_MS: 20000, // Guard against hanging native WiFi join calls
+  IOS_WIFI_TOTAL_CONNECT_TIMEOUT_MS: 65000, // Join prompt can expire if ignored too long
   // WiFi initialization cooldown - prevents repeated "enable WiFi" alerts while WiFi is initializing
   WIFI_COOLDOWN_MS: 3000, // Wait 3 seconds after user visits WiFi settings before showing alert again
 } as const
@@ -60,6 +62,27 @@ class GallerySyncService {
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
 
   private constructor() {}
+
+  private createTimeoutError(message: string, code: string): Error & {code: string} {
+    const timeoutError = new Error(message) as Error & {code: string}
+    timeoutError.code = code
+    return timeoutError
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutError: Error): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timeoutId = BackgroundTimer.setTimeout(() => reject(timeoutError), timeoutMs)
+      promise
+        .then((result) => {
+          BackgroundTimer.clearTimeout(timeoutId)
+          resolve(result)
+        })
+        .catch((error) => {
+          BackgroundTimer.clearTimeout(timeoutId)
+          reject(error)
+        })
+    })
+  }
 
   static getInstance(): GallerySyncService {
     if (!GallerySyncService.instance) {
@@ -206,7 +229,7 @@ class GallerySyncService {
 
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-          await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, RETRY_DELAY_MS))
+          await new Promise<void>((resolve) => BackgroundTimer.setTimeout(() => resolve(), RETRY_DELAY_MS))
 
           const netState = await NetInfo.fetch()
           console.log(
@@ -764,12 +787,20 @@ class GallerySyncService {
     try {
       for (let attempt = 1; attempt <= TIMING.IOS_WIFI_MAX_RETRIES; attempt++) {
         const attemptStartTime = Date.now()
+        const elapsedWifiConnectTimeMs = Date.now() - wifiConnectStartTime
 
         // Check if cancelled
         if (this.abortController?.signal.aborted) {
           console.log("[GallerySyncService] 🛑 Sync was cancelled - aborting WiFi connection")
           store.setSyncError("Sync cancelled")
           return
+        }
+
+        if (Platform.OS === "ios" && elapsedWifiConnectTimeMs > TIMING.IOS_WIFI_TOTAL_CONNECT_TIMEOUT_MS) {
+          throw this.createTimeoutError(
+            "iOS WiFi join prompt timed out before connection could complete",
+            "iosJoinPromptStale",
+          )
         }
 
         try {
@@ -818,7 +849,15 @@ class GallerySyncService {
           appBackgrounded = false // Reset flag for this attempt
           appBackgroundTime = null
 
-          await WifiManager.connectToProtectedSSID(hotspotInfo.ssid, hotspotInfo.password, false, false)
+          const connectAttemptTimeoutError = this.createTimeoutError(
+            "iOS WiFi join attempt timed out",
+            "iosJoinAttemptTimeout",
+          )
+          await this.withTimeout(
+            WifiManager.connectToProtectedSSID(hotspotInfo.ssid, hotspotInfo.password, false, false),
+            Platform.OS === "ios" ? TIMING.IOS_WIFI_CONNECT_ATTEMPT_TIMEOUT_MS : TIMING.WIFI_CONNECTION_TIMEOUT_MS,
+            connectAttemptTimeoutError,
+          )
 
           const connectCallDuration = Date.now() - connectCallStartTime
           console.log(`[GallerySyncService] ✅ WifiManager.connectToProtectedSSID returned successfully`)
@@ -872,7 +911,7 @@ class GallerySyncService {
 
               // Don't wait after last attempt
               if (i < maxVerifyAttempts - 1) {
-                await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 500))
+                await new Promise<void>((resolve) => BackgroundTimer.setTimeout(() => resolve(), 500))
               }
             }
 
@@ -967,7 +1006,7 @@ class GallerySyncService {
 
               // Wait 500ms before next probe (unless this was the last attempt)
               if (probeNum < maxProbeAttempts) {
-                await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 500))
+                await new Promise<void>((resolve) => BackgroundTimer.setTimeout(() => resolve(), 500))
               }
             }
 
@@ -1100,7 +1139,9 @@ class GallerySyncService {
             console.log(`[GallerySyncService] 🔄 Preparing retry ${attempt + 1}/${TIMING.IOS_WIFI_MAX_RETRIES}`)
             console.log(`[GallerySyncService] ⏱️ Waiting ${TIMING.IOS_WIFI_RETRY_DELAY_MS}ms (${reason})`)
             console.log(`[GallerySyncService] 📱 App currently: ${AppState.currentState}`)
-            await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, TIMING.IOS_WIFI_RETRY_DELAY_MS))
+            await new Promise<void>((resolve) =>
+              BackgroundTimer.setTimeout(() => resolve(), TIMING.IOS_WIFI_RETRY_DELAY_MS),
+            )
             console.log(`[GallerySyncService] ⏱️ Wait complete - starting retry`)
           } else {
             console.error("[GallerySyncService] 🚫 No more retry attempts available")
@@ -1128,12 +1169,20 @@ class GallerySyncService {
       if (lastError?.code === "timeoutOccurred" && appBackgrounded) {
         userErrorMessage =
           "WiFi connection timed out. Android may be blocking automatic WiFi switching. Please manually connect to the glasses hotspot in Settings."
+      } else if (lastError?.code === "iosJoinAttemptTimeout" || lastError?.code === "iosJoinPromptStale") {
+        // iOS doesn't expose a reliable API to read the phone's Personal Hotspot state,
+        // so we provide guidance instead of claiming direct hotspot detection.
+        userErrorMessage =
+          "Connection timed out waiting for iOS WiFi join. Personal Hotspot may be interfering - try turning it off and retrying. If the Join prompt appears, tap Join within 60 seconds."
       } else if (lastError?.message?.includes("internal error")) {
         userErrorMessage =
           "Could not connect to glasses WiFi. Please ensure you accept the WiFi prompt when it appears."
       }
 
       store.setSyncError(userErrorMessage)
+      // Same path for both platforms: notifications are effectively disabled in
+      // gallerySyncNotifications, and the gallery bar only shows generic copy.
+      showAlert("Sync failed", userErrorMessage, [{text: "OK"}])
 
       if (store.syncServiceOpenedHotspot) {
         await this.closeHotspot()
