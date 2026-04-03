@@ -71,6 +71,10 @@ public class WhipCameraCapturer implements VideoCapturer {
   private int mFps;
   private int mCaptureWidth;
   private int mCaptureHeight;
+  private int mCropX;
+  private int mCropY;
+  private int mCropWidth;
+  private int mCropHeight;
   private int mSensorOrientation;
   private int mFrameRotation;
   private boolean mIsFrontCamera;
@@ -118,6 +122,7 @@ public class WhipCameraCapturer implements VideoCapturer {
       Size captureSize = chooseCaptureSize(chars, width, height);
       mCaptureWidth = captureSize.getWidth();
       mCaptureHeight = captureSize.getHeight();
+      updateOutputCrop();
       mSurfaceTextureHelper.setTextureSize(mCaptureWidth, mCaptureHeight);
       mFrameRotation = getFrameOrientation();
     } catch (CameraAccessException e) {
@@ -126,12 +131,15 @@ public class WhipCameraCapturer implements VideoCapturer {
       mIsFrontCamera = false;
       mCaptureWidth = width;
       mCaptureHeight = height;
+      updateOutputCrop();
       mSurfaceTextureHelper.setTextureSize(mCaptureWidth, mCaptureHeight);
       mFrameRotation = 0;
     }
 
     Log.d(TAG, "Requested capture: " + mWidth + "x" + mHeight
         + ", selected camera size: " + mCaptureWidth + "x" + mCaptureHeight
+        + ", crop window: " + mCropWidth + "x" + mCropHeight + " @ (" + mCropX + ", " + mCropY
+        + ")"
         + ", sensor orientation: " + mSensorOrientation
         + ", isFront: " + mIsFrontCamera
         + ", frame rotation: " + mFrameRotation);
@@ -242,15 +250,21 @@ public class WhipCameraCapturer implements VideoCapturer {
           Log.i(TAG, "DIAG: First frame buffer size: " + texBuffer.getWidth() + "x"
               + texBuffer.getHeight() + " (requested: " + mWidth + "x" + mHeight
               + ", selected camera size: " + mCaptureWidth + "x" + mCaptureHeight
+              + ", crop window: " + mCropWidth + "x" + mCropHeight + " @ (" + mCropX + ", "
+              + mCropY + ")"
               + ", sensor orientation: " + mSensorOrientation
               + ", frame rotation: " + mFrameRotation + ")");
         }
 
         TextureBufferImpl modifiedBuffer = texBuffer.applyTransformMatrix(
             createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
+        VideoFrame.Buffer outputBuffer = adaptOutputBuffer(modifiedBuffer);
+        if (outputBuffer != modifiedBuffer) {
+          modifiedBuffer.release();
+        }
 
         VideoFrame modifiedFrame = new VideoFrame(
-            modifiedBuffer, mFrameRotation, frame.getTimestampNs());
+            outputBuffer, mFrameRotation, frame.getTimestampNs());
         mObserver.onFrameCaptured(modifiedFrame);
         modifiedFrame.release();
       });
@@ -400,43 +414,91 @@ public class WhipCameraCapturer implements VideoCapturer {
 
     Size requestedSize = normalizeLandscapeSize(new Size(requestedWidth, requestedHeight));
     Size bestSize = normalizeLandscapeSize(outputSizes[0]);
-    float requestedAspectRatio = requestedSize.getWidth() / (float) requestedSize.getHeight();
-    long requestedArea = (long) requestedSize.getWidth() * requestedSize.getHeight();
-    double bestAspectDelta = Double.MAX_VALUE;
-    boolean bestMeetsRequestedSize = false;
-    long bestAreaDelta = Long.MAX_VALUE;
+    int bestTransformPenalty = Integer.MAX_VALUE;
+    long bestSourceArea = Long.MAX_VALUE;
+    long bestCropAreaDelta = Long.MAX_VALUE;
 
     for (Size rawSize : outputSizes) {
       Size candidate = normalizeLandscapeSize(rawSize);
-      float candidateAspectRatio = candidate.getWidth() / (float) candidate.getHeight();
-      double aspectDelta = Math.abs(candidateAspectRatio - requestedAspectRatio);
-      boolean meetsRequestedSize = candidate.getWidth() >= requestedSize.getWidth()
-          && candidate.getHeight() >= requestedSize.getHeight();
+      Size croppedSize = getCenterCropSize(candidate.getWidth(), candidate.getHeight(),
+          requestedSize.getWidth(), requestedSize.getHeight());
+      boolean meetsRequestedSize = croppedSize.getWidth() >= requestedSize.getWidth()
+          && croppedSize.getHeight() >= requestedSize.getHeight();
+      boolean exactOutput = croppedSize.getWidth() == requestedSize.getWidth()
+          && croppedSize.getHeight() == requestedSize.getHeight();
+      int transformPenalty = exactOutput ? 0 : meetsRequestedSize ? 1 : 2;
       long candidateArea = (long) candidate.getWidth() * candidate.getHeight();
-      long areaDelta = Math.abs(candidateArea - requestedArea);
+      long cropArea = (long) croppedSize.getWidth() * croppedSize.getHeight();
+      long cropAreaDelta = Math.abs(cropArea
+          - ((long) requestedSize.getWidth() * requestedSize.getHeight()));
 
-      boolean isBetter = aspectDelta < bestAspectDelta
-          || (Double.compare(aspectDelta, bestAspectDelta) == 0
-              && meetsRequestedSize && !bestMeetsRequestedSize)
-          || (Double.compare(aspectDelta, bestAspectDelta) == 0
-              && meetsRequestedSize == bestMeetsRequestedSize
-              && areaDelta < bestAreaDelta);
+      boolean isBetter = transformPenalty < bestTransformPenalty
+          || (transformPenalty == bestTransformPenalty && candidateArea < bestSourceArea)
+          || (transformPenalty == bestTransformPenalty && candidateArea == bestSourceArea
+              && cropAreaDelta < bestCropAreaDelta);
 
       if (isBetter) {
         bestSize = candidate;
-        bestAspectDelta = aspectDelta;
-        bestMeetsRequestedSize = meetsRequestedSize;
-        bestAreaDelta = areaDelta;
+        bestTransformPenalty = transformPenalty;
+        bestSourceArea = candidateArea;
+        bestCropAreaDelta = cropAreaDelta;
       }
     }
 
     Log.d(TAG, "Available SurfaceTexture sizes: " + Arrays.toString(outputSizes));
-    if (bestAspectDelta > 0.01d) {
+    if (bestTransformPenalty == 1) {
+      Log.d(TAG, "Selected camera size " + bestSize.getWidth() + "x" + bestSize.getHeight()
+          + " will be cropped and downscaled to " + requestedWidth + "x" + requestedHeight);
+    } else if (bestTransformPenalty == 2) {
       Log.w(TAG, "Selected camera size " + bestSize.getWidth() + "x" + bestSize.getHeight()
-          + " is not a close aspect-ratio match for requested " + requestedWidth + "x"
-          + requestedHeight);
+          + " cannot reach requested " + requestedWidth + "x" + requestedHeight
+          + " without upscaling");
     }
     return bestSize;
+  }
+
+  private void updateOutputCrop() {
+    Size cropSize = getCenterCropSize(mCaptureWidth, mCaptureHeight, mWidth, mHeight);
+    mCropWidth = cropSize.getWidth();
+    mCropHeight = cropSize.getHeight();
+    mCropX = Math.max(0, (mCaptureWidth - mCropWidth) / 2);
+    mCropY = Math.max(0, (mCaptureHeight - mCropHeight) / 2);
+  }
+
+  private VideoFrame.Buffer adaptOutputBuffer(TextureBufferImpl buffer) {
+    boolean needsCrop = mCropX != 0 || mCropY != 0
+        || mCropWidth != buffer.getWidth() || mCropHeight != buffer.getHeight();
+    boolean needsScale = buffer.getWidth() != mWidth || buffer.getHeight() != mHeight;
+
+    if (!needsCrop && !needsScale) {
+      return buffer;
+    }
+
+    return buffer.cropAndScale(mCropX, mCropY, mCropWidth, mCropHeight, mWidth, mHeight);
+  }
+
+  private Size getCenterCropSize(int sourceWidth, int sourceHeight, int targetWidth,
+      int targetHeight) {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+      return new Size(sourceWidth, sourceHeight);
+    }
+
+    float sourceAspectRatio = sourceWidth / (float) sourceHeight;
+    float targetAspectRatio = targetWidth / (float) targetHeight;
+    int cropWidth = sourceWidth;
+    int cropHeight = sourceHeight;
+
+    if (Math.abs(sourceAspectRatio - targetAspectRatio) > 0.0001f) {
+      if (sourceAspectRatio > targetAspectRatio) {
+        cropWidth = Math.round(sourceHeight * targetAspectRatio);
+      } else {
+        cropHeight = Math.round(sourceWidth / targetAspectRatio);
+      }
+    }
+
+    cropWidth = Math.max(1, Math.min(sourceWidth, cropWidth));
+    cropHeight = Math.max(1, Math.min(sourceHeight, cropHeight));
+    return new Size(cropWidth, cropHeight);
   }
 
   private Size normalizeLandscapeSize(Size size) {
