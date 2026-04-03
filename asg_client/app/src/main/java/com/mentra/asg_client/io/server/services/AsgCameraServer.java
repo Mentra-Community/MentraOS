@@ -11,6 +11,7 @@ import com.mentra.asg_client.io.file.core.FileManager.FileMetadata;
 import com.mentra.asg_client.io.file.core.FileManager.FileOperationResult;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.File;
@@ -20,6 +21,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 // JSON parsing imports
 import org.json.JSONArray;
@@ -48,11 +50,28 @@ public class AsgCameraServer extends AsgServer {
         String getActiveRecordingCaptureId();
     }
 
+    /**
+     * Provider that returns the latest UVC preview frame bytes.
+     * This endpoint is TEST_ONLY and should only be enabled in debug/testing flows.
+     */
+    public interface UvcPreviewProvider {
+        byte[] getLatestJpegFrame();
+    }
+
+    /**
+     * Provider that indicates whether UVC preview endpoints should be served.
+     */
+    public interface UvcActiveProvider {
+        boolean isUvcPreviewActive();
+    }
+
     // File management system
     private final FileManager fileManager;
 
     // Optional provider for currently recording file name
     private ActiveRecordingProvider activeRecordingProvider;
+    private UvcPreviewProvider uvcPreviewProvider;
+    private UvcActiveProvider uvcActiveProvider;
 
     // Cache for latest photo metadata
     private FileMetadata latestPhotoMetadata;
@@ -148,6 +167,15 @@ public class AsgCameraServer extends AsgServer {
             case "/api/sync-status":
                 logger.debug(TAG, "📊 Serving sync status request");
                 return serveSyncStatus(session);
+            case "/api/uvc/latest-frame":
+                logger.debug(TAG, "🎥 Serving UVC latest frame");
+                return serveUvcLatestFrame();
+            case "/api/uvc/preview":
+                logger.debug(TAG, "🎥 Serving UVC preview page");
+                return serveUvcPreviewPage();
+            case "/api/uvc/preview-stream":
+                logger.debug(TAG, "🎥 Serving UVC MJPEG preview stream");
+                return serveUvcPreviewStream();
             default:
                 // Check if it's a static file request
                 if (uri.startsWith("/static/")) {
@@ -1134,6 +1162,53 @@ public class AsgCameraServer extends AsgServer {
         }
     }
 
+    private Response serveUvcLatestFrame() {
+        if (uvcActiveProvider == null || !uvcActiveProvider.isUvcPreviewActive()) {
+            return createErrorResponse(Response.Status.SERVICE_UNAVAILABLE, "UVC preview inactive");
+        }
+        if (uvcPreviewProvider == null) {
+            return createErrorResponse(Response.Status.SERVICE_UNAVAILABLE, "UVC preview provider unavailable");
+        }
+
+        byte[] jpeg = uvcPreviewProvider.getLatestJpegFrame();
+        if (jpeg == null || jpeg.length == 0) {
+            return createErrorResponse(Response.Status.NOT_FOUND, "No UVC frame available");
+        }
+        return newChunkedResponse(Response.Status.OK, "image/jpeg", new ByteArrayInputStream(jpeg));
+    }
+
+    private Response serveUvcPreviewPage() {
+        String html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>"
+            + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
+            + "<title>UVC Preview (TEST_ONLY)</title>"
+            + "<style>body{font-family:sans-serif;background:#101010;color:#fff;padding:16px;}"
+            + "img{max-width:100%;border:1px solid #333;border-radius:8px;}small{color:#aaa;}</style>"
+            + "</head><body><h3>UVC Preview (TEST_ONLY)</h3><small>MJPEG stream target: 30fps</small><br/><br/>"
+            + "<img id=\"frame\" src=\"/api/uvc/preview-stream\" alt=\"UVC frame\"/>"
+            + "</body></html>";
+        return newFixedLengthResponse(Response.Status.OK, "text/html", html);
+    }
+
+    private Response serveUvcPreviewStream() {
+        if (uvcActiveProvider == null || !uvcActiveProvider.isUvcPreviewActive()) {
+            return createErrorResponse(Response.Status.SERVICE_UNAVAILABLE, "UVC preview inactive");
+        }
+        if (uvcPreviewProvider == null) {
+            return createErrorResponse(Response.Status.SERVICE_UNAVAILABLE, "UVC preview provider unavailable");
+        }
+
+        UvcMjpegStreamInputStream stream = new UvcMjpegStreamInputStream(uvcPreviewProvider, uvcActiveProvider);
+        Response response = newChunkedResponse(
+            Response.Status.OK,
+            "multipart/x-mixed-replace; boundary=frame",
+            stream
+        );
+        response.addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        response.addHeader("Pragma", "no-cache");
+        response.addHeader("Connection", "keep-alive");
+        return response;
+    }
+
     /**
      * Get the latest photo metadata with caching.
      */
@@ -1173,6 +1248,104 @@ public class AsgCameraServer extends AsgServer {
 
     public void setActiveRecordingProvider(ActiveRecordingProvider provider) {
         this.activeRecordingProvider = provider;
+    }
+
+    public void setUvcPreviewProvider(UvcPreviewProvider provider) {
+        this.uvcPreviewProvider = provider;
+    }
+
+    public void setUvcActiveProvider(UvcActiveProvider provider) {
+        this.uvcActiveProvider = provider;
+    }
+
+    private static class UvcMjpegStreamInputStream extends InputStream {
+        private static final byte[] BOUNDARY = "--frame\r\n".getBytes(StandardCharsets.UTF_8);
+        private static final int TARGET_FRAME_INTERVAL_MS = 33; // ~30 fps
+
+        private final UvcPreviewProvider previewProvider;
+        private final UvcActiveProvider activeProvider;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        private byte[] currentChunk = new byte[0];
+        private int cursor = 0;
+
+        UvcMjpegStreamInputStream(UvcPreviewProvider previewProvider, UvcActiveProvider activeProvider) {
+            this.previewProvider = previewProvider;
+            this.activeProvider = activeProvider;
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] single = new byte[1];
+            int result = read(single, 0, 1);
+            if (result <= 0) {
+                return -1;
+            }
+            return single[0] & 0xFF;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (closed.get()) {
+                return -1;
+            }
+
+            if (cursor >= currentChunk.length) {
+                if (!refillChunk()) {
+                    return -1;
+                }
+            }
+
+            int toCopy = Math.min(len, currentChunk.length - cursor);
+            System.arraycopy(currentChunk, cursor, b, off, toCopy);
+            cursor += toCopy;
+            return toCopy;
+        }
+
+        @Override
+        public void close() {
+            closed.set(true);
+        }
+
+        private boolean refillChunk() throws IOException {
+            while (!closed.get()) {
+                if (activeProvider == null || !activeProvider.isUvcPreviewActive()) {
+                    return false;
+                }
+                byte[] jpeg = previewProvider.getLatestJpegFrame();
+                if (jpeg != null && jpeg.length > 0) {
+                    String headers = "Content-Type: image/jpeg\r\n"
+                        + "Content-Length: " + jpeg.length + "\r\n\r\n";
+                    byte[] headerBytes = headers.getBytes(StandardCharsets.UTF_8);
+                    byte[] trailer = "\r\n".getBytes(StandardCharsets.UTF_8);
+
+                    currentChunk = new byte[BOUNDARY.length + headerBytes.length + jpeg.length + trailer.length];
+                    int pos = 0;
+                    System.arraycopy(BOUNDARY, 0, currentChunk, pos, BOUNDARY.length);
+                    pos += BOUNDARY.length;
+                    System.arraycopy(headerBytes, 0, currentChunk, pos, headerBytes.length);
+                    pos += headerBytes.length;
+                    System.arraycopy(jpeg, 0, currentChunk, pos, jpeg.length);
+                    pos += jpeg.length;
+                    System.arraycopy(trailer, 0, currentChunk, pos, trailer.length);
+                    cursor = 0;
+
+                    sleepFrameInterval();
+                    return true;
+                }
+                sleepFrameInterval();
+            }
+            return false;
+        }
+
+        private void sleepFrameInterval() throws IOException {
+            try {
+                Thread.sleep(TARGET_FRAME_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("MJPEG stream interrupted", e);
+            }
+        }
     }
 
     /**

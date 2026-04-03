@@ -9,6 +9,7 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.SettingsCommandHandler;
 import com.mentra.asg_client.service.core.handlers.VersionCommandHandler;
+import com.mentra.asg_client.service.core.handlers.UvcCommandHandler;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
@@ -362,6 +363,9 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new I2SAudioCommandHandler());
             Log.d(TAG, "✅ Registered I2SAudioCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new UvcCommandHandler(context, communicationManager));
+            Log.d(TAG, "✅ Registered UvcCommandHandler");
 
             Log.i(TAG, "✅ Successfully registered " + commandHandlerRegistry.getHandlerCount() + " command handlers");
 

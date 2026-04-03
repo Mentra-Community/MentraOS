@@ -9,10 +9,12 @@ Deliver Mentra Live USB webcam in three phases: zero-firmware-dependency static-
 - `phase1-uvc-core` - Implement UVC core module with sink abstraction and sink factory, plus static-frame bring-up using only mock/null/file sinks (`pending`)
 - `phase1-service-wireup` - Wire UVC service into manifest, ServiceContainer, and AsgClientServiceManager lifecycle (`pending`)
 - `phase1-test-harness` - Implement Phase 1 automated and script-driven validation for NullSink/FileSink pacing, lifecycle cycles, and soak metrics (`pending`)
-- `phase2-camera-producer` - Implement Camera2 frame producer under manager-owned orchestration and add shared camera ownership gate (`pending`)
+- `phase2-camera-producer` - Implement Camera2 frame producer under manager-owned orchestration (`pending`)
 - `phase2-command-surface` - Add UVC command handler and register in CommandProcessor for controlled testing (`pending`)
 - `phase2-sink-policy-tests` - Add sink factory policy tests to enforce V4L2-only behavior in release runtime (`pending`)
-- `phase2-arbitration` - Integrate UVC ownership checks with MediaCaptureService and RTMP/SRT/WHIP services (`pending`)
+- `phase2-lightweight-arbitration` - Add minimal UVC camera conflict checks in manager/command path without shared-gate refactor (`pending`)
+- `phase2-preview-endpoint` - Add TEST_ONLY browser preview endpoints for latest frame visibility without OBS (`pending`)
+- `phase2-thorough-pipeline-tests` - Add full pipeline test matrix (unit + integration + endpoint + soak + regression) with artifacts (`pending`)
 - `phase3-native-v4l2` - Implement JNI/C++ V4L2 writer path and Gradle/CMake integration (`pending`)
 - `phase3-firmware-bind` - Bind to firmware endpoint, validate host start/stop behavior, and confirm OBS stability (`pending`)
 - `phase3-release-profile` - Lock target mode profile (720p30 MJPEG primary) with recovery/replug test pass (`pending`)
@@ -129,38 +131,58 @@ flowchart LR
 
 ### Objective
 
-Build production camera capture/format pipeline while still allowing fallback to non-firmware-dependent sinks.
+Build production camera capture/format pipeline while still allowing fallback to non-firmware-dependent sinks, and add a TEST_ONLY browser preview path for rapid visual validation.
 
 ### Scope
 
 - Implement frame producer from Camera2.
 - Support MJPEG-first path with optional YUYV fallback.
-- Add lifecycle state machine and camera ownership policy.
-- Add a shared `CameraOwnershipGate` helper to remove duplicated camera busy/kept-alive checks across UVC, media capture, and streaming services.
+- Add lifecycle state machine and lightweight camera conflict policy in UVC path.
+- Add TEST_ONLY preview endpoints for latest frame inspection in browser (`/api/uvc/latest-frame`, `/api/uvc/preview`).
 
 ### Files to add or update
 
-- Add frame producer and scheduler:
+- Add frame producer and manager integration:
   - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/UvcFrameProducer.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/UvcFrameProducer.java)` - Camera2 capture source, buffer extraction, and frame handoff.
-  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/CameraOwnershipGate.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/CameraOwnershipGate.java)` - Shared camera-ownership helper for in-use checks and kept-alive camera release policy.
-- Integrate with existing camera ownership checks:
-  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/media/core/MediaCaptureService.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/media/core/MediaCaptureService.java)`
-  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/streaming/services/RtmpStreamingService.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/streaming/services/RtmpStreamingService.java)`
-  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/streaming/services/SrtStreamingService.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/streaming/services/SrtStreamingService.java)`
-  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/streaming/services/WhipStreamingService.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/streaming/services/WhipStreamingService.java)`
+- Add minimal conflict checks in UVC path:
+  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/UvcBridgeManager.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/UvcBridgeManager.java)` - pre-start camera busy check and kept-alive close.
+  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/UvcBridgeService.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/uvc/core/UvcBridgeService.java)` - deterministic busy/error status propagation.
 - Add command surfaces for local testing:
   - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/service/core/handlers/UvcCommandHandler.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/service/core/handlers/UvcCommandHandler.java)` - Runtime control entry points (`start_uvc`, `stop_uvc`, `status`).
   - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/service/core/processors/CommandProcessor.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/service/core/processors/CommandProcessor.java)` - Handler registration and command routing integration.
+- Add TEST_ONLY preview endpoint integration:
+  - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/server/services/AsgCameraServer.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/main/java/com/mentra/asg_client/io/server/services/AsgCameraServer.java)` - `/api/uvc/latest-frame` and `/api/uvc/preview`.
 - Add sink factory policy tests:
   - `[/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/test/java/com/mentra/asg_client/io/uvc/sink/UvcSinkFactoryPolicyTest.java](/Users/mentra/Documents/MentraApps/MentraOS/asg_client/app/src/test/java/com/mentra/asg_client/io/uvc/sink/UvcSinkFactoryPolicyTest.java)` - Verifies release-mode sink lock-down and debug-mode test sink eligibility.
 
 ### Acceptance criteria
 
 - Camera2 frames reach sink at target pacing with no unbounded memory growth.
-- Ownership policy blocks local photo/video/RTMP while UVC streaming state is active.
+- UVC start path blocks when camera is busy and returns deterministic error status.
 - Can run full pipeline against `NullSink` and `FileSink` for deterministic tests.
 - Release policy tests prove non-production sinks cannot be selected in production runtime.
-- Camera ownership decisions are centralized via `CameraOwnershipGate` (no duplicated in-use checks across feature paths).
+- TEST_ONLY browser preview endpoint shows live-updating frame output without OBS.
+
+### Thorough pipeline test matrix (Phase 2)
+
+- Unit tests:
+  - producer lifecycle and frame validity,
+  - manager pacing/state/counter correctness,
+  - command handler start/stop/status behavior,
+  - busy-path and sink-policy guardrails.
+- Integration tests:
+  - manager + Camera2 producer + `NullSink`,
+  - manager + Camera2 producer + `FileSink`,
+  - service/command/manager ownership path stability.
+- Endpoint tests:
+  - `/api/uvc/latest-frame` serves non-empty `image/jpeg` while active,
+  - `/api/uvc/preview` auto-refreshes and shows changing frames.
+- Stability tests:
+  - 20-50 start/stop cycles with camera producer enabled,
+  - 10-minute soak run with no crash/ANR/unbounded memory growth,
+  - conflict regression where busy camera returns safe deterministic UVC rejection.
+- Evidence artifacts:
+  - test outputs, cycle/soak logs, key runtime metrics (fps/drops/state/memory), preview verification screenshots.
 
 ## Phase 3: Full Firmware Integration and Host Validation
 

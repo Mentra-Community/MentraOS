@@ -105,11 +105,11 @@ public class AsgClientServiceManager {
             Log.d(TAG, "📸 Step 5: Initializing media capture service");
             initializeMediaCaptureService();
 
-            Log.d(TAG, "🌐 Step 6: Initializing camera web server");
-            initializeCameraWebServer();
-
-            Log.d(TAG, "🎥 Step 7: Initializing UVC bridge manager");
+            Log.d(TAG, "🎥 Step 6: Initializing UVC bridge manager");
             initializeUvcBridgeManager();
+
+            Log.d(TAG, "🌐 Step 7: Initializing camera web server");
+            initializeCameraWebServer();
 
             isInitialized = true;
             Log.i(TAG, "✅ All service components initialized successfully");
@@ -200,6 +200,7 @@ public class AsgClientServiceManager {
         if (uvcBridgeManager != null) {
             Log.d(TAG, "🧹 Stopping UVC bridge manager");
             uvcBridgeManager.stopSafely();
+            com.mentra.asg_client.io.uvc.core.UvcRuntimeRegistry.set(null);
             uvcBridgeManager = null;
             Log.d(TAG, "✅ UVC bridge manager stopped and nullified");
         }
@@ -442,7 +443,8 @@ public class AsgClientServiceManager {
         }
 
         try {
-            uvcBridgeManager = new UvcBridgeManager();
+            uvcBridgeManager = new UvcBridgeManager(context.getApplicationContext(), new com.mentra.asg_client.io.uvc.sink.UvcSinkFactory(), new com.mentra.asg_client.io.uvc.core.UvcDeviceLocator());
+            com.mentra.asg_client.io.uvc.core.UvcRuntimeRegistry.set(uvcBridgeManager);
             Log.d(TAG, "✅ UvcBridgeManager created successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error creating UvcBridgeManager", e);
@@ -499,6 +501,14 @@ public class AsgClientServiceManager {
                 if (mediaCaptureService != null) {
                     cameraServer.setActiveRecordingProvider(mediaCaptureService::getActiveRecordingCaptureId);
                     Log.d(TAG, "📡 Active recording provider set on camera server");
+                }
+                if (uvcBridgeManager != null) {
+                    cameraServer.setUvcPreviewProvider(() -> {
+                        UvcBridgeManager.PreviewFrameSnapshot snapshot = uvcBridgeManager.getPreviewFrameSnapshot();
+                        return snapshot == null ? null : snapshot.jpegBytes;
+                    });
+                    cameraServer.setUvcActiveProvider(() -> uvcBridgeManager.isStreaming() && uvcBridgeManager.isPreviewEnabled());
+                    Log.d(TAG, "📡 UVC preview provider set on camera server");
                 }
 
                 serverManager.registerServer("camera", cameraServer);
