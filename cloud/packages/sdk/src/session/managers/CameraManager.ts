@@ -38,6 +38,55 @@ export interface PhotoData {
   savedToGallery: boolean;
 }
 
+/**
+ * Options for session.camera.startStream().
+ *
+ * Three modes:
+ * - No options → managed relay (default, best for most apps)
+ * - `destinations` → managed relay + fan out to external services
+ * - `direct` → glasses connect straight to this URL, no relay
+ */
+export interface StreamOptions {
+  /** Direct stream URL. Glasses connect to this URL directly, bypassing the cloud relay.
+   *  Supports srt://, rtmp://, rtmps://, and https:// (WHIP) protocols.
+   *  When set, the cloud relay is not used. No viewer URLs are returned.
+   *  Most apps should NOT use this — use the default managed relay instead. */
+  direct?: string;
+
+  /** Restream destinations. The cloud relay fans out to these URLs.
+   *  Only works with managed streaming (when `direct` is not set).
+   *  Each URL is an RTMP or SRT ingest endpoint (YouTube, Twitch, etc.) */
+  destinations?: string[];
+
+  /** Stream quality. Only applies to managed streaming. */
+  quality?: "720p" | "1080p";
+
+  /** Enable WebRTC playback URL. Only applies to managed streaming. Default: true. */
+  enableWebRTC?: boolean;
+
+  /** Video configuration (resolution, bitrate, fps) */
+  video?: VideoConfig;
+
+  /** Audio configuration (bitrate, sample rate) */
+  audio?: AudioConfig;
+
+  /** Stream transport configuration */
+  stream?: StreamConfig;
+
+  /** Controls stream start/stop sounds on the glasses. Default: true. */
+  sound?: boolean;
+}
+
+export interface StreamResult {
+  hlsUrl: string;
+  dashUrl: string;
+  webrtcUrl?: string;
+  previewUrl?: string;
+  thumbnailUrl?: string;
+  streamId: string;
+}
+
+/** @deprecated Use StreamOptions instead */
 export interface RtmpStreamOptions {
   rtmpUrl: string;
   video?: VideoConfig;
@@ -46,6 +95,7 @@ export interface RtmpStreamOptions {
   sound?: boolean;
 }
 
+/** @deprecated Use StreamOptions with destinations instead */
 export interface ManagedStreamOptions {
   quality?: "720p" | "1080p";
   enableWebRTC?: boolean;
@@ -56,14 +106,8 @@ export interface ManagedStreamOptions {
   sound?: boolean;
 }
 
-export interface ManagedStreamResult {
-  hlsUrl: string;
-  dashUrl: string;
-  webrtcUrl?: string;
-  previewUrl?: string;
-  thumbnailUrl?: string;
-  streamId: string;
-}
+/** @deprecated Use StreamResult instead */
+export type ManagedStreamResult = StreamResult;
 
 export interface ExistingStreamInfo {
   hasActiveStream: boolean;
@@ -228,56 +272,69 @@ export class CameraManager {
     };
   }
 
-  async startStream(options: RtmpStreamOptions): Promise<void> {
-    if (!options.rtmpUrl) {
-      throw new Error("rtmpUrl is required");
-    }
+  // ── Unified streaming API ────────────────────────────────────────────────
 
-    if (this.isStreaming) {
-      throw new Error("Already streaming. Stop the current stream before starting a new one.");
-    }
+  /**
+   * Start a video stream from the glasses.
+   *
+   * Three modes:
+   * - `startStream()` — managed relay (default). Cloud handles quality, reconnection, viewer URLs.
+   * - `startStream({ destinations: [...] })` — managed relay + fan out to YouTube/Twitch/etc.
+   * - `startStream({ direct: "srt://..." })` — glasses connect straight to your URL, no relay.
+   *
+   * @example
+   * ```ts
+   * // Default — managed relay
+   * const stream = await session.camera.startStream();
+   * console.log(stream.hlsUrl, stream.webrtcUrl);
+   *
+   * // Managed relay + restream to YouTube
+   * const stream = await session.camera.startStream({
+   *   destinations: ["rtmp://youtube.com/live/your-key"],
+   * });
+   *
+   * // Direct — glasses → your server, no relay
+   * await session.camera.startStream({ direct: "srt://192.168.1.100:4201" });
+   * ```
+   */
+  async startStream(options?: StreamOptions): Promise<StreamResult | void> {
+    const opts = options ?? {};
 
-    this.currentStreamUrl = options.rtmpUrl;
-    this.deps.sendMessage({
-      type: AppToCloudMessageType.STREAM_REQUEST,
-      packageName: this.deps.getPackageName(),
-      sessionId: this.deps.getSessionId(),
-      rtmpUrl: options.rtmpUrl,
-      video: options.video,
-      audio: options.audio,
-      stream: options.stream,
-      sound: options.sound,
-      timestamp: new Date(),
-    });
-    this.isStreaming = true;
+    if (opts.direct) {
+      return this._startDirectStream(opts);
+    }
+    return this._startManagedStream(opts);
   }
 
+  /**
+   * Stop any active stream (managed or direct).
+   */
   async stopStream(): Promise<void> {
-    if (!this.isStreaming && !this.currentStreamState?.streamId) {
-      return;
+    if (this.isStreaming) {
+      // Stop direct stream
+      this.deps.sendMessage({
+        type: AppToCloudMessageType.STREAM_STOP,
+        packageName: this.deps.getPackageName(),
+        sessionId: this.deps.getSessionId(),
+        streamId: this.currentStreamState?.streamId,
+        timestamp: new Date(),
+      });
     }
 
-    this.deps.sendMessage({
-      type: AppToCloudMessageType.STREAM_STOP,
-      packageName: this.deps.getPackageName(),
-      sessionId: this.deps.getSessionId(),
-      streamId: this.currentStreamState?.streamId,
-      timestamp: new Date(),
-    });
+    if (this.isManagedStreaming) {
+      // Stop managed stream
+      this.deps.sendMessage({
+        type: AppToCloudMessageType.MANAGED_STREAM_STOP,
+        packageName: this.deps.getPackageName(),
+        sessionId: this.deps.getSessionId(),
+        timestamp: new Date(),
+      });
+    }
   }
 
-  isCurrentlyStreaming(): boolean {
-    return this.isStreaming;
-  }
-
-  getCurrentStreamUrl(): string | undefined {
-    return this.currentStreamUrl;
-  }
-
-  getStreamStatus(): StreamStatus | undefined {
-    return this.currentStreamState;
-  }
-
+  /**
+   * Subscribe to stream status updates (works for both managed and direct).
+   */
   onStreamStatus(handler: StreamStatusHandler): () => void {
     this.deps.addSubscription(StreamType.STREAM_STATUS);
     this.events.on("rtmp_stream_status", handler);
@@ -288,27 +345,76 @@ export class CameraManager {
     };
   }
 
-  async startManagedStream(options: ManagedStreamOptions = {}): Promise<ManagedStreamResult> {
-    if (this.isManagedStreaming) {
-      throw new Error("Already streaming. Stop the current managed stream before starting a new one.");
+  isCurrentlyStreaming(): boolean {
+    return this.isStreaming || this.isManagedStreaming;
+  }
+
+  getCurrentStreamUrl(): string | undefined {
+    return this.currentStreamUrl;
+  }
+
+  getStreamStatus(): StreamStatus | undefined {
+    return this.currentStreamState;
+  }
+
+  getStreamUrls(): StreamResult | undefined {
+    return this.currentManagedStreamUrls;
+  }
+
+  // ── Direct streaming (glasses → URL, no relay) ───────────────────────────
+
+  private async _startDirectStream(opts: StreamOptions): Promise<void> {
+    const url = opts.direct!;
+
+    if (!url.startsWith("rtmp://") && !url.startsWith("rtmps://") && !url.startsWith("srt://") && !url.startsWith("https://") && !url.startsWith("http://")) {
+      throw new Error("Invalid stream URL: must start with rtmp://, rtmps://, srt://, https://, or http://");
     }
+
+    if (this.isStreaming || this.isManagedStreaming) {
+      throw new Error("Already streaming. Stop the current stream before starting a new one.");
+    }
+
+    this.currentStreamUrl = url;
+    this.deps.sendMessage({
+      type: AppToCloudMessageType.STREAM_REQUEST,
+      packageName: this.deps.getPackageName(),
+      sessionId: this.deps.getSessionId(),
+      streamUrl: url,
+      video: opts.video,
+      audio: opts.audio,
+      stream: opts.stream,
+      sound: opts.sound,
+      timestamp: new Date(),
+    });
+    this.isStreaming = true;
+  }
+
+  // ── Managed streaming (glasses → cloud relay → viewers/destinations) ─────
+
+  private async _startManagedStream(opts: StreamOptions): Promise<StreamResult> {
+    if (this.isStreaming || this.isManagedStreaming) {
+      throw new Error("Already streaming. Stop the current stream before starting a new one.");
+    }
+
+    // Convert destinations to restreamDestinations format
+    const restreamDestinations: RestreamDestination[] | undefined = opts.destinations?.map((url) => ({ url }));
 
     this.deps.sendMessage({
       type: AppToCloudMessageType.MANAGED_STREAM_REQUEST,
       packageName: this.deps.getPackageName(),
       sessionId: this.deps.getSessionId(),
-      quality: options.quality,
-      enableWebRTC: options.enableWebRTC,
-      video: options.video,
-      audio: options.audio,
-      stream: options.stream,
-      restreamDestinations: options.restreamDestinations,
-      sound: options.sound,
+      quality: opts.quality,
+      enableWebRTC: opts.enableWebRTC ?? true,
+      video: opts.video,
+      audio: opts.audio,
+      stream: opts.stream,
+      restreamDestinations,
+      sound: opts.sound,
       timestamp: new Date(),
     });
     this.isManagedStreaming = true;
 
-    return new Promise<ManagedStreamResult>((resolve, reject) => {
+    return new Promise<StreamResult>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         if (this.pendingManagedStreamRequest?.timeoutId === timeoutId) {
           this.pendingManagedStreamRequest = undefined;
@@ -321,15 +427,32 @@ export class CameraManager {
     });
   }
 
-  async stopManagedStream(): Promise<void> {
-    this.deps.sendMessage({
-      type: AppToCloudMessageType.MANAGED_STREAM_STOP,
-      packageName: this.deps.getPackageName(),
-      sessionId: this.deps.getSessionId(),
-      timestamp: new Date(),
+  // ── Deprecated methods (backward compat) ─────────────────────────────────
+
+  /** @deprecated Use startStream({ direct: url }) instead */
+  async startDirectStream(options: RtmpStreamOptions): Promise<void> {
+    return this._startDirectStream({ direct: options.rtmpUrl, video: options.video, audio: options.audio, stream: options.stream, sound: options.sound });
+  }
+
+  /** @deprecated Use startStream() or startStream({ destinations: [...] }) instead */
+  async startManagedStream(options: ManagedStreamOptions = {}): Promise<StreamResult> {
+    return this._startManagedStream({
+      quality: options.quality,
+      enableWebRTC: options.enableWebRTC,
+      video: options.video,
+      audio: options.audio,
+      stream: options.stream,
+      destinations: options.restreamDestinations?.map((d) => d.url),
+      sound: options.sound,
     });
   }
 
+  /** @deprecated Use stopStream() instead */
+  async stopManagedStream(): Promise<void> {
+    return this.stopStream();
+  }
+
+  /** @deprecated Use onStreamStatus() instead */
   onManagedStreamStatus(handler: (status: ManagedStreamStatus) => void): () => void {
     this.deps.addSubscription(StreamType.MANAGED_STREAM_STATUS);
     this.events.on("managed_stream_status", handler);
@@ -340,11 +463,13 @@ export class CameraManager {
     };
   }
 
+  /** @deprecated Use isCurrentlyStreaming() instead */
   isManagedStreamActive(): boolean {
     return this.isManagedStreaming;
   }
 
-  getManagedStreamUrls(): ManagedStreamResult | undefined {
+  /** @deprecated Use getStreamUrls() instead */
+  getManagedStreamUrls(): StreamResult | undefined {
     return this.currentManagedStreamUrls;
   }
 

@@ -121,7 +121,7 @@ export class _V2CameraShim {
   }
 
   startStream(options: RtmpStreamOptions): Promise<void> {
-    return this.session.camera.startStream(options);
+    return this.session.camera.startDirectStream(options);
   }
 
   stopStream(): Promise<void> {
