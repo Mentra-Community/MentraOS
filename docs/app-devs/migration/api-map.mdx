@@ -84,8 +84,12 @@ Use this page to find the v3 equivalent of any v2 API. Press Ctrl+F (or Cmd+F) a
 |----|-----|-------|
 | `session.camera.takePhoto(options)` | `session.camera.takePhoto(options)` | Same API surface. |
 | `session.camera.onPhotoTaken(handler)` | `session.camera.onPhotoTaken(handler)` | Same API surface. |
-| `session.camera.startStream(options)` | `session.camera.startStream(options)` | Same API surface. |
-| `session.camera.stopStream()` | `session.camera.stopStream()` | Same API surface. |
+| `session.camera.startLocalLivestream({ streamUrl })` | `session.camera.startStream({ direct: url })` | Direct streaming. `streamUrl` → `direct`. Supports SRT, RTMP, RTMPS, WHIP. |
+| `session.camera.stopLocalLivestream()` | `session.camera.stopStream()` | One stop method for both modes. |
+| `session.camera.onLocalLivestreamStatus(handler)` | `session.camera.onStreamStatus(handler)` | Works for both managed and direct. |
+| `session.camera.startLivestream(options)` | `session.camera.startStream(options)` | Managed relay. No args = default. `restreamDestinations` → `destinations` (string[] instead of object[]). |
+| `session.camera.stopLivestream()` | `session.camera.stopStream()` | One stop method for both modes. |
+| `session.camera.onLivestreamStatus(handler)` | `session.camera.onStreamStatus(handler)` | Works for both managed and direct. |
 
 ## Device State & Events
 
