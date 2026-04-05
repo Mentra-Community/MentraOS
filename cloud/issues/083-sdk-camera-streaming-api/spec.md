@@ -315,6 +315,67 @@ The MentraOS cloud relay provides:
 
 Direct streaming is for: local recording, custom infrastructure, testing, or cases where you need the absolute lowest latency and accept the tradeoffs.
 
+## Backward Compatibility
+
+The cloud MUST continue to work with all three SDK versions that exist in the wild. The app message handler already handles this via `normalizeStreamRequest`:
+
+### Three SDK versions the cloud must support
+
+**1. Published v2 SDK (`@mentra/sdk@2.1.29`, Jan 6 2026, npm `latest`)**
+
+What customers actually have installed. Express-based AppServer. RTMP-only streaming.
+
+Sends:
+```json
+{ "type": "rtmp_stream_request", "rtmpUrl": "rtmp://..." }
+```
+
+Cloud handler: catches `"rtmp_stream_request"` as a legacy alias at line 128 of `app-message-handler.ts`. `normalizeStreamRequest` copies `rtmpUrl` → `streamUrl`.
+
+**2. Hono experimental SDK (`@mentra/sdk@3.0.0-hono.8`, npm `hono` tag)**
+
+Unpublished to `latest`. The SRT developer built against this. Hono-based, supports SRT/RTMP/WHIP.
+
+Sends:
+```json
+{ "type": "stream_request", "streamUrl": "srt://..." }
+```
+
+Cloud handler: catches `STREAM_REQUEST` at line 127. `normalizeStreamRequest` sees `streamUrl` is already set, no-op.
+
+**3. Current v3 CameraManager (this branch, not yet published)**
+
+Has the `rtmpUrl` bug. RTMP-only naming.
+
+Sends:
+```json
+{ "type": "stream_request", "rtmpUrl": "rtmp://..." }
+```
+
+Cloud handler: catches `STREAM_REQUEST`. `normalizeStreamRequest` sees no `streamUrl` but has `rtmpUrl`, copies it. Works accidentally.
+
+### The normalizer (line 398 of app-message-handler.ts)
+
+```typescript
+function normalizeStreamRequest(message: any): StreamRequest {
+  if (!message.streamUrl && message.rtmpUrl) {
+    message.streamUrl = message.rtmpUrl;
+  }
+  return message as StreamRequest;
+}
+```
+
+This function is the backward compat layer. It handles every SDK version. After we fix the v3 CameraManager to send `streamUrl`, path #3 becomes identical to path #2 and the normalizer is a no-op. The normalizer stays in the cloud permanently for v2 SDK compatibility.
+
+### After this fix
+
+The v3 SDK will send:
+```json
+{ "type": "stream_request", "streamUrl": "srt://..." }
+```
+
+Same as path #2. No cloud changes needed. The `normalizeStreamRequest` function and the `"rtmp_stream_request"` case statement stay in the cloud for old SDK compatibility.
+
 ## Decision Log
 
 | Decision | Alternatives considered | Why we chose this |
