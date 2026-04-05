@@ -1,0 +1,3 @@
+# Private/internal docs that shouldn't be in the public repo
+# (cost investigations, BetterStack specifics, internal operational notes)
+.local/
