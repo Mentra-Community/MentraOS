@@ -6,6 +6,169 @@
 **Why this doc exists:** The current v3 CameraManager has a broken streaming implementation (sends `rtmpUrl` instead of `streamUrl` on the wire), uses RTMP-only naming despite SRT/WHIP support, and has confusing method names (`startStream` vs `startManagedStream`) that don't match the v2 API the SRT developer built against.
 **Who should read this:** SDK developers, anyone building streaming apps.
 
+## Current State (Before)
+
+### v2 SDK — CameraModule (on dev, what the SRT developer built)
+
+**File:** `cloud/packages/sdk/src/app/session/modules/camera.ts`
+
+The v2 CameraModule has two clean APIs with proper SRT/RTMP/WHIP support:
+
+```typescript
+// Direct stream — glasses connect straight to your URL
+// Supports rtmp://, rtmps://, srt://, https:// (WHIP)
+interface StreamOptions {
+  streamUrl: string;        // <-- generic, supports all protocols
+  video?: VideoConfig;
+  audio?: AudioConfig;
+  stream?: StreamConfig;
+  sound?: boolean;
+}
+
+await session.camera.startLocalLivestream({
+  streamUrl: "srt://192.168.1.100:4201?streamid=my-stream",
+});
+await session.camera.stopLocalLivestream();
+session.camera.onLocalLivestreamStatus((status) => { ... });
+
+// Managed stream — glasses stream to cloud relay, cloud distributes
+interface ManagedStreamOptions {
+  quality?: "720p" | "1080p";
+  enableWebRTC?: boolean;
+  video?: VideoConfig;
+  audio?: AudioConfig;
+  restreamDestinations?: RestreamDestination[];
+  sound?: boolean;
+}
+
+const urls = await session.camera.startLivestream({
+  quality: "1080p",
+  restreamDestinations: [{ url: "rtmp://youtube.com/live/key" }],
+});
+// Returns { hlsUrl, dashUrl, webrtcUrl, streamId }
+await session.camera.stopLivestream();
+session.camera.onLivestreamStatus((status) => { ... });
+```
+
+The v2 module sends the correct wire message:
+
+```typescript
+const message: StreamRequest = {
+  type: AppToCloudMessageType.STREAM_REQUEST,
+  packageName: this.packageName,
+  sessionId: this.sessionId,
+  streamUrl: options.streamUrl,  // <-- correct field name
+  video: options.video,
+  audio: options.audio,
+  stream: options.stream,
+  sound: options.sound,
+  timestamp: new Date(),
+};
+```
+
+### v3 SDK — CameraManager (on this branch, what we designed before SRT)
+
+**File:** `cloud/packages/sdk/src/session/managers/CameraManager.ts`
+
+The v3 CameraManager was written before SRT support existed. It has RTMP-only naming and a broken wire message:
+
+```typescript
+// Direct stream — RTMP only, wrong field name
+interface RtmpStreamOptions {
+  rtmpUrl: string;          // <-- RTMP-only, should be streamUrl
+  video?: VideoConfig;
+  audio?: AudioConfig;
+  stream?: StreamConfig;
+  sound?: boolean;
+}
+
+await session.camera.startStream({ rtmpUrl: "rtmp://..." });
+await session.camera.stopStream();
+session.camera.onStreamStatus((status) => { ... });
+
+// Managed stream — separate method, different naming from v2
+await session.camera.startManagedStream({ quality: "1080p" });
+await session.camera.stopManagedStream();
+session.camera.onManagedStreamStatus((status) => { ... });
+```
+
+The v3 manager sends the WRONG wire message:
+
+```typescript
+this.deps.sendMessage({
+  type: AppToCloudMessageType.STREAM_REQUEST,
+  packageName: this.deps.getPackageName(),
+  sessionId: this.deps.getSessionId(),
+  rtmpUrl: options.rtmpUrl,  // <-- BUG: wrong field name, should be streamUrl
+  video: options.video,
+  ...
+});
+```
+
+### Cloud — App Message Handler
+
+**File:** `cloud/packages/cloud/src/services/session/handlers/app-message-handler.ts`
+
+The cloud has a normalizer that papers over the v3 bug:
+
+```typescript
+// Line 398-403
+function normalizeStreamRequest(message: any): StreamRequest {
+  if (!message.streamUrl && message.rtmpUrl) {
+    message.streamUrl = message.rtmpUrl;   // fallback: copies rtmpUrl → streamUrl
+  }
+  return message as StreamRequest;
+}
+```
+
+This means the v3 bug doesn't cause a runtime failure (the cloud fixes it), but it's still wrong.
+
+### Cloud — UnmanagedStreamingExtension
+
+**File:** `cloud/packages/cloud/src/services/session/UnmanagedStreamingExtension.ts`
+
+Reads `streamUrl` from the (normalized) request, validates it, then sends `START_STREAM` to the glasses:
+
+```typescript
+const { packageName, streamUrl, video, audio, stream: streamOptions, sound: appSound } = request;
+
+// ... validation ...
+
+const startMessage: StartStream = {
+  type: CloudToGlassesMessageType.START_STREAM,
+  sessionId: this.userSession.sessionId,
+  streamUrl,          // <-- sent to glasses as streamUrl
+  appId: packageName,
+  streamId,
+  video: video || {},
+  audio: audio || {},
+  stream: streamOptions || {},
+  flash,
+  sound,
+  timestamp: now,
+};
+```
+
+### Wire Protocol — StreamRequest
+
+**File:** `cloud/packages/sdk/src/types/messages/app-to-cloud.ts`
+
+The wire protocol already uses `streamUrl` (not `rtmpUrl`):
+
+```typescript
+export interface StreamRequest extends BaseMessage {
+  type: AppToCloudMessageType.STREAM_REQUEST;
+  packageName: string;
+  streamUrl: string;    // <-- the correct field name
+  video?: VideoConfig;
+  audio?: AudioConfig;
+  stream?: StreamConfig;
+  sound?: boolean;
+}
+```
+
+---
+
 ## The Problem in 30 Seconds
 
 The v3 CameraManager was designed before SRT streaming was implemented. It has three problems:
