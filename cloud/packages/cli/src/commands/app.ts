@@ -256,12 +256,16 @@ appCommand
           }
         }
         if (webviewUrl) {
-          try {
-            new URL(webviewUrl)
-            updateData.webviewURL = webviewUrl
-          } catch {
-            error("Invalid webview URL format")
-            process.exit(7)
+          if (webviewUrl === "null" || webviewUrl === "none") {
+            updateData.webviewURL = null
+          } else {
+            try {
+              new URL(webviewUrl)
+              updateData.webviewURL = webviewUrl
+            } catch {
+              error("Invalid webview URL format")
+              process.exit(7)
+            }
           }
         }
         if (logoUrl) updateData.logoURL = logoUrl
@@ -302,12 +306,16 @@ appCommand
           }
         }
         if (options.webviewUrl) {
-          try {
-            new URL(options.webviewUrl)
-            updateData.webviewURL = options.webviewUrl
-          } catch {
-            error("Invalid webview URL format")
-            process.exit(7)
+          if (options.webviewUrl === "null" || options.webviewUrl === "none") {
+            updateData.webviewURL = null
+          } else {
+            try {
+              new URL(options.webviewUrl)
+              updateData.webviewURL = options.webviewUrl
+            } catch {
+              error("Invalid webview URL format")
+              process.exit(7)
+            }
           }
         }
         if (options.logoUrl) updateData.logoURL = options.logoUrl
