@@ -7,23 +7,18 @@ description: Identify MentraOS users in webviews using the SDK's built-in authen
 
 MentraOS provides a simple and secure way for apps to identify users within webviews. When a user opens your web application through the MentraOS Mobile App, you can automatically identify them without requiring a separate login process.
 
+Auth middleware is applied automatically by `MiniAppServer`. You don't need to set it up — just call `getMentraAuth(c)` on any route.
+
 ```typescript
-import { MiniAppServer, createAuthMiddleware, getMentraAuth } from "@mentra/sdk";
+import { MiniAppServer, getMentraAuth } from "@mentra/sdk";
 
 const app = new MiniAppServer({
   packageName: "org.example.myapp",
   apiKey: process.env.API_KEY!,
   port: 3000,
-  cookieSecret: process.env.COOKIE_SECRET!,
 });
 
-const authMiddleware = createAuthMiddleware({
-  apiKey: process.env.API_KEY!,
-  packageName: "org.example.myapp",
-  cookieSecret: process.env.COOKIE_SECRET!,
-});
-
-app.get("/webview", authMiddleware, (c) => {
+app.get("/webview", (c) => {
   const auth = getMentraAuth(c);
   const userId = auth.userId;
 
@@ -44,7 +39,7 @@ Webview authentication lets your web application identify MentraOS users without
 ### When a user opens your webview through the MentraOS Mobile App:
 
 1. The MentraOS app automatically appends a temporary authentication token to your URL
-2. The SDK's `createAuthMiddleware` automatically exchanges this token for the user's ID and sets a signed cookie
+2. The SDK's built-in auth middleware automatically exchanges this token for the user's ID and sets a signed cookie
 3. Your webview can then provide a personalized experience based on the user's identity
 
 ### When a user opens your website in a regular browser (not the MentraOS app):
@@ -76,36 +71,28 @@ Specify a webview URL in your app's configuration through the MentraOS Developer
 3. Add your `Webview URL`
 4. Save your changes
 
-### 2. Set Up Authentication
+### 2. Authentication Is Automatic
 
-The SDK provides `createAuthMiddleware` which handles the token exchange process automatically. You need three things: your API key, your package name, and a cookie secret for signing session cookies.
+`MiniAppServer` applies auth middleware to all routes automatically. You don't need to call `createAuthMiddleware` or configure a `cookieSecret` — the SDK uses your `apiKey` to sign session cookies by default.
 
 ```typescript
-import { MiniAppServer, createAuthMiddleware, getMentraAuth } from "@mentra/sdk";
+import { MiniAppServer, getMentraAuth } from "@mentra/sdk";
 
 const app = new MiniAppServer({
   packageName: "org.example.myapp",
   apiKey: process.env.API_KEY!,
   port: 3000,
-  cookieSecret: process.env.COOKIE_SECRET!,
 });
 
-const authMiddleware = createAuthMiddleware({
-  apiKey: process.env.API_KEY!,
-  packageName: "org.example.myapp",
-  cookieSecret: process.env.COOKIE_SECRET!,
-});
+// Auth is already set up. Just use getMentraAuth(c) on any route.
 ```
 
-The `cookieSecret` must be at least 8 characters. Use a strong random string from an environment variable.
+### 3. Access User Identity in Your Routes
 
-### 3. Protect Your Routes
-
-Apply the auth middleware to any route that needs to know who the user is:
+Call `getMentraAuth(c)` on any route to get the user's identity. The auth context is available everywhere — no middleware application needed per-route.
 
 ```typescript
-// Protect a single route
-app.get("/webview", authMiddleware, (c) => {
+app.get("/webview", (c) => {
   const auth = getMentraAuth(c);
   const userId = auth.userId;
 
@@ -115,9 +102,6 @@ app.get("/webview", authMiddleware, (c) => {
     return c.html('<p>Please <a href="/mentra-auth">sign in with Mentra</a></p>');
   }
 });
-
-// Protect a group of routes
-app.use("/api/*", authMiddleware);
 
 app.get("/api/me", (c) => {
   const auth = getMentraAuth(c);
@@ -131,6 +115,8 @@ app.get("/api/settings", (c) => {
   return c.json({ userId, settings: {} });
 });
 ```
+
+If the user isn't authenticated, `auth.userId` is `null`. It's your route handler's job to check and return a 401 or redirect if needed.
 
 ### 4. Handle Unauthenticated Users with the OAuth Flow
 
@@ -171,34 +157,26 @@ The token issued during the OAuth flow expires after 10 minutes. After that, the
 ## Complete Example
 
 ```typescript
-import { MiniAppServer, createAuthMiddleware, getMentraAuth, type MentraSession } from "@mentra/sdk";
+import { MiniAppServer, getMentraAuth, type MentraSession } from "@mentra/sdk";
 
 const app = new MiniAppServer({
   packageName: "org.example.myapp",
   apiKey: process.env.API_KEY!,
   port: 3000,
-  cookieSecret: process.env.COOKIE_SECRET!,
-});
-
-const authMiddleware = createAuthMiddleware({
-  apiKey: process.env.API_KEY!,
-  packageName: "org.example.myapp",
-  cookieSecret: process.env.COOKIE_SECRET!,
 });
 
 // Public health check
 app.get("/api/health", (c) => c.json({ ok: true }));
 
-// Protected API routes
-app.use("/api/user/*", authMiddleware);
-
+// Auth is automatic — getMentraAuth(c) works on every route
 app.get("/api/user/me", (c) => {
   const auth = getMentraAuth(c);
+  if (!auth.userId) return c.json({ error: "Not authenticated" }, 401);
   return c.json({ userId: auth.userId });
 });
 
 // Webview route
-app.get("/webview", authMiddleware, (c) => {
+app.get("/webview", (c) => {
   const auth = getMentraAuth(c);
 
   if (auth.userId) {
@@ -246,19 +224,18 @@ expressApp.get("/webview", (req: AuthenticatedRequest, res) => {
   res.send(`Welcome ${userId}`);
 });
 
-// v3 (Hono)
-app.get("/webview", authMiddleware, (c) => {
+// v3 (Hono) — auth is automatic
+app.get("/webview", (c) => {
   const auth = getMentraAuth(c);
-  const userId = auth.userId;
-  return c.html(`Welcome ${userId}`);
+  return c.html(`Welcome ${auth.userId}`);
 });
 ```
 
 Key differences:
 - `getExpressApp()` is removed. Routes are added directly on the `MiniAppServer` instance.
 - `AuthenticatedRequest` and `req.authUserId` are replaced by `getMentraAuth(c).userId`.
-- `createAuthMiddleware()` is a Hono middleware, not Express middleware.
-- `cookieSecret` is required in the MiniAppServer config and in `createAuthMiddleware`.
+- No `createAuthMiddleware()` call needed. Auth middleware is applied automatically by `MiniAppServer`.
+- No `cookieSecret` needed. The SDK uses your `apiKey` to sign cookies by default.
 
 See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.
 

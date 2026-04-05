@@ -157,6 +157,7 @@ appCommand
         name,
         appType,
         publicUrl,
+        webviewURL: `${publicUrl.replace(/\/$/, "")}/webview`,
       }
 
       if (description) appData.description = description
@@ -245,6 +246,10 @@ appCommand
           try {
             new URL(publicUrl)
             updateData.publicUrl = publicUrl
+            // Auto-set webviewURL if not explicitly provided
+            if (!webviewUrl) {
+              updateData.webviewURL = `${publicUrl.replace(/\/$/, "")}/webview`
+            }
           } catch {
             error("Invalid URL format")
             process.exit(7)
@@ -287,6 +292,10 @@ appCommand
           try {
             new URL(options.publicUrl)
             updateData.publicUrl = options.publicUrl
+            // Auto-set webviewURL if not explicitly provided
+            if (!options.webviewUrl) {
+              updateData.webviewURL = `${options.publicUrl.replace(/\/$/, "")}/webview`
+            }
           } catch {
             error("Invalid URL format")
             process.exit(7)

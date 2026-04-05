@@ -1,9 +1,11 @@
 # Spec: Auto Auth Middleware in MiniAppServer
 
+**Status:** Already implemented. See findings below.
+
 ## Overview
 
 **What this doc covers:** Removing boilerplate from webview authentication by having MiniAppServer apply auth middleware automatically, and deprecating `cookieSecret` in favor of reusing `apiKey`.
-**Why this doc exists:** Today, developers must create a separate `createAuthMiddleware` call with the same values they already passed to MiniAppServer. This is redundant and error-prone.
+**Why this doc exists:** We thought developers had to manually create a `createAuthMiddleware` call. Turns out `AppServer` (the base class of `MiniAppServer`) already does this automatically.
 **Who should read this:** SDK developers, anyone building apps with webviews.
 
 ## The Problem in 30 Seconds
@@ -101,6 +103,57 @@ Since the middleware is applied globally, `getMentraAuth(c)` returns the auth co
 The auto middleware doesn't block requests. It just reads the cookie/token if present and makes `getMentraAuth(c)` available. Unauthenticated requests still pass through. It's the route handler's job to check `auth.userId` and return 401 if needed.
 
 This is the same behavior as the current manual middleware — it doesn't reject requests, it just populates the auth context.
+
+## Finding: Already Implemented
+
+On investigation, `AppServer` (the base class that `MiniAppServer` extends) already does everything this spec proposes:
+
+**File:** `cloud/packages/sdk/src/app/server/index.ts`
+
+Line 183-190 in the `AppServer` constructor:
+
+```typescript
+this.use(
+  "*",
+  createAuthMiddleware({
+    apiKey: this.config.apiKey,
+    packageName: this.config.packageName,
+    getAppSessionForUser: (userId: string) => {
+      return this.activeSessionsByUserId.get(userId) || null;
+    },
+    cookieSecret: this.config.cookieSecret || this.config.apiKey,
+  }),
+);
+```
+
+What's already true:
+- Auth middleware is applied globally to all routes (`"*"`)
+- `cookieSecret` is optional (line 93: `cookieSecret?: string`)
+- When not provided, it defaults to `apiKey` (line 189: `this.config.cookieSecret || this.config.apiKey`)
+- `getMentraAuth(c)` works on every route without any setup
+- `createMentraAuthRoutes` is also set up automatically (line 1031)
+
+This means developers can already do:
+
+```typescript
+const app = new MiniAppServer({
+  packageName: "com.example.myapp",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+// Auth just works. No createAuthMiddleware call needed.
+app.get("/api/me", (c) => {
+  const auth = getMentraAuth(c);
+  return c.json({ userId: auth.userId });
+});
+```
+
+## What still needs to happen
+
+1. **Update the docs.** The webview-authentication.mdx page still shows the manual `createAuthMiddleware` pattern. It should show the simple path (just use `getMentraAuth(c)`, auth is already set up).
+2. **Add `@deprecated` JSDoc to `cookieSecret` in `MiniAppServerConfig`.** It works but is unnecessary since `apiKey` is used as the default.
+3. **Update the migration guide** to note that auth middleware is automatic.
 
 ## Decision Log
 
