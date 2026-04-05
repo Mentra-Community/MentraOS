@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger fallback
   push:
     branches:
-      - cloud/issues-048-merge
+      - cloud/issues-048
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"
