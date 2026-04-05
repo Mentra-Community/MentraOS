@@ -1,6 +1,6 @@
 ---
-title: Webview authentication
-description: Identify MentraOS users in webviews using temporary tokens from the MentraOS app and the Mentra SDK’s automatic token exchange, with an OAuth fallback when opened in a regular browser.
+title: Webview Authentication
+description: Identify MentraOS users in webviews using the SDK's built-in authentication middleware for Hono.
 ---
 
 # Webview Authentication
@@ -8,37 +8,43 @@ description: Identify MentraOS users in webviews using temporary tokens from the
 MentraOS provides a simple and secure way for apps to identify users within webviews. When a user opens your web application through the MentraOS Mobile App, you can automatically identify them without requiring a separate login process.
 
 ```typescript
-// Example of using webview authentication in your app
-import { MiniAppServer, createAuthMiddleware, getMentraAuth } from "@mentra/sdk"
+import { MiniAppServer, createAuthMiddleware, getMentraAuth } from "@mentra/sdk";
 
 const app = new MiniAppServer({
   packageName: "org.example.myapp",
-  apiKey: process.env.API_KEY, // Load from environment variables
-})
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+  cookieSecret: process.env.COOKIE_SECRET!,
+});
 
-const app = server.getExpressApp()
+const authMiddleware = createAuthMiddleware({
+  apiKey: process.env.API_KEY!,
+  packageName: "org.example.myapp",
+  cookieSecret: process.env.COOKIE_SECRET!,
+});
 
-app.get("/webview", (req: AuthenticatedRequest, res) => {
-  const userId = req.authUserId
+app.get("/webview", authMiddleware, (c) => {
+  const auth = getMentraAuth(c);
+  const userId = auth.userId;
 
   if (userId) {
-    // User is authenticated, show personalized content
-    res.send(`Welcome user ${userId}!`)
+    return c.html(`Welcome user ${userId}!`);
   } else {
-    // User is not authenticated
-    res.send("Please open this page from the MentraOS app, or <a href='/mentra-auth'>login with Mentra</a>")
+    return c.html('Please open this page from the MentraOS app, or <a href="/mentra-auth">login with Mentra</a>');
   }
-})
+});
+
+await app.start();
 ```
 
 ## What Is Webview Authentication?
 
-Webview authentication lets your web application identify MentraOS users without requiring them to log in separately
+Webview authentication lets your web application identify MentraOS users without requiring them to log in separately.
 
 ### When a user opens your webview through the MentraOS Mobile App:
 
-1. The manager app automatically appends a temporary authentication token to your URL
-2. The MentraOS SDK middleware automatically exchanges this token for the user's ID
+1. The MentraOS app automatically appends a temporary authentication token to your URL
+2. The SDK's `createAuthMiddleware` automatically exchanges this token for the user's ID and sets a signed cookie
 3. Your webview can then provide a personalized experience based on the user's identity
 
 ### When a user opens your website in a regular browser (not the MentraOS app):
@@ -53,65 +59,80 @@ They'll sign in with their Mentra account and be redirected to your app automati
 
 Here's what happens under the hood:
 
-1. Your app detects the user isn't authenticated (no `authUserId` on the request).
-2. You redirect them to `/mentra-auth`, which the SDK handles automatically.
-3. The user is sent to `account.mentra.glass/auth?packagename=your.package.name` — a consent screen where they sign in with their Mentra account (email, Google, or Apple) and authorize your app.
-4. After the user clicks "Allow", they are redirected back to your app's webview URL with a signed token (`aos_signed_user_token`) in the query parameters.
-5. The SDK middleware automatically validates this token and sets `req.authUserId`.
+1. Your app detects the user isn't authenticated (no `userId` from `getMentraAuth(c)`)
+2. You redirect them to `/mentra-auth`, which the SDK handles automatically
+3. The user is sent to `account.mentra.glass/auth?packagename=your.package.name` where they sign in with their Mentra account (email, Google, or Apple) and authorize your app
+4. After the user clicks "Allow", they are redirected back to your app's webview URL with a signed token in the query parameters
+5. The auth middleware automatically validates this token and sets a signed cookie for future requests
 
 ## How It Works
 
 ### 1. Include a Webview in Your App
 
-First, specify a webview URL in your app's configuration through the MentraOS Developer Console:
+Specify a webview URL in your app's configuration through the MentraOS Developer Console:
 
 1. Log in to the [MentraOS Developer Console](https://console.mentra.glass/apps/)
 2. Navigate to your app's settings
 3. Add your `Webview URL`
 4. Save your changes
 
-### 2. Set Up Authentication with the SDK
+### 2. Set Up Authentication
 
-The MentraOS SDK provides built-in middleware that handles the token exchange process automatically:
+The SDK provides `createAuthMiddleware` which handles the token exchange process automatically. You need three things: your API key, your package name, and a cookie secret for signing session cookies.
 
 ```typescript
-import { MiniAppServer, createAuthMiddleware, getMentraAuth } from "@mentra/sdk"
+import { MiniAppServer, createAuthMiddleware, getMentraAuth } from "@mentra/sdk";
 
-// Create an app server instance
 const app = new MiniAppServer({
   packageName: "org.example.myapp",
-  apiKey: process.env.API_KEY, // Load from environment variables, never check it into source control
-})
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+  cookieSecret: process.env.COOKIE_SECRET!,
+});
 
-// The SDK automatically sets up the authentication middleware
+const authMiddleware = createAuthMiddleware({
+  apiKey: process.env.API_KEY!,
+  packageName: "org.example.myapp",
+  cookieSecret: process.env.COOKIE_SECRET!,
+});
 ```
 
-### 3. Access User ID in Your Routes
+The `cookieSecret` must be at least 8 characters. Use a strong random string from an environment variable.
 
-In your Express route handlers, access the authenticated user ID:
+### 3. Protect Your Routes
+
+Apply the auth middleware to any route that needs to know who the user is:
 
 ```typescript
-const app = server.getExpressApp()
-
-app.get("/webview", (req: AuthenticatedRequest, res) => {
-  // Access the authenticated user ID
-  const userId = req.authUserId
+// Protect a single route
+app.get("/webview", authMiddleware, (c) => {
+  const auth = getMentraAuth(c);
+  const userId = auth.userId;
 
   if (userId) {
-    // User is authenticated, provide personalized content
-    res.render("dashboard", {
-      userId,
-    })
+    return c.html(`<h1>Welcome, ${userId}!</h1>`);
   } else {
-    // User is not authenticated
-    res.render("login", {
-      message: "Please open this page from the MentraOS app",
-    })
+    return c.html('<p>Please <a href="/mentra-auth">sign in with Mentra</a></p>');
   }
-})
+});
+
+// Protect a group of routes
+app.use("/api/*", authMiddleware);
+
+app.get("/api/me", (c) => {
+  const auth = getMentraAuth(c);
+  return c.json({ userId: auth.userId });
+});
+
+app.get("/api/settings", (c) => {
+  const auth = getMentraAuth(c);
+  const userId = auth.userId;
+  // Load user-specific settings...
+  return c.json({ userId, settings: {} });
+});
 ```
 
-### 4. Handle unauthenticated users with the OAuth flow
+### 4. Handle Unauthenticated Users with the OAuth Flow
 
 If the user opens your webview in a regular browser (not through the MentraOS app), they won't have a token automatically. The SDK provides a built-in `/mentra-auth` route that redirects users to the Mentra OAuth consent screen.
 
@@ -125,9 +146,7 @@ Add a "Sign in with Mentra" button to your unauthenticated view:
 
 <img src="https://account.mentra.glass/sign-in-mentra.png" alt="Sign in with Mentra" width="140" height="50" />
 
-You can use the "Sign in with Mentra" image as the login button: `https://account.mentra.glass/sign-in-mentra.png`
-
-## How the OAuth consent screen works
+## How the OAuth Consent Screen Works
 
 When a user clicks "Sign in with Mentra", they are redirected to:
 
@@ -143,11 +162,68 @@ This is the Mentra OAuth consent screen. Here's what happens:
    ```
    https://your-app.com/webview?aos_signed_user_token=eyJ...&source=oauth
    ```
-4. **Token validation**: The SDK middleware automatically validates the token and sets `req.authUserId` on all subsequent requests.
+4. **Token validation**: The auth middleware automatically validates the token and sets a signed cookie for future requests.
 
 <Note>
 The token issued during the OAuth flow expires after 10 minutes. After that, the user will need to re-authenticate. The SDK handles this automatically when the user returns through the MentraOS app.
 </Note>
+
+## Complete Example
+
+```typescript
+import { MiniAppServer, createAuthMiddleware, getMentraAuth, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "org.example.myapp",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+  cookieSecret: process.env.COOKIE_SECRET!,
+});
+
+const authMiddleware = createAuthMiddleware({
+  apiKey: process.env.API_KEY!,
+  packageName: "org.example.myapp",
+  cookieSecret: process.env.COOKIE_SECRET!,
+});
+
+// Public health check
+app.get("/api/health", (c) => c.json({ ok: true }));
+
+// Protected API routes
+app.use("/api/user/*", authMiddleware);
+
+app.get("/api/user/me", (c) => {
+  const auth = getMentraAuth(c);
+  return c.json({ userId: auth.userId });
+});
+
+// Webview route
+app.get("/webview", authMiddleware, (c) => {
+  const auth = getMentraAuth(c);
+
+  if (auth.userId) {
+    return c.html(`
+      <h1>Hello, ${auth.userId}</h1>
+      <p>You are authenticated.</p>
+    `);
+  }
+
+  return c.html(`
+    <h1>Welcome</h1>
+    <p>Please sign in to continue.</p>
+    <a href="/mentra-auth">
+      <img src="https://account.mentra.glass/sign-in-mentra.png" alt="Sign in with Mentra" />
+    </a>
+  `);
+});
+
+// Session handler
+app.onSession((session: MentraSession) => {
+  session.display.showTextWall("App connected");
+});
+
+await app.start();
+```
 
 ## Common Use Cases
 
@@ -158,6 +234,34 @@ Webview authentication enables:
 - Integration with your existing user database
 - Seamless experiences without additional login steps
 
+## Migrating from v2
+
+In v2, authentication used Express middleware with `req.authUserId`:
+
+```typescript
+// v2 (Express)
+const expressApp = server.getExpressApp();
+expressApp.get("/webview", (req: AuthenticatedRequest, res) => {
+  const userId = req.authUserId;
+  res.send(`Welcome ${userId}`);
+});
+
+// v3 (Hono)
+app.get("/webview", authMiddleware, (c) => {
+  const auth = getMentraAuth(c);
+  const userId = auth.userId;
+  return c.html(`Welcome ${userId}`);
+});
+```
+
+Key differences:
+- `getExpressApp()` is removed. Routes are added directly on the `MiniAppServer` instance.
+- `AuthenticatedRequest` and `req.authUserId` are replaced by `getMentraAuth(c).userId`.
+- `createAuthMiddleware()` is a Hono middleware, not Express middleware.
+- `cookieSecret` is required in the MiniAppServer config and in `createAuthMiddleware`.
+
+See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.
+
 ## React Webviews
 
-If you want to build your frontend webview using React, see the [React Webviews](/app-devs/core-concepts/webviews/react-webviews) guide.
+If you want to build your frontend webview using React, see the [React Webviews](/app-devs/core-concepts/webviews/react-webviews) guide. The `@mentra/react` package handles authentication on the frontend — it works the same regardless of whether your backend uses v2 or v3.
