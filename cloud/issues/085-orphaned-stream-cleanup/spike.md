@@ -1,139 +1,253 @@
-# Spike: Orphaned Stream Cleanup
+# Spike: Stream Lifecycle Across Session Disruptions
 
 ## Overview
 
-**What this doc covers:** Streams that survive app disconnects/restarts and flood new sessions with stale status messages, eventually crashing the new session.
-**Why this doc exists:** Discovered while testing managed streaming in the stream-test app (issue 083). Restarting the app left a stale stream running on the glasses. The cloud kept relaying status updates for the orphaned stream to the new session, which couldn't handle them, causing repeated disconnections.
-**Who should read this:** Cloud engineers, anyone working on streaming.
+**What this doc covers:** How streams (both managed and direct) should behave across WebSocket blips, app crashes, resurrections, and fresh restarts. Covers both the user experience (the person wearing glasses) and the developer experience (the person writing the mini app).
+**Why this doc exists:** Testing the stream-test app (issue 083) revealed that streams become orphaned when the mini app restarts. The glasses keep streaming but nobody controls the stream. Status messages flood the new session and crash it. The current system has no design for stream persistence across session disruptions.
+**Who should read this:** Cloud engineers, SDK developers, anyone working on streaming.
 
-## The Bug
+## The User's Expectation
 
-1. App starts a direct stream (glasses → RTMP endpoint)
-2. App is restarted (developer hits Ctrl+C, `bun --watch` restarts, or app crashes)
-3. Nobody tells the glasses to stop streaming — the stream keeps running
-4. New app session connects
-5. Glasses keep sending `stream_status` for the old stream ID
-6. Cloud's `UnmanagedStreamingExtension` tries to relay status to the new app session
-7. Relay fails with "Connection not available for messaging" (code 1069) because the new session's WebSocket isn't fully ready (issue 084)
-8. Each failed relay triggers `handleAppConnectionClosed`, disconnecting the new session
-9. New session reconnects, gets flooded again, disconnects again — infinite loop
-10. Stream stays "initializing" forever, app is unusable
+A user starts a livestream through a mini app. They don't know or care about WebSockets, cloud instances, or session state. Their expectation is simple:
 
-## Evidence from Cloud Logs
+- **The stream keeps going** unless they explicitly stop it or close the app on their phone
+- **Brief network issues are invisible** — the stream doesn't stop because a WebSocket had a hiccup
+- **If the app restarts, the stream should survive** — or at minimum, restart automatically without the user doing anything
+
+## The Developer's Expectation
+
+A developer builds a streaming mini app. Their expectation:
+
+- **Starting a stream is simple** — `session.camera.startStream()`
+- **If my server restarts, I can resume control** — I get told "hey, there's an active stream" and I can adopt it or stop it
+- **I don't lose the viewer URLs** — if I started a managed stream and my server restarts, the HLS/WebRTC URLs should still be valid
+- **Status events work across reconnections** — I don't miss status updates during a blip
+
+## Scenarios
+
+### Scenario 1: Transport Blip (WebSocket drops, SDK reconnects within grace period)
+
+**What happens:** Network hiccup, cloud deploy, brief connectivity loss. The mini app process is still alive. The SDK reconnects within milliseconds to seconds. The user doesn't notice.
+
+**Current behavior:**
+- Stream keeps running on the glasses (correct)
+- Cloud enters TRANSPORT_DOWN for the app session (correct)
+- Stream status messages from glasses can't be relayed to the app (broken — causes "Connection not available for messaging" error, triggers disconnect cascade)
+- After reconnection, stream status events start flowing again but may have been missed during the gap
+
+**Correct behavior:**
+- Stream keeps running (no change)
+- Stream status messages that arrive while the app is in TRANSPORT_DOWN should be queued or silently dropped, NOT trigger a connection error
+- After reconnection, the app should receive the current stream state so it can sync its UI
+- No stream interruption, no cleanup, no user-visible impact
+
+### Scenario 2: Resurrection (grace period expires, cloud restarts the app session)
+
+**What happens:** The mini app's WebSocket drops and doesn't reconnect within the 5-second grace period. The cloud fires the stop webhook and then a new start webhook. The mini app's `onSession` fires again. The process is still alive but the SDK creates a fresh session context.
+
+**Current behavior:**
+- Stream keeps running on the glasses (the glasses don't know the app session restarted)
+- New app session has no knowledge of the existing stream
+- Stream status messages arrive for the new session but reference an unknown stream ID
+- Status relay fails, causes reconnection storm (the bug we hit)
+
+**Correct behavior:**
+- Stream keeps running on the glasses (correct — don't interrupt the user)
+- On resurrection, the cloud should inform the new session about any active streams owned by the app's previous session
+- The new session should receive stream info (stream ID, type, URL, status) either in the CONNECTION_ACK or as an immediate message after connection
+- The SDK should surface this to the developer via a callback or property: `session.camera.getActiveStreams()` or `session.camera.onExistingStream(handler)`
+- The developer can then decide: adopt the stream (update their UI to show it's live) or stop it
+
+### Scenario 3: Mini App Process Crash and Restart
+
+**What happens:** The mini app server process dies (OOM, unhandled error, developer Ctrl+C) and restarts. All in-memory state is lost. A new WebSocket connection is established. From the cloud's perspective this looks identical to Scenario 2 (resurrection or fresh start).
+
+**Current behavior:** Same as Scenario 2 — orphaned stream, reconnection storm.
+
+**Correct behavior:** Same as Scenario 2 — inform the new session about active streams.
+
+### Scenario 4: Developer Restarts During Development
+
+**What happens:** Developer hits Ctrl+C, `bun --watch` restarts the process. This is Scenario 3 but happens dozens of times per day during development.
+
+**Current behavior:** Each restart leaves an orphaned stream. The glasses keep streaming. The developer has to restart the glasses to clear the stale stream.
+
+**Correct behavior:** Same as Scenario 2/3. Additionally, if the developer's new code doesn't explicitly adopt the existing stream, it should be auto-stopped after a timeout (e.g. 30 seconds of no adoption = stop the stream). This prevents battery drain from forgotten streams during development.
+
+### Scenario 5: User Stops the App
+
+**What happens:** The user closes the mini app from the Mentra phone app.
+
+**Current behavior:** The app's stop webhook fires. Stream may or may not be stopped depending on whether the mini app handles `onStop` correctly.
+
+**Correct behavior:**
+- The cloud should stop ALL streams (managed and direct) owned by the stopping app
+- This is the one scenario where cleanup is always correct — the user explicitly ended the app
+- The glasses should receive STOP_STREAM and turn off the camera
+- The flash/LED should turn off (privacy indicator)
+
+## What Needs to Change
+
+### 1. Don't crash on status messages for TRANSPORT_DOWN apps
+
+**Where:** `UnmanagedStreamingExtension.handleStreamStatus()` and the relay path in `UserSession`
+
+When the cloud tries to relay a stream status message to an app that's in TRANSPORT_DOWN, it should queue or drop the message instead of triggering `handleAppConnectionClosed`. The current code treats "can't send to app" as "app disconnected" which is wrong when the app is already known to be in TRANSPORT_DOWN.
 
 ```
-WARN  App dev.mentra.streamtest unexpectedly disconnected (code: 1069) (reason: Connection not available for messaging)
-INFO  v3 SDK: entering TRANSPORT_DOWN — subscriptions preserved, waiting for RECONNECT
-WARN  Failed to send stream status to owning App dev.mentra.streamtest
-DEBUG State transition: transport_down -> transport_down
+if app is in TRANSPORT_DOWN:
+  queue the status message (deliver on reconnect)
+  DO NOT trigger handleAppConnectionClosed
+  DO NOT close the WebSocket
 ```
 
-This repeats every ~1.5 seconds, matching the glasses' stream status report interval.
+### 2. Inform new sessions about existing streams
 
-## Root Causes
+**Where:** `AppManager.handleAppInit()` or the CONNECTION_ACK message
 
-### 1. Streams aren't stopped when the owning app disconnects
-
-When an app's WebSocket disconnects or the app session is stopped, any active streams owned by that app should be stopped. Currently this doesn't happen.
-
-**Where the cleanup should be:**
-
-`AppManager.handleAppConnectionClosed()` or `AppSession.handleDisconnect()` should call `UnmanagedStreamingExtension.stopStream()` for any streams owned by the disconnecting app.
+When a new app session connects (fresh or resurrected), check if there are active streams for that package name:
 
 ```
-AppSession disconnects
-  → AppManager.handleAppConnectionClosed()
-    → should check: does this app own any active streams?
-    → if yes: tell UnmanagedStreamingExtension to stop them
-    → UnmanagedStreamingExtension sends STOP_STREAM to glasses
+on app connect:
+  activeStreams = unmanagedStreamingExtension.getStreamsForApp(packageName)
+  managedStreams = managedStreamingExtension.getStreamsForApp(packageName)
+
+  if streams exist:
+    send EXISTING_STREAMS message to the app with stream details
+    (or include in CONNECTION_ACK)
 ```
 
-### 2. Stale stream status messages crash new sessions
-
-Even if cleanup is added, there's a window where the glasses may still send a few status messages for the old stream before the stop command arrives. The cloud should handle this gracefully:
-
-- If a `stream_status` arrives for a stream ID that no running app owns, drop it silently
-- Don't try to relay it to an app, don't trigger connection errors
-- Log it at debug level for observability
-
-### 3. No stream inventory on session startup
-
-When a new app session starts, it has no knowledge of any pre-existing streams. The cloud could:
-
-- On app connect, check if there are any orphaned streams for that package name
-- Auto-stop them before the new session begins
-- Or inform the new session about existing streams so it can decide to adopt or stop them
-
-## Proposed Fix
-
-### Phase 1: Stop streams on app disconnect (critical)
-
-In `AppManager` or `AppSession`, when an app disconnects:
+The SDK receives this and surfaces it to the developer:
 
 ```typescript
-// In handleAppConnectionClosed or similar
-const activeStreams = this.userSession.unmanagedStreamingExtension
-  .getStreamsForApp(packageName);
-
-for (const stream of activeStreams) {
-  await this.userSession.unmanagedStreamingExtension.stopStream(stream.streamId);
-}
-```
-
-This ensures streams are always cleaned up when the owning app goes away. The glasses receive `STOP_STREAM` and stop the camera.
-
-### Phase 2: Handle stale status messages gracefully (important)
-
-In `UnmanagedStreamingExtension.handleStreamStatus()`:
-
-```typescript
-// If the stream ID is unknown or the owning app is disconnected, drop silently
-const runtime = this.unmanagedStreams.get(statusMessage.streamId);
-if (!runtime) {
-  this.logger.debug({ streamId: statusMessage.streamId }, "Dropping status for unknown stream");
-  return;
-}
-
-if (!this.userSession.appManager.isAppRunning(runtime.packageName)) {
-  this.logger.debug({ streamId: statusMessage.streamId }, "Dropping status for disconnected app, stopping stream");
-  await this.stopStream(statusMessage.streamId);
-  return;
-}
-```
-
-### Phase 3: Clean up on session start (nice to have)
-
-When a new app session starts (`handleAppInit`), check for and stop any orphaned streams from previous sessions of the same package:
-
-```typescript
-// In handleAppInit, after the app is registered
-const orphanedStreams = this.userSession.unmanagedStreamingExtension
-  .getStreamsForApp(packageName);
-
-if (orphanedStreams.length > 0) {
-  logger.info({ count: orphanedStreams.length, packageName }, "Cleaning up orphaned streams from previous session");
-  for (const stream of orphanedStreams) {
-    await this.userSession.unmanagedStreamingExtension.stopStream(stream.streamId);
+app.onSession((session) => {
+  // Check for streams from a previous session
+  const existing = session.camera.getActiveStreams();
+  if (existing.length > 0) {
+    console.log("Resuming stream:", existing[0].streamId);
+    // UI: show "streaming" state
   }
-}
+});
 ```
 
-## Impact
+### 3. Stop streams on explicit app stop
 
-Without this fix:
-- Any app that starts a stream and then restarts becomes unusable
-- The glasses keep streaming indefinitely (draining battery, privacy concern)
-- Developer experience is broken for streaming apps during development (frequent restarts)
-- The stale status messages cause a reconnection storm that makes the new session unstable
+**Where:** `AppManager.stopApp()` or the stop webhook handler
+
+When the cloud processes a stop for an app (user closed it, not a transport blip):
+
+```
+on app stop (not disconnect, not transport blip — actual stop):
+  unmanagedStreamingExtension.stopStreamsForApp(packageName)
+  managedStreamingExtension.stopStreamsForApp(packageName)
+  send STOP_STREAM to glasses
+```
+
+### 4. Auto-stop orphaned streams after timeout
+
+**Where:** `UnmanagedStreamingExtension`
+
+If a stream exists but the owning app hasn't connected (or reconnected) within a configurable timeout (e.g. 30 seconds), auto-stop the stream. This prevents indefinite streaming from crashed apps.
+
+```
+stream has no connected owner for 30 seconds:
+  stop the stream
+  send STOP_STREAM to glasses
+  log: "Auto-stopped orphaned stream {streamId} for {packageName}"
+```
+
+This timeout should be longer than the resurrection grace period (5s) to give the app time to reconnect and adopt the stream.
+
+## Managed vs Direct Streams
+
+Both stream types need the same lifecycle handling, but with different details:
+
+| Aspect | Direct Stream | Managed Stream |
+|--------|--------------|----------------|
+| Who receives the video | Developer's endpoint (RTMP/SRT URL) | MentraOS cloud relay |
+| Viewer URLs | None | HLS, DASH, WebRTC |
+| Survives app blip? | Should: yes | Should: yes (relay keeps running) |
+| Survives app restart? | Should: adoptable | Should: adoptable (viewer URLs still valid) |
+| Cleanup on app stop | Send STOP_STREAM to glasses | Send STOP_STREAM to glasses + stop relay |
+| Status messages | `stream_status` from glasses | `managed_stream_status` from relay infrastructure |
+
+For managed streams, the relay infrastructure (Cloudflare, HLS/DASH servers) continues running independently of the mini app. The viewer URLs remain valid even if the mini app restarts. The mini app just needs to re-learn the URLs.
+
+## SDK API Design
+
+### Getting active streams on session start
+
+```typescript
+app.onSession((session) => {
+  // Streams that were started by a previous session of this app
+  // and are still running on the glasses
+  const activeStreams = session.camera.getActiveStreams();
+
+  for (const stream of activeStreams) {
+    if (stream.type === "managed") {
+      console.log("Managed stream still live:", stream.hlsUrl, stream.webrtcUrl);
+      // Update UI with viewer URLs
+    } else {
+      console.log("Direct stream still running to:", stream.url);
+      // Update UI to show streaming state
+    }
+  }
+});
+```
+
+### Adopting vs stopping existing streams
+
+```typescript
+app.onSession((session) => {
+  const active = session.camera.getActiveStreams();
+
+  if (active.length > 0) {
+    // Option A: Adopt it — keep streaming, take control
+    // Status events will now flow to this session
+    // Nothing to call — adoption is automatic on connect
+
+    // Option B: Stop it — don't want this stream anymore
+    session.camera.stopStream();
+  }
+});
+```
+
+### Stream status across reconnections
+
+```typescript
+session.camera.onStreamStatus((status) => {
+  // This fires for both new streams and adopted streams
+  // After a reconnection, the first status event gives you
+  // the current state of the stream
+  console.log(status.streamId, status.status);
+});
+```
+
+## v3 CameraManager Bug: Unhandled rtmp_stream_status
+
+The cloud sends `rtmp_stream_status` as a top-level message type, but the v3 `_MessageRouter` doesn't have a handler for it. The `CameraManager.onStreamStatus()` registers on the DATA_STREAM router for `StreamType.STREAM_STATUS`, but the cloud sends it as a direct message.
+
+Fix: Register a top-level message handler in CameraManager for `rtmp_stream_status`:
+
+```typescript
+// In CameraManager constructor
+this.deps.messageHandlers.register("rtmp_stream_status", (msg) => {
+  this.currentStreamState = msg;
+  this.events.emit("rtmp_stream_status", msg);
+});
+```
+
+This is separate from the lifecycle issues but was discovered alongside them.
 
 ## Related Issues
 
-- **084** — "App is not running" race condition. The stale stream status relay triggers the same code path.
-- **083** — Unified camera streaming API. This is how the bug was discovered.
+- **083** — Unified camera streaming API. This is where the bugs were discovered.
+- **084** — "App is not running" race condition. The stale stream status relay triggers the same code path that causes the race.
 
-## Next Steps
+## Priority
 
-1. Implement Phase 1 (stop streams on disconnect) — this is the critical fix
-2. Implement Phase 2 (drop stale status messages) — prevents the reconnection storm
-3. Phase 3 can be deferred but is good defensive coding
-4. Test: start stream → kill app → verify glasses stop streaming → restart app → verify clean session
+1. **Don't crash on TRANSPORT_DOWN status relay** — fixes the immediate reconnection storm
+2. **Register rtmp_stream_status handler in CameraManager** — fixes the "unhandled message type" warning
+3. **Stop streams on explicit app stop** — prevents orphaned streams when user closes the app
+4. **Inform new sessions about existing streams** — enables adoption after restart/resurrection
+5. **Auto-stop after orphan timeout** — safety net for development and edge cases
