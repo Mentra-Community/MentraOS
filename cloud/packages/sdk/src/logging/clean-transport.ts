@@ -48,7 +48,10 @@ const LEVEL_CONFIG: Record<number, { symbol: string; color: (s: string) => strin
   60: { symbol: "✗", color: chalk.red }, // fatal
 };
 
-/** Pino level number for warn — SDK internal logs below this are hidden from terminal. */
+/** Whether verbose mode is enabled — when true, SDK internal logs are shown in terminal. */
+const VERBOSE = process.env.MENTRA_VERBOSE === "true" || process.env.MENTRA_VERBOSE === "1";
+
+/** Pino level number for warn — SDK internal logs below this are hidden from terminal (unless verbose). */
 const WARN_LEVEL = 40;
 
 const DEFAULT_LEVEL_CONFIG = { symbol: "·", color: chalk.dim };
@@ -96,7 +99,7 @@ export function createCleanStream(): Writable {
         // This keeps the developer's terminal clean — their own session.logger.info()
         // calls always show, while SDK plumbing noise is hidden.
         // BetterStack still gets everything (it's a separate transport).
-        if (obj._sdk === true && level < WARN_LEVEL) {
+        if (obj._sdk === true && level < WARN_LEVEL && !VERBOSE) {
           callback();
           return;
         }
