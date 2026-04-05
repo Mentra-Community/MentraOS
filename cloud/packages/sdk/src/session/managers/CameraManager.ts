@@ -204,7 +204,12 @@ export class CameraManager {
       this.deps.messageHandlers.register(CloudToAppMessageType.PHOTO_RESPONSE, (msg: any) =>
         this.handlePhotoResponse(msg),
       ),
+      // Register for both old ("rtmp_stream_status") and new ("stream_status") message types.
+      // The cloud currently sends "rtmp_stream_status" but the enum maps to "stream_status".
       this.deps.messageHandlers.register(CloudToAppMessageType.STREAM_STATUS, (msg: any) =>
+        this.handleStreamStatus(msg),
+      ),
+      this.deps.messageHandlers.register("rtmp_stream_status" as any, (msg: any) =>
         this.handleStreamStatus(msg),
       ),
       this.deps.messageHandlers.register(CloudToAppMessageType.MANAGED_STREAM_STATUS, (msg: any) =>
@@ -337,10 +342,10 @@ export class CameraManager {
    */
   onStreamStatus(handler: StreamStatusHandler): () => void {
     this.deps.addSubscription(StreamType.STREAM_STATUS);
-    this.events.on("rtmp_stream_status", handler);
+    this.events.on("stream_status", handler);
 
     return () => {
-      this.events.off("rtmp_stream_status", handler);
+      this.events.off("stream_status", handler);
       this.deps.removeSubscription(StreamType.STREAM_STATUS);
     };
   }
@@ -370,6 +375,9 @@ export class CameraManager {
       throw new Error("Invalid stream URL: must start with rtmp://, rtmps://, srt://, https://, or http://");
     }
 
+    // Only check streams WE started, not orphaned streams from a previous session.
+    // isStreaming is only set when _startDirectStream sends a STREAM_REQUEST.
+    // It's NOT set by incoming status events.
     if (this.isStreaming || this.isManagedStreaming) {
       throw new Error("Already streaming. Stop the current stream before starting a new one.");
     }
@@ -392,6 +400,7 @@ export class CameraManager {
   // ── Managed streaming (glasses → cloud relay → viewers/destinations) ─────
 
   private async _startManagedStream(opts: StreamOptions): Promise<StreamResult> {
+    // Only check streams WE started, not orphaned streams from a previous session.
     if (this.isStreaming || this.isManagedStreaming) {
       throw new Error("Already streaming. Stop the current stream before starting a new one.");
     }
@@ -542,14 +551,17 @@ export class CameraManager {
       timestamp: message.timestamp ? new Date(message.timestamp) : new Date(),
     };
 
-    if (message.status === "stopped" || message.status === "error" || message.status === "timeout") {
-      this.isStreaming = false;
-      this.currentStreamUrl = undefined;
-    } else {
-      this.isStreaming = true;
+    // Only update isStreaming for streams WE initiated (isStreaming is set to true
+    // in _startDirectStream). Don't let orphaned stream status events from a
+    // previous session set isStreaming — that blocks new streams from starting.
+    if (this.isStreaming) {
+      if (message.status === "stopped" || message.status === "error" || message.status === "timeout") {
+        this.isStreaming = false;
+        this.currentStreamUrl = undefined;
+      }
     }
 
-    this.events.emit("rtmp_stream_status", this.currentStreamState);
+    this.events.emit("stream_status", this.currentStreamState);
   }
 
   private handleManagedStreamStatus(status: ManagedStreamStatus): void {
