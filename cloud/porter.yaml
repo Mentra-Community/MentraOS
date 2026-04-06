@@ -11,8 +11,8 @@ services:
     type: web
     run: ./start.sh
     port: 80
-    cpuCores: 5
-    ramMegabytes: 4096
+    cpuCores: 1
+    ramMegabytes: 3096
     env:
       HOST: "0.0.0.0"
       SERVICE_NAME: "cloud"
