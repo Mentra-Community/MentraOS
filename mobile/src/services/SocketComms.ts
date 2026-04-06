@@ -688,10 +688,6 @@ class SocketComms {
     audioPlaybackService.stopForApp(appId)
   }
 
-  private handle_ping(_msg: any) {
-    ws.sendText(JSON.stringify({type: "pong"}))
-  }
-
   // Message Handling
   private handle_message(msg: any) {
     const type = msg.type
@@ -793,10 +789,6 @@ class SocketComms {
 
       case "audio_stop_request":
         this.handle_audio_stop_request(msg)
-        break
-
-      case "ping":
-        this.handle_ping(msg)
         break
 
       case "udp_ping_ack":

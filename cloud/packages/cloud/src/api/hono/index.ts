@@ -15,6 +15,7 @@ export {
   minVersionApi,
   notificationsApi,
   photoApi,
+  sessionHealthApi,
   userSettingsApi,
 } from "./client";
 

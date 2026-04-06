@@ -161,11 +161,19 @@ export const requireUserSession: MiddlewareHandler<AppEnv> = async (c, next) => 
     const userSession = UserSession.getById(email);
 
     if (!userSession) {
-      reqLogger.warn(`requireUserSession: No active session found for user: ${email}`);
+      reqLogger.error(
+        {
+          userId: email,
+          error: "NO_ACTIVE_SESSION_OR_WEBSOCKET",
+          path: c.req.path,
+          method: c.req.method,
+        },
+        `No active session or WebSocket for user: ${email} — returning 503`,
+      );
       return c.json(
         {
-          error: "no_active_session",
-          message: "No active cloud session. Please ensure your app is connected.",
+          error: "NO_ACTIVE_SESSION_OR_WEBSOCKET",
+          message: "No active WebSocket connection and no active user session for this client.",
         },
         503,
       );

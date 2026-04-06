@@ -603,6 +603,21 @@ class RestComms {
     return res.map(() => undefined)
   }
 
+  /**
+   * Check whether the cloud still has an active WebSocket + UserSession for
+   * this client.  Called by WebSocketManager when a pong is missed.
+   *
+   * Returns { healthy: true } on 200, or throws on 503 with
+   * error: "NO_ACTIVE_SESSION_OR_WEBSOCKET".
+   */
+  public checkSessionHealth(): AsyncResult<{healthy: boolean}, Error> {
+    const config: RequestConfig = {
+      method: "GET",
+      endpoint: "/api/client/session-health",
+    }
+    return this.authenticatedRequest<{healthy: boolean}>(config)
+  }
+
   public goodbye(): AsyncResult<void, Error> {
     const config: RequestConfig = {
       method: "POST",

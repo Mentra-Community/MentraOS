@@ -141,8 +141,7 @@ export class UserSession {
 
   // Heartbeat for glasses connection
   private glassesHeartbeatInterval?: NodeJS.Timeout;
-  private appLevelPingInterval?: NodeJS.Timeout;
-  private appLevelPingCount = 0; // Counter for targeted debug logging
+  private appLevelPingInterval?: NodeJS.Timeout; // Retained for clearGlassesHeartbeat cleanup
   private pongHandler?: () => void; // Stored for cleanup
   public lastPongTime?: number;
   private pongTimeoutTimer?: NodeJS.Timeout;
@@ -232,7 +231,6 @@ export class UserSession {
    */
   private setupGlassesHeartbeat(): void {
     const HEARTBEAT_INTERVAL = 10000; // 10 seconds
-    const APP_LEVEL_PING_INTERVAL = 2000; // 2 seconds
 
     // Clear any existing heartbeat
     this.clearGlassesHeartbeat();
@@ -254,40 +252,10 @@ export class UserSession {
       }
     }, HEARTBEAT_INTERVAL);
 
-    // Application-level pings — visible to the client's onmessage handler.
-    // Protocol-level pings are invisible to React Native's WebSocket API,
-    // so the client can't use them for liveness detection. These app-level
-    // pings give the client guaranteed periodic messages to track against.
-    this.appLevelPingCount = 0;
-    this.appLevelPingInterval = setInterval(() => {
-      if (this.disposed) {
-        if (this.appLevelPingCount < 5) {
-          this.logger.info(`[app-ping] skip: session disposed for ${this.userId}`);
-        }
-        return;
-      }
-      if (!this.websocket || this.websocket.readyState !== WebSocketReadyState.OPEN) {
-        if (this.appLevelPingCount < 5) {
-          this.logger.info(
-            `[app-ping] skip: ws=${this.websocket ? `readyState=${this.websocket.readyState}` : "null"} for ${
-              this.userId
-            }`,
-          );
-        }
-        return;
-      }
-      try {
-        const result = this.websocket.send(JSON.stringify({ type: "ping" }));
-        this.appLevelPingCount++;
-        if (this.appLevelPingCount <= 3) {
-          this.logger.info(`[app-ping] #${this.appLevelPingCount} sent to ${this.userId}, send() returned: ${result}`);
-        }
-      } catch (e) {
-        this.logger.warn(`[app-ping] send FAILED for ${this.userId}: ${e}`);
-      }
-    }, APP_LEVEL_PING_INTERVAL);
-
-    this.resources.trackInterval(this.appLevelPingInterval);
+    // Application-level pings are no longer sent by the server.
+    // The client now initiates pings and the server responds with pongs
+    // (handled in bun-websocket.ts). This lets the client detect dead
+    // connections faster and trigger its own health-check + reconnect flow.
 
     // Track interval for automatic cleanup
     this.resources.trackInterval(this.glassesHeartbeatInterval);
