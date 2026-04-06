@@ -1,3 +1,6 @@
+# Camera App (separate repo)
+Camera-App/
+
 # MCU Client exceptions - allow build directories for embedded projects
 !mcu_client/**/build/
 !mcu_client/**/include/
