@@ -100,5 +100,3 @@ pnpm-lock.yaml
 .env.local
 
 .model-cache/
-
-issues

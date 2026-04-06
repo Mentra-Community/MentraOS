@@ -95,9 +95,24 @@ class RestComms {
     }
 
     return Res.try_async(async () => {
-      const res = await this.axiosInstance.request<T>(axiosConfig)
-      return res.data
+      try {
+        const res = await this.axiosInstance.request<T>(axiosConfig)
+        return res.data
+      } catch (error) {
+        if (this.isNoActiveSessionError(error)) {
+          GlobalEventEmitter.emit("NO_ACTIVE_SESSION")
+        }
+        throw error
+      }
     })
+  }
+
+  private isNoActiveSessionError(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) {
+      return false
+    }
+
+    return error.response?.status === 503 && error.response?.data?.error === "NO_ACTIVE_SESSION"
   }
 
   private authenticatedRequest<T>(config: RequestConfig): AsyncResult<T, Error> {
@@ -601,21 +616,6 @@ class RestComms {
     }
     const res = this.authenticatedRequest<Response>(config)
     return res.map(() => undefined)
-  }
-
-  /**
-   * Check whether the cloud still has an active WebSocket + UserSession for
-   * this client.  Called by WebSocketManager when a pong is missed.
-   *
-   * Returns { healthy: true } on 200, or throws on 503 with
-   * error: "NO_ACTIVE_SESSION_OR_WEBSOCKET".
-   */
-  public checkSessionHealth(): AsyncResult<{healthy: boolean}, Error> {
-    const config: RequestConfig = {
-      method: "GET",
-      endpoint: "/api/client/session-health",
-    }
-    return this.authenticatedRequest<{healthy: boolean}>(config)
   }
 
   public goodbye(): AsyncResult<void, Error> {

@@ -146,7 +146,7 @@ export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
 /**
  * Middleware that fetches and populates the user session.
  * Must be used after clientAuth.
- * Sets c.get("userSession") on success, returns 401 if no session found.
+ * Sets c.get("userSession") on success, returns 503 if no session found.
  */
 export const requireUserSession: MiddlewareHandler<AppEnv> = async (c, next) => {
   const email = c.get("email");
@@ -164,16 +164,16 @@ export const requireUserSession: MiddlewareHandler<AppEnv> = async (c, next) => 
       reqLogger.error(
         {
           userId: email,
-          error: "NO_ACTIVE_SESSION_OR_WEBSOCKET",
+          error: "NO_ACTIVE_SESSION",
           path: c.req.path,
           method: c.req.method,
         },
-        `No active session or WebSocket for user: ${email} — returning 503`,
+        `No active session for user: ${email} — returning 503`,
       );
       return c.json(
         {
-          error: "NO_ACTIVE_SESSION_OR_WEBSOCKET",
-          message: "No active WebSocket connection and no active user session for this client.",
+          error: "NO_ACTIVE_SESSION",
+          message: "No active cloud session for this client.",
         },
         503,
       );

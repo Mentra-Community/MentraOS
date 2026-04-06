@@ -6,7 +6,6 @@ on:
     branches:
       - cloud/issues-047
       - cloud/issues-048-merge
-      - websocket-client-fix
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

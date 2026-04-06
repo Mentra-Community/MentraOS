@@ -3,22 +3,22 @@ import {EventEmitter} from "events"
 import restComms from "@/services/RestComms"
 import {useConnectionStore} from "@/stores/connection"
 import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
+import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {BackgroundTimer} from "@/utils/timers"
 
 // ---------------------------------------------------------------------------
 // Liveness detection constants
 // ---------------------------------------------------------------------------
 // The CLIENT sends {"type":"ping"} every 5 s. The server responds with
-// {"type":"pong"}. If a pong is missed, the client calls the session-health
-// REST endpoint to confirm, then reconnects if needed.
+// {"type":"pong"}. If a pong is missed, the client reconnects immediately.
 
 // How often the client sends a ping to the server.
 const PING_INTERVAL_MS = 5_000
 
 // If no pong is received within this window, consider the connection
-// potentially dead and trigger a health-check. The health-check confirms
-// whether the session is actually dead before reconnecting, so a quick
-// trigger here is fine — it just costs one REST call.
+// dead and reconnect. This timeout is measured from the last ping sent,
+// not from connect time, so the first timer tick always sends a ping
+// instead of immediately declaring the socket stale.
 const PONG_TIMEOUT_MS = 5_000
 
 // Delay between reconnect attempts after a disconnect.
@@ -41,12 +41,14 @@ class WebSocketManager extends EventEmitter {
   private manuallyDisconnected: boolean = false
 
   // Liveness detection state
+  private lastPingAt: number = 0
   private lastPongTime: number = 0
+  private awaitingPong: boolean = false
   private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0
-  private healthCheckInFlight: boolean = false
 
   private constructor() {
     super()
+    GlobalEventEmitter.on("NO_ACTIVE_SESSION", this.handleNoActiveSession)
   }
 
   public static getInstance(): WebSocketManager {
@@ -186,6 +188,37 @@ class WebSocketManager extends EventEmitter {
     this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)
   }
 
+  private reconnectNow(reason: string) {
+    console.log(`WSM: Immediate reconnect requested: ${reason}`)
+    if (this.manuallyDisconnected) {
+      return
+    }
+
+    if (this.reconnectInterval) {
+      BackgroundTimer.clearInterval(this.reconnectInterval)
+      this.reconnectInterval = 0
+    }
+
+    this.stopLivenessMonitor()
+    this.detachAndCloseSocket()
+    this.updateStatus(WebSocketStatus.DISCONNECTED)
+
+    if (this.url && this.coreToken) {
+      this.connect(this.url, this.coreToken)
+      return
+    }
+
+    this.startReconnectInterval()
+  }
+
+  private handleNoActiveSession = () => {
+    if (this.previousStatus === WebSocketStatus.CONNECTING) {
+      return
+    }
+
+    this.reconnectNow("REST request returned NO_ACTIVE_SESSION")
+  }
+
   public disconnect() {
     this.manuallyDisconnected = true
 
@@ -209,80 +242,43 @@ class WebSocketManager extends EventEmitter {
    * Every PING_INTERVAL_MS the client sends {"type":"ping"} to the server.
    * The server responds with {"type":"pong"} which updates lastPongTime
    * (via handleIncomingMessage → pong branch).
-   *
-   * If a pong is not received within PONG_TIMEOUT_MS of the last ping,
-   * the client calls the session-health REST endpoint to confirm whether
-   * the session is actually dead, then reconnects if it is.
    */
   private startLivenessMonitor() {
     this.stopLivenessMonitor()
 
+    this.lastPingAt = 0
     this.lastPongTime = Date.now()
-    this.healthCheckInFlight = false
+    this.awaitingPong = false
+
+    this.sendPing()
 
     this.pingInterval = BackgroundTimer.setInterval(() => {
       if (!this.isConnected()) return
 
-      // Check if the PREVIOUS ping's pong is overdue before sending the next one.
-      // We allow 2× the ping interval as the timeout window — this means we tolerate
-      // one missed pong (network jitter) but trigger on two consecutive misses.
-      const elapsed = Date.now() - this.lastPongTime
-      if (elapsed > PONG_TIMEOUT_MS && !this.healthCheckInFlight) {
-        console.log(`WSM: Pong overdue by ${elapsed}ms — checking session health`)
-        this.performHealthCheck()
-        return // Don't send another ping while health-checking
-      }
-
-      // Send ping
-      try {
-        this.webSocket?.send(JSON.stringify({type: "ping"}))
-      } catch (error) {
-        console.log("WSM: Error sending ping:", error)
-      }
-    }, PING_INTERVAL_MS)
-  }
-
-  /**
-   * Call the session-health REST endpoint to confirm whether the WebSocket
-   * and UserSession are actually dead on the cloud side. If they are,
-   * force-close and reconnect.
-   */
-  private async performHealthCheck() {
-    this.healthCheckInFlight = true
-    try {
-      const result = await restComms.checkSessionHealth()
-
-      // If the socket was already closed while we were awaiting, don't act —
-      // onclose/onerror already triggered reconnection.
-      if (!this.isConnected()) {
-        console.log("WSM: Health check returned but socket already closed, skipping")
+      if (this.awaitingPong) {
+        const elapsed = Date.now() - this.lastPingAt
+        if (elapsed >= PONG_TIMEOUT_MS) {
+          this.reconnectNow(`pong timeout after ${elapsed}ms`)
+        }
         return
       }
 
-      if (result.is_ok() && result.value.healthy) {
-        // False alarm — connection is fine, maybe a single pong was dropped.
-        // Reset the pong timer so we don't immediately re-trigger.
-        console.log("WSM: Health check passed — session is healthy, resetting pong timer")
-        this.lastPongTime = Date.now()
-      } else {
-        // Session is dead — force-close and reconnect
-        console.log("WSM: Health check failed — session dead, reconnecting")
-        this.stopLivenessMonitor()
-        this.detachAndCloseSocket()
-        this.updateStatus(WebSocketStatus.DISCONNECTED)
-        this.startReconnectInterval()
-      }
-    } catch (error) {
-      // Network error or 503 — treat as dead, but only if still connected
-      if (!this.isConnected()) return
+      this.sendPing()
+    }, PING_INTERVAL_MS)
+  }
 
-      console.log("WSM: Health check error — assuming dead, reconnecting:", error)
-      this.stopLivenessMonitor()
-      this.detachAndCloseSocket()
-      this.updateStatus(WebSocketStatus.DISCONNECTED)
-      this.startReconnectInterval()
-    } finally {
-      this.healthCheckInFlight = false
+  private sendPing() {
+    if (!this.isConnected()) {
+      return
+    }
+
+    this.lastPingAt = Date.now()
+    this.awaitingPong = true
+
+    try {
+      this.webSocket?.send(JSON.stringify({type: "ping"}))
+    } catch (error) {
+      console.log("WSM: Error sending ping:", error)
     }
   }
 
@@ -294,6 +290,9 @@ class WebSocketManager extends EventEmitter {
       BackgroundTimer.clearInterval(this.pingInterval)
       this.pingInterval = 0
     }
+
+    this.awaitingPong = false
+    this.lastPingAt = 0
   }
 
   // -------------------------------------------------------------------------
@@ -356,6 +355,7 @@ class WebSocketManager extends EventEmitter {
       // Pong received — update liveness timestamp. Don't forward to SocketComms.
       if (message.type === "pong") {
         this.lastPongTime = Date.now()
+        this.awaitingPong = false
         return
       }
 
