@@ -6,10 +6,8 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 
 WORKDIR /app
 
-# Copy cloud directory
-COPY cloud/ ./cloud/
-
-WORKDIR /app/cloud
+# Copy source code (build context is ./cloud)
+COPY . .
 
 # Install dependencies and ensure correct bun-types version
 RUN bun install && \
