@@ -17,7 +17,7 @@ public class WhipThermalQualityProfileTest {
         .setVideoWidth(960)
         .setVideoHeight(540)
         .setVideoFps(15)
-        .setVideoBitrate(1_000_000);
+        .setVideoBitrate(4_000_000);
 
     WhipStreamConfig adjustedConfig = WhipThermalQualityProfile.buildConfig(
         requestedConfig, WhipThermalQualityProfile.Tier.WARM);
@@ -25,7 +25,7 @@ public class WhipThermalQualityProfileTest {
     Assert.assertEquals(960, adjustedConfig.getVideoWidth());
     Assert.assertEquals(540, adjustedConfig.getVideoHeight());
     Assert.assertEquals(15, adjustedConfig.getVideoFps());
-    Assert.assertEquals(700_000, adjustedConfig.getVideoBitrate());
+    Assert.assertEquals(3_400_000, adjustedConfig.getVideoBitrate());
   }
 
   @Test
@@ -34,15 +34,15 @@ public class WhipThermalQualityProfileTest {
         .setVideoWidth(960)
         .setVideoHeight(540)
         .setVideoFps(15)
-        .setVideoBitrate(1_000_000);
+        .setVideoBitrate(4_000_000);
 
     WhipStreamConfig adjustedConfig = WhipThermalQualityProfile.buildConfig(
         requestedConfig, WhipThermalQualityProfile.Tier.HOT);
 
-    Assert.assertEquals(640, adjustedConfig.getVideoWidth());
-    Assert.assertEquals(360, adjustedConfig.getVideoHeight());
-    Assert.assertEquals(12, adjustedConfig.getVideoFps());
-    Assert.assertEquals(500_000, adjustedConfig.getVideoBitrate());
+    Assert.assertEquals(960, adjustedConfig.getVideoWidth());
+    Assert.assertEquals(540, adjustedConfig.getVideoHeight());
+    Assert.assertEquals(15, adjustedConfig.getVideoFps());
+    Assert.assertEquals(2_800_000, adjustedConfig.getVideoBitrate());
   }
 
   @Test
@@ -51,15 +51,15 @@ public class WhipThermalQualityProfileTest {
         .setVideoWidth(960)
         .setVideoHeight(540)
         .setVideoFps(15)
-        .setVideoBitrate(1_000_000);
+        .setVideoBitrate(4_000_000);
 
     WhipStreamConfig adjustedConfig = WhipThermalQualityProfile.buildConfig(
         requestedConfig, WhipThermalQualityProfile.Tier.CRITICAL);
 
-    Assert.assertEquals(480, adjustedConfig.getVideoWidth());
-    Assert.assertEquals(270, adjustedConfig.getVideoHeight());
+    Assert.assertEquals(720, adjustedConfig.getVideoWidth());
+    Assert.assertEquals(405, adjustedConfig.getVideoHeight());
     Assert.assertEquals(10, adjustedConfig.getVideoFps());
-    Assert.assertEquals(350_000, adjustedConfig.getVideoBitrate());
+    Assert.assertEquals(2_200_000, adjustedConfig.getVideoBitrate());
   }
 
   @Test
@@ -72,5 +72,30 @@ public class WhipThermalQualityProfileTest {
         WhipThermalQualityProfile.fromThermalStatus(PowerManager.THERMAL_STATUS_SEVERE));
     Assert.assertEquals(WhipThermalQualityProfile.Tier.CRITICAL,
         WhipThermalQualityProfile.fromThermalStatus(PowerManager.THERMAL_STATUS_EMERGENCY));
+  }
+
+  @Test
+  public void normalThermalsDoNotApplyBitrateCapWithoutExplicitRequest() {
+    WhipStreamConfig requestedConfig = new WhipStreamConfig();
+
+    Assert.assertFalse(WhipThermalQualityProfile.shouldApplyBitrateCap(
+        requestedConfig, WhipThermalQualityProfile.Tier.NORMAL));
+  }
+
+  @Test
+  public void normalThermalsKeepExplicitBitrateCaps() {
+    WhipStreamConfig requestedConfig = new WhipStreamConfig()
+        .setVideoBitrate(2_500_000);
+
+    Assert.assertTrue(WhipThermalQualityProfile.shouldApplyBitrateCap(
+        requestedConfig, WhipThermalQualityProfile.Tier.NORMAL));
+  }
+
+  @Test
+  public void hotThermalsApplyBitrateCapEvenWithoutExplicitRequest() {
+    WhipStreamConfig requestedConfig = new WhipStreamConfig();
+
+    Assert.assertTrue(WhipThermalQualityProfile.shouldApplyBitrateCap(
+        requestedConfig, WhipThermalQualityProfile.Tier.HOT));
   }
 }

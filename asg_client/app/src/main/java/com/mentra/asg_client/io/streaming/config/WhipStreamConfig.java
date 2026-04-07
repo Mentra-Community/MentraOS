@@ -10,7 +10,7 @@ public class WhipStreamConfig {
   public static final int DEFAULT_VIDEO_WIDTH = 960;
   public static final int DEFAULT_VIDEO_HEIGHT = 540;
   public static final int DEFAULT_VIDEO_FPS = 15;
-  public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
+  public static final int DEFAULT_VIDEO_BITRATE = 4000000; // 4 Mbps thermal baseline
 
   public static final boolean DEFAULT_ECHO_CANCELLATION = false;
   public static final boolean DEFAULT_NOISE_SUPPRESSION = false;
@@ -21,6 +21,7 @@ public class WhipStreamConfig {
   private int videoHeight = DEFAULT_VIDEO_HEIGHT;
   private int videoFps = DEFAULT_VIDEO_FPS;
   private int videoBitrate = DEFAULT_VIDEO_BITRATE;
+  private boolean hasExplicitVideoBitrate = false;
 
   private boolean echoCancellation = DEFAULT_ECHO_CANCELLATION;
   private boolean noiseSuppression = DEFAULT_NOISE_SUPPRESSION;
@@ -39,6 +40,7 @@ public class WhipStreamConfig {
     videoHeight = other.videoHeight;
     videoFps = other.videoFps;
     videoBitrate = other.videoBitrate;
+    hasExplicitVideoBitrate = other.hasExplicitVideoBitrate;
     echoCancellation = other.echoCancellation;
     noiseSuppression = other.noiseSuppression;
     stunServer = other.stunServer;
@@ -56,6 +58,7 @@ public class WhipStreamConfig {
     if (videoJson != null) {
       config.videoWidth = clamp(optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH), 320, 1920);
       config.videoHeight = clamp(optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT), 240, 1080);
+      config.hasExplicitVideoBitrate = videoJson.has("bitrate") || videoJson.has("br");
       config.videoBitrate = clamp(optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE), 100000, 10000000);
       config.videoFps = clamp(optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS), 10, 60);
     }
@@ -87,6 +90,7 @@ public class WhipStreamConfig {
   public int getVideoHeight() { return videoHeight; }
   public int getVideoFps() { return videoFps; }
   public int getVideoBitrate() { return videoBitrate; }
+  public boolean hasExplicitVideoBitrate() { return hasExplicitVideoBitrate; }
   public boolean isEchoCancellation() { return echoCancellation; }
   public boolean isNoiseSuppression() { return noiseSuppression; }
   public String getStunServer() { return stunServer; }
@@ -109,6 +113,7 @@ public class WhipStreamConfig {
 
   public WhipStreamConfig setVideoBitrate(int bitrate) {
     this.videoBitrate = clamp(bitrate, 100000, 10000000);
+    this.hasExplicitVideoBitrate = true;
     return this;
   }
 

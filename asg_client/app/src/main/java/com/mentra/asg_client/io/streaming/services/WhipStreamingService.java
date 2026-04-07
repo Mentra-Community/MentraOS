@@ -514,6 +514,9 @@ public class WhipStreamingService extends Service {
       return;
     }
 
+    boolean shouldApplyBitrateCap = WhipThermalQualityProfile.shouldApplyBitrateCap(
+        mRequestedStreamConfig, mAppliedThermalTier);
+
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
       if (!"video".equals(sender.track().kind())) continue;
@@ -524,12 +527,16 @@ public class WhipStreamingService extends Service {
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
       for (RtpParameters.Encoding encoding : params.encodings) {
-        encoding.maxBitrateBps = mStreamConfig.getVideoBitrate();
+        encoding.maxBitrateBps = shouldApplyBitrateCap ? mStreamConfig.getVideoBitrate() : null;
       }
 
       sender.setParameters(params);
-      Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
-          + " kbps, degradation: MAINTAIN_FRAMERATE");
+      if (shouldApplyBitrateCap) {
+        Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
+            + " kbps, degradation: MAINTAIN_FRAMERATE");
+      } else {
+        Log.i(TAG, "Cleared video bitrate cap at normal thermals; keeping requested quality");
+      }
     }
   }
 

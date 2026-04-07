@@ -20,14 +20,13 @@ final class WhipThermalQualityProfile {
     CRITICAL
   }
 
-  private static final double WARM_BITRATE_SCALE = 0.70d;
-  private static final double HOT_BITRATE_SCALE = 0.50d;
-  private static final double CRITICAL_BITRATE_SCALE = 0.35d;
+  private static final double WARM_BITRATE_SCALE = 0.85d;
+  private static final double HOT_BITRATE_SCALE = 0.70d;
+  private static final double CRITICAL_BITRATE_SCALE = 0.55d;
 
-  private static final double HOT_RESOLUTION_SCALE = 2d / 3d;
-  private static final double CRITICAL_RESOLUTION_SCALE = 0.50d;
+  private static final double CRITICAL_RESOLUTION_SCALE = 0.75d;
 
-  private static final int HOT_MAX_FPS = 12;
+  private static final int HOT_MAX_FPS = 15;
   private static final int CRITICAL_MAX_FPS = 10;
 
   private WhipThermalQualityProfile() {
@@ -58,7 +57,6 @@ final class WhipThermalQualityProfile {
         adjustedConfig
             .setVideoBitrate(scaleBitrate(requestedConfig.getVideoBitrate(), HOT_BITRATE_SCALE))
             .setVideoFps(Math.min(requestedConfig.getVideoFps(), HOT_MAX_FPS));
-        applyScaledResolution(adjustedConfig, requestedConfig, HOT_RESOLUTION_SCALE);
         break;
       case CRITICAL:
         adjustedConfig
@@ -73,6 +71,10 @@ final class WhipThermalQualityProfile {
     }
 
     return adjustedConfig;
+  }
+
+  static boolean shouldApplyBitrateCap(WhipStreamConfig requestedConfig, Tier tier) {
+    return tier != Tier.NORMAL || requestedConfig.hasExplicitVideoBitrate();
   }
 
   static String describe(WhipStreamConfig config) {
