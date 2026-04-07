@@ -201,11 +201,46 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
     }
 }
 #endif
-
+void on_le_param_updated(struct bt_conn *conn,
+						 uint16_t interval,
+						 uint16_t latency,
+						 uint16_t timeout)
+{
+	double connection_interval = interval * 1.25; // in ms
+	uint16_t supervision_timeout = timeout * 10;  // in ms
+	LOG_INF("on_le_param_updated -> Connection parameters updated: interval %.2f ms, latency %d intervals, timeout %d ms",
+			connection_interval, latency, supervision_timeout);
+}
+void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)
+{
+	if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_1M)
+	{
+		LOG_INF("PHY updated. New PHY: 1M");
+	}
+	else if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_2M)
+	{
+		LOG_INF("PHY updated. New PHY: 2M");
+	}
+	else if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_CODED_S8)
+	{
+		LOG_INF("PHY updated. New PHY: Long Range");
+	}
+}
+void on_le_data_len_updated(struct bt_conn *conn, struct bt_conn_le_data_len_info *info)
+{
+	uint16_t tx_len = info->tx_max_len;
+	uint16_t tx_time = info->tx_max_time;
+	uint16_t rx_len = info->rx_max_len;
+	uint16_t rx_time = info->rx_max_time;
+	LOG_INF("Data length updated. Length %d/%d bytes, time %d/%d us", tx_len, rx_len, tx_time, rx_time);
+}
 BT_CONN_CB_DEFINE(conn_callbacks) = {
     .connected = connected,
     .disconnected = disconnected,
     .recycled = recycled_cb,
+    .le_param_updated = on_le_param_updated,
+    .le_phy_updated = on_le_phy_updated,
+    .le_data_len_updated = on_le_data_len_updated,
 #ifdef CONFIG_BT_NUS_SECURITY_ENABLED
     .security_changed = security_changed,
 #endif
@@ -329,7 +364,9 @@ void mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
     LOG_INF("Updated MTU: TX: %d RX: %d bytes", tx, rx);
     LOG_INF("Updated MTU: %d; Payload=[%d] ", payload_mtu + 3, payload_mtu);
 }
-static struct bt_gatt_cb gatt_callbacks = {.att_mtu_updated = mtu_updated};
+static struct bt_gatt_cb gatt_callbacks = {
+    .att_mtu_updated = mtu_updated
+};
 
 /**
  * @brief ble send data function

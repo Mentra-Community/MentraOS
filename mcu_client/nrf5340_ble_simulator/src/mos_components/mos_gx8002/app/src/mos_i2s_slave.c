@@ -41,7 +41,7 @@ LOG_MODULE_REGISTER(mos_i2s_slave, LOG_LEVEL_INF);
 #define GX8002_STREAM_ID_LEN 1
 #define GX8002_PDM_SAMPLE_RATE 16000 // GX8002 PDM mic sample rate is fixed at 16 kHz
 #define GX8002_PDM_BIT_DEPTH 16 // GX8002 PDM mic provides 16-bit samples (in 32-bit words, left-aligned)
-#define GX8002_PDM_CHANNELS 2 // GX8002 PDM mic is stereo (2 channels), but we will only use one channel for LC3 encoding
+#define GX8002_PDM_CHANNELS 1 // Encode mono: (L+R)/2 mix from GX8002 stereo output
 #define GX8002_LC3_FRAME_DURATION_US 10000 // LC3 frame duration is 10 ms
 #define GX8002_LC3_BITRATE_DEFAULT 32000 // Default LC3 bitrate for 16 kHz mono audio; can be adjusted based on quality/latency needs
 #define GX8002_LC3_FRAME_LEN (GX8002_LC3_BITRATE_DEFAULT * GX8002_LC3_FRAME_DURATION_US / 8 / 1000000)
@@ -76,9 +76,11 @@ static nrfx_i2s_config_t cfg = {
     .sample_width = NRF_I2S_SWIDTH_16BIT,
     .channels = NRF_I2S_CHANNELS_STEREO,
     .enable_bypass = false,
-    .clksrc = NRF_I2S_CLKSRC_ACLK,
-    .mck_setup = NRF_I2S_MCK_32MDIV8,
-    .ratio = NRF_I2S_RATIO_96X,
+    /* SLAVE mode: SCK and LRCK come from GX8002 master.
+     * MCK must be disabled; clksrc/ratio only affect MCK output. */
+    .clksrc = NRF_I2S_CLKSRC_PCLK32M,
+    .mck_setup = NRF_I2S_MCK_DISABLED,
+    .ratio = NRF_I2S_RATIO_32X,    /* 16-bit stereo = 32 SCK/LRCK */
 };
 
 static nrfx_i2s_buffers_t const i2s_req_buffer[2] = {
@@ -215,10 +217,13 @@ static void gx8002_i2s_audio_worker(void *p1, void *p2, void *p3)
                                        GX8002_LC3_FRAME_LEN, lc3_frame, &encoded_bytes_written);
         if (ret < 0 || encoded_bytes_written == 0)
         {
+            LOG_ERR("GX8002 LC3 encode failed: %d", ret);
             continue;
         }
         if (encoded_bytes_written != GX8002_LC3_FRAME_LEN)
         {
+            LOG_WRN("GX8002 LC3 encoded frame size mismatch: expected %u, got %u", (unsigned int)GX8002_LC3_FRAME_LEN,
+                    (unsigned int)encoded_bytes_written);
             continue;
         }
 
@@ -241,16 +246,11 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
         return;
     }
 
+    /* Double-buffer pingpong: recycle buffer in order: 0→1→0→1...
+     * (current_buffer_index + 1) % 2 gives the correct next slot.
+     * The released buffer becomes the next buffer to fill — do NOT override
+     * this with the inverted index (that would re-queue the still-active buffer). */
     uint8_t next_buffer_index = (current_buffer_index + 1) % 2;
-
-    if (p_released != NULL && p_released->p_rx_buffer == i2s_rx_req_buffer[0])
-    {
-        next_buffer_index = 1;
-    }
-    else if (p_released != NULL && p_released->p_rx_buffer == i2s_rx_req_buffer[1])
-    {
-        next_buffer_index = 0;
-    }
 
     /* I2S TX: output silence (no local PCM5102A playback; audio goes to phone via BLE only) */
     memset(i2s_tx_req_buffer[next_buffer_index], 0, PDM_PCM_REQ_BUFFER_SIZE * sizeof(uint32_t));

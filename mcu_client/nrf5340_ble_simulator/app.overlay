@@ -151,8 +151,11 @@
 /* PDM microphone disabled - GX8002 VAD path uses I2S slave */
 &pdm0 {
     status = "disabled";
+    pinctrl-0 = <&pdm0_default>;
+    pinctrl-names = "default";
+    // clock-source = "PCLK32M_HFXO";
+    // queue-size = <4>;
 };
-
 &i2c2 {
     compatible = "nordic,nrf-twim";
     status = "okay";
