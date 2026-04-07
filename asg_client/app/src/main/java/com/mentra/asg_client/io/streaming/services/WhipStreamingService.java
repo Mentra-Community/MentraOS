@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -109,6 +110,7 @@ public class WhipStreamingService extends Service {
 
   // Current stream configuration
   private WhipStreamConfig mStreamConfig = new WhipStreamConfig();
+  private WhipStreamConfig mRequestedStreamConfig = new WhipStreamConfig();
 
   // ---- WebRTC components ----
   private EglBase mEglBase;
@@ -139,6 +141,12 @@ public class WhipStreamingService extends Service {
   private static IStateManager sStateManager;
   private Handler mBatteryMonitorHandler;
   private Runnable mBatteryCheckRunnable;
+
+  // ---- Thermal monitoring ----
+  private PowerManager mPowerManager;
+  private PowerManager.OnThermalStatusChangedListener mThermalStatusListener;
+  private WhipThermalQualityProfile.Tier mAppliedThermalTier =
+      WhipThermalQualityProfile.Tier.NORMAL;
 
   // ---- Reconnection ----
   private static final int MAX_RECONNECT_ATTEMPTS = 3;
@@ -190,11 +198,12 @@ public class WhipStreamingService extends Service {
   public void onCreate() {
     super.onCreate();
     sInstance = this;
+    mPowerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
 
     if (sPendingStreamConfig != null) {
-      mStreamConfig = sPendingStreamConfig;
+      updateRequestedStreamConfig(sPendingStreamConfig, false);
       sPendingStreamConfig = null;
-      Log.d(TAG, "Applied pending stream config: " + mStreamConfig);
+      Log.d(TAG, "Applied pending stream config: " + mRequestedStreamConfig);
     }
 
     mMainHandler = new Handler(Looper.getMainLooper());
@@ -285,6 +294,7 @@ public class WhipStreamingService extends Service {
 
     try {
       initWebRtc();
+      prepareStreamConfigForStartup();
       setupCamera();
       setupAudio();
       createPeerConnectionAndOffer();
@@ -311,6 +321,7 @@ public class WhipStreamingService extends Service {
     mMainHandler.removeCallbacks(mStatsRunnable);
     cancelStreamTimeout();
     stopBatteryMonitoring();
+    stopThermalMonitoring();
     Log.d(TAG, "Stopping WHIP streaming (forReconnect=" + forReconnect + ")");
 
     if (mWhipResourceUrl != null) {
@@ -499,12 +510,16 @@ public class WhipStreamingService extends Service {
    * frame rate when thermals get tight.
    */
   private void applyBitrateConstraints() {
+    if (mPeerConnection == null) {
+      return;
+    }
+
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
       if (!"video".equals(sender.track().kind())) continue;
 
       RtpParameters params = sender.getParameters();
-      if (params == null) continue;
+      if (params == null || params.encodings == null || params.encodings.isEmpty()) continue;
 
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
@@ -516,6 +531,114 @@ public class WhipStreamingService extends Service {
       Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
           + " kbps, degradation: MAINTAIN_FRAMERATE");
     }
+  }
+
+  private void prepareStreamConfigForStartup() {
+    int thermalStatus = getCurrentThermalStatus();
+    applyThermalProfileForStatus(thermalStatus, false);
+  }
+
+  private void updateRequestedStreamConfig(WhipStreamConfig config, boolean applyLiveChanges) {
+    if (config == null) {
+      return;
+    }
+
+    mRequestedStreamConfig = new WhipStreamConfig(config);
+    if (applyLiveChanges) {
+      applyThermalProfileForStatus(getCurrentThermalStatus(), true);
+    } else {
+      mStreamConfig = new WhipStreamConfig(mRequestedStreamConfig);
+      mAppliedThermalTier = WhipThermalQualityProfile.Tier.NORMAL;
+    }
+  }
+
+  private void applyThermalProfileForStatus(int thermalStatus, boolean applyLiveChanges) {
+    WhipThermalQualityProfile.Tier targetTier =
+        WhipThermalQualityProfile.fromThermalStatus(thermalStatus);
+    WhipStreamConfig targetConfig =
+        WhipThermalQualityProfile.buildConfig(mRequestedStreamConfig, targetTier);
+
+    boolean changed = targetConfig.getVideoWidth() != mStreamConfig.getVideoWidth()
+        || targetConfig.getVideoHeight() != mStreamConfig.getVideoHeight()
+        || targetConfig.getVideoFps() != mStreamConfig.getVideoFps()
+        || targetConfig.getVideoBitrate() != mStreamConfig.getVideoBitrate()
+        || targetTier != mAppliedThermalTier;
+
+    if (!changed) {
+      return;
+    }
+
+    WhipStreamConfig previousConfig = new WhipStreamConfig(mStreamConfig);
+    mStreamConfig = targetConfig;
+    mAppliedThermalTier = targetTier;
+
+    Log.i(TAG, "Thermal status " + WhipThermalQualityProfile.thermalStatusToString(thermalStatus)
+        + " -> "
+        + WhipThermalQualityProfile.describe(previousConfig)
+        + " to " + WhipThermalQualityProfile.describe(mStreamConfig));
+
+    if (!applyLiveChanges) {
+      return;
+    }
+
+    synchronized (mStateLock) {
+      if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
+        return;
+      }
+    }
+
+    boolean captureFormatChanged = previousConfig.getVideoWidth() != mStreamConfig.getVideoWidth()
+        || previousConfig.getVideoHeight() != mStreamConfig.getVideoHeight()
+        || previousConfig.getVideoFps() != mStreamConfig.getVideoFps();
+
+    if (captureFormatChanged && mVideoCapturer != null) {
+      mVideoCapturer.changeCaptureFormat(
+          mStreamConfig.getVideoWidth(),
+          mStreamConfig.getVideoHeight(),
+          mStreamConfig.getVideoFps());
+    }
+
+    applyBitrateConstraints();
+    updateNotification(buildStreamingNotificationText());
+  }
+
+  private int getCurrentThermalStatus() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || mPowerManager == null) {
+      return PowerManager.THERMAL_STATUS_NONE;
+    }
+    return mPowerManager.getCurrentThermalStatus();
+  }
+
+  private String buildStreamingNotificationText() {
+    if (mAppliedThermalTier == WhipThermalQualityProfile.Tier.NORMAL) {
+      return "Streaming";
+    }
+    return "Streaming (thermal: " + WhipThermalQualityProfile.describe(mStreamConfig) + ")";
+  }
+
+  private void startThermalMonitoring() {
+    stopThermalMonitoring();
+
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || mPowerManager == null) {
+      Log.d(TAG, "Thermal status callbacks unavailable on this device/API level");
+      return;
+    }
+
+    mThermalStatusListener = status ->
+        mMainHandler.post(() -> applyThermalProfileForStatus(status, true));
+    mPowerManager.addThermalStatusListener(mThermalStatusListener);
+    applyThermalProfileForStatus(mPowerManager.getCurrentThermalStatus(), true);
+    Log.d(TAG, "Started thermal monitoring for WHIP streaming");
+  }
+
+  private void stopThermalMonitoring() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || mPowerManager == null
+        || mThermalStatusListener == null) {
+      return;
+    }
+
+    mPowerManager.removeThermalStatusListener(mThermalStatusListener);
+    mThermalStatusListener = null;
   }
 
   // -----------------------------------------------------------------------
@@ -574,6 +697,7 @@ public class WhipStreamingService extends Service {
             mMainHandler.postDelayed(mStatsRunnable, STATS_INTERVAL_MS);
             scheduleStreamTimeout(mCurrentStreamId);
             startBatteryMonitoring();
+            startThermalMonitoring();
             Log.d(TAG, "Streaming started via WHIP");
             if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
               mHardwareManager.setRecordingLedOn();
@@ -589,7 +713,7 @@ public class WhipStreamingService extends Service {
             } else {
               notifyStarted(mWhipUrl);
             }
-            updateNotification("Streaming");
+            updateNotification(buildStreamingNotificationText());
           }
 
           @Override
@@ -998,9 +1122,9 @@ public class WhipStreamingService extends Service {
   public static void setStreamConfig(WhipStreamConfig config) {
     if (config == null) return;
     if (sInstance != null) {
-      sInstance.mStreamConfig = config;
+      sInstance.updateRequestedStreamConfig(config, true);
     } else {
-      sPendingStreamConfig = config;
+      sPendingStreamConfig = new WhipStreamConfig(config);
     }
   }
 }
