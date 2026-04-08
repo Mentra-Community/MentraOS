@@ -1,80 +1,69 @@
 package com.mentra.asg_client.io.streaming.services;
 
 import android.os.PowerManager;
+import android.util.Log;
 
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.Locale;
+
 /**
- * Thermal downgrade policy for WHIP streams.
- *
- * Bitrate is the first knob because WebRTC can apply it live through RTP sender
- * parameters without renegotiation or reopening the camera. FPS and resolution
- * are only reduced once thermals worsen.
+ * Utility methods for WHIP thermal monitoring and logging.
  */
 final class WhipThermalQualityProfile {
 
-  enum Tier {
-    NORMAL,
-    WARM,
-    HOT,
-    CRITICAL
-  }
+  private static final String TAG = "WhipThermalQuality";
 
-  private static final double WARM_BITRATE_SCALE = 0.85d;
-  private static final double HOT_BITRATE_SCALE = 0.70d;
-  private static final double CRITICAL_BITRATE_SCALE = 0.55d;
+  // CPU temperature sysfs path (mtktscpu on MediaTek devices).
+  private static final String CPU_THERMAL_PATH = "/sys/class/thermal/thermal_zone1/temp";
 
-  private static final double CRITICAL_RESOLUTION_SCALE = 0.75d;
-
-  private static final int HOT_MAX_FPS = 15;
-  private static final int CRITICAL_MAX_FPS = 10;
+  private static final double TEMPERATURE_SMOOTHING_ALPHA = 0.35d;
 
   private WhipThermalQualityProfile() {
   }
 
-  static Tier fromThermalStatus(int thermalStatus) {
-    if (thermalStatus >= PowerManager.THERMAL_STATUS_CRITICAL) {
-      return Tier.CRITICAL;
+  /**
+   * Read the CPU temperature from sysfs. Returns the value in millidegrees
+   * Celsius, or -1 if the file cannot be read.
+   */
+  static int readCpuTemperature() {
+    try (BufferedReader reader = new BufferedReader(new FileReader(CPU_THERMAL_PATH))) {
+      return Integer.parseInt(reader.readLine().trim());
+    } catch (IOException | NumberFormatException e) {
+      Log.w(TAG, "Failed to read CPU temperature from sysfs", e);
+      return -1;
     }
-    if (thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
-      return Tier.HOT;
-    }
-    if (thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE) {
-      return Tier.WARM;
-    }
-    return Tier.NORMAL;
   }
 
-  static WhipStreamConfig buildConfig(WhipStreamConfig requestedConfig, Tier tier) {
-    WhipStreamConfig adjustedConfig = new WhipStreamConfig(requestedConfig);
-
-    switch (tier) {
-      case WARM:
-        adjustedConfig.setVideoBitrate(scaleBitrate(requestedConfig.getVideoBitrate(),
-            WARM_BITRATE_SCALE));
-        break;
-      case HOT:
-        adjustedConfig
-            .setVideoBitrate(scaleBitrate(requestedConfig.getVideoBitrate(), HOT_BITRATE_SCALE))
-            .setVideoFps(Math.min(requestedConfig.getVideoFps(), HOT_MAX_FPS));
-        break;
-      case CRITICAL:
-        adjustedConfig
-            .setVideoBitrate(scaleBitrate(requestedConfig.getVideoBitrate(),
-                CRITICAL_BITRATE_SCALE))
-            .setVideoFps(Math.min(requestedConfig.getVideoFps(), CRITICAL_MAX_FPS));
-        applyScaledResolution(adjustedConfig, requestedConfig, CRITICAL_RESOLUTION_SCALE);
-        break;
-      case NORMAL:
-      default:
-        break;
-    }
-
-    return adjustedConfig;
+  static double toCelsius(int milliDegrees) {
+    return milliDegrees / 1000.0d;
   }
 
-  static boolean shouldApplyBitrateCap(WhipStreamConfig requestedConfig, Tier tier) {
-    return tier != Tier.NORMAL || requestedConfig.hasExplicitVideoBitrate();
+  static String formatTemperature(int milliDegrees) {
+    if (milliDegrees <= 0) {
+      return "unavailable";
+    }
+    return String.format(Locale.US, "%.1fC", toCelsius(milliDegrees));
+  }
+
+  /**
+   * Smooth the instantaneous CPU temperature to avoid bitrate hunting around a
+   * threshold. Returns the new smoothed temperature in millidegrees Celsius.
+   */
+  static int smoothCpuTemperature(int previousMilliDegrees, int currentMilliDegrees) {
+    if (currentMilliDegrees <= 0) {
+      return previousMilliDegrees;
+    }
+    if (previousMilliDegrees <= 0) {
+      return currentMilliDegrees;
+    }
+
+    return (int) Math.round(
+        previousMilliDegrees + (currentMilliDegrees - previousMilliDegrees)
+            * TEMPERATURE_SMOOTHING_ALPHA);
   }
 
   static String describe(WhipStreamConfig config) {
@@ -102,17 +91,5 @@ final class WhipThermalQualityProfile {
       default:
         return "UNKNOWN(" + thermalStatus + ")";
     }
-  }
-
-  private static int scaleBitrate(int bitrate, double scale) {
-    return Math.max(100_000, (int) Math.round(bitrate * scale));
-  }
-
-  private static void applyScaledResolution(WhipStreamConfig adjustedConfig,
-      WhipStreamConfig requestedConfig, double scale) {
-    int scaledWidth = Math.max(320, (int) Math.round(requestedConfig.getVideoWidth() * scale));
-    int scaledHeight = Math.max(240, (int) Math.round(requestedConfig.getVideoHeight() * scale));
-    adjustedConfig.setVideoWidth(scaledWidth);
-    adjustedConfig.setVideoHeight(scaledHeight);
   }
 }

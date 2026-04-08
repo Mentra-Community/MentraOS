@@ -23,6 +23,7 @@ import {
 } from "@mentra/sdk";
 
 import { StreamLifecycleController } from "../streaming/StreamLifecycleController";
+import { normalizeStreamTelemetry } from "../streaming/streamStatusTelemetry";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 import { WebSocketReadyState } from "../websocket/types";
 
@@ -291,7 +292,13 @@ export class UnmanagedStreamingExtension {
   /**
    * Update stream status (simplified from original)
    */
-  async updateStatus(streamId: string, status: UnmanagedStreamStatus): Promise<void> {
+  async updateStatus(
+    streamId: string,
+    status: UnmanagedStreamStatus,
+    errorDetails?: string,
+    stats?: StreamStatus["stats"],
+    temperatureC?: StreamStatus["temperatureC"],
+  ): Promise<void> {
     const runtime = this.unmanagedStreams.get(streamId);
     if (!runtime) {
       this.logger.warn({ streamId }, "Attempted to update status for unknown stream");
@@ -304,7 +311,7 @@ export class UnmanagedStreamingExtension {
     runtime.lastActivity = new Date();
     this.userSession.streamRegistry.updateLastActivity(this.userSession.userId);
 
-    await this.sendStreamStatusToApp(streamId, status);
+    await this.sendStreamStatusToApp(streamId, status, errorDetails, stats, temperatureC);
 
     if (status === "active") {
       runtime.lifecycle.setActive(true);
@@ -457,6 +464,8 @@ export class UnmanagedStreamingExtension {
    */
   handleStreamStatus(statusMessage: StreamStatus): void {
     const { streamId, status } = statusMessage;
+    const telemetry = normalizeStreamTelemetry(statusMessage as StreamStatus & Record<string, any>);
+    const { stats, temperatureC } = telemetry;
     this.logger.debug({ streamId, status, debugKey: "STREAM_STATUS" }, "STREAM_STATUS Handling stream status update");
 
     if (!streamId) {
@@ -522,7 +531,7 @@ export class UnmanagedStreamingExtension {
         break;
     }
 
-    void this.updateStatus(streamId, mappedStatus);
+    void this.updateStatus(streamId, mappedStatus, statusMessage.errorDetails, stats, temperatureC);
   }
 
   /**
@@ -574,6 +583,7 @@ export class UnmanagedStreamingExtension {
     status: StreamStatus["status"], // This is the status string from SDK
     errorDetails?: string,
     stats?: StreamStatus["stats"],
+    temperatureC?: StreamStatus["temperatureC"],
   ): Promise<void> {
     const streamInfo = this.unmanagedStreams.get(streamId);
     // It's possible streamInfo is gone if cleanup happened due to rapid events.
@@ -588,6 +598,7 @@ export class UnmanagedStreamingExtension {
       status,
       errorDetails,
       stats,
+      temperatureC,
       appId: packageName,
       timestamp: new Date(),
     };
@@ -643,6 +654,7 @@ export class UnmanagedStreamingExtension {
       errorDetails,
       appId: packageName,
       stats,
+      temperatureC,
       timestamp: new Date(),
     };
 

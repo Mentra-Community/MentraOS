@@ -341,9 +341,15 @@ export interface RgbLedControlResponse extends BaseMessage {
   error?: string;
 }
 
-/**
- * Stream status update from glasses
- */
+export interface StreamStats {
+  bitrate: number;
+  fps: number;
+  width: number;
+  height: number;
+  droppedFrames: number;
+  duration: number;
+}
+
 export interface StreamStatus extends BaseMessage {
   type: GlassesToCloudMessageType.STREAM_STATUS;
   streamId?: string; // Unique identifier for the stream
@@ -362,12 +368,8 @@ export interface StreamStatus extends BaseMessage {
     | "reconnect_failed";
   errorDetails?: string;
   appId?: string; // ID of the app that requested the stream
-  stats?: {
-    bitrate: number;
-    fps: number;
-    droppedFrames: number;
-    duration: number;
-  };
+  stats?: StreamStats;
+  temperatureC?: number;
 }
 
 /**

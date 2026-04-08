@@ -64,4 +64,28 @@ public interface StreamingStatusCallback {
      * @param streamId The stream ID, or null
      */
     void onStreamError(String error, String streamId);
+
+    /**
+     * Called with live streaming metrics while the stream is active.
+     *
+     * @param streamId          The stream ID, or null
+     * @param bitrateBps        Current measured video bitrate in bits per second
+     * @param fps               Current measured FPS
+     * @param width             Current active video width
+     * @param height            Current active video height
+     * @param droppedFrames     Current dropped frame count reported by WebRTC
+     * @param durationMs        Stream duration in milliseconds
+     * @param temperatureC      Current CPU temperature in Celsius, or a negative value if unavailable
+     */
+    default void onStreamMetrics(
+        String streamId,
+        long bitrateBps,
+        int fps,
+        int width,
+        int height,
+        int droppedFrames,
+        long durationMs,
+        double temperatureC
+    ) {
+    }
 }

@@ -205,6 +205,7 @@ export const ConsoleLogger = () => {
         {logs.map((log, index) => (
           <View key={index}>
             <Text
+              selectable
               text={log.message}
               className="text-[10px]/3 font-bold color-secondary-foreground font-mono"
               style={[log.type === "error" && themed($errorText), log.type === "warn" && themed($warnText)]}

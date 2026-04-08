@@ -17,6 +17,7 @@ import UserSession from "../session/UserSession";
 import { CloudflareStreamService } from "./CloudflareStreamService";
 import { StreamRegistry, ManagedStreamState, StreamState } from "./StreamRegistry";
 import { StreamLifecycleController } from "./StreamLifecycleController";
+import { normalizeStreamTelemetry } from "./streamStatusTelemetry";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 
 // Keep-alive constants matching UnmanagedStreamingExtension
@@ -374,6 +375,7 @@ export class ManagedStreamingExtension {
    */
   async handleStreamStatus(userSession: UserSession, status: StreamStatus): Promise<boolean> {
     const { streamId, status: glassesStatus } = status;
+    const telemetry = normalizeStreamTelemetry(status as StreamStatus & Record<string, any>);
 
     // Check if this is a managed stream by stream ID
     if (!streamId) {
@@ -390,12 +392,16 @@ export class ManagedStreamingExtension {
         streamId,
         glassesStatus,
         userId: stream.userId,
+        stats: telemetry.stats,
+        temperatureC: telemetry.temperatureC,
       },
       "Received managed stream status from glasses",
     );
 
     // Update last activity
     this.stateManager.updateLastActivity(stream.userId);
+    stream.latestStats = telemetry.stats ?? stream.latestStats;
+    stream.temperatureC = telemetry.temperatureC ?? stream.temperatureC;
 
     const lifecycle = this.ensureLifecycle(userSession, stream);
     lifecycle.recordActivity();
@@ -428,6 +434,11 @@ export class ManagedStreamingExtension {
         break;
       default:
         lifecycle.setActive(true);
+    }
+
+    if (mappedStatus === "stopped" || mappedStatus === "error") {
+      stream.latestStats = undefined;
+      stream.temperatureC = undefined;
     }
 
     // Send status to all viewers
@@ -1133,6 +1144,8 @@ export class ManagedStreamingExtension {
       streamId,
       message,
       outputs,
+      stats: stream.latestStats,
+      temperatureC: stream.temperatureC,
     };
 
     // Check if this is a duplicate status
@@ -1147,6 +1160,8 @@ export class ManagedStreamingExtension {
         lastStatus.dashUrl === statusMessage.dashUrl &&
         lastStatus.webrtcUrl === statusMessage.webrtcUrl &&
         lastStatus.message === statusMessage.message &&
+        JSON.stringify(lastStatus.stats) === JSON.stringify(statusMessage.stats) &&
+        lastStatus.temperatureC === statusMessage.temperatureC &&
         JSON.stringify(lastStatus.outputs) === JSON.stringify(statusMessage.outputs);
 
       if (isDuplicate) {

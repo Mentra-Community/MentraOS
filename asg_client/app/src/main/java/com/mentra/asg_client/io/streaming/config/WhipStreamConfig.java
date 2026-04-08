@@ -117,6 +117,15 @@ public class WhipStreamConfig {
     return this;
   }
 
+  /**
+   * Apply a resolved runtime bitrate without changing whether the bitrate was
+   * explicitly requested by the caller.
+   */
+  public WhipStreamConfig setResolvedVideoBitrate(int bitrate) {
+    this.videoBitrate = clamp(bitrate, 100000, 10000000);
+    return this;
+  }
+
   public WhipStreamConfig setEchoCancellation(boolean enabled) {
     this.echoCancellation = enabled;
     return this;

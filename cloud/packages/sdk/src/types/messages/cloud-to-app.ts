@@ -10,6 +10,7 @@ import type {
   LocationUpdate,
   CalendarEvent,
   StreamStatus,
+  StreamStats,
   PhotoResponse,
   RgbLedControlResponse,
 } from "./glasses-to-cloud";
@@ -317,6 +318,8 @@ export interface ManagedStreamStatus extends BaseMessage {
   streamId?: string;
   /** Status of re-stream outputs if configured */
   outputs?: OutputStatus[];
+  stats?: StreamStats;
+  temperatureC?: number;
 }
 
 /**
