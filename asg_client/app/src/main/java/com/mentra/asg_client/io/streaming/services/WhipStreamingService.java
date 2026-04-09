@@ -12,7 +12,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.PowerManager;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -143,7 +142,6 @@ public class WhipStreamingService extends Service {
   private Runnable mBatteryCheckRunnable;
 
   // ---- Thermal monitoring ----
-  private PowerManager mPowerManager;
   private static final long THERMAL_POLL_INTERVAL_MS = 2000;
   private Runnable mThermalPollRunnable;
   private final WhipBitrateTemperatureController mBitrateTemperatureController =
@@ -224,7 +222,6 @@ public class WhipStreamingService extends Service {
   public void onCreate() {
     super.onCreate();
     sInstance = this;
-    mPowerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
 
     if (sPendingStreamConfig != null) {
       updateRequestedStreamConfig(sPendingStreamConfig, false);
@@ -643,14 +640,6 @@ public class WhipStreamingService extends Service {
 
     if (decision.isHardLimitActive()) {
       details.append(", hardLimit");
-    }
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mPowerManager != null) {
-      details.append(", pmStatus=")
-          .append(WhipThermalQualityProfile.thermalStatusToString(
-              mPowerManager.getCurrentThermalStatus()));
-    } else {
-      details.append(", pmStatus=unavailable");
     }
 
     return details.toString();

@@ -1,6 +1,4 @@
 package com.mentra.asg_client.io.streaming.services;
-
-import android.os.PowerManager;
 import android.util.Log;
 
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
@@ -70,26 +68,5 @@ final class WhipThermalQualityProfile {
     return config.getVideoWidth() + "x" + config.getVideoHeight()
         + "@" + config.getVideoFps() + "fps "
         + (config.getVideoBitrate() / 1000) + "kbps";
-  }
-
-  static String thermalStatusToString(int thermalStatus) {
-    switch (thermalStatus) {
-      case PowerManager.THERMAL_STATUS_NONE:
-        return "NONE";
-      case PowerManager.THERMAL_STATUS_LIGHT:
-        return "LIGHT";
-      case PowerManager.THERMAL_STATUS_MODERATE:
-        return "MODERATE";
-      case PowerManager.THERMAL_STATUS_SEVERE:
-        return "SEVERE";
-      case PowerManager.THERMAL_STATUS_CRITICAL:
-        return "CRITICAL";
-      case PowerManager.THERMAL_STATUS_EMERGENCY:
-        return "EMERGENCY";
-      case PowerManager.THERMAL_STATUS_SHUTDOWN:
-        return "SHUTDOWN";
-      default:
-        return "UNKNOWN(" + thermalStatus + ")";
-    }
   }
 }
