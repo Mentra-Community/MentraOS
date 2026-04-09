@@ -541,9 +541,6 @@ public class WhipStreamingService extends Service {
       return;
     }
 
-    boolean shouldApplyBitrateCap = WhipBitrateTemperatureController.shouldApplyBitrateCap(
-        mRequestedStreamConfig, mLastBitrateDecision);
-
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
       if (!"video".equals(sender.track().kind())) continue;
@@ -554,16 +551,12 @@ public class WhipStreamingService extends Service {
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
       for (RtpParameters.Encoding encoding : params.encodings) {
-        encoding.maxBitrateBps = shouldApplyBitrateCap ? mStreamConfig.getVideoBitrate() : null;
+        encoding.maxBitrateBps = mStreamConfig.getVideoBitrate();
       }
 
       sender.setParameters(params);
-      if (shouldApplyBitrateCap) {
-        Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
-            + " kbps, degradation: MAINTAIN_FRAMERATE");
-      } else {
-        Log.i(TAG, "Cleared video bitrate cap at normal thermals; keeping requested quality");
-      }
+      Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
+          + " kbps, degradation: MAINTAIN_FRAMERATE");
     }
   }
 
@@ -593,7 +586,7 @@ public class WhipStreamingService extends Service {
     WhipBitrateTemperatureController.BitrateDecision decision =
         mBitrateTemperatureController.update(rawCpuTempMilli, mRequestedStreamConfig);
     WhipStreamConfig targetConfig = new WhipStreamConfig(mRequestedStreamConfig);
-    targetConfig.setResolvedVideoBitrate(decision.getTargetBitrateBps());
+    targetConfig.setVideoBitrate(decision.getTargetBitrateBps());
 
     boolean changed = targetConfig.getVideoBitrate() != mStreamConfig.getVideoBitrate();
 

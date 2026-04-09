@@ -146,14 +146,6 @@ final class WhipBitrateTemperatureController {
         mSmoothedCpuTempMilli >= HARD_LIMIT_MDEG);
   }
 
-  static boolean shouldApplyBitrateCap(
-      WhipStreamConfig requestedConfig,
-      BitrateDecision decision) {
-    return requestedConfig.hasExplicitVideoBitrate()
-        || (decision != null
-        && decision.getTargetBitrateBps() < requestedConfig.getVideoBitrate());
-  }
-
   static double getSoftTargetTempC() {
     return WhipThermalQualityProfile.toCelsius(SOFT_TARGET_MDEG);
   }

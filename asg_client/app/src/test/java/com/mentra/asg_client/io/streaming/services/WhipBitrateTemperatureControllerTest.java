@@ -111,23 +111,4 @@ public class WhipBitrateTemperatureControllerTest {
     Assert.assertTrue(smoothed < 90_400);
   }
 
-  @Test
-  public void bitrateCapIsOnlyAppliedWhenExplicitOrThermallyLimited() {
-    WhipStreamConfig defaultConfig = new WhipStreamConfig();
-    WhipStreamConfig explicitConfig = new WhipStreamConfig()
-        .setVideoBitrate(2_500_000);
-
-    Assert.assertFalse(WhipBitrateTemperatureController.shouldApplyBitrateCap(
-        defaultConfig,
-        new WhipBitrateTemperatureController.BitrateDecision(-1, -1, 4_000_000, 1.0d, 0.0d,
-            false, false)));
-    Assert.assertTrue(WhipBitrateTemperatureController.shouldApplyBitrateCap(
-        explicitConfig,
-        new WhipBitrateTemperatureController.BitrateDecision(-1, -1, 2_500_000, 1.0d, 0.0d,
-            false, false)));
-    Assert.assertTrue(WhipBitrateTemperatureController.shouldApplyBitrateCap(
-        defaultConfig,
-        new WhipBitrateTemperatureController.BitrateDecision(-1, -1, 2_000_000, 0.5d, 0.0d,
-            true, false)));
-  }
 }
