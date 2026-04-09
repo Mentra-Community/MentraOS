@@ -1,4 +1,5 @@
 package com.mentra.asg_client.io.streaming.services;
+
 import android.util.Log;
 
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
@@ -11,7 +12,7 @@ import java.util.Locale;
 /**
  * Utility methods for WHIP thermal monitoring and logging.
  */
-final class WhipThermalQualityProfile {
+final class WhipThermalUtils {
 
   private static final String TAG = "WhipThermalQuality";
 
@@ -20,7 +21,7 @@ final class WhipThermalQualityProfile {
 
   private static final double TEMPERATURE_SMOOTHING_ALPHA = 0.35d;
 
-  private WhipThermalQualityProfile() {
+  private WhipThermalUtils() {
   }
 
   /**

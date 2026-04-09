@@ -88,15 +88,15 @@ final class WhipBitrateTemperatureController {
     }
 
     int previousSmoothedCpuTempMilli = mSmoothedCpuTempMilli;
-    mSmoothedCpuTempMilli = WhipThermalQualityProfile.smoothCpuTemperature(
+    mSmoothedCpuTempMilli = WhipThermalUtils.smoothCpuTemperature(
         mSmoothedCpuTempMilli, rawCpuTempMilli);
 
-    double smoothedTempC = WhipThermalQualityProfile.toCelsius(mSmoothedCpuTempMilli);
+    double smoothedTempC = WhipThermalUtils.toCelsius(mSmoothedCpuTempMilli);
     double previousSmoothedTempC = previousSmoothedCpuTempMilli > 0
-        ? WhipThermalQualityProfile.toCelsius(previousSmoothedCpuTempMilli)
+        ? WhipThermalUtils.toCelsius(previousSmoothedCpuTempMilli)
         : smoothedTempC;
     double temperatureRiseC = Math.max(0.0d, smoothedTempC - previousSmoothedTempC);
-    double errorC = WhipThermalQualityProfile.toCelsius(SOFT_TARGET_MDEG) - smoothedTempC;
+    double errorC = WhipThermalUtils.toCelsius(SOFT_TARGET_MDEG) - smoothedTempC;
 
     if (mSmoothedCpuTempMilli <= INTEGRAL_RESET_MDEG) {
       mIntegralErrorC = 0.0d;
@@ -147,11 +147,11 @@ final class WhipBitrateTemperatureController {
   }
 
   static double getSoftTargetTempC() {
-    return WhipThermalQualityProfile.toCelsius(SOFT_TARGET_MDEG);
+    return WhipThermalUtils.toCelsius(SOFT_TARGET_MDEG);
   }
 
   static double getHardLimitTempC() {
-    return WhipThermalQualityProfile.toCelsius(HARD_LIMIT_MDEG);
+    return WhipThermalUtils.toCelsius(HARD_LIMIT_MDEG);
   }
 
   private static int computeFeedForwardCap(int requestedBitrate, int smoothedCpuTempMilli) {

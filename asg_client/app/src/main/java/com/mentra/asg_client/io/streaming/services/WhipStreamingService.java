@@ -196,7 +196,7 @@ public class WhipStreamingService extends Service {
         mLastVideoBytesSent = videoBytesTotal;
         mLastAudioBytesSent = audioBytesTotal;
         long videoBitrateBps = videoDelta * 8 * 1000 / STATS_INTERVAL_MS;
-        int cpuTempMilli = WhipThermalQualityProfile.readCpuTemperature();
+        int cpuTempMilli = WhipThermalUtils.readCpuTemperature();
         Log.d(TAG, String.format(
             "↑ video: %d B/s (%d pkts total)  audio: %d B/s (%d pkts total)",
             videoDelta * 1000 / STATS_INTERVAL_MS, videoPackets,
@@ -208,7 +208,7 @@ public class WhipStreamingService extends Service {
             mStreamConfig.getVideoHeight(),
             droppedFrames,
             mStreamStartedAtMs > 0 ? System.currentTimeMillis() - mStreamStartedAtMs : 0,
-            cpuTempMilli > 0 ? WhipThermalQualityProfile.toCelsius(cpuTempMilli) : -1);
+            cpuTempMilli > 0 ? WhipThermalUtils.toCelsius(cpuTempMilli) : -1);
       });
       mMainHandler.postDelayed(this, STATS_INTERVAL_MS);
     }
@@ -559,7 +559,7 @@ public class WhipStreamingService extends Service {
 
   private void prepareStreamConfigForStartup() {
     mBitrateTemperatureController.reset(mRequestedStreamConfig);
-    applyTemperatureControl(WhipThermalQualityProfile.readCpuTemperature(), false);
+    applyTemperatureControl(WhipThermalUtils.readCpuTemperature(), false);
   }
 
   private void updateRequestedStreamConfig(WhipStreamConfig config, boolean applyLiveChanges) {
@@ -570,7 +570,7 @@ public class WhipStreamingService extends Service {
     mRequestedStreamConfig = new WhipStreamConfig(config);
     if (applyLiveChanges) {
       mBitrateTemperatureController.updateRequestedConfig(mRequestedStreamConfig);
-      applyTemperatureControl(WhipThermalQualityProfile.readCpuTemperature(), true);
+      applyTemperatureControl(WhipThermalUtils.readCpuTemperature(), true);
     } else {
       mStreamConfig = new WhipStreamConfig(mRequestedStreamConfig);
       mLastBitrateDecision = null;
@@ -597,8 +597,8 @@ public class WhipStreamingService extends Service {
     mLastBitrateDecision = decision;
 
     Log.i(TAG, "Temperature control update (" + buildThermalDebugDetails(decision) + "): "
-        + WhipThermalQualityProfile.describe(previousConfig)
-        + " to " + WhipThermalQualityProfile.describe(mStreamConfig));
+        + WhipThermalUtils.describe(previousConfig)
+        + " to " + WhipThermalUtils.describe(mStreamConfig));
 
     if (!applyLiveChanges) {
       return;
@@ -619,15 +619,15 @@ public class WhipStreamingService extends Service {
     if (!bitrateReduced) {
       return "Streaming";
     }
-    return "Streaming (temp control: " + WhipThermalQualityProfile.describe(mStreamConfig) + ")";
+    return "Streaming (temp control: " + WhipThermalUtils.describe(mStreamConfig) + ")";
   }
 
   private String buildThermalDebugDetails(
       WhipBitrateTemperatureController.BitrateDecision decision) {
     StringBuilder details = new StringBuilder("source=sysfs")
-        .append(", raw=").append(WhipThermalQualityProfile.formatTemperature(
+        .append(", raw=").append(WhipThermalUtils.formatTemperature(
             decision.getRawCpuTempMilli()))
-        .append(", smoothed=").append(WhipThermalQualityProfile.formatTemperature(
+        .append(", smoothed=").append(WhipThermalUtils.formatTemperature(
             decision.getSmoothedCpuTempMilli()))
         .append(", softTarget=").append(String.format(java.util.Locale.US, "%.1fC",
             WhipBitrateTemperatureController.getSoftTargetTempC()))
@@ -648,7 +648,7 @@ public class WhipStreamingService extends Service {
   private void startThermalMonitoring() {
     stopThermalMonitoring();
 
-    int cpuTemp = WhipThermalQualityProfile.readCpuTemperature();
+    int cpuTemp = WhipThermalUtils.readCpuTemperature();
     mBitrateTemperatureController.reset(mRequestedStreamConfig);
     applyTemperatureControl(cpuTemp, true);
     if (mLastBitrateDecision != null) {
@@ -660,7 +660,7 @@ public class WhipStreamingService extends Service {
 
   private void startSysfsThermalPolling() {
     mThermalPollRunnable = () -> {
-      applyTemperatureControl(WhipThermalQualityProfile.readCpuTemperature(), true);
+      applyTemperatureControl(WhipThermalUtils.readCpuTemperature(), true);
       mMainHandler.postDelayed(mThermalPollRunnable, THERMAL_POLL_INTERVAL_MS);
     };
     mMainHandler.postDelayed(mThermalPollRunnable, THERMAL_POLL_INTERVAL_MS);

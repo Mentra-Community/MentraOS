@@ -105,7 +105,7 @@ public class WhipBitrateTemperatureControllerTest {
 
   @Test
   public void smoothingStillDampensTemperatureSpikes() {
-    int smoothed = WhipThermalQualityProfile.smoothCpuTemperature(89_000, 90_400);
+    int smoothed = WhipThermalUtils.smoothCpuTemperature(89_000, 90_400);
 
     Assert.assertTrue(smoothed > 89_000);
     Assert.assertTrue(smoothed < 90_400);
