@@ -10,7 +10,7 @@ public class WhipStreamConfig {
   public static final int DEFAULT_VIDEO_WIDTH = 960;
   public static final int DEFAULT_VIDEO_HEIGHT = 540;
   public static final int DEFAULT_VIDEO_FPS = 15;
-  public static final int DEFAULT_VIDEO_BITRATE = 4000000; // 4 Mbps thermal baseline
+  public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
 
   public static final boolean DEFAULT_ECHO_CANCELLATION = false;
   public static final boolean DEFAULT_NOISE_SUPPRESSION = false;

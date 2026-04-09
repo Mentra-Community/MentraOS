@@ -393,7 +393,6 @@ export class ManagedStreamingExtension {
         glassesStatus,
         userId: stream.userId,
         stats: telemetry.stats,
-        temperatureC: telemetry.temperatureC,
       },
       "Received managed stream status from glasses",
     );
@@ -401,7 +400,6 @@ export class ManagedStreamingExtension {
     // Update last activity
     this.stateManager.updateLastActivity(stream.userId);
     stream.latestStats = telemetry.stats ?? stream.latestStats;
-    stream.temperatureC = telemetry.temperatureC ?? stream.temperatureC;
 
     const lifecycle = this.ensureLifecycle(userSession, stream);
     lifecycle.recordActivity();
@@ -438,7 +436,6 @@ export class ManagedStreamingExtension {
 
     if (mappedStatus === "stopped" || mappedStatus === "error") {
       stream.latestStats = undefined;
-      stream.temperatureC = undefined;
     }
 
     // Send status to all viewers
@@ -1145,7 +1142,6 @@ export class ManagedStreamingExtension {
       message,
       outputs,
       stats: stream.latestStats,
-      temperatureC: stream.temperatureC,
     };
 
     // Check if this is a duplicate status
@@ -1161,7 +1157,6 @@ export class ManagedStreamingExtension {
         lastStatus.webrtcUrl === statusMessage.webrtcUrl &&
         lastStatus.message === statusMessage.message &&
         JSON.stringify(lastStatus.stats) === JSON.stringify(statusMessage.stats) &&
-        lastStatus.temperatureC === statusMessage.temperatureC &&
         JSON.stringify(lastStatus.outputs) === JSON.stringify(statusMessage.outputs);
 
       if (isDuplicate) {

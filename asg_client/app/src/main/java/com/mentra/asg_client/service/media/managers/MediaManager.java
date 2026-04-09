@@ -376,11 +376,10 @@ public class MediaManager implements IMediaManager {
                     stats.put("h", height);
                     stats.put("d", droppedFrames);
                     stats.put("u", durationMs);
-                    status.put("m", stats);
-
                     if (temperatureC >= 0) {
-                        status.put("tp", Math.round(temperatureC * 10.0d) / 10.0d);
+                        stats.put("tp", Math.round(temperatureC * 10.0d) / 10.0d);
                     }
+                    status.put("m", stats);
 
                     sendStreamStatusResponse(true, status);
                 } catch (JSONException e) {

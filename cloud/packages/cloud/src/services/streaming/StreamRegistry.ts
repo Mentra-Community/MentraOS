@@ -37,7 +37,6 @@ export interface ManagedStreamState extends BaseStreamState {
     status?: CloudflareOutput;
   }>; // Restream outputs if configured
   latestStats?: StreamStats;
-  temperatureC?: number;
 }
 
 /**
@@ -215,7 +214,6 @@ export class StreamRegistry {
         status: output,
       })),
       latestStats: undefined,
-      temperatureC: undefined,
     };
 
     // Update all maps

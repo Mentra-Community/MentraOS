@@ -297,7 +297,6 @@ export class UnmanagedStreamingExtension {
     status: UnmanagedStreamStatus,
     errorDetails?: string,
     stats?: StreamStatus["stats"],
-    temperatureC?: StreamStatus["temperatureC"],
   ): Promise<void> {
     const runtime = this.unmanagedStreams.get(streamId);
     if (!runtime) {
@@ -311,7 +310,7 @@ export class UnmanagedStreamingExtension {
     runtime.lastActivity = new Date();
     this.userSession.streamRegistry.updateLastActivity(this.userSession.userId);
 
-    await this.sendStreamStatusToApp(streamId, status, errorDetails, stats, temperatureC);
+    await this.sendStreamStatusToApp(streamId, status, errorDetails, stats);
 
     if (status === "active") {
       runtime.lifecycle.setActive(true);
@@ -465,7 +464,7 @@ export class UnmanagedStreamingExtension {
   handleStreamStatus(statusMessage: StreamStatus): void {
     const { streamId, status } = statusMessage;
     const telemetry = normalizeStreamTelemetry(statusMessage as StreamStatus & Record<string, any>);
-    const { stats, temperatureC } = telemetry;
+    const { stats } = telemetry;
     this.logger.debug({ streamId, status, debugKey: "STREAM_STATUS" }, "STREAM_STATUS Handling stream status update");
 
     if (!streamId) {
@@ -531,7 +530,7 @@ export class UnmanagedStreamingExtension {
         break;
     }
 
-    void this.updateStatus(streamId, mappedStatus, statusMessage.errorDetails, stats, temperatureC);
+    void this.updateStatus(streamId, mappedStatus, statusMessage.errorDetails, stats);
   }
 
   /**
@@ -583,7 +582,6 @@ export class UnmanagedStreamingExtension {
     status: StreamStatus["status"], // This is the status string from SDK
     errorDetails?: string,
     stats?: StreamStatus["stats"],
-    temperatureC?: StreamStatus["temperatureC"],
   ): Promise<void> {
     const streamInfo = this.unmanagedStreams.get(streamId);
     // It's possible streamInfo is gone if cleanup happened due to rapid events.
@@ -598,7 +596,6 @@ export class UnmanagedStreamingExtension {
       status,
       errorDetails,
       stats,
-      temperatureC,
       appId: packageName,
       timestamp: new Date(),
     };
@@ -654,7 +651,6 @@ export class UnmanagedStreamingExtension {
       errorDetails,
       appId: packageName,
       stats,
-      temperatureC,
       timestamp: new Date(),
     };
 

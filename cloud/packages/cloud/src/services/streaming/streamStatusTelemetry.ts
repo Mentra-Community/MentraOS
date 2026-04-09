@@ -10,7 +10,7 @@ function toNumber(value: unknown): number | undefined {
  * Normalize compact BLE telemetry aliases from glasses into the full SDK shape
  * used inside cloud and app-facing messages.
  */
-export function normalizeStreamTelemetry(status: RawTelemetryMessage): Pick<StreamStatus, "stats" | "temperatureC"> {
+export function normalizeStreamTelemetry(status: RawTelemetryMessage): Pick<StreamStatus, "stats"> {
   const compactStats = status.m;
   const rawStats = status.stats ?? compactStats;
 
@@ -20,6 +20,7 @@ export function normalizeStreamTelemetry(status: RawTelemetryMessage): Pick<Stre
   const height = toNumber(rawStats?.height ?? rawStats?.h);
   const droppedFrames = toNumber(rawStats?.droppedFrames ?? rawStats?.d);
   const duration = toNumber(rawStats?.duration ?? rawStats?.u);
+  const temperatureC = toNumber(rawStats?.temperatureC ?? rawStats?.tp ?? status.temperatureC ?? status.tp);
 
   const statsShapeComplete =
     bitrate !== undefined &&
@@ -38,8 +39,8 @@ export function normalizeStreamTelemetry(status: RawTelemetryMessage): Pick<Stre
           height,
           droppedFrames,
           duration,
+          temperatureC,
         }
       : undefined,
-    temperatureC: toNumber(status.temperatureC ?? status.tp),
   };
 }

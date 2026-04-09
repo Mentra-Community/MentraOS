@@ -348,6 +348,7 @@ export interface StreamStats {
   height: number;
   droppedFrames: number;
   duration: number;
+  temperatureC?: number;
 }
 
 export interface StreamStatus extends BaseMessage {
@@ -369,7 +370,6 @@ export interface StreamStatus extends BaseMessage {
   errorDetails?: string;
   appId?: string; // ID of the app that requested the stream
   stats?: StreamStats;
-  temperatureC?: number;
 }
 
 /**

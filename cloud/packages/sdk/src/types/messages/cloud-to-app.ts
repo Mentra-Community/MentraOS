@@ -319,7 +319,6 @@ export interface ManagedStreamStatus extends BaseMessage {
   /** Status of re-stream outputs if configured */
   outputs?: OutputStatus[];
   stats?: StreamStats;
-  temperatureC?: number;
 }
 
 /**
