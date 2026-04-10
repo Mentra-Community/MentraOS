@@ -7,53 +7,13 @@ Read-only audit of the MentraOS cloud server code. Findings are organized by sev
 
 ---
 
-## Critical
+## Security Findings
 
-### A-001: `getUserAppSettings` uses raw auth header as userId (no JWT verification)
-
-**File:** `packages/cloud/src/api/hono/routes/app-settings.routes.ts`, ~L222-230
-
-The `GET /appsettings/user/:appName` endpoint takes the raw second word of the Authorization header and uses it directly as a `userId` to look up settings. It does not verify any JWT. It also calls `User.findOrCreateUser(userId)`, meaning an attacker can create user records by sending arbitrary emails in the header.
-
-```
-const authHeader = c.req.header("authorization");
-const userId = authHeader.split(" ")[1];
-// ... used directly in User.findOrCreateUser(userId)
-```
-
-**Impact:** Any caller can read and write settings for any user, and create user records.
+Security-sensitive findings (auth bypasses, injection vulnerabilities, credential leaks, unauthenticated endpoints) are documented separately in `security-audit.md` (gitignored, not committed to the public repo). 17 security findings total.
 
 ---
 
-## High (Security)
-
-### A-002: Store search passes user input directly to MongoDB `$regex`
-
-**File:** `packages/cloud/src/services/core/store.service.ts`, ~L98-106
-
-```
-const apps = await App.find({
-  appStoreStatus: "PUBLISHED",
-  $or: [
-    { name: { $regex: query, $options: "i" } },
-    { packageName: { $regex: query, $options: "i" } }
-  ],
-}).lean();
-```
-
-The user-supplied `query` string from `GET /api/store/search?q=` is passed directly as a MongoDB `$regex` pattern without escaping. This enables ReDoS (regex denial of service) via crafted patterns like `.*.*.*.*.*.*.*a`.
-
-**Impact:** An attacker can slow or hang MongoDB queries. Should use `escapeRegex(query)` or `$text` search.
-
-### A-003: Legacy `exchange-store-token` leaks static Supabase JWT to client
-
-**File:** `packages/cloud/src/api/hono/routes/auth.routes.ts`, ~L246-266
-
-The legacy `POST /auth/exchange-store-token` endpoint returns a `supabaseToken` field in the response that contains the value of the `JOE_MAMA_USER_JWT` environment variable. This is a static server-side token being sent to every caller.
-
-The newer `POST /api/store/auth/exchange-store-token` does NOT include this field.
-
-**Impact:** Every authenticated store token exchanger receives a shared Supabase JWT. The legacy endpoint should be removed or the field stripped.
+## High (Bugs)
 
 ### A-004: `sendError` kills the entire WebSocket on every error (including transient)
 
@@ -82,18 +42,6 @@ Race condition: the app server could connect _after_ the timeout but before clea
 
 **Impact:** Apps with server startup > 6s will always fail to start, even if the webhook eventually succeeds.
 
-### A-006: JWT secret falls back to empty string
-
-**File:** `packages/cloud/src/services/websocket/websocket.service.ts`, ~L15
-
-```
-const AUGMENTOS_AUTH_JWT_SECRET = process.env.AUGMENTOS_AUTH_JWT_SECRET || "";
-```
-
-If the env var is missing, `jwt.verify(token, "")` will verify tokens signed with the empty string, enabling token forgery. The Bun WebSocket handler (`bun-websocket.ts:48`) does NOT use a fallback (correctly leaves it undefined).
-
-**Impact:** If the env var is unset, any token signed with an empty string is accepted.
-
 ---
 
 ## High (Dead Code / Duplication)
@@ -121,7 +69,7 @@ Mounted at both `/api/apps` and `/apps`. Handles install/uninstall/start/stop wi
 
 ### A-010: `/auth/*` duplicates `/api/store/auth/*` token exchange
 
-Both paths are live. The legacy one at `/auth/exchange-store-token` has the Supabase JWT leak (A-003). The new one at `/api/store/auth/exchange-store-token` is clean.
+Both paths are live. The legacy one at `/auth/exchange-store-token` has issues (see `security-audit.md`). The new one at `/api/store/auth/exchange-store-token` is clean.
 
 ---
 
@@ -205,34 +153,6 @@ The `snapshotForClient()` call is commented out of the CONNECTION_ACK message se
 
 ---
 
-## Medium (Security)
-
-### A-019: `/api/admin/debug` exposes DB counts with no auth
-
-**File:** `packages/cloud/src/api/hono/routes/admin.routes.ts`, ~L43
-
-Returns document counts (apps, orgs) and status information to any unauthenticated caller.
-
-### A-020: `/api/onboarding/status` takes email from query param, no auth
-
-**File:** `packages/cloud/src/api/hono/routes/onboarding.routes.ts`, ~L24
-
-Allows probing for user/app existence without authentication.
-
-### A-021: `create-test-submission` admin route relies only on NODE_ENV
-
-**File:** `packages/cloud/src/api/hono/routes/admin.routes.ts`, ~L45
-
-If `NODE_ENV` is misconfigured in production, anyone can create test app submissions.
-
-### A-022: System-app API key auth via query params
-
-**File:** `packages/cloud/src/api/hono/sdk/system-app/system-app.api.ts`, ~L68-71
-
-API keys are passed as query parameters rather than headers. Query params appear in access logs, browser history, referrer headers, and proxy logs. The whitelist restricts this to trusted packages, but credentials should be in headers.
-
----
-
 ## Low (Dead Code / Cleanup)
 
 ### A-023: `photo-taken.service.ts` is entirely dead
@@ -289,12 +209,6 @@ The 404 handler checks for "legacy routes not yet migrated" but the array is emp
 
 `getIncidentLogs` checks `!incidentId` twice in a row. The second check is unreachable.
 
-### A-032: Rate limiting TODO never implemented for simple-storage
-
-**File:** `packages/cloud/src/api/hono/sdk/simple-storage.api.ts`, ~L31-33
-
-Comment documents a 100 req/min rate limit, but the middleware is commented out. No rate limiting is applied.
-
 ### A-033: `isTranscribing` flag is stale
 
 **File:** `packages/cloud/src/services/session/UserSession.ts`, ~L109
@@ -340,25 +254,19 @@ The handler is for `/glasses-ws`, but the log message says "Phone WebSocket conn
 
 The Bun WebSocket handler checks for both `/app-ws` and `/ws/miniapp`. The ws-based fallback only checks `/app-ws`. If the server ever runs in a non-Bun environment, `/ws/miniapp` connections will be destroyed.
 
-### A-040: Console JWT secret evaluated at module load, not per-request
-
-**File:** `packages/cloud/src/api/hono/middleware/console.middleware.ts`, ~L17
-
-Inconsistent with CLI middleware which evaluates per-request via `getCLIJWTSecret()`. If the env var changes at runtime (secret rotation), the console middleware won't pick it up.
-
 ---
 
 ## Summary by Severity
 
-| Severity          | Count  | Key Items                                                                                                   |
-| ----------------- | ------ | ----------------------------------------------------------------------------------------------------------- |
-| Critical          | 1      | A-001: Auth bypass on settings endpoint                                                                     |
-| High (Security)   | 5      | A-002 regex injection, A-003 JWT leak, A-004 sendError kills WS, A-005 timeout race, A-006 empty JWT secret |
-| High (Dead Code)  | 4      | A-007 through A-010: ~2000+ lines of duplicated legacy routes                                               |
-| Medium (Bugs)     | 8      | A-011 through A-018: missing guards, inverted logs, orphaned streams, polling loops                         |
-| Medium (Security) | 4      | A-019 through A-022: unauthenticated endpoints, query param credentials                                     |
-| Low (Dead Code)   | 18     | A-023 through A-040: stale files, unused constants, commented-out code, misleading logs                     |
-| **Total**         | **40** |                                                                                                             |
+| Severity         | Count  | Key Items                                                                               |
+| ---------------- | ------ | --------------------------------------------------------------------------------------- |
+| High (Bugs)      | 2      | A-004 sendError kills WS, A-005 timeout race                                            |
+| High (Dead Code) | 4      | A-007 through A-010: ~2000+ lines of duplicated legacy routes                           |
+| Medium (Bugs)    | 8      | A-011 through A-018: missing guards, inverted logs, orphaned streams, polling loops     |
+| Low (Dead Code)  | 16     | A-023 through A-039: stale files, unused constants, commented-out code, misleading logs |
+| **Total**        | **30** |                                                                                         |
+
+17 additional security findings are in the gitignored `security-audit.md`.
 
 ---
 
@@ -434,12 +342,6 @@ If the user is on China deployment or a dev server, this share link points to th
 | `sendErrorReport()` L525  | `/app/error-report`    | `/api/error-report`        |
 
 All work due to backward-compat aliases on the cloud, but they're hitting legacy routes.
-
-### M-009: Authing (China) refresh token not implemented
-
-**File:** `mobile/src/utils/auth/provider/authingClient.ts`, L151 and L264
-
-Two TODOs indicate refresh token flow is not implemented. China deployment users can't refresh their tokens.
 
 ## Low (Dead Code)
 
@@ -635,12 +537,6 @@ The message says "Type the package name to confirm deletion" but the code uses a
 
 Export only includes `packageName, name, description, appType, publicUrl, logoURL`. Both `webviewURL` and `permissions` are silently dropped. Import doesn't set `webviewURL` either. Export then import loses data.
 
-### CLI-006: `TEST_RESULTS.md` contains old brand URLs and PII
-
-**File:** `TEST_RESULTS.md`
-
-References `https://isaiah.augmentos.cloud`, `dev.augmentos.isaiah` package name, personal email. Committed test artifact with stale URLs and PII.
-
 ## Medium
 
 ### CLI-007: Dead root `index.ts`
@@ -662,24 +558,6 @@ Contains only `console.log("Hello via Bun!")`. Real entry point is `src/index.ts
 | `password()`       | `src/utils/prompt.ts`    |
 | `multiSelect()`    | `src/utils/prompt.ts`    |
 
-### CLI-009: Token not validated at `mentra auth` time
-
-**File:** `src/commands/auth.ts`, ~L19-21
-
-`mentra auth <token>` only does `jwt.decode()` (no signature verification) and saves. User doesn't discover a revoked/invalid token until their first API call.
-
-### CLI-010: Keychain clear leaves poison empty string
-
-**File:** `src/config/credentials.ts`, ~L113-118
-
-`clearCredentials()` sets keychain value to `""`. On next `loadCredentials()`, `JSON.parse("")` throws. The catch block silently falls through to file storage. Functional but dirty - silent exception on every load after logout.
-
-### CLI-011: Cloud switching doesn't warn about credential mismatch
-
-**File:** `src/commands/cloud.ts`, ~L62-72
-
-Switching from production to staging doesn't re-validate credentials. If staging uses a different JWT secret, user gets opaque 401 with no guidance to re-authenticate.
-
 ### CLI-012: Test suite is mostly placeholder stubs
 
 **Files:** `test/credentials.test.ts`, `test/api-client.test.ts`
@@ -698,25 +576,23 @@ Claims `test/integration/` directory exists with `auth-flow.test.ts`, `app-comma
 
 | Codebase          | Critical | High   | Medium | Low    | Total  |
 | ----------------- | -------- | ------ | ------ | ------ | ------ |
-| Cloud Server      | 1        | 9      | 12     | 18     | 40     |
-| Mobile Client     | 3        | 4      | 2      | 5      | 14     |
+| Cloud Server      | 0        | 6      | 8      | 16     | 30     |
+| Mobile Client     | 3        | 4      | 1      | 5      | 13     |
 | Developer Console | 1        | 3      | 2      | 0      | 6      |
 | App Store         | 0        | 3      | 2      | 0      | 5      |
-| CLI               | 3        | 3      | 7      | 0      | 13     |
-| **Total**         | **8**    | **22** | **25** | **23** | **78** |
+| CLI               | 3        | 2      | 4      | 0      | 9      |
+| **Total**         | **7**    | **18** | **17** | **21** | **63** |
+
+17 additional security findings are in the gitignored `security-audit.md`.
 
 ## Recommended Review Order
 
-1. **A-001** - Critical auth bypass on settings endpoint. Verify if reachable in production.
-2. **A-004** - `sendError` killing connections on transient errors. Likely a major contributor to "apps feel broken."
-3. **A-003** - JWT leak in legacy endpoint. Check if legacy `/auth/exchange-store-token` can be removed.
-4. **M-001** - Mobile calls `/api/client/goodbye` which doesn't exist. Silent 404 on every disconnect.
-5. **M-002** - Users see literal "TODO" strings in the UI.
-6. **A-002** - Regex injection in store search. Quick fix (escape the input).
-7. **A-005** - Timeout race in app start. 6s session timeout vs 10s webhook timeout.
-8. **A-006** - Empty string JWT fallback enables token forgery if env var unset.
-9. **CLI-001/002/003** - CLI advertises features that don't work (`.mentrarc`, global flags, delete confirmation).
-10. **A-007 through A-010** - ~2000 lines of duplicated legacy routes. Decide what can be removed.
-11. **C-002** - Console still has 16 call sites hitting legacy endpoints instead of new console API.
-12. **S-001** - Store has 7 dead API functions from before `@mentra/shared` migration.
-13. Everything else in severity order.
+1. **A-004** - `sendError` killing connections on transient errors. Likely a major contributor to "apps feel broken."
+2. **A-005** - Timeout race in app start. 6s session timeout vs 10s webhook timeout.
+3. **M-001** - Mobile calls `/api/client/goodbye` which doesn't exist. Silent 404 on every disconnect.
+4. **M-002** - Users see literal "TODO" strings in the UI.
+5. **CLI-001/002/003** - CLI advertises features that don't work (`.mentrarc`, global flags, delete confirmation).
+6. **A-007 through A-010** - ~2000 lines of duplicated legacy routes. Decide what can be removed.
+7. **C-002** - Console still has 16 call sites hitting legacy endpoints instead of new console API.
+8. **S-001** - Store has 7 dead API functions from before `@mentra/shared` migration.
+9. Everything else in severity order.
