@@ -240,6 +240,11 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.d(TAG, "🗑️ Cleaning up orphaned BLE transfer files");
             cleanupOrphanedBleTransfers();
 
+            // Schedule drain of any pending incident logs from previous sessions
+            Log.d(TAG, "📋 Scheduling incident log upload drain (startup sweep)");
+            com.mentra.asg_client.reporting.incidentlogs.IncidentLogUploadScheduler
+                .scheduleDrain(this);
+
             // Log all available video resolutions
             Log.d(TAG, "📹 Querying available video resolutions");
             logAvailableVideoResolutions();

@@ -5,22 +5,12 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.mentra.asg_client.reporting.incidentlogs.IncidentLogUploadScheduler;
+import com.mentra.asg_client.reporting.incidentlogs.PendingIncidentLogStore;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
-import com.mentra.asg_client.utils.ServerConfigUtil;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-
-import java.io.IOException;
-import java.util.concurrent.TimeUnit;
-
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
 
 /**
  * Manages BES chip log collection over UART.
@@ -48,9 +38,6 @@ public class BesLogManager {
   private static final String TERMINATOR_BODY = "end";
   private static final long FIRST_PACKET_TIMEOUT_MS = 2000;
   private static final long OVERALL_TIMEOUT_MS = 20_000; // 20 s — only fires if terminator never arrives
-
-  private static final MediaType JSON_MEDIA_TYPE =
-      MediaType.parse("application/json; charset=utf-8");
 
   private final String mIncidentId;
   private final Context mContext;
@@ -185,18 +172,16 @@ public class BesLogManager {
     Log.i(TAG, "===== BES TRACE LOG END =====");
   }
 
+  /**
+   * Persist BES logs to the durable pending queue and schedule upload.
+   *
+   * <p>Previously this method POSTed directly to the backend via OkHttp, which
+   * silently lost logs when WiFi was down (e.g., STA torn down for SoftAP).
+   * Now it writes to disk immediately and lets the WorkManager-based
+   * {@link IncidentLogUploadWorker} handle upload + retry.</p>
+   */
   private void uploadLogs(String logText) {
     try {
-      String coreToken = mConfigurationManager.getCoreToken();
-      if (coreToken == null || coreToken.isEmpty()) {
-        Log.e(TAG, "No coreToken — cannot upload BES logs for incident " + mIncidentId);
-        return;
-      }
-
-      String baseUrl = ServerConfigUtil.getServerBaseUrl(mContext);
-      // baseUrl = "https://devapi.mentra.glass:443";
-      String url = baseUrl + "/api/incidents/" + mIncidentId + "/logs";
-
       // Build log entries: one entry per non-empty line, matching the incident logs schema
       JSONArray logs = new JSONArray();
       long now = System.currentTimeMillis();
@@ -210,53 +195,20 @@ public class BesLogManager {
         logs.put(entry);
       }
 
-      JSONObject body = new JSONObject();
-      body.put("source", "glasses_firmware");
-      body.put("logs", logs);
+      if (logs.length() == 0) {
+        Log.i(TAG, "No BES log lines to persist for incident " + mIncidentId);
+        return;
+      }
 
-      RequestBody requestBody = RequestBody.create(body.toString(), JSON_MEDIA_TYPE);
+      // Persist to disk and schedule upload
+      PendingIncidentLogStore store = new PendingIncidentLogStore(mContext);
+      store.enqueue(mIncidentId, "glasses_firmware", logs);
+      IncidentLogUploadScheduler.scheduleDrain(mContext);
 
-      // BES payload can be large (25k+ chars); backend may need time to merge + store to R2
-      OkHttpClient client = new OkHttpClient.Builder()
-          .connectTimeout(15, TimeUnit.SECONDS)
-          .writeTimeout(45, TimeUnit.SECONDS)
-          .readTimeout(60, TimeUnit.SECONDS)
-          .build();
-
-      Request request = new Request.Builder()
-          .url(url)
-          .header("Authorization", "Bearer " + coreToken)
-          .post(requestBody)
-          .build();
-
-      // [LOGS] Full request for glasses firmware (BES) logs — backend routes by body.source
-      String bodyStr = body.toString();
-      int bodyPreviewLen = Math.min(bodyStr.length(), 1500);
-      Log.i(TAG, "[LOGS] Glasses firmware (BES) full request: method=POST url=" + url
-          + " body.source=glasses_firmware body.logs.length=" + logs.length()
-          + " bodyPreview=" + (bodyStr.length() > bodyPreviewLen ? bodyStr.substring(0, bodyPreviewLen) + "..." : bodyStr));
-
-      client.newCall(request).enqueue(new Callback() {
-        @Override
-        public void onFailure(Call call, IOException e) {
-          Log.e(TAG, "Failed to upload BES logs for incident " + mIncidentId, e);
-        }
-
-        @Override
-        public void onResponse(Call call, Response response) {
-          if (response.isSuccessful()) {
-            Log.i(TAG, "✅ BES (glasses_firmware) logs uploaded for incident "
-                + mIncidentId + " (" + logs.length() + " lines)");
-          } else {
-            Log.e(TAG, "❌ Server rejected BES logs upload — status: "
-                + response.code() + " for incident " + mIncidentId);
-          }
-          response.close();
-        }
-      });
-
+      Log.i(TAG, "✅ BES logs queued for incident " + mIncidentId
+          + " (" + logs.length() + " lines)");
     } catch (Exception e) {
-      Log.e(TAG, "Error preparing BES logs upload for incident " + mIncidentId, e);
+      Log.e(TAG, "Error persisting BES logs for incident " + mIncidentId, e);
     }
   }
 }

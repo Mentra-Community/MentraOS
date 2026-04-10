@@ -321,6 +321,9 @@ dependencies {
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
 
+    // WorkManager for offline-first incident log upload
+    implementation 'androidx.work:work-runtime:2.9.0'
+
     // Sentry SDK for error reporting
     implementation 'io.sentry:sentry-android:7.5.0'
 
