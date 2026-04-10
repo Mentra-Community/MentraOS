@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.augmentos.otaupdater'
+    namespace 'com.mentra.otaupdater'
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.augmentos.otaupdater"
+        applicationId "com.mentra.otaupdater"
         minSdk 29
         targetSdk 35
         versionCode 3

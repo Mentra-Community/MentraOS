@@ -77,9 +77,9 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     public static final String ACTION_START_OTA_UPDATER = "ACTION_START_OTA_UPDATER";
 
     // OTA Update progress actions
-    public static final String ACTION_DOWNLOAD_PROGRESS = "com.augmentos.otaupdater.ACTION_DOWNLOAD_PROGRESS";
-    public static final String ACTION_INSTALLATION_PROGRESS = "com.augmentos.otaupdater.ACTION_INSTALLATION_PROGRESS";
-    public static final String ACTION_OTA_HEARTBEAT = "com.augmentos.otaupdater.ACTION_HEARTBEAT";
+    public static final String ACTION_DOWNLOAD_PROGRESS = "com.mentra.otaupdater.ACTION_DOWNLOAD_PROGRESS";
+    public static final String ACTION_INSTALLATION_PROGRESS = "com.mentra.otaupdater.ACTION_INSTALLATION_PROGRESS";
+    public static final String ACTION_OTA_HEARTBEAT = "com.mentra.otaupdater.ACTION_HEARTBEAT";
 
     // Service health monitoring
     private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
@@ -1143,13 +1143,13 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     Log.d(TAG, "💓 Heartbeat receiver triggered - Action: " + action);
                     
                     if (ACTION_HEARTBEAT.equals(action) ||
-                            "com.augmentos.otaupdater.ACTION_HEARTBEAT".equals(action)) {
+                            "com.mentra.otaupdater.ACTION_HEARTBEAT".equals(action)) {
 
                         Log.i(TAG, "💓 Heartbeat received - sending acknowledgment");
 
                         try {
                             Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                            ackIntent.setPackage("com.augmentos.otaupdater");
+                            ackIntent.setPackage("com.mentra.otaupdater");
                             sendBroadcast(ackIntent);
 
                             Log.i(TAG, "✅ Heartbeat acknowledgment sent successfully");

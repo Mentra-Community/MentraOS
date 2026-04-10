@@ -33,7 +33,7 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
             try {
                 // Send acknowledgment back to monitor
                 Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                ackIntent.setPackage("com.augmentos.otaupdater");
+                ackIntent.setPackage("com.mentra.otaupdater");
                 context.sendBroadcast(ackIntent);
                 Log.d(TAG, "Sent heartbeat acknowledgment");
             } catch (Exception e) {

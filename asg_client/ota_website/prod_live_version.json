@@ -6,7 +6,7 @@
       "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-35.apk",
       "sha256": "8d2cbb327d5063b9613ca393a7dd008f931da92676bdb2dd241fedf94925b3e5"
     },
-    "com.augmentos.otaupdater": {
+    "com.mentra.otaupdater": {
       "versionCode": 0,
       "versionName": "0.0.0",
       "apkUrl": "https://ota.mentraglass.com/apk/otaupdater-200.apk",

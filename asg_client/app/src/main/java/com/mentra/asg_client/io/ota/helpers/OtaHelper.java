@@ -101,7 +101,7 @@ public class OtaHelper {
     private static final String CACHE_FIELD_VERSION = "version";
     private static final String CACHE_FIELD_TIMESTAMP = "timestamp";
     private static final String CACHE_KEY_APK_ASG = "apk_com.mentra.asg_client";
-    private static final String CACHE_KEY_APK_UPDATER = "apk_com.augmentos.otaupdater";
+    private static final String CACHE_KEY_APK_UPDATER = "apk_com.mentra.otaupdater";
     private static final String CACHE_KEY_MTK = "mtk_main";
     private static final String CACHE_KEY_BES = "bes_main";
     
@@ -763,7 +763,7 @@ public class OtaHelper {
         // Process apps in order - important for sequential updates
         String[] orderedPackages = {
             "com.mentra.asg_client",     // Update ASG client first
-            "com.augmentos.otaupdater"      // Then OTA updater
+            "com.mentra.otaupdater"      // Then OTA updater
         };
 
         // PHASE 0: Pre-download firmware artifacts BEFORE any APK install.
@@ -2264,9 +2264,9 @@ public class OtaHelper {
                 }
 
                 // Check ota_updater
-                JSONObject otaUpdater = apps.optJSONObject("com.augmentos.otaupdater");
+                JSONObject otaUpdater = apps.optJSONObject("com.mentra.otaupdater");
                 if (otaUpdater != null) {
-                    long currentVersion = getInstalledVersion("com.augmentos.otaupdater", context);
+                    long currentVersion = getInstalledVersion("com.mentra.otaupdater", context);
                     long serverVersion = otaUpdater.getLong("versionCode");
                     if (serverVersion > currentVersion) {
                         // Include in APK updates (don't add separate entry, just size)
@@ -2367,9 +2367,9 @@ public class OtaHelper {
                         }
                     }
 
-                    JSONObject updaterInfo = apps.optJSONObject("com.augmentos.otaupdater");
-                    if (updaterInfo != null && updaterInfo.optLong("versionCode", 0) > getInstalledVersion("com.augmentos.otaupdater", context)) {
-                        String updaterPath = OtaConstants.BASE_DIR + "/" + getApkFilename("com.augmentos.otaupdater");
+                    JSONObject updaterInfo = apps.optJSONObject("com.mentra.otaupdater");
+                    if (updaterInfo != null && updaterInfo.optLong("versionCode", 0) > getInstalledVersion("com.mentra.otaupdater", context)) {
+                        String updaterPath = OtaConstants.BASE_DIR + "/" + getApkFilename("com.mentra.otaupdater");
                         if (!isCachedArtifactValid(CACHE_KEY_APK_UPDATER, UPDATE_TYPE_APK, updaterPath, updaterInfo)) {
                             return false;
                         }

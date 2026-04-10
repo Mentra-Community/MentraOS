@@ -7,13 +7,13 @@ public class Constants {
     public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json"; // TODO: change with real server ip address
 
     // Heartbeat actions
-    public static final String ACTION_HEARTBEAT = "com.augmentos.otaupdater.ACTION_HEARTBEAT";
+    public static final String ACTION_HEARTBEAT = "com.mentra.otaupdater.ACTION_HEARTBEAT";
     public static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
     public static final String ACTION_RESTART_ASG_CLIENT = "com.mentra.asg_client.ACTION_RESTART_SERVICE";
     public static final String ACTION_ASG_RESTART_COMPLETE = "com.mentra.asg_client.ACTION_RESTART_COMPLETE";
-    public static final String ACTION_UPDATE_COMPLETED = "com.augmentos.otaupdater.ACTION_UPDATE_COMPLETED";
-    public static final String ACTION_RECOVERY_HEARTBEAT_ACK = "com.augmentos.otaupdater.ACTION_RECOVERY_HEARTBEAT_ACK"; // For internal recovery worker use
-    public static final String ACTION_UNBLOCK_HEARTBEATS = "com.augmentos.otaupdater.ACTION_UNBLOCK_HEARTBEATS"; // For explicit heartbeat unblocking
+    public static final String ACTION_UPDATE_COMPLETED = "com.mentra.otaupdater.ACTION_UPDATE_COMPLETED";
+    public static final String ACTION_RECOVERY_HEARTBEAT_ACK = "com.mentra.otaupdater.ACTION_RECOVERY_HEARTBEAT_ACK"; // For internal recovery worker use
+    public static final String ACTION_UNBLOCK_HEARTBEATS = "com.mentra.otaupdater.ACTION_UNBLOCK_HEARTBEATS"; // For explicit heartbeat unblocking
 
     // Service health monitoring intervals and timeouts
     public static final long HEARTBEAT_INTERVAL_MS = 6 * 1000;  // 2 minutes
@@ -29,7 +29,7 @@ public class Constants {
     public static final String BACKUP_APK_PATH = BASE_DIR + "/" + BACKUP_APK_FILENAME;
 
     // OTA update actions
-    public static final String ACTION_INSTALL_OTA = "com.augmentos.otaupdater.ACTION_INSTALL_OTA";
+    public static final String ACTION_INSTALL_OTA = "com.mentra.otaupdater.ACTION_INSTALL_OTA";
     public static final String APK_FILENAME = "update.apk";
     public static final String APK_FULL_PATH = BASE_DIR + "/" + APK_FILENAME;
     public static final String METADATA_JSON = "metadata.json";
@@ -48,7 +48,7 @@ public class Constants {
     public static final long UPDATE_TIMEOUT_MS = 5 * 60 * 1000;      // 5 minutes timeout for updates
     
     // Battery status actions
-    public static final String ACTION_GLASSES_BATTERY_STATUS = "com.augmentos.otaupdater.ACTION_GLASSES_BATTERY_STATUS";
+    public static final String ACTION_GLASSES_BATTERY_STATUS = "com.mentra.otaupdater.ACTION_GLASSES_BATTERY_STATUS";
     
     // Package names
     public static final String ASG_CLIENT_PACKAGE = "com.mentra.asg_client";

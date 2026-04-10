@@ -68,7 +68,7 @@ Add `bes_firmware` section to your version.json:
       "sha256": "abc123...",
       "releaseNotes": "ASG Client updates"
     },
-    "com.augmentos.otaupdater": {
+    "com.mentra.otaupdater": {
       "versionCode": 200,
       "versionName": "2.0.0",
       "apkUrl": "https://server.com/ota_updater_v2.0.0.apk",

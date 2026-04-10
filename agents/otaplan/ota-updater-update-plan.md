@@ -23,7 +23,7 @@ Your architectural insight is spot on - keeping these apps separate with mutual 
 ```java
 // In AsgClientService.java
 
-private static final String OTA_UPDATER_PACKAGE = "com.augmentos.otaupdater";
+private static final String OTA_UPDATER_PACKAGE = "com.mentra.otaupdater";
 
 @Override
 public void onCreate() {
@@ -133,7 +133,7 @@ private int getInstalledVersion(String packageName) {
   },
   "otaUpdater": {
     "versionCode": 2,
-    "packageName": "com.augmentos.otaupdater",
+    "packageName": "com.mentra.otaupdater",
     "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/...",
     "sha256": "...",
     "minAsgClientVersion": 6
@@ -155,7 +155,7 @@ private int getInstalledVersion(String packageName) {
       "apkUrl": "https://...",
       "sha256": "..."
     },
-    "com.augmentos.otaupdater": {
+    "com.mentra.otaupdater": {
       "versionCode": 2,
       "apkUrl": "https://...",
       "sha256": "..."

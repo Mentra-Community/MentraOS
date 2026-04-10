@@ -49,7 +49,7 @@ public class OtaService extends Service {
         // This prevents dual OTA checks when updating from older versions
         try {
             Log.w(TAG, "Stopping external OTA updater app to prevent conflicts");
-            SysControl.stopApp(this, "com.augmentos.otaupdater");
+            SysControl.stopApp(this, "com.mentra.otaupdater");
             Log.i(TAG, "External OTA updater stopped");
         } catch (Exception e) {
             Log.e(TAG, "Failed to stop external OTA updater", e);
