@@ -1,13 +1,14 @@
 import CoreModule from "core"
-import {useState, useEffect, useCallback, useMemo} from "react"
+import {useState, useEffect, useCallback, useMemo, useRef} from "react"
 import {View, Platform, TextInput, FlatList, ActivityIndicator, Image} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Screen, Text, Header, Switch} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
+import {notifyPackageName} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {$styles} from "@/theme"
 
 interface InstalledApp {
   packageName: string
@@ -20,8 +21,8 @@ interface InstalledApp {
 const ITEM_HEIGHT = 64
 
 export default function NotificationSettingsScreen() {
-  const {theme, themed} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {theme} = useAppTheme()
+  const viewShotRef = useRef<View>(null)
 
   const [apps, setApps] = useState<InstalledApp[]>([])
   const [blocklist, setBlocklist] = useSetting(SETTINGS.notifications_blocklist.key)
@@ -35,9 +36,7 @@ export default function NotificationSettingsScreen() {
 
   const loadInstalledApps = async () => {
     try {
-      // console.log("Loading installed apps...")
       const installedApps = await CoreModule.getInstalledApps()
-      // console.log(installedApps)
 
       // Sort alphabetically by app name
       let sortedApps = installedApps.sort((a: InstalledApp, b: InstalledApp) => a.appName.localeCompare(b.appName))
@@ -55,8 +54,8 @@ export default function NotificationSettingsScreen() {
       console.error("Error loading apps:", error)
       Toast.show({
         type: "error",
-        text1: "Failed to load apps",
-        text2: "Please try again",
+        text1: translate("settings:notificationsFailedLoad"),
+        text2: translate("settings:notificationsFailedLoadRetry"),
       })
     } finally {
       setLoading(false)
@@ -84,19 +83,18 @@ export default function NotificationSettingsScreen() {
           setBlocklist([...new Set([...currentBlocklist, packageName])])
         }
 
-        // Update local state
-        // setApps(prev => prev.map(app => (app.packageName === packageName ? {...app, isBlocked: newBlockedState} : app)))
-
         Toast.show({
           type: newBlockedState ? "info" : "success",
-          text1: newBlockedState ? "Notifications blocked" : "Notifications enabled",
+          text1: newBlockedState
+            ? translate("settings:notificationsBlocked")
+            : translate("settings:notificationsEnabled"),
           text2: apps.find((a) => a.packageName === packageName)?.appName || packageName,
         })
       } catch (error) {
         console.error("Error toggling app:", error)
         Toast.show({
           type: "error",
-          text1: "Failed to update setting",
+          text1: translate("settings:notificationsFailedUpdate"),
         })
       }
     },
@@ -192,122 +190,136 @@ export default function NotificationSettingsScreen() {
 
   if (loading) {
     return (
-      <Screen preset="fixed">
-        <Header title="Notification Settings" leftIcon="chevron-left" onLeftPress={goBack} />
-        <View style={{flex: 1, justifyContent: "center", alignItems: "center"}}>
-          <ActivityIndicator size="large" color={theme.colors.foreground} />
-          <Text style={{color: theme.colors.textDim, marginTop: theme.spacing.s4}}>Loading apps...</Text>
-        </View>
-      </Screen>
+      <>
+        <MiniAppCapsuleMenu packageName={notifyPackageName} viewShotRef={viewShotRef} />
+        <Screen preset="fixed" ref={viewShotRef}>
+          <Header title={translate("settings:notificationsSettings")} />
+          <View style={{flex: 1, justifyContent: "center", alignItems: "center"}}>
+            <ActivityIndicator size="large" color={theme.colors.foreground} />
+            <Text style={{color: theme.colors.textDim, marginTop: theme.spacing.s4}}>
+              {translate("settings:notificationsLoadingApps")}
+            </Text>
+          </View>
+        </Screen>
+      </>
     )
   }
 
   // Show iOS message if on iOS
   if (Platform.OS === "ios") {
     return (
-      <Screen preset="fixed">
-        <Header title="Notification Settings" leftIcon="chevron-left" onLeftPress={goBack} />
-        <View style={{flex: 1, justifyContent: "center", alignItems: "center", padding: theme.spacing.s6}}>
-          <Text
-            style={{
-              fontSize: 18,
-              fontWeight: "600",
-              color: theme.colors.text,
-              textAlign: "center",
-              marginBottom: theme.spacing.s4,
-            }}>
-            iOS Notification Settings
-          </Text>
-          <Text style={{color: theme.colors.textDim, textAlign: "center", lineHeight: 22}}>
-            Notification settings are not implemented yet in iOS.
-          </Text>
-        </View>
-      </Screen>
+      <>
+        <MiniAppCapsuleMenu packageName={notifyPackageName} viewShotRef={viewShotRef} />
+        <Screen preset="fixed" ref={viewShotRef}>
+          <Header title={translate("settings:notificationsSettings")} />
+          <View style={{flex: 1, justifyContent: "center", alignItems: "center", padding: theme.spacing.s6}}>
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: "600",
+                color: theme.colors.text,
+                textAlign: "center",
+                marginBottom: theme.spacing.s4,
+              }}>
+              {translate("settings:notificationsIosTitle")}
+            </Text>
+            <Text style={{color: theme.colors.textDim, textAlign: "center", lineHeight: 22}}>
+              {translate("settings:notificationsIosMessage")}
+            </Text>
+          </View>
+        </Screen>
+      </>
     )
   }
 
   return (
-    <Screen preset="fixed">
-      <Header title="Notification Settings" leftIcon="chevron-left" onLeftPress={goBack} />
+    <>
+      <MiniAppCapsuleMenu packageName={notifyPackageName} viewShotRef={viewShotRef} />
+      <Screen preset="fixed" ref={viewShotRef}>
+        <Header title={translate("settings:notificationsSettings")} />
 
-      {/* Explanatory Text */}
-      <View
-        style={{
-          paddingHorizontal: theme.spacing.s4,
-          paddingVertical: theme.spacing.s3,
-        }}>
-        <Text
+        {/* Explanatory Text */}
+        <View
           style={{
-            fontSize: 13,
-            color: theme.colors.textDim,
-            lineHeight: 18,
-            marginBottom: theme.spacing.s2,
+            paddingHorizontal: theme.spacing.s4,
+            paddingVertical: theme.spacing.s3,
           }}>
-          Control which apps can send notifications to MentraOS. When enabled, notifications from these apps will be
-          available to MentraOS.
-        </Text>
-      </View>
+          <Text
+            style={{
+              fontSize: 13,
+              color: theme.colors.textDim,
+              lineHeight: 18,
+              marginBottom: theme.spacing.s2,
+            }}>
+            {translate("settings:notificationsDescription")}
+          </Text>
+        </View>
 
-      {/* Search Bar */}
-      <View
-        style={{
-          paddingHorizontal: theme.spacing.s4,
-          paddingBottom: theme.spacing.s3,
-        }}>
-        <TextInput
-          placeholder="Search apps..."
-          placeholderTextColor={theme.colors.textDim}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
+        {/* Search Bar */}
+        <View
           style={{
-            // backgroundColor: theme.colors.card,
-            borderRadius: theme.spacing.s3,
+            paddingHorizontal: theme.spacing.s4,
+            paddingBottom: theme.spacing.s3,
+          }}>
+          <TextInput
+            placeholder={translate("settings:notificationsSearchApps")}
+            placeholderTextColor={theme.colors.textDim}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            style={{
+              borderRadius: theme.spacing.s3,
+              paddingHorizontal: theme.spacing.s4,
+              paddingVertical: theme.spacing.s2,
+              fontSize: 15,
+              color: theme.colors.text,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          />
+        </View>
+
+        {/* Stats */}
+        <View
+          style={{
             paddingHorizontal: theme.spacing.s4,
             paddingVertical: theme.spacing.s2,
-            fontSize: 15,
-            color: theme.colors.text,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-          }}
+            borderBottomWidth: 1,
+            borderBottomColor: theme.colors.border,
+          }}>
+          <Text style={{fontSize: 12, color: theme.colors.textDim, fontWeight: "500"}}>
+            {translate("settings:notificationsAppsEnabled", {
+              enabled: filteredApps.filter((app) => !app.isBlocked).length,
+              total: filteredApps.length,
+            })}
+          </Text>
+        </View>
+
+        {/* Apps List */}
+        <FlatList
+          data={filteredApps}
+          keyExtractor={keyExtractor}
+          renderItem={renderAppItem}
+          contentContainerStyle={{paddingBottom: theme.spacing.s8}}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          getItemLayout={getItemLayout}
+          removeClippedSubviews={false}
+          maxToRenderPerBatch={20}
+          windowSize={21}
+          initialNumToRender={20}
+          updateCellsBatchingPeriod={50}
+          maintainVisibleContentPosition={{minIndexForVisible: 0}}
+          ListEmptyComponent={
+            <View style={{flex: 1, alignItems: "center", marginTop: theme.spacing.s12}}>
+              <Text style={{color: theme.colors.textDim}}>
+                {searchQuery
+                  ? translate("settings:notificationsNoAppsFoundSearch")
+                  : translate("settings:notificationsNoAppsFound")}
+              </Text>
+            </View>
+          }
         />
-      </View>
-
-      {/* Stats */}
-      <View
-        style={{
-          paddingHorizontal: theme.spacing.s4,
-          paddingVertical: theme.spacing.s2,
-          borderBottomWidth: 1,
-          borderBottomColor: theme.colors.border,
-        }}>
-        <Text style={{fontSize: 12, color: theme.colors.textDim, fontWeight: "500"}}>
-          {filteredApps.filter((app) => !app.isBlocked).length} of {filteredApps.length} apps enabled
-        </Text>
-      </View>
-
-      {/* Apps List - Simplified settings */}
-      <FlatList
-        data={filteredApps}
-        keyExtractor={keyExtractor}
-        renderItem={renderAppItem}
-        contentContainerStyle={{paddingBottom: theme.spacing.s8}}
-        onRefresh={onRefresh}
-        refreshing={refreshing}
-        getItemLayout={getItemLayout}
-        removeClippedSubviews={false}
-        maxToRenderPerBatch={20}
-        windowSize={21}
-        initialNumToRender={20}
-        updateCellsBatchingPeriod={50}
-        maintainVisibleContentPosition={{minIndexForVisible: 0}}
-        ListEmptyComponent={
-          <View style={{flex: 1, alignItems: "center", marginTop: theme.spacing.s12}}>
-            <Text style={{color: theme.colors.textDim}}>
-              {searchQuery ? "No apps found matching your search" : "No apps found"}
-            </Text>
-          </View>
-        }
-      />
-    </Screen>
+      </Screen>
+    </>
   )
 }

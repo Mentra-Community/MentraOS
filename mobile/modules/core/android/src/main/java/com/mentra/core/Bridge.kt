@@ -600,7 +600,7 @@ public class Bridge private constructor() {
                         "$packageName-$notificationKey" // Stable ID combining package and Android
                 // key
                 data["app"] = appName
-                data["title"] = title
+                data["title"] = title.ifEmpty { appName }
                 data["content"] = text
                 data["priority"] = "normal" // Default priority, could be enhanced later
                 data["timestamp"] = timestamp

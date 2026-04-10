@@ -18,10 +18,14 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.audio.AudioAssets;
+import com.mentra.asg_client.camera.CameraNeo;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
+import com.mentra.asg_client.service.core.constants.BatteryConstants;
+import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.utils.WakeLockManager;
 
 import org.webrtc.RTCStats;
 import org.webrtc.RTCStatsCollectorCallback;
@@ -51,6 +55,8 @@ import org.webrtc.VideoTrack;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -124,6 +130,15 @@ public class WhipStreamingService extends Service {
   private enum StreamState { IDLE, STARTING, STREAMING, STOPPING, RECONNECTING }
   private volatile StreamState mStreamState = StreamState.IDLE;
   private final Object mStateLock = new Object();
+
+  // ---- Stream timeout (keep-alive) ----
+  private static final long STREAM_TIMEOUT_MS = 60000; // 60 seconds
+  private Timer mStreamTimeoutTimer;
+
+  // ---- Battery monitoring ----
+  private static IStateManager sStateManager;
+  private Handler mBatteryMonitorHandler;
+  private Runnable mBatteryCheckRunnable;
 
   // ---- Reconnection ----
   private static final int MAX_RECONNECT_ATTEMPTS = 3;
@@ -234,6 +249,20 @@ public class WhipStreamingService extends Service {
 
   /** Start streaming to the currently configured WHIP URL. */
   private void startStreaming() {
+    // Check if camera is busy with photo/video capture
+    if (CameraNeo.isCameraInUse()) {
+      Log.e(TAG, "Cannot start WHIP stream - camera is busy with photo/video capture");
+      notifyError("camera_busy");
+      // If we were reconnecting, reset state so we don't get stuck in RECONNECTING
+      if (mIsReconnecting) {
+        mIsReconnecting = false;
+        mReconnectAttempts = 0;
+        resetState();
+        notifyStopped();
+      }
+      return;
+    }
+
     synchronized (mStateLock) {
       if (mStreamState != StreamState.IDLE && mStreamState != StreamState.RECONNECTING) {
         Log.w(TAG, "startStreaming() called in state " + mStreamState + ", ignoring");
@@ -241,6 +270,10 @@ public class WhipStreamingService extends Service {
       }
       mStreamState = StreamState.STARTING;
     }
+
+    // Acquire wake lock to prevent device sleep during streaming
+    WakeLockManager.acquireFullWakeLockAndBringToForeground(
+        getApplicationContext(), 2180000, 5000);
 
     if (!mIsReconnecting) {
       mReconnectAttempts = 0;
@@ -276,6 +309,8 @@ public class WhipStreamingService extends Service {
     }
 
     mMainHandler.removeCallbacks(mStatsRunnable);
+    cancelStreamTimeout();
+    stopBatteryMonitoring();
     Log.d(TAG, "Stopping WHIP streaming (forReconnect=" + forReconnect + ")");
 
     if (mWhipResourceUrl != null) {
@@ -298,6 +333,7 @@ public class WhipStreamingService extends Service {
       }
       mIsReconnecting = false;
       mReconnectAttempts = 0;
+      WakeLockManager.releaseAllWakeLocks();
       resetState();
       notifyStopped();
       updateNotification("Stream stopped");
@@ -536,6 +572,8 @@ public class WhipStreamingService extends Service {
             mLastVideoBytesSent = 0;
             mLastAudioBytesSent = 0;
             mMainHandler.postDelayed(mStatsRunnable, STATS_INTERVAL_MS);
+            scheduleStreamTimeout(mCurrentStreamId);
+            startBatteryMonitoring();
             Log.d(TAG, "Streaming started via WHIP");
             if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
               mHardwareManager.setRecordingLedOn();
@@ -769,6 +807,107 @@ public class WhipStreamingService extends Service {
   }
 
   // -----------------------------------------------------------------------
+  // Stream timeout (keep-alive)
+  // -----------------------------------------------------------------------
+
+  private void scheduleStreamTimeout(String streamId) {
+    cancelStreamTimeout();
+
+    mStreamTimeoutTimer = new Timer("WhipStreamTimeout-" + streamId);
+    mStreamTimeoutTimer.schedule(new TimerTask() {
+      @Override
+      public void run() {
+        mMainHandler.post(() -> {
+          synchronized (mStateLock) {
+            if (mStreamState != StreamState.STREAMING) return;
+          }
+          Log.w(TAG, "Stream timed out - no keep-alive received within " + STREAM_TIMEOUT_MS + "ms");
+          notifyError("Stream timed out - no keep-alive from cloud");
+          stopStreaming();
+        });
+      }
+    }, STREAM_TIMEOUT_MS);
+  }
+
+  private void cancelStreamTimeout() {
+    if (mStreamTimeoutTimer != null) {
+      mStreamTimeoutTimer.cancel();
+      mStreamTimeoutTimer = null;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Battery monitoring
+  // -----------------------------------------------------------------------
+
+  private void startBatteryMonitoring() {
+    stopBatteryMonitoring();
+
+    if (mBatteryMonitorHandler == null) {
+      mBatteryMonitorHandler = new Handler(Looper.getMainLooper());
+    }
+
+    mBatteryCheckRunnable = new Runnable() {
+      @Override
+      public void run() {
+        boolean shouldStop = false;
+        boolean shouldReschedule = false;
+
+        synchronized (mStateLock) {
+          if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
+            return; // Stream ended, stop monitoring
+          }
+
+          if (mHardwareManager == null) {
+            Log.w(TAG, "HardwareManager not available during battery monitoring - will retry");
+            shouldReschedule = true;
+          } else if (mStreamState == StreamState.STREAMING) {
+            int batteryLevel = mHardwareManager.getBatteryLevel();
+
+            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+              Log.w(TAG, "Battery dropped to " + batteryLevel
+                  + "% during WHIP streaming - stopping");
+              shouldStop = true;
+
+              if (mHardwareManager.supportsAudioPlayback()) {
+                mHardwareManager.playAudioAsset(AudioAssets.BATTERY_LOW);
+              }
+            } else {
+              shouldReschedule = true;
+            }
+          } else {
+            // Reconnecting — keep monitoring
+            shouldReschedule = true;
+          }
+        }
+
+        if (shouldReschedule && mBatteryMonitorHandler != null) {
+          mBatteryMonitorHandler.postDelayed(this,
+              BatteryConstants.BATTERY_CHECK_INTERVAL_MS);
+        }
+
+        if (shouldStop) {
+          stopStreaming();
+        }
+      }
+    };
+
+    mBatteryMonitorHandler.postDelayed(mBatteryCheckRunnable,
+        BatteryConstants.BATTERY_CHECK_INTERVAL_MS);
+    Log.d(TAG, "Started battery monitoring for WHIP streaming");
+  }
+
+  private void stopBatteryMonitoring() {
+    if (mBatteryMonitorHandler != null) {
+      if (mBatteryCheckRunnable != null) {
+        mBatteryMonitorHandler.removeCallbacks(mBatteryCheckRunnable);
+        mBatteryCheckRunnable = null;
+      }
+      mBatteryMonitorHandler.removeCallbacksAndMessages(null);
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Static public API
   // -----------------------------------------------------------------------
 
@@ -833,6 +972,27 @@ public class WhipStreamingService extends Service {
   /** Get the current stream ID, or null if not streaming. */
   public static String getCurrentStreamId() {
     return sInstance != null ? sInstance.mCurrentStreamId : null;
+  }
+
+  /** Set the state manager for battery monitoring. */
+  public static void setStateManager(IStateManager stateManager) {
+    sStateManager = stateManager;
+  }
+
+  /**
+   * Reset the stream timeout timer (called by keep-alive commands).
+   * @return true if the streamId matches the current stream
+   */
+  public static boolean resetStreamTimeout(String streamId) {
+    if (sInstance == null) return false;
+    boolean matches = streamId != null && streamId.equals(sInstance.mCurrentStreamId);
+    if (matches) {
+      sInstance.scheduleStreamTimeout(streamId);
+      // Re-acquire wake lock on keep-alive
+      WakeLockManager.acquireFullWakeLockAndBringToForeground(
+          sInstance.getApplicationContext(), 2180000, 5000);
+    }
+    return matches;
   }
 
   public static void setStreamConfig(WhipStreamConfig config) {

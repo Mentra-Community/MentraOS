@@ -3,6 +3,7 @@ import {useRef, useEffect, useState} from "react"
 
 import {Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
 import {useGlassesStore} from "@/stores/glasses"
@@ -32,6 +33,7 @@ export default function CoreStatusBar() {
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const glassesConnected = useGlassesStore((state) => state.connected)
   const glassesFullyBooted = useGlassesStore((state) => state.fullyBooted)
+  const cloudStatus = useConnectionStore((state) => state.status)
   const insets = useSaferAreaInsets()
   const [touchEvent, setTouchEvent] = useState<TouchEvent | null>(null)
 
@@ -89,6 +91,11 @@ export default function CoreStatusBar() {
             {systemMicUnavailable && <Tag icon="unplug" label="SMIC unavailable!" bg="bg-destructive" />}
           </View>
           <View className="flex-row flex-wrap items-center justify-center justify-end">
+            <Tag
+              icon="wifi"
+              label={cloudStatus === "connected" ? "Cloud" : cloudStatus === "connecting" ? "Connecting" : cloudStatus === "error" ? "Cloud Err" : "Cloud Off"}
+              bg={cloudStatus === "connected" ? "bg-primary" : cloudStatus === "connecting" ? "bg-chart-3" : "bg-destructive"}
+            />
             <Tag icon="pointer" label={touchEvent ? (touchEvent.gesture_name ?? "None") : "None"} bg="bg-primary" />
             <Tag icon="bluetooth" label={glassesFullyBooted ? "Booted" : "Not booted"} bg="bg-primary" />
             <Tag

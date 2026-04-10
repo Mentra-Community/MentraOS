@@ -525,6 +525,14 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Cached required version from server - used to enforce updates even when offline
+  cached_required_version: {
+    key: "cached_required_version",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   // OTA update dismissal - stores the version code user dismissed (not persisted so resets on app restart)
   dismissed_ota_version: {
     key: "dismissed_ota_version",

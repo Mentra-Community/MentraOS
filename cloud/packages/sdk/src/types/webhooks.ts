@@ -35,7 +35,18 @@ export interface BaseWebhookRequest {
  */
 export interface SessionWebhookRequest extends BaseWebhookRequest {
   type: WebhookRequestType.SESSION_REQUEST;
+  /**
+   * Canonical mini app websocket URL for this app session.
+   * New SDK/server paths should prefer this field.
+   */
+  websocketUrl?: string;
+  /**
+   * @deprecated Prefer `websocketUrl`.
+   */
   mentraOSWebsocketUrl?: string;
+  /**
+   * @deprecated Prefer `websocketUrl`.
+   */
   augmentOSWebsocketUrl?: string;
 }
 
@@ -65,17 +76,13 @@ export interface WebhookResponse {
 /**
  * Type guard to check if a webhook request is a session request
  */
-export function isSessionWebhookRequest(
-  request: WebhookRequest,
-): request is SessionWebhookRequest {
+export function isSessionWebhookRequest(request: WebhookRequest): request is SessionWebhookRequest {
   return request.type === WebhookRequestType.SESSION_REQUEST;
 }
 
 /**
  * Type guard to check if a webhook request is a stop request
  */
-export function isStopWebhookRequest(
-  request: WebhookRequest,
-): request is StopWebhookRequest {
+export function isStopWebhookRequest(request: WebhookRequest): request is StopWebhookRequest {
   return request.type === WebhookRequestType.STOP_REQUEST;
 }

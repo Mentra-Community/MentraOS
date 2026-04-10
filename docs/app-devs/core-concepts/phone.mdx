@@ -1,0 +1,214 @@
+---
+title: "Phone"
+description: "Phone notifications and calendar events from the companion app."
+---
+
+Use `session.phone` to receive phone notifications and calendar events from the user's companion app. It exposes two sub-managers: `session.phone.notifications` and `session.phone.calendar`.
+
+## Quick Example
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.phone-reader",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  session.phone.notifications.on((notification) => {
+    session.display.showTextWall(`${notification.app}: ${notification.title}`);
+  });
+
+  session.phone.calendar.on((event) => {
+    session.display.showTextWall(`Upcoming: ${event.title}`);
+  });
+});
+
+await app.start();
+```
+
+## Notifications
+
+### Listening for notifications
+
+Subscribe to incoming phone notifications with `session.phone.notifications.on()`. The handler fires each time a new notification arrives on the user's phone.
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const cleanup = session.phone.notifications.on((notification) => {
+    session.logger.info("Notification from:", notification.app);
+    session.display.showTextWall(`${notification.title}\n${notification.content}`);
+  });
+
+  // Stop listening when done
+  session.onStopped(() => {
+    cleanup();
+  });
+});
+```
+
+The callback receives a notification object with these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `app` | `string` | Name of the app that sent the notification |
+| `title` | `string` | Notification title |
+| `content` | `string` | Notification body text |
+
+### Listening for dismissed notifications
+
+Subscribe to notifications the user dismisses on their phone:
+
+```typescript
+const cleanup = session.phone.notifications.onDismissed((notification) => {
+  session.logger.info("Dismissed:", notification.title);
+});
+```
+
+### Permission check
+
+Reading notifications requires the **READ_NOTIFICATIONS** permission. You can check at runtime:
+
+```typescript
+if (session.phone.notifications.hasPermission) {
+  session.phone.notifications.on((notification) => {
+    session.display.showTextWall(notification.title);
+  });
+} else {
+  session.logger.warn("No notification permission");
+}
+```
+
+## Calendar
+
+### Listening for calendar events
+
+Subscribe to calendar events from the user's phone:
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const cleanup = session.phone.calendar.on((event) => {
+    session.display.showTextWall(`${event.title} at ${event.dtStart}`);
+  });
+
+  session.onStopped(() => {
+    cleanup();
+  });
+});
+```
+
+### Permission check
+
+Calendar events require the **CALENDAR** permission:
+
+```typescript
+if (session.phone.calendar.hasPermission) {
+  session.phone.calendar.on((event) => {
+    session.display.showTextWall(event.title);
+  });
+} else {
+  session.logger.warn("No calendar permission");
+}
+```
+
+## API Reference
+
+### phone.notifications
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `on(handler)` | `(handler: (data) => void) => () => void` | Subscribe to incoming notifications. Returns a cleanup function. |
+| `onDismissed(handler)` | `(handler: (data) => void) => () => void` | Subscribe to dismissed notifications. Returns a cleanup function. |
+| `hasPermission` | `boolean` | Whether the app has READ_NOTIFICATIONS permission. |
+
+### phone.calendar
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `on(handler)` | `(handler: (data) => void) => () => void` | Subscribe to calendar events. Returns a cleanup function. |
+| `hasPermission` | `boolean` | Whether the app has CALENDAR permission. |
+
+## Common Patterns
+
+### Filter notifications by app
+
+```typescript
+app.onSession((session: MentraSession) => {
+  session.phone.notifications.on((notification) => {
+    // Only show Slack notifications
+    if (notification.app.toLowerCase().includes("slack")) {
+      session.display.showTextWall(`Slack: ${notification.title}\n${notification.content}`);
+    }
+  });
+});
+```
+
+### Show upcoming calendar events on session start
+
+```typescript
+app.onSession((session: MentraSession) => {
+  if (!session.phone.calendar.hasPermission) {
+    session.display.showTextWall("Calendar permission required.");
+    return;
+  }
+
+  session.phone.calendar.on((event) => {
+    session.display.showTextWall(`Next: ${event.title}`);
+  });
+});
+```
+
+### Combine notifications and transcription
+
+```typescript
+app.onSession((session: MentraSession) => {
+  // Show notifications briefly
+  session.phone.notifications.on((notification) => {
+    session.display.showTextWall(`[${notification.app}] ${notification.title}`);
+  });
+
+  // Default to showing transcription
+  session.transcription.on((data) => {
+    session.display.showTextWall(data.text);
+  });
+});
+```
+
+### Guard both permissions at once
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const hasNotifs = session.phone.notifications.hasPermission;
+  const hasCal = session.phone.calendar.hasPermission;
+
+  if (hasNotifs) {
+    session.phone.notifications.on((notification) => {
+      session.display.showTextWall(notification.title);
+    });
+  }
+
+  if (hasCal) {
+    session.phone.calendar.on((event) => {
+      session.display.showTextWall(event.title);
+    });
+  }
+
+  if (!hasNotifs && !hasCal) {
+    session.display.showTextWall("No phone permissions granted.");
+  }
+});
+```
+
+## Permissions
+
+Your app must declare the appropriate permissions in the [Developer Console](https://console.mentra.glass/apps):
+
+| Feature | Required Permission |
+|---------|-------------------|
+| `phone.notifications.on()` | READ_NOTIFICATIONS |
+| `phone.notifications.onDismissed()` | READ_NOTIFICATIONS |
+| `phone.calendar.on()` | CALENDAR |
+
+Without the required permission, `hasPermission` returns `false` and event handlers will not fire. See [Permissions](/app-devs/core-concepts/permissions) for details on declaring and managing permissions.

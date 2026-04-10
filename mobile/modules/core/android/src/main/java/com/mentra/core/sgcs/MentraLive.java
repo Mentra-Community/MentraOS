@@ -777,6 +777,7 @@ public class MentraLive extends SGCManager {
                         isConnecting = true;
                     }
                     stopScan();
+                    isReconnecting = false;
                     connectToDevice(result.getDevice());
                 }
             }
@@ -903,6 +904,9 @@ public class MentraLive extends SGCManager {
         isReconnecting = true;
 
         reconnectAttempts++;
+        // RN home UI keys off core.searching for "connecting"; auto-reconnect does not set that.
+        // Publish CONNECTING so the app shows reconnecting during backoff (e.g. post-shutdown delay).
+        updateConnectionState(ConnTypes.CONNECTING);
         // Calculate delay with exponential backoff
         long delay = Math.min(BASE_RECONNECT_DELAY_MS * (1L << reconnectAttempts), MAX_RECONNECT_DELAY_MS);
         // After K900 shutdown, glasses need time to power cycle before they advertise again
@@ -923,23 +927,37 @@ public class MentraLive extends SGCManager {
             @Override
             public void run() {
                 if (!isConnected && !isConnecting && !isKilled) {
-                    // Check for last known device name to start scan
-                    // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                    // String lastDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
+                    // Prefer saved MAC for direct GATT connect (faster and more reliable than scanning).
+                    // Falls back to name-based scan if no address is saved.
+                    String lastDeviceAddress = (String) GlassesStore.INSTANCE.get("core", "device_address");
+                    if (lastDeviceAddress != null && !lastDeviceAddress.isEmpty() && bluetoothAdapter != null) {
+                        try {
+                            BluetoothDevice device = bluetoothAdapter.getRemoteDevice(lastDeviceAddress);
+                            Log.i(TAG, "🔌 🔁 RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS
+                                    + " - Direct GATT to saved address " + lastDeviceAddress);
+                            Bridge.log("LIVE: 🔌 🔁 Reconnection attempt " + reconnectAttempts + "/"
+                                    + MAX_RECONNECT_ATTEMPTS + " - connecting to saved BLE address: "
+                                    + lastDeviceAddress);
+                            // Release latch so connect timeout / GATT error can call handleReconnection() again
+                            isReconnecting = false;
+                            connectToDevice(device);
+                            return;
+                        } catch (IllegalArgumentException e) {
+                            Log.w(TAG, "🔌 ⚠️ Invalid saved BLE address, falling back to scan: " + lastDeviceAddress, e);
+                            Bridge.log("LIVE: 🔌 ⚠️ Invalid saved BLE address, using scan fallback");
+                        }
+                    }
 
-                    if (savedDeviceName != null && bluetoothAdapter != null) {
-                        Log.i(TAG, "🔌 🔍 STARTING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
+                    if (savedDeviceName != null && !savedDeviceName.isEmpty() && bluetoothAdapter != null) {
+                        Log.i(TAG, "🔌 🔍 STARTING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
                               " - Fast scan (" + RECONNECT_SCAN_TIMEOUT_MS + "ms) for device: " + savedDeviceName);
-                        Bridge.log("LIVE: 🔌 🔍 Reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
+                        Bridge.log("LIVE: 🔌 🔍 Reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
                               " - Starting FAST BLE scan for: " + savedDeviceName);
-                        // Start scan to find this device (will use fast timeout)
                         startScan();
-                        // The scan will automatically connect if it finds a device with the saved name
                     } else {
-                        Log.w(TAG, "🔌 ⚠️ RECONNECT #" + reconnectAttempts + " SKIPPED - No saved device name available");
-                        Bridge.log("LIVE: 🔌 ⚠️ Reconnection attempt " + reconnectAttempts + 
-                              " - No last device name available, scheduling next attempt");
-                        // Schedule another reconnection attempt - maybe the name will be available later
+                        Log.w(TAG, "🔌 ⚠️ RECONNECT #" + reconnectAttempts + " SKIPPED - No saved address or device id");
+                        Bridge.log("LIVE: 🔌 ⚠️ Reconnection attempt " + reconnectAttempts +
+                              " - No saved BLE address or device id, scheduling next attempt");
                         handleReconnection();
                     }
                 } else if (isConnected) {
@@ -975,6 +993,10 @@ public class MentraLive extends SGCManager {
                     isConnected = true;
                     connectedDevice = gatt.getDevice();
                     GlassesStore.INSTANCE.apply("glasses", "bluetoothName", connectedDevice.getName());
+                    // Persist MAC so reconnection can use direct GATT instead of scanning
+                    if (connectedDevice.getAddress() != null) {
+                        GlassesStore.INSTANCE.apply("core", "device_address", connectedDevice.getAddress());
+                    }
 
                     // Save the connected device name for future reconnections
                     // no longer needed as we now save it immediately in connectToDevice()
@@ -3924,6 +3946,10 @@ public class MentraLive extends SGCManager {
                         switch (bondState) {
                             case BluetoothDevice.BOND_BONDED:
                                 Bridge.log("LIVE: CTKD: ✅ Successfully bonded with device - BT Classic connection established");
+                                if (isKilled) {
+                                    Bridge.log("LIVE: CTKD: Ignoring bond complete — SGC destroyed");
+                                    break;
+                                }
                                 isBtClassicConnected = true;
                                 audioConnected = true;
                                 bondingRetryCount = 0; // Reset retry counter on success
@@ -3952,6 +3978,9 @@ public class MentraLive extends SGCManager {
                                     if (bondingRetryCount < MAX_BONDING_RETRIES && connectedDevice != null) {
                                         Bridge.log("LIVE: CTKD: 🔄 Retrying bonding in " + BONDING_RETRY_DELAY_MS + "ms...");
                                         handler.postDelayed(() -> {
+                                            if (isKilled) {
+                                                return;
+                                            }
                                             if (connectedDevice != null && connectedDevice.getBondState() != BluetoothDevice.BOND_BONDED) {
                                                 Bridge.log("LIVE: CTKD: 🔄 Initiating bonding retry #" + bondingRetryCount);
                                                 createBond(connectedDevice);
@@ -4068,6 +4097,17 @@ public class MentraLive extends SGCManager {
         @Override
         public void onServiceConnected(int profile, BluetoothProfile proxy) {
             if (profile == BluetoothProfile.A2DP) {
+                if (isKilled) {
+                    Bridge.log("LIVE: A2DP: Ignoring onServiceConnected — SGC destroyed (stale profile callback)");
+                    try {
+                        if (bluetoothAdapter != null && proxy != null) {
+                            bluetoothAdapter.closeProfileProxy(BluetoothProfile.A2DP, proxy);
+                        }
+                    } catch (Exception e) {
+                        Bridge.log("LIVE: A2DP: Error closing stale proxy: " + e.getMessage());
+                    }
+                    return;
+                }
                 a2dpProfile = (BluetoothA2dp) proxy;
                 Bridge.log("LIVE: A2DP: Profile proxy obtained");
 
@@ -4092,6 +4132,10 @@ public class MentraLive extends SGCManager {
      * Helper to connect A2DP using the proxy - called from service listener or directly
      */
     private void connectA2dpWithProxy(BluetoothDevice device) {
+        if (isKilled) {
+            Bridge.log("LIVE: A2DP: Skipping connectA2dpWithProxy — SGC destroyed");
+            return;
+        }
         if (a2dpProfile == null || device == null) {
             Bridge.log("LIVE: A2DP: Cannot connect - proxy or device is null");
             return;
@@ -4123,6 +4167,9 @@ public class MentraLive extends SGCManager {
                 // STATE_DISCONNECTING - wait and retry
                 Bridge.log("LIVE: A2DP: Device disconnecting, will retry in 500ms");
                 handler.postDelayed(() -> {
+                    if (isKilled) {
+                        return;
+                    }
                     if (connectedDevice != null && a2dpProfile != null) {
                         connectA2dpWithProxy(connectedDevice);
                     }
@@ -4139,6 +4186,10 @@ public class MentraLive extends SGCManager {
      * Helper to mark audio as connected and notify
      */
     private void markAudioConnected(String deviceName) {
+        if (isKilled) {
+            Bridge.log("LIVE: A2DP: Ignoring markAudioConnected — SGC destroyed (would confuse CoreManager)");
+            return;
+        }
         isBtClassicConnected = true;
         audioConnected = true;
         Bridge.sendAudioConnected(deviceName);
@@ -4154,6 +4205,10 @@ public class MentraLive extends SGCManager {
      * This is needed because being bonded doesn't automatically connect the audio profile
      */
     private void connectA2dpProfile(BluetoothDevice device) {
+        if (isKilled) {
+            Bridge.log("LIVE: A2DP: Skipping connectA2dpProfile — SGC destroyed");
+            return;
+        }
         if (device == null) {
             Bridge.log("LIVE: A2DP: Cannot connect - device is null");
             return;
@@ -4204,7 +4259,6 @@ public class MentraLive extends SGCManager {
         Bridge.log("LIVE: Destroying MentraLiveSGC");
 
         // Mark as killed to prevent reconnection attempts
-        boolean wasKilled = isKilled;
         isKilled = true;
 
         // Stop scanning if in progress

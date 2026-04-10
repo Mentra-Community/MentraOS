@@ -27,17 +27,23 @@ export function SaferAreaProvider({children}: SaferAreaProviderProps) {
 
     let overrides = {...insets}
 
-    if (insets.top) {
-      overrides.top += theme.spacing.s4
-    } else {
+    // if (insets.top) {
+    //   overrides.top += theme.spacing.s4
+    // } else {
+    //   overrides.top = theme.spacing.s4
+    // }
+
+    if (insets.top === 0) {
       overrides.top = theme.spacing.s4
     }
 
-    if (insets.bottom) {
-      overrides.bottom += theme.spacing.s6
-    } else {
+    if (insets.bottom === 0) {
       overrides.bottom = theme.spacing.s6
     }
+    //  else if (insets.bottom <= theme.spacing.s6) {
+    //   // add some extra padding to the bottom if it isn't enough:
+    //   overrides.bottom += theme.spacing.s6
+    // }
     return overrides
   }, [insets])
 

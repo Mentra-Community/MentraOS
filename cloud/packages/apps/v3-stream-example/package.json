@@ -1,0 +1,41 @@
+{
+  "name": "@mentra/v3-stream-example",
+  "version": "0.1.0",
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "record": "mkdir -p recordings && ffmpeg -listen 1 -i \"rtmp://0.0.0.0:1935/live/test\" -c copy recordings/$(date +%Y%m%d_%H%M%S).mkv",
+    "record:mp4": "mkdir -p recordings && ffmpeg -listen 1 -i \"rtmp://0.0.0.0:1935/live/test\" -c:v libx264 -c:a copy recordings/$(date +%Y%m%d_%H%M%S).mp4",
+    "record:debug": "mkdir -p recordings && ffmpeg -loglevel debug -listen 1 -i \"rtmp://0.0.0.0:1935/live/test\" -c copy recordings/$(date +%Y%m%d_%H%M%S).mkv",
+    "play": "ffplay -fflags nobuffer -flags low_delay -framedrop -listen 1 -i \"rtmp://0.0.0.0:1935/live/test\"",
+    "play:hls": "echo 'Pass the HLS URL as an argument:' && echo '  bunx ffplay -fflags nobuffer <HLS_URL>'",
+    "transcode": "ffmpeg -i recordings/$(ls -t recordings/ | head -1) -c:v libx264 -c:a aac recordings/$(ls -t recordings/ | head -1 | sed 's/\\.[^.]*$//').mp4",
+    "ngrok": "ngrok http 3000 --url https://isaiah-tpa.ngrok.app",
+    "setup": "cp -n .env.example .env && echo 'Created .env — edit it with your API key and local IP'"
+  },
+  "dependencies": {
+    "@mentra/sdk": "file:../../sdk",
+    "@mentra/react": "^2.1.2",
+    "hono": "4.12.8",
+    "@radix-ui/react-label": "^2.1.7",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-slot": "^1.2.3",
+    "bun-plugin-tailwind": "^0.1.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.545.0",
+    "react": "^19",
+    "react-dom": "^19",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^4.1.11",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^5"
+  }
+}

@@ -107,6 +107,9 @@ async function addRestreamOutput(c: AppContext) {
   }
   const appDoc = (c as any).app as AppI;
   const packageName = appDoc.packageName;
+  if (!streamId) {
+    return c.json({ error: "streamId is required" }, 400);
+  }
 
   try {
     const body = await c.req.json().catch(() => ({}));
@@ -244,6 +247,9 @@ async function removeRestreamOutput(c: AppContext) {
   }
   const appDoc = (c as any).app as AppI;
   const packageName = appDoc.packageName;
+  if (!streamId || !outputId) {
+    return c.json({ error: "streamId and outputId are required" }, 400);
+  }
 
   logger.info(
     {
@@ -343,6 +349,9 @@ async function listRestreamOutputs(c: AppContext) {
   }
   const appDoc = (c as any).app as AppI;
   const packageName = appDoc.packageName;
+  if (!streamId) {
+    return c.json({ error: "streamId is required" }, 400);
+  }
 
   try {
     // Find user session by app

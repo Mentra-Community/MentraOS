@@ -127,6 +127,19 @@ public class OtaHelper {
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
 
+    // The version JSON URL used for the current/last check. Stored so that
+    // the prefetch→install retry loop re-uses the same URL instead of
+    // falling back to the compiled-in default (which would break test flows).
+    private volatile String lastVersionJsonUrl = OtaConstants.VERSION_JSON_URL;
+
+    /**
+     * Set the phone-initiated OTA flag. Used by DebugApkOtaReceiver to force
+     * installNow=true so the OTA installs immediately rather than just prefetching.
+     */
+    public void setPhoneInitiatedOta(boolean value) {
+        isPhoneInitiatedOta = value;
+    }
+
     // Track if we've notified phone about available update (to avoid spam)
     private static volatile boolean hasNotifiedPhoneOfUpdate = false;
 
@@ -587,19 +600,30 @@ public class OtaHelper {
     }
 
     public void startVersionCheck(Context context) {
+        startVersionCheckWithUrl(context, OtaConstants.VERSION_JSON_URL);
+    }
+
+    /**
+     * Start a version check using a custom version JSON URL.
+     * Used by DebugApkOtaReceiver to test OTA with a local/custom URL.
+     * @param context Application context
+     * @param versionJsonUrl URL to fetch the version JSON from (http, https)
+     */
+    public void startVersionCheckWithUrl(Context context, String versionJsonUrl) {
         Log.d(TAG, "Check OTA update method init");
         Log.i(TAG, "OTA check trigger -> phoneInitiated=" + isPhoneInitiatedOta
                 + ", autonomousEnabled=" + AUTONOMOUS_OTA_ENABLED
                 + ", lockHeld=" + versionCheckLock.isLocked()
                 + ", isUpdating=" + isUpdating
                 + ", mtkInProgress=" + isMtkOtaInProgress
-                + ", besInProgress=" + BesOtaManager.isBesOtaInProgress);
+                + ", besInProgress=" + BesOtaManager.isBesOtaInProgress
+                + ", versionJsonUrl=" + versionJsonUrl);
 
         // if (!isNetworkAvailable(context)) {
         //     Log.e(TAG, "No WiFi connection available. Skipping OTA check.");
         //     return;
         // }
-        
+
         // // Check battery status before proceeding with OTA update
         // if (!isBatterySufficientForUpdates()) {
         //     Log.w(TAG, "🚨 Battery insufficient for OTA updates - skipping version check");
@@ -613,14 +637,18 @@ public class OtaHelper {
                 return;
             }
             Log.d(TAG, "Version check lock acquired");
-            
+
+            // Store the URL under the lock so a concurrent caller can't overwrite it
+            // before this check finishes (used by the pendingPhoneInstall retry).
+            lastVersionJsonUrl = versionJsonUrl;
+
             // Check if update is in progress (separate from version check)
             if (isUpdating) {
                 Log.d(TAG, "Update already in progress, skipping version check");
                 versionCheckLock.unlock();
                 return;
             }
-            
+
             // Record timestamp to prevent duplicate network callback triggers
             lastVersionCheckTime = System.currentTimeMillis();
 
@@ -639,7 +667,7 @@ public class OtaHelper {
 
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
-                String versionInfo = fetchVersionInfo(OtaConstants.VERSION_JSON_URL);
+                String versionInfo = fetchVersionInfo(versionJsonUrl);
                 stage[0] = "parse_version_json";
                 JSONObject json = new JSONObject(versionInfo);
 
@@ -705,7 +733,7 @@ public class OtaHelper {
                 if (shouldInstallNow) {
                     Log.i(TAG, "📱 Phone-initiated install was queued during prefetch - firing install pass now");
                     isPhoneInitiatedOta = true;
-                    startVersionCheck(context); // fresh pass: installNow=true, files served from cache
+                    startVersionCheckWithUrl(context, lastVersionJsonUrl); // fresh pass: same URL, installNow=true, files served from cache
                 }
             }
         }).start();

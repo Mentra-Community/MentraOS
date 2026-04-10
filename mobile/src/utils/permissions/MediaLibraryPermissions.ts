@@ -7,7 +7,7 @@ import CrustModule from "crust"
  * MediaLibraryPermissions - Handles save-only permissions for camera roll
  *
  * Platform behavior:
- * - iOS: Uses PHOTO_LIBRARY_ADD_ONLY (no "select photos" prompt, just save access)
+ * - iOS: Uses PHOTO_LIBRARY (read-write) so we can manage the MentraOS album
  * - Android 10+ (API 29+): No permission needed to save your own files to MediaStore
  * - Android 9-: Uses WRITE_EXTERNAL_STORAGE (legacy)
  */
@@ -19,7 +19,7 @@ export class MediaLibraryPermissions {
   static async checkPermission(): Promise<boolean> {
     try {
       if (Platform.OS === "ios") {
-        const status = await check(PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY)
+        const status = await check(PERMISSIONS.IOS.PHOTO_LIBRARY)
         return status === RESULTS.GRANTED || status === RESULTS.LIMITED
       }
 
@@ -48,7 +48,7 @@ export class MediaLibraryPermissions {
   static async requestPermission(): Promise<boolean> {
     try {
       if (Platform.OS === "ios") {
-        const status = await request(PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY)
+        const status = await request(PERMISSIONS.IOS.PHOTO_LIBRARY)
         return status === RESULTS.GRANTED || status === RESULTS.LIMITED
       }
 
@@ -71,8 +71,9 @@ export class MediaLibraryPermissions {
   }
 
   /**
-   * Save a file to the device's camera roll/photo library
-   * On Android 10+, this works without any permission
+   * Save a file to the photo library in a glasses-specific location (MentraOS album on iOS;
+   * Pictures/MentraOS or Movies/MentraOS on Android 10+).
+   * On Android 10+, this works without any permission.
    *
    * IMPORTANT: This method sets the DATE_TAKEN (Android) or creation date (iOS)
    * metadata to the original capture time, so gallery apps show the correct date.

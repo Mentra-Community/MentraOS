@@ -40,6 +40,27 @@ export interface AppConnectionError extends BaseMessage {
   code?: string;
 }
 
+export interface ReconnectAck extends BaseMessage {
+  type: CloudToAppMessageType.RECONNECT_ACK;
+  sessionId: string;
+  subscriptions?: string[];
+  userId?: string;
+  email?: string;
+}
+
+export interface ReconnectRejected extends BaseMessage {
+  type: CloudToAppMessageType.RECONNECT_REJECTED;
+  code: "SESSION_NOT_FOUND" | "SESSION_STOPPED" | "SESSION_EXPIRED" | "NOT_RUNNING" | "BOOT_TIMEOUT";
+  message: string;
+}
+
+export interface ReconnectDeferred extends BaseMessage {
+  type: CloudToAppMessageType.RECONNECT_DEFERRED;
+  code: "BOOTING" | "AWAITING_APP_RESTORE";
+  message: string;
+  timeoutMs?: number;
+}
+
 //===========================================================
 // Permission messages
 //===========================================================
@@ -366,6 +387,9 @@ export interface RequestTelemetry extends BaseMessage {
 export type CloudToAppMessage =
   | AppConnectionAck
   | AppConnectionError
+  | ReconnectAck
+  | ReconnectRejected
+  | ReconnectDeferred
   | StandardConnectionError
   | DataStream
   | AppStopped
@@ -408,6 +432,18 @@ export function isAppConnectionAck(message: CloudToAppMessage): message is AppCo
 
 export function isAppConnectionError(message: CloudToAppMessage): message is AppConnectionError {
   return message.type === CloudToAppMessageType.CONNECTION_ERROR || (message as any).type === "connection_error";
+}
+
+export function isReconnectAck(message: CloudToAppMessage): message is ReconnectAck {
+  return message.type === CloudToAppMessageType.RECONNECT_ACK;
+}
+
+export function isReconnectRejected(message: CloudToAppMessage): message is ReconnectRejected {
+  return message.type === CloudToAppMessageType.RECONNECT_REJECTED;
+}
+
+export function isReconnectDeferred(message: CloudToAppMessage): message is ReconnectDeferred {
+  return message.type === CloudToAppMessageType.RECONNECT_DEFERRED;
 }
 
 export function isAppStopped(message: CloudToAppMessage): message is AppStopped {

@@ -113,6 +113,7 @@ export enum CloudToGlassesMessageType {
 export enum AppToCloudMessageType {
   // Commands
   CONNECTION_INIT = "tpa_connection_init",
+  RECONNECT = "reconnect",
   SUBSCRIPTION_UPDATE = "subscription_update",
   LOCATION_POLL_REQUEST = "location_poll_request",
 
@@ -165,6 +166,9 @@ export enum CloudToAppMessageType {
   // Responses
   CONNECTION_ACK = "tpa_connection_ack",
   CONNECTION_ERROR = "tpa_connection_error",
+  RECONNECT_ACK = "reconnect_ack",
+  RECONNECT_REJECTED = "reconnect_rejected",
+  RECONNECT_DEFERRED = "reconnect_deferred",
 
   // Updates
   APP_STOPPED = "app_stopped",

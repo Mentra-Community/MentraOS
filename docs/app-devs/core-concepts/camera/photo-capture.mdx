@@ -1,104 +1,164 @@
-# Photo Capture Guide
+---
+title: "Photo Capture"
+description: "Take photos from smart glasses with a camera."
+---
 
-This guide covers how to capture photos from smart glasses using the MentraOS Camera Module.
+Use `session.camera.takePhoto()` to capture a photo from the user's smart glasses. The method returns a promise that resolves with the photo data.
 
-## Overview
-
-Photo capture allows your app to request individual photos from connected smart glasses. This is perfect for:
-
-- Documentation and note-taking apps
-- Visual assistance applications
-- Inventory management
-- Social sharing features
-- Accessibility tools
-
-## Permissions Required
-
-Before using photo capture, your app must have the `CAMERA` permission:
-
-**Add to App Manifest**: Include `CAMERA` in your app's permissions in the [Developer Console](https://console.mentra.glass/)
-
-For complete permission setup instructions, see the [Permissions Guide](/app-devs/core-concepts/permissions).
-
-## Basic Usage
-
-### Simple Photo Capture
+## Quick Start
 
 ```typescript
-// Request a photo from the smart glasses
-const photo = await session.camera.requestPhoto()
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
 
-console.log(`Photo captured: ${photo.filename}`)
-console.log(`Size: ${photo.size} bytes`)
-console.log(`Type: ${photo.mimeType}`)
+const app = new MiniAppServer();
+
+app.onSession((session) => {
+  session.transcription.on((data) => {
+    if (!data.isFinal) return;
+
+    if (data.text.toLowerCase().includes("take photo")) {
+      session.camera.takePhoto().then((photo) => {
+        session.logger.info(`Photo captured: ${photo.url}`);
+        session.logger.info(`Resolution: ${photo.width}x${photo.height}`);
+      });
+    }
+  });
+});
+
+app.start();
 ```
 
-### Requesting Photo Size
+## Permissions
 
-Apps can request the desired photo size. Supported values are `small`, `medium` (default), and `large`. Small photos are faster to capture and transfer, but have lower resolution. Large photos are slower to capture and transfer, but have higher resolution.
+Your app needs the **camera** permission to take photos. Add it in the [Developer Console](https://console.mentra.glass/apps) when creating or editing your app.
+
+Check permission at runtime:
 
 ```typescript
-// Small, faster capture/transfer
-const small = await session.camera.requestPhoto({size: "small"})
-
-// Default medium
-const medium = await session.camera.requestPhoto() // or { size: 'medium' }
-
-// Large, highest available resolution
-const large = await session.camera.requestPhoto({size: "large"})
+if (session.camera.hasPermission) {
+  const photo = await session.camera.takePhoto();
+  session.logger.info(`Captured: ${photo.url}`);
+} else {
+  session.logger.warn("Camera permission not granted");
+}
 ```
 
-### Photo Resolutions
+## Options
 
-The resolution of the photo your app receives depends on the requested size and whether the user's Mentra Live is connected to WiFi.
-
-When on WiFi, photos are uploaded at full quality via webhook. When not on WiFi, photos are transferred over BLE with aggressive compression to fit Bluetooth bandwidth constraints.
-
-| Size | WiFi Resolution | No WiFi (BLE) Resolution |
-|------|----------------|--------------------------|
-| `small` | 640×480 | 400×300 |
-| `medium` | 1280×960 | 640×480 |
-| `large` | 1920×1440 | 800×600 |
-| `full` | 3264×2448 | 1024×768 |
-
-All photos maintain a 4:3 aspect ratio. BLE photos are encoded as AVIF (with JPEG fallback) and are significantly smaller in file size to accommodate Bluetooth transfer limits.
-
-### Working with Photo Data
-
-The photo is returned as a `Buffer` object. Here are common ways to use it:
+Pass an options object to control the capture:
 
 ```typescript
-private async processPhoto(session: AppSession): Promise<void> {
-  try {
-    const photo = await session.camera.requestPhoto();
+const photo = await session.camera.takePhoto({
+  size: "large",
+  compression: "high",
+  saveToGallery: true,
+  sound: true,
+  timeout: 10000,
+});
+```
 
-    // Convert to base64 for storage or transmission
-    const base64String = photo.buffer.toString('base64');
-    session.logger.info(`Photo as base64 (first 50 chars): ${base64String.substring(0, 50)}...`);
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `size` | `"small" \| "medium" \| "large" \| "full"` | `"medium"` | Photo resolution |
+| `compression` | `string` | `undefined` | Compression level |
+| `saveToGallery` | `boolean` | `false` | Save the photo to the user's gallery |
+| `sound` | `boolean` | `true` | Play a shutter sound on capture |
+| `timeout` | `number` | `5000` | Timeout in milliseconds |
 
-    // Save to file (Node.js)
-    import fs from 'fs';
-    const filename = `photo_${Date.now()}.jpg`;
-    fs.writeFileSync(filename, photo.buffer);
-    session.logger.info(`Photo saved to file: ${filename}`);
+## Return Value
 
-    // Send to external API
-    await this.uploadPhotoToAPI(photo.buffer, photo.mimeType);
-  } catch (error) {
-    session.logger.error('Failed to process photo:', error);
+`takePhoto()` returns a `Promise<PhotoData>` with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | `string` | URL to the captured photo |
+| `width` | `number` | Photo width in pixels |
+| `height` | `number` | Photo height in pixels |
+| `timestamp` | `number` | Unix timestamp of the capture |
+| `savedToGallery` | `boolean` | Whether the photo was saved to the gallery |
+
+## Photo Sizes
+
+The resolution depends on the requested size and connection type.
+
+| Size | WiFi Resolution | BLE Resolution |
+|------|----------------|----------------|
+| `small` | 640x480 | 400x300 |
+| `medium` | 1280x960 | 640x480 |
+| `large` | 1920x1440 | 800x600 |
+| `full` | 3264x2448 | 1024x768 |
+
+All photos maintain a 4:3 aspect ratio. Over BLE, photos are compressed more aggressively to fit Bluetooth bandwidth constraints.
+
+## Common Patterns
+
+### Take a photo and upload it
+
+```typescript
+app.onSession((session) => {
+  session.transcription.on(async (data) => {
+    if (!data.isFinal) return;
+
+    if (data.text.toLowerCase().includes("capture")) {
+      try {
+        const photo = await session.camera.takePhoto({ size: "large" });
+        session.logger.info(`Uploading photo: ${photo.url}`);
+
+        await fetch("https://your-api.com/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageUrl: photo.url }),
+        });
+
+        session.speaker.speak("Photo uploaded");
+      } catch (error) {
+        session.logger.error("Photo capture failed", error);
+      }
+    }
+  });
+});
+```
+
+### Take multiple photos with a delay
+
+```typescript
+async function captureSequence(session: MentraSession, count: number) {
+  const photos = [];
+  for (let index = 0; index < count; index++) {
+    const photo = await session.camera.takePhoto({ size: "small" });
+    photos.push(photo);
+    session.logger.info(`Captured ${index + 1}/${count}`);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-}
-
-private async uploadPhotoToAPI(buffer: Buffer, mimeType: string): Promise<void> {
-  // Example: Upload to your backend API
-  // const formData = new FormData();
-  // formData.append('photo', new Blob([buffer], { type: mimeType }));
-  // await fetch('/api/upload', { method: 'POST', body: formData });
+  return photos;
 }
 ```
 
-## See Also
+### Save to gallery
 
-- [Camera API Reference](/app-devs/reference/managers/camera) - Complete API documentation
-- [Video Streaming Guide](/app-devs/core-concepts/camera/streaming) - Live video streaming
-- [Permissions Guide](/app-devs/core-concepts/permissions) - Setting up camera permissions
+```typescript
+const photo = await session.camera.takePhoto({
+  saveToGallery: true,
+  size: "full",
+});
+
+session.logger.info(`Saved to gallery: ${photo.savedToGallery}`);
+```
+
+## Migrating from v2
+
+Three changes to be aware of:
+
+- **`requestPhoto()` is now `takePhoto()`.** The method name changed, but the usage pattern is the same.
+- **`customWebhookUrl` and `authToken` options are removed.** Photos are returned directly from the promise.
+- **`onPhotoTaken()` is deprecated.** Use the promise returned by `takePhoto()` instead.
+
+```typescript
+// v2
+const photo = await session.camera.requestPhoto({ size: "large" });
+
+// v3
+const photo = await session.camera.takePhoto({ size: "large" });
+```
+
+See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

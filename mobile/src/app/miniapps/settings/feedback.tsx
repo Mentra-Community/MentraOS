@@ -3,21 +3,22 @@ import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
 import * as ImagePicker from "expo-image-picker"
 import * as Location from "expo-location"
-import {useState, useEffect} from "react"
+import {useState, useEffect, useCallback, useRef} from "react"
 import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {logBuffer} from "@/utils/dev/logging"
 import restComms from "@/services/RestComms"
-import {useAppletStatusStore} from "@/stores/applets"
+import {feedbackPackageName, settingsPackageName, useAppletStatusStore} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
+import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 
 export default function FeedbackPage() {
   const [savedContactEmail, setSavedContactEmail] = useSetting(SETTINGS.contact_email.key)
@@ -33,10 +34,21 @@ export default function FeedbackPage() {
 
   const MAX_SCREENSHOTS = 5
 
-  const {goBack} = useNavigationHistory()
   const {theme} = useAppTheme()
   const apps = useAppletStatusStore((state) => state.apps)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const viewShotRef = useRef<View>(null)
+  const {goBack} = useNavigationHistory()
+
+  const resolveScreenshotPackageName = useCallback(() => {
+    if (apps.some((app) => app.packageName === feedbackPackageName && app.running)) {
+      return feedbackPackageName
+    }
+    if (apps.some((app) => app.packageName === settingsPackageName && app.running)) {
+      return settingsPackageName
+    }
+    return null
+  }, [apps])
 
   // Glasses info for bug reports
   const glassesConnected = useGlassesStore((state) => state.connected)
@@ -306,7 +318,7 @@ export default function FeedbackPage() {
           {
             text: translate("common:ok"),
             onPress: () => {
-              goBack()
+              void goBack()
             },
           },
         ])
@@ -329,7 +341,7 @@ export default function FeedbackPage() {
       {
         text: translate("common:ok"),
         onPress: () => {
-          goBack()
+          void goBack()
 
           // If user rated highly, prompt for app store rating after a delay
           if (shouldPromptAppRating) {
@@ -367,168 +379,177 @@ export default function FeedbackPage() {
   }
 
   return (
-    <Screen preset="fixed">
-      <Header title={translate("feedback:giveFeedback")} leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView
-        className="pt-6 -mx-6 px-6"
-        contentContainerClassName="flex-grow pb-12"
-        keyboardShouldPersistTaps="handled">
-        <View className="gap-6">
-          <View>
-            <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:type")}</Text>
-            <RadioGroup
-              options={[
-                {value: "bug", label: translate("feedback:bugReport")},
-                {value: "feature", label: translate("feedback:featureRequest")},
-              ]}
-              value={feedbackType}
-              onValueChange={(value) => setFeedbackType(value as "bug" | "feature")}
-            />
-          </View>
-
-          {isApplePrivateRelay && (
+    <>
+      <MiniAppCapsuleMenu packageName={resolveScreenshotPackageName() || ""} viewShotRef={viewShotRef} />
+      <Screen preset="fixed" ref={viewShotRef} safeAreaEdges={["top", "bottom"]}>
+        <View className="h-12 justify-center">
+          <Text tx="feedback:giveFeedback" className="text-xl text-foreground" />
+        </View>
+        <ScrollView
+          className="pt-6 -mx-6 px-6"
+          contentContainerClassName="flex-grow pb-12"
+          keyboardShouldPersistTaps="handled">
+          <View className="gap-6">
             <View>
-              <View className="flex-row items-center mb-2 gap-1.5">
-                <Text className="text-sm font-semibold text-foreground">{translate("feedback:emailOptional")}</Text>
-                <Pressable
-                  hitSlop={10}
-                  onPress={() =>
-                    showAlert(translate("feedback:emailOptional"), translate("feedback:emailInfoMessage"), [
-                      {text: translate("common:ok")},
-                    ])
-                  }>
-                  <Icon name="info-circle" size={16} color={theme.colors.muted_foreground} />
-                </Pressable>
-              </View>
-              <TextInput
-                className="bg-background border border-border rounded-xl p-4 text-base text-foreground"
-                value={email}
-                onChangeText={setEmail}
-                placeholder={translate("feedback:email")}
-                placeholderTextColor={theme.colors.muted_foreground}
-                keyboardType="email-address"
-                autoCapitalize="none"
+              <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:type")}</Text>
+              <RadioGroup
+                options={[
+                  {value: "bug", label: translate("feedback:bugReport")},
+                  {value: "feature", label: translate("feedback:featureRequest")},
+                ]}
+                value={feedbackType}
+                onValueChange={(value) => setFeedbackType(value as "bug" | "feature")}
               />
             </View>
-          )}
 
-          {feedbackType === "bug" ? (
-            <>
+            {isApplePrivateRelay && (
               <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:expectedBehavior")}
-                </Text>
-                <TextInput
-                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
-                  multiline
-                  numberOfLines={4}
-                  placeholder={translate("feedback:share")}
-                  placeholderTextColor={theme.colors.muted_foreground}
-                  value={expectedBehavior}
-                  onChangeText={setExpectedBehavior}
-                  textAlignVertical="top"
-                />
-              </View>
-
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:actualBehavior")}
-                </Text>
-                <TextInput
-                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
-                  multiline
-                  numberOfLines={4}
-                  placeholder={translate("feedback:actualShare")}
-                  placeholderTextColor={theme.colors.muted_foreground}
-                  value={actualBehavior}
-                  onChangeText={setActualBehavior}
-                  textAlignVertical="top"
-                />
-              </View>
-
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:severityRating")}
-                </Text>
-                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
-                <RatingButtons value={severityRating} onValueChange={setSeverityRating} />
-              </View>
-
-              {/* Screenshots Section */}
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:screenshots")}</Text>
-                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:screenshotsHint")}</Text>
-
-                {/* Screenshot Thumbnails */}
-                {screenshots.length > 0 && (
-                  <View className="flex-row flex-wrap gap-2 mb-3">
-                    {screenshots.map((image, index) => (
-                      <View key={image.uri} className="relative">
-                        <Image source={{uri: image.uri}} className="w-20 h-20 rounded-lg" resizeMode="cover" />
-                        <Pressable
-                          onPress={() => removeScreenshot(index)}
-                          className="absolute -top-2 -right-2 bg-destructive rounded-full w-6 h-6 items-center justify-center">
-                          <Text className="text-white text-xs font-bold">X</Text>
-                        </Pressable>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Add Screenshot Button */}
-                {screenshots.length < MAX_SCREENSHOTS && (
+                <View className="flex-row items-center mb-2 gap-1.5">
+                  <Text className="text-sm font-semibold text-foreground">{translate("feedback:emailOptional")}</Text>
                   <Pressable
-                    onPress={pickScreenshots}
-                    className="border-2 border-dashed border-border rounded-xl p-4 items-center justify-center">
-                    <Text className="text-muted-foreground">
-                      {screenshots.length === 0 ? translate("feedback:addScreenshots") : translate("feedback:addMore")}
-                    </Text>
-                    <Text className="text-xs text-muted-foreground mt-1">
-                      {screenshots.length}/{MAX_SCREENSHOTS}
-                    </Text>
+                    hitSlop={10}
+                    onPress={() =>
+                      showAlert(translate("feedback:emailOptional"), translate("feedback:emailInfoMessage"), [
+                        {text: translate("common:ok")},
+                      ])
+                    }>
+                    <Icon name="info-circle" size={16} color={theme.colors.muted_foreground} />
                   </Pressable>
-                )}
-              </View>
-            </>
-          ) : (
-            <>
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:feedbackLabel")}
-                </Text>
+                </View>
                 <TextInput
-                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
-                  multiline
-                  numberOfLines={6}
-                  placeholder={translate("feedback:shareThoughts")}
+                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground"
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder={translate("feedback:email")}
                   placeholderTextColor={theme.colors.muted_foreground}
-                  value={feedbackText}
-                  onChangeText={setFeedbackText}
-                  textAlignVertical="top"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
                 />
               </View>
+            )}
 
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:experienceRating")}
-                </Text>
-                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
-                <StarRating value={experienceRating} onValueChange={setExperienceRating} />
-              </View>
-            </>
-          )}
-        </View>
-        <View className="flex-1 min-h-6" />
-        <Button
-          text={
-            isSubmitting ? "" : feedbackType === "bug" ? translate("feedback:continue") : translate("feedback:submit")
-          }
-          onPress={handleSubmitFeedback}
-          disabled={!isFormValid() || isSubmitting}
-          preset="primary">
-          {isSubmitting && <ActivityIndicator color={theme.colors.background} />}
-        </Button>
-      </ScrollView>
-    </Screen>
+            {feedbackType === "bug" ? (
+              <>
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:expectedBehavior")}
+                  </Text>
+                  <TextInput
+                    className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                    multiline
+                    numberOfLines={4}
+                    placeholder={translate("feedback:share")}
+                    placeholderTextColor={theme.colors.muted_foreground}
+                    value={expectedBehavior}
+                    onChangeText={setExpectedBehavior}
+                    textAlignVertical="top"
+                  />
+                </View>
+
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:actualBehavior")}
+                  </Text>
+                  <TextInput
+                    className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                    multiline
+                    numberOfLines={4}
+                    placeholder={translate("feedback:actualShare")}
+                    placeholderTextColor={theme.colors.muted_foreground}
+                    value={actualBehavior}
+                    onChangeText={setActualBehavior}
+                    textAlignVertical="top"
+                  />
+                </View>
+
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:severityRating")}
+                  </Text>
+                  <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
+                  <RatingButtons value={severityRating} onValueChange={setSeverityRating} />
+                </View>
+
+                {/* Screenshots Section */}
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:screenshots")}
+                  </Text>
+                  <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:screenshotsHint")}</Text>
+
+                  {/* Screenshot Thumbnails */}
+                  {screenshots.length > 0 && (
+                    <View className="flex-row flex-wrap gap-2 mb-3">
+                      {screenshots.map((image, index) => (
+                        <View key={image.uri} className="relative">
+                          <Image source={{uri: image.uri}} className="w-20 h-20 rounded-lg" resizeMode="cover" />
+                          <Pressable
+                            onPress={() => removeScreenshot(index)}
+                            className="absolute -top-2 -right-2 bg-destructive rounded-full w-6 h-6 items-center justify-center">
+                            <Text className="text-white text-xs font-bold">X</Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Add Screenshot Button */}
+                  {screenshots.length < MAX_SCREENSHOTS && (
+                    <Pressable
+                      onPress={pickScreenshots}
+                      className="border-2 border-dashed border-border rounded-xl p-4 items-center justify-center">
+                      <Text className="text-muted-foreground">
+                        {screenshots.length === 0
+                          ? translate("feedback:addScreenshots")
+                          : translate("feedback:addMore")}
+                      </Text>
+                      <Text className="text-xs text-muted-foreground mt-1">
+                        {screenshots.length}/{MAX_SCREENSHOTS}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              </>
+            ) : (
+              <>
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:feedbackLabel")}
+                  </Text>
+                  <TextInput
+                    className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                    multiline
+                    numberOfLines={6}
+                    placeholder={translate("feedback:shareThoughts")}
+                    placeholderTextColor={theme.colors.muted_foreground}
+                    value={feedbackText}
+                    onChangeText={setFeedbackText}
+                    textAlignVertical="top"
+                  />
+                </View>
+
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:experienceRating")}
+                  </Text>
+                  <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
+                  <StarRating value={experienceRating} onValueChange={setExperienceRating} />
+                </View>
+              </>
+            )}
+          </View>
+          <View className="flex-1 min-h-6" />
+          <Button
+            text={
+              isSubmitting ? "" : feedbackType === "bug" ? translate("feedback:continue") : translate("feedback:submit")
+            }
+            onPress={handleSubmitFeedback}
+            disabled={!isFormValid() || isSubmitting}
+            preset="primary">
+            {isSubmitting && <ActivityIndicator color={theme.colors.background} />}
+          </Button>
+        </ScrollView>
+      </Screen>
+    </>
   )
 }

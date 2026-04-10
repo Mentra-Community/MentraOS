@@ -373,7 +373,7 @@ export class LocationManager {
     const locationUpdate = this.toSdkLocationUpdate(this.lastLocation);
     const dataStream: DataStream = {
       type: CloudToAppMessageType.DATA_STREAM,
-      sessionId: `${this.userSession.userId}-${packageName}`,
+      sessionId: this.userSession.getAppSessionId(packageName),
       streamType: StreamType.LOCATION_UPDATE,
       data: locationUpdate,
       timestamp: new Date(),
@@ -473,7 +473,7 @@ export class LocationManager {
       const dataStream: DataStream = {
         type: CloudToAppMessageType.DATA_STREAM,
         streamType: StreamType.LOCATION_UPDATE,
-        sessionId: `${this.userSession.sessionId}-${packageName}`,
+        sessionId: this.userSession.getAppSessionId(packageName),
         data: update,
         timestamp: new Date(),
       };

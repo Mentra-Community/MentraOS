@@ -178,10 +178,13 @@ class CrustModule : Module() {
             }
 
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-              put(
-                android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
-                "DCIM/Camera"
-              )
+              val relativePath =
+                if (isVideo) {
+                  "Movies/MentraOS"
+                } else {
+                  "Pictures/MentraOS"
+                }
+              put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
               put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
             }
           }

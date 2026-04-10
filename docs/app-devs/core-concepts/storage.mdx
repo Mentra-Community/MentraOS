@@ -1,0 +1,184 @@
+---
+title: "Storage"
+description: "Persistent key-value storage for your app"
+---
+
+Use `session.storage` to save and retrieve data that persists across sessions. When a user closes your app and opens it again later, their stored data is still there.
+
+## Basic Usage
+
+```typescript
+// Save a value
+await session.storage.set("username", "Alice");
+
+// Read it back
+const username = await session.storage.get("username");
+// "Alice"
+
+// Delete it
+await session.storage.delete("username");
+```
+
+All values are stored as strings. For objects, use `JSON.stringify` and `JSON.parse`:
+
+```typescript
+// Save an object
+const settings = { theme: "dark", fontSize: 14 };
+await session.storage.set("settings", JSON.stringify(settings));
+
+// Read it back
+const raw = await session.storage.get("settings");
+const parsed = raw ? JSON.parse(raw) : null;
+```
+
+## Methods
+
+### get
+
+Retrieve a value by key. Returns `null` if the key doesn't exist.
+
+```typescript
+const value = await session.storage.get("key");
+
+if (value !== null) {
+  // Key exists
+}
+```
+
+### set
+
+Store a value. Overwrites any existing value for that key.
+
+```typescript
+await session.storage.set("key", "value");
+```
+
+### delete
+
+Remove a key and its value.
+
+```typescript
+await session.storage.delete("key");
+```
+
+### getAll
+
+Retrieve all stored key-value pairs.
+
+```typescript
+const all = await session.storage.getAll();
+// { "key1": "value1", "key2": "value2", ... }
+```
+
+### clear
+
+Remove all stored data for this app and user.
+
+```typescript
+await session.storage.clear();
+```
+
+### keys
+
+Get all stored keys. Returns `Promise<string[]>`.
+
+```typescript
+const allKeys = await session.storage.keys();
+// ["username", "settings", "launchCount"]
+```
+
+### has
+
+Check if a key exists. Returns `Promise<boolean>`.
+
+```typescript
+const exists = await session.storage.has("username");
+```
+
+### setMultiple
+
+Batch set multiple key-value pairs. Takes a `Record<string, any>`.
+
+```typescript
+await session.storage.setMultiple({ username: "Alice", theme: "dark", fontSize: "14" });
+```
+
+### flush
+
+Force-flush any pending writes to the server.
+
+```typescript
+await session.storage.flush();
+```
+
+## Common Patterns
+
+### User preferences
+
+```typescript
+app.onSession(async (session) => {
+  // Load saved preferences
+  const lang = await session.storage.get("language") || "en";
+
+  session.transcription.configure({
+    languageHints: [lang],
+  });
+
+  session.transcription.on((data) => {
+    session.display.showTextWall(data.text);
+  });
+});
+```
+
+### Session state that survives restarts
+
+```typescript
+app.onSession(async (session) => {
+  // Restore state from last session
+  const raw = await session.storage.get("lastState");
+  const lastState = raw ? JSON.parse(raw) : null;
+
+  if (lastState) {
+    session.display.showTextWall(`Welcome back! Last seen: ${lastState.lastSeen}`);
+  }
+
+  // Save state on stop
+  session.onStopped(async () => {
+    await session.storage.set("lastState", JSON.stringify({
+      lastSeen: new Date().toISOString(),
+    }));
+  });
+});
+```
+
+### Counters
+
+```typescript
+const raw = await session.storage.get("launchCount");
+const count = raw ? parseInt(raw, 10) + 1 : 1;
+await session.storage.set("launchCount", count.toString());
+
+session.display.showTextWall(`You've opened this app ${count} times`);
+```
+
+## Storage Limits
+
+Storage is per-app, per-user. Each user of your app has their own isolated storage. Data stored for one user is not visible to other users.
+
+Storage is backed by the cloud - it's not local to the glasses or phone. This means it works across devices if the user switches phones.
+
+## Migrating from v2
+
+```typescript
+// v2
+await session.simpleStorage.get("key");
+await session.simpleStorage.set("key", "value");
+await session.simpleStorage.delete("key");
+
+// v3
+await session.storage.get("key");
+await session.storage.set("key", "value");
+await session.storage.delete("key");
+```
+
+Same API, just `session.storage` instead of `session.simpleStorage`. See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

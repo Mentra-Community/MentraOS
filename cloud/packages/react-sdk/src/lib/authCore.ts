@@ -14,6 +14,8 @@ TQIDAQAB
 
 const USER_ID_KEY = "mentraos_userId";
 const FRONTEND_TOKEN_KEY = "mentraos_frontendToken";
+const DEFAULT_AUTH_INIT_PATH = "/api/_mentraos/auth/init";
+const LEGACY_AUTH_INIT_PATH = "/api/mentra/auth/init";
 
 interface SignedUserTokenPayload {
   sub: string; // This is the userId
@@ -112,12 +114,25 @@ async function exchangeTempToken(tempToken: string, signedUserToken?: string): P
     if (cloudApiUrl) exchangeParams.set("cloudApiUrl", cloudApiUrl);
     if (cloudApiUrlChecksum) exchangeParams.set("cloudApiUrlChecksum", cloudApiUrlChecksum);
 
-    console.log("[exchangeTempToken] Calling /api/mentra/auth/init with params:", Array.from(exchangeParams.keys()));
+    console.log("[exchangeTempToken] Calling webview auth init with params:", Array.from(exchangeParams.keys()));
 
-    const response = await fetch(`/api/mentra/auth/init?${exchangeParams.toString()}`, {
-      method: "GET",
-      credentials: "include", // Include cookies to receive Set-Cookie
-    });
+    const pathsToTry = [DEFAULT_AUTH_INIT_PATH, LEGACY_AUTH_INIT_PATH];
+    let response: Response | null = null;
+
+    for (const path of pathsToTry) {
+      response = await fetch(`${path}?${exchangeParams.toString()}`, {
+        method: "GET",
+        credentials: "include", // Include cookies to receive Set-Cookie
+      });
+
+      if (response.status !== 404) {
+        break;
+      }
+    }
+
+    if (!response) {
+      return null;
+    }
 
     if (!response.ok) {
       console.error("[exchangeTempToken] Backend returned error:", response.status);

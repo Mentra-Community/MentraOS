@@ -1,6 +1,6 @@
 {
   "name": "@mentra/sdk",
-  "version": "3.0.0-hono.8",
+  "version": "3.0.0-alpha.1",
   "description": "Build apps for MentraOS smartglasses. This SDK provides everything you need to create real-time smartglasses applications.",
   "source": "src/index.ts",
   "main": "dist/index.js",
@@ -18,6 +18,18 @@
         "types": "./dist/index.d.ts"
       }
     },
+    "./session": {
+      "development": {
+        "import": "./src/session.ts",
+        "require": "./src/session.ts",
+        "types": "./src/session.ts"
+      },
+      "default": {
+        "import": "./dist/session.js",
+        "require": "./dist/session.js",
+        "types": "./dist/session.d.ts"
+      }
+    },
     "./display-utils": {
       "development": {
         "import": "./src/display-utils.ts",
@@ -32,11 +44,12 @@
     }
   },
   "scripts": {
-    "build": "bun run clean && bun run build:js && bun run build:types",
-    "build:js-only": "bun run clean && bun run build:js",
-    "build:full": "bun run clean && bun run build:js && bun run build:types",
-    "clean": "rm -rf dist",
-    "build:js": "bun build src/index.ts src/display-utils.ts --outdir dist --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external chalk --external dotenv --external hono --external jimp --external jsonwebtoken --external jsrsasign --external lamejs --external pino --external pino-pretty --external strip-ansi --external ws",
+    "build": "bun run build:js && bun run build:types",
+    "build:js-only": "bun run build:js",
+    "build:full": "bun run build:js && bun run build:types",
+    "build:clean": "bun run clean && bun run build",
+    "clean": "rm -rf dist .dist-tmp",
+    "build:js": "rm -rf .dist-tmp && bun build src/index.ts src/session.ts src/display-utils.ts --outdir .dist-tmp --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external chalk --external dotenv --external hono --external jimp --external jsonwebtoken --external jsrsasign --external lamejs --external pino --external pino-pretty --external strip-ansi --external ws && rm -rf dist && mv .dist-tmp dist",
     "build:types": "bun x tsc --build --force",
     "dev": "echo 'No build needed in dev mode - using source files directly'",
     "prepare": "bun run build",

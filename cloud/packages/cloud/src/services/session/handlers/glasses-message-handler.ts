@@ -284,7 +284,7 @@ async function handleTouchEvent(userSession: UserSession, touchEvent: TouchEvent
   for (const packageName of allSubscribers) {
     const connection = userSession.appWebsockets.get(packageName);
     if (connection && connection.readyState === WebSocketReadyState.OPEN) {
-      const appSessionId = `${userSession.sessionId}-${packageName}`;
+      const appSessionId = userSession.getAppSessionId(packageName);
 
       // Determine which subscription this app is using
       const appSubscription = gestureSubscribers.includes(packageName) ? gestureSubscription : baseSubscription;

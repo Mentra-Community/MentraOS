@@ -40,6 +40,8 @@ import type {
 } from "./types";
 
 import { parseBinaryFrame } from "../session/AppAudioStreamManager";
+import * as developerService from "../core/developer.service";
+import { deferredAppConnectionRegistry } from "./DeferredAppConnectionRegistry";
 
 const logger = rootLogger.child({ service: "bun-websocket" });
 
@@ -64,9 +66,9 @@ export function handleUpgrade(req: Request, server: any): Response | undefined {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  if (path === "/glasses-ws") {
+  if (path === "/glasses-ws" || path === "/ws/client") {
     return handleGlassesUpgrade(req, server, url);
-  } else if (path === "/app-ws") {
+  } else if (path === "/app-ws" || path === "/ws/miniapp") {
     return handleAppUpgrade(req, server, url);
   }
 
@@ -146,7 +148,10 @@ function handleGlassesUpgrade(req: Request, server: any, url: URL): Response | u
 function handleAppUpgrade(req: Request, server: any, _url: URL): Response | undefined {
   const authHeader = req.headers.get("authorization");
   const userId = (req.headers.get("x-user-id") || "").toLowerCase();
-  const sessionId = req.headers.get("x-session-id") || "";
+  const sessionId = req.headers.get("x-session-id") || undefined;
+  const packageName = req.headers.get("x-package-name") || undefined;
+  const apiKey = req.headers.get("x-api-key") || undefined;
+  const sdkVersion = req.headers.get("x-sdk-version") || undefined;
 
   let appJwtPayload: { packageName: string; apiKey: string } | undefined;
 
@@ -155,13 +160,13 @@ function handleAppUpgrade(req: Request, server: any, _url: URL): Response | unde
     const appJwt = authHeader.substring(7);
 
     // Check for required headers when using JWT auth
-    if (!userId || !sessionId) {
-      logger.error("Missing userId or sessionId in app request headers");
+    if (!userId) {
+      logger.error("Missing userId in app request headers");
       return new Response(
         JSON.stringify({
           type: "tpa_connection_error",
           code: "MISSING_HEADERS",
-          message: "Missing userId or sessionId in request headers",
+          message: "Missing userId in request headers",
           timestamp: new Date(),
         }),
         { status: 401, headers: { "Content-Type": "application/json" } },
@@ -198,6 +203,9 @@ function handleAppUpgrade(req: Request, server: any, _url: URL): Response | unde
       type: "app",
       userId,
       sessionId,
+      packageName,
+      apiKey,
+      sdkVersion,
       appJwtPayload,
     } as AppWebSocketData,
   });
@@ -568,7 +576,7 @@ async function handleAppOpen(ws: AppServerWebSocket): Promise<void> {
   logger.info({ userId, hasJwt: !!appJwtPayload }, "App WebSocket connection opened");
 
   // If we have JWT auth, handle init immediately
-  if (appJwtPayload && userId && sessionId) {
+  if (appJwtPayload && userId) {
     const userSession = UserSession.getById(userId);
     if (!userSession) {
       logger.error({ userId }, "User session not found for app connection");
@@ -588,8 +596,9 @@ async function handleAppOpen(ws: AppServerWebSocket): Promise<void> {
     const initMessage: AppConnectionInit = {
       type: AppToCloudMessageType.CONNECTION_INIT,
       packageName: appJwtPayload.packageName,
-      sessionId: sessionId,
       apiKey: appJwtPayload.apiKey,
+      sdkVersion: ws.data.sdkVersion,
+      ...(sessionId ? { sessionId } : {}),
     };
 
     try {
@@ -647,13 +656,10 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
     if (parsed.type === AppToCloudMessageType.CONNECTION_INIT) {
       const initMessage = parsed as AppConnectionInit;
 
-      // Parse session ID to get user ID
-      const sessionParts = initMessage.sessionId.split("-");
-      const parsedUserId = sessionParts[0]?.toLowerCase();
-
-      if (sessionParts.length < 2) {
-        logger.error({ sessionId: initMessage.sessionId }, "Invalid session ID format");
-        ws.close(1008, "Invalid session ID format");
+      const parsedUserId = userId || ws.data.userId || parseUserIdFromLegacySessionId(initMessage.sessionId);
+      if (!parsedUserId) {
+        logger.error({ sessionId: initMessage.sessionId }, "Unable to determine user ID for app init");
+        ws.close(1008, "User session identity missing");
         return;
       }
 
@@ -675,8 +681,105 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
       // Update ws.data with parsed info
       ws.data.userId = parsedUserId;
       ws.data.packageName = initMessage.packageName;
+      ws.data.sdkVersion = initMessage.sdkVersion;
+      ws.data.apiKey = initMessage.apiKey;
 
       await userSession.appManager.handleAppInit(ws as any, initMessage);
+      return;
+    }
+
+    if (parsed.type === AppToCloudMessageType.RECONNECT) {
+      const reconnectMessage = parsed as any;
+      const reconnectUserId = userId || ws.data.userId;
+      const reconnectPackageName =
+        ws.data.packageName ||
+        ws.data.appJwtPayload?.packageName ||
+        parsePackageNameFromLegacySessionId(reconnectMessage.sessionId);
+      const reconnectSdkVersion = reconnectMessage.sdkVersion || ws.data.sdkVersion;
+
+      if (!isV3Sdk(reconnectSdkVersion)) {
+        ws.send(
+          JSON.stringify({
+            type: CloudToAppMessageType.RECONNECT_REJECTED,
+            code: "SESSION_NOT_FOUND",
+            message: "Reconnect is only supported for SDK v3",
+            timestamp: new Date(),
+          }),
+        );
+        ws.close(1008, "Reconnect unsupported");
+        return;
+      }
+
+      if (!reconnectUserId || !reconnectPackageName) {
+        ws.send(
+          JSON.stringify({
+            type: CloudToAppMessageType.RECONNECT_REJECTED,
+            code: "SESSION_NOT_FOUND",
+            message: "Reconnect missing user or package identity",
+            timestamp: new Date(),
+          }),
+        );
+        ws.close(1008, "Reconnect identity missing");
+        return;
+      }
+
+      ws.data.userId = reconnectUserId;
+      ws.data.packageName = reconnectPackageName;
+      ws.data.sdkVersion = reconnectSdkVersion;
+
+      const activeUserSession = UserSession.getById(reconnectUserId);
+      if (!activeUserSession) {
+        const apiKey = ws.data.appJwtPayload?.apiKey || ws.data.apiKey;
+        if (!apiKey) {
+          ws.send(
+            JSON.stringify({
+              type: CloudToAppMessageType.RECONNECT_REJECTED,
+              code: "SESSION_NOT_FOUND",
+              message: "Reconnect requires apiKey when cloud state is unavailable",
+              timestamp: new Date(),
+            }),
+          );
+          ws.close(1008, "Reconnect unauthenticated");
+          return;
+        }
+
+        const isValidApiKey = await developerService.validateApiKey(reconnectPackageName, apiKey);
+        if (!isValidApiKey) {
+          ws.send(
+            JSON.stringify({
+              type: CloudToAppMessageType.CONNECTION_ERROR,
+              code: "INVALID_API_KEY",
+              message: "Invalid API key",
+              timestamp: new Date(),
+            }),
+          );
+          ws.close(1008, "Invalid API key");
+          return;
+        }
+
+        deferredAppConnectionRegistry.register({
+          userId: reconnectUserId,
+          packageName: reconnectPackageName,
+          sdkVersion: reconnectSdkVersion,
+          apiKey,
+          priorSessionId: reconnectMessage.sessionId,
+          websocket: ws,
+          reason: "booting",
+        });
+
+        ws.send(
+          JSON.stringify({
+            type: CloudToAppMessageType.RECONNECT_DEFERRED,
+            code: "BOOTING",
+            message: "Cloud is still restoring user session state",
+            timeoutMs: 30_000,
+            timestamp: new Date(),
+          }),
+        );
+        return;
+      }
+
+      await activeUserSession.appManager.handleReconnect(ws as any, reconnectMessage, reconnectPackageName);
       return;
     }
 
@@ -729,6 +832,8 @@ function handleAppClose(ws: AppServerWebSocket, code: number, reason: string): v
 
   logger.info({ userId, packageName, code, reason }, "App WebSocket closed");
 
+  deferredAppConnectionRegistry.removeSocket(ws);
+
   if (!packageName) {
     logger.warn({ userId, code, reason }, "App WebSocket closed but no packageName - ignoring");
     return;
@@ -743,4 +848,39 @@ function handleAppClose(ws: AppServerWebSocket, code: number, reason: string): v
   // Delegate to AppManager which owns the AppSession
   // This will trigger grace period -> resurrection flow
   userSession.appManager.handleAppConnectionClosed(packageName, code, reason);
+}
+
+function isV3Sdk(version?: string): boolean {
+  if (!version) {
+    return false;
+  }
+
+  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
+  return Number.isFinite(major) && major >= 3;
+}
+
+function parsePackageNameFromLegacySessionId(sessionId?: string): string | undefined {
+  if (!sessionId) {
+    return undefined;
+  }
+
+  const separator = sessionId.indexOf("-");
+  if (separator === -1 || separator === sessionId.length - 1) {
+    return undefined;
+  }
+
+  return sessionId.slice(separator + 1);
+}
+
+function parseUserIdFromLegacySessionId(sessionId?: string): string | undefined {
+  if (!sessionId) {
+    return undefined;
+  }
+
+  const separator = sessionId.indexOf("-");
+  if (separator <= 0) {
+    return undefined;
+  }
+
+  return sessionId.slice(0, separator);
 }

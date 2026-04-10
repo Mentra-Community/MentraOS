@@ -213,6 +213,16 @@ class AudioPlaybackService {
       const durationMs = (status.duration || 0) * 1000 // expo-audio uses seconds
       console.log(`AUDIO: Playback finished for ${playback.requestId}, duration: ${durationMs}ms`)
       playback.completed = true
+
+      // Pause the player to prevent Android ExoPlayer from looping/replaying
+      if (this.player) {
+        try {
+          this.player.pause()
+        } catch (e) {
+          console.warn("AUDIO: Error pausing player after finish:", e)
+        }
+      }
+
       playback.onComplete(playback.requestId, true, null, durationMs)
       this.currentPlayback = null
 

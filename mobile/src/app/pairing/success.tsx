@@ -188,7 +188,7 @@ export default function PairingSuccessScreen() {
   }, [stack])
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <OnboardingGuide
         steps={steps}
         autoStart={true}

@@ -27,12 +27,14 @@ import {
 } from "../../types";
 
 import { AppSession } from "../session/index";
-import { createAuthMiddleware } from "../webview";
+import { createAuthMiddleware, createMentraAuthRoutes } from "../webview";
 
 // Import PhotoData type for pending photo requests
 import type { PhotoData } from "../../types/photo-data";
 
 export const GIVE_APP_CONTROL_OF_TOOL_RESPONSE: string = "GIVE_APP_CONTROL_OF_TOOL_RESPONSE";
+const SDK_ROUTE_PREFIX = "/api/_mentraos";
+const LEGACY_MENTRA_AUTH_ROUTE_PREFIX = "/api/mentra/auth";
 
 /**
  * Pending photo request stored at AppServer level for reconnection resilience.
@@ -91,6 +93,18 @@ export interface AppServerConfig {
   cookieSecret?: string;
   /** App instructions string shown to the user */
   appInstructions?: string;
+
+  /**
+   * SDK log level. Controls which log messages appear in the terminal.
+   * - 'error': Only errors
+   * - 'warn': Errors and warnings (default)
+   * - 'info': Normal operation
+   * - 'debug': Everything including SDK internals
+   *
+   * Can also be set with the MENTRA_LOG_LEVEL environment variable.
+   * This config option takes priority over the env var.
+   */
+  logLevel?: "error" | "warn" | "info" | "debug";
 }
 
 // Type for Hono app with auth variables
@@ -140,6 +154,8 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
   private activeSessions = new Map<string, AppSession>();
   /** Map of active user sessions by userId */
   private activeSessionsByUserId = new Map<string, AppSession>();
+  /** Guards against running cleanup twice (double Ctrl-C, SIGINT+SIGTERM, etc.) */
+  private _cleanupPromise: Promise<void> | null = null;
   /**
    * Pending photo requests by requestId - owned by AppServer for HTTP endpoint access.
    * This is the single source of truth for pending photo requests.
@@ -169,7 +185,15 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
       ...config,
     };
 
-    this.logger = createLogger().child({
+    // Apply config-level log settings to environment before logger creation.
+    // Config takes priority over env vars.
+    if (config.logLevel !== undefined) {
+      process.env.MENTRA_LOG_LEVEL = config.logLevel;
+    }
+
+    this.logger = createLogger({
+      logLevel: (config.logLevel ?? "warn") as any,
+    }).child({
       app: this.config.packageName,
       packageName: this.config.packageName,
       service: "app-server",
@@ -196,6 +220,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
     this.setupHealthCheck();
     this.setupToolCallEndpoint();
     this.setupPhotoUploadEndpoint();
+    this.setupMentraWebviewAuth();
     this.setupMentraAuthRedirect();
     this.setupPublicDir();
     this.setupShutdown();
@@ -265,6 +290,24 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
     this.logger.debug(`Tool call received: ${toolCall.toolId}`);
     this.logger.debug(`Parameters: ${JSON.stringify(toolCall.toolParameters)}`);
     return undefined;
+  }
+
+  protected getActiveSessionById(sessionId: string): AppSession | null {
+    return this.activeSessions.get(sessionId) || null;
+  }
+
+  protected getActiveSessionForUser(userId: string): AppSession | null {
+    return this.activeSessionsByUserId.get(userId) || null;
+  }
+
+  protected setActiveSession(sessionId: string, userId: string, session: AppSession): void {
+    this.activeSessions.set(sessionId, session);
+    this.activeSessionsByUserId.set(userId, session);
+  }
+
+  protected removeActiveSession(sessionId: string, userId: string): void {
+    this.activeSessions.delete(sessionId);
+    this.activeSessionsByUserId.delete(userId);
   }
 
   /**
@@ -347,8 +390,11 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
    * Gracefully shuts down the server and cleans up all sessions.
    */
   public async stop(): Promise<void> {
+    // Prevent double-cleanup from concurrent signals or multiple stop() calls
+    if (this._cleanupPromise) return this._cleanupPromise;
     this.logger.info("Shutting down...");
-    await this.cleanup();
+    this._cleanupPromise = this.cleanup();
+    return this._cleanupPromise;
   }
 
   /**
@@ -472,19 +518,19 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
    * Creates the webhook endpoint that MentraOS Cloud calls to start new sessions.
    */
   private setupWebhook(): void {
-    const webhookPath = this.config.webhookPath || "/webhook";
+    const webhookPaths = [this.config.webhookPath || "/webhook", `${SDK_ROUTE_PREFIX}/webhook`];
 
-    this.post(webhookPath, async (c) => {
+    const handler = async (c: Context<{ Variables: AuthVariables }>) => {
       try {
         const webhookRequest = (await c.req.json()) as WebhookRequest;
 
         // Handle session request
         if (webhookRequest.type === WebhookRequestType.SESSION_REQUEST) {
-          return this.handleSessionRequest(webhookRequest as SessionWebhookRequest, c);
+          return this.handleSessionWebhookRequest(webhookRequest as SessionWebhookRequest, c);
         }
         // Handle stop request
         else if (webhookRequest.type === WebhookRequestType.STOP_REQUEST) {
-          return this.handleStopRequest(webhookRequest as StopWebhookRequest, c);
+          return this.handleStopWebhookRequest(webhookRequest as StopWebhookRequest, c);
         }
         // Unknown webhook type
         else {
@@ -507,7 +553,11 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
           500,
         );
       }
-    });
+    };
+
+    for (const path of webhookPaths) {
+      this.post(path, handler);
+    }
   }
 
   /**
@@ -515,14 +565,10 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
    * Creates a /tool endpoint for handling tool calls from MentraOS Cloud.
    */
   private setupToolCallEndpoint(): void {
-    this.post("/tool", async (c) => {
+    const postHandler = async (c: Context<{ Variables: AuthVariables }>) => {
       try {
         const toolCall = (await c.req.json()) as ToolCall;
-        if (this.activeSessionsByUserId.has(toolCall.userId)) {
-          toolCall.activeSession = this.activeSessionsByUserId.get(toolCall.userId) || null;
-        } else {
-          toolCall.activeSession = null;
-        }
+        toolCall.activeSession = this.getActiveSessionForUser(toolCall.userId);
         this.logger.debug({ toolId: toolCall.toolId }, "Tool call received");
 
         // Call the onToolCall handler and get the response
@@ -544,21 +590,26 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
           500,
         );
       }
-    });
+    };
 
-    this.get("/tool", async (c) => {
+    const getHandler = async (c: Context<{ Variables: AuthVariables }>) => {
       return c.json({ status: "success", reply: "Hello, world!" });
-    });
+    };
+
+    for (const path of ["/tool", `${SDK_ROUTE_PREFIX}/tool`]) {
+      this.post(path, postHandler);
+      this.get(path, getHandler);
+    }
   }
 
   /**
    * Handle a session request webhook
    */
-  private async handleSessionRequest(
+  protected async handleSessionWebhookRequest(
     request: SessionWebhookRequest,
     c: Context<{ Variables: AuthVariables }>,
   ): Promise<Response> {
-    const { sessionId, userId, mentraOSWebsocketUrl, augmentOSWebsocketUrl } = request;
+    const { sessionId, userId, websocketUrl, mentraOSWebsocketUrl, augmentOSWebsocketUrl } = request;
     this.logger.debug({ userId, sessionId }, "Session request received");
 
     // Check for existing session (user might be switching clouds)
@@ -566,7 +617,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
     // 1. Orphaned sessions with open WebSockets
     // 2. Cleanup handlers that corrupt the new session's map entries
     // See: cloud/issues/018-app-disconnect-resurrection
-    const existingSession = this.activeSessions.get(sessionId);
+    const existingSession = this.getActiveSessionById(sessionId);
     if (existingSession) {
       this.logger.debug({ sessionId, userId }, "Existing session found — releasing ownership before reconnect");
 
@@ -586,8 +637,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
       }
 
       // Remove from maps immediately (don't wait for cleanup handler)
-      this.activeSessions.delete(sessionId);
-      this.activeSessionsByUserId.delete(userId);
+      this.removeActiveSession(sessionId, userId);
 
       this.logger.debug({ sessionId, userId }, "Old session cleaned up, proceeding with new connection");
     }
@@ -596,7 +646,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
     const session = new AppSession({
       packageName: this.config.packageName,
       apiKey: this.config.apiKey,
-      mentraOSWebsocketUrl: mentraOSWebsocketUrl || augmentOSWebsocketUrl,
+      mentraOSWebsocketUrl: websocketUrl || mentraOSWebsocketUrl || augmentOSWebsocketUrl,
       appServer: this,
       userId,
     });
@@ -669,13 +719,10 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
         // 4. When Cloud A disposes, sessionA's cleanup fires and would delete sessionB
         // By checking identity (===), we only delete if we're still the current session.
         // See: cloud/issues/018-app-disconnect-resurrection
-        if (this.activeSessions.get(sessionId) === session) {
-          this.activeSessions.delete(sessionId);
+        if (this.getActiveSessionById(sessionId) === session) {
+          this.removeActiveSession(sessionId, userId);
         } else {
           this.logger.debug({ sessionId }, "Session cleanup skipped — a newer session has taken over");
-        }
-        if (this.activeSessionsByUserId.get(userId) === session) {
-          this.activeSessionsByUserId.delete(userId);
         }
 
         // Clean up any pending photo requests for this session
@@ -694,8 +741,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
     // Start the session
     try {
       await session.connect(sessionId);
-      this.activeSessions.set(sessionId, session);
-      this.activeSessionsByUserId.set(userId, session);
+      this.setActiveSession(sessionId, userId, session);
       await this.onSession(session, sessionId, userId);
       return c.json({ status: "success" } as WebhookResponse);
     } catch (error) {
@@ -715,7 +761,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
   /**
    * Handle a stop request webhook
    */
-  private async handleStopRequest(
+  protected async handleStopWebhookRequest(
     request: StopWebhookRequest,
     c: Context<{ Variables: AuthVariables }>,
   ): Promise<Response> {
@@ -743,13 +789,17 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
    */
   private setupHealthCheck(): void {
     if (this.config.healthCheck) {
-      this.get("/health", (c) => {
+      const handler = (c: Context<{ Variables: AuthVariables }>) => {
         return c.json({
           status: "healthy",
           app: this.config.packageName,
           activeSessions: this.activeSessions.size,
         });
-      });
+      };
+
+      for (const path of ["/health", `${SDK_ROUTE_PREFIX}/health`]) {
+        this.get(path, handler);
+      }
     }
   }
 
@@ -758,7 +808,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
    * Creates a /settings endpoint that the MentraOS Cloud can use to update settings.
    */
   private setupSettingsEndpoint(): void {
-    this.post("/settings", async (c) => {
+    const handler = async (c: Context<{ Variables: AuthVariables }>) => {
       try {
         const { userIdForSettings, settings } = await c.req.json();
 
@@ -812,7 +862,11 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
           500,
         );
       }
-    });
+    };
+
+    for (const path of ["/settings", `${SDK_ROUTE_PREFIX}/settings`]) {
+      this.post(path, handler);
+    }
   }
 
   /**
@@ -829,11 +883,43 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
 
   /**
    * Setup Shutdown Handlers
-   * Registers process signal handlers for graceful shutdown.
+   *
+   * Both SIGINT (Ctrl+C) and SIGTERM (Kubernetes) → fast exit.
+   *
+   * We never release ownership on shutdown (cloud will resurrect), so
+   * there is nothing useful to clean up. The only thing worth doing is
+   * a best-effort SimpleStorage flush, which we fire-and-forget.
+   *
+   * process.exit() does NOT work reliably under `bun --watch` — it
+   * intercepts the call. Instead we remove all JS signal handlers and
+   * re-raise the signal so the OS default handler terminates us.
+   *
+   * See: cloud/issues/086-sdk-fast-shutdown
    */
   private setupShutdown(): void {
-    process.on("SIGTERM", () => this.stop());
-    process.on("SIGINT", () => this.stop());
+    const die = (signal: "SIGINT" | "SIGTERM") => {
+      this.logger.info("Shutting down...");
+
+      // Best-effort flush of SimpleStorage (fire-and-forget, don't await).
+      for (const [, session] of this.activeSessions) {
+        try {
+          (session as any).simpleStorage?.flush?.()?.catch?.(() => {});
+        } catch {
+          // ignore
+        }
+      }
+
+      // Remove ALL handlers for BOTH signals so the re-raised signal
+      // hits the OS default handler and actually kills the process.
+      process.removeAllListeners("SIGINT");
+      process.removeAllListeners("SIGTERM");
+
+      // Re-raise the original signal. OS kills us immediately.
+      process.kill(process.pid, signal);
+    };
+
+    process.on("SIGINT", () => die("SIGINT"));
+    process.on("SIGTERM", () => die("SIGTERM"));
   }
 
   /**
@@ -886,7 +972,7 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
    * Creates a /photo-upload endpoint for receiving photos directly from ASG glasses
    */
   private setupPhotoUploadEndpoint(): void {
-    this.post("/photo-upload", async (c) => {
+    const handler = async (c: Context<{ Variables: AuthVariables }>) => {
       try {
         // Parse multipart form data
         const body = await c.req.parseBody();
@@ -969,7 +1055,11 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
         this.logger.error(error, "Error handling photo response");
         return c.json({ success: false, error: "Internal server error processing photo response" }, 500);
       }
-    });
+    };
+
+    for (const path of ["/photo-upload", `${SDK_ROUTE_PREFIX}/photo-upload`]) {
+      this.post(path, handler);
+    }
   }
 
   /**
@@ -977,10 +1067,33 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
    * Creates a /mentra-auth endpoint that redirects to the MentraOS OAuth flow.
    */
   private setupMentraAuthRedirect(): void {
-    this.get("/mentra-auth", (c) => {
+    const handler = (c: Context<{ Variables: AuthVariables }>) => {
       const authUrl = `https://account.mentra.glass/auth?packagename=${encodeURIComponent(this.config.packageName)}`;
       return c.redirect(authUrl, 302);
+    };
+
+    for (const path of ["/mentra-auth", `${SDK_ROUTE_PREFIX}/auth`]) {
+      this.get(path, handler);
+    }
+  }
+
+  /**
+   * Setup SDK-owned webview auth routes.
+   *
+   * Canonical v3 path is under the internal SDK namespace. The legacy
+   * `/api/mentra/auth` path remains as a compatibility alias during the
+   * transition so older Hono examples and early adopters keep working.
+   */
+  private setupMentraWebviewAuth(): void {
+    const authApp = createMentraAuthRoutes({
+      apiKey: this.config.apiKey,
+      packageName: this.config.packageName,
+      cookieSecret: this.config.cookieSecret || this.config.apiKey,
     });
+
+    for (const path of [`${SDK_ROUTE_PREFIX}/auth`, LEGACY_MENTRA_AUTH_ROUTE_PREFIX]) {
+      this.route(path, authApp);
+    }
   }
 }
 

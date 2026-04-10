@@ -95,9 +95,24 @@ class RestComms {
     }
 
     return Res.try_async(async () => {
-      const res = await this.axiosInstance.request<T>(axiosConfig)
-      return res.data
+      try {
+        const res = await this.axiosInstance.request<T>(axiosConfig)
+        return res.data
+      } catch (error) {
+        if (this.isNoActiveSessionError(error)) {
+          GlobalEventEmitter.emit("NO_ACTIVE_SESSION")
+        }
+        throw error
+      }
     })
+  }
+
+  private isNoActiveSessionError(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) {
+      return false
+    }
+
+    return error.response?.status === 503 && error.response?.data?.error === "NO_ACTIVE_SESSION"
   }
 
   private authenticatedRequest<T>(config: RequestConfig): AsyncResult<T, Error> {

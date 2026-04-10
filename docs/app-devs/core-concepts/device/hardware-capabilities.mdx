@@ -1,0 +1,315 @@
+---
+title: "Hardware Capabilities"
+description: "Check what the connected glasses can do and adapt your app accordingly."
+---
+
+Different smart glasses have different hardware. Some have cameras, some have displays, some have both. Capabilities tell your app exactly what the connected device supports so you can adapt at runtime.
+
+Capabilities are sent by the device during the initial connection handshake (CONNECTION_ACK) and are available on `session.device.capabilities` as soon as your `onSession` callback fires.
+
+## Quick Example
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.adaptive-app",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  const caps = session.device.capabilities;
+
+  if (caps?.hasCamera) {
+    session.camera.onStreamStatus((status) => {
+      session.logger.info("Camera stream:", status);
+    });
+  }
+
+  if (caps?.hasDisplay) {
+    session.display.showTextWall("Welcome!");
+  }
+
+  // Transcription works on all glasses (mic can be on phone)
+  session.transcription.on((data) => {
+    session.logger.info("Transcription:", data.text);
+  });
+});
+
+await app.start();
+```
+
+## API Reference
+
+### `session.device.capabilities`
+
+Returns a `Capabilities` object (or `null` if capabilities have not been received yet). This object contains boolean flags for each hardware feature and optional detail objects with more specific information.
+
+```typescript
+interface Capabilities {
+  modelName: string;
+
+  hasCamera: boolean;
+  camera: CameraCapabilities | null;
+
+  hasDisplay: boolean;
+  display: DisplayCapabilities | null;
+
+  hasMicrophone: boolean;
+  microphone: MicrophoneCapabilities | null;
+
+  hasSpeaker: boolean;
+  speaker: SpeakerCapabilities | null;
+
+  hasIMU: boolean;
+  imu: IMUCapabilities | null;
+
+  hasButton: boolean;
+  button: ButtonCapabilities | null;
+
+  hasLight: boolean;
+  light: LightCapabilities | null;
+
+  hasWifi: boolean;
+
+  hasPower?: boolean;
+  power?: PowerCapabilities;
+}
+```
+
+### Boolean Flags
+
+| Flag | Description |
+|------|-------------|
+| `hasDisplay` | The device has a screen for showing content |
+| `hasCamera` | The device can capture photos or video |
+| `hasMicrophone` | The device has audio input |
+| `hasSpeaker` | The device can play audio |
+| `hasButton` | The device has physical buttons or touch controls |
+| `hasLight` | The device has LED indicators |
+| `hasIMU` | The device has motion sensors (accelerometer, gyroscope) |
+| `hasWifi` | The device supports WiFi connectivity |
+
+### `session.device.onCapabilitiesChange(handler)`
+
+Subscribe to capability changes at runtime. This fires if the device reports updated capabilities after the initial connection, for example when a peripheral is attached or detached.
+
+Returns a cleanup function.
+
+```typescript
+const cleanup = session.device.onCapabilitiesChange((caps) => {
+  session.logger.info("Capabilities updated:", caps.modelName);
+
+  if (caps.hasCamera) {
+    session.logger.info("Camera is now available");
+  }
+});
+
+// Stop listening
+cleanup();
+```
+
+## Capabilities by Device
+
+Not every pair of glasses supports every feature. Here is what the current devices report:
+
+| Capability | Mentra Live | Even Realities G1 |
+|------------|:-----------:|:------------------:|
+| Display | ✅ | ✅ |
+| Camera | ✅ | ❌ |
+| Microphone | ✅ | ✅ |
+| Speaker | ✅ | ✅ |
+| LED | ✅ | ❌ |
+| Buttons | ✅ | ✅ (touch) |
+| IMU | ✅ | ❌ |
+
+<Note>
+This table reflects the capabilities reported by each device at connection time. New devices will report their own capabilities through the same mechanism.
+</Note>
+
+## Reading Capability Details
+
+Each boolean flag has a corresponding detail object with hardware-specific information. The detail object is `null` when the capability is not present.
+
+### Display details
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const caps = session.device.capabilities;
+
+  if (caps?.hasDisplay && caps.display) {
+    session.logger.info("Resolution:", caps.display.resolution);
+    session.logger.info("Color display:", caps.display.isColor);
+    session.logger.info("Max text lines:", caps.display.maxTextLines);
+  }
+});
+```
+
+### Camera details
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const caps = session.device.capabilities;
+
+  if (caps?.hasCamera && caps.camera) {
+    session.logger.info("Resolution:", caps.camera.resolution);
+    session.logger.info("Can stream:", caps.camera.video.canStream);
+    session.logger.info("Can record:", caps.camera.video.canRecord);
+  }
+});
+```
+
+### LED details
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const caps = session.device.capabilities;
+
+  if (caps?.hasLight && caps.light) {
+    session.logger.info("LED count:", caps.light.count);
+
+    caps.light.lights?.forEach((led) => {
+      session.logger.info(`${led.id}: ${led.isFullColor ? "RGB" : led.color}`);
+    });
+  }
+});
+```
+
+## Common Patterns
+
+### Write one app that adapts to any glasses
+
+The main pattern is to check capabilities before using hardware-specific features. This lets a single codebase work across all supported devices.
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.universal",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  const caps = session.device.capabilities;
+
+  // Visual output if available, audio fallback otherwise
+  if (caps?.hasDisplay) {
+    session.display.showTextWall("App started");
+  } else if (caps?.hasSpeaker) {
+    session.speaker.speak("App started");
+  }
+
+  // Camera features only on camera-equipped glasses
+  if (caps?.hasCamera) {
+    enablePhotoFeatures(session);
+  }
+
+  // Transcription works on all glasses with a microphone
+  if (caps?.hasMicrophone) {
+    session.transcription.on((data) => {
+      if (data.isFinal) {
+        session.display.showTextWall(data.text);
+      }
+    });
+  }
+});
+
+function enablePhotoFeatures(session: MentraSession) {
+  session.camera.onStreamStatus((status) => {
+    session.logger.info("Camera stream status:", status);
+  });
+}
+
+await app.start();
+```
+
+### Guard against null capabilities
+
+Capabilities may be `null` if the connection handshake has not completed. Always use optional chaining.
+
+```typescript
+app.onSession((session: MentraSession) => {
+  // Safe: uses optional chaining
+  if (session.device.capabilities?.hasCamera) {
+    session.camera.takePhoto();
+  }
+
+  // Unsafe: will throw if capabilities is null
+  // if (session.device.capabilities.hasCamera) { ... }
+});
+```
+
+### Log device info for debugging
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const caps = session.device.capabilities;
+
+  if (caps) {
+    session.logger.info("Connected device:", caps.modelName);
+    session.logger.info("Display:", caps.hasDisplay);
+    session.logger.info("Camera:", caps.hasCamera);
+    session.logger.info("Microphone:", caps.hasMicrophone);
+    session.logger.info("Speaker:", caps.hasSpeaker);
+    session.logger.info("IMU:", caps.hasIMU);
+    session.logger.info("LED:", caps.hasLight);
+  } else {
+    session.logger.warn("Capabilities not available yet");
+  }
+});
+```
+
+### React to capability changes
+
+In rare cases, capabilities can change after the session starts. Use `onCapabilitiesChange` to handle this.
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const caps = session.device.capabilities;
+
+  // Set up initial features
+  if (caps?.hasCamera) {
+    enablePhotoFeatures(session);
+  }
+
+  // Listen for changes
+  session.device.onCapabilitiesChange((updatedCaps) => {
+    session.logger.info("Device capabilities changed");
+
+    if (updatedCaps.hasCamera && !caps?.hasCamera) {
+      session.logger.info("Camera became available");
+      enablePhotoFeatures(session);
+    }
+  });
+});
+```
+
+## Best Practices
+
+**Always check before using hardware features.** Calling a camera method on glasses without a camera will not work. Check the flag first.
+
+```typescript
+// Good
+if (session.device.capabilities?.hasCamera) {
+  session.camera.takePhoto();
+}
+
+// Bad: may fail silently or throw
+session.camera.takePhoto();
+```
+
+**Provide fallbacks.** If your app needs to display information, fall back to audio when no display is available.
+
+```typescript
+function showMessage(session: MentraSession, text: string) {
+  if (session.device.capabilities?.hasDisplay) {
+    session.display.showTextWall(text);
+  } else if (session.device.capabilities?.hasSpeaker) {
+    session.speaker.speak(text);
+  }
+}
+```
+
+**Do not hardcode device assumptions.** New glasses models will appear over time. Rely on capability flags, not on `modelName` checks.

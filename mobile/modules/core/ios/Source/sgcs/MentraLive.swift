@@ -533,15 +533,15 @@ extension MentraLive: CBCentralManagerDelegate {
 
         case .poweredOff:
             Bridge.log("LIVE: Bluetooth is powered off")
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         case .unauthorized:
             Bridge.log("LIVE: Bluetooth is unauthorized")
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         case .unsupported:
             Bridge.log("LIVE: Bluetooth is unsupported")
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         default:
             Bridge.log("LIVE: Bluetooth state: \(central.state.rawValue)")
@@ -590,12 +590,14 @@ extension MentraLive: CBCentralManagerDelegate {
         isConnecting = false
         connectedPeripheral = peripheral
 
-        // Save device name for future reconnection
+        // Save device name and address for future reconnection
         if let name = peripheral.name {
             UserDefaults.standard.set(name, forKey: PREFS_DEVICE_NAME)
             Bridge.log("Saved device name for future reconnection: \(name)")
             GlassesStore.shared.apply("glasses", "bluetoothName", name)
         }
+        // Persist peripheral UUID so CoreManager can sync it to RN settings
+        GlassesStore.shared.apply("core", "device_address", peripheral.identifier.uuidString)
 
         // Audio Pairing: Setup Bluetooth audio after BLE connection
         if let deviceName = peripheral.name {
@@ -620,7 +622,7 @@ extension MentraLive: CBCentralManagerDelegate {
         connectedPeripheral = nil
         fullyBooted = false
         connected = false
-        connectionState = ConnTypes.DISCONNECTED
+        updateConnectionState(ConnTypes.DISCONNECTED)
         rgbLedAuthorityClaimed = false
 
         stopAllTimers()
@@ -642,7 +644,8 @@ extension MentraLive: CBCentralManagerDelegate {
 
         stopConnectionTimeout()
         isConnecting = false
-        connectionState = ConnTypes.DISCONNECTED
+        connectedPeripheral = nil
+        updateConnectionState(ConnTypes.DISCONNECTED)
 
         if !isKilled {
             handleReconnection()
@@ -736,7 +739,7 @@ extension MentraLive: CBPeripheralDelegate {
             // GlassesStore handles connected state based on fullyBooted
 
             // Keep state as connecting until glasses are ready
-            connectionState = ConnTypes.CONNECTING
+            updateConnectionState(ConnTypes.CONNECTING)
 
             // Request MTU size
             peripheral.readRSSI()
@@ -874,6 +877,12 @@ class MentraLive: NSObject, SGCManager {
     private let BLOCK_AUDIO_DUPLEX = false
 
     var connectionState: String = ConnTypes.DISCONNECTED
+
+    /// Mirrors Android `updateConnectionState` — RN home reads `glasses.connectionState` for reconnecting UI.
+    private func updateConnectionState(_ state: String) {
+        connectionState = state
+        GlassesStore.shared.apply("glasses", "connectionState", state)
+    }
 
     func setDashboardPosition(_: Int, _: Int) {}
     func setSilentMode(_: Bool) {}
@@ -1523,7 +1532,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Connecting to device: \(peripheral.identifier.uuidString)")
 
         isConnecting = true
-        connectionState = ConnTypes.CONNECTING
+        updateConnectionState(ConnTypes.CONNECTING)
         connectedPeripheral = peripheral
         peripheral.delegate = self
 
@@ -1543,7 +1552,7 @@ class MentraLive: NSObject, SGCManager {
         if reconnectAttempts >= MAX_RECONNECT_ATTEMPTS {
             Bridge.log("LIVE: Maximum reconnection attempts reached (\(MAX_RECONNECT_ATTEMPTS))")
             reconnectAttempts = 0
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
             connected = false
             fullyBooted = false
             return
@@ -1555,6 +1564,9 @@ class MentraLive: NSObject, SGCManager {
         )
         reconnectAttempts += 1
 
+        // RN keys off connectionState for reconnecting affordance during backoff (matches Android).
+        updateConnectionState(ConnTypes.CONNECTING)
+
         Bridge.log(
             "LIVE: Scheduling reconnection attempt \(reconnectAttempts) in \(Double(delayNanoseconds) / 1_000_000_000)s (max \(MAX_RECONNECT_ATTEMPTS))"
         )
@@ -1563,7 +1575,8 @@ class MentraLive: NSObject, SGCManager {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
 
-            if self.connectionState == ConnTypes.DISCONNECTED && !self.isKilled {
+            // Use peripheral presence, not connectionState: we stay CONNECTING during backoff until scan/connect.
+            if self.connectedPeripheral == nil, !self.isKilled {
                 // Check for last known device name to start scan
                 if let lastDeviceName = UserDefaults.standard.string(
                     forKey: self.PREFS_DEVICE_NAME), !lastDeviceName.isEmpty
@@ -1578,7 +1591,7 @@ class MentraLive: NSObject, SGCManager {
                     Bridge.log(
                         "LIVE: Reconnection attempt \(self.reconnectAttempts) - no last device name available"
                     )
-                    self.connectionState = ConnTypes.DISCONNECTED
+                    self.updateConnectionState(ConnTypes.DISCONNECTED)
                 }
             }
         }
@@ -2085,7 +2098,7 @@ class MentraLive: NSObject, SGCManager {
             //     centralManager?.cancelPeripheralConnection(peripheral)
             // }
             // Notify the system that glasses are intentionally disconnected
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         case "sr_adota":
             // BES chip OTA progress - convert to ota_progress format for phone UI
@@ -2332,7 +2345,7 @@ class MentraLive: NSObject, SGCManager {
 
         fullyBooted = true
         connected = true
-        connectionState = ConnTypes.CONNECTED
+        updateConnectionState(ConnTypes.CONNECTED)
     }
 
     private func handleWifiScanResult(_ json: [String: Any]) {
@@ -3475,7 +3488,6 @@ class MentraLive: NSObject, SGCManager {
 
         GlassesStore.shared.apply("glasses", "connected", false)
         GlassesStore.shared.apply("glasses", "fullyBooted", false)
-        GlassesStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
         GlassesStore.shared.apply("glasses", "wifiConnected", false)
         GlassesStore.shared.apply("glasses", "wifiSsid", "")
         GlassesStore.shared.apply("glasses", "wifiLocalIp", "")
@@ -3488,7 +3500,7 @@ class MentraLive: NSObject, SGCManager {
         centralManager?.delegate = nil
         centralManager = nil
 
-        connectionState = ConnTypes.DISCONNECTED
+        updateConnectionState(ConnTypes.DISCONNECTED)
     }
 }
 

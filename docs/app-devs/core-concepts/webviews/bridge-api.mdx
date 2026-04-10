@@ -10,7 +10,7 @@ When your webview runs inside the MentraOS Mobile App, it has access to native c
 The bridge API is included in the `@mentra/react` package:
 
 ```bash
-npm install @mentra/react
+bun add @mentra/react
 ```
 
 ## Quick Start
@@ -132,7 +132,7 @@ import { copyToClipboard } from '@mentra/react';
 const success = await copyToClipboard('Copied text!');
 ```
 
-**Returns** `Promise<boolean>` — `true` if the copy succeeded.
+**Returns** `Promise<boolean>` - `true` if the copy succeeded.
 
 **Browser fallback**: `navigator.clipboard.writeText()`.
 
@@ -198,8 +198,8 @@ function MyApp() {
 
 **Returns** `{ rect: CapsuleMenuRect | null, safeAreaTop: number }`
 
-- `rect` — the bounding box of the capsule menu, or `null` outside MentraOS
-- `safeAreaTop` — minimum top padding (in px) to clear the capsule menu. `0` outside MentraOS.
+- `rect` - the bounding box of the capsule menu, or `null` outside MentraOS
+- `safeAreaTop` - minimum top padding (in px) to clear the capsule menu. `0` outside MentraOS.
 
 ### `getCapsuleMenuRect()`
 
@@ -265,13 +265,13 @@ import { useMentraBridge } from '@mentra/react';
 function MyComponent() {
   const bridge = useMentraBridge();
 
-  // bridge.isInMentraOS  — boolean
-  // bridge.platform      — 'ios' | 'android' | null
-  // bridge.hasCapability — (capability: string) => boolean
-  // bridge.share         — (options: ShareOptions) => Promise<BridgeResponse>
-  // bridge.openUrl       — (url: string) => void
-  // bridge.copyToClipboard — (text: string) => Promise<boolean>
-  // bridge.download      — (options: DownloadOptions) => Promise<BridgeResponse>
+  // bridge.isInMentraOS  - boolean
+  // bridge.platform      - 'ios' | 'android' | null
+  // bridge.hasCapability - (capability: string) => boolean
+  // bridge.share         - (options: ShareOptions) => Promise<BridgeResponse>
+  // bridge.openUrl       - (url: string) => void
+  // bridge.copyToClipboard - (text: string) => Promise<boolean>
+  // bridge.download      - (options: DownloadOptions) => Promise<BridgeResponse>
 }
 ```
 

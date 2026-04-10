@@ -184,6 +184,18 @@ class Composer {
     // update the applets store with the installed mini apps:
     // useAppletStatusStore.getState().setInstalledLmas(this.installedLmas)
     // useAppletStatusStore.getState().refreshApplets()
+
+  }
+
+  public async fanOutPcm(bytes: Uint8Array) {
+    // let offlineCaptionsRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
+    // let offlineTranslationRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_translation_running.key)
+    // if (offlineCaptionsRunning) {
+    //   // send the pcm to the offline transcription service
+    // }
+
+
+    // TODO: fan out the PCM to the mini apps that request it
   }
 
   public async fanOutPcm(bytes: Uint8Array) {

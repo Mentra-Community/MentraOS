@@ -1,33 +1,19 @@
 import {GalleryScreen} from "@/components/glasses/Gallery/GalleryScreen"
 import {Screen} from "@/components/ignite"
 import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {cameraPackageName} from "@/stores/applets"
 import {useRef} from "react"
 import {View} from "react-native"
-import {captureRef} from "react-native-view-shot"
 
 export default function AsgGallery() {
-  const viewShotRef = useRef(null)
-  const {goBack} = useNavigationHistory()
-
-  const handleExit = async () => {
-    // take a screenshot of the webview and save it to the applet zustand store:
-    try {
-      const uri = await captureRef(viewShotRef, {
-        format: "jpg",
-        quality: 0.5,
-      })
-    } catch (e) {
-      console.warn("screenshot failed:", e)
-    }
-    // goBack()
-  }
+  const viewShotRef = useRef<View>(null)
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef}>
-      {/* <MiniAppCapsuleMenu packageName="com.mentra.camera" viewShotRef={viewShotRef} /> */}
-      {/* <View className="h-24" /> */}
-      <GalleryScreen />
-    </Screen>
+    <>
+      <MiniAppCapsuleMenu packageName={cameraPackageName} viewShotRef={viewShotRef} />
+      <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef}>
+        <GalleryScreen />
+      </Screen>
+    </>
   )
 }

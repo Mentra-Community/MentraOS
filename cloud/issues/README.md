@@ -26,6 +26,20 @@ spike.md → spec.md → design.md
 
 Not every issue needs all three. A small bug fix might just need a spec. A complex investigation might produce a spike that concludes "do nothing." Use judgment — but when in doubt, write more rather than less.
 
+### Process Rules
+
+**The stages are sequential. Do not skip ahead.**
+
+1. **Investigate and discuss before writing anything.** The investigation happens in conversation — reading code, querying logs, tracing flows, forming hypotheses, testing them. All findings should be discussed, iterated on, and agreed upon in chat before any doc is written. The spike is the *consolidation* of that shared understanding, not the place where understanding is developed.
+
+2. **Don't write a spike until the investigation is complete and aligned.** A spike captures confirmed findings that both parties understand and agree on. If you're still speculating ("possibly," "likely," "needs investigation"), you're not ready to write — keep investigating in chat. The spike should feel like writing down what you already know, not figuring it out as you go.
+
+3. **Don't write a spec until the spike is written and reviewed.** The spec defines *what* we're going to do. It should reference the spike's findings. If the findings change, the spec is wasted work.
+
+4. **Don't write a design doc until the spec is agreed on.** The design doc defines *how* we're going to implement the spec. If the *what* changes, the *how* is wasted work.
+
+5. **AI agents: investigate in chat, write docs only when asked.** When asked to investigate an issue, do the research — read code, query logs, trace flows, explain findings in conversation. Do NOT immediately produce a spike document. Wait until the investigation is discussed, aligned, and the human says to write it up. Same for specs and design docs — discuss first, write when asked. Never bundle spike + spec + design in one pass.
+
 Each feature gets a folder: `cloud/issues/{number}-{feature-name}/`
 
 Example: `cloud/issues/034-ws-liveness/` (matches branch `cloud/ws-liveness-detection`)
@@ -265,11 +279,18 @@ But also: **Dense and useful > long and fluffy**
 
 Before implementation:
 
-1. Investigate (spike)
-2. Specify (spec)
-3. Design (design)
-4. Review together
-5. **Then** start coding
+1. Investigate in conversation — read code, query logs, trace flows, discuss findings
+2. **Align on understanding** — both parties agree on root cause and findings
+3. Write spike — consolidate the agreed findings into a document
+4. **Review spike** — confirm it captures the investigation accurately
+5. Discuss solution approach — explore options in conversation
+6. Write spec — consolidate the agreed approach into a document
+7. **Review spec** — confirm the approach before designing
+8. Write design doc — plan the implementation
+9. **Review design** — confirm before coding
+10. **Then** start coding
+
+The key: investigation and discussion happen in conversation. Documents are the *output* of that discussion, not the medium for it. Don't write to think — think first, then write to record.
 
 Docs are **planning artifacts**, not post-implementation documentation.
 
@@ -326,6 +347,11 @@ If you are an AI agent (Claude, Codex, Copilot, etc.) generating or editing thes
 ❌ **Committing secrets in docs** — tokens, API keys, passwords, connection strings. Use placeholders.
 ❌ **Including real PII** — customer emails, user IDs from production logs. Anonymize.
 ❌ **Skipping the design doc** — don't go straight from spec to implementation. The design doc is where implementation details get reviewed before code is written.
+❌ **Writing docs while still investigating** — investigate in conversation first. Documents consolidate agreed findings, they don't develop them.
+❌ **Writing specs before the spike is reviewed** — if the findings change, the spec is wasted work.
+❌ **Writing design docs before the spec is agreed** — if the approach changes, the design is wasted work.
+❌ **Bundling spike + spec + design in one pass** — each stage needs discussion and agreement before the next. Rushing through all three produces docs built on unverified assumptions.
+❌ **AI agents writing docs preemptively** — investigate and explain in chat. Only write the document when the human says the understanding is aligned and asks for it.
 
 ---
 

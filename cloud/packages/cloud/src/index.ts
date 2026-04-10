@@ -145,7 +145,12 @@ const _server = Bun.serve({
     const url = new URL(req.url);
 
     // WebSocket upgrade requests
-    if (url.pathname === "/glasses-ws" || url.pathname === "/app-ws") {
+    if (
+      url.pathname === "/glasses-ws" ||
+      url.pathname === "/app-ws" ||
+      url.pathname === "/ws/client" ||
+      url.pathname === "/ws/miniapp"
+    ) {
       const upgradeResult = handleUpgrade(req, server);
       if (upgradeResult === undefined) {
         // Upgrade successful

@@ -112,18 +112,7 @@ const AppDetailsDesktop: React.FC<AppDetailsDesktopProps> = ({
                       }}>
                       Installed
                     </Button>
-                  ) : app.compatibility?.isCompatible === false ? (
-                    <Button
-                      disabled={true}
-                      className="px-8 h-[44px] text-[18px] font-medium rounded-full opacity-40 cursor-not-allowed min-w-[242px]"
-                      style={{
-                        fontFamily: '"Red Hat Display", sans-serif',
-                        backgroundColor: "var(--button-bg)",
-                        color: "var(--button-text)",
-                      }}>
-                      Get
-                    </Button>
-                  ) : (
+                  ) : app.compatibility?.isCompatible === false ? null : (
                     <Button
                       onClick={handleInstall}
                       disabled={installingApp}

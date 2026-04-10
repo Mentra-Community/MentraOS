@@ -157,7 +157,7 @@
     "react-native-svg-transformer": "^1.5.3",
     "react-test-renderer": "19.2.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.2"
   },
   "engines": {
     "node": "^20.19.4 || ^22.13.0 || ^24.3.0 || ^25.0.0"

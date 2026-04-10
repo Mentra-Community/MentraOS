@@ -1,361 +1,333 @@
 ---
-title: "Text-to-Speech"
-description: "Make your app speak using voice synthesis"
+title: "Speaker"
+description: "Text-to-speech, audio playback, and real-time audio streaming."
 ---
 
-Convert text to natural speech on smart glasses using `session.audio.speak()`. Powered by ElevenLabs TTS for high-quality voice synthesis.
+Use `session.speaker` to play audio through the user's smart glasses. The SpeakerManager supports three modes: text-to-speech, audio file playback from a URL, and real-time audio streaming.
 
-## Basic Usage
+## Quick Examples
+
+### Text-to-Speech
+
+Convert text to speech using ElevenLabs and play it through the glasses speakers:
 
 ```typescript
-// Simple TTS
-await session.audio.speak('Hello from your app!');
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer();
+
+app.onSession((session) => {
+  session.speaker.speak("Hello, welcome to my app");
+});
+
+app.start();
 ```
 
-## How It Works
+### Audio File Playback
 
-1. Your app calls `session.audio.speak(text)`
-2. MentraOS Cloud generates audio using ElevenLabs TTS
-3. Audio streams to the user's device
-4. Plays through glasses speakers or phone
-
-## Voice Customization
-
-### Custom Voice
+Play an audio file from a URL:
 
 ```typescript
-await session.audio.speak('Welcome back!', {
-  voice_id: 'your_voice_id'
+app.onSession((session) => {
+  session.speaker.play({ url: "https://example.com/notification.mp3" });
 });
 ```
 
-### Voice Settings
+### Real-Time Audio Streaming
+
+Stream audio chunks in real time, for example from a conversational AI API:
 
 ```typescript
-await session.audio.speak('Custom voice settings', {
-  voice_id: 'adam',
-  voice_settings: {
-    stability: 0.5,      // 0-1: Lower = more expressive
-    similarity_boost: 0.75, // 0-1: Voice similarity
-    style: 0.5,          // 0-1: Style exaggeration
-    speed: 1.2           // Playback speed
+app.onSession(async (session) => {
+  const stream = await session.speaker.createStream({ format: "mp3" });
+
+  stream.onStateChange((state) => {
+    session.logger.info(`Stream state: ${state}`);
+  });
+
+  // Fetch audio from a TTS API and stream it in real time
+  const response = await fetch("https://api.example.com/tts", {
+    method: "POST",
+    body: "Hello",
+  });
+
+  for await (const chunk of response.body) {
+    stream.write(new Uint8Array(chunk));
   }
+
+  // Signal that no more data is coming
+  await stream.end();
 });
 ```
 
-### Volume Control
+## Permissions
+
+Your app needs the **speaker** permission. Add it in the [Developer Console](https://console.mentra.glass/apps) when creating or editing your app.
+
+Check permission at runtime:
 
 ```typescript
-await session.audio.speak('Quiet message', {
-  volume: 0.5  // 0.0 - 1.0
+if (session.speaker.hasPermission) {
+  session.speaker.speak("Permission granted");
+} else {
+  session.logger.warn("Speaker permission not granted");
+}
+```
+
+## API Reference
+
+### speak
+
+`session.speaker.speak(text, options?)` converts text to speech via ElevenLabs and plays it through the glasses. Returns a `Promise<PlayResult>`.
+
+```typescript
+await session.speaker.speak("The weather is 72 degrees and sunny");
+```
+
+With options:
+
+```typescript
+await session.speaker.speak("Hello there", {
+  voiceId: "abc123",
+  modelId: "eleven_monolingual_v1",
+  voiceSettings: {
+    stability: 0.5,
+    similarityBoost: 0.75,
+    style: 0.0,
+    speed: 1.0,
+  },
+  volume: 0.8,
+  trackId: "greeting",
+  stopOtherAudio: true,
 });
 ```
 
-## TTS Options
+| Option | Type | Description |
+|--------|------|-------------|
+| `voiceId` | `string` | ElevenLabs voice ID |
+| `modelId` | `string` | ElevenLabs model ID |
+| `voiceSettings` | `object` | Voice tuning parameters (see below) |
+| `volume` | `number` | Playback volume (0.0 to 1.0) |
+| `trackId` | `string` | Identifier for this audio track, used with `stop()` |
+| `stopOtherAudio` | `boolean` | Stop any currently playing audio before speaking |
+
+**Voice settings:**
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `stability` | `number` | Voice stability (0.0 to 1.0) |
+| `similarityBoost` | `number` | Similarity boost (0.0 to 1.0) |
+| `style` | `number` | Style exaggeration (0.0 to 1.0) |
+| `speed` | `number` | Speech speed multiplier |
+
+### play
+
+`session.speaker.play(options)` plays an audio file from a URL. Returns a `Promise<PlayResult>`.
+
+```typescript
+await session.speaker.play({ url: "https://example.com/sound.mp3" });
+```
+
+With options:
+
+```typescript
+await session.speaker.play({
+  url: "https://example.com/alert.mp3",
+  volume: 1.0,
+  trackId: "alert-sound",
+  stopOtherAudio: false,
+});
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `url` | `string` | URL of the audio file (must be publicly accessible) |
+| `volume` | `number` | Playback volume (0.0 to 1.0) |
+| `trackId` | `string` | Identifier for this audio track, used with `stop()` |
+| `stopOtherAudio` | `boolean` | Stop any currently playing audio first |
+
+Supported formats: MP3 (recommended), WAV, and OGG.
+
+### createStream
+
+`session.speaker.createStream(options?)` opens a real-time audio output stream. Returns a `Promise<AudioOutputStream>`.
+
+```typescript
+const stream = await session.speaker.createStream({
+  format: "pcm16",
+  sampleRate: 24000,
+  channels: 1,
+  volume: 0.9,
+  trackId: "ai-response",
+  stopOtherAudio: true,
+});
+```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `voice_id` | string | Server default | ElevenLabs voice ID |
-| `model_id` | string | eleven_flash_v2_5 | TTS model to use |
-| `voice_settings` | object | - | Voice customization |
-| `volume` | number | 1.0 | Volume level (0.0-1.0) |
+| `format` | `"mp3" \| "pcm16"` | `"mp3"` | Audio format |
+| `sampleRate` | `number` | - | Sample rate in Hz |
+| `channels` | `number` | - | Number of audio channels |
+| `bitrate` | `number` | - | Bitrate for compressed formats |
+| `volume` | `number` | - | Playback volume (0.0 to 1.0) |
+| `trackId` | `string` | - | Identifier for this audio track |
+| `stopOtherAudio` | `boolean` | - | Stop any currently playing audio first |
 
-### Voice Settings Options
+#### AudioOutputStream
 
-| Setting | Type | Range | Description |
-|---------|------|-------|-------------|
-| `stability` | number | 0-1 | Lower = more expressive |
-| `similarity_boost` | number | 0-1 | Voice similarity to original |
-| `style` | number | 0-1 | Style exaggeration |
-| `speed` | number | 0.5-2.0 | Playback speed |
-| `use_speaker_boost` | boolean | - | Enhance speaker clarity |
+The stream object returned by `createStream()` has the following interface:
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `stream.write(chunk)` | `(chunk: Uint8Array) => void` | Write audio data to the stream |
+| `stream.end()` | `() => void` | Gracefully end the stream (finishes playing buffered audio) |
+| `stream.flush()` | `() => void` | Interrupt playback, discard the buffer, and go silent immediately |
+| `stream.onStateChange(handler)` | `(handler: (state) => void) => void` | Listen for state transitions |
+| `stream.state` | `string` | Current state of the stream |
+| `stream.id` | `string` | UUID identifying this stream |
+
+Stream states: `"created"`, `"streaming"`, `"ending"`, `"ended"`, `"error"`.
+
+### stop
+
+`session.speaker.stop(trackId?)` stops audio playback. Pass a `trackId` to stop a specific track, or omit it to stop all audio.
+
+```typescript
+// Stop a specific track
+session.speaker.stop("alert-sound");
+
+// Stop all audio
+session.speaker.stop();
+```
+
+### hasPermission
+
+`session.speaker.hasPermission` is a boolean that indicates whether the app has speaker permission.
+
+```typescript
+if (session.speaker.hasPermission) {
+  session.speaker.speak("Ready");
+}
+```
 
 ## Common Patterns
 
-### Voice Confirmation
+### Respond to voice commands with speech
 
 ```typescript
-session.events.onTranscription(async (data) => {
-  if (data.isFinal) {
-    // Acknowledge user input
-    await session.audio.speak('Got it!');
+app.onSession((session) => {
+  session.transcription.on(async (data) => {
+    if (!data.isFinal) return;
 
-    // Process command
-    const result = await processCommand(data.text);
+    const text = data.text.toLowerCase();
 
-    // Speak result
-    await session.audio.speak(result);
-  }
-});
-```
-
-### Notifications
-
-```typescript
-session.events.onPhoneNotification(async (data) => {
-  if (data.app === 'Messages') {
-    await session.audio.speak(`New message from ${data.title}`);
-  }
-});
-```
-
-### Multi-Step Instructions
-
-```typescript
-async function guideUser(session: AppSession) {
-  await session.audio.speak('Step 1: Look at the target');
-  await sleep(2000);
-
-  await session.audio.speak('Step 2: Press the button');
-  await sleep(2000);
-
-  await session.audio.speak('Step 3: Wait for confirmation');
-}
-```
-
-### Contextual Responses
-
-```typescript
-session.events.onTranscription(async (data) => {
-  if (!data.isFinal) return;
-
-  const text = data.text.toLowerCase();
-
-  if (text.includes('weather')) {
-    await session.audio.speak('The weather is sunny and 72 degrees');
-  } else if (text.includes('time')) {
-    const time = new Date().toLocaleTimeString();
-    await session.audio.speak(`The time is ${time}`);
-  } else if (text.includes('help')) {
-    await session.audio.speak('You can ask about weather, time, or directions');
-  }
-});
-```
-
-### Error Handling
-
-```typescript
-try {
-  const result = await session.audio.speak('Hello!');
-
-  if (result.success) {
-    session.logger.info('TTS played successfully');
-  } else {
-    session.logger.error('TTS failed:', result.error);
-  }
-} catch (error) {
-  session.logger.error('TTS error:', error);
-  // Fallback to text display
-  session.layouts.showTextWall('Hello!');
-}
-```
-
-## Best Practices
-
-<AccordionGroup>
-  <Accordion title="Keep Messages Brief" icon="comment">
-    Short messages are easier to understand:
-
-    ```typescript
-    // ✅ Good
-    await session.audio.speak('Message sent');
-
-    // ❌ Avoid - too long
-    await session.audio.speak(
-      'Your message has been successfully sent to the recipient and they will receive it shortly'
-    );
-    ```
-  </Accordion>
-
-  <Accordion title="Wait for Completion" icon="clock">
-    Don't overlap audio:
-
-    ```typescript
-    // ✅ Good - sequential
-    await session.audio.speak('First message');
-    await session.audio.speak('Second message');
-
-    // ❌ Avoid - messages overlap
-    session.audio.speak('First message');  // No await
-    session.audio.speak('Second message'); // Plays immediately
-    ```
-  </Accordion>
-
-  <Accordion title="Provide Visual Feedback" icon="eye">
-    Combine audio with visual cues:
-
-    ```typescript
-    // ✅ Good
-    session.layouts.showTextWall('Processing...');
-    await session.audio.speak('Processing your request');
-
-    // User gets both visual and audio feedback
-    ```
-  </Accordion>
-
-  <Accordion title="Handle Audio-Only Devices" icon="headphones">
-    Not all devices have displays:
-
-    ```typescript
-    if (session.capabilities?.hasDisplay) {
-      session.layouts.showTextWall('Hello!');
+    if (text.includes("weather")) {
+      const weather = await fetchWeather();
+      session.speaker.speak(`It's ${weather.temp} degrees and ${weather.condition}`);
     }
-
-    // Always provide audio for accessibility
-    await session.audio.speak('Hello!');
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Voice Selection
-
-**Finding Voice IDs:**
-
-1. Visit [ElevenLabs Voice Library](https://elevenlabs.io/voice-library)
-2. Choose a voice
-3. Copy the voice ID
-4. Use in your app
-
-```typescript
-// Popular voices
-await session.audio.speak('Professional voice', {
-  voice_id: 'adam'  // Male, professional
-});
-
-await session.audio.speak('Friendly voice', {
-  voice_id: 'rachel'  // Female, friendly
+  });
 });
 ```
 
-<Info>
-Configure default voice ID in your environment variables: `ELEVENLABS_DEFAULT_VOICE_ID`
-</Info>
-
-## Troubleshooting
-
-### Audio Not Playing
-
-**Check device capabilities:**
+### Play a sound effect on an action
 
 ```typescript
-if (!session.capabilities) {
-  session.logger.warn('Capabilities not loaded');
-  return;
-}
+app.onSession((session) => {
+  session.transcription.on((data) => {
+    if (!data.isFinal) return;
 
-// Note: Audio should work on all devices
-// It routes through phone if glasses don't have speakers
+    if (data.text.toLowerCase().includes("take photo")) {
+      session.camera.takePhoto();
+      session.speaker.play({ url: "https://example.com/shutter.mp3" });
+    }
+  });
+});
 ```
 
-### TTS Timing Out
-
-**TTS has 60 second timeout:**
+### Stream audio from a conversational AI
 
 ```typescript
-try {
-  await session.audio.speak('Your message');
-} catch (error) {
-  if (error.includes('timeout')) {
-    session.logger.error('TTS timed out');
-    // Retry or fallback to text
-  }
-}
+app.onSession(async (session) => {
+  const stream = await session.speaker.createStream({
+    format: "pcm16",
+    sampleRate: 24000,
+    channels: 1,
+    stopOtherAudio: true,
+  });
+
+  stream.onStateChange((state) => {
+    session.logger.info(`Audio stream state: ${state}`);
+  });
+
+  // As your AI generates audio chunks, write them to the stream
+  aiClient.onAudioChunk((chunk: Uint8Array) => {
+    stream.write(chunk);
+  });
+
+  aiClient.onDone(() => {
+    stream.end();
+  });
+});
 ```
 
-### Voice Quality Issues
+### Interrupt streaming audio
 
-**Adjust voice settings:**
+Use `flush()` to immediately stop playback and discard any buffered audio. This is useful when the user interrupts the AI mid-sentence:
 
 ```typescript
-// For clearer speech
-await session.audio.speak('Clear message', {
-  voice_settings: {
-    stability: 0.7,       // More stable
-    similarity_boost: 0.5, // Less similarity boost
-    speed: 0.9            // Slightly slower
+session.mic.onVoiceActivity((isSpeaking) => {
+  if (isSpeaking && stream.state === "streaming") {
+    stream.flush();
+    session.logger.info("Audio interrupted by user");
   }
 });
 ```
 
-## Performance Tips
+### Stop specific audio tracks
 
-<AccordionGroup>
-  <Accordion title="Cache Common Phrases" icon="floppy-disk">
-    Pre-generate audio for frequently used phrases:
-
-    ```typescript
-    // Consider using pre-recorded audio files
-    // for very common phrases
-    await session.audio.playAudio({
-      audioUrl: 'https://your-cdn.com/hello.mp3'
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Batch Related Messages" icon="list">
-    Combine related information:
-
-    ```typescript
-    // ✅ Good - one TTS call
-    await session.audio.speak(
-      'You have 3 messages and 2 notifications'
-    );
-
-    // ❌ Avoid - multiple calls
-    await session.audio.speak('You have 3 messages');
-    await session.audio.speak('and 2 notifications');
-    ```
-  </Accordion>
-
-  <Accordion title="Use Appropriate Speed" icon="gauge">
-    Faster speed = less time = better UX:
-
-    ```typescript
-    // For quick confirmations
-    await session.audio.speak('Done', {
-      voice_settings: { speed: 1.3 }
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Return Value
-
-The `speak()` method returns a promise that resolves with:
+Use `trackId` to manage multiple audio tracks independently:
 
 ```typescript
-interface AudioPlayResult {
-  success: boolean;
-  error?: string;
-  duration?: number;  // Audio duration in seconds
-}
+// Start background audio
+session.speaker.play({
+  url: "https://example.com/ambient.mp3",
+  trackId: "background",
+});
+
+// Start a notification sound without stopping the background
+session.speaker.play({
+  url: "https://example.com/ding.mp3",
+  trackId: "notification",
+  stopOtherAudio: false,
+});
+
+// Later, stop only the background audio
+session.speaker.stop("background");
 ```
 
-**Example:**
+## Tips
+
+- Keep spoken text short and natural. The user is wearing glasses, not reading a document.
+- Do not call `speak()` on every interim transcription result. Only speak on final results or specific triggers. Rapid-fire TTS calls will queue and overlap.
+- Use MP3 for audio files. It offers the best balance of quality and file size.
+- Host audio files on a CDN for fast delivery.
+- For real-time AI integrations, use `createStream()` with PCM16 format for the lowest latency.
+- Use `trackId` when you need to stop specific audio without interrupting everything else.
+
+## Migrating from v2
+
+Text-to-speech and audio playback have moved from `session.audio` to `session.speaker`:
 
 ```typescript
-const result = await session.audio.speak('Hello!');
+// v2
+session.audio.speak("Hello");
+session.audio.playAudio({ audioUrl: "https://example.com/sound.mp3" });
 
-if (result.success) {
-  session.logger.info(`Played ${result.duration}s of audio`);
-} else {
-  session.logger.error('Failed:', result.error);
-}
+// v3
+session.speaker.speak("Hello");
+session.speaker.play({ url: "https://example.com/sound.mp3" });
 ```
 
-## Next Steps
+Audio streaming via `createStream()` is new in v3 and has no v2 equivalent. The `stop()` method and `trackId` support are also new.
 
-<CardGroup cols={2}>
-  <Card title="Playing Audio Files" icon="file-audio" href="/app-devs/core-concepts/speakers/playing-audio-files">
-    Play pre-recorded audio from URLs
-  </Card>
-  <Card title="Speech-to-Text" icon="microphone" href="/app-devs/core-concepts/microphone/speech-to-text">
-    Listen to user voice input
-  </Card>
-  <Card title="Audio Manager" icon="book" href="/app-devs/reference/managers/audio-manager">
-    Complete audio API reference
-  </Card>
-  <Card title="Device Control" icon="microchip" href="/app-devs/core-concepts/app-session/device-control">
-    All device control features
-  </Card>
-</CardGroup>
+See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

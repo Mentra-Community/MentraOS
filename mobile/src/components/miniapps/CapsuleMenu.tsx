@@ -44,11 +44,13 @@ export function MiniAppCapsuleMenu({
   viewShotRef,
   onEllipsisPress,
   onMinusPress,
+  onBackPress,
 }: {
   packageName: string
   viewShotRef: React.RefObject<View | null>
   onEllipsisPress?: () => void
   onMinusPress?: () => void
+  onBackPress?: () => void
 }) {
   const {goBack} = useNavigationHistory()
   const insets = useSaferAreaInsets()
@@ -82,7 +84,7 @@ export function MiniAppCapsuleMenu({
         RNImage.getSize(uri, (w, h) => resolve({width: w, height: h}), reject)
       })
       let amountToChop = insets.top * PixelRatio.get()
-
+      amountToChop = 0
       const context = ImageManipulator.ImageManipulator.manipulate(uri)
       context.crop({originX: 0, originY: amountToChop, width: width, height: height - amountToChop})
       const imageRef = await context.renderAsync()
@@ -101,13 +103,41 @@ export function MiniAppCapsuleMenu({
     }
   }
 
-  focusEffectPreventBack(() => {
-    // Defer screenshot capture so it doesn't block the navigation animation
-    InteractionManager.runAfterInteractions(() => {
-      let shouldGoBack = Platform.OS === "android"
-      handleExit(shouldGoBack)
-    })
-  }, true)
+  // focusEffectPreventBack(
+  //   onBackPress
+  //     ? () => {
+  //         onBackPress()
+  //       }
+  //     : () => {
+  //         // Defer screenshot capture so it doesn't block the navigation animation
+  //         // InteractionManager.runAfterInteractions(() => {
+  //         //   let shouldGoBack = Platform.OS === "android"
+  //         //   handleExit(shouldGoBack)
+  //         // })
+  //         let shouldGoBack = Platform.OS === "android"
+  //         handleExit(shouldGoBack)
+  //       },
+  //   onBackPress ? false : true,
+  // )
+
+  focusEffectPreventBack(
+    onBackPress
+      ? () => {
+          console.log("CAPSULE MENU: handleBackPress() called")
+          // InteractionManager.runAfterInteractions(() => {
+            handleExit(false)
+            onBackPress()
+          // })
+        }
+      : () => {
+          // Defer screenshot capture so it doesn't block the navigation animation
+          InteractionManager.runAfterInteractions(() => {
+            let shouldGoBack = Platform.OS === "android"
+            handleExit(shouldGoBack)
+          })
+        },
+    true,
+  )
 
   return (
     <View className="z-2 absolute right-2 items-center justify-end flex-row" style={{top: top}}>

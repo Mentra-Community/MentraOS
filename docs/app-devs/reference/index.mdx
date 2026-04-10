@@ -1,21 +1,31 @@
 ---
-title: MentraOS SDK Reference
-description: Comprehensive reference for the MentraOS SDK (`@mentra/sdk`), covering core classes, manager classes, interfaces, enums, and utilities for building apps.
+title: v2 SDK Reference
+description: Comprehensive reference for the legacy v2 MentraOS SDK (`@mentra/sdk`), covering core classes, session managers, interfaces, enums, and utilities for building apps.
 ---
 
-# MentraOS SDK Reference
+# v2 SDK Reference
 
-Welcome to the reference for the MentraOS SDK. This section provides detailed information about all classes, interfaces, types, and enums available in the `@mentra/sdk` package.
+Welcome to the reference for the MentraOS SDK (`@mentra/sdk`). This section provides detailed information about all classes, interfaces, types, and enums.
 
-## Overview
+## v3 SDK
 
-The MentraOS SDK is organized into several main components:
+The v3 SDK is organized around two main concepts:
 
-- **Primary Classes**: Core classes like [`AppServer`](/app-devs/reference/app-server) and [`AppSession`](/app-devs/reference/app-session) that serve as the main entry points for app development
-- **Manager Classes**: Component classes like [`EventManager`](/app-devs/reference/managers/event-manager), [`LayoutManager`](/app-devs/reference/managers/layout-manager), and [`SettingsManager`](/app-devs/reference/managers/settings-manager) that handle specific functionalities
-- **Enums**: Enumeration types that define constants and options throughout the SDK
-- **Interfaces**: Type definitions for configuration objects, events, layouts, settings, and messages
-- **Utilities**: Helper functions and utility classes
+- **[MiniAppServer](/app-devs/core-concepts/app-server)** — your app's entry point. Handles webhooks, WebSocket connections, and creates sessions.
+- **[MentraSession](/app-devs/core-concepts/session)** — one user's connection to your app. All capabilities are accessed through 14 typed managers on the session object.
+
+For a guide-oriented introduction, see [Core Concepts](/app-devs/core-concepts/app-server). For the full v2 → v3 method mapping, see the [API Map](/app-devs/migration/api-map).
+
+## v2 Reference (Legacy)
+
+The pages below document the v2 API. These classes still work in v3.0 via the compatibility layer but will be removed in v3.1.
+
+- **[AppServer (v2)](/app-devs/reference/app-server)** — the v2 base class (replaced by MiniAppServer)
+- **[AppSession (v2)](/app-devs/reference/app-session)** — the v2 session class (replaced by MentraSession)
+- **Manager Classes (v2)**: [EventManager](/app-devs/reference/managers/event-manager), [LayoutManager](/app-devs/reference/managers/layout-manager), [AudioManager](/app-devs/reference/managers/audio-manager), [SettingsManager](/app-devs/reference/managers/settings-manager), [LedManager](/app-devs/reference/managers/led-manager), [Camera](/app-devs/reference/managers/camera), [LocationManager](/app-devs/reference/managers/location-manager)
+- **Enums**: [Enum reference](/app-devs/reference/enums) — ViewType, LayoutType, StreamType, etc. (unchanged in v3)
+- **Interfaces**: Type definitions for [configuration](/app-devs/reference/interfaces/config-types), [events](/app-devs/reference/interfaces/event-types), [layouts](/app-devs/reference/interfaces/layout-types), [capabilities](/app-devs/reference/interfaces/capabilities), [webhooks](/app-devs/reference/interfaces/webhook-types), [messages](/app-devs/reference/interfaces/message-types), [settings](/app-devs/reference/interfaces/setting-types), and [tools](/app-devs/reference/interfaces/tool-types)
+- **Utilities**: [Token utilities](/app-devs/reference/token-utils), [Helper functions](/app-devs/reference/utilities)
 
 ## How to Use This Reference
 

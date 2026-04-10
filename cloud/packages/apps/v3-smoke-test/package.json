@@ -1,0 +1,25 @@
+{
+  "name": "@mentra/v3-smoke-test",
+  "version": "0.1.0",
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "NODE_ENV=development bun --watch src/index.ts",
+    "ngrok": "ngrok http 3335 --url https://isaiah-tpa.ngrok.app",
+    "start": "bun src/index.ts",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mentra/react": "workspace:*",
+    "@mentra/sdk": "workspace:*",
+    "hono": "^4.8.12",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}

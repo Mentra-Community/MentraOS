@@ -1,395 +1,136 @@
 ---
-title: "Audio Chunks"
-description: "Process raw audio data for custom speech recognition and analysis"
+title: "Audio Chunks & Mic Input"
+description: "Access raw audio from the microphone and detect voice activity."
 ---
 
-## Basic Usage
+Use `session.mic` to receive raw audio chunks from the glasses microphone and detect when the user is speaking. This is separate from transcription - subscribing to `session.mic` gives you raw audio data, not text.
+
+## Audio Chunks
+
+Receive raw PCM audio data from the microphone:
 
 ```typescript
-session.events.onAudioChunk((audioChunk: AudioChunk) => {
-  // audioChunk.arrayBuffer contains the raw audio data
-  const buffer = audioChunk.arrayBuffer;
-  const sampleRate = audioChunk.sampleRate || 16000;
-  
-  session.logger.info('Received audio chunk:', buffer.byteLength, 'bytes at', sampleRate, 'Hz');
+const cleanup = session.mic.onChunk((chunk) => {
+  // chunk.arrayBuffer - raw PCM audio data
+  // chunk.sampleRate  - sample rate (typically 16000 Hz)
+  const buffer = chunk.arrayBuffer;
+  const sampleRate = chunk.sampleRate || 16000;
+});
+
+// Stop receiving audio chunks
+cleanup();
+```
+
+Audio chunks arrive continuously while the microphone is active. Each chunk is a small buffer of PCM audio data (typically 20ms worth at 16kHz).
+
+## Voice Activity Detection
+
+Detect when the user starts or stops speaking:
+
+```typescript
+const cleanup = session.mic.onVoiceActivity((isSpeaking) => {
+  if (isSpeaking) {
+    session.display.showText("Listening...");
+  } else {
+    session.display.showText("Silent");
+  }
 });
 ```
 
-## Audio Chunk Interface
+You can also check the current state:
 
 ```typescript
-interface AudioChunk {
-  type: StreamType.AUDIO_CHUNK;
-  arrayBuffer: ArrayBufferLike;  // Raw audio data buffer
-  sampleRate?: number;            // Sample rate (e.g., 16000 Hz)
-  timestamp: Date;                // When chunk was received
+const speaking = session.mic.isSpeaking;  // true/false
+const active = session.mic.isActive;       // true if mic is streaming
+```
+
+## Stop the Microphone
+
+Call `session.mic.stop()` to turn off the microphone and stop all audio chunk and voice activity callbacks:
+
+```typescript
+session.mic.stop();
+```
+
+This is useful when your app no longer needs audio input and you want to conserve battery. Subscribing to `onChunk` or `onVoiceActivity` again will restart the microphone.
+
+## Check Permission
+
+Use `session.mic.hasPermission` to check whether your app has microphone access before subscribing:
+
+```typescript
+if (session.mic.hasPermission) {
+  session.mic.onChunk((chunk) => {
+    // process audio
+  });
+} else {
+  session.logger.warn("Microphone permission not granted");
 }
 ```
 
-## When to Use Audio Chunks
+## When to Use Mic vs Transcription
 
-<AccordionGroup>
-  <Accordion title="Custom Speech Recognition" icon="microphone">
-    Use your own speech-to-text model:
+| Use case | Use this |
+|----------|----------|
+| Show what the user said as text | `session.transcription` |
+| Run your own speech recognition model | `session.mic` |
+| Detect when the user is speaking (VAD) | `session.mic` |
+| Record audio for later processing | `session.mic` |
+| Build a voice command system | `session.transcription` |
+| Stream audio to an external API (Whisper, Deepgram, etc.) | `session.mic` |
+| Stop the mic to save battery | `session.mic.stop()` |
 
-    ```typescript
-    session.events.onAudioChunk(async (audioChunk: AudioChunk) => {
-      const result = await customSTT.process(audioChunk.arrayBuffer);
-      session.logger.info('Transcription:', result);
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Voice Analysis" icon="waveform">
-    Analyze voice characteristics:
-
-    - Voice activity detection (VAD)
-    - Pitch detection
-    - Emotion recognition
-    - Speaker identification
-  </Accordion>
-
-  <Accordion title="Audio Effects" icon="sliders">
-    Apply real-time audio processing:
-
-    - Noise reduction
-    - Echo cancellation
-    - Voice enhancement
-    - Audio filtering
-  </Accordion>
-
-  <Accordion title="Recording" icon="record-vinyl">
-    Save audio for later processing:
-
-    ```typescript
-    const audioChunks: AudioChunk[] = [];
-
-    session.events.onAudioChunk((audioChunk: AudioChunk) => {
-      audioChunks.push(audioChunk);
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
-
-<Warning>
-Audio chunks are **advanced functionality**. For most apps, use `session.events.onTranscription()` instead.
-</Warning>
-
-## Working with Audio Data
-
-### Convert to Float32Array
-
-```typescript
-session.events.onAudioChunk((audioChunk: AudioChunk) => {
-  // Convert to typed array for processing
-  const samples = new Float32Array(audioChunk.arrayBuffer);
-  
-  // Process samples (values typically between -1.0 and 1.0)
-  for (let i = 0; i < samples.length; i++) {
-    const sample = samples[i];
-    // Process each sample...
-  }
-});
-```
-
-### Calculate Audio Level
-
-```typescript
-function calculateRMS(audioChunk: AudioChunk): number {
-  const samples = new Float32Array(audioChunk.arrayBuffer);
-  let sum = 0;
-  
-  for (let i = 0; i < samples.length; i++) {
-    sum += samples[i] * samples[i];
-  }
-  
-  return Math.sqrt(sum / samples.length);
-}
-
-session.events.onAudioChunk((audioChunk: AudioChunk) => {
-  const level = calculateRMS(audioChunk);
-  
-  if (level > 0.1) {
-    session.logger.info('Voice detected, RMS level:', level.toFixed(3));
-  }
-});
-```
-
-
+Subscribing to `session.transcription` does NOT give you raw audio. Subscribing to `session.mic` does NOT give you transcription text. They are independent. Either one activates the hardware microphone. If you want both, subscribe to both.
 
 ## Common Patterns
 
-### Recording Audio
+### Send audio to an external API
 
 ```typescript
-class AudioRecorder {
-  private chunks: ArrayBuffer[] = [];
-  private isRecording = false;
+session.mic.onChunk(async (chunk) => {
+  await fetch("https://your-api.com/audio", {
+    method: "POST",
+    body: chunk.arrayBuffer,
+    headers: { "Content-Type": "application/octet-stream" },
+  });
+});
+```
 
-  start(session: AppSession) {
-    this.chunks = [];
-    this.isRecording = true;
-    
-    session.events.onAudioChunk((chunk) => {
-      if (this.isRecording) {
-        // Store the arrayBuffer
-        this.chunks.push(chunk.arrayBuffer);
-      }
-    });
-  }
+### Buffer audio while speaking
 
-  stop(): ArrayBuffer[] {
-    this.isRecording = false;
-    return this.chunks;
-  }
+```typescript
+const audioBuffers: ArrayBuffer[] = [];
+let recording = false;
 
-  getRecording(): ArrayBuffer[] {
-    return this.chunks;
-  }
-}
-
-// Usage
-const recorder = new AudioRecorder();
-
-session.events.onButtonPress((data) => {
-  if (data.button === 'select') {
-    recorder.start(session);
-    session.layouts.showTextWall('Recording...');
+session.mic.onVoiceActivity((isSpeaking) => {
+  if (isSpeaking) {
+    recording = true;
+    audioBuffers.length = 0;
+  } else if (recording) {
+    recording = false;
+    processRecording(audioBuffers);
   }
 });
 
-// Stop after 5 seconds
-setTimeout(() => {
-  const recording = recorder.stop();
-  session.layouts.showTextWall(`Recorded ${recording.length} chunks`);
-}, 5000);
-```
-
-### Audio Level Monitoring
-
-```typescript
-let lastUpdate = 0;
-
-session.events.onAudioChunk((chunk) => {
-  const now = Date.now();
-  
-  // Update display every 200ms
-  if (now - lastUpdate > 200) {
-    const sampleRate = chunk.sampleRate || 16000;
-    session.dashboard.content.writeToMain(`🎤 Recording at ${sampleRate}Hz`);
-    lastUpdate = now;
+session.mic.onChunk((chunk) => {
+  if (recording) {
+    audioBuffers.push(chunk.arrayBuffer);
   }
 });
 ```
 
+## Permissions
 
+Your app needs the **microphone** permission to receive audio chunks. Add it in the [Developer Console](https://console.mentra.glass/apps) when creating or editing your app.
 
-
-
-## Performance Considerations
-
-<AccordionGroup>
-  <Accordion title="Audio Chunks Are Frequent" icon="gauge">
-    Audio chunks arrive **many times per second**:
-
-    ```typescript
-    // ❌ Avoid - expensive operation every chunk
-    session.events.onAudioChunk(async (audioChunk: AudioChunk) => {
-      await expensiveProcessing(audioChunk); // Too slow
-    });
-
-    // ✅ Good - queue for batch processing
-    const queue: AudioChunk[] = [];
-    session.events.onAudioChunk((audioChunk: AudioChunk) => {
-      queue.push(audioChunk);
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Memory Management" icon="memory">
-    Audio data accumulates quickly:
-
-    ```typescript
-    // ✅ Good - limit stored chunks
-    const maxChunks = 100;
-    const chunks: AudioChunk[] = [];
-
-    session.events.onAudioChunk((audioChunk: AudioChunk) => {
-      chunks.push(audioChunk);
-
-      if (chunks.length > maxChunks) {
-        chunks.shift();
-      }
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Processing Time" icon="clock">
-    Keep processing fast:
-
-    ```typescript
-    session.events.onAudioChunk((audioChunk: AudioChunk) => {
-      // Keep processing fast - audio chunks arrive frequently
-      const buffer = audioChunk.arrayBuffer;
-      // Process synchronously
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Best Practices
-
-<AccordionGroup>
-  <Accordion title="Use Transcription API When Possible" icon="comment">
-    Built-in transcription is optimized and easier:
-
-    ```typescript
-    // ✅ Better for most cases
-    session.events.onTranscription((data) => {
-      if (data.isFinal) {
-        processCommand(data.text);
-      }
-    });
-
-    // Only use audio chunks if you need:
-    // - Custom speech recognition
-    // - Voice analysis
-    // - Audio effects
-    // - Recording
-    ```
-  </Accordion>
-
-  <Accordion title="Clone Buffers" icon="clone">
-    ArrayBuffers may be reused:
-
-    ```typescript
-    // ✅ Good - store the arrayBuffer
-    session.events.onAudioChunk((chunk) => {
-      storedChunks.push(chunk.arrayBuffer);
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Handle Errors" icon="triangle-exclamation">
-    Audio processing can fail:
-
-    ```typescript
-    session.events.onAudioChunk((audioChunk: AudioChunk) => {
-      try {
-        processAudio(audioChunk.arrayBuffer);
-      } catch (error) {
-        session.logger.error('Audio processing error:', error);
-      }
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Clean Up Resources" icon="broom">
-    Stop processing when done:
-
-    ```typescript
-    const unsubscribe = session.events.onAudioChunk((audioChunk: AudioChunk) => {
-      // Process audio
-    });
-
-    // Later, stop receiving chunks
-    unsubscribe();
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Permissions Required
-
-<Warning>
-Audio chunks require the **MICROPHONE** permission. Set this in the [Developer Console](https://console.mentra.glass/apps).
-</Warning>
-
-## AudioChunk Properties
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `arrayBuffer` | `ArrayBufferLike` | Raw audio data buffer |
-| `sampleRate` | `number` (optional) | Sample rate in Hz (typically 16000) |
-| `timestamp` | `Date` | When chunk was received |
-| `type` | `StreamType.AUDIO_CHUNK` | Stream type identifier |
-
-**Audio Format:**
-- Raw PCM audio data
-- Mono (1 channel)
-- Convert to `Float32Array` for processing
-
-## Troubleshooting
-
-<AccordionGroup>
-  <Accordion title="No Audio Chunks" icon="microphone-slash">
-    **Check permission:**
-
-    - Ensure MICROPHONE permission is set
-    - User must approve permission
-    - Check for permission errors in logs
-  </Accordion>
-
-  <Accordion title="Delayed Processing" icon="clock">
-    **Processing too slow:**
-
-    - Keep processing under 20ms per chunk
-    - Use async processing with queues
-    - Optimize audio algorithms
-  </Accordion>
-
-  <Accordion title="Memory Issues" icon="memory">
-    **Too much buffering:**
-
-    - Limit stored chunks
-    - Process and discard quickly
-    - Don't store entire recording in memory
-  </Accordion>
-</AccordionGroup>
-
-## Example: Simple Recording
+## Migrating from v2
 
 ```typescript
-const recordedChunks: AudioChunk[] = [];
-let isRecording = false;
+// v2
+session.events.onAudioChunk((chunk) => { ... });
 
-session.events.onButtonPress((data) => {
-  if (data.button === 'select') {
-    isRecording = !isRecording;
-    if (isRecording) {
-      recordedChunks.length = 0;
-      session.logger.info('Recording started');
-    } else {
-      session.logger.info('Recorded', recordedChunks.length, 'chunks');
-      
-      // Process recorded audio
-      recordedChunks.forEach((chunk) => {
-        const samples = new Float32Array(chunk.arrayBuffer);
-        session.logger.info('Chunk:', samples.length, 'samples at', chunk.sampleRate, 'Hz');
-      });
-    }
-  }
-});
-
-session.events.onAudioChunk((audioChunk: AudioChunk) => {
-  if (isRecording) {
-    recordedChunks.push(audioChunk);
-  }
-});
+// v3
+session.mic.onChunk((chunk) => { ... });
 ```
 
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Speech-to-Text" icon="microphone" href="/app-devs/core-concepts/microphone/speech-to-text">
-    Use built-in transcription
-  </Card>
-  <Card title="Text-to-Speech" icon="comment" href="/app-devs/core-concepts/speakers/text-to-speech">
-    Generate voice output
-  </Card>
-  <Card title="Event Manager" icon="book" href="/app-devs/reference/managers/event-manager">
-    Complete event API reference
-  </Card>
-  <Card title="Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
-    Learn about permissions
-  </Card>
-</CardGroup>
+Voice activity detection (`session.mic.onVoiceActivity`, `session.mic.isSpeaking`), `session.mic.stop()`, and `session.mic.hasPermission` are new in v3 and have no v2 equivalent. See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

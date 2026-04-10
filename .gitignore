@@ -122,16 +122,8 @@ dist
 docs/_build/
 eggs
 htmlcov
-<<<<<<< dev-nexfirmware-evt1
-# Python include/lib directories (not MCU includes)
-**/python/**/include/
-**/python/**/lib/
-**/venv/**/include/
-**/venv/**/lib/
-=======
 #include/
 .lib/
->>>>>>> dev
 man/
 nosetests.xml
 parts
@@ -197,13 +189,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-<<<<<<< dev-nexfirmware-evt1
-# Python lib directories (specific to Python builds)
-**/python/**/lib/
-**/python/**/lib64/
-=======
 .lib/
->>>>>>> dev
 lib64/
 parts/
 sdist/

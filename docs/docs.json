@@ -32,6 +32,7 @@
             "pages": [
               "app-devs/getting-started/overview",
               "app-devs/getting-started/quickstart",
+              "app-devs/core-concepts/app-lifecycle-overview",
               "app-devs/getting-started/ai-ide-integration",
               "app-devs/getting-started/example-apps",
               {
@@ -46,72 +47,116 @@
             ]
           },
           {
-            "group": "Core Concepts",
+            "group": "v3 (SDK 3.x)",
             "icon": "brain",
             "pages": [
-              "app-devs/core-concepts/app-lifecycle-overview",
-              "app-devs/core-concepts/app-server",
-              "app-devs/core-concepts/app-session/app-session",
               {
-                "group": "Display",
-                "icon": "display",
-                "pages": ["app-devs/core-concepts/display/layouts", "app-devs/core-concepts/display/dashboard"]
-              },
-              {
-                "group": "Microphone",
-                "icon": "microphone",
-                "pages": [
-                  "app-devs/core-concepts/microphone/speech-to-text",
-                  "app-devs/core-concepts/microphone/audio-chunks"
-                ]
-              },
-              {
-                "group": "Speakers",
-                "icon": "volume",
-                "pages": [
-                  "app-devs/core-concepts/speakers/text-to-speech",
-                  "app-devs/core-concepts/speakers/playing-audio-files"
-                ]
-              },
-              {
-                "group": "Camera",
-                "icon": "camera",
-                "pages": [
-                  "app-devs/core-concepts/camera/README",
-                  "app-devs/core-concepts/camera/photo-capture",
-                  "app-devs/core-concepts/camera/streaming"
-                ]
+                "group": "MiniAppServer",
+                "icon": "server",
+                "pages": ["app-devs/core-concepts/app-server"]
               },
               {
                 "group": "Webviews",
                 "icon": "browser",
                 "pages": [
+                  "app-devs/core-concepts/webviews/bun-fullstack",
                   "app-devs/core-concepts/webviews/react-webviews",
                   "app-devs/core-concepts/webviews/webview-authentication",
                   "app-devs/core-concepts/webviews/bridge-api"
                 ]
               },
-              "app-devs/core-concepts/permissions",
-              "app-devs/core-concepts/simple-storage",
-              "app-devs/core-concepts/led/overview",
-              "app-devs/core-concepts/location",
               {
-                "group": "Hardware & Capabilities",
-                "icon": "microchip",
+                "group": "MentraSession",
+                "icon": "link",
+                "pages": ["app-devs/core-concepts/session"]
+              },
+              {
+                "group": "Device",
+                "icon": "glasses",
                 "pages": [
-                  "app-devs/core-concepts/hardware-capabilities/overview",
-                  "app-devs/core-concepts/hardware-capabilities/display-glasses",
-                  "app-devs/core-concepts/hardware-capabilities/camera-glasses",
-                  "app-devs/core-concepts/hardware-capabilities/device-capabilities"
+                  "app-devs/core-concepts/device/overview",
+                  "app-devs/core-concepts/device/hardware-capabilities"
                 ]
+              },
+              {
+                "group": "Display",
+                "icon": "display",
+                "pages": ["app-devs/core-concepts/display/layouts"]
+              },
+              {
+                "group": "Transcription",
+                "icon": "message-captions",
+                "pages": ["app-devs/core-concepts/microphone/speech-to-text"]
+              },
+              {
+                "group": "Translation",
+                "icon": "language",
+                "pages": ["app-devs/core-concepts/translation"]
+              },
+              {
+                "group": "Speaker",
+                "icon": "volume",
+                "pages": ["app-devs/core-concepts/speakers/text-to-speech"]
+              },
+              {
+                "group": "Microphone",
+                "icon": "microphone",
+                "pages": ["app-devs/core-concepts/microphone/audio-chunks"]
+              },
+              {
+                "group": "Camera",
+                "icon": "camera",
+                "pages": ["app-devs/core-concepts/camera/photo-capture", "app-devs/core-concepts/camera/streaming"]
+              },
+              {
+                "group": "Dashboard",
+                "icon": "gauge",
+                "pages": ["app-devs/core-concepts/display/dashboard"]
+              },
+              {
+                "group": "Permissions",
+                "icon": "lock",
+                "pages": ["app-devs/core-concepts/permissions"]
+              },
+              {
+                "group": "Storage",
+                "icon": "database",
+                "pages": ["app-devs/core-concepts/storage"]
+              },
+              {
+                "group": "LED",
+                "icon": "lightbulb",
+                "pages": ["app-devs/core-concepts/led/overview"]
+              },
+              {
+                "group": "Location",
+                "icon": "location-dot",
+                "pages": ["app-devs/core-concepts/location"]
+              },
+              {
+                "group": "Phone",
+                "icon": "mobile",
+                "pages": ["app-devs/core-concepts/phone"]
+              },
+              {
+                "group": "Time",
+                "icon": "clock",
+                "pages": ["app-devs/core-concepts/time"]
+              },
+              {
+                "group": "Migrating from v2",
+                "icon": "arrow-up-right-dots",
+                "pages": ["app-devs/migration/overview", "app-devs/migration/api-map"]
               }
             ]
           },
           {
-            "group": "SDK Reference",
-            "icon": "code",
+            "group": "v2 (Legacy)",
+            "icon": "clock-rotate-left",
             "pages": [
               "app-devs/reference/index",
+              "app-devs/core-concepts/app-session/app-session",
+              "app-devs/core-concepts/simple-storage",
               "app-devs/reference/app-server",
               "app-devs/reference/app-session",
               {

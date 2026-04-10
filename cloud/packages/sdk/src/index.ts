@@ -94,6 +94,12 @@ export * from "./types/capabilities";
 
 // App session and server exports
 export * from "./app/index";
+export * from "./MiniAppServer";
+
+// v3 session — explicit re-exports to avoid name collisions with v2 types
+// The full set of manager types is available via "@mentra/sdk/session" entrypoint
+export { MentraSession } from "./session/MentraSession";
+export type { MentraSessionConfig } from "./session/MentraSession";
 
 // Logging exports
 export * from "./logging/logger";
@@ -265,7 +271,13 @@ export interface WebSocketError {
   details?: unknown;
 }
 
-export type { AuthenticatedRequest, AuthVariables } from "./types/index";
+export type { AuthenticatedRequest, AuthVariables, MentraAuthContext, MentraAuthHonoContext } from "./types/index";
 
-// Frontend authentication routes for Bun fullstack apps
-export { createMentraAuthRoutes, generateFrontendToken } from "./app/webview/index";
+// Frontend authentication helpers for Bun fullstack apps
+export {
+  createAuthMiddleware,
+  createMentraAuthRoutes,
+  generateFrontendToken,
+  getMentraAuth,
+  requireMentraAuth,
+} from "./app/webview/index";

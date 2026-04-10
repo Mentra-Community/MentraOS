@@ -11,7 +11,7 @@ Install MentraOS on your Android or iPhone from [MentraGlass.com/OS](https://men
 
 ### Step 2: Set up ngrok
 
-We are going to use ngrok to expose your local app to the internet.  This is useful for development, but when you're ready to go live, you'll want to [deploy to a cloud service](/app-devs/getting-started/deployment/overview).
+We are going to use ngrok to expose your local app to the internet. This is useful for development, but when you're ready to go live, you'll want to [deploy to a cloud service](/app-devs/getting-started/deployment/overview).
 
 1. [Install ngrok](https://ngrok.com/docs/getting-started/)
 2. Create an ngrok account
@@ -31,7 +31,7 @@ This example app will send traffic through the Mentra Relay Server, which connec
 2. Click "Create App". Set a unique package name like `com.yourName.yourAppName`. For "Public URL", enter your ngrok static URL.
 3. Add microphone permission.
 
-> This automatically installs the app for your user - check the Mentra app on your phone.  For other people to test the app, they need to install it. You can retrieve your app's install link from "My Apps" page, click the *Share* icon.
+> This automatically installs the app for your user - check the Mentra app on your phone. For other people to test the app, they need to install it. You can retrieve your app's install link from "My Apps" page, click the *Share* icon.
 
 ### Step 4: Start your app
 
@@ -43,7 +43,7 @@ Ensure you have [Node.js v18 or later](https://nodejs.org/en/download/) and [Bun
      <Tab title="Camera Glasses">
        **Compatible glasses:** Mentra Live
 
-       Use the **Camera Example App** — it captures photos using the glasses' camera and shows them on the user's phone.
+       Use the **Camera Example App** - it captures photos using the glasses' camera and shows them on the user's phone.
 
        **Repository:** [MentraOS-Camera-Example-App](https://github.com/Mentra-Community/MentraOS-Camera-Example-App)
 
@@ -60,7 +60,7 @@ Ensure you have [Node.js v18 or later](https://nodejs.org/en/download/) and [Bun
      <Tab title="Display Glasses">
        **Compatible glasses:** Even Realities G1, Mentra Mach1, Vuzix Z100
 
-       Use the **Display Example App** — it displays spoken words as live captions on the glasses' HUD.
+       Use the **Display Example App** - it displays spoken words as live captions on the glasses' HUD.
 
        **Repository:** [MentraOS-Display-Example-App](https://github.com/Mentra-Community/MentraOS-Display-Example-App)
 
@@ -102,10 +102,58 @@ Go to your phone and open Mentra. Start your app. Begin speaking, and you'll see
 
 Congratulations, you just built your first smart glasses app!
 
+## Understanding the Code
+
+Once your app is running, here's what's happening under the hood. A MentraOS app has three parts: a server that receives connections, a session for each user, and managers that interact with the glasses.
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.myapp",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  // This runs once per user when they start your app.
+  // `session` is your connection to that user's glasses.
+
+  // Listen to what the user says
+  session.transcription.on((data) => {
+    // Show their words on the glasses display
+    session.display.showTextWall(data.text);
+  });
+});
+
+await app.start();
+```
+
+**`MiniAppServer`** handles the server - webhooks, WebSocket connections, routing. You create one instance and register callbacks.
+
+**`MentraSession`** is your connection to one user. Everything you do with that user goes through the session object. Each capability is a manager you can access directly:
+
+| Manager | What it does |
+|---------|-------------|
+| `session.transcription` | Real-time speech-to-text from the microphone |
+| `session.translation` | Real-time translation |
+| `session.display` | Show text, cards, and images on the glasses |
+| `session.speaker` | Play audio and text-to-speech |
+| `session.mic` | Raw audio chunks and voice activity detection |
+| `session.camera` | Take photos and stream video |
+| `session.device` | Hardware state, battery, connection, model info |
+| `session.phone` | Notifications, calendar events, phone battery |
+| `session.storage` | Persistent key-value storage for your app |
+| `session.location` | GPS location |
+| `session.permissions` | Check what your app is allowed to do |
+| `session.led` | Control the LED light on supported glasses |
+| `session.dashboard` | Write to the system dashboard view |
+| `session.time` | Timezone-aware time utilities |
+
+Explore these managers - each one is fully typed, so your editor's autocomplete will show you what's available.
+
 ## Next Steps
 
 - Check out our [Example Apps](./example-apps) page for more templates and advanced examples
+- Read the [Migration Guide](/app-devs/migration/overview) if you're updating an existing v2 app
 - Join our [Discord community](https://discord.gg/5ukNvkEAqT) for help and support
-
-
-

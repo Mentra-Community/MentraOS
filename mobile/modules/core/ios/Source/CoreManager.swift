@@ -119,8 +119,8 @@ struct ViewState {
     }
 
     private var deviceAddress: String {
-        get { GlassesStore.shared.get("core", "deviceAddress") as? String ?? "" }
-        set { GlassesStore.shared.apply("core", "deviceAddress", newValue) }
+        get { GlassesStore.shared.get("core", "device_address") as? String ?? "" }
+        set { GlassesStore.shared.apply("core", "device_address", newValue) }
     }
 
     private var defaultController: String {
@@ -941,7 +941,7 @@ struct ViewState {
         // save the default_wearable now that we're connected:
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
-        //        Bridge.saveSetting("device_address", deviceAddress)
+        Bridge.saveSetting("device_address", deviceAddress)
 
         // Re-apply display height after reconnection
         let h = GlassesStore.shared.get("core", "dashboard_height") as? Int ?? 4
@@ -1381,8 +1381,10 @@ struct ViewState {
         // Clear state
         defaultWearable = ""
         deviceName = ""
+        deviceAddress = ""
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
+        Bridge.saveSetting("device_address", "")
     }
 
     func forgetController() {

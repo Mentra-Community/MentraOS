@@ -157,7 +157,7 @@ export const AllProviders = withWrappers(
   },
   ConnectionOverlayProvider,
   (props) => {
-    const {preventBack, animation} = useNavigationHistory()
+    const {preventBack, animation, forceGestureEnabled} = useNavigationHistory()
 
     const convertToNativeAnimation = (animation: string) => {
       if (animation === "zoom") {
@@ -172,7 +172,7 @@ export const AllProviders = withWrappers(
         <Stack
           screenOptions={{
             headerShown: false,
-            gestureEnabled: !preventBack,
+            gestureEnabled: forceGestureEnabled || !preventBack,
             gestureDirection: "horizontal",
             animation: convertToNativeAnimation(animation) as any,
             // animation: "default",

@@ -88,6 +88,9 @@ async function listIncidents(c: AppContext) {
  */
 async function getIncident(c: AppContext) {
   const incidentId = c.req.param("incidentId");
+  if (!incidentId) {
+    return c.json({ error: "incidentId is required" }, 400);
+  }
 
   try {
     const incident = await Incident.findOne({ incidentId }).lean();
@@ -112,6 +115,9 @@ async function getIncident(c: AppContext) {
  */
 async function getIncidentLogs(c: AppContext) {
   const incidentId = c.req.param("incidentId");
+  if (!incidentId) {
+    return c.json({ error: "incidentId is required" }, 400);
+  }
 
   if (!incidentId) {
     return c.json({ error: "Missing required parameter: incidentId" }, 400);
@@ -144,6 +150,9 @@ async function getIncidentLogs(c: AppContext) {
 async function getAttachment(c: AppContext) {
   const incidentId = c.req.param("incidentId");
   const filename = c.req.param("filename");
+  if (!incidentId || !filename) {
+    return c.json({ error: "incidentId and filename are required" }, 400);
+  }
 
   if (!incidentId || !filename) {
     return c.json({ error: "Missing required parameters: incidentId and filename" }, 400);

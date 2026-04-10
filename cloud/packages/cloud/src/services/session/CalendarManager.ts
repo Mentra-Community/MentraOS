@@ -304,7 +304,7 @@ export class CalendarManager {
       const dataStream: DataStream = {
         type: CloudToAppMessageType.DATA_STREAM,
         streamType: StreamType.CALENDAR_EVENT,
-        sessionId: `${this.userSession.userId}-${packageName}`,
+        sessionId: this.userSession.getAppSessionId(packageName),
         data: event,
         timestamp: new Date(),
       };

@@ -7,6 +7,8 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
+import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
+import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
 
 import org.json.JSONObject;
@@ -120,8 +122,8 @@ public class GalleryCommandHandler implements ICommandHandler {
     private String getCameraBusyState() {
         try {
             // Check if RTMP streaming is active
-            if (RtmpStreamingService.isStreaming()) {
-                Log.d(TAG, "Camera is busy: RTMP streaming active");
+            if (RtmpStreamingService.isStreaming() || SrtStreamingService.isStreaming() || WhipStreamingService.isStreaming()) {
+                Log.d(TAG, "Camera is busy: streaming active");
                 return "stream";
             }
             

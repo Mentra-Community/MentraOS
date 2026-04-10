@@ -1,0 +1,437 @@
+---
+title: "Migrating to SDK v3"
+description: "Everything you need to know to update your MentraOS app from v2 to v3"
+---
+
+Your existing v2 app **still works after updating**. SDK v3 ships with a compatibility layer that keeps the old API functional. You'll see deprecation warnings in the console, but nothing breaks.
+
+This guide walks you through updating to the new API at your own pace. You can migrate one piece at a time - there's no need to rewrite everything at once.
+
+## TL;DR
+
+1. Run `npm update @mentra/sdk`
+2. Your app still works (compat layer handles everything)
+3. Follow the steps below to adopt the new API when you're ready
+4. The compat layer will be removed in v3.1 (minimum 8 weeks after v3.0)
+
+## What Changed (and Why)
+
+**`MiniAppServer` replaces `AppServer`.**
+Instead of subclassing `AppServer` and overriding `onSession`, you create a `MiniAppServer` instance and register callbacks. This is simpler, works better with TypeScript inference, and matches how most modern frameworks handle lifecycle hooks.
+
+**Session managers replace `session.events.*`.**
+Instead of one big `events` bag where everything is accessed via string-based method names, each capability is now its own manager on the session object. `session.events.onTranscription(handler)` becomes `session.transcription.on(handler)`. This gives you autocomplete, type safety, and discoverability - you can explore `session.` and see everything available.
+
+**Some things were renamed** to be clearer:
+- `session.layouts` → `session.display`
+- `session.audio` → `session.speaker` (output only)
+- `session.simpleStorage` → `session.storage`
+
+**Some things are new** and didn't exist in v2:
+- `session.mic` - raw audio input and voice activity detection
+- `session.device` - unified hardware state, events, WiFi, and capabilities
+- `session.phone` - notifications, calendar, and phone battery
+- `session.permissions` - query and observe app permissions
+- `session.time` - timezone-aware time utilities
+- `session.translation` - real-time translation (was deferred to v3.1, pulled into v3.0)
+
+## Step 1: AppServer → MiniAppServer
+
+This is the biggest change. Your v2 app looks like this:
+
+```typescript
+import { AppServer, AppSession } from "@mentra/sdk";
+
+class MyApp extends AppServer {
+  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    session.events.onTranscription((data) => {
+      session.layouts.showTextWall(data.text);
+    });
+  }
+
+  protected async onStop(session: AppSession, sessionId: string, userId: string, reason: string) {
+    console.log("Session stopped:", reason);
+  }
+}
+
+const app = new MyApp({
+  packageName: "com.example.myapp",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.start();
+```
+
+The v3 equivalent:
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.myapp",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  session.transcription.on((data) => {
+    session.display.showTextWall(data.text);
+  });
+});
+
+app.onStop((session, reason) => {
+  console.log("Session stopped:", reason);
+});
+
+await app.start();
+```
+
+Key differences:
+- No class, no inheritance. Just create an instance and register callbacks.
+- `onSession` receives a `MentraSession` (not `AppSession`). No separate `sessionId` and `userId` args - they're on the session object as `session.sessionId` and `session.userId`.
+- `onStop` receives the session and a reason string.
+- `app.start()` returns a Promise. Use `await` or `.then()`.
+
+**Custom Hono routes** work the same as before - `MiniAppServer` extends the Hono app, so you can call `app.get()`, `app.post()`, `app.use()`, etc. directly:
+
+```typescript
+app.get("/api/health", (c) => c.json({ ok: true }));
+```
+
+If you were using `getExpressApp()` in v2, that's gone. Express was removed. Use Hono's routing API directly.
+
+## Step 2: session.events → session managers
+
+Every `session.events.onSomething()` call maps to a specific manager on the session.
+
+### Transcription
+
+```typescript
+// v2
+session.events.onTranscription((data) => { ... });
+
+// v3
+session.transcription.on((data) => { ... });
+```
+
+You can also subscribe to a specific language:
+
+```typescript
+// v3 only - subscribe to English transcriptions
+const cleanup = session.transcription.forLanguage("en", (data) => { ... });
+
+// Call cleanup() to unsubscribe
+cleanup();
+```
+
+Configure transcription settings:
+
+```typescript
+session.transcription.configure({
+  languageHints: ["en", "es"],
+  diarization: true,
+});
+```
+
+### Translation
+
+```typescript
+// v2
+session.events.onTranslation((data) => { ... });
+
+// v3
+session.translation.on((data) => { ... });
+```
+
+Subscribe to a specific target language:
+
+```typescript
+const cleanup = session.translation.to("es", (data) => { ... });
+```
+
+### Phone Notifications
+
+```typescript
+// v2
+session.events.onPhoneNotifications((data) => { ... });
+
+// v3
+session.phone.notifications.on((data) => { ... });
+```
+
+### Calendar Events
+
+```typescript
+// v2
+session.events.onCalendarEvent((data) => { ... });
+
+// v3
+session.phone.calendar.on((data) => { ... });
+```
+
+### Button Press / Touch Events
+
+```typescript
+// v2
+session.events.onButtonPress((data) => { ... });
+session.events.onTouchEvent((data) => { ... });
+
+// v3
+session.device.onButtonPress((data) => { ... });
+session.device.onTouchEvent((data) => { ... });
+```
+
+### Glasses Connection State
+
+```typescript
+// v2
+session.events.onGlassesConnectionState((connected) => { ... });
+
+// v3
+session.device.state.connected.onChange((connected) => { ... });
+```
+
+### Battery Updates
+
+```typescript
+// v2
+session.events.onBatteryUpdate((data) => { ... });
+
+// v3
+session.device.state.batteryLevel.onChange((level) => { ... });
+```
+
+## Step 3: session.layouts → session.display
+
+All the same methods exist, just on `session.display` instead of `session.layouts`:
+
+```typescript
+// v2
+session.layouts.showTextWall("Hello world");
+session.layouts.showDoubleTextWall("Left", "Right");
+session.layouts.showText("Simple text");
+session.layouts.showReferenceCard("Title", "Body");
+
+// v3
+session.display.showTextWall("Hello world");
+session.display.showDoubleTextWall("Left", "Right");
+session.display.showText("Simple text");
+session.display.showReferenceCard("Title", "Body");
+```
+
+`ViewType` and `LayoutType` enums are unchanged.
+
+## Step 4: session.audio → session.speaker
+
+Audio output (playing sounds, TTS) moved to `session.speaker`:
+
+```typescript
+// v2
+session.audio.playAudio({ audioUrl: "https://example.com/sound.mp3" });
+session.audio.speak("Hello world");
+
+// v3
+session.speaker.play({ url: "https://example.com/sound.mp3" });
+session.speaker.speak("Hello world");
+```
+
+Audio output streaming:
+
+```typescript
+// v2
+const stream = session.audio.createStream();
+
+// v3
+const stream = session.speaker.createStream();
+```
+
+## Step 5: session.simpleStorage → session.storage
+
+```typescript
+// v2
+await session.simpleStorage.get("key");
+await session.simpleStorage.set("key", "value");
+await session.simpleStorage.delete("key");
+
+// v3
+await session.storage.get("key");
+await session.storage.set("key", "value");
+await session.storage.delete("key");
+```
+
+## Step 6: Other Renames
+
+```typescript
+// Capabilities
+// v2
+session.capabilities
+
+// v3
+session.capabilities  // unchanged, also available via session.device.capabilities
+
+// WiFi
+// v2
+session.getWifiStatus()
+session.isWifiConnected()
+session.requestWifiSetup("reason")
+
+// v3
+session.device.state.wifiConnected.value
+session.device.requestWifiSetup("reason")
+
+// Location
+// v2
+session.location.getLatestLocation({ accuracy: "high" })
+session.events.onLocationUpdate((data) => { ... })
+
+// v3
+session.location.getLatestLocation({ accuracy: "high" })
+session.location.onUpdate((data) => { ... })
+```
+
+## Step 7: Clean Up Deprecated Imports
+
+After migrating your code, update your imports:
+
+```typescript
+// v2 imports (still work, but deprecated)
+import { AppServer, AppSession } from "@mentra/sdk";
+
+// v3 imports
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+```
+
+The old names are still exported as aliases during the v3.0 transition period.
+
+## What Didn't Change
+
+These things work exactly the same in v3:
+
+- **Wire protocol** - WebSocket messages, subscription strings, all unchanged
+- **Cloud behavior** - The cloud handles v2 and v3 apps identically
+- **Webhook format** - Same `/webhook` endpoint, same payload. `MiniAppServer` mounts both old and new paths.
+- **Settings and capabilities** - Same data, just accessed through managers
+- **Camera** - Same API surface, accessed via `session.camera`
+- **LED** - Same API, accessed via `session.led`
+- **Webviews** - Same webview system, `@mentra/react` works the same
+
+## New Features in v3
+
+These are only available with the v3 API (not accessible through the compat layer):
+
+### session.mic
+
+Raw audio input from the glasses microphone:
+
+```typescript
+session.mic.onChunk((chunk) => {
+  // Process raw PCM audio
+});
+
+session.mic.onVoiceActivity((isSpeaking) => {
+  console.log("User is speaking:", isSpeaking);
+});
+```
+
+### session.device
+
+Unified device state with reactive Observables:
+
+```typescript
+// Read current values
+const battery = session.device.state.batteryLevel.value;
+const model = session.device.state.modelName.value;
+const connected = session.device.state.connected.value;
+
+// React to changes
+session.device.state.batteryLevel.onChange((level) => {
+  if (level < 10) session.display.showText("Low battery!");
+});
+```
+
+### session.phone
+
+Phone state and events:
+
+```typescript
+session.phone.notifications.on((notification) => {
+  session.display.showText(`${notification.app}: ${notification.title}`);
+});
+
+session.phone.calendar.on((event) => {
+  session.display.showText(`Next: ${event.title}`);
+});
+```
+
+### session.permissions
+
+Query what your app is allowed to do:
+
+```typescript
+const canUseCamera = session.permissions.has("camera");
+const all = session.permissions.getAll();
+
+session.permissions.onUpdate((permissions) => {
+  // Permissions changed
+});
+```
+
+### session.time
+
+Timezone-aware utilities:
+
+```typescript
+const now = session.time.now();         // Current time in user's timezone
+const zone = session.time.zone;          // User's timezone string
+const formatted = session.time.format(date, { hour: "numeric", minute: "2-digit" });
+```
+
+### session.translation
+
+Real-time translation with language targeting:
+
+```typescript
+// All translations
+session.translation.on((data) => {
+  session.display.showTextWall(data.text);
+});
+
+// Specific target language
+session.translation.to("es", (data) => {
+  session.display.showTextWall(data.text);
+});
+```
+
+### Reconnection Callbacks
+
+Know when a session reconnects after a transport blip:
+
+```typescript
+app.onSession((session) => {
+  session.onReconnected(() => {
+    console.log("Session reconnected, state preserved");
+  });
+
+  session.onStopped((reason) => {
+    console.log("Session ended:", reason);
+  });
+});
+```
+
+## FAQ
+
+**Do I have to migrate right now?**
+No. Your v2 app works on v3 without changes. Migrate when you're ready.
+
+**When is the compat layer removed?**
+v3.1, which will be at least 8 weeks after v3.0 ships. We'll announce with advance warning.
+
+**Can I use v3 and v2 patterns in the same app?**
+Yes. During the transition, you can mix old and new patterns. For example, use `MiniAppServer` with `session.events.onTranscription()` - it works.
+
+**What about my Express middleware?**
+Express was removed. `MiniAppServer` uses Hono. If you had custom Express middleware, rewrite it as Hono middleware. See the [Hono documentation](https://hono.dev/docs/guides/middleware) for the equivalent patterns.
+
+**I used `session.events.on()` as a generic escape hatch.**
+It still works in v3.0. The compat layer translates it to the appropriate manager subscription.

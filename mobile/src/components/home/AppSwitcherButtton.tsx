@@ -6,7 +6,13 @@ import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {ClientAppletInterface, useActiveApps, useActiveBackgroundApps, useActiveForegroundApp} from "@/stores/applets"
+import {
+  ClientAppletInterface,
+  sortAppsByLastOpenTime,
+  useActiveApps,
+  useActiveBackgroundApps,
+  useActiveForegroundApp,
+} from "@/stores/applets"
 import {RefObject, useEffect, useRef, useState} from "react"
 import {scheduleOnRN} from "react-native-worklets"
 import {BlurView} from "expo-blur"
@@ -42,11 +48,14 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   const [androidBlur] = useSetting(SETTINGS.android_blur.key)
 
   useEffect(() => {
-    let list = [...backgroundApps]
-    if (foregroundApp) {
-      list.push(foregroundApp)
+    let cancelled = false
+    const list = foregroundApp ? [...backgroundApps, foregroundApp] : [...backgroundApps]
+    sortAppsByLastOpenTime(list).then((sorted) => {
+      if (!cancelled) setAppsList(sorted)
+    })
+    return () => {
+      cancelled = true
     }
-    setAppsList(list)
   }, [backgroundApps, foregroundApp])
 
   const panGesture = Gesture.Pan()
@@ -77,7 +86,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         }
       }
     })
-    .onEnd((event) => {
+    .onEnd((_event) => {
       const swipeDistance = Math.abs(translateY.value)
       // const normalizedVelocity = event.velocityY / (SWIPE_DISTANCE_THRESHOLD * SWIPE_DISTANCE_MULTIPLIER)
       // const velocity = event.velocityY / 100
@@ -118,7 +127,12 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   let composedGesture = Gesture.Exclusive(panGesture, tapGesture)
 
   // const bottomPadding = insets.bottom + theme.spacing.s4
-  const bottomPadding = insets.bottom
+  let bottomPadding = insets.bottom
+  if (Platform.OS === "android") {
+    bottomPadding += theme.spacing.s6
+  }
+  // const bottomPadding = theme.spacing.s6
+  // const bottomPadding = 0
 
   const renderBackground = () => {
     // return (

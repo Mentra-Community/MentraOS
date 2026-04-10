@@ -17,6 +17,8 @@ import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
+import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
+import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
@@ -710,11 +712,11 @@ public class MediaCaptureService {
      * Start video recording with specific parameters, settings, and max time
      */
     private void startVideoRecording(String videoFilePath, String requestId, VideoSettings settings, boolean enableFlash, boolean enableSound, int maxRecordingTimeMinutes) {
-        // Check if RTMP streaming is active - videos cannot interrupt streams
-        if (RtmpStreamingService.isStreaming()) {
-            Log.e(TAG, "Cannot start video - RTMP streaming active");
+        // Check if any streaming is active - videos cannot interrupt streams
+        if (RtmpStreamingService.isStreaming() || SrtStreamingService.isStreaming() || WhipStreamingService.isStreaming()) {
+            Log.e(TAG, "Cannot start video - streaming active");
             if (mMediaCaptureListener != null) {
-                mMediaCaptureListener.onMediaError(requestId, "Camera busy with streaming", 
+                mMediaCaptureListener.onMediaError(requestId, "Camera busy with streaming",
                     MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
             }
             return;
@@ -1156,10 +1158,10 @@ public class MediaCaptureService {
             Log.i(TAG, "⏱️ [TIMING] LOCAL Photo request START");
         }
         
-        // Check if RTMP streaming is active - photos cannot interrupt streams
-        if (RtmpStreamingService.isStreaming()) {
-            Log.e(TAG, "Cannot take photo - RTMP streaming active");
-            sendPhotoErrorResponse("local", "CAMERA_BUSY", "Camera busy with RTMP streaming");
+        // Check if any streaming is active - photos cannot interrupt streams
+        if (RtmpStreamingService.isStreaming() || SrtStreamingService.isStreaming() || WhipStreamingService.isStreaming()) {
+            Log.e(TAG, "Cannot take photo - streaming active");
+            sendPhotoErrorResponse("local", "CAMERA_BUSY", "Camera busy with streaming");
             return;
         }
         
@@ -1333,10 +1335,10 @@ public class MediaCaptureService {
 
         Log.d(TAG, "Taking photo and uploading to " + webhookUrl + " with compression: " + compress);
 
-        // Check if RTMP streaming is active - photos cannot interrupt streams
-        if (RtmpStreamingService.isStreaming()) {
-            Log.e(TAG, "Cannot take photo - RTMP streaming active");
-            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with RTMP streaming");
+        // Check if any streaming is active - photos cannot interrupt streams
+        if (RtmpStreamingService.isStreaming() || SrtStreamingService.isStreaming() || WhipStreamingService.isStreaming()) {
+            Log.e(TAG, "Cannot take photo - streaming active");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
             return;
         }
 
@@ -2320,10 +2322,10 @@ public class MediaCaptureService {
             Log.i(TAG, "⏱️ [TIMING] BLE Photo request START - ID: " + requestId);
         }
 
-        // Check if RTMP streaming is active - photos cannot interrupt streams
-        if (RtmpStreamingService.isStreaming()) {
-            Log.e(TAG, "Cannot take photo - RTMP streaming active");
-            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with RTMP streaming");
+        // Check if any streaming is active - photos cannot interrupt streams
+        if (RtmpStreamingService.isStreaming() || SrtStreamingService.isStreaming() || WhipStreamingService.isStreaming()) {
+            Log.e(TAG, "Cannot take photo - streaming active");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
             return;
         }
 
@@ -2470,10 +2472,10 @@ public class MediaCaptureService {
      * This avoids taking a duplicate photo
      */
     private void reusePhotoForBleTransfer(String existingPhotoPath, String requestId, String bleImgId, boolean save, String size) {
-        // Check if RTMP streaming is active - avoid BLE transfers during streams
-        if (RtmpStreamingService.isStreaming()) {
-            Log.e(TAG, "Cannot transfer photo via BLE - RTMP streaming active");
-            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with RTMP streaming");
+        // Check if any streaming is active - avoid BLE transfers during streams
+        if (RtmpStreamingService.isStreaming() || SrtStreamingService.isStreaming() || WhipStreamingService.isStreaming()) {
+            Log.e(TAG, "Cannot transfer photo via BLE - streaming active");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
             return;
         }
 

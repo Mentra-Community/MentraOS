@@ -14,6 +14,7 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
+import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
@@ -28,7 +29,7 @@ import {
 import MicIcon from "assets/icons/component/MicIcon"
 import {useCoreStore} from "@/stores/core"
 
-const getBatteryIcon = (batteryLevel: number): string => {
+const getBatteryIcon = (batteryLevel: number): "battery-3" | "battery-2" | "battery-1" | "battery-0" => {
   if (batteryLevel >= 75) return "battery-3"
   if (batteryLevel >= 50) return "battery-2"
   if (batteryLevel >= 25) return "battery-1"
@@ -46,6 +47,7 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   const [isExpanded, setIsExpanded] = useState(false)
   const glassesConnected = useGlassesStore((state) => state.connected)
   const glassesFullyBooted = useGlassesStore((state) => state.fullyBooted)
+  const glassesConnectionState = useGlassesStore((state) => state.connectionState)
   const glassesStyle = useGlassesStore((state) => state.style)
   const color = useGlassesStore((state) => state.color)
   const caseRemoved = useGlassesStore((state) => state.caseRemoved)
@@ -75,6 +77,8 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
     }
   }, [glassesFullyBooted, glassesConnected])
 
+  const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, glassesConnectionState)
+
   if (defaultWearable.includes(DeviceTypes.SIMULATED)) {
     return <ConnectedSimulatedGlassesInfo style={style} mirrorStyle={{backgroundColor: theme.colors.background}} />
   }
@@ -103,9 +107,10 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const handleConnectOrDisconnect = async () => {
-    if (searching) {
+    if (searching || nativeLinkBusy) {
       await CoreModule.disconnect()
       setIsCheckingConnectivity(false)
+      resetSearching()
     } else {
       await connectGlasses()
     }
@@ -129,11 +134,13 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
     return image
   }
 
-  let isSearching = searching || isCheckingConnectivity
+  let isSearching = searching || isCheckingConnectivity || wasSearching || nativeLinkBusy
   let connectingText = translate("home:connectingGlasses")
   // Only show booting message when we've received a glasses_not_ready event
   if (showGlassesBooting) {
     connectingText = "Glasses are booting..."
+  } else if (nativeLinkBusy && !searching) {
+    connectingText = translate("glasses:glassesAreReconnecting")
   }
 
   const handleGetSupport = () => {
@@ -186,7 +193,6 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
                   <ActivityIndicator size="small" color={theme.colors.primary_foreground} style={{marginRight: 8}} />
                 )}
                 text={connectingText}
-                // tx="home:connectingGlasses"
               />
             </>
           )}
@@ -340,11 +346,6 @@ export const CompactDeviceStatus = ({style}: {style?: ViewStyle}) => {
     </View>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({spacing, colors}) => ({
-  backgroundColor: colors.primary_foreground,
-  padding: spacing.s6,
-})
 
 const $imageContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flex: 2,

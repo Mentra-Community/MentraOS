@@ -11,24 +11,24 @@ sequenceDiagram
     participant User
     participant Glasses
     participant Cloud
-    participant AppServer
+    participant MiniAppServer
 
     User->>Glasses: Starts your app
     Glasses->>Cloud: Request app session
-    Cloud->>AppServer: Webhook POST /webhook
-    AppServer->>Cloud: WebSocket connection
-    Cloud->>AppServer: Session confirmed
+    Cloud->>MiniAppServer: Webhook POST /webhook
+    MiniAppServer->>Cloud: WebSocket connection
+    Cloud->>MiniAppServer: Session confirmed (MentraSession created)
 
     loop Active Session
         Glasses->>Cloud: Events (voice, buttons, etc)
-        Cloud->>AppServer: Forward events
-        AppServer->>Cloud: Display updates
+        Cloud->>MiniAppServer: Forward events via WebSocket
+        MiniAppServer->>Cloud: Display updates
         Cloud->>Glasses: Show content
     end
 
     User->>Glasses: Stops app
-    Cloud->>AppServer: Stop webhook
-    AppServer->>Cloud: Disconnect
+    Cloud->>MiniAppServer: Stop webhook
+    MiniAppServer->>Cloud: Disconnect
 ```
 
 ## Lifecycle Stages
@@ -54,10 +54,10 @@ Register your app in the [Developer Console](https://console.mentra.glass/apps):
 
 ```typescript
 // The SDK handles this automatically
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
+app.onSession((session: MentraSession) => {
   // Your app logic starts here
-  session.logger.info('Session started!');
-}
+  session.logger.info("Session started!");
+});
 ```
 
 ### 3. Active Session
@@ -66,18 +66,18 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
 
 - Subscribe to events (transcription, button presses, etc.)
 - Handle incoming events with callbacks
-- Update the display using layouts
+- Update the display
 - Access device capabilities
 
 ```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
+app.onSession((session: MentraSession) => {
   // Subscribe to voice transcription
-  session.events.onTranscription((data) => {
-    session.logger.info('User said:', data.text);
+  session.transcription.on((data) => {
+    session.logger.info("User said:", data.text);
   });
 
   // Update display
-  session.layouts.showTextWall('App is running!');
+  session.display.showTextWall("App is running!");
 }
 ```
 
@@ -91,38 +91,51 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
 - Your server disconnects
 
 ```typescript
-protected async onStop(sessionId: string, userId: string, reason: string) {
+app.onStop((session, reason) => {
   // Clean up resources
-  session.logger.info('Session ended:', reason);
-}
+  console.log("Session ended:", reason);
+});
+```
+
+In v3, sessions can also reconnect after a brief transport blip without ending:
+
+```typescript
+app.onSession((session) => {
+  session.onReconnected(() => {
+    // Connection restored - subscriptions still active
+  });
+
+  session.onStopped((reason) => {
+    // Session truly ended - clean up per-user state
+  });
+});
 ```
 
 ## Key Components
 
 | Component | Purpose |
 |-----------|---------|
-| **AppServer** | Your server class that handles webhooks and connections |
-| **AppSession** | Represents one user's active connection to your app |
-| **WebSocket** | Real-time bidirectional communication channel |
-| **Events** | Data streams from glasses (voice, sensors, buttons) |
-| **Layouts** | What displays on the glasses screen |
+| **MiniAppServer** | Your server that handles webhooks and connections |
+| **MentraSession** | One user's active connection to your app |
+| **Session Managers** | Typed interfaces for each capability (transcription, display, camera, etc.) |
+| **WebSocket** | Real-time bidirectional communication between your server and MentraOS Cloud |
 
 ## Important Notes
 
 <Info>
-Sessions are isolated per user. Each user who starts your app gets their own `AppSession` instance with a unique `userId`.
+Sessions are isolated per user. Each user who starts your app gets their own `MentraSession` instance with a unique `userId`. Nothing leaks between users.
 </Info>
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Learn About AppServer" icon="server" href="/app-devs/core-concepts/app-server">
-    Understand the server class that powers your app
+  <Card title="MiniAppServer" icon="server" href="/app-devs/core-concepts/app-server">
+    The entry point for your app
   </Card>
-  <Card title="Learn About AppSession" icon="plug" href="/app-devs/core-concepts/app-session/app-session">
+  <Card title="Learn About MentraSession" icon="plug" href="/app-devs/core-concepts/session">
     Work with individual user sessions
   </Card>
-  <Card title="Handle Events" icon="bolt" href="/app-devs/core-concepts/app-session/events-and-data">
+  <Card title="Handle Events" icon="bolt" href="/app-devs/core-concepts/session">
     Subscribe to real-time data from glasses
   </Card>
   <Card title="Set Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
@@ -135,34 +148,31 @@ Sessions are isolated per user. Each user who starts your app gets their own `Ap
 Here's a minimal MentraOS app:
 
 ```typescript
-import { AppServer, AppSession } from '@mentraos/sdk';
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
 
-class HelloGlasses extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    // Show greeting
-    session.layouts.showTextWall('Hello from MentraOS!');
-
-    // Listen for voice input
-    session.events.onTranscription((data) => {
-      if (data.isFinal) {
-        session.layouts.showTextWall(`You said: ${data.text}`);
-      }
-    });
-  }
-
-  protected async onStop(sessionId: string, userId: string, reason: string) {
-    console.log(`Session ${sessionId} ended: ${reason}`);
-  }
-}
-
-// Start server
-const server = new HelloGlasses({
-  packageName: 'com.example.helloglasses',
+const app = new MiniAppServer({
+  packageName: "com.example.helloglasses",
   apiKey: process.env.MENTRAOS_API_KEY!,
-  port: 3000
+  port: 3000,
 });
 
-server.start();
+app.onSession((session: MentraSession) => {
+  // Show greeting
+  session.display.showTextWall("Hello from MentraOS!");
+
+  // Listen for voice input
+  session.transcription.on((data) => {
+    if (data.isFinal) {
+      session.display.showTextWall(`You said: ${data.text}`);
+    }
+  });
+
+  session.onStopped((reason) => {
+    console.log(`Session ended: ${reason}`);
+  });
+});
+
+await app.start();
 ```
 
 This app greets the user and echoes back their voice input. Simple, but it demonstrates the complete lifecycle.

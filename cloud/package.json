@@ -11,6 +11,8 @@
     "build:utils": "cd packages/utils && bun run build",
     "build:sdk": "cd packages/sdk && bun run build",
     "build": "bun run build:types && bun run --parallel build:display-utils build:utils && bun run build:sdk",
+    "ci": "./scripts/prebuild.sh --clean",
+    "bstack": "bun run tools/bstack/bstack.ts",
     "build:console": "bun run build && cd websites/console && bun run build",
     "postinstall": "if [ -z \"$CONTAINER_ENVIRONMENT\" ]; then bun run build:types && bun run --parallel build:display-utils build:utils && bun run build:sdk; fi",
     "setup-deps": "bun install --no-link",

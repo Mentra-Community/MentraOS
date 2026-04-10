@@ -152,6 +152,21 @@ export const getLastOpenTime = (packageName: string): AsyncResult<number, Error>
   })
 }
 
+export const sortAppsByLastOpenTime = async <T extends {packageName: string}>(apps: T[]): Promise<T[]> => {
+  const timestamps = await Promise.all(
+    apps.map(async (app) => ({
+      app,
+      time: await getLastOpenTime(app.packageName),
+    })),
+  )
+  return timestamps
+    .sort((a, b) => {
+      if (a.time.is_error() || b.time.is_error()) return 0
+      return a.time.value - b.time.value
+    })
+    .map((entry) => entry.app)
+}
+
 export type OrderMap = Record<string, number>
 const APP_ORDER_KEY = "foreground_apps_order"
 export const saveAppsOrder = (orderMap: OrderMap) => {
@@ -770,7 +785,6 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     for (const applet of applets) {
       if (applet.packageName === notifyPackageName) {
         // On Android, route to notification settings instead of generic webview settings
-        applet.offline = true
         applet.offlineRoute = "/miniapps/settings/notifications"
       }
     }
@@ -856,11 +870,10 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
       const currentRoute = getCurrentRoute()
       if (currentRoute === "/home") {
         saveLastOpenTime(applet.packageName)
-        if (applet.offline) {
-          const offlineRoute = applet.offlineRoute
-          if (offlineRoute) {
-            push(offlineRoute, {transition: "zoom"})
-          }
+        if (applet.offlineRoute) {
+          push(applet.offlineRoute, {transition: "zoom"})
+        } else if (applet.offline) {
+          // offline app with no route - nothing to navigate to
         } else if (applet.local) {
           push("/applet/local", {
             packageName: applet.packageName,
@@ -972,7 +985,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     }))
   },
 
-  setInstalledLmas: (installedLmas: ClientAppletInterface[]) => {
+  setInstalledLmas: (_installedLmas: ClientAppletInterface[]) => {
     // set({localMiniApps: installedLmas})
   },
 }))

@@ -1,13 +1,27 @@
 import * as Linking from "expo-linking"
 import * as WebBrowser from "expo-web-browser"
 import {FC, ReactNode, createContext, useContext, useEffect} from "react"
-import {Platform} from "react-native"
+import {AppState, Platform} from "react-native"
 
 // import {Linking} from "react-native"
 // import {useAuth} from "@/contexts/AuthContext"
-import {NavObject, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {NavObject, useNavigationHistory, getCurrentRoute} from "@/contexts/NavigationHistoryContext"
+import {useAppletStatusStore} from "@/stores/applets"
 import mentraAuth from "@/utils/auth/authClient"
 import {BackgroundTimer} from "@/utils/timers"
+
+/** Returns immediately if the app is already active, otherwise waits for it. */
+const waitForActive = (): Promise<void> => {
+  if (AppState.currentState === "active") return Promise.resolve()
+  return new Promise((resolve) => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        sub.remove()
+        resolve()
+      }
+    })
+  })
+}
 
 export interface DeepLinkRoute {
   pattern: string
@@ -118,6 +132,36 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     requiresAuth: true,
   },
 
+  // Smart start: activates the app if installed, otherwise shows the store page
+  {
+    pattern: "/package/:packageName/start",
+    handler: async (url: string, params: Record<string, string>, navObject: NavObject) => {
+      
+      const {packageName, preloaded, authed} = params
+      if (preloaded && authed) {
+        // Deep links can fire while the app is still in the background state.
+        // Navigation calls made before the app is active get lost, so wait first.
+        await waitForActive()
+        // Reset stack to home, then push store on top so back always goes home.
+        navObject.replaceAll("/home")
+        await useAppletStatusStore.getState().refreshApplets()
+        const applet = useAppletStatusStore.getState().apps.find((app) => app.packageName === packageName)
+        console.log("[DEEPLINK] Smart start for package:", packageName, "applet found:", !!applet)
+        if (applet) {
+          setTimeout(() => useAppletStatusStore.getState().startApplet(applet), 150)
+          return;
+        } else {
+          setTimeout(() => navObject.push("/miniapps/store/store", {packageName}), 150)
+          return
+        }
+      }
+      // Cold start or not authenticated — store raw URL so processUrl re-matches it after init
+      navObject.setPendingRoute(url)
+      navObject.replace(`/`)
+    },
+    requiresAuth: true,
+  },
+
   // Store routes
   {
     pattern: "/store",
@@ -129,15 +173,19 @@ const deepLinkRoutes: DeepLinkRoute[] = [
   },
   {
     pattern: "/package/:packageName",
-    handler: (url: string, params: Record<string, string>, navObject: NavObject) => {
+    handler: async (url: string, params: Record<string, string>, navObject: NavObject) => {
       const {packageName, preloaded, authed} = params
       if (preloaded && authed) {
-        // we've already loaded the app, so we can just navigate there directly
-        navObject.replace(`/store?packageName=${packageName}`)
+        // Deep links can fire while the app is still in the background state.
+        // Navigation calls made before the app is active get lost, so wait first.
+        await waitForActive()
+        // Reset stack to home, then push store on top so back always goes home.
+        navObject.replaceAll("/home")
+        setTimeout(() => navObject.push("/miniapps/store/store", {packageName}), 150)
         return
       }
-      // we probably need to login first:
-      navObject.setPendingRoute(`/store?packageName=${packageName}`)
+      // Cold start or not authenticated — store raw URL so processUrl re-matches it after init
+      navObject.setPendingRoute(url)
       navObject.replace(`/`)
     },
     requiresAuth: true,
@@ -343,14 +391,6 @@ const deepLinkRoutes: DeepLinkRoute[] = [
 
   // Universal app link routes (for apps.mentra.glass)
   {
-    pattern: "/package/:packageName",
-    handler: async (url: string, params: Record<string, string>, navObject: NavObject) => {
-      const {packageName} = params
-      navObject.push(`/store?packageName=${packageName}`)
-    },
-    requiresAuth: true,
-  },
-  {
     pattern: "/apps/:packageName",
     handler: async (url: string, params: Record<string, string>, navObject: NavObject) => {
       const {packageName} = params
@@ -474,11 +514,38 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     return params
   }
 
+  let lastProcessedUrl: string | null = null
+  let lastProcessedTime = 0
+
   const processUrl = async (url: string, initial: boolean = false) => {
     try {
-      // Add delay to ensure Root Layout is mounted
+      // Deduplicate — iOS can fire the same universal link event multiple times,
+      // and on cold start both getInitialURL and addEventListener fire for the
+      // same URL. Initial calls skip the check but claim the URL so that the
+      // duplicate addEventListener call is blocked. The index.tsx re-processing
+      // call happens >2s later (1s initial delay + init time + 1s DEEPLINK_DELAY)
+      // so it naturally falls outside the dedup window.
+      const now = Date.now()
+      if (!initial && url === lastProcessedUrl && now - lastProcessedTime < 3000) {
+        console.log("[DEEPLINK] Ignoring duplicate URL:", url)
+        return
+      }
+      lastProcessedUrl = url
+      lastProcessedTime = now
+
+      // For initial URLs (cold start), set the pending route BEFORE the delay.
+      // This prevents a race condition where index.tsx init completes during the
+      // delay and calls navigateToDestination() before the pending route is set,
+      // causing it to navigate to /home instead of the deep link target.
       if (initial) {
+        setPendingRoute(url)
         await new Promise((resolve) => setTimeout(resolve, 1000))
+        // If index.tsx already consumed and re-processed the pending route
+        // during the delay, don't double-process it
+        if (getPendingRoute() !== url) {
+          console.log("[DEEPLINK] Pending route was consumed during delay, skipping")
+          return
+        }
       }
 
       console.log("[LOGIN DEBUG] Deep link received:", url)

@@ -157,6 +157,7 @@ appCommand
         name,
         appType,
         publicUrl,
+        webviewURL: publicUrl,
       }
 
       if (description) appData.description = description
@@ -245,18 +246,26 @@ appCommand
           try {
             new URL(publicUrl)
             updateData.publicUrl = publicUrl
+            // Auto-set webviewURL if not explicitly provided
+            if (!webviewUrl) {
+              updateData.webviewURL = publicUrl
+            }
           } catch {
             error("Invalid URL format")
             process.exit(7)
           }
         }
         if (webviewUrl) {
-          try {
-            new URL(webviewUrl)
-            updateData.webviewURL = webviewUrl
-          } catch {
-            error("Invalid webview URL format")
-            process.exit(7)
+          if (webviewUrl === "null" || webviewUrl === "none") {
+            updateData.webviewURL = null
+          } else {
+            try {
+              new URL(webviewUrl)
+              updateData.webviewURL = webviewUrl
+            } catch {
+              error("Invalid webview URL format")
+              process.exit(7)
+            }
           }
         }
         if (logoUrl) updateData.logoURL = logoUrl
@@ -287,18 +296,26 @@ appCommand
           try {
             new URL(options.publicUrl)
             updateData.publicUrl = options.publicUrl
+            // Auto-set webviewURL if not explicitly provided
+            if (!options.webviewUrl) {
+              updateData.webviewURL = options.publicUrl
+            }
           } catch {
             error("Invalid URL format")
             process.exit(7)
           }
         }
         if (options.webviewUrl) {
-          try {
-            new URL(options.webviewUrl)
-            updateData.webviewURL = options.webviewUrl
-          } catch {
-            error("Invalid webview URL format")
-            process.exit(7)
+          if (options.webviewUrl === "null" || options.webviewUrl === "none") {
+            updateData.webviewURL = null
+          } else {
+            try {
+              new URL(options.webviewUrl)
+              updateData.webviewURL = options.webviewUrl
+            } catch {
+              error("Invalid webview URL format")
+              process.exit(7)
+            }
           }
         }
         if (options.logoUrl) updateData.logoURL = options.logoUrl

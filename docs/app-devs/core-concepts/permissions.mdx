@@ -4,6 +4,28 @@ description: "Control what device data your app can access"
 icon: "lock"
 ---
 
+In v3, you can query and observe your app's permissions at runtime using `session.permissions`.
+
+## Checking Permissions at Runtime
+
+```typescript
+// Check a single permission
+const canUseCamera = session.permissions.has("camera");
+
+// Get all permissions
+const all = session.permissions.getAll();
+```
+
+Subscribe to permission changes (e.g. if the user revokes a permission while your app is running):
+
+```typescript
+session.permissions.onUpdate((permissions) => {
+  if (!permissions.includes("microphone")) {
+    session.display.showTextWall("Microphone permission removed");
+  }
+});
+```
+
 ## Available Permissions
 
 | Permission | Unlocks | Required For |
@@ -21,7 +43,7 @@ icon: "lock"
 1. **Declare in Developer Console** - Set required permissions for your app
 2. **User approval** - Users see and approve permissions when installing
 3. **Automatic enforcement** - Cloud blocks access to features without permission
-4. **No code needed** - Just declare permissions, SDK handles the rest
+4. **Runtime query (v3)** - Use `session.permissions.has()` to check at runtime
 
 ## Setting Permissions
 
@@ -61,40 +83,40 @@ icon: "lock"
 
 ```typescript
 // These require MICROPHONE permission:
-session.events.onTranscription((data) => {});
-session.events.onAudioChunk((data) => {});
-session.events.onVAD((data) => {});
+session.transcription.on((data) => {});
+session.mic.onChunk((data) => {});
+session.mic.onVoiceActivity((data) => {});
 ```
 
 ### LOCATION
 
 ```typescript
 // These require LOCATION permission:
-session.location.subscribeToStream({ accuracy: 'high' }, (data) => {});
-const location = await session.location.getLatestLocation();
+session.location.onUpdate((data) => { session.logger.info(data.lat, data.lng); });
+session.location.requestUpdate();
 ```
 
 ### CAMERA
 
 ```typescript
 // These require CAMERA permission:
-const photo = await session.camera.requestPhoto();
-await session.camera.startLocalLivestream({ streamUrl: 'srt://...' });
+const photo = await session.camera.takePhoto();
+await session.camera.startStream({ direct: 'srt://...' });
 ```
 
 ### READ_NOTIFICATIONS
 
 ```typescript
 // These require READ_NOTIFICATIONS permission:
-session.events.onPhoneNotification((data) => {});
-session.events.onNotificationDismissed((data) => {});
+session.phone.notifications.on((data) => {});
+session.phone.notifications.onDismissed((data) => {});
 ```
 
 ### CALENDAR
 
 ```typescript
 // Requires CALENDAR permission:
-session.events.on(StreamType.CALENDAR_EVENT, (data) => {});
+session.phone.calendar.on((data) => {});
 ```
 
 ## Runtime Behavior

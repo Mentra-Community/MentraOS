@@ -1,0 +1,179 @@
+---
+title: "Bun Fullstack Dev Server"
+description: "How MentraOS mini apps serve both the API and webview from a single Bun process."
+---
+
+# Bun Fullstack Dev Server
+
+A MentraOS mini app is a single Bun process that does three things at once:
+
+1. **Connects to the MentraOS cloud** via WebSocket (handled by `MiniAppServer`)
+2. **Serves API routes** via [Hono](https://hono.dev) (for your webview to call)
+3. **Serves the webview frontend** (HTML, JS, CSS) via [Bun's fullstack dev server](https://bun.sh/docs/bundler/fullstack)
+
+All three run on the same port, same URL. The URL you give to ngrok (or deploy to) serves both the cloud webhook AND the phone webview.
+
+```/dev/null/diagram.txt#L1-5
+┌─────────────────────────────────────────┐
+│          Bun.serve() on :3000           │
+│                                         │
+│  /webhook ──> MiniAppServer (cloud WS)  │
+│  /api/*   ──> Hono routes               │
+│  /webview ──> HTML + JS + CSS (bundled) │
+└─────────────────────────────────────────┘
+```
+
+## How it works
+
+`MiniAppServer` extends Hono, so you add routes directly onto it. When you call `Bun.serve()`, you pass HTML imports as static routes and your app's `fetch` method as the fallback handler. Bun automatically bundles your HTML files, resolving script tags, CSS imports, and module dependencies.
+
+- HTML files imported with `import page from "./index.html"` become bundled routes
+- `<script type="module" src="./frontend.tsx">` is transpiled and bundled automatically
+- In development, HMR (hot module replacement) is built in
+- All other requests fall through to Hono, which handles `/api/*` routes and the `/webhook` endpoint
+
+## Example setup
+
+This is based on how the stream-test app works. Every MentraOS mini app follows the same pattern:
+
+```/dev/null/index.ts#L1-43
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+import indexHtml from "./frontend/index.html";
+
+// ─── Config ──────────────────────────────────────────────────────────────────
+
+const PORT = Number.parseInt(process.env.PORT || "3000", 10);
+const PACKAGE_NAME = process.env.PACKAGE_NAME || "com.example.myapp";
+const API_KEY = process.env.MENTRAOS_API_KEY || "";
+
+// ─── App ─────────────────────────────────────────────────────────────────────
+
+const app = new MiniAppServer({
+  packageName: PACKAGE_NAME,
+  apiKey: API_KEY,
+  port: PORT,
+});
+
+app.onSession((session: MentraSession) => {
+  session.logger.info(`Session started for ${session.userId}`);
+  session.display.showTextWall("App ready\nUse webview to interact");
+});
+
+// Add your own API routes (Hono)
+app.get("/api/health", (c) => c.json({ ok: true }));
+app.get("/api/data", (c) => c.json({ hello: "world" }));
+
+await app.start();
+
+// ─── Bun fullstack webview server ────────────────────────────────────────────
+
+Bun.serve({
+  port: PORT,
+  idleTimeout: 255, // max value - prevents Bun from killing SSE connections
+  development: {
+    hmr: true,
+    console: true,
+  },
+  routes: {
+    "/": indexHtml,
+    "/webview": indexHtml,
+    "/webview/*": indexHtml,
+  },
+  fetch(request: Request) {
+    return app.fetch(request);
+  },
+});
+
+console.log(`App listening on http://localhost:${PORT}`);
+```
+
+### What each part does
+
+| Part | Purpose |
+|---|---|
+| `import indexHtml from "./frontend/index.html"` | Bun bundles the HTML and all its imports at build time |
+| `routes: { "/webview": indexHtml }` | Serves the bundled frontend at these paths |
+| `fetch(request) { return app.fetch(request) }` | Everything else (API routes, webhook) goes through Hono |
+| `idleTimeout: 255` | Keeps SSE connections alive for real-time updates |
+| `development: { hmr: true }` | Enables hot module replacement during development |
+
+### The HTML entry point
+
+Your HTML file references a TSX script and stylesheet. Bun handles the rest:
+
+```/dev/null/index.html#L1-11
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>My App</title>
+        <link rel="stylesheet" href="tailwindcss" />
+        <script type="module" src="./frontend.tsx"></script>
+    </head>
+    <body></body>
+</html>
+```
+
+Bun sees `src="./frontend.tsx"` and automatically transpiles and bundles it. No separate build step needed.
+
+## Tailwind CSS
+
+Tailwind v4 works out of the box with a `bunfig.toml` in your project root:
+
+```/dev/null/bunfig.toml#L1-2
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+```
+
+Then install the plugin:
+
+```/dev/null/shell.sh#L1
+bun add bun-plugin-tailwind
+```
+
+In your HTML, reference Tailwind with the magic `href`:
+
+```/dev/null/snippet.html#L1
+<link rel="stylesheet" href="tailwindcss" />
+```
+
+That's it. Bun processes all Tailwind directives (`@apply`, `@layer`, etc.) and serves compiled CSS. No PostCSS config, no CLI watcher.
+
+## Mounting sub-routers
+
+For larger apps, you can split API routes into separate Hono routers and mount them:
+
+```/dev/null/routes.ts#L1-16
+import { Hono } from "hono";
+
+// In a separate file: src/backend/api.ts
+const api = new Hono();
+
+api.get("/health", (c) => c.json({ ok: true }));
+api.get("/sessions", (c) => c.json({ sessions: [] }));
+api.post("/actions", (c) => c.json({ success: true }));
+
+export { api };
+
+// In your index.ts:
+// app.route("/api", api);
+//
+// This mounts all routes under /api:
+//   GET /api/health, GET /api/sessions, POST /api/actions
+```
+
+## Why this matters
+
+- **One process, one port, one URL.** No separate frontend dev server, no proxy config.
+- **No CORS issues.** The webview and API share the same origin.
+- **Single deployment target.** The cloud hits `/webhook` on your URL. The phone loads `/webview` on the same URL.
+- **HMR in development.** Edit your frontend code and see changes instantly without a page reload.
+- **No separate build step.** Bun bundles HTML imports, transpiles TSX, and processes CSS on the fly.
+
+## Further reading
+
+- [Bun Fullstack Dev Server docs](https://bun.sh/docs/bundler/fullstack) - The full reference for HTML imports, `Bun.serve()` routes, and HMR
+- [Hono documentation](https://hono.dev) - The web framework that `MiniAppServer` extends
+- [Webview Authentication](/app-devs/core-concepts/webviews/webview-authentication) - How to authenticate users in your webview
+- [Bridge API](/app-devs/core-concepts/webviews/bridge-api) - Communicating between the webview and the glasses

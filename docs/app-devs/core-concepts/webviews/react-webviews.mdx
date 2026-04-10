@@ -1,6 +1,6 @@
 ---
 title: React Webviews
-description: Build React-based webviews for MentraOS using @mentra/react. Learn setup, authentication, making authenticated API calls, CORS configuration, and troubleshooting with a full example.
+description: Build React-based webviews for MentraOS using @mentra/react. Learn setup, authentication, making authenticated API calls, and troubleshooting with a full example.
 ---
 
 The [`@mentra/react`](https://www.npmjs.com/package/@mentra/react) library simplifies building React-based webviews that integrate seamlessly with MentraOS authentication. When users open your webview through the MentraOS Mobile App, they are automatically authenticated without requiring a separate login process.
@@ -25,17 +25,13 @@ There's a complete example of a React webview in the [`MentraOS-React-Example-Ap
 Install the React authentication library in your webview project:
 
 ```bash
-npm install @mentra/react
-# or
-yarn add @mentra/react
-# or
 bun add @mentra/react
 ```
 
 ## Prerequisites
 
 - **React 16.8+**: The library uses React Hooks
-- **MentraOS App Server**: Your backend must be deployed, either on the same domain as your frontend or on a different domain that allows CORS requests from your frontend.
+- **MentraOS App Server**: Your backend must be deployed.
 - **Developer Console Setup**: Set the webview url in the developer console to your frontend server
 
 ## Basic Setup
@@ -409,30 +405,6 @@ interface MentraAuthContextType {
 4. **Persistence**: The authentication data is stored in `localStorage` for the session
 5. **Context Sharing**: All authentication state is made available through React Context
 
-## CORS Configuration
-
-If your webview frontend is hosted separately from your app backend, configure CORS properly:
-
-```typescript
-// In your app server setup
-import cors from "cors"
-
-/**
- * Configure CORS to allow requests from your webview domain
- */
-app.use(
-  cors({
-    origin: [
-      "https://your-webview-domain.com",
-      "http://localhost:3000", // For development
-    ],
-    credentials: true, // If you use cookies
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-)
-```
-
 ## Troubleshooting
 
 ### Common Issues
@@ -453,7 +425,6 @@ app.use(
 
 - Check that you're sending the `Authorization: Bearer ${frontendToken}` header
 - Verify your app server is configured to accept the frontend token
-- Ensure CORS is configured properly if frontend and backend are on different domains
 
 **Changes not reflecting**
 

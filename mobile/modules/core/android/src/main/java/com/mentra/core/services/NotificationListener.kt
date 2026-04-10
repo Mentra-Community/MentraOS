@@ -137,8 +137,8 @@ class NotificationListener private constructor(private val context: Context) {
         val textCharSequence = extras.getCharSequence("android.text")
         val text = textCharSequence?.toString() ?: ""
 
-        // Ignore empty notifications
-        if (title.isEmpty() || text.isEmpty()) {
+        // Ignore empty notifications (only when both title and text are empty)
+        if (title.isEmpty() && text.isEmpty()) {
             Bridge.log("NOTIF: Ignoring empty notification")
             return
         }

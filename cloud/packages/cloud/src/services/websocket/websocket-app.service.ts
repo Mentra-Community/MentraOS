@@ -118,12 +118,13 @@ export class AppWebSocketService {
         // Check if it's old auth via App Init message.
         if (message.type === AppToCloudMessageType.CONNECTION_INIT) {
           const initMessage = message as AppConnectionInit;
-          // Parse session ID to get user session ID
-          const sessionParts = initMessage.sessionId.split("-");
-          const userId = sessionParts[0];
-          if (sessionParts.length < 2) {
-            logger.error({ service: SERVICE_NAME, message }, `Invalid session ID format: ${initMessage.sessionId}`);
-            ws.close(1008, "Invalid session ID format");
+          const userId = request?.userId || parseUserIdFromLegacySessionId(initMessage.sessionId);
+          if (!userId) {
+            logger.error(
+              { service: SERVICE_NAME, message },
+              `Unable to determine user ID for session: ${initMessage.sessionId}`,
+            );
+            ws.close(1008, "User session identity missing");
             return;
           }
 
@@ -190,6 +191,19 @@ export class AppWebSocketService {
       }
     }
   }
+}
+
+function parseUserIdFromLegacySessionId(sessionId?: string): string | undefined {
+  if (!sessionId) {
+    return undefined;
+  }
+
+  const separator = sessionId.indexOf("-");
+  if (separator <= 0) {
+    return undefined;
+  }
+
+  return sessionId.slice(0, separator);
 }
 
 export default AppWebSocketService;
