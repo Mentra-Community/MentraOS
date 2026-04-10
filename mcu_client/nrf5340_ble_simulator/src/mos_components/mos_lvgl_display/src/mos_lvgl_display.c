@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-03-26 16:57:07
+ * @LastEditTime : 2026-04-10 15:00:41
  * @FilePath     : mos_lvgl_display.c
  * @Description  :
  *
@@ -57,9 +57,12 @@ static volatile bool display_onoff = false;
 
 /* Must be declared before apply_font_update_in_lvgl_thread within CONFIG_LVGL scope (C visibility).
  * 须在 CONFIG_LVGL 内 apply_font_update_in_lvgl_thread 之前声明（C 可见性）。 */
+static lv_obj_t *welcome_container = NULL;
+static lv_obj_t *welcome_label = NULL;
 static lv_obj_t *protobuf_container = NULL;
 static lv_obj_t *protobuf_label = NULL;
 static lv_obj_t *protobuf_gbk_container = NULL;
+static lv_obj_t *protobuf_xy_overlay_container = NULL;
 static bool welcome_screen_active = true;
 static bool welcome_screen_initializing = false;
 static char last_protobuf_text[MAX_TEXT_LEN + 1];
@@ -73,10 +76,20 @@ static bool s_last_welcome_text_valid = false;
 static lv_obj_t *s_dynamic_font_labels[16] = {0};
 static int s_dynamic_font_label_count = 0;
 
+static void restore_welcome_screen_state(void);
 static void update_welcome_label_with_battery(void);
 static void update_protobuf_text_content(const char *text_content);
 static void protobuf_scroll_ascii_label_bottom_visible(void);
 static void protobuf_container_set_welcome_scroll(bool welcome_active);
+static void ensure_pattern4_scene_ready(void);
+static void ensure_protobuf_scene_ready(void);
+static void reset_display_text_caches(void);
+static void hide_and_clear_protobuf_xy_overlay(void);
+static void clear_current_display_text(void);
+static void destroy_protobuf_scene(void);
+
+/* Welcome/BLE text share the same top margin within Pattern 4. */
+#define PROTOBUF_BLE_LABEL_YOFF 80
 
 /* Copy text before lv_label_set_text.
  * If the input pointer aliases label internal text, LVGL v9 may skip relayout or trigger abnormal redraw.
@@ -120,6 +133,28 @@ static void add_dynamic_font_label(lv_obj_t *label)
     }
 
     s_dynamic_font_labels[s_dynamic_font_label_count++] = label;
+}
+
+static void remove_dynamic_font_label(lv_obj_t *label)
+{
+    if (label == NULL)
+    {
+        return;
+    }
+
+    for (int i = 0; i < s_dynamic_font_label_count; i++)
+    {
+        if (s_dynamic_font_labels[i] == label)
+        {
+            for (int j = i; j < s_dynamic_font_label_count - 1; j++)
+            {
+                s_dynamic_font_labels[j] = s_dynamic_font_labels[j + 1];
+            }
+            s_dynamic_font_labels[s_dynamic_font_label_count - 1] = NULL;
+            s_dynamic_font_label_count--;
+            return;
+        }
+    }
 }
 
 /* Font-switch callback.
@@ -178,11 +213,11 @@ static void apply_font_update_in_lvgl_thread(const lv_font_t *new_font)
          * 换字体后 line_height/字宽已变：经拷贝 set_text 触发 WRAP 重算（勿直接传入 lv_label_get_text 指针）。 */
         for (int i = 0; i < s_dynamic_font_label_count; i++)
         {
-            /* protobuf_label on welcome screen is handled later by update_welcome_label_with_battery().
-             * 欢迎屏的 protobuf_label 稍后通过 update_welcome_label_with_battery() 统一处理。 */
-            if (welcome_screen_active && s_dynamic_font_labels[i] == protobuf_label)
+            /* welcome_label on welcome screen is handled later by update_welcome_label_with_battery().
+             * 欢迎屏的 welcome_label 稍后通过 update_welcome_label_with_battery() 统一处理。 */
+            if (welcome_screen_active && s_dynamic_font_labels[i] == welcome_label)
             {
-                LOG_DBG("Skipping relayout for protobuf_label (welcome screen active)");
+                LOG_DBG("Skipping relayout for welcome_label (welcome screen active)");
                 continue;
             }
             dynamic_label_relayout_text(s_dynamic_font_labels[i]);
@@ -199,9 +234,9 @@ static void apply_font_update_in_lvgl_thread(const lv_font_t *new_font)
             {
                 lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
             }
-            if (protobuf_label != NULL)
+            if (welcome_label != NULL)
             {
-                lv_obj_clear_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(welcome_label, LV_OBJ_FLAG_HIDDEN);
             }
         }
         else
@@ -209,7 +244,15 @@ static void apply_font_update_in_lvgl_thread(const lv_font_t *new_font)
             /* Even when last text is empty, relayout is still required.
              * Otherwise old CJK per-char layer may remain visible with stale coordinates.
              * last 为空也必须重跑：否则会保留 CJK 逐字层可见，坐标仍按旧字高，与新分区字模叠在一起。 */
-            update_protobuf_text_content(last_protobuf_text);
+            if (protobuf_container != NULL)
+            {
+                update_protobuf_text_content(last_protobuf_text);
+            }
+        }
+
+        if (welcome_container != NULL && welcome_screen_active)
+        {
+            lv_obj_update_layout(welcome_container);
         }
 
         if (protobuf_container != NULL)
@@ -402,7 +445,28 @@ void display_request_welcome_battery_refresh(void)
 void display_show_welcome_screen(void)
 {
     display_cmd_t cmd = {.type = LCD_CMD_SHOW_WELCOME_SCREEN};
-    (void)mos_msgq_send(&lvgl_display_msgq, &cmd, (int64_t)100);
+    int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, 100);
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to enqueue welcome screen command (error: %d)", ret);
+    }
+}
+
+void display_reset_protobuf_text_state(void)
+{
+    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
+    s_pending_protobuf_text_valid = false;
+    s_pending_protobuf_text_notify_pending = false;
+    s_pending_protobuf_arrival_ms = 0U;
+    s_last_committed_protobuf_text_valid = false;
+    s_pending_protobuf_text_big[0] = '\0';
+    s_last_committed_protobuf_text_big[0] = '\0';
+    k_mutex_unlock(&s_pending_protobuf_text_lock);
+
+    last_protobuf_text_valid = false;
+    last_protobuf_text[0] = '\0';
+
+    LOG_INF("Reset protobuf text state (pending + de-dup cache cleared)");
 }
 
 /* Thread-safe: update DFU progress bar on welcome screen (below battery).
@@ -561,12 +625,14 @@ void display_update_protobuf_text(const char *text_content)
     if (s_pending_protobuf_text_valid && strcmp(s_pending_protobuf_text_big, text_content) == 0)
     {
         s_pt_dedup_skip_count++;
+        LOG_INF("[PROTOBUF][DEDUP] Skip duplicate text against pending slot: %s", text_content);
         k_mutex_unlock(&s_pending_protobuf_text_lock);
         return;
     }
     if (s_last_committed_protobuf_text_valid && strcmp(s_last_committed_protobuf_text_big, text_content) == 0)
     {
         s_pt_dedup_skip_count++;
+        LOG_INF("[PROTOBUF][DEDUP] Skip duplicate text against last committed: %s", text_content);
         k_mutex_unlock(&s_pending_protobuf_text_lock);
         return;
     }
@@ -873,7 +939,7 @@ static void show_default_ui(void)
     show_test_pattern(4);
 
     LOG_INF("🖼️ Scrolling welcome message complete - should see animated text");
-    LOG_INF("🖼️ protobuf_label after init: %p", (void *)protobuf_label);
+    LOG_INF("🖼️ welcome_label after init: %p", (void *)welcome_label);
 }
 
 /* 测试图案函数 / Test pattern functions */
@@ -1183,6 +1249,30 @@ static void protobuf_container_set_welcome_scroll(bool welcome_active)
     }
 }
 
+/* Welcome-screen state reset:
+ * hide BLE/CJK content, show the shared welcome label, restore container scroll mode,
+ * and request one redraw. This is separate from text refresh on purpose.
+ * 欢迎界面状态恢复：隐藏 BLE/CJK 内容、显示欢迎标签、恢复容器滚动模式并请求重绘。
+ * 故意与欢迎文案刷新分离。 */
+static void restore_welcome_screen_state(void)
+{
+    ensure_pattern4_scene_ready();
+
+    destroy_protobuf_scene();
+
+    if (welcome_container != NULL)
+    {
+        lv_obj_clear_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(welcome_container);
+    }
+
+    if (welcome_label != NULL)
+    {
+        lv_obj_clear_flag(welcome_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(welcome_label, LV_ALIGN_TOP_LEFT, 0, 80);
+    }
+}
+
 /* 欢迎屏：使用当前外置字库（与全局一致）。上电默认值见 prj.conf 的 MOS_WELCOME_LANG_* / PT_SIZE，
  * 对应 mos_binfont_lvgl.c 里 s_current_*；用户调用 mos_font_switch_language 后不再被欢迎刷新覆盖。
  * 未就绪时回退 secondary。须在 LVGL 线程调用。 */
@@ -1218,51 +1308,42 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     /* 获取模块化显示配置 / Get modular display configuration */
     const display_config_t *config = display_get_config();
 
-    /* 按模块化尺寸创建可滚动容器 / Create scrollable container using modular dimensions */
+    /* Pattern 4 默认只创建常驻欢迎容器；BLE 文本容器按需懒创建。 */
     lv_obj_t *container = lv_obj_create(screen);
     display_apply_container_config(container, screen, config);
+    welcome_container = container;
 
-    /* 保存全局引用供 protobuf 文本更新 / Store global reference for protobuf text updates */
-    protobuf_container = container;
-
-    /* 先不设垂直滚动：默认欢迎屏；连上 BLE 出转写时再由 protobuf_container_set_welcome_scroll(false) 打开 */
+    /* 欢迎容器默认不滚动。 */
     lv_obj_set_scroll_dir(container, LV_DIR_NONE);
-    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF); /* 无滚动条 / NO SCROLLBARS */
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF);
 
-    /* 按配置设置容器样式（A6N invert 下与 display_get_background_color 一致，避免白底块与整屏对比错乱） */
     lv_obj_set_style_bg_color(container, display_get_background_color(), 0);
     lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(container, 0, 0); /* 隐藏边框 / Hide border */
-    lv_obj_set_style_border_opa(container, LV_OPA_TRANSP, 0); /* 边框透明 / Make border transparent */
+    lv_obj_set_style_border_width(container, 0, 0);
+    lv_obj_set_style_border_opa(container, LV_OPA_TRANSP, 0);
 
-    /* 在容器内创建 protobuf 文本标签 / Create label inside container with protobuf text */
+    /* 欢迎界面主文案标签。 */
     lv_obj_t *label = lv_label_create(container);
     LOG_INF("Welcome: label created @%p, container @%p, screen @%p", (void *)label, (void *)container, (void *)screen);
 
     lv_coord_t label_width = config->layout.usable_width - (config->layout.padding * 2);
     lv_obj_set_width(label, label_width);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP); /* 自动换行适应宽度 / Wrap text to fit width */
-    /* 欢迎 / BLE 共用 label：左对齐多行文案；宽度已为 usable_width - 2*padding */
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
 
     LOG_INF("Welcome: label width set to %d (usable_width=%d, padding=%d)", (int)label_width,
             (int)config->layout.usable_width, (int)config->layout.padding);
 
-    /* 保存全局引用供 protobuf 文本更新 / Store global reference for protobuf text updates */
-    protobuf_label = label;
+    welcome_label = label;
 
-    /* 标记欢迎界面正在初始化，防止字体回调干扰 / Mark welcome screen as initializing to prevent font callback
-     * interference */
     welcome_screen_initializing = true;
 
-    /* 欢迎默认 Flash EN18；无效再回退内置 secondary。须在 set_text 前设好字体。 */
 #if defined(CONFIG_LVGL)
     welcome_apply_preferred_font(label);
 #else
     lv_obj_set_style_text_font(label, display_get_font("secondary"), 0);
 #endif
 
-    /* 未连接/未配对时初始文案（含电量行）/ Set initial text for disconnected/unpaired state (with battery line) */
     const char *initial_text;
     char display_text[160];
 
@@ -1298,46 +1379,29 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     initial_text = display_text;
 #endif
 
-    /* 先设置所有样式，包括字体、颜色、行间距，再设置文本 */
-    /* 文本颜色随显示配置（A6N invert 时为"亮字"逻辑中的高对比前景色） */
     lv_obj_set_style_text_color(label, display_get_text_color(), 0);
     lv_obj_set_style_text_line_space(label, config->fonts.line_spacing, 0);
 
-    /* 记录颜色信息（简化版本，避免访问内部成员） */
     LOG_INF("Welcome: text color and bg color styles set");
 
-    /* 最后设置文本，确保所有样式已经就绪 */
     lv_label_set_text(label, initial_text);
-
-    /* 强制更新布局，以便 LVGL 计算文本尺寸 */
     lv_obj_update_layout(label);
 
     LOG_INF("Welcome text set: '%.50s...' (truncated)", initial_text);
 
-    /* 首次显示时视为欢迎屏激活 / Ensure welcome screen is considered active when we first show it */
     welcome_screen_active = true;
-
-    /* 欢迎界面初始化完成，允许字体回调更新 / Welcome screen initialization complete, allow font callback updates */
     welcome_screen_initializing = false;
 
     LOG_INF("Welcome screen initialized: label_ptr=%p, state=%d", (void *)label, welcome_screen_active);
 
-    /* 启动 60s 周期刷新欢迎文案（含电量行）/ Start 60s periodic refresh of welcome text (battery line) */
     k_work_init_delayable(&welcome_battery_work, welcome_battery_work_handler);
     k_work_schedule(&welcome_battery_work, K_MSEC(WELCOME_BATTERY_REFRESH_MS));
 #if defined(CONFIG_LVGL)
-    /* 添加到动态字体标签列表，以便字体切换时自动更新 / Add to dynamic font list for auto-update on font change */
     add_dynamic_font_label(label);
 #endif
 
-    /* 与 BLE 文案同高（距顶 80px）避免被裁 / Align welcome text to same height as BLE text (80px from top) so it isn't
-     * cut off */
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 80);
-
-    /* 再次更新布局以应用对齐 */
     lv_obj_update_layout(label);
-
-    /* 确保 label 可见 */
     lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
     LOG_INF("Welcome: label visibility set to visible");
 
@@ -1357,11 +1421,9 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     lv_coord_t label_h = lv_obj_get_height(label);
     LOG_INF("Welcome: label actual size: %dx%d", (int)label_w, (int)label_h);
 
-    /* 触发容器重新渲染 */
     lv_obj_invalidate(container);
     LOG_INF("Welcome: container invalidated to trigger rendering");
 
-    /* DFU 状态文字：欢迎文案下方一行，与主 label 同宽左对齐，初始隐藏 */
     dfu_status_label = lv_label_create(container);
     lv_label_set_text(dfu_status_label, "");
     lv_obj_set_width(dfu_status_label, config->layout.usable_width - (config->layout.padding * 2));
@@ -1371,26 +1433,9 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     lv_obj_align_to(dfu_status_label, label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     lv_obj_add_flag(dfu_status_label, LV_OBJ_FLAG_HIDDEN);
 #if defined(CONFIG_LVGL)
-    /* 添加到动态字体标签列表 / Add to dynamic font list */
     add_dynamic_font_label(dfu_status_label);
 #endif
 
-    /* 中文字库逐字渲染容器：BLE 文本逐字显示，默认隐藏；多行时垂直滚动 */
-    protobuf_gbk_container = lv_obj_create(container);
-    lv_obj_set_size(protobuf_gbk_container, config->layout.usable_width - (config->layout.padding * 2),
-                    config->layout.usable_height - (config->layout.padding * 2));
-    lv_obj_set_style_bg_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(protobuf_gbk_container, 0, 0);
-    lv_obj_set_style_border_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_scroll_dir(protobuf_gbk_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(protobuf_gbk_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_LEFT, 0, 80);
-    lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
-    memset(s_protobuf_gbk_label_pool, 0, sizeof(s_protobuf_gbk_label_pool));
-    s_protobuf_gbk_label_pool_used = 0;
-
-    /* DFU 进度条：单色显示（亮/暗），轨道=背景色、填充=文字色 | Progress bar: monochrome (bright/dark), track=bg,
-     * fill=text color */
     dfu_progress_bar_w = (lv_coord_t)(config->layout.usable_width / 2);
     dfu_progress_bar = lv_obj_create(container);
     lv_obj_set_size(dfu_progress_bar, dfu_progress_bar_w, 12);
@@ -1410,10 +1455,102 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     lv_obj_set_style_pad_all(dfu_progress_fill, 0, 0);
     lv_obj_add_flag(dfu_progress_bar, LV_OBJ_FLAG_HIDDEN);
 
-    /* 自动滚到底部以显示最新内容 / AUTO-SCROLL TO BOTTOM to show latest content */
-    lv_obj_update_layout(container); /* 确保布局已计算 / Ensure layout is calculated */
-    LOG_INF("📝 Created adaptive scrolling container: %dx%d with %s font", config->layout.usable_width,
-            config->layout.usable_height, config->name);
+    lv_obj_update_layout(container);
+    LOG_INF("Welcome container ready: %dx%d with %s font", config->layout.usable_width, config->layout.usable_height,
+            config->name);
+}
+/**
+ * 确保 protobuf 场景就绪：如果尚未创建，则创建 BLE 文本容器和标签，并隐藏欢迎容器。
+ * Ensure protobuf scene is ready: if not already created, create BLE text container and label, and hide welcome container.
+ */
+static void ensure_protobuf_scene_ready(void)
+{
+    if (protobuf_container != NULL && protobuf_label != NULL)
+    {
+        return;
+    }
+
+    ensure_pattern4_scene_ready();
+
+    lv_obj_t *screen = lv_screen_active();
+    const display_config_t *config = display_get_config();
+
+    protobuf_container = lv_obj_create(screen);
+    display_apply_container_config(protobuf_container, screen, config);
+    lv_obj_set_scroll_dir(protobuf_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(protobuf_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(protobuf_container, display_get_background_color(), 0);
+    lv_obj_set_style_bg_opa(protobuf_container, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(protobuf_container, 0, 0);
+    lv_obj_set_style_border_opa(protobuf_container, LV_OPA_TRANSP, 0);
+
+    protobuf_label = lv_label_create(protobuf_container);
+    lv_obj_set_width(protobuf_label, config->layout.usable_width - (config->layout.padding * 2));
+    lv_label_set_long_mode(protobuf_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(protobuf_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_color(protobuf_label, display_get_text_color(), 0);
+    lv_obj_set_style_text_line_space(protobuf_label, config->fonts.line_spacing, 0);
+    lv_obj_set_style_text_font(protobuf_label, display_get_font("secondary"), 0);
+    lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
+#if defined(CONFIG_LVGL)
+    add_dynamic_font_label(protobuf_label);
+#endif
+
+    protobuf_gbk_container = lv_obj_create(protobuf_container);
+    lv_obj_set_size(protobuf_gbk_container, config->layout.usable_width - (config->layout.padding * 2),
+                    config->layout.usable_height - (config->layout.padding * 2));
+    lv_obj_set_style_bg_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(protobuf_gbk_container, 0, 0);
+    lv_obj_set_style_border_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_dir(protobuf_gbk_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(protobuf_gbk_container, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
+    lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+    memset(s_protobuf_gbk_label_pool, 0, sizeof(s_protobuf_gbk_label_pool));
+    s_protobuf_gbk_label_pool_used = 0;
+
+    protobuf_xy_overlay_container = lv_obj_create(protobuf_container);
+    lv_obj_set_size(protobuf_xy_overlay_container, config->layout.usable_width - (config->layout.padding * 2),
+                    config->layout.usable_height - (config->layout.padding * 2));
+    lv_obj_set_style_bg_opa(protobuf_xy_overlay_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(protobuf_xy_overlay_container, 0, 0);
+    lv_obj_set_style_border_opa(protobuf_xy_overlay_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(protobuf_xy_overlay_container, 0, 0);
+    lv_obj_set_scroll_dir(protobuf_xy_overlay_container, LV_DIR_NONE);
+    lv_obj_set_scrollbar_mode(protobuf_xy_overlay_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_align(protobuf_xy_overlay_container, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_add_flag(protobuf_xy_overlay_container, LV_OBJ_FLAG_HIDDEN);
+
+    if (welcome_container != NULL)
+    {
+        lv_obj_add_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_update_layout(protobuf_container);
+    LOG_INF("Text container ready: %dx%d", config->layout.usable_width, config->layout.usable_height);
+}
+
+static void destroy_protobuf_scene(void)
+{
+    if (protobuf_label != NULL)
+    {
+#if defined(CONFIG_LVGL)
+        remove_dynamic_font_label(protobuf_label);
+#endif
+    }
+
+    if (protobuf_container != NULL)
+    {
+        lv_obj_del(protobuf_container);
+    }
+
+    protobuf_container = NULL;
+    protobuf_label = NULL;
+    protobuf_gbk_container = NULL;
+    protobuf_xy_overlay_container = NULL;
+    current_xy_text_label = NULL;
+    memset(s_protobuf_gbk_label_pool, 0, sizeof(s_protobuf_gbk_label_pool));
+    s_protobuf_gbk_label_pool_used = 0;
 }
 
 /* Pattern 5：XY 文本定位区域，模块化配置 / Pattern 5 - XY Text Positioning Area with modular configuration */
@@ -1457,6 +1594,11 @@ int display_get_current_pattern(void)
     return current_pattern;
 }
 
+bool display_is_welcome_screen_active(void)
+{
+    return welcome_screen_active;
+}
+
 /* lv_obj_del 子控件后，文件内缓存的 lv_obj_t* 全部悬空；必须清零，否则 BLE/protobuf 与 DFU 路径会 UAF。 */
 static void tear_down_screen_child_global_refs(void)
 {
@@ -1468,9 +1610,12 @@ static void tear_down_screen_child_global_refs(void)
         scrolling_welcome_label = NULL;
     }
 
+    welcome_container = NULL;
+    welcome_label = NULL;
     protobuf_container = NULL;
     protobuf_label = NULL;
     protobuf_gbk_container = NULL;
+    protobuf_xy_overlay_container = NULL;
 
     dfu_status_label = NULL;
     dfu_progress_bar = NULL;
@@ -1493,10 +1638,137 @@ static void tear_down_screen_child_global_refs(void)
     welcome_screen_initializing = false;
 }
 
+static void ensure_pattern4_scene_ready(void)
+{
+    if (welcome_container != NULL && welcome_label != NULL)
+    {
+        return;
+    }
+
+    LOG_INF("Recreating Pattern 4 scene after clear/reset");
+    show_test_pattern(4);
+}
+
+static void reset_display_text_caches(void)
+{
+    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
+    s_pending_protobuf_text_valid = false;
+    s_pending_protobuf_text_notify_pending = false;
+    s_pending_protobuf_arrival_ms = 0U;
+    s_last_committed_protobuf_text_valid = false;
+    s_pending_protobuf_text_big[0] = '\0';
+    s_last_committed_protobuf_text_big[0] = '\0';
+    k_mutex_unlock(&s_pending_protobuf_text_lock);
+
+    last_protobuf_text_valid = false;
+    last_protobuf_text[0] = '\0';
+    s_last_welcome_text_valid = false;
+    s_last_welcome_text[0] = '\0';
+}
+
+static void hide_and_clear_protobuf_xy_overlay(void)
+{
+    if (protobuf_xy_overlay_container == NULL)
+    {
+        return;
+    }
+
+    if (lv_obj_get_child_cnt(protobuf_xy_overlay_container) > 0)
+    {
+        lv_obj_clean(protobuf_xy_overlay_container);
+    }
+
+    current_xy_text_label = NULL;
+    lv_obj_add_flag(protobuf_xy_overlay_container, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void clear_current_display_text(void)
+{
+    /* ClearDisplay 只清空当前活跃容器的显示内容，不删除当前活跃容器本身。 */
+    bool clearing_welcome = welcome_screen_active;
+
+    reset_display_text_caches();
+    welcome_screen_active = clearing_welcome;
+    welcome_screen_initializing = false;
+
+    if (clearing_welcome)
+    {
+        if (welcome_label != NULL)
+        {
+            lv_label_set_text(welcome_label, "");
+            lv_obj_clear_flag(welcome_label, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (dfu_status_label != NULL)
+        {
+            lv_label_set_text(dfu_status_label, "");
+            lv_obj_add_flag(dfu_status_label, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (dfu_progress_fill != NULL)
+        {
+            lv_obj_set_width(dfu_progress_fill, 0);
+        }
+        if (dfu_progress_bar != NULL)
+        {
+            lv_obj_add_flag(dfu_progress_bar, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (welcome_container != NULL)
+        {
+            lv_obj_invalidate(welcome_container);
+        }
+    }
+    else
+    {
+        if (protobuf_label != NULL)
+        {
+            lv_label_set_text(protobuf_label, "");
+            lv_obj_clear_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        if (protobuf_gbk_container != NULL)
+        {
+            lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+            for (size_t index = 0; index < s_protobuf_gbk_label_pool_used; ++index)
+            {
+                if (s_protobuf_gbk_label_pool[index] != NULL)
+                {
+                    lv_obj_add_flag(s_protobuf_gbk_label_pool[index], LV_OBJ_FLAG_HIDDEN);
+                }
+            }
+            s_protobuf_gbk_label_pool_used = 0;
+        }
+
+        hide_and_clear_protobuf_xy_overlay();
+
+        if (protobuf_container != NULL)
+        {
+            lv_obj_scroll_to_y(protobuf_container, 0, LV_ANIM_OFF);
+            lv_obj_invalidate(protobuf_container);
+        }
+    }
+
+    if (xy_text_container != NULL)
+    {
+        if (lv_obj_get_child_cnt(xy_text_container) > 0)
+        {
+            lv_obj_clean(xy_text_container);
+        }
+        current_xy_text_label = NULL;
+        lv_obj_invalidate(xy_text_container);
+    }
+
+    if (gbk_test_label != NULL)
+    {
+        lv_label_set_text(gbk_test_label, "");
+        lv_obj_invalidate(gbk_test_label);
+    }
+
+    lv_obj_invalidate(lv_screen_active());
+    lvgl_force_one_refresh = true;
+}
+
 static void show_test_pattern(int pattern_id)
 {
     /* 仅由 LVGL 线程调用，无需加锁 / SAFE: Now called only from LVGL thread - no locking needed */
-
     /* 获取屏幕并设黑色背景 / Get screen and set black background */
     lv_obj_t *screen = lv_screen_active();
 
@@ -1550,6 +1822,10 @@ static void invalidate_current_visible_ui(void)
     switch (current_pattern)
     {
         case 4:
+            if (welcome_container != NULL && !lv_obj_has_flag(welcome_container, LV_OBJ_FLAG_HIDDEN))
+            {
+                lv_obj_invalidate(welcome_container);
+            }
             if (protobuf_container != NULL)
             {
                 lv_obj_invalidate(protobuf_container);
@@ -1606,9 +1882,9 @@ static void update_display_height(uint16_t height)
 
     LOG_INF("update_display_height - Thread-safe height update: %u", height);
 
-    if (!protobuf_container)
+    if (welcome_container == NULL && protobuf_container == NULL)
     {
-        LOG_WRN("protobuf_container not initialized");
+        LOG_WRN("Pattern 4 containers not initialized");
         return;
     }
 
@@ -1632,11 +1908,17 @@ static void update_display_height(uint16_t height)
         tmp.layout.margin_top = (tmp.height > tmp.layout.usable_height) ? (tmp.height - tmp.layout.usable_height) : 0;
     }
 
-    /* Apply to the existing container */
-    (void)display_apply_container_config(protobuf_container, screen, &tmp);
+    if (welcome_container != NULL)
+    {
+        (void)display_apply_container_config(welcome_container, screen, &tmp);
+        lv_obj_update_layout(welcome_container);
+    }
 
-    /* Recompute layout */
-    lv_obj_update_layout(protobuf_container);
+    if (protobuf_container != NULL)
+    {
+        (void)display_apply_container_config(protobuf_container, screen, &tmp);
+        lv_obj_update_layout(protobuf_container);
+    }
 
     LOG_INF("Applied margin_top=%u (height=%u)", tmp.layout.margin_top, height);
 }
@@ -2139,8 +2421,8 @@ static bool protobuf_text_should_commit(const char *candidate_text)
     return (strcmp(candidate_text, s_last_committed_protobuf_text_big) != 0);
 }
 
-
-static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_text_size, bool schedule_retry_if_throttled)
+static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_text_size,
+                                             bool schedule_retry_if_throttled)
 {
     uint32_t pending_arrival_ms = 0U;
     bool has_pending = protobuf_text_peek_latest(latest_text, latest_text_size, &pending_arrival_ms);
@@ -2152,13 +2434,11 @@ static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_te
     uint32_t now_ms = k_uptime_get_32();
     uint32_t elapsed_ms = now_ms - s_protobuf_last_apply_ms;
     uint32_t age_ms = now_ms - pending_arrival_ms;
-    bool throttle_ready = !s_protobuf_last_apply_ms 
-                        || (elapsed_ms >= PROTOBUF_TEXT_THROTTLE_MS && age_ms >= PROTOBUF_TEXT_THROTTLE_MS);
+    bool throttle_ready = !s_protobuf_last_apply_ms || (elapsed_ms >= PROTOBUF_TEXT_THROTTLE_MS && age_ms >= PROTOBUF_TEXT_THROTTLE_MS);
 
     if (throttle_ready)
     {
-        if (protobuf_text_should_commit(latest_text)
-            && protobuf_text_take_latest(latest_text, latest_text_size))
+        if (protobuf_text_should_commit(latest_text) && protobuf_text_take_latest(latest_text, latest_text_size))
         {
             update_protobuf_text_content(latest_text);
             s_pt_commit_count++;
@@ -2178,7 +2458,16 @@ static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_te
     {
         /* No new wakeup may arrive; schedule a retry. */
         display_cmd_t retry_cmd = {.type = LCD_CMD_UPDATE_PROTOBUF_TEXT};
-        (void)mos_msgq_send(&lvgl_display_msgq, &retry_cmd, (int64_t)PROTOBUF_TEXT_THROTTLE_MS);
+        int retry_ret = mos_msgq_send(&lvgl_display_msgq, &retry_cmd, 0);
+        if (retry_ret != 0)
+        {
+            /* If retry enqueue fails, let the next producer send a fresh wakeup instead of
+             * leaving the pending slot stuck behind notify_pending=true forever. */
+            k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
+            s_pending_protobuf_text_notify_pending = false;
+            k_mutex_unlock(&s_pending_protobuf_text_lock);
+            LOG_WRN("[PROTOBUF][THROTTLE] Retry enqueue failed: %d, re-arming producer wakeup", retry_ret);
+        }
     }
     return false;
 }
@@ -2224,9 +2513,6 @@ static lv_obj_t *protobuf_gbk_acquire_label(lv_obj_t *parent, size_t index)
 
     return s_protobuf_gbk_label_pool[index];
 }
-
-/* 与欢迎/BLE 共用顶边距，仅随字体在变的是行高与 style line_space（apply_font 内按 line_height 算） */
-#define PROTOBUF_BLE_LABEL_YOFF 80
 
 /* 多行 + 大字重：先刷新 label 布局，再按「标签底边贴视口底」滚动（仅依赖 get_scroll_bottom 易停在中间段） */
 static void protobuf_scroll_ascii_label_bottom_visible(void)
@@ -2276,8 +2562,11 @@ static void update_protobuf_text_content(const char *text_content)
     /* 内容与上次完全一致则跳过 */
     if (last_protobuf_text_valid && strcmp(text_content, last_protobuf_text) == 0)
     {
+        LOG_INF("[PROTOBUF][DEDUP] Skip duplicate text in label path (last_protobuf_text): %s", text_content);
         return;
     }
+
+    ensure_protobuf_scene_ready();
 
     if (!protobuf_container || !protobuf_label)
     {
@@ -2286,9 +2575,15 @@ static void update_protobuf_text_content(const char *text_content)
     }
 
     welcome_screen_active = false;
+    if (welcome_container != NULL)
+    {
+        lv_obj_add_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
+    }
 #if defined(CONFIG_LVGL)
     protobuf_container_set_welcome_scroll(false);
 #endif
+
+    hide_and_clear_protobuf_xy_overlay();
 
     bool ascii_only = utf8_is_ascii_only(text_content);
     bool has_cjk = utf8_contains_cjk(text_content);
@@ -2467,6 +2762,16 @@ static void update_protobuf_text_content(const char *text_content)
 
     protobuf_scroll_ascii_label_bottom_visible();
 
+    /* Normal protobuf text updates need an explicit visible redraw hint as well.
+     * Otherwise the LVGL object tree may have the latest text while the panel stays
+     * on an older frame until another command forces a refresh. */
+    lv_obj_invalidate(protobuf_label);
+    if (protobuf_container != NULL)
+    {
+        lv_obj_invalidate(protobuf_container);
+    }
+    lvgl_force_one_refresh = true;
+
     strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
     last_protobuf_text[MAX_TEXT_LEN] = '\0';
     last_protobuf_text_valid = true;
@@ -2478,11 +2783,6 @@ static void update_protobuf_text_content(const char *text_content)
  * refresh); call from LVGL thread only */
 static void update_welcome_label_with_battery(void)
 {
-    if (!protobuf_label)
-    {
-        return;
-    }
-
     /* 仅当欢迎屏激活时刷新；不覆盖 BLE/其它内容 / Only refresh when welcome screen is active; do not overwrite
      * BLE/other content */
     if (!welcome_screen_active)
@@ -2496,12 +2796,21 @@ static void update_welcome_label_with_battery(void)
         return;
     }
 
+    ensure_pattern4_scene_ready();
+
+    if (!welcome_label)
+    {
+        return;
+    }
+
+    hide_and_clear_protobuf_xy_overlay();
+
     const display_config_t *config = display_get_config();
     static char welcome_buf[160];
 
 #if defined(CONFIG_LVGL)
     /* 先确保当前字库已懒加载，再按 mos_binfont_get_current_language() 组欢迎文案 */
-    welcome_apply_preferred_font(protobuf_label);
+    welcome_apply_preferred_font(welcome_label);
     build_welcome_screen_text(welcome_buf, sizeof(welcome_buf), config);
 #else
     const char *device_name = get_ble_device_name();
@@ -2537,14 +2846,10 @@ static void update_welcome_label_with_battery(void)
         return;
     }
 
-    lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, 80);
-    lv_label_set_text(protobuf_label, welcome_buf);
+    lv_label_set_text(welcome_label, welcome_buf);
     strncpy(s_last_welcome_text, welcome_buf, sizeof(s_last_welcome_text) - 1U);
     s_last_welcome_text[sizeof(s_last_welcome_text) - 1U] = '\0';
     s_last_welcome_text_valid = true;
-#if defined(CONFIG_LVGL)
-    protobuf_container_set_welcome_scroll(true);
-#endif
 }
 
 static void welcome_battery_work_handler(struct k_work *work)
@@ -2580,11 +2885,11 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
         target_container = xy_text_container;
         LOG_INF("Using Pattern 5 XY text container");
     }
-    else if (protobuf_container)
+    else if (protobuf_xy_overlay_container)
     {
-        /* Pattern 4：滚动文本容器 / Pattern 4: Scrolling Text Container */
-        target_container = protobuf_container;
-        LOG_INF("Using Pattern 4 scrolling text container");
+        /* Pattern 4：走独立 overlay，避免误删共享 protobuf/welcome 对象。 */
+        target_container = protobuf_xy_overlay_container;
+        LOG_INF("Using Pattern 4 XY overlay container");
     }
     else
     {
@@ -2594,7 +2899,7 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
     }
 
 #if defined(CONFIG_LVGL)
-    if (protobuf_container != NULL && target_container == protobuf_container)
+    if (protobuf_container != NULL && target_container == protobuf_xy_overlay_container)
     {
         protobuf_container_set_welcome_scroll(false);
     }
@@ -2611,7 +2916,15 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
         /* Use lv_obj_clean() to clear container - LVGL v9 handles resource cleanup automatically */
         lv_obj_clean(target_container);
         current_xy_text_label = NULL;
+        if (target_container == protobuf_xy_overlay_container)
+        {
+            lv_obj_clear_flag(protobuf_xy_overlay_container, LV_OBJ_FLAG_HIDDEN);
+        }
         LOG_DBG("Cleared %d text labels from container", lv_obj_get_child_cnt(target_container));
+    }
+    else if (target_container == protobuf_xy_overlay_container)
+    {
+        lv_obj_clear_flag(protobuf_xy_overlay_container, LV_OBJ_FLAG_HIDDEN);
     }
 
     /* 校验坐标在容器范围内（580x420 可用区，10px 内边距）/ Validate coordinates within container bounds (580x420
@@ -3085,8 +3398,8 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                 case LCD_CMD_UPDATE_PROTOBUF_TEXT:
                 {
                     static char latest_text[PROTOBUF_TEXT_MAX_CHARS];
-
-                    /* 队列中的 UPDATE_PROTOBUF_TEXT 只作为唤醒事件，正文统一从 pending 槽取最新值。 */
+                    /* 队列中的 UPDATE_PROTOBUF_TEXT 只作为唤醒事件，正文统一从 pending 槽取最新值。
+                     * The UPDATE_PROTOBUF_TEXT in the queue is only used as a wake-up event, the actual content is always taken from the pending slot*/
                     display_cmd_t next;
                     while (mos_msgq_receive(&lvgl_display_msgq, &next, 0) == 0)
                     {
@@ -3096,14 +3409,16 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                         }
                         else
                         {
-                            (void)protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), false);
+                            /* A non-protobuf command interrupted the wakeup path. If we're still
+                             * inside the throttle window, keep a retry armed so pending text does
+                             * not get stranded with notify_pending=true and no future wakeup. */
+                            protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), true);
                             cmd = next;
                             protobuf_text_log_throttle_stats_if_due();
                             goto reenter_switch;
                         }
                     }
-
-                    (void)protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), true);
+                    protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), true);
                     protobuf_text_log_throttle_stats_if_due();
                     break;
                 }
@@ -3130,28 +3445,14 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                 case LCD_CMD_SHOW_WELCOME_SCREEN:
                     /* 蓝牙断开后重新进入欢迎界面：隐藏 BLE 文案区，显示欢迎标签并刷新电量 */
                     welcome_screen_active = true;
-                    if (protobuf_gbk_container)
-                    {
-                        lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
-                    }
-                    if (protobuf_label)
-                    {
-                        lv_obj_clear_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
-                        lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, 80);
-                    }
-                    last_protobuf_text_valid = false; /* 下次连接收到文案时正常重绘 */
+                    reset_display_text_caches();
+                    restore_welcome_screen_state();
                     update_welcome_label_with_battery();
-                    if (protobuf_container)
-                    {
-#if defined(CONFIG_LVGL)
-                        protobuf_container_set_welcome_scroll(true);
-#endif
-                        lv_obj_invalidate(protobuf_container);
-                    }
                     LOG_INF("📱 Welcome screen shown (BLE disconnected)");
                     break;
                 case LCD_CMD_UPDATE_DFU_PROGRESS:
-                    // 显示/隐藏并更新 DFU 进度条：前景条宽度 = 百分比，随 % 滑动 | Progress bar: fill width = percent
+                    // 显示/隐藏并更新 DFU 进度条：前景条宽度 = 百分比，随 % 滑动
+                    // Progress bar: fill width = percent and moves with %; show/hide based on flag
                     if (dfu_progress_bar != NULL && dfu_progress_fill != NULL)
                     {
                         if (cmd.p.dfu_progress.show)
@@ -3187,13 +3488,10 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     }
                     break;
                 case LCD_CMD_CLEAR_DISPLAY:
-                    if (!welcome_screen_active)
-                    {
-                        a6n_clear_screen(false);
-                    }
-                    lvgl_force_one_refresh = true;
-                    lv_obj_invalidate(lv_screen_active());
+                {
+                    clear_current_display_text();
                     break;
+                }
                 case LCD_CMD_CLOSE:
                     if (get_display_onoff())
                     {
@@ -3263,7 +3561,8 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
             if (state_type == LCD_STATE_ON)
                 need_refresh = true;
         }
-
+        // 如果需要刷新，则调用 lv_timer_handler 刷新，判断条件为：屏幕开启且需要刷新，或者强制刷新
+        // Refresh if needed: screen is on and either refresh is due or forced
         if (state_type == LCD_STATE_ON && (need_refresh || lvgl_force_one_refresh))
         {
             if (!lvgl_freeze_refresh || lvgl_force_one_refresh)

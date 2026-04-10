@@ -18,6 +18,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "mos_i2s_slave.h"
 #include "vad_interrupt_handler.h"
 
 LOG_MODULE_REGISTER(mos_gx8002, LOG_LEVEL_INF);
@@ -293,6 +294,13 @@ int mos_gx8002_init(void)
     if (ret != 0)
     {
         LOG_ERR("VAD interrupt handler init failed: %d", ret);
+        return ret;
+    }
+
+    ret = gx8002_i2s_init();
+    if (ret != 0)
+    {
+        LOG_ERR("GX8002 I2S pre-init failed: %d", ret);
         return ret;
     }
 

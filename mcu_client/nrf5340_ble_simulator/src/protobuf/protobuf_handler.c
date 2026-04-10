@@ -295,8 +295,8 @@ void protobuf_analyze_message(const uint8_t *data, uint16_t len)
         LOG_WRN("Received empty data - ignoring");
         return;
     }
-    /* LOG_INF("=== BLE DATA RECEIVED ==="); */
-    /* LOG_INF("Received BLE data (%u bytes):", len); */
+    // LOG_INF("=== BLE DATA RECEIVED ===");
+    LOG_INF("Received BLE data (%u bytes):", len);
 
     // Print hex dump (use Zephyr hexdump helper so logging backend and
     // runtime filtering are respected)
@@ -845,6 +845,14 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
     }
 
     size_t text_length = strlen(display_text->text);
+
+    /* Ignore an empty first DisplayText while still on the welcome screen.
+     * Once we've already switched into the text scene, keep honoring BLE payloads as-is. */
+    if (text_length == 0U && display_is_welcome_screen_active())
+    {
+        LOG_INF("[PROTOBUF] Ignore empty DisplayText while welcome screen is active");
+        return;
+    }
 
     uint32_t color_rgb888 = display_text->color;
     uint16_t color_rgb565 = (uint16_t)color_rgb888;

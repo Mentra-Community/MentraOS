@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-03-02 15:33:39
- * @LastEditTime : 2026-04-02 20:06:52
+ * @LastEditTime : 2026-04-10 14:28:42
  * @FilePath     : mos_i2s_slave.c
  * @Description  : MOS I2S slave driver - GX8002 VAD path (nRF as I2S slave)
  *
@@ -80,7 +80,7 @@ static nrfx_i2s_config_t cfg = {
      * MCK must be disabled; clksrc/ratio only affect MCK output. */
     .clksrc = NRF_I2S_CLKSRC_PCLK32M,
     .mck_setup = NRF_I2S_MCK_DISABLED,
-    .ratio = NRF_I2S_RATIO_32X,    /* 16-bit stereo = 32 SCK/LRCK */
+    .ratio = NRF_I2S_RATIO_32X, /* 16-bit stereo = 32 SCK/LRCK */
 };
 
 static nrfx_i2s_buffers_t const i2s_req_buffer[2] = {
@@ -109,11 +109,107 @@ static K_THREAD_STACK_DEFINE(gx8002_audio_worker_stack, 4096);
 static struct k_thread gx8002_audio_worker_data;
 static k_tid_t gx8002_audio_worker_tid;
 static bool gx8002_audio_worker_started;
+static bool gx8002_lc3_core_initialized;
 static bool gx8002_lc3_encoder_ready;
 static uint32_t gx8002_dropped_frames;
 static bool s_first_frame_pending = false;
 static bool s_first_ble_sent_pending = false;
 static int64_t s_last_ble_send_tick = 0;
+static bool s_fade_in_pending = false;
+/* Skip the first N I2S frames after VAD trigger: GX8002 analog mic path needs
+ * settling time (~20 ms) after transitioning from idle to active. The initial
+ * samples contain transients/steps that corrupt the LC3 encoder output and cause
+ * audible noise at the receiver. Two 10 ms frames are discarded as a safe margin. */
+#define GX8002_WARMUP_FRAMES 2
+static uint8_t s_warmup_frames_remaining = 0;
+
+#define GX8002_FADE_IN_MS 8U
+#define GX8002_Q15_ONE 32767
+#define GX8002_FADE_IN_SAMPLES ((uint32_t)((uint64_t)GX8002_FADE_IN_MS * GX8002_PDM_SAMPLE_RATE / 1000U))
+
+static int gx8002_lc3_encoder_start(void)
+{
+    if (!gx8002_lc3_core_initialized)
+    {
+        int ret = sw_codec_lc3_init(NULL, NULL, GX8002_LC3_FRAME_DURATION_US);
+        if (ret < 0)
+        {
+            LOG_ERR("GX8002 LC3 core init failed: %d", ret);
+            return ret;
+        }
+        gx8002_lc3_core_initialized = true;
+    }
+
+    uint16_t pcm_bytes_req = 0;
+    int ret = sw_codec_lc3_enc_init(GX8002_PDM_SAMPLE_RATE, GX8002_PDM_BIT_DEPTH, GX8002_LC3_FRAME_DURATION_US,
+                                    GX8002_LC3_BITRATE_DEFAULT, GX8002_PDM_CHANNELS, &pcm_bytes_req);
+    if (ret < 0)
+    {
+        LOG_ERR("GX8002 LC3 encoder init failed: %d", ret);
+        return ret;
+    }
+
+    gx8002_lc3_encoder_ready = true;
+    return 0;
+}
+
+static void gx8002_lc3_encoder_stop(void)
+{
+    if (!gx8002_lc3_encoder_ready)
+    {
+        return;
+    }
+
+    int ret = sw_codec_lc3_enc_uninit_all();
+    if (ret < 0)
+    {
+        LOG_WRN("GX8002 LC3 encoder uninit failed: %d", ret);
+        return;
+    }
+
+    gx8002_lc3_encoder_ready = false;
+}
+/*
+ * Fade-in the first N samples of the first frame after VAD trigger.
+ * This is needed to avoid pops/clicks at the start of the audio stream.
+ * 函数在VAD触发后的第一帧的前N个样本上应用淡入效果，以避免音频流开始时出现爆音/点击声。
+ */
+static void gx8002_apply_fade_in(int16_t *mono_frame, size_t sample_count)
+{
+    if (!s_fade_in_pending || mono_frame == NULL || sample_count == 0U)
+    {
+        return;
+    }
+
+    uint32_t fade_samples = GX8002_FADE_IN_SAMPLES;
+    if (fade_samples == 0U)
+    {
+        s_fade_in_pending = false;
+        return;
+    }
+
+    if (fade_samples > sample_count)
+    {
+        fade_samples = (uint32_t)sample_count;
+    }
+
+    for (uint32_t i = 0; i < fade_samples; ++i)
+    {
+        uint32_t gain_q15 = (uint32_t)(((uint64_t)(i + 1U) * GX8002_Q15_ONE) / fade_samples);
+        int32_t scaled = ((int32_t)mono_frame[i] * (int32_t)gain_q15) >> 15;
+        if (scaled > 32767)
+        {
+            scaled = 32767;
+        }
+        else if (scaled < -32768)
+        {
+            scaled = -32768;
+        }
+        mono_frame[i] = (int16_t)scaled;
+    }
+
+    s_fade_in_pending = false;
+}
 
 #define GX8002_DEBUG_MTU_SKIP_LOG_INTERVAL 50U
 
@@ -160,7 +256,10 @@ static void gx8002_send_batched_packet(void)
             int64_t trigger_tick = vad_get_trigger_tick();
             if (trigger_tick > 0)
             {
-                LOG_INF("[TIMING] VAD->BLE first 202B packet: %lld ms", now - trigger_tick);
+                LOG_INF("[TIMING] VAD->BLE first 202B packet: %lld ms "
+                    "(includes %d ms warmup skip + %d ms batch accumulation)",
+                    now - trigger_tick, GX8002_WARMUP_FRAMES * (GX8002_LC3_FRAME_DURATION_US / 1000),
+                    GX8002_LC3_FRAMES_PER_PACKET * (GX8002_LC3_FRAME_DURATION_US / 1000));
             }
             s_first_ble_sent_pending = false;
         }
@@ -206,12 +305,26 @@ static void gx8002_i2s_audio_worker(void *p1, void *p2, void *p3)
             continue;
         }
 
+        /* Discard warmup frames: GX8002 analog path settling transient causes
+         * LC3 decode noise at the receiver if these samples are encoded. */
+        if (s_warmup_frames_remaining > 0)
+        {
+            s_warmup_frames_remaining--;
+            if (s_warmup_frames_remaining == 0U)
+            {
+                s_fade_in_pending = true;
+            }
+            continue;
+        }
+
         for (size_t i = 0; i < PDM_PCM_REQ_BUFFER_SIZE; ++i)
         {
             int16_t left = ((int16_t *)&raw_frame.words[i])[0];
             int16_t right = ((int16_t *)&raw_frame.words[i])[1];
             mono_frame[i] = (int16_t)(((int32_t)left + (int32_t)right) / 2);
         }
+
+        gx8002_apply_fade_in(mono_frame, PDM_PCM_REQ_BUFFER_SIZE);
 
         int ret = sw_codec_lc3_enc_run(mono_frame, sizeof(mono_frame), LC3_USE_BITRATE_FROM_INIT, 0,
                                        GX8002_LC3_FRAME_LEN, lc3_frame, &encoded_bytes_written);
@@ -246,10 +359,6 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
         return;
     }
 
-    /* Double-buffer pingpong: recycle buffer in order: 0→1→0→1...
-     * (current_buffer_index + 1) % 2 gives the correct next slot.
-     * The released buffer becomes the next buffer to fill — do NOT override
-     * this with the inverted index (that would re-queue the still-active buffer). */
     uint8_t next_buffer_index = (current_buffer_index + 1) % 2;
 
     /* I2S TX: output silence (no local PCM5102A playback; audio goes to phone via BLE only) */
@@ -269,7 +378,9 @@ static void i2s_buffer_req_evt_handle(nrfx_i2s_buffers_t const *p_released, uint
             if (trigger_tick > 0)
             {
                 int64_t now = k_uptime_get();
-                LOG_INF("[TIMING] VAD->I2S first frame: %lld ms", now - trigger_tick);
+                LOG_INF("[TIMING] VAD->I2S first frame: %lld ms "
+                    "(next %d frames discarded as warmup)",
+                    now - trigger_tick, GX8002_WARMUP_FRAMES);
             }
             s_first_frame_pending = false;
         }
@@ -309,34 +420,14 @@ int gx8002_i2s_init(void)
         return -EIO;
     }
 
-    if (!gx8002_lc3_encoder_ready)
-    {
-        int ret = sw_codec_lc3_init(NULL, NULL, GX8002_LC3_FRAME_DURATION_US);
-        if (ret < 0)
-        {
-            LOG_ERR("GX8002 LC3 core init failed: %d", ret);
-        }
-        else
-        {
-            uint16_t pcm_bytes_req = 0;
-            ret = sw_codec_lc3_enc_init(GX8002_PDM_SAMPLE_RATE, GX8002_PDM_BIT_DEPTH, GX8002_LC3_FRAME_DURATION_US,
-                                        GX8002_LC3_BITRATE_DEFAULT, GX8002_PDM_CHANNELS, &pcm_bytes_req);
-            if (ret < 0)
-            {
-                LOG_ERR("GX8002 LC3 encoder init failed: %d", ret);
-            }
-            else
-            {
-                gx8002_lc3_encoder_ready = true;
-            }
-        }
-    }
-
     if (!gx8002_audio_worker_started)
     {
-        gx8002_audio_worker_tid = k_thread_create(&gx8002_audio_worker_data, gx8002_audio_worker_stack,
-                                                  K_THREAD_STACK_SIZEOF(gx8002_audio_worker_stack),
-                                                  gx8002_i2s_audio_worker, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+        gx8002_audio_worker_tid = k_thread_create(&gx8002_audio_worker_data,
+                                                    gx8002_audio_worker_stack,
+                                                    K_THREAD_STACK_SIZEOF(gx8002_audio_worker_stack),
+                                                    gx8002_i2s_audio_worker, 
+                                                    NULL, NULL, NULL, 
+                                                    5, 0, K_NO_WAIT);
         if (gx8002_audio_worker_tid != NULL)
         {
             k_thread_name_set(gx8002_audio_worker_tid, "gx8k_i2s_audio");
@@ -364,6 +455,8 @@ int gx8002_i2s_start(void)
         return 0;
     }
 
+    k_msgq_purge(&gx8002_raw_i2s_msgq);
+
     memset(i2s_rx_req_buffer, 0, sizeof(i2s_rx_req_buffer));
     memset(i2s_tx_req_buffer, 0, sizeof(i2s_tx_req_buffer));
     current_buffer_index = 0;
@@ -372,10 +465,19 @@ int gx8002_i2s_start(void)
     s_first_frame_pending = true;
     s_first_ble_sent_pending = true;
     s_last_ble_send_tick = 0;
+    s_warmup_frames_remaining = GX8002_WARMUP_FRAMES;
+    s_fade_in_pending = false;
+
+    int enc_ret = gx8002_lc3_encoder_start();
+    if (enc_ret < 0)
+    {
+        return enc_ret;
+    }
 
     nrfx_err_t ret = nrfx_i2s_start(&i2s_inst, &i2s_req_buffer[0], 0);
     if (ret != NRFX_SUCCESS)
     {
+        gx8002_lc3_encoder_stop();
         return -EIO;
     }
 
@@ -394,6 +496,13 @@ int gx8002_i2s_stop(void)
     state = GX8002_I2S_IDLE;
     nrfx_i2s_stop(&i2s_inst);
     k_msgq_purge(&gx8002_raw_i2s_msgq);
+    /* Clear batch buffer and count so no residual LC3 frames from this session
+     * contaminate the next session's first packet. */
+    gx8002_batch_count = 0;
+    memset(gx8002_lc3_batch, 0, sizeof(gx8002_lc3_batch));
+    s_warmup_frames_remaining = 0;
+    s_fade_in_pending = false;
+    gx8002_lc3_encoder_stop();
     return 0;
 }
 

@@ -148,6 +148,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_INF("Connected %s", addr);
     set_ble_connected_status(true);
+    display_reset_protobuf_text_state();
     current_conn = bt_conn_ref(conn);
 }
 
