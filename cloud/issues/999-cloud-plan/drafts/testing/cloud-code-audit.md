@@ -360,13 +360,363 @@ Inconsistent with CLI middleware which evaluates per-request via `getCLIJWTSecre
 | Low (Dead Code)   | 18     | A-023 through A-040: stale files, unused constants, commented-out code, misleading logs                     |
 | **Total**         | **40** |                                                                                                             |
 
+---
+
+# Mobile Client Audit
+
+Read-only audit of the MentraOS mobile app's cloud interaction layer. Focus on REST endpoints, WebSocket handlers, UDP audio, and dead code.
+
+**Codebase:** `MentraOS-2/mobile/`
+
+## Critical
+
+### M-001: `/api/client/goodbye` endpoint does not exist on cloud
+
+**File:** `mobile/src/services/RestComms.ts`, ~L621-632, called from `MantleManager.ts` L131
+
+The mobile app POSTs to `/api/client/goodbye` on every disconnect. This endpoint does not exist anywhere in the cloud codebase (zero matches across all cloud source). The call silently 404s every time. The return value is never checked by the caller.
+
+### M-002: i18n strings contain literal "TODO" visible to users
+
+**File:** `mobile/src/utils/en.ts`, ~L249-253 and L537
+
+Three i18n string values are literally `"TODO1"`, `"TODO2"`, and `"TODO"`. These are rendered in the UI and visible to end users.
+
+### M-003: Duplicate `fanOutPcm` method definitions
+
+**File:** `mobile/src/services/Composer.ts`, ~L190-208
+
+Two identical method definitions of `fanOutPcm`. The second silently overrides the first. Both are entirely commented-out stubs with a TODO. TypeScript may not error on this in a class body.
+
+## High
+
+### M-004: Cloud sends `settings_update` WS message but mobile doesn't handle it
+
+**File:** `mobile/src/services/SocketComms.ts` (handle_message switch)
+
+The cloud can push `settings_update`, `dashboard_mode_change`, and `dashboard_always_on_change` via WebSocket. The mobile client has no handlers for any of these. Settings changes pushed from the cloud are silently ignored.
+
+### M-005: Buffer/video recording WS handlers have no cloud sender
+
+**File:** `mobile/src/services/SocketComms.ts`, ~L555-585
+
+`start_buffer_recording`, `stop_buffer_recording`, `save_buffer_video`, `start_video_recording`, `stop_video_recording` are all handled by the mobile client but do not appear in the cloud SDK `CloudToGlassesMessageType` enum and have zero matches in cloud source. These may be sent by individual mini apps via passthrough, or they may be dead code from a removed feature.
+
+### M-006: No UDP fallback after mid-session network change
+
+**File:** `mobile/src/services/UdpManager.ts`
+
+Once `audioEnabled = true` is set after a successful probe, there's no monitoring that UDP stays available. If the network path changes mid-session (WiFi to cellular), UDP packets silently fail and no audio reaches the cloud until the WebSocket reconnects and re-probes. No sustained-failure detection or fallback mechanism.
+
+### M-007: CapsuleMenu hardcodes store URL instead of using configured setting
+
+**File:** `mobile/src/components/miniapps/CapsuleMenu.tsx`, L201
+
+```
+const storeUrl = `https://apps.mentraglass.com/package/${packageName}`
+```
+
+If the user is on China deployment or a dev server, this share link points to the wrong store. Should use the configured `store_url` setting.
+
+## Medium (Stale References)
+
+### M-008: Multiple REST endpoints use old URL patterns
+
+**File:** `mobile/src/services/RestComms.ts`
+
+| Method                    | Old Path               | Should Be                  |
+| ------------------------- | ---------------------- | -------------------------- |
+| `startApp()` L195         | `/apps/:pkg/start`     | `/api/apps/:pkg/start`     |
+| `stopApp()` L208          | `/apps/:pkg/stop`      | `/api/apps/:pkg/stop`      |
+| `exchangeToken()` L273    | `/auth/exchange-token` | `/api/auth/exchange-token` |
+| `getAppSettings()` L235   | `/appsettings/:app`    | `/api/appsettings/:app`    |
+| `updateAppSetting()` L244 | `/appsettings/:app`    | `/api/appsettings/:app`    |
+| `sendErrorReport()` L525  | `/app/error-report`    | `/api/error-report`        |
+
+All work due to backward-compat aliases on the cloud, but they're hitting legacy routes.
+
+### M-009: Authing (China) refresh token not implemented
+
+**File:** `mobile/src/utils/auth/provider/authingClient.ts`, L151 and L264
+
+Two TODOs indicate refresh token flow is not implemented. China deployment users can't refresh their tokens.
+
+## Low (Dead Code)
+
+### M-010: LiveKit infrastructure still loaded despite being disabled
+
+**Files:** `mobile/src/services/Livekit.ts`, `SocketComms.ts`, `WebSocketManager.ts`, `MantleManager.ts`
+
+`Livekit.ts` is a full service class that's imported and partially called. `livekit.connect()` is commented out but `livekit.disconnect()` is still called on cleanup. `WebSocketManager.ts` still sends `livekit=true` query param on WS connect. `RestComms.ts` still has `getLivekitUrlAndToken()`. All of this is dead work on every connection.
+
+### M-011: `Composer.updateOfflineSTT()` is entirely empty
+
+**File:** `mobile/src/services/Composer.ts`, ~L302-310
+
+Method is exported but has no implementation (all lines commented out).
+
+### M-012: `MiniComms` dead handlers
+
+**File:** `mobile/src/services/MiniComms.ts`, ~L216-240
+
+`request_mic_audio` and `request_transcription` message types are in the switch statement but their handlers are commented out. `handleRequestTranscription` body is empty.
+
+### M-013: `Constants.tsx` dead exports
+
+**File:** `mobile/src/utils/Constants.tsx`
+
+`INTENSE_LOGGING`, `enable_phone_notifications_DEFAULT`, and `ConnTypes` are exported but never imported anywhere. `MOCK_CONNECTION` is always `false`.
+
+### M-014: Gallery sync notifications entirely disabled
+
+**File:** `mobile/src/services/asg/gallerySyncNotifications.ts`
+
+Every `Notifications.scheduleNotificationAsync()` call is commented out. Permission check hardcodes `return true`. The entire notification system for gallery sync is stubbed out.
+
+---
+
+# Developer Console Audit
+
+Read-only audit of the developer console frontend.
+
+**Codebase:** `MentraOS-2/cloud/websites/console/`
+
+## High
+
+### C-001: Unreachable duplicate catch-all route
+
+**File:** `console/src/App.tsx`, ~L255-256
+
+```
+<Route path="*" element={<NotFound />} />
+<Route path="*" element={<LandingPage />} />
+```
+
+Two `path="*"` routes. React Router matches the first and never reaches the second. `<LandingPage />` is unreachable.
+
+### C-002: 16 UI call sites still use legacy `api.*` instead of `api.console.*`
+
+**File:** `console/src/services/api.service.ts` and various pages/dialogs
+
+The Zustand stores (`apps.store`, `orgs.store`) use the new `/api/console/*` endpoints. But 16 page/dialog components bypass the stores and call legacy `api.*` functions that hit `/api/dev/*`, `/api/orgs/*`, and `/api/apps/*` directly.
+
+Affected: `CreateOrgDialog`, `OrganizationSettings`, `Members`, `CreateMiniApp`, `PublishDialog`, `DeleteDialog`, `ApiKeyDialog`, `SharingDialog`, `InstallDialog`, `MiniAppTable`, `AdminPanel`, `EditMiniApp`, `ServerUrlInput`, `ImageUpload`, `AuthPage`, `useOrgPermissions`.
+
+### C-003: 8 dead API functions hitting likely non-existent endpoints
+
+**File:** `console/src/services/api.service.ts`
+
+| Function                            | Endpoint                                 | Call Sites |
+| ----------------------------------- | ---------------------------------------- | ---------- |
+| `api.apps.permissions.get`          | `GET /api/permissions/:pkg`              | 0          |
+| `api.apps.permissions.update`       | `PATCH /api/permissions/:pkg`            | 0          |
+| `api.auth.updateProfile`            | `PUT /api/dev/auth/profile`              | 0          |
+| `api.admin.fixAppStatuses`          | `POST /api/admin/fix-app-statuses`       | 0          |
+| `api.admin.createTestSubmission`    | `POST /api/admin/create-test-submission` | 0          |
+| `api.admin.users.getAll/add/remove` | `/api/admin/users/*`                     | 0          |
+| `api.apps.updateVisibility`         | `PATCH /api/dev/apps/:pkg/visibility`    | 0          |
+| `api.apps.updateSharedEmails`       | `PATCH /api/dev/apps/:pkg/share-emails`  | 0          |
+
+### C-004: Inconsistent documentation URLs
+
+Two different docs domains used interchangeably across console components:
+
+- `https://docs.mentra.glass` in `DashboardLayout`, `DashboardHome`, `LandingPage`
+- `https://docs.mentraglass.com` in `HelpLink`, `HardwareRequirementsSection`, `ServerUrlField`, `ToolsSection`, `PermissionsSection`, `StoreGuidelines`, `EditMiniApp`
+
+One is likely wrong or a redirect.
+
+## Medium (Dead Code)
+
+### C-005: Dead files
+
+| File                                 | Issue                                                                             |
+| ------------------------------------ | --------------------------------------------------------------------------------- |
+| `src/hooks/useAuthToken.ts`          | Never imported. Superseded by `@mentra/shared`.                                   |
+| `src/components/ShadcnProviders.tsx` | Entirely commented out (48 lines). Never imported.                                |
+| `src/types/app.tsx`                  | Never imported. Duplicate `App` interface that conflicts with `src/types/app.ts`. |
+| `src/stores/stores.md`               | Planning doc mixed in with source code.                                           |
+
+### C-006: Dead enums
+
+**File:** `console/src/types/enums.ts`
+
+`AppState`, `Language`, `LayoutType`, `ViewType`, `AppSettingType`, `AppType` are all exported but never imported. Only `HardwareType` and `HardwareRequirementLevel` are actually used from this file. `AppState` has a `TODO(isaiah)` asking if it should be removed.
+
+---
+
+# App Store Audit
+
+Read-only audit of the app store frontend.
+
+**Codebase:** `MentraOS-2/cloud/websites/store/`
+
+## High
+
+### S-001: 7 dead API functions
+
+**File:** `store/src/api/index.ts`
+
+| Function                             | Call Sites                                              |
+| ------------------------------------ | ------------------------------------------------------- |
+| `appService.startApp`                | 0                                                       |
+| `appService.stopApp`                 | 0 (only in commented-out code in dead `AppDetails.tsx`) |
+| `appService.searchApps`              | 0 (search is done client-side)                          |
+| `userService.getCurrentUser`         | 0                                                       |
+| `authService.exchangeToken`          | 0                                                       |
+| `authService.exchangeTemporaryToken` | 0                                                       |
+| `setAuthToken`                       | 0                                                       |
+
+Auth is handled entirely by `@mentra/shared`. These functions are leftover from before that migration.
+
+### S-002: Dead page file with cascading dead components
+
+**File:** `store/src/pages/AppDetails.tsx`
+
+Never routed (import commented out in `App.tsx:11`). Superseded by `AppDetailsV2.tsx`. This causes `Header.tsx` (only imported by dead `AppDetails.tsx`) and `AppPermissions.tsx` (same) to also be dead code.
+
+### S-003: Hardcoded `com.augmentos.xstats` references
+
+**File:** `store/src/components/ui/slides.tsx`, L483, L512, L595
+
+Three hardcoded references to `com.augmentos.xstats` package name in navigation and API calls. Old brand name, should be `com.mentra.xstats` or whatever the current package is.
+
+## Medium
+
+### S-004: Dead hooks and enums
+
+| File                                 | Issue                                                                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `src/hooks/useToken.tsx`             | Never imported anywhere.                                                                         |
+| `src/components/PlatformExample.tsx` | Never imported anywhere.                                                                         |
+| `src/types/enums.ts`                 | Same dead enums as console (`AppState`, `Language`, `LayoutType`, `ViewType`, `AppSettingType`). |
+
+### S-005: Env var inconsistency with console
+
+Console uses `VITE_API_URL`, store uses `VITE_CLOUD_API_URL`. Both point to the same backend. Should be standardized.
+
+---
+
+# CLI Audit
+
+Read-only audit of the `@mentra/cli` package.
+
+**Codebase:** `MentraOS-2/cloud/packages/cli/`
+
+## Critical
+
+### CLI-001: `.mentrarc` documented but completely unimplemented
+
+**File:** `README.md` L126-132, zero implementation in `src/`
+
+README tells users to create a `.mentrarc` per-project config with `packageName` and `org` fields. No code anywhere reads this file. Users following the docs get nothing.
+
+### CLI-002: Global options `--quiet`, `--verbose`, `--no-color` are no-ops
+
+**File:** `src/index.ts`, L25-27
+
+Registered with Commander but never read by any command handler. `--quiet` doesn't suppress anything. `--verbose` doesn't add debug output. `--no-color` doesn't disable chalk.
+
+### CLI-003: `app delete` confirmation prompt is misleading
+
+**File:** `src/commands/app.ts`, ~L413-420
+
+The message says "Type the package name to confirm deletion" but the code uses a simple yes/no `confirm()` prompt, not a text `input()` that validates the typed name. The safety confirmation is weaker than described.
+
+## High
+
+### CLI-004: Version mismatch
+
+**File:** `package.json` says `1.0.3`, `src/index.ts` L19 says `.version("1.0.0")`. `mentra --version` prints wrong version.
+
+### CLI-005: `app export` / `app import` round-trip loses data
+
+**File:** `src/commands/app.ts`, ~L537-547 and ~L623-628
+
+Export only includes `packageName, name, description, appType, publicUrl, logoURL`. Both `webviewURL` and `permissions` are silently dropped. Import doesn't set `webviewURL` either. Export then import loses data.
+
+### CLI-006: `TEST_RESULTS.md` contains old brand URLs and PII
+
+**File:** `TEST_RESULTS.md`
+
+References `https://isaiah.augmentos.cloud`, `dev.augmentos.isaiah` package name, personal email. Committed test artifact with stale URLs and PII.
+
+## Medium
+
+### CLI-007: Dead root `index.ts`
+
+**File:** `index.ts` (root)
+
+Contains only `console.log("Hello via Bun!")`. Real entry point is `src/index.ts`.
+
+### CLI-008: 8 exported functions never called
+
+| Function           | File                     |
+| ------------------ | ------------------------ |
+| `updateCloud()`    | `src/config/clouds.ts`   |
+| `setConfigValue()` | `src/config/settings.ts` |
+| `getConfigValue()` | `src/config/settings.ts` |
+| `display()`        | `src/utils/output.ts`    |
+| `warning()`        | `src/utils/output.ts`    |
+| `info()`           | `src/utils/output.ts`    |
+| `password()`       | `src/utils/prompt.ts`    |
+| `multiSelect()`    | `src/utils/prompt.ts`    |
+
+### CLI-009: Token not validated at `mentra auth` time
+
+**File:** `src/commands/auth.ts`, ~L19-21
+
+`mentra auth <token>` only does `jwt.decode()` (no signature verification) and saves. User doesn't discover a revoked/invalid token until their first API call.
+
+### CLI-010: Keychain clear leaves poison empty string
+
+**File:** `src/config/credentials.ts`, ~L113-118
+
+`clearCredentials()` sets keychain value to `""`. On next `loadCredentials()`, `JSON.parse("")` throws. The catch block silently falls through to file storage. Functional but dirty - silent exception on every load after logout.
+
+### CLI-011: Cloud switching doesn't warn about credential mismatch
+
+**File:** `src/commands/cloud.ts`, ~L62-72
+
+Switching from production to staging doesn't re-validate credentials. If staging uses a different JWT secret, user gets opaque 401 with no guidance to re-authenticate.
+
+### CLI-012: Test suite is mostly placeholder stubs
+
+**Files:** `test/credentials.test.ts`, `test/api-client.test.ts`
+
+Most tests are `expect(true).toBe(true)` placeholders. `IMPLEMENTATION.md` claims "52+ tests passing" but actual assertions are trivial.
+
+### CLI-013: `TESTING.md` references non-existent test files
+
+**File:** `TESTING.md`
+
+Claims `test/integration/` directory exists with `auth-flow.test.ts`, `app-commands.test.ts`, `cloud-switching.test.ts`. None exist.
+
+---
+
+# Full Audit Summary
+
+| Codebase          | Critical | High   | Medium | Low    | Total  |
+| ----------------- | -------- | ------ | ------ | ------ | ------ |
+| Cloud Server      | 1        | 9      | 12     | 18     | 40     |
+| Mobile Client     | 3        | 4      | 2      | 5      | 14     |
+| Developer Console | 1        | 3      | 2      | 0      | 6      |
+| App Store         | 0        | 3      | 2      | 0      | 5      |
+| CLI               | 3        | 3      | 7      | 0      | 13     |
+| **Total**         | **8**    | **22** | **25** | **23** | **78** |
+
 ## Recommended Review Order
 
-1. **A-001** - Critical auth bypass. Verify if this endpoint is reachable in production.
-2. **A-003** - JWT leak in legacy endpoint. Check if the legacy `/auth/exchange-store-token` can be removed.
-3. **A-004** - `sendError` killing connections. This is likely a significant contributor to "apps feel broken." Decide whether errors should be non-fatal.
-4. **A-002** - Regex injection in store search. Quick fix (escape the input).
-5. **A-005** - Timeout race in app start. The 6s session timeout vs 10s webhook timeout mismatch needs a decision.
-6. **A-006** - Empty string JWT fallback. Verify the env var is always set in production.
-7. **A-007 through A-010** - Legacy route cleanup. ~2000 lines of duplication. Decide which legacy routes can be removed.
-8. Everything else in severity order.
+1. **A-001** - Critical auth bypass on settings endpoint. Verify if reachable in production.
+2. **A-004** - `sendError` killing connections on transient errors. Likely a major contributor to "apps feel broken."
+3. **A-003** - JWT leak in legacy endpoint. Check if legacy `/auth/exchange-store-token` can be removed.
+4. **M-001** - Mobile calls `/api/client/goodbye` which doesn't exist. Silent 404 on every disconnect.
+5. **M-002** - Users see literal "TODO" strings in the UI.
+6. **A-002** - Regex injection in store search. Quick fix (escape the input).
+7. **A-005** - Timeout race in app start. 6s session timeout vs 10s webhook timeout.
+8. **A-006** - Empty string JWT fallback enables token forgery if env var unset.
+9. **CLI-001/002/003** - CLI advertises features that don't work (`.mentrarc`, global flags, delete confirmation).
+10. **A-007 through A-010** - ~2000 lines of duplicated legacy routes. Decide what can be removed.
+11. **C-002** - Console still has 16 call sites hitting legacy endpoints instead of new console API.
+12. **S-001** - Store has 7 dead API functions from before `@mentra/shared` migration.
+13. Everything else in severity order.
