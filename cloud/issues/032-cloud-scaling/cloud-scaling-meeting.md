@@ -2,7 +2,7 @@
 
 ## Why We're Here
 
-We're shipping ~1,000 glasses to customers soon. Right now, US Central production handles ~35 concurrent users on a single cloud instance. We don't know how many users that instance can actually handle before things start breaking — captions lagging, miniapps dropping, connections failing.
+We're actively shipping glasses to customers. Right now, US Central production handles real users on a single cloud instance. We don't know how many users that instance can actually handle before things start breaking — captions lagging, miniapps dropping, connections failing.
 
 We need to figure that out before we hit it.
 
@@ -49,7 +49,7 @@ These are the questions we need to answer:
 2. **Event loop saturation** — Are we at 10% utilization (tons of headroom) or 80% (about to fall over)? We had no way to measure this. Now we do.
 3. **Where event loop time is spent** — Is the bottleneck UDP handling? WebSocket fan-out? Transcription? JSON serialization?
 4. **Per-user memory cost** — How much RAM does each session actually consume?
-5. **Concurrency ratio** — 1,000 shipped glasses ≠ 1,000 concurrent users. What's the real number? 10%? 50%?
+5. **Concurrency ratio** — shipped glasses ≠ concurrent users. What's the real concurrency ratio?
 
 ---
 

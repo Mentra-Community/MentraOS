@@ -46,9 +46,9 @@ Who's working on what right now. Goals and context for each task.
 
 **Currently working on this.**
 
-**Goal:** Fix the BetterStack log ingestion spike (449 GB/day) and audit all Porter services for sensitive and verbose logs.
+**Goal:** Fix the BetterStack log ingestion spike (extremely high daily volume) and audit all Porter services for sensitive and verbose logs.
 
-**Why:** The BetterStack default collector on US Central is running alongside our custom Vector Helm chart, collecting ALL container stdout with no filter. MiniApp containers (dashboard, captions) are flooding it. Cloud logs are also being double-ingested. This is costing ~$500/day.
+**Why:** The BetterStack default collector on US Central is running alongside our custom Vector Helm chart, collecting ALL container stdout with no filter. MiniApp containers (dashboard, captions) are flooding it. Cloud logs are also being double-ingested. This is incurring significant daily cost.
 
 **Context:**
 
@@ -56,7 +56,7 @@ Who's working on what right now. Goals and context for each task.
 - France, East Asia, US West, US East collector sources exist in BetterStack but have zero logs (collectors were never installed on those clusters)
 - MiniApp containers on US Central are extremely verbose at info level
 
-**Done when:** Only one collector running per cluster. No double ingestion. All Porter services audited for sensitive and verbose logs. BetterStack daily ingestion back to a reasonable level.
+**Done when:** Only one collector running per cluster. No double ingestion. All Porter services audited for sensitive and verbose logs. BetterStack daily ingestion back at a reasonable level.
 
 ## Aryan
 
@@ -112,13 +112,13 @@ Who's working on what right now. Goals and context for each task.
 - `disposedSessionsPendingGC` is creeping back to 7-10, indicating more timer/closure leaks
 - Weekly error audit SOP and runbooks are in `cloud/tools/bstack/runbooks/`
 
-**Done when:** Vector only collects logs from containers we care about. BetterStack daily ingestion back under 25 GB. Crash frequency reduced. Memory leaks identified and fixed. Noisy log patterns no longer shipped at info level.
+**Done when:** Vector only collects logs from containers we care about. BetterStack daily ingestion back at a reasonable level. Crash frequency reduced. Memory leaks identified and fixed. Noisy log patterns no longer shipped at info level.
 
 ### 2. Scaling Phase 1: Enable US West and US East
 
 **Goal:** Get real user traffic flowing to the US West and US East instances that are already deployed.
 
-**Why:** The instances are running on `api.mentraglass.com` but nobody's connected to them because the mobile client still points to the old `api.mentra.glass` load balancer. We shipped 1,000 Mentra Live units and all the US traffic is hitting one region.
+**Why:** The instances are running on `api.mentraglass.com` but nobody's connected to them because the mobile client still points to the old `api.mentra.glass` load balancer. Mentra Live units are actively shipping and all the US traffic is hitting one region.
 
 **Context:**
 

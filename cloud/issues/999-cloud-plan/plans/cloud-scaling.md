@@ -4,11 +4,11 @@ TODO: Detailed implementation plan needs to be written. The sections below captu
 
 ## Goal
 
-MentraOS currently serves ~1,000 weekly active users across three regions. The goal is to support 5,000+ weekly active users as G2 adoption grows. This requires the cloud to be more reliable, more performant, and architecturally capable of horizontal scaling.
+MentraOS serves real production users across three regions, with active growth. The goal is to support significantly more users as G2 adoption grows. This requires the cloud to be more reliable, more performant, and architecturally capable of horizontal scaling.
 
 ## Current State
 
-- Three active regions: US Central (~60-75 sessions), France (~16-18 sessions), East Asia (~3-4 sessions)
+- Three active regions: US Central, France, East Asia
 - Two additional regions deployed but not receiving traffic: US West, US East (client still points to old load balancer)
 - China region WIP
 - Each region runs a single Bun process, single-threaded, all sessions in memory

@@ -6,7 +6,7 @@ TODO: Detailed implementation plan needs to be written. The sections below captu
 
 The MentraOS cloud has zero automated tests. The only way to verify the cloud works is to physically connect glasses, open the app, and check manually. This is true for every deploy, every bug fix, every feature. It does not scale.
 
-We ship 1,000 Mentra Live units. A single cloud deploy can break captions for every connected user simultaneously. We find out when users tell us. There is no CI gate, no smoke test, no regression check. The cloud compiles, so it ships.
+Mentra Live units are actively shipping. A single cloud deploy can break captions for every connected user simultaneously. We find out when users tell us. There is no CI gate, no smoke test, no regression check. The cloud compiles, so it ships.
 
 When something does break, diagnosing it is slow. The system has four layers (glasses firmware, phone client, cloud, MiniApps) and four transports (WebSocket, REST, UDP audio, WS audio fallback). A bug at any layer can look like a bug at any other layer. Issue 079 is an example: the cloud was blamed for broken sessions, but production data proved 7 out of 13 cases were the phone failing to reconnect. That investigation took days of manual log analysis. A test that simulates a reconnection would have caught it before it shipped.
 

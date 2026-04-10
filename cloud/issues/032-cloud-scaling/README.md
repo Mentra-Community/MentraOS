@@ -4,7 +4,7 @@ How many concurrent users can one cloud instance handle, and how do we scale bey
 
 ## Context
 
-We're shipping ~1,000 glasses to customers soon. Current US Central production serves ~35 concurrent users. We need to understand our capacity ceiling and have a plan before we hit it.
+We're actively shipping glasses to customers. We need to understand our capacity ceiling and have a plan before we hit it.
 
 This issue captures what we know, what we don't know, what we need to measure, and the possible directions for scaling.
 
@@ -112,7 +112,7 @@ The `MemoryTelemetryService` exists and tracks per-session stats (audio buffers,
 
 ### Concurrency ratio
 
-1,000 shipped glasses ≠ 1,000 concurrent users. What percentage are active simultaneously? 10%? 20%? 50%? This determines whether we need capacity for 100 or 500 users.
+Shipped glasses ≠ concurrent users. What percentage are active simultaneously? This determines real capacity requirements.
 
 ---
 

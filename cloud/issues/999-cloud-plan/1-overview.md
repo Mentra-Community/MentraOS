@@ -6,9 +6,9 @@ The cloud is the backend that connects smart glasses, phones, and third-party mi
 
 ## Regions
 
-- **US Central** — active, handling all US production traffic (~60-75 sessions)
-- **France** — active (~16-18 sessions)
-- **East Asia** — active (~3-4 sessions)
+- **US Central** — active, handling all US production traffic
+- **France** — active
+- **East Asia** — active
 - **US West** — deployed, not receiving traffic (client still points to old load balancer)
 - **US East** — deployed, not receiving traffic (same reason)
 - **China** — WIP
@@ -38,17 +38,17 @@ Still happening:
 
 ## Load
 
-- 1,000 Mentra Live units shipped
+- Mentra Live units actively shipping
 - Cloud is under real production load
 - All US traffic hitting a single region (US Central)
 
 ## Cost Alert
 
-BetterStack log ingestion spiked to **449 GB/day** on April 2:
+BetterStack log ingestion spiked to **extremely high volume** on April 2:
 
-- Dashboard MiniApp stdout: 241 GB (54%)
-- Captions MiniApp stdout: 83 GB (19%)
-- Cloud itself: 20 GB (5%) — normal
+- Dashboard MiniApp stdout: majority of volume
+- Captions MiniApp stdout: significant portion
+- Cloud itself: small fraction — normal
 - Cause: BetterStack default collector on US Central collecting all container stdout without filtering. Our custom Vector Helm chart only collects cloud containers but the default collector is also running alongside it.
 
 ## Sections

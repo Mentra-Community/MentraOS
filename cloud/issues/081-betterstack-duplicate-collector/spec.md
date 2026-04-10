@@ -2,13 +2,13 @@
 
 ## Overview
 
-**What this doc covers:** Fixing the duplicate log collection infrastructure that's costing ~$400/day, and setting up a clean one-collector-per-region architecture.
-**Why this doc exists:** On April 2, 2026, BetterStack ingestion hit 449 GB/day ($850 incurred). Investigation found two separate log collectors running on US Central, MiniApp containers flooding unfiltered stdout, and four empty regional sources with no collectors installed.
+**What this doc covers:** Fixing the duplicate log collection infrastructure that's incurring significant unnecessary cost, and setting up a clean one-collector-per-region architecture.
+**Why this doc exists:** BetterStack ingestion spiked to extremely high daily volume. Investigation found two separate log collectors running on US Central, MiniApp containers flooding unfiltered stdout, and four empty regional sources with no collectors installed.
 **Who should read this:** Cloud team.
 
 ## The Problem in 30 Seconds
 
-US Central has two log collection systems running simultaneously. The BetterStack Collector collects ALL container stdout (400 GB/day, unfiltered) and sends to `mentra-us-central`. Our custom Vector Helm chart collects cloud-only logs (5 GB/day, filtered) and sends to `MentraCloud - Prod`. Cloud logs are double-ingested. MiniApp logs flood the unfiltered collector. Four other regional collector sources exist but have no collectors installed, so we have no infrastructure metrics outside US Central.
+US Central has two log collection systems running simultaneously. The BetterStack Collector collects ALL container stdout (unfiltered, extremely high volume) and sends to `mentra-us-central`. Our custom Vector Helm chart collects cloud-only logs (filtered, much lower volume) and sends to `MentraCloud - Prod`. Cloud logs are double-ingested. MiniApp logs flood the unfiltered collector. Four other regional collector sources exist but have no collectors installed, so we have no infrastructure metrics outside US Central.
 
 ## Current State
 
@@ -26,7 +26,7 @@ US Central has two log collection systems running simultaneously. The BetterStac
 
 The collector is not just a log shipper. It provides three things:
 
-1. **Logs** from container stdout (this is the 400 GB/day problem)
+1. **Logs** from container stdout (this is the high-volume problem)
 2. **Metrics** via eBPF (container CPU, memory, restarts, OOM kills, network, disk). These power the Host overview, Services, Hosts, and MentraCloud SRE dashboards.
 3. **Tracing** via eBPF auto-instrumentation (request latency, error rates)
 
@@ -64,7 +64,7 @@ The filter should:
 - Flatten Pino JSON to top level (same transforms as our current `values.yaml`)
 - Normalize log level numbers to strings
 
-This immediately stops the ~400 GB/day of MiniApp and K8s system log ingestion. Metrics and tracing continue flowing because they go through separate pipelines in the collector, not through the log filter.
+This immediately stops the bulk of MiniApp and K8s system log ingestion. Metrics and tracing continue flowing because they go through separate pipelines in the collector, not through the log filter.
 
 ### Step 2: Remove our separate Vector Helm chart from US Central
 
@@ -193,7 +193,7 @@ Results after 2 minutes:
 
 ### What still needs to be done
 
-- Monitor BetterStack usage over 24 hours to confirm cost reduction (should drop from ~$400/day to ~$10-20/day for logs)
+- Monitor BetterStack usage over 24 hours to confirm cost reduction (should drop significantly)
 - Decide whether to keep `MentraCloud - Prod` as a separate source or migrate queries to regional sources
 - Decide whether to keep `AugmentOS` source (MiniApp logs via @logtail/pino) or phase it out now that MiniApp logs have been cleaned up
 - Update `cloud/.architecture/infra.md` with the new architecture
