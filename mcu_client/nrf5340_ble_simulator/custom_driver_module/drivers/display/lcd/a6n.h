@@ -11,6 +11,7 @@
 
 #ifndef _A6N_H_
 #define _A6N_H_
+#include <stdint.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/spi.h>
 // 颜色定义 | Color definitions
@@ -208,6 +209,8 @@ int a6n_set_shift_mirror(uint8_t h_shift, uint8_t v_shift, a6n_mirror_mode_t mir
 int a6n_set_stereo_shift(uint8_t left_h_shift, uint8_t right_h_shift);
 int a6n_set_software_depth_offset(int8_t offset);
 int8_t a6n_get_software_depth_offset(void);
+int a6n_depth_distance_cm_to_offset(uint32_t distance_cm, int8_t *offset_out, uint32_t *clamped_distance_cm_out);
+int a6n_set_software_depth_distance_cm(uint32_t distance_cm);
 
 int a6n_get_max_brightness(void);
 

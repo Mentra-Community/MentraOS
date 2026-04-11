@@ -980,43 +980,43 @@ void protobuf_process_display_distance_config(const mentraos_ble_DisplayDistance
         return;
     }
 
-    /*
-     * App 侧约定：distance_cm 字段里直接传档位索引 1/2/3，
-     * 不再解释为真实“距离厘米”。
-     *
-     * 1 => 第一档：offset -16
-     * 2 => 第二档：offset 0 (默认 2.5m)
-     * 3 => 第三档：offset +16
-     *
-     * 任何其他值都直接报错并返回（保留原样参数，不做兜底猜测）。
-     */
     const uint32_t v = (uint32_t)config->distance_cm;
-    long offset_i;
+    uint32_t distance_cm = v;
+    bool legacy_tier = false;
 
     if (v == 1U)
     {
-        offset_i = -16;
+        distance_cm = 200U;
+        legacy_tier = true;
     }
     else if (v == 2U)
     {
-        offset_i = 0;
+        distance_cm = 250U;
+        legacy_tier = true;
     }
     else if (v == 3U)
     {
-        offset_i = 16;
+        distance_cm = 500U;
+        legacy_tier = true;
     }
-    else
+
+    int8_t offset = 0;
+    uint32_t clamped_cm = 0U;
+    int ret = a6n_depth_distance_cm_to_offset(distance_cm, &offset, &clamped_cm);
+    if (ret != 0)
     {
-        LOG_ERR("[PROTOBUF] DisplayDistanceConfig invalid tier: distance_cm=%u (expected 1/2/3)", (unsigned int)v);
+        LOG_ERR("Failed to calculate DisplayDistance: request=%u cm ret=%d", (unsigned int)distance_cm, ret);
         return;
     }
 
-    LOG_INF("[PROTOBUF] DisplayDistanceConfig tier map: distance_cm=%u -> offset=%ld", (unsigned int)v, offset_i);
+    LOG_INF("[PROTOBUF] DisplayDistanceConfig %srequest=%u -> distance=%u cm clamp=%u cm offset=%d px",
+            legacy_tier ? "legacy-tier " : "", (unsigned int)v, (unsigned int)distance_cm,
+            (unsigned int)clamped_cm, (int)offset);
 
-    int ret = a6n_set_software_depth_offset((int8_t)offset_i);
+    ret = a6n_set_software_depth_offset(offset);
     if (ret != 0)
     {
-        LOG_ERR("Failed to apply DisplayDistance: offset=%ld ret=%d", offset_i, ret);
+        LOG_ERR("Failed to apply DisplayDistance: offset=%d ret=%d", (int)offset, ret);
         return;
     }
 
