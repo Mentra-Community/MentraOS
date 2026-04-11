@@ -48,12 +48,6 @@ extern struct k_msgq lvgl_display_msgq;
 
 LOG_MODULE_REGISTER(shell_display, LOG_LEVEL_INF);
 
-/* Software distance mapping model (meters -> stereo offset) */
-#define DISPLAY_DISTANCE_BASE_M       2.5   /* default convergence distance from vendor */
-#define DISPLAY_DISTANCE_NEAR_LIMIT_M 0.5
-#define DISPLAY_DISTANCE_FAR_LIMIT_M  20.0
-#define DISPLAY_DISTANCE_GAIN         12.0  /* tunable gain: higher = stronger depth change */
-
 #ifndef PM_QSPI_NOR_BASE_ADDRESS
 #define PM_QSPI_NOR_BASE_ADDRESS 0x10000000u
 #endif
@@ -136,8 +130,9 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "                                   - offset: -16..16, pure software (no shift register write)");
     shell_print(shell, "  display redraw                   - Full-screen invalidate + refresh");
     shell_print(shell, "  display redraw_visible            - Current pattern UI only (lighter than redraw)");
-    shell_print(shell, "  display distance <meters>        - Distance control by meters (software mapping)");
-    shell_print(shell, "                                   - example: 0.8 / 2.5 / 5.0 / 10.0");
+    shell_print(shell, "  display distance <meters>        - Distance control by trigonometry (2.0-5.0m)");
+    shell_print(shell, "                                   - default: 2.5m => 0px, values clamp to 2.0-5.0m");
+    shell_print(shell, "  display distance_test            - Print 2.0-5.0m distance-to-pixel table");
     shell_print(shell, "  display stereo <lh> <rh>         - Hardware stereo shift (register)");
     shell_print(shell, "                                   - lh/rh: left/right H shift only");
     shell_print(shell, "                                   - mirror is preserved from existing panel setting");
@@ -951,14 +946,9 @@ static int cmd_display_depth(const struct shell *shell, size_t argc, char **argv
 }
 
 /**
- * Display distance command (software mapping model)
+ * Display distance command (trigonometry model)
  * Usage: display distance <meters>
- *   meters: 0.5..20.0
- *
- * Model:
- *   offset_f = G * (1/d - 1/d0)
- *   d0 = DISPLAY_DISTANCE_BASE_M (default 2.5m => offset=0)
- *   G  = DISPLAY_DISTANCE_GAIN
+ *   meters: 2.0..5.0, default 2.5m => offset 0
  */
 static int cmd_display_distance(const struct shell *shell, size_t argc, char **argv)
 {
@@ -975,23 +965,24 @@ static int cmd_display_distance(const struct shell *shell, size_t argc, char **a
         shell_error(shell, "❌ Invalid distance: %s", argv[1]);
         return -EINVAL;
     }
-    if (distance_m < DISPLAY_DISTANCE_NEAR_LIMIT_M || distance_m > DISPLAY_DISTANCE_FAR_LIMIT_M)
+
+    if (distance_m <= 0.0)
     {
-        shell_error(shell, "❌ Distance out of range: %.3f (valid: %.1f..%.1f m)", distance_m,
-                    DISPLAY_DISTANCE_NEAR_LIMIT_M, DISPLAY_DISTANCE_FAR_LIMIT_M);
+        shell_error(shell, "❌ Invalid distance: %.3f m", distance_m);
         return -EINVAL;
     }
 
-    /* offset_f > 0 => near, offset_f < 0 => far */
-    double offset_f = DISPLAY_DISTANCE_GAIN * ((1.0 / distance_m) - (1.0 / DISPLAY_DISTANCE_BASE_M));
+    uint32_t requested_cm = (uint32_t)((distance_m * 100.0) + 0.5);
+    int8_t offset = 0;
+    uint32_t clamped_cm = 0U;
+    int ret = a6n_depth_distance_cm_to_offset(requested_cm, &offset, &clamped_cm);
+    if (ret != 0)
+    {
+        shell_error(shell, "❌ Distance calculate failed: %d", ret);
+        return ret;
+    }
 
-    long offset_i = (long)((offset_f >= 0.0) ? (offset_f + 0.5) : (offset_f - 0.5));
-    if (offset_i < -16)
-        offset_i = -16;
-    if (offset_i > 16)
-        offset_i = 16;
-
-    int ret = a6n_set_software_depth_offset((int8_t)offset_i);
+    ret = a6n_set_software_depth_offset(offset);
     if (ret != 0)
     {
         shell_error(shell, "❌ Distance apply failed: %d", ret);
@@ -999,18 +990,41 @@ static int cmd_display_distance(const struct shell *shell, size_t argc, char **a
     }
 
     display_request_visible_redraw();
-    shell_print(shell,
-                "✅ Distance set: %.2fm -> sw_offset=%.2f (quantized=%ld px, pure software) (base=%.1fm, gain=%.1f)",
-                distance_m, offset_f, offset_i, DISPLAY_DISTANCE_BASE_M, DISPLAY_DISTANCE_GAIN);
+    shell_print(shell, "✅ Distance set: request=%.2fm (%u cm), clamp=%.2fm, offset=%d px",
+                distance_m, (unsigned int)requested_cm, (double)clamped_cm / 100.0, (int)offset);
     shell_print(shell, "   Visible UI refresh queued. Use \"display redraw\" for full screen if needed.");
     return 0;
 }
 
+static int cmd_display_distance_test(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    static const uint32_t test_cm[] = {200U, 225U, 250U, 300U, 400U, 500U};
+
+    shell_print(shell, "Distance trigonometry test (default 2.50m => 0px):");
+    for (size_t i = 0; i < (sizeof(test_cm) / sizeof(test_cm[0])); ++i)
+    {
+        int8_t offset = 0;
+        uint32_t clamped_cm = 0U;
+        int ret = a6n_depth_distance_cm_to_offset(test_cm[i], &offset, &clamped_cm);
+        if (ret != 0)
+        {
+            shell_error(shell, "  %.2fm -> error %d", (double)test_cm[i] / 100.0, ret);
+            continue;
+        }
+        shell_print(shell, "  %.2fm -> clamp %.2fm -> offset %+d px",
+                    (double)test_cm[i] / 100.0, (double)clamped_cm / 100.0, (int)offset);
+    }
+
+    return 0;
+}
+
 /**
- * Simulate protobuf DisplayDistanceConfig tier mapping locally.
+ * Simulate legacy protobuf DisplayDistanceConfig tier mapping locally.
  *
- * App 侧约定：distance_cm 字段里直接传档位索引 1/2/3
- * 1 => offset -16, 2 => offset 0, 3 => offset +16
+ * 1 => 2.0m, 2 => 2.5m, 3 => 5.0m, then use the trigonometry model.
  */
 static int cmd_display_distance_tier(const struct shell *shell, size_t argc, char **argv)
 {
@@ -1032,7 +1046,7 @@ static int cmd_display_distance_tier(const struct shell *shell, size_t argc, cha
     cfg.distance_cm = (uint32_t)v;
 
     protobuf_process_display_distance_config(&cfg);
-    shell_print(shell, "✅ distance_tier=%ld applied (see A6N offset log / errors in console).", v);
+    shell_print(shell, "✅ legacy distance_tier=%ld applied (1=2.0m, 2=2.5m, 3=5.0m).", v);
     return 0;
 }
 
@@ -1522,7 +1536,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(battery, NULL, "Set battery level & charging: <level> [true/false]", cmd_display_battery, 2, 1),
     SHELL_CMD_ARG(depth, NULL, "One-param depth: <offset>", cmd_display_depth, 2, 0),
     SHELL_CMD_ARG(distance, NULL, "Distance by meters: <meters>", cmd_display_distance, 2, 0),
-    SHELL_CMD_ARG(distance_tier, NULL, "Simulate tier: <1|2|3> (protobuf distance)", cmd_display_distance_tier, 2, 0),
+    SHELL_CMD(distance_test, NULL, "Print distance trigonometry table", cmd_display_distance_test),
+    SHELL_CMD_ARG(distance_tier, NULL, "Simulate legacy tier: <1|2|3>", cmd_display_distance_tier, 2, 0),
     SHELL_CMD(redraw, NULL, "Force full LVGL screen invalidate + refresh", cmd_display_redraw),
     SHELL_CMD(redraw_visible, NULL, "Invalidate current pattern UI only", cmd_display_redraw_visible),
     SHELL_CMD_ARG(stereo, NULL, "Set stereo shift: <left_h> <right_h>", cmd_display_stereo, 3, 0),

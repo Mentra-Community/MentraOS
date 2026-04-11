@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-07-28 11:31:02
- * @LastEditTime : 2026-04-10 19:59:55
+ * @LastEditTime : 2026-04-11 14:36:37
  * @FilePath     : a6n.c
  * @Description  :
  *
@@ -11,6 +11,7 @@
 
 #include "a6n.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/display.h>
@@ -33,6 +34,15 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 const struct device *dev_a6n = DEVICE_DT_GET(DT_INST(0, DT_DRV_COMPAT));
 static K_SEM_DEFINE(a6n_init_sem, 0, 1);
 static volatile int8_t s_software_depth_offset = 0;
+
+#define A6N_DEPTH_DISTANCE_MIN_CM      200U    // 最小投影距离 2.0m | Minimum projection distance: 2.0 m
+#define A6N_DEPTH_DISTANCE_DEFAULT_CM  250U    // 默认投影距离 2.5m，对应 0px 偏移 | Default projection distance: 2.5 m, maps to 0 px offset
+#define A6N_DEPTH_DISTANCE_MAX_CM      500U    // 最大投影距离 5.0m | Maximum projection distance: 5.0 m
+#define A6N_DEPTH_OFFSET_MIN_PX        (-16)   // 软件双目偏移最小值 | Minimum software stereo offset in pixels
+#define A6N_DEPTH_OFFSET_MAX_PX        16      // 软件双目偏移最大值 | Maximum software stereo offset in pixels
+#define A6N_DEPTH_IPD_MM               63.0    // 三角模型使用的等效双目基线/瞳距，需实测校准 | Effective binocular baseline/IPD, tune after measurement
+#define A6N_DEPTH_EFFECTIVE_FOCAL_PX   2400.0  // 角度差到像素偏移的标定系数，需实测校准 | Calibration factor from angular difference to pixel offset
+#define A6N_DEPTH_OFFSET_SIGN          1.0     // 方向校准：若实机远近方向相反，改为 -1.0 | Direction calibration; flip to -1.0 if hardware direction is reversed
 
 /**
  * A6N 显示配置参数 | A6N Display Configuration
@@ -628,9 +638,7 @@ static void a6m_pack_i1_to_i4_shifted_full_line_lut(const uint8_t *src_row, uint
         }
         return;
     }
-
     uint16_t out = 0;
-
     if (dx > 0)
     {
         for (uint16_t g = 0; g < row_bytes; g++)
@@ -716,15 +724,11 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
     int ret = 0;
     int8_t sw_depth = s_software_depth_offset;
     bool need_row_clear = (width != cfg->screen_width);
-    const int64_t t_start = k_uptime_get();
-    uint32_t prep_ms = 0U;
-    uint32_t send_ms = 0U;
     uint32_t bytes_sent = 0U;
     uint32_t lines_sent = 0U;
 
     if (sw_depth == 0)
     {
-        /* 逐行 LUT 转换 → I4 行（不足 320B 的右侧补 0） */
         for (uint16_t row = 0; row < height; row++)
         {
             const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
@@ -735,11 +739,7 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
             }
             a6m_pack_i1_to_i4_line_lut(src_row, width, dst_row);
         }
-        const int64_t t_before_send = k_uptime_get();
-        prep_ms = (uint32_t)(t_before_send - t_start);
         ret = a6n_transmit_all(dev, tx, bytes_to_send, 1);
-        const int64_t t_after_send = k_uptime_get();
-        send_ms = (uint32_t)(t_after_send - t_before_send);
         if (ret == 0)
         {
             bytes_sent = bytes_to_send;
@@ -750,14 +750,8 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
     {
         uint8_t shifted_row[(SCREEN_WIDTH + 7U) / 8U];
         const bool full_width_fast_shift = (!need_row_clear && width == cfg->screen_width && ((width & 0x7U) == 0U));
-        /*
-         * 双目视差: 几何上左眼应略向右、右眼略向左(或相反)才能合像。
-         * 面板侧全程使能水平镜像(MIRROR_HORZ)时，帧缓冲里的“左移/右移”在视网膜上的符号会与直觉相反，
-         * 因此这里对左右眼的 dx 取反，使 display depth 的正负与远近体感一致。
-         */
         const int16_t dx_left = (int16_t)(-sw_depth);
         const int16_t dx_right = (int16_t)sw_depth;
-
         /* Left eye frame */
         for (uint16_t row = 0; row < height; row++)
         {
@@ -777,11 +771,7 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
                 a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
             }
         }
-        const int64_t t_before_left_send = k_uptime_get();
-        prep_ms += (uint32_t)(t_before_left_send - t_start);
         ret = a6n_transmit_side(dev, tx, bytes_to_send, 1, true);
-        const int64_t t_after_left_send = k_uptime_get();
-        send_ms += (uint32_t)(t_after_left_send - t_before_left_send);
         if (ret == 0)
         {
             bytes_sent += bytes_to_send;
@@ -790,8 +780,6 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
 
         if (ret == 0)
         {
-            const int64_t t_right_prepare_start = k_uptime_get();
-            /* Right eye frame */
             for (uint16_t row = 0; row < height; row++)
             {
                 const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
@@ -810,11 +798,7 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
                     a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
                 }
             }
-            const int64_t t_before_right_send = k_uptime_get();
-            prep_ms += (uint32_t)(t_before_right_send - t_right_prepare_start);
             ret = a6n_transmit_side(dev, tx, bytes_to_send, 1, false);
-            const int64_t t_after_right_send = k_uptime_get();
-            send_ms += (uint32_t)(t_after_right_send - t_before_right_send);
             if (ret == 0)
             {
                 bytes_sent += bytes_to_send;
@@ -822,43 +806,6 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
             }
         }
     }
-    {
-        const int64_t t_end = k_uptime_get();
-        const uint32_t total_ms = (uint32_t)(t_end - t_start);
-        const uint32_t kBps = (send_ms ? (bytes_sent * 1000U / send_ms / 1024U) : 0U);
-        const uint32_t Mbps = (send_ms ? (bytes_sent * 8U / send_ms / 1000U) : 0U);
-
-        bool should_log = false;
-        if (sw_depth == 0)
-        {
-            static uint32_t s_no_offset_log_gate;
-            s_no_offset_log_gate++;
-            should_log = ((s_no_offset_log_gate % 30U) == 1U);
-        }
-        else
-        {
-            static uint32_t s_offset_log_gate;
-            s_offset_log_gate++;
-            should_log = ((s_offset_log_gate % 30U) == 1U);
-        }
-
-        if (total_ms >= 8U)
-        {
-            should_log = true;
-        }
-
-        if (should_log)
-        {
-            const uint32_t eyes = (sw_depth == 0) ? 1U : 2U;
-            LOG_INF(
-                "A6N write perf: depth=%d (%s), y=%u, h=%u, eyes=%u, lines_per_eye=%u, lines_total=%u, bytes_sent=%u, "
-                "prep=%ums, send=%ums, total=%ums, tx_rate~%uKB/s (%uMbit/s)",
-                sw_depth, (sw_depth == 0) ? "no-offset" : "offset", y, height, (unsigned int)eyes, (unsigned int)height,
-                (unsigned int)lines_sent, (unsigned int)bytes_sent, (unsigned int)prep_ms, (unsigned int)send_ms,
-                (unsigned int)total_ms, (unsigned int)kBps, (unsigned int)Mbps);
-        }
-    }
-
     if (ret)
     {
         LOG_ERR("a6n_write: SPI transmit failed: %d", ret);
@@ -884,6 +831,66 @@ int8_t a6n_get_software_depth_offset(void)
 {
     return s_software_depth_offset;
 }
+
+int a6n_depth_distance_cm_to_offset(uint32_t distance_cm, int8_t *offset_out, uint32_t *clamped_distance_cm_out)
+{
+    if (offset_out == NULL)
+    {
+        return -EINVAL;
+    }
+
+    uint32_t clamped_cm = distance_cm;
+    if (clamped_cm < A6N_DEPTH_DISTANCE_MIN_CM)
+    {
+        clamped_cm = A6N_DEPTH_DISTANCE_MIN_CM;
+    }
+    else if (clamped_cm > A6N_DEPTH_DISTANCE_MAX_CM)
+    {
+        clamped_cm = A6N_DEPTH_DISTANCE_MAX_CM;
+    }
+
+    const double half_ipd_mm = A6N_DEPTH_IPD_MM / 2.0;
+    const double distance_mm = (double)clamped_cm * 10.0;
+    const double default_distance_mm = (double)A6N_DEPTH_DISTANCE_DEFAULT_CM * 10.0;
+    const double target_angle = atan(half_ipd_mm / distance_mm);
+    const double default_angle = atan(half_ipd_mm / default_distance_mm);
+    const double offset_f = A6N_DEPTH_OFFSET_SIGN * A6N_DEPTH_EFFECTIVE_FOCAL_PX * tan(target_angle - default_angle);
+
+    long offset_i = (long)((offset_f >= 0.0) ? (offset_f + 0.5) : (offset_f - 0.5));
+    if (offset_i < A6N_DEPTH_OFFSET_MIN_PX)
+    {
+        offset_i = A6N_DEPTH_OFFSET_MIN_PX;
+    }
+    else if (offset_i > A6N_DEPTH_OFFSET_MAX_PX)
+    {
+        offset_i = A6N_DEPTH_OFFSET_MAX_PX;
+    }
+
+    *offset_out = (int8_t)offset_i;
+    if (clamped_distance_cm_out != NULL)
+    {
+        *clamped_distance_cm_out = clamped_cm;
+    }
+
+    return 0;
+}
+
+int a6n_set_software_depth_distance_cm(uint32_t distance_cm)
+{
+    int8_t offset = 0;
+    uint32_t clamped_cm = 0U;
+    int ret = a6n_depth_distance_cm_to_offset(distance_cm, &offset, &clamped_cm);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    LOG_INF("A6N depth distance: request=%u cm clamp=%u cm default=%u cm -> offset=%d px",
+            (unsigned int)distance_cm, (unsigned int)clamped_cm, (unsigned int)A6N_DEPTH_DISTANCE_DEFAULT_CM,
+            (int)offset);
+    return a6n_set_software_depth_offset(offset);
+}
+
 static int a6n_read(struct device *dev, int x, int y, const struct display_buffer_descriptor *desc, void *buf)
 {
     return -ENOTSUP;
