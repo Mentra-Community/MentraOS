@@ -131,26 +131,38 @@ Grouped by manager:
 
 The `run_test` tool is the interesting one. It would run through the relevant items from the SDK v3 test checklist (`drafts/testing/sdk-v3-checklist.md`) programmatically and report results. Gemini could then summarize: "I tested the display manager. 7 of 8 tests passed. showBitmap failed because the glasses don't support bitmaps."
 
-### 5. PCM16 audio output regression blocks this
+### 5. PCM16 audio output path is WORKING
 
-The sdk-test app uses `createOutputStream({ format: "pcm16" })` to pipe Gemini's audio response to the glasses speaker. This is broken (issue 092, finding #1, ship-blocking). Gemini outputs PCM16 24kHz, the SDK is supposed to encode it to MP3 before sending to the cloud relay, but v3 passes raw PCM through without encoding.
+**Verified April 10, 2026.** The PCM16 encoding path is not broken. The issue 092 regression report was either based on older code or a different scenario.
 
-This must be fixed before the Gemini integration works end to end. Options:
+We built a mic feedback loop test in the stream-test app (`MicTestManager`) that pipes `session.mic.onChunk()` directly to `session.speaker.createStream({ format: "pcm16", sampleRate: 16000 })`. Result: 283 chunks piped successfully, audio plays back through the glasses speaker. The full pipeline works:
 
-1. Fix the PCM16 encoding in `SpeakerManager` / `AudioOutputStreamImpl.write()` (the correct fix)
-2. Transcode server-side in the mini app before calling `write()` (workaround)
-3. Use MP3-only output from Gemini (not supported, Gemini Live only outputs PCM)
+- `session.mic.onChunk()` delivers `AudioChunk` with `.data: ArrayBuffer` (1600 bytes per chunk = 50ms at 16kHz mono)
+- `session.speaker.createStream({ format: "pcm16" })` opens correctly, transitions to "streaming"
+- PCM16 to MP3 encoding via lamejs works (the `toInt16Array` -> `encoder.encodeBuffer` path)
+- Cloud relay receives and forwards the encoded MP3
+- Phone plays it back through the glasses speaker
 
-Option 1 is the right fix and is already tracked in issue 092.
+**One gotcha found:** The v3 `AudioChunk` interface uses `chunk.data` (ArrayBuffer), not `chunk.arrayBuffer`. The old v2 API used `chunk.arrayBuffer`. Code that passes mic chunks to `write()` must use `new Uint8Array(chunk.data)`. This is not a bug in the SDK, just an API change that needs to be documented clearly in the migration guide.
 
-### 6. Audio input path
+This means Gemini Live integration is **unblocked**. No SDK fix needed.
 
-Gemini needs raw audio from the glasses microphone. Two options:
+### 6. Audio input path is WORKING
 
-- **Use `session.mic.onChunk()`** - the v3 SDK manager. Gets PCM16 chunks from the cloud. This is the clean path.
-- **Use the old `session.events.onAudioChunk()`** via the v2 compat shim. This is what sdk-test uses today.
+**Verified April 10, 2026.** `session.mic.onChunk()` delivers PCM16 16kHz mono audio chunks. Each chunk is an `AudioChunk` object:
 
-The v3 path (`session.mic.onChunk()`) is the right one. Need to verify it works and delivers PCM16 at 16kHz, which is what Gemini expects.
+```
+{
+  data: ArrayBuffer (1600 bytes),   // 50ms of 16kHz mono PCM16
+  sampleRate: 16000,
+  channels: 1,
+  timestamp: number
+}
+```
+
+For Gemini Live, we need to base64-encode `chunk.data` and send it as `audio/pcm;rate=16000`. This is exactly what the sdk-test reference app does (via `bufferToBase64(new Uint8Array(chunk.arrayBuffer))` in the old API, updated to `chunk.data` for v3).
+
+Decision: use `session.mic.onChunk()` (v3 API), not the old `session.events.onAudioChunk()`.
 
 ### 7. Capability-gated tools
 
@@ -164,24 +176,45 @@ Not all tools should be available on all glasses. The tool declarations should b
 
 This means the Gemini session config is dynamic, built at connection time based on what glasses are connected. If glasses change mid-session (disconnect/reconnect with different model), the Gemini session would need to reconnect with updated tools.
 
+## Progress (April 10, 2026)
+
+### What's been built in stream-test so far
+
+- Video config dropped to 480p / 2Mbps / 15fps (from 720p / 4Mbps) to reduce glasses thermal load
+- `MicTestManager` added: mic-to-speaker feedback loop, togglable from webview button
+- Mic feedback test verified the full audio pipeline works end to end (283 chunks, no errors)
+- Discovered `AudioChunk.data` vs `AudioChunk.arrayBuffer` API difference between v3 and v2
+- SSE state broadcasting extended with `micTest` state slice
+- REST API route `/api/mic-test/toggle` for webview control
+
+### Decisions made
+
+- **Two-tab UI:** Stream tab (existing camera streaming) + Live Test tab (Gemini conversation + manager explorer)
+- **Manager Explorer:** starts as a list of managers/categories, tap to open controls and live state for that manager, back button to return to list. Quick way to test through entire SDK.
+- **Gemini model:** `gemini-3.1-flash-live` (not the old 2.5 preview model). Non-negotiable: always use latest models.
+- **Audio path:** v3 `session.mic.onChunk()` for input, `session.speaker.createStream({ format: "pcm16" })` for output. Both verified working.
+- **Reference code:** Use sdk-test app's `GeminiRealtimeProvider` as a starting point for the provider pattern, but build fresh in stream-test with new model and actual function calling.
+- **Tools:** ~20 tools across all managers, capability-gated based on `session.capabilities`. The `run_test(manager)` meta-tool runs checklist items programmatically.
+
 ## Conclusions
 
-| Item                      | Status             | Notes                                                                      |
-| ------------------------- | ------------------ | -------------------------------------------------------------------------- |
-| Gemini 3.1 Flash Live API | Ready              | Same SDK, same protocol, new model string, function calling is first-class |
-| stream-test architecture  | Ready              | Clean patterns for adding managers, state, API routes, UI tabs             |
-| Tool declarations         | Designed           | ~20 tools across all managers, capability-gated                            |
-| PCM16 audio output        | Blocked            | Issue 092 regression must be fixed first                                   |
-| Audio input (mic)         | Needs verification | `session.mic.onChunk()` should work but needs testing                      |
-| Webview UI                | Needs design       | Two-tab layout, transcript view, tool call log                             |
-| Automated test runner     | Future             | `run_test(manager)` tool that executes checklist items programmatically    |
+| Item                      | Status      | Notes                                                                                   |
+| ------------------------- | ----------- | --------------------------------------------------------------------------------------- |
+| Gemini 3.1 Flash Live API | Ready       | Same SDK, same protocol, new model string, function calling is first-class              |
+| stream-test architecture  | Ready       | Clean patterns for adding managers, state, API routes, UI tabs                          |
+| Tool declarations         | Designed    | ~20 tools across all managers, capability-gated                                         |
+| PCM16 audio output        | **Working** | Verified via mic feedback test. lamejs encoding works. Not a regression.                |
+| Audio input (mic)         | **Working** | `session.mic.onChunk()` delivers PCM16 16kHz. Use `chunk.data` not `chunk.arrayBuffer`. |
+| Webview UI                | Designed    | Two tabs: Stream + Live Test. Manager explorer with list -> detail navigation.          |
+| Automated test runner     | Future      | `run_test(manager)` tool that executes checklist items programmatically                 |
 
 ## Next Steps
 
-1. **Fix PCM16 regression (issue 092)** - prerequisite for any audio output
-2. **Verify `session.mic.onChunk()` delivers PCM16 16kHz** - prerequisite for audio input
-3. **Write spec** - define the exact tool declarations, state shape, API routes, and UI layout
-4. **Implement** - add GeminiManager to stream-test, wire up tools, build the Live Test tab
+1. **Build the Manager Explorer tab** - list of managers, tap to open, controls + live state per manager
+2. **Add Gemini 3.1 Flash Live provider** - `GeminiManager` on `UserSession`, tool declarations, `sendToolResponse` wiring
+3. **Build the Live Test tab** - Gemini conversation UI, transcript, tool call log
+4. **Wire up all tools** - map each tool to the corresponding SDK manager method
+5. **Add TTS and audio file playback tests** - `session.speaker.speak()` and `session.speaker.play()` alongside the mic feedback test
 
 ## Related Documents
 
