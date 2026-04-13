@@ -57,17 +57,17 @@ public class WhipBitrateTemperatureControllerTest {
   }
 
   @Test
-  public void emergencyStartsBeforeNinetyC() {
+  public void emergencyStartsAtNinetyC() {
     WhipBitrateTemperatureController controller = new WhipBitrateTemperatureController();
     WhipStreamConfig requestedConfig = new WhipStreamConfig()
         .setVideoBitrate(4_000_000);
 
     controller.reset(requestedConfig);
     WhipBitrateTemperatureController.BitrateDecision decision =
-        controller.update(89_700, requestedConfig);
+        controller.update(90_000, requestedConfig);
 
     Assert.assertTrue(decision.isHardLimitActive());
-    Assert.assertTrue(decision.getTargetBitrateBps() <= 700_000);
+    Assert.assertTrue(decision.getTargetBitrateBps() <= 800_000);
   }
 
   @Test
@@ -90,14 +90,14 @@ public class WhipBitrateTemperatureControllerTest {
   }
 
   @Test
-  public void hardLimitAtNinetyCTriggersAggressiveReduction() {
+  public void hardLimitAboveNinetyCTriggersAggressiveReduction() {
     WhipBitrateTemperatureController controller = new WhipBitrateTemperatureController();
     WhipStreamConfig requestedConfig = new WhipStreamConfig()
         .setVideoBitrate(4_000_000);
 
     controller.reset(requestedConfig);
     WhipBitrateTemperatureController.BitrateDecision decision =
-        controller.update(90_000, requestedConfig);
+        controller.update(90_300, requestedConfig);
 
     Assert.assertTrue(decision.isHardLimitActive());
     Assert.assertTrue(decision.getTargetBitrateBps() <= 300_000);

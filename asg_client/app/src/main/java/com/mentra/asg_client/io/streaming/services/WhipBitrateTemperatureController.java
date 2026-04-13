@@ -19,21 +19,21 @@ import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
  */
 final class WhipBitrateTemperatureController {
 
-  private static final int CONTROL_START_MDEG = 86_500;
-  private static final int SOFT_TARGET_MDEG = 88_600;
-  private static final int HARD_LIMIT_MDEG = 89_700;
-  private static final int INTEGRAL_RESET_MDEG = 84_000;
-  private static final int RECOVERY_RELEASE_MDEG = 87_000;
+  private static final int CONTROL_START_MDEG = 86_000;
+  private static final int SOFT_TARGET_MDEG = 89_000;
+  private static final int HARD_LIMIT_MDEG = 90_000;
+  private static final int INTEGRAL_RESET_MDEG = 85_000;
+  private static final int RECOVERY_RELEASE_MDEG = 88_000;
 
   private static final int MIN_AUTO_BITRATE_BPS = 300_000;
   private static final int BITRATE_STEP_BPS = 100_000;
-  private static final int MAX_STEP_DOWN_BPS = 1_400_000;
-  private static final int MAX_STEP_UP_BPS = 150_000;
+  private static final int MAX_STEP_DOWN_BPS = 1_000_000;
+  private static final int MAX_STEP_UP_BPS = 100_000;
   private static final int HARD_LIMIT_EXTRA_DROP_BPS = 500_000;
   private static final int HARD_LIMIT_EXTRA_DROP_PER_C_BPS = 300_000;
 
   private static final double FEED_FORWARD_MIN_SCALE = 0.15d;
-  private static final double FEED_FORWARD_CURVE_EXPONENT = 4.0d;
+  private static final double FEED_FORWARD_CURVE_EXPONENT = 3d;
   private static final double KP_BPS_PER_C = 260_000d;
   private static final double KI_BPS_PER_C = 20_000d;
   private static final double KD_BPS_PER_C = 280_000d;
