@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-07-28 11:31:02
- * @LastEditTime : 2026-03-25 09:52:59
+ * @LastEditTime : 2026-04-11 15:23:44
  * @FilePath     : a6n.c
  * @Description  :
  *
@@ -11,6 +11,7 @@
 
 #include "a6n.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/display.h>
@@ -33,6 +34,15 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 const struct device *dev_a6n = DEVICE_DT_GET(DT_INST(0, DT_DRV_COMPAT));
 static K_SEM_DEFINE(a6n_init_sem, 0, 1);
 static volatile int8_t s_software_depth_offset = 0;
+
+#define A6N_DEPTH_DISTANCE_MIN_CM      200U    // 最小投影距离 2.0m | Minimum projection distance: 2.0 m
+#define A6N_DEPTH_DISTANCE_DEFAULT_CM  250U    // 默认投影距离 2.5m，对应 0px 偏移 | Default projection distance: 2.5 m, maps to 0 px offset
+#define A6N_DEPTH_DISTANCE_MAX_CM      500U    // 最大投影距离 5.0m | Maximum projection distance: 5.0 m
+#define A6N_DEPTH_OFFSET_MIN_PX        (-16)   // 软件双目偏移最小值 | Minimum software stereo offset in pixels
+#define A6N_DEPTH_OFFSET_MAX_PX        16      // 软件双目偏移最大值 | Maximum software stereo offset in pixels
+#define A6N_DEPTH_IPD_MM               63.0    // 三角模型使用的等效双目基线/瞳距，需实测校准 | Effective binocular baseline/IPD, tune after measurement
+#define A6N_DEPTH_EFFECTIVE_FOCAL_PX   2400.0  // 角度差到像素偏移的标定系数，需实测校准 | Calibration factor from angular difference to pixel offset
+#define A6N_DEPTH_OFFSET_SIGN          1.0     // 方向校准：若实机远近方向相反，改为 -1.0 | Direction calibration; flip to -1.0 if hardware direction is reversed
 
 /**
  * A6N 显示配置参数 | A6N Display Configuration
@@ -505,6 +515,109 @@ static inline void a6m_pack_i1_to_i4_line_lut(const uint8_t *src_row,
     }
 }
 
+static inline void a6m_store_i4_lut_pack(uint8_t *dst, uint32_t pack)
+{
+    dst[0] = (uint8_t)(pack >> 24);
+    dst[1] = (uint8_t)(pack >> 16);
+    dst[2] = (uint8_t)(pack >> 8);
+    dst[3] = (uint8_t)(pack >> 0);
+}
+
+static inline void a6m_pack_i1_bytes_to_i4_lut(const uint8_t *src_row, uint16_t src_bytes, uint8_t *dst_row)
+{
+    uint16_t out = 0;
+
+    for (uint16_t g = 0; g < src_bytes; g++)
+    {
+        a6m_store_i4_lut_pack(&dst_row[out], s_i1_to_i4_LUT[src_row[g]]);
+        out += 4U;
+    }
+}
+
+static inline uint8_t mono_get_full_width_byte(const uint8_t *row, uint16_t row_bytes, int32_t byte_index)
+{
+    if (byte_index < 0 || byte_index >= (int32_t)row_bytes)
+    {
+        return 0xFF; /* out-of-range pixels are dark */
+    }
+
+    return row[byte_index];
+}
+
+static void a6m_pack_i1_to_i4_shifted_full_line_lut(const uint8_t *src_row, uint16_t width, int16_t dx,
+                                                    uint8_t *dst_row)
+{
+    const uint16_t row_bytes = (uint16_t)(width / 8U);
+    const uint16_t i4_bytes = (uint16_t)(width / 2U);
+
+    if (dx >= (int16_t)width || dx <= -(int16_t)width)
+    {
+        memset(dst_row, 0x00, i4_bytes);
+        return;
+    }
+
+    if (dx == 0)
+    {
+        a6m_pack_i1_bytes_to_i4_lut(src_row, row_bytes, dst_row);
+        return;
+    }
+
+    const uint16_t shift = (uint16_t)((dx > 0) ? dx : -dx);
+    const uint16_t byte_shift = (uint16_t)(shift >> 3U);
+    const uint16_t bit_shift = (uint16_t)(shift & 0x7U);
+
+    if (bit_shift == 0U)
+    {
+        if (byte_shift >= row_bytes)
+        {
+            memset(dst_row, 0x00, i4_bytes);
+            return;
+        }
+
+        const uint16_t dark_i4_bytes = (uint16_t)(byte_shift * 4U);
+        const uint16_t src_bytes = (uint16_t)(row_bytes - byte_shift);
+
+        if (dx > 0)
+        {
+            memset(dst_row, 0x00, dark_i4_bytes);
+            a6m_pack_i1_bytes_to_i4_lut(src_row, src_bytes, &dst_row[dark_i4_bytes]);
+        }
+        else
+        {
+            a6m_pack_i1_bytes_to_i4_lut(&src_row[byte_shift], src_bytes, dst_row);
+            memset(&dst_row[src_bytes * 4U], 0x00, dark_i4_bytes);
+        }
+        return;
+    }
+    uint16_t out = 0;
+    if (dx > 0)
+    {
+        for (uint16_t g = 0; g < row_bytes; g++)
+        {
+            const int32_t src_index = (int32_t)g - (int32_t)byte_shift;
+            const uint8_t curr = mono_get_full_width_byte(src_row, row_bytes, src_index);
+            const uint8_t prev = mono_get_full_width_byte(src_row, row_bytes, src_index - 1);
+            const uint8_t shifted = (uint8_t)((curr >> bit_shift) | (uint8_t)(prev << (8U - bit_shift)));
+
+            a6m_store_i4_lut_pack(&dst_row[out], s_i1_to_i4_LUT[shifted]);
+            out += 4U;
+        }
+    }
+    else
+    {
+        for (uint16_t g = 0; g < row_bytes; g++)
+        {
+            const int32_t src_index = (int32_t)g + (int32_t)byte_shift;
+            const uint8_t curr = mono_get_full_width_byte(src_row, row_bytes, src_index);
+            const uint8_t next = mono_get_full_width_byte(src_row, row_bytes, src_index + 1);
+            const uint8_t shifted = (uint8_t)((uint8_t)(curr << bit_shift) | (next >> (8U - bit_shift)));
+
+            a6m_store_i4_lut_pack(&dst_row[out], s_i1_to_i4_LUT[shifted]);
+            out += 4U;
+        }
+    }
+}
+
 /**
  * @Description: Write pixel data to the display
  * @param dev   Device handle
@@ -562,10 +675,10 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
     const uint32_t bytes_to_send = 4U + payload_bytes;
     int ret = 0;
     int8_t sw_depth = s_software_depth_offset;
+    bool need_row_clear = (width != cfg->screen_width);
 
     if (sw_depth == 0)
     {
-        /* 逐行 LUT 转换 → I4 行（不足 320B 的右侧补 0） */
         for (uint16_t row = 0; row < height; row++)
         {
             const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
@@ -578,49 +691,53 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
     else
     {
         uint8_t shifted_row[(SCREEN_WIDTH + 7U) / 8U];
-        /*
-         * 双目视差: 几何上左眼应略向右、右眼略向左(或相反)才能合像。
-         * 面板侧全程使能水平镜像(MIRROR_HORZ)时，帧缓冲里的“左移/右移”在视网膜上的符号会与直觉相反，
-         * 因此这里对左右眼的 dx 取反，使 display depth 的正负与远近体感一致。
-         */
+        const bool full_width_fast_shift = (!need_row_clear && width == cfg->screen_width && ((width & 0x7U) == 0U));
         const int16_t dx_left = (int16_t)(-sw_depth);
         const int16_t dx_right = (int16_t)sw_depth;
-
         /* Left eye frame */
         for (uint16_t row = 0; row < height; row++)
         {
             const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
             uint8_t *dst_row = dst_base + (uint32_t)row * i4_bytes_per_ln;
-            memset(dst_row, 0x00, i4_bytes_per_ln);
-            mono_shift_row(src_row, width, dx_left, shifted_row);
-            a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
+            if (need_row_clear)
+            {
+                memset(dst_row, 0x00, i4_bytes_per_ln);
+            }
+            if (full_width_fast_shift)
+            {
+                a6m_pack_i1_to_i4_shifted_full_line_lut(src_row, width, dx_left, dst_row);
+            }
+            else
+            {
+                mono_shift_row(src_row, width, dx_left, shifted_row);
+                a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
+            }
         }
         ret = a6n_transmit_side(dev, tx, bytes_to_send, 1, true);
+
         if (ret == 0)
         {
-            /* Right eye frame */
             for (uint16_t row = 0; row < height; row++)
             {
                 const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
                 uint8_t *dst_row = dst_base + (uint32_t)row * i4_bytes_per_ln;
-                memset(dst_row, 0x00, i4_bytes_per_ln);
-                mono_shift_row(src_row, width, dx_right, shifted_row);
-                a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
+                if (need_row_clear)
+                {
+                    memset(dst_row, 0x00, i4_bytes_per_ln);
+                }
+                if (full_width_fast_shift)
+                {
+                    a6m_pack_i1_to_i4_shifted_full_line_lut(src_row, width, dx_right, dst_row);
+                }
+                else
+                {
+                    mono_shift_row(src_row, width, dx_right, shifted_row);
+                    a6m_pack_i1_to_i4_line_lut(shifted_row, width, dst_row);
+                }
             }
             ret = a6n_transmit_side(dev, tx, bytes_to_send, 1, false);
         }
     }
-    #if 0//TEST LOG
-    const int64_t t0 = k_uptime_get();
-    ret              = a6n_transmit_all(dev, tx, bytes_to_send, 1);
-    const int64_t t1 = k_uptime_get();
-    const uint32_t ms   = (uint32_t)(t1 - t0);
-    const uint32_t kBps = (ms ? (bytes_to_send * 1000U / ms / 1024U) : 0U);
-    const uint32_t Mbps = (ms ? (bytes_to_send * 8U / ms / 1000U) : 0U);
-    LOG_INF("a6n_write[I1->I4, %uB/line] = [%u]ms, lines[%u], bytes[%u]B, rate≈[%u]KB/s (%uMbit/s)",
-            line_bytes_min, ms, height, bytes_to_send, kBps, Mbps);
-    #endif
-
     if (ret)
     {
         LOG_ERR("a6n_write: SPI transmit failed: %d", ret);
@@ -647,6 +764,66 @@ int8_t a6n_get_software_depth_offset(void)
 {
     return s_software_depth_offset;
 }
+
+int a6n_depth_distance_cm_to_offset(uint32_t distance_cm, int8_t *offset_out, uint32_t *clamped_distance_cm_out)
+{
+    if (offset_out == NULL)
+    {
+        return -EINVAL;
+    }
+
+    uint32_t clamped_cm = distance_cm;
+    if (clamped_cm < A6N_DEPTH_DISTANCE_MIN_CM)
+    {
+        clamped_cm = A6N_DEPTH_DISTANCE_MIN_CM;
+    }
+    else if (clamped_cm > A6N_DEPTH_DISTANCE_MAX_CM)
+    {
+        clamped_cm = A6N_DEPTH_DISTANCE_MAX_CM;
+    }
+
+    const double half_ipd_mm = A6N_DEPTH_IPD_MM / 2.0;
+    const double distance_mm = (double)clamped_cm * 10.0;
+    const double default_distance_mm = (double)A6N_DEPTH_DISTANCE_DEFAULT_CM * 10.0;
+    const double target_angle = atan(half_ipd_mm / distance_mm);
+    const double default_angle = atan(half_ipd_mm / default_distance_mm);
+    const double offset_f = A6N_DEPTH_OFFSET_SIGN * A6N_DEPTH_EFFECTIVE_FOCAL_PX * tan(target_angle - default_angle);
+
+    long offset_i = (long)((offset_f >= 0.0) ? (offset_f + 0.5) : (offset_f - 0.5));
+    if (offset_i < A6N_DEPTH_OFFSET_MIN_PX)
+    {
+        offset_i = A6N_DEPTH_OFFSET_MIN_PX;
+    }
+    else if (offset_i > A6N_DEPTH_OFFSET_MAX_PX)
+    {
+        offset_i = A6N_DEPTH_OFFSET_MAX_PX;
+    }
+
+    *offset_out = (int8_t)offset_i;
+    if (clamped_distance_cm_out != NULL)
+    {
+        *clamped_distance_cm_out = clamped_cm;
+    }
+
+    return 0;
+}
+
+int a6n_set_software_depth_distance_cm(uint32_t distance_cm)
+{
+    int8_t offset = 0;
+    uint32_t clamped_cm = 0U;
+    int ret = a6n_depth_distance_cm_to_offset(distance_cm, &offset, &clamped_cm);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    LOG_INF("A6N depth distance: request=%u cm clamp=%u cm default=%u cm -> offset=%d px",
+            (unsigned int)distance_cm, (unsigned int)clamped_cm, (unsigned int)A6N_DEPTH_DISTANCE_DEFAULT_CM,
+            (int)offset);
+    return a6n_set_software_depth_offset(offset);
+}
+
 static int a6n_read(struct device *dev, int x, int y, const struct display_buffer_descriptor *desc, void *buf)
 {
     return -ENOTSUP;
