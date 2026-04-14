@@ -127,6 +127,8 @@ public class RtmpStreamingService extends Service {
     // Stream duration tracking
     private long mStreamStartTime = 0;
     private long mLastReconnectionTime = 0;
+    private static final long METRICS_INTERVAL_MS = 2000;
+    private PeriodicStreamMetricsReporter mMetricsReporter;
 
     // Reconnection sequence tracking to prevent stale handlers
     private int mReconnectionSequence = 0;
@@ -179,6 +181,7 @@ public class RtmpStreamingService extends Service {
 
         // Initialize handler for reconnection logic
         mReconnectHandler = new Handler(Looper.getMainLooper());
+        mMetricsReporter = createMetricsReporter();
 
         // Initialize handler for timeout logic
         mTimeoutHandler = new Handler(Looper.getMainLooper());
@@ -482,6 +485,7 @@ public class RtmpStreamingService extends Service {
 
                         // Start battery monitoring
                         startBatteryMonitoring();
+                        startMetricsReporting();
 
                         EventBus.getDefault().post(new StreamingEvent.Connected());
                         EventBus.getDefault().post(new StreamingEvent.Started());
@@ -499,6 +503,7 @@ public class RtmpStreamingService extends Service {
                     mLastReconnectionTime = currentTime;
 
                     Log.e(TAG, "RTMP connection failed: " + message);
+                    stopMetricsReporting();
                     EventBus.getDefault().post(new StreamingEvent.ConnectionFailed(message));
 
                     // Report connection failure
@@ -560,6 +565,7 @@ public class RtmpStreamingService extends Service {
                     mLastReconnectionTime = currentTime;
 
                     Log.i(TAG, "RTMP connection lost: " + message);
+                    stopMetricsReporting();
                     EventBus.getDefault().post(new StreamingEvent.Disconnected());
 
                     // Report connection lost
@@ -968,6 +974,7 @@ public class RtmpStreamingService extends Service {
         if (!preserveSession) {
             stopBatteryMonitoring();
         }
+        stopMetricsReporting();
 
         // Increment reconnection sequence to invalidate any pending handlers
         mReconnectionSequence++;
@@ -1388,6 +1395,56 @@ public class RtmpStreamingService extends Service {
             mBatteryMonitorHandler.removeCallbacksAndMessages(null);
             Log.d(TAG, "🔋 Stopped battery monitoring");
         }
+    }
+
+    private PeriodicStreamMetricsReporter createMetricsReporter() {
+        return new PeriodicStreamMetricsReporter(
+            mReconnectHandler,
+            METRICS_INTERVAL_MS,
+            () -> {
+                synchronized (mStateLock) {
+                    return mStreamState == StreamState.STREAMING && mIsStreaming && !mReconnecting;
+                }
+            },
+            () -> new PeriodicStreamMetricsReporter.MetricsSample(
+                mStreamConfig.getVideoBitrate(),
+                mStreamConfig.getVideoFps(),
+                mStreamConfig.getVideoWidth(),
+                mStreamConfig.getVideoHeight(),
+                0,
+                mStreamStartTime > 0 ? System.currentTimeMillis() - mStreamStartTime : 0,
+                getCpuTemperatureC()
+            ),
+            new PeriodicStreamMetricsReporter.CallbackProvider() {
+                @Override
+                public StreamingStatusCallback getCallback() {
+                    return sStatusCallback;
+                }
+
+                @Override
+                public String getStreamId() {
+                    return mCurrentStreamId;
+                }
+            }
+        );
+    }
+
+    private void startMetricsReporting() {
+        if (mMetricsReporter == null) {
+            return;
+        }
+        mMetricsReporter.start();
+    }
+
+    private void stopMetricsReporting() {
+        if (mMetricsReporter != null) {
+            mMetricsReporter.stop();
+        }
+    }
+
+    private double getCpuTemperatureC() {
+        int cpuTempMilli = WhipThermalUtils.readCpuTemperature();
+        return cpuTempMilli > 0 ? WhipThermalUtils.toCelsius(cpuTempMilli) : -1;
     }
 
 

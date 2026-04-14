@@ -106,6 +106,8 @@ public class SrtStreamingService extends Service {
   private long mStreamStartTime = 0;
   private long mLastReconnectionTime = 0;
   private int mReconnectionSequence = 0;
+  private static final long METRICS_INTERVAL_MS = 2000;
+  private PeriodicStreamMetricsReporter mMetricsReporter;
 
   private IHardwareManager mHardwareManager;
   private boolean mLedEnabled = false;
@@ -146,6 +148,7 @@ public class SrtStreamingService extends Service {
     }
 
     mReconnectHandler = new Handler(Looper.getMainLooper());
+    mMetricsReporter = createMetricsReporter();
     mTimeoutHandler = new Handler(Looper.getMainLooper());
     mHardwareManager = HardwareManagerFactory.getInstance(this);
 
@@ -341,6 +344,7 @@ public class SrtStreamingService extends Service {
             }
 
             startBatteryMonitoring();
+            startMetricsReporting();
             EventBus.getDefault().post(new StreamingEvent.Connected());
             EventBus.getDefault().post(new StreamingEvent.Started());
           }
@@ -354,6 +358,7 @@ public class SrtStreamingService extends Service {
           }
           mLastReconnectionTime = currentTime;
           Log.e(TAG, "SRT connection failed: " + message);
+          stopMetricsReporting();
           EventBus.getDefault().post(new StreamingEvent.ConnectionFailed(message));
           StreamingReporting.reportRtmpConnectionFailure(SrtStreamingService.this, mSrtUrl, message, null);
 
@@ -383,6 +388,7 @@ public class SrtStreamingService extends Service {
           long streamDuration = mStreamStartTime > 0 ? currentTime - mStreamStartTime : 0;
           Log.e(TAG, "🔴 SRT STREAM DISCONNECTED after " + formatDuration(streamDuration));
           mLastReconnectionTime = currentTime;
+          stopMetricsReporting();
           EventBus.getDefault().post(new StreamingEvent.Disconnected());
           StreamingReporting.reportRtmpConnectionLost(SrtStreamingService.this, mSrtUrl, streamDuration, message);
 
@@ -598,6 +604,7 @@ public class SrtStreamingService extends Service {
     Log.d(TAG, "Force stopping SRT stream (preserveSession=" + preserveSession + ")");
 
     if (!preserveSession) stopBatteryMonitoring();
+    stopMetricsReporting();
 
     mReconnectionSequence++;
     if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
@@ -804,6 +811,56 @@ public class SrtStreamingService extends Service {
       mBatteryMonitorHandler.removeCallbacksAndMessages(null);
       Log.d(TAG, "🔋 Stopped SRT battery monitoring");
     }
+  }
+
+  private PeriodicStreamMetricsReporter createMetricsReporter() {
+    return new PeriodicStreamMetricsReporter(
+        mReconnectHandler,
+        METRICS_INTERVAL_MS,
+        () -> {
+          synchronized (mStateLock) {
+            return mStreamState == StreamState.STREAMING && mIsStreaming && !mReconnecting;
+          }
+        },
+        () -> new PeriodicStreamMetricsReporter.MetricsSample(
+            mStreamConfig.getVideoBitrate(),
+            mStreamConfig.getVideoFps(),
+            mStreamConfig.getVideoWidth(),
+            mStreamConfig.getVideoHeight(),
+            0,
+            mStreamStartTime > 0 ? System.currentTimeMillis() - mStreamStartTime : 0,
+            getCpuTemperatureC()
+        ),
+        new PeriodicStreamMetricsReporter.CallbackProvider() {
+          @Override
+          public StreamingStatusCallback getCallback() {
+            return sStatusCallback;
+          }
+
+          @Override
+          public String getStreamId() {
+            return mCurrentStreamId;
+          }
+        }
+    );
+  }
+
+  private void startMetricsReporting() {
+    if (mMetricsReporter == null) {
+      return;
+    }
+    mMetricsReporter.start();
+  }
+
+  private void stopMetricsReporting() {
+    if (mMetricsReporter != null) {
+      mMetricsReporter.stop();
+    }
+  }
+
+  private double getCpuTemperatureC() {
+    int cpuTempMilli = WhipThermalUtils.readCpuTemperature();
+    return cpuTempMilli > 0 ? WhipThermalUtils.toCelsius(cpuTempMilli) : -1;
   }
 
   public static void setStreamConfig(RtmpStreamConfig config) {
