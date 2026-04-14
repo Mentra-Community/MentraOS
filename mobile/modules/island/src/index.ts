@@ -1,26 +1,16 @@
 // export {default} from "./IslandModule"
 // export * from "./Island.types"
 
+import {useApps} from "./stores/apps"
+import {useActiveApps} from "./stores/apps"
 
-
-
-function startMiniApp(packageName: string) {
+const apps = {
+  useApps: useApps,
+  useActiveApps: useActiveApps,
 }
-
-
-function stopMiniApp(packageName: string) {
-}
-
-import { useApps } from "./stores/applets"
 
 const IslandModule = {
-    // startMiniApp,
-    // stopMiniApp,
-    apps: {
-        useApps: useApps,
-    }
-}
-
-export const apps = {
-    useApps: useApplets,
+  apps: {
+    useApps: useApps,
+  },
 }
