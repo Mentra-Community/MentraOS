@@ -57,6 +57,7 @@
     "babel-plugin-module-resolver": "5.0.0",
     "core": "file:./modules/core",
     "crust": "file:./modules/crust",
+    "island": "file:./modules/island",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "expo": "^55.0.5",

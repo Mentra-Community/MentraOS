@@ -1,21 +1,11 @@
 {
-  "name": "core",
+  "name": "island",
   "version": "0.1.0",
-  "description": "Mentra Manager Core",
+  "description": "Mentra Manager Island",
   "main": "build/index.js",
   "app.plugin": "plugin/src/index",
   "types": "build/index.d.ts",
   "scripts": {
-    "build": "expo-module build",
-    "build:plugin": "expo-module build plugin",
-    "clean": "expo-module clean",
-    "test": "expo-module test",
-    "prepare": "expo-module prepare",
-    "prepublishOnly": "expo-module prepublishOnly",
-    "lint": "expo-module lint",
-    "expo-module": "expo-module",
-    "open:ios": "xed example/ios",
-    "open:android": "open -a \"Android Studio\" example/android"
   },
   "keywords": [
     "react-native",
@@ -30,7 +20,18 @@
   "author": "fossephate <6175367+fossephate@users.noreply.github.com> (https://github.com/fossephate)",
   "license": "MIT",
   "homepage": "https://github.com/fossephate/core#readme",
-  "dependencies": {},
+  "dependencies": {
+    "typesafe-ts": "^1.7.1",
+    "zustand": "^5.0.11",
+    "expo": "^55.0.5",
+    "expo-file-system": "~55.0.10",
+    "react-native-zip-archive": "^7.0.2",
+    "react-native-nitro-bg-timer": "^0.1.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-i18next": "^16.5.6",
+    "react-native": "0.83.2"
+  },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2"
   },

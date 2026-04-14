@@ -68,6 +68,7 @@
         "expo-web-browser": "~55.0.9",
         "i18next": "^25.8.17",
         "intl-pluralrules": "^2.0.1",
+        "island": "file:./modules/island",
         "lucide-react-native": "^0.553.0",
         "posthog-react-native": "^4.37.1",
         "react": "19.2.0",
@@ -1868,6 +1869,8 @@
     "isarray": ["isarray@2.0.5", "", {}, "sha512-xHjhDr3cNBK0BzdUJSPXZntQUx/mwMS5Rw4A7lPJ90XGAO6ISP/ePDNuo0vhqOZU+UD5JoodwCAAoZQd3FeAKw=="],
 
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
+
+    "island": ["core@file:modules/island", { "devDependencies": { "expo-module-scripts": "^55.0.2" }, "peerDependencies": { "@expo/config-plugins": "*", "@types/react": "*", "expo": "*", "react": "*", "react-native": "*" } }],
 
     "istanbul-lib-coverage": ["istanbul-lib-coverage@3.2.2", "", {}, "sha512-O8dpsF+r0WV/8MNRKfnmrtCWhuKjxrq2w+jpzBL5UZKTi2LeVWnWOmWRxFlesJONmc+wLAGvKQZEOanko0LFTg=="],
 

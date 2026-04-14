@@ -161,10 +161,10 @@ async function downloadAndInstallMiniApp(url: string) {
   printDirectory(versionDir, 2)
 }
 
+// this class manages the on-disk state of installed mini apps
 class Composer {
   private installedLmas: ClientAppletInterface[] = []
   private refreshNeeded: boolean = false
-  private pcmSub: any = null
 
   private static instance: Composer | null = null
   private constructor() {
