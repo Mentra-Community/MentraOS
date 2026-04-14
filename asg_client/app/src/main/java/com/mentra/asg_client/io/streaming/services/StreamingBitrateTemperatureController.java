@@ -1,24 +1,11 @@
 package com.mentra.asg_client.io.streaming.services;
 
-import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
-
 /**
- * Small stateful bitrate controller for temperature-based throttling.
- *
- * The controller only touches bitrate. Resolution and FPS remain fixed at the
- * requested values. The control law is intentionally isolated here so
- * WhipStreamingService only needs to ask for the next bitrate cap.
- *
- * The implementation uses:
- * - smoothed CPU temperature
- * - a feed-forward cap as the stream approaches the thermal limit
- * - a small PID-like correction on top of the current bitrate target
- *
- * The control goal is to stay under 90C, so the soft target is kept slightly
- * lower to leave room for thermal lag.
+ * Stateful bitrate controller for temperature-based throttling across stream transports.
  */
-final class WhipBitrateTemperatureController {
+final class StreamingBitrateTemperatureController {
 
+  private static final int DEFAULT_REQUESTED_BITRATE_BPS = 1_000_000;
   private static final int CONTROL_START_MDEG = 86_000;
   private static final int SOFT_TARGET_MDEG = 89_000;
   private static final int HARD_LIMIT_MDEG = 90_000;
@@ -44,32 +31,31 @@ final class WhipBitrateTemperatureController {
   private int mCurrentTargetBitrateBps = -1;
   private double mIntegralErrorC = 0.0d;
 
-  void reset(WhipStreamConfig requestedConfig) {
+  void reset(int requestedBitrateBps) {
     mSmoothedCpuTempMilli = -1;
     mIntegralErrorC = 0.0d;
-    mCurrentTargetBitrateBps = requestedConfig != null
-        ? requestedConfig.getVideoBitrate()
-        : -1;
+    mCurrentTargetBitrateBps = requestedBitrateBps > 0
+        ? requestedBitrateBps
+        : DEFAULT_REQUESTED_BITRATE_BPS;
   }
 
-  void updateRequestedConfig(WhipStreamConfig requestedConfig) {
-    if (requestedConfig == null) {
+  void updateRequestedBitrate(int requestedBitrateBps) {
+    if (requestedBitrateBps <= 0) {
       return;
     }
 
-    int requestedBitrate = requestedConfig.getVideoBitrate();
     if (mCurrentTargetBitrateBps <= 0) {
-      mCurrentTargetBitrateBps = requestedBitrate;
+      mCurrentTargetBitrateBps = requestedBitrateBps;
       return;
     }
 
-    mCurrentTargetBitrateBps = Math.min(mCurrentTargetBitrateBps, requestedBitrate);
+    mCurrentTargetBitrateBps = Math.min(mCurrentTargetBitrateBps, requestedBitrateBps);
   }
 
-  BitrateDecision update(int rawCpuTempMilli, WhipStreamConfig requestedConfig) {
-    int requestedBitrate = requestedConfig != null
-        ? requestedConfig.getVideoBitrate()
-        : WhipStreamConfig.DEFAULT_VIDEO_BITRATE;
+  BitrateDecision update(int rawCpuTempMilli, int requestedBitrateBps) {
+    int requestedBitrate = requestedBitrateBps > 0
+        ? requestedBitrateBps
+        : DEFAULT_REQUESTED_BITRATE_BPS;
     int minAllowedBitrateBps = Math.min(MIN_AUTO_BITRATE_BPS, requestedBitrate);
 
     if (mCurrentTargetBitrateBps <= 0) {
@@ -88,15 +74,15 @@ final class WhipBitrateTemperatureController {
     }
 
     int previousSmoothedCpuTempMilli = mSmoothedCpuTempMilli;
-    mSmoothedCpuTempMilli = WhipThermalUtils.smoothCpuTemperature(
+    mSmoothedCpuTempMilli = StreamingThermalUtils.smoothCpuTemperature(
         mSmoothedCpuTempMilli, rawCpuTempMilli);
 
-    double smoothedTempC = WhipThermalUtils.toCelsius(mSmoothedCpuTempMilli);
+    double smoothedTempC = StreamingThermalUtils.toCelsius(mSmoothedCpuTempMilli);
     double previousSmoothedTempC = previousSmoothedCpuTempMilli > 0
-        ? WhipThermalUtils.toCelsius(previousSmoothedCpuTempMilli)
+        ? StreamingThermalUtils.toCelsius(previousSmoothedCpuTempMilli)
         : smoothedTempC;
     double temperatureRiseC = Math.max(0.0d, smoothedTempC - previousSmoothedTempC);
-    double errorC = WhipThermalUtils.toCelsius(SOFT_TARGET_MDEG) - smoothedTempC;
+    double errorC = StreamingThermalUtils.toCelsius(SOFT_TARGET_MDEG) - smoothedTempC;
 
     if (mSmoothedCpuTempMilli <= INTEGRAL_RESET_MDEG) {
       mIntegralErrorC = 0.0d;
@@ -147,11 +133,11 @@ final class WhipBitrateTemperatureController {
   }
 
   static double getSoftTargetTempC() {
-    return WhipThermalUtils.toCelsius(SOFT_TARGET_MDEG);
+    return StreamingThermalUtils.toCelsius(SOFT_TARGET_MDEG);
   }
 
   static double getHardLimitTempC() {
-    return WhipThermalUtils.toCelsius(HARD_LIMIT_MDEG);
+    return StreamingThermalUtils.toCelsius(HARD_LIMIT_MDEG);
   }
 
   private static int computeFeedForwardCap(int requestedBitrate, int smoothedCpuTempMilli) {

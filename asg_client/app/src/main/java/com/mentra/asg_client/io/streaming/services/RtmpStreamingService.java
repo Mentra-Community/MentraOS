@@ -86,8 +86,9 @@ public class RtmpStreamingService extends Service {
     private static final int DEFAULT_SURFACE_HEIGHT = 720;  // HD resolution (720p)
     private static final int DEFAULT_START_BITRATE = 2000000; //2,000,000 => 800,000
 
-    // Current stream configuration (set via setStreamConfig or defaults)
+    // Stream configuration (requested vs currently applied bitrate)
     private RtmpStreamConfig mStreamConfig = new RtmpStreamConfig();
+    private RtmpStreamConfig mRequestedStreamConfig = new RtmpStreamConfig();
     private static RtmpStreamConfig sPendingStreamConfig = null; // Config to apply when service starts
 
     // Reconnection logic parameters
@@ -129,6 +130,9 @@ public class RtmpStreamingService extends Service {
     private long mLastReconnectionTime = 0;
     private static final long METRICS_INTERVAL_MS = 2000;
     private PeriodicStreamMetricsReporter mMetricsReporter;
+    private static final long THERMAL_POLL_INTERVAL_MS = 2000;
+    private PeriodicThermalBitrateController mThermalBitrateController;
+    private StreamingBitrateTemperatureController.BitrateDecision mLastBitrateDecision;
 
     // Reconnection sequence tracking to prevent stale handlers
     private int mReconnectionSequence = 0;
@@ -166,7 +170,8 @@ public class RtmpStreamingService extends Service {
 
         // Apply pending stream config if it was set before service started
         if (sPendingStreamConfig != null) {
-            mStreamConfig = sPendingStreamConfig;
+            mRequestedStreamConfig = new RtmpStreamConfig(sPendingStreamConfig);
+            mStreamConfig = new RtmpStreamConfig(sPendingStreamConfig);
             sPendingStreamConfig = null; // Clear pending after applying
             Log.d(TAG, "✅ Applied pending stream config during onCreate: " + mStreamConfig.toString());
         }
@@ -182,6 +187,7 @@ public class RtmpStreamingService extends Service {
         // Initialize handler for reconnection logic
         mReconnectHandler = new Handler(Looper.getMainLooper());
         mMetricsReporter = createMetricsReporter();
+        mThermalBitrateController = createThermalBitrateController();
 
         // Initialize handler for timeout logic
         mTimeoutHandler = new Handler(Looper.getMainLooper());
@@ -485,6 +491,7 @@ public class RtmpStreamingService extends Service {
 
                         // Start battery monitoring
                         startBatteryMonitoring();
+                        startThermalMonitoring();
                         startMetricsReporting();
 
                         EventBus.getDefault().post(new StreamingEvent.Connected());
@@ -503,6 +510,7 @@ public class RtmpStreamingService extends Service {
                     mLastReconnectionTime = currentTime;
 
                     Log.e(TAG, "RTMP connection failed: " + message);
+                    stopThermalMonitoring();
                     stopMetricsReporting();
                     EventBus.getDefault().post(new StreamingEvent.ConnectionFailed(message));
 
@@ -565,6 +573,7 @@ public class RtmpStreamingService extends Service {
                     mLastReconnectionTime = currentTime;
 
                     Log.i(TAG, "RTMP connection lost: " + message);
+                    stopThermalMonitoring();
                     stopMetricsReporting();
                     EventBus.getDefault().post(new StreamingEvent.Disconnected());
 
@@ -788,6 +797,8 @@ public class RtmpStreamingService extends Service {
         }
 
         try {
+            prepareStreamConfigForStartup();
+
             // Always wake up the screen before any camera access
             // This is crucial for reconnection attempts when screen might be off
             Log.d(TAG, "Waking up screen before camera access");
@@ -974,6 +985,7 @@ public class RtmpStreamingService extends Service {
         if (!preserveSession) {
             stopBatteryMonitoring();
         }
+        stopThermalMonitoring();
         stopMetricsReporting();
 
         // Increment reconnection sequence to invalidate any pending handlers
@@ -1429,6 +1441,150 @@ public class RtmpStreamingService extends Service {
         );
     }
 
+    private PeriodicThermalBitrateController createThermalBitrateController() {
+        return new PeriodicThermalBitrateController(
+            mReconnectHandler,
+            THERMAL_POLL_INTERVAL_MS,
+            () -> mRequestedStreamConfig.getVideoBitrate(),
+            () -> {
+                synchronized (mStateLock) {
+                    return mStreamState != StreamState.IDLE && mStreamState != StreamState.STOPPING;
+                }
+            },
+            this::applyTemperatureControl
+        );
+    }
+
+    private void prepareStreamConfigForStartup() {
+        if (mThermalBitrateController == null) {
+            return;
+        }
+        mThermalBitrateController.reset(mRequestedStreamConfig.getVideoBitrate());
+        mThermalBitrateController.evaluateNow(false);
+    }
+
+    private void updateRequestedStreamConfig(RtmpStreamConfig config, boolean applyLiveChanges) {
+        if (config == null) {
+            config = new RtmpStreamConfig();
+        }
+
+        mRequestedStreamConfig = new RtmpStreamConfig(config);
+
+        boolean shouldApplyNow;
+        synchronized (mStateLock) {
+            shouldApplyNow = applyLiveChanges && mStreamState == StreamState.STREAMING;
+        }
+
+        if (!shouldApplyNow) {
+            mStreamConfig = new RtmpStreamConfig(mRequestedStreamConfig);
+            mLastBitrateDecision = null;
+            if (mThermalBitrateController != null) {
+                mThermalBitrateController.reset(mRequestedStreamConfig.getVideoBitrate());
+            }
+            return;
+        }
+
+        mThermalBitrateController.updateRequestedBitrate(
+            mRequestedStreamConfig.getVideoBitrate(),
+            true);
+    }
+
+    private void applyTemperatureControl(
+            StreamingBitrateTemperatureController.BitrateDecision decision,
+            boolean applyLiveChanges) {
+        RtmpStreamConfig targetConfig = new RtmpStreamConfig(mRequestedStreamConfig);
+        targetConfig.setVideoBitrate(decision.getTargetBitrateBps());
+
+        boolean changed = targetConfig.getVideoBitrate() != mStreamConfig.getVideoBitrate();
+        mLastBitrateDecision = decision;
+
+        if (!changed) {
+            return;
+        }
+
+        RtmpStreamConfig previousConfig = new RtmpStreamConfig(mStreamConfig);
+        mStreamConfig = targetConfig;
+
+        Log.i(TAG, "Temperature control update (" + buildThermalDebugDetails(decision) + "): "
+            + describeStreamConfig(previousConfig)
+            + " to " + describeStreamConfig(mStreamConfig));
+
+        if (!applyLiveChanges) {
+            return;
+        }
+
+        synchronized (mStateLock) {
+            if (mStreamState != StreamState.STREAMING || mStreamer == null) {
+                return;
+            }
+        }
+
+        applyLiveVideoBitrate();
+    }
+
+    private void startThermalMonitoring() {
+        if (mThermalBitrateController == null) {
+            return;
+        }
+        stopThermalMonitoring();
+        mThermalBitrateController.reset(mRequestedStreamConfig.getVideoBitrate());
+        mThermalBitrateController.start();
+        if (mLastBitrateDecision != null) {
+            Log.i(TAG, "Temperature monitoring active (" + buildThermalDebugDetails(
+                mLastBitrateDecision) + ")");
+        }
+    }
+
+    private void stopThermalMonitoring() {
+        if (mThermalBitrateController != null) {
+            mThermalBitrateController.stop();
+        }
+    }
+
+    private void applyLiveVideoBitrate() {
+        try {
+            if (mStreamer == null) {
+                return;
+            }
+            mStreamer.getSettings().getVideo().setBitrate(mStreamConfig.getVideoBitrate());
+            Log.i(TAG, "Applied RTMP video bitrate: " + (mStreamConfig.getVideoBitrate() / 1000)
+                + " kbps");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to apply RTMP bitrate update", e);
+        }
+    }
+
+    private String buildThermalDebugDetails(
+            StreamingBitrateTemperatureController.BitrateDecision decision) {
+        StringBuilder details = new StringBuilder("source=sysfs")
+            .append(", raw=").append(StreamingThermalUtils.formatTemperature(
+                decision.getRawCpuTempMilli()))
+            .append(", smoothed=").append(StreamingThermalUtils.formatTemperature(
+                decision.getSmoothedCpuTempMilli()))
+            .append(", softTarget=").append(String.format(java.util.Locale.US, "%.1fC",
+                StreamingBitrateTemperatureController.getSoftTargetTempC()))
+            .append(", max=").append(String.format(java.util.Locale.US, "%.1fC",
+                StreamingBitrateTemperatureController.getHardLimitTempC()))
+            .append(", scale=").append(String.format(java.util.Locale.US, "%.2f",
+                decision.getAppliedScale()))
+            .append(", integral=").append(String.format(java.util.Locale.US, "%.2fC",
+                decision.getIntegralErrorC()))
+            .append(", bitrate=").append(decision.getTargetBitrateBps() / 1000)
+            .append("/").append(mRequestedStreamConfig.getVideoBitrate() / 1000).append("kbps");
+
+        if (decision.isHardLimitActive()) {
+            details.append(", hardLimit");
+        }
+
+        return details.toString();
+    }
+
+    private String describeStreamConfig(RtmpStreamConfig config) {
+        return config.getVideoWidth() + "x" + config.getVideoHeight()
+            + "@" + config.getVideoFps() + "fps "
+            + (config.getVideoBitrate() / 1000) + "kbps";
+    }
+
     private void startMetricsReporting() {
         if (mMetricsReporter == null) {
             return;
@@ -1443,8 +1599,8 @@ public class RtmpStreamingService extends Service {
     }
 
     private double getCpuTemperatureC() {
-        int cpuTempMilli = WhipThermalUtils.readCpuTemperature();
-        return cpuTempMilli > 0 ? WhipThermalUtils.toCelsius(cpuTempMilli) : -1;
+        int cpuTempMilli = StreamingThermalUtils.readCpuTemperature();
+        return cpuTempMilli > 0 ? StreamingThermalUtils.toCelsius(cpuTempMilli) : -1;
     }
 
 
@@ -1458,15 +1614,12 @@ public class RtmpStreamingService extends Service {
      * @param config The stream configuration to use
      */
     public static void setStreamConfig(RtmpStreamConfig config) {
-        if (config == null) {
-            config = new RtmpStreamConfig(); // Use defaults if null
-        }
         if (sInstance != null) {
-            sInstance.mStreamConfig = config;
-            Log.d(TAG, "✅ Stream config set: " + config.toString());
+            sInstance.updateRequestedStreamConfig(config, true);
+            Log.d(TAG, "✅ Stream config set: " + sInstance.mRequestedStreamConfig.toString());
         } else {
-            sPendingStreamConfig = config;
-            Log.d(TAG, "✅ Stream config stored as pending: " + config.toString());
+            sPendingStreamConfig = config != null ? new RtmpStreamConfig(config) : new RtmpStreamConfig();
+            Log.d(TAG, "✅ Stream config stored as pending: " + sPendingStreamConfig.toString());
         }
     }
 
