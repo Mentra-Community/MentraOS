@@ -209,9 +209,7 @@ export class CameraManager {
       this.deps.messageHandlers.register(CloudToAppMessageType.STREAM_STATUS, (msg: any) =>
         this.handleStreamStatus(msg),
       ),
-      this.deps.messageHandlers.register("rtmp_stream_status" as any, (msg: any) =>
-        this.handleStreamStatus(msg),
-      ),
+      this.deps.messageHandlers.register("rtmp_stream_status" as any, (msg: any) => this.handleStreamStatus(msg)),
       this.deps.messageHandlers.register(CloudToAppMessageType.MANAGED_STREAM_STATUS, (msg: any) =>
         this.handleManagedStreamStatus(msg),
       ),
@@ -371,7 +369,13 @@ export class CameraManager {
   private async _startDirectStream(opts: StreamOptions): Promise<void> {
     const url = opts.direct!;
 
-    if (!url.startsWith("rtmp://") && !url.startsWith("rtmps://") && !url.startsWith("srt://") && !url.startsWith("https://") && !url.startsWith("http://")) {
+    if (
+      !url.startsWith("rtmp://") &&
+      !url.startsWith("rtmps://") &&
+      !url.startsWith("srt://") &&
+      !url.startsWith("https://") &&
+      !url.startsWith("http://")
+    ) {
       throw new Error("Invalid stream URL: must start with rtmp://, rtmps://, srt://, https://, or http://");
     }
 
@@ -440,7 +444,13 @@ export class CameraManager {
 
   /** @deprecated Use startStream({ direct: url }) instead */
   async startDirectStream(options: RtmpStreamOptions): Promise<void> {
-    return this._startDirectStream({ direct: options.rtmpUrl, video: options.video, audio: options.audio, stream: options.stream, sound: options.sound });
+    return this._startDirectStream({
+      direct: options.rtmpUrl,
+      video: options.video,
+      audio: options.audio,
+      stream: options.stream,
+      sound: options.sound,
+    });
   }
 
   /** @deprecated Use startStream() or startStream({ destinations: [...] }) instead */

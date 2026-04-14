@@ -483,18 +483,7 @@ export default function EditMiniApp() {
       }
 
       // Step 4: Normalize URLs before submission
-      // If webviewURL is empty, use the default based on publicUrl
-      let finalWebviewUrl = formData.webviewURL;
-      if (!finalWebviewUrl && formData.publicUrl) {
-        try {
-          const normalizedServerUrl = normalizeUrl(formData.publicUrl);
-          const base = normalizedServerUrl.replace(/\/$/, "");
-          finalWebviewUrl = `${base}/webview`;
-        } catch {
-          // If normalization fails, leave empty
-          finalWebviewUrl = "";
-        }
-      }
+      const finalWebviewUrl = formData.webviewURL || "";
 
       const normalizedData = {
         name: formData.name,
