@@ -1,0 +1,1128 @@
+import {
+  AppletInterface,
+  DeviceTypes,
+  getModelCapabilities,
+  HardwareRequirementLevel,
+  HardwareType,
+} from "@/../../cloud/packages/types/src"
+import {useMemo} from "react"
+import {Platform} from "react-native"
+import {AsyncResult, result as Res, Result} from "typesafe-ts"
+import {create} from "zustand"
+import * as Sentry from "@sentry/react-native"
+
+import {getCurrentRoute, push} from "@/contexts/NavigationHistoryContext"
+import {translate} from "@/i18n"
+import CoreModule from "core"
+import restComms from "@/services/RestComms"
+import STTModelManager from "@/services/STTModelManager"
+import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {showAlert} from "@/contexts/ModalContext"
+import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
+import {BackgroundTimer} from "@/utils/timers"
+import {storage} from "@/utils/storage"
+import {useShallow} from "zustand/react/shallow"
+import composer from "@/services/Composer"
+
+export interface ClientAppletInterface extends AppletInterface {
+  offline: boolean
+  offlineRoute: string
+  compatibility?: CompatibilityResult
+  loading: boolean
+  local: boolean
+  hidden: boolean
+  onStart?: () => AsyncResult<void, Error>
+  onStop?: () => AsyncResult<void, Error>
+  screenshot?: string
+  runtimePermissions?: string[]
+  declaredPermissions?: string[]
+  version?: string
+  needsPcm?: boolean
+  needsTranscript?: boolean
+}
+
+interface AppStatusState {
+  apps: ClientAppletInterface[]
+  refreshApplets: () => Promise<void>
+  retryStartApp: (packageName: string) => void
+  startApplet: (applet: ClientAppletInterface, options?: {skipNavigation?: boolean}) => Promise<void>
+  stopApplet: (packageName: string) => Promise<void>
+  stopAllApplets: () => AsyncResult<void, Error>
+  saveScreenshot: (packageName: string, screenshot: string) => Promise<void>
+  setInstalledLmas: (installedLmas: ClientAppletInterface[]) => void
+  setHiddenStatus: (packageName: string, status: boolean) => void
+  getHiddenStatus: (packageName: string) => boolean
+  uninstallApplet: (packageName: string) => Promise<void>
+}
+
+export const DUMMY_APPLET: ClientAppletInterface = {
+  packageName: "",
+  name: "",
+  webviewUrl: "",
+  logoUrl: "",
+  type: "standard",
+  permissions: [],
+  running: false,
+  loading: false,
+  healthy: true,
+  hardwareRequirements: [],
+  offline: true,
+  offlineRoute: "",
+  local: false,
+  hidden: false,
+}
+
+/**
+ * Offline Apps Configuration
+ *
+ * These are local React Native apps that don't require webviews or server communication.
+ * They navigate directly to specific React Native routes when activated.
+ */
+
+export const cameraPackageName = "com.mentra.camera"
+export const captionsPackageName = "com.mentra.offline_captions"
+export const galleryPackageName = "com.mentra.gallery"
+export const settingsPackageName = "com.mentra.settings"
+export const storePackageName = "com.mentra.store"
+export const simulatedPackageName = "com.mentra.simulated"
+export const mirrorPackageName = "com.mentra.mirror"
+export const lmaInstallerPackageName = "com.mentra.lma_installer"
+export const mentraAiPackageName = "com.mentra.ai"
+export const feedbackPackageName = "com.mentra.feedback"
+export const notifyPackageName = "cloud.augmentos.notify"
+
+export const uninstallAppUI = async (clientApp: ClientAppletInterface) => {
+  console.log(`Uninstalling app: ${clientApp.packageName}`)
+
+  let result = await showAlert({
+    title: translate("appSettings:uninstallApp"),
+    message: translate("appSettings:uninstallConfirm", {appName: clientApp.name}),
+    buttons: [
+      {text: translate("common:cancel"), style: "cancel"},
+      {text: translate("appSettings:uninstall"), style: "destructive"},
+    ],
+  })
+
+  if (result === 1) {
+    try {
+      // First stop the app if it's running
+      if (clientApp.running) {
+        useAppletStatusStore.getState().stopApplet(clientApp.packageName)
+      }
+
+      await useAppletStatusStore.getState().uninstallApplet(clientApp.packageName)
+      await showAlert({
+        title: translate("common:success"),
+        message: translate("appSettings:uninstalledSuccess", {appName: clientApp.name}),
+        buttons: [{text: translate("common:ok")}],
+      })
+    } catch (error: any) {
+      console.error("APPLET: Error uninstalling app:", error)
+      useAppletStatusStore.getState().refreshApplets()
+      await showAlert({
+        title: translate("common:error"),
+        message: translate("appSettings:uninstallError", {error: error.message || "Unknown error"}),
+        buttons: [{text: translate("common:ok")}],
+      })
+    }
+  }
+}
+
+export const saveLocalAppRunningState = (packageName: string, status: boolean): AsyncResult<void, Error> => {
+  return Res.try_async(async () => {
+    await storage.save(`${packageName}_running`, status)
+    return undefined
+  })
+}
+
+export const saveLastOpenTime = (packageName: string): AsyncResult<void, Error> => {
+  return Res.try_async(async () => {
+    await storage.save(`${packageName}_last_open_time`, Date.now())
+    return undefined
+  })
+}
+
+export const getLastOpenTime = (packageName: string): AsyncResult<number, Error> => {
+  return Res.try_async(async () => {
+    const lastOpenTime = await storage.load<number>(`${packageName}_last_open_time`)
+    if (lastOpenTime.is_ok()) {
+      return lastOpenTime.value
+    }
+    return 0
+  })
+}
+
+export const sortAppsByLastOpenTime = async <T extends {packageName: string}>(apps: T[]): Promise<T[]> => {
+  const timestamps = await Promise.all(
+    apps.map(async (app) => ({
+      app,
+      time: await getLastOpenTime(app.packageName),
+    })),
+  )
+  return timestamps
+    .sort((a, b) => {
+      if (a.time.is_error() || b.time.is_error()) return 0
+      return a.time.value - b.time.value
+    })
+    .map((entry) => entry.app)
+}
+
+export type OrderMap = Record<string, number>
+const APP_ORDER_KEY = "foreground_apps_order"
+export const saveAppsOrder = (orderMap: OrderMap) => {
+  return storage.save(APP_ORDER_KEY, orderMap)
+}
+
+export const getAppsOrder = (): Result<OrderMap, Error> => {
+  return storage.load<OrderMap>(APP_ORDER_KEY)
+}
+
+const getRawPackageNamePriority = (pkg: string) => {
+  if (pkg.includes("@empty")) {
+    return 1000
+  }
+  return 0
+}
+
+export const sortAppsByPackageNamePriority = (a: ClientAppletInterface, b: ClientAppletInterface): number => {
+  const pa = getRawPackageNamePriority(a.packageName)
+  const pb = getRawPackageNamePriority(b.packageName)
+  if (pa !== pb) {
+    return pa - pb
+  }
+
+  return a.name.localeCompare(b.name)
+}
+
+// these apps cannot be uninstalled:
+export const SYSTEM_APPS = [
+  cameraPackageName,
+  captionsPackageName,
+  galleryPackageName,
+  settingsPackageName,
+  storePackageName,
+  simulatedPackageName,
+  mirrorPackageName,
+  mentraAiPackageName,
+  notifyPackageName,
+  feedbackPackageName,
+]
+
+// get offline applets:
+const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
+  let miniApps: ClientAppletInterface[] = [
+    {
+      packageName: cameraPackageName,
+      name: translate("miniApps:camera"),
+      type: "standard", // Foreground app (only one at a time)
+      offline: true, // Works without internet connection
+      logoUrl: require("@assets/applet-icons/camera.png"),
+      // description: "Capture photos and videos with your Mentra glasses.",
+      webviewUrl: "",
+      // version: "0.0.1",
+      permissions: [],
+      offlineRoute: "/asg/gallery",
+      local: false,
+      running: false,
+      loading: false,
+      healthy: true,
+      hidden: false,
+      hardwareRequirements: [
+        {type: HardwareType.CAMERA, level: HardwareRequirementLevel.REQUIRED},
+        {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      ],
+      onStart: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          await storage.save(`${cameraPackageName}_running`, true)
+          // tell the core:
+          await useSettingsStore.getState().setSetting(SETTINGS.offline_camera_running.key, true)
+          return undefined
+        })
+      },
+      onStop: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          await storage.save(`${cameraPackageName}_running`, false)
+          // tell the core:
+          await useSettingsStore.getState().setSetting(SETTINGS.offline_camera_running.key, false)
+          return undefined
+        })
+      },
+    },
+    {
+      packageName: captionsPackageName,
+      name: translate("miniApps:offlineCaptions"),
+      type: "standard", // Foreground app (only one at a time)
+      offline: true, // Works without internet connection
+      // logoUrl: getCaptionsIcon(isDark),
+      logoUrl: require("@assets/applet-icons/captions.png"),
+      // description: "Live captions for your mentra glasses.",
+      webviewUrl: "",
+      healthy: true,
+      hidden: false,
+      permissions: [],
+      offlineRoute: "",
+      running: false,
+      loading: false,
+      local: false,
+      hardwareRequirements: [
+        {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+        {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      ],
+      onStart: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          const modelAvailable = await STTModelManager.isModelAvailable()
+          if (modelAvailable) {
+            await storage.save(`${captionsPackageName}_running`, true)
+            // ensure transcriber is initialized with the current model:
+            await CoreModule.restartTranscriber()
+            // tell the core:
+            await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true)
+            return undefined
+          }
+
+          let result = await showAlert({
+            title: translate("transcription:noModelInstalled"),
+            message: translate("transcription:noModelInstalledMessage"),
+            buttons: [
+              {text: translate("common:cancel"), style: "cancel"},
+              {text: translate("transcription:goToSettings"), style: "default"},
+            ],
+          })
+
+          if (result === 1) {
+            push("/miniapps/settings/transcription")
+          }
+
+          throw new Error("No model available")
+        })
+      },
+      onStop: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          await storage.save(`${captionsPackageName}_running`, false)
+          // tell the core:
+          await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, false)
+          return undefined
+        })
+      },
+    },
+    {
+      packageName: notifyPackageName,
+      name: translate("miniApps:offlineCaptions"),
+      type: "standard", // Foreground app (only one at a time)
+      offline: true, // Works without internet connection
+      // logoUrl: getCaptionsIcon(isDark),
+      logoUrl: require("@assets/applet-icons/notification.png"),
+      // description: "Live captions for your mentra glasses.",
+      webviewUrl: "",
+      healthy: true,
+      hidden: false,
+      permissions: [],
+      offlineRoute: "",
+      running: false,
+      loading: false,
+      local: false,
+      hardwareRequirements: [
+        {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+        {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      ],
+      onStart: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          // const modelAvailable = await STTModelManager.isModelAvailable()
+          // if (modelAvailable) {
+          //   await storage.save(`${captionsPackageName}_running`, true)
+          //   // ensure transcriber is initialized with the current model:
+          //   await CoreModule.restartTranscriber()
+          //   // tell the core:
+          //   await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true)
+          //   return undefined
+          // }
+          // let result = await showAlert({
+          //   title: translate("transcription:noModelInstalled"),
+          //   message: translate("transcription:noModelInstalledMessage"),
+          //   buttons: [
+          //     {text: translate("common:cancel"), style: "cancel"},
+          //     {text: translate("transcription:goToSettings"), style: "default"},
+          //   ],
+          // })
+          // if (result === 1) {
+          //   push("/miniapps/settings/transcription")
+          // }
+          // throw new Error("No model available")
+        })
+      },
+      onStop: (): AsyncResult<void, Error> => {
+        return Res.try_async(async () => {
+          await storage.save(`${captionsPackageName}_running`, false)
+          // tell the core:
+          await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, false)
+          return undefined
+        })
+      },
+    },
+    // {
+    //   packageName: captionsPackageName,
+    //   name: translate("miniApps:offlineCaptions"),
+    //   type: "standard", // Foreground app (only one at a time)
+    //   offline: true, // Works without internet connection
+    //   // logoUrl: getCaptionsIcon(isDark),
+    //   logoUrl: require("@assets/applet-icons/captions.png"),
+    //   // description: "Live captions for your mentra glasses.",
+    //   webviewUrl: "",
+    //   healthy: true,
+    //   hidden: false,
+    //   permissions: [],
+    //   offlineRoute: "",
+    //   running: false,
+    //   loading: false,
+    //   local: false,
+    //   hardwareRequirements: [
+    //     {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+    //     {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+    //   ],
+    //   onStart: (): AsyncResult<void, Error> => {
+    //     return Res.try_async(async () => {
+    //       const modelAvailable = await STTModelManager.isModelAvailable()
+    //       if (modelAvailable) {
+    //         await storage.save(`${captionsPackageName}_running`, true)
+    //         // ensure transcriber is initialized with the current model:
+    //         await CoreModule.restartTranscriber()
+    //         // tell the core:
+    //         await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true)
+    //         return undefined
+    //       }
+
+    //       let result = await showAlert({
+    //         title: translate("transcription:noModelInstalled"),
+    //         message: translate("transcription:noModelInstalledMessage"),
+    //         buttons: [
+    //           {text: translate("common:cancel"), style: "cancel"},
+    //           {text: translate("transcription:goToSettings"), style: "default"},
+    //         ],
+    //       })
+
+    //       if (result === 1) {
+    //         push("/miniapps/settings/transcription")
+    //       }
+
+    //       throw new Error("No model available")
+    //     })
+    //   },
+    //   onStop: (): AsyncResult<void, Error> => {
+    //     return Res.try_async(async () => {
+    //       await storage.save(`${captionsPackageName}_running`, false)
+    //       // tell the core:
+    //       await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, false)
+    //       return undefined
+    //     })
+    //   },
+    // },
+    // {
+    //   packageName: galleryPackageName,
+    //   name: translate("miniApps:gallery"),
+    //   type: "background", // Foreground app (only one at a time)
+    //   offline: true, // Works without internet connection
+    //   logoUrl: require("@assets/applet-icons/gallery.png"),
+    //   local: false,
+    //   running: false,
+    //   loading: false,
+    //   healthy: true,
+    //   hidden: false,
+    //   permissions: [],
+    //   offlineRoute: "/asg/gallery",
+    //   webviewUrl: "",
+    //   hardwareRequirements: [
+    //     {type: HardwareType.CAMERA, level: HardwareRequirementLevel.REQUIRED},
+    //     {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+    //   ],
+    //   onStart: () => saveLocalAppRunningState(galleryPackageName, true),
+    //   onStop: () => saveLocalAppRunningState(galleryPackageName, false),
+    // },
+    {
+      packageName: settingsPackageName,
+      name: translate("miniApps:settings"),
+      type: "background", // Foreground app (only one at a time)
+      offline: true, // Works without internet connection
+      logoUrl: require("@assets/applet-icons/settings.png"),
+      local: false,
+      running: false,
+      loading: false,
+      healthy: true,
+      hidden: false,
+      permissions: [],
+      offlineRoute: "/miniapps/settings/main",
+      webviewUrl: "",
+      hardwareRequirements: [],
+      onStart: () => saveLocalAppRunningState(settingsPackageName, true),
+      onStop: () => saveLocalAppRunningState(settingsPackageName, false),
+    },
+    {
+      packageName: storePackageName,
+      name: translate("miniApps:store"),
+      offlineRoute: "/miniapps/store/store",
+      webviewUrl: "",
+      healthy: true,
+      hidden: false,
+      permissions: [],
+      offline: true,
+      running: false,
+      loading: false,
+      hardwareRequirements: [],
+      type: "background",
+      logoUrl: require("@assets/applet-icons/store.png"),
+      local: false,
+      onStart: () => {
+        return Res.try_async(async () => {
+          const appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
+          if (!appSwitcherUi) {
+            saveLocalAppRunningState(storePackageName, true)
+          }
+          return undefined
+        })
+      },
+      onStop: () => {
+        return Res.try_async(async () => {
+          const appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
+          if (!appSwitcherUi) {
+            saveLocalAppRunningState(storePackageName, false)
+          }
+          return undefined
+        })
+      },
+    },
+    {
+      packageName: mirrorPackageName,
+      name: translate("miniApps:mirror"),
+      offlineRoute: "/miniapps/mirror/mirror",
+      webviewUrl: "",
+      healthy: true,
+      hidden: false,
+      permissions: [],
+      offline: true,
+      running: false,
+      loading: false,
+      hardwareRequirements: [
+        {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+        {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      ],
+      type: "background",
+      logoUrl: require("@assets/applet-icons/mirror.png"),
+      local: false,
+      onStart: () => saveLocalAppRunningState(mirrorPackageName, true),
+      onStop: () => saveLocalAppRunningState(mirrorPackageName, false),
+    },
+    {
+      packageName: feedbackPackageName,
+      name: translate("miniApps:feedback"),
+      type: "background",
+      offline: true,
+      logoUrl: require("@assets/applet-icons/feedback.png"),
+      offlineRoute: "/miniapps/settings/feedback",
+      webviewUrl: "",
+      healthy: true,
+      hidden: false,
+      permissions: [],
+      running: false,
+      loading: false,
+      local: false,
+      hardwareRequirements: [],
+      onStart: () => saveLocalAppRunningState(feedbackPackageName, true),
+      onStop: () => saveLocalAppRunningState(feedbackPackageName, false),
+    },
+    // {
+    //   packageName: simulatedPackageName,
+    //   name: translate("miniApps:simulated"),
+    //   offlineRoute: "/miniapps/simulated",
+    //   webviewUrl: "",
+    //   healthy: true,
+    //   permissions: [],
+    //   offline: true,
+    //   running: false,
+    //   loading: false,
+    //   hardwareRequirements: [],
+    //   type: "background",
+    //   logoUrl: require("@assets/applet-icons/simulated.png"),
+    //   local: false,
+    //   onStart: () => saveLocalAppRunningState(simulatedPackageName, true),
+    //   onStop: () => saveLocalAppRunningState(simulatedPackageName, false),
+    // },
+  ]
+
+  let superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+  let appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
+  if (superMode && appSwitcherUi) {
+    miniApps.push({
+      packageName: lmaInstallerPackageName,
+      name: translate("miniApps:lmaInstaller"),
+      type: "standard",
+      offline: true,
+      offlineRoute: "/miniapps/dev/mini-app-installer",
+      local: false,
+      webviewUrl: "",
+      permissions: [],
+      running: false,
+      loading: false,
+      healthy: true,
+      hidden: false,
+      hardwareRequirements: [],
+      logoUrl: require("@assets/applet-icons/store.png"),
+      onStart: () => saveLocalAppRunningState(lmaInstallerPackageName, true),
+      onStop: () => saveLocalAppRunningState(lmaInstallerPackageName, false),
+    })
+  }
+
+  if (!appSwitcherUi) {
+    // remove the settings, gallery, and simulator apps:
+    miniApps = miniApps.filter(
+      (app) =>
+        app.packageName !== settingsPackageName &&
+        app.packageName !== galleryPackageName &&
+        app.packageName !== simulatedPackageName &&
+        app.packageName !== mirrorPackageName,
+    )
+  }
+
+  // check the storage for the running state of the applets and update them:
+  for (const mapp of miniApps) {
+    let runningRes = await storage.load(`${mapp.packageName}_running`)
+    if (runningRes.is_ok() && runningRes.value) {
+      mapp.running = true
+    }
+    // let screenshotRes = await storage.load<string>(`${mapp.packageName}_screenshot`)
+    // if (screenshotRes.is_ok() && screenshotRes.value) {
+    //   mapp.screenshot = screenshotRes.value
+    // }
+  }
+  return miniApps as ClientAppletInterface[]
+}
+
+const startStopOfflineApplet = (applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> => {
+  // await useSettingsStore.getState().setSetting(packageName, status)
+  return Res.try_async(async () => {
+    let packageName = applet.packageName
+
+    let appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
+    if (packageName === storePackageName && !appSwitcherUi) {
+      push("/store")
+      return
+    }
+
+    if (!status && applet.onStop) {
+      const result = await applet.onStop()
+      if (result.is_error()) {
+        console.log(`APPLET: Failed to stop applet onStop() for ${applet.packageName}: ${result.error}`)
+        return
+      }
+    }
+
+    if (status && applet.onStart) {
+      const result = await applet.onStart()
+      if (result.is_error()) {
+        console.log(`APPLET: Failed to start applet onStart() for ${applet.packageName}: ${result.error}`)
+        return
+      }
+    }
+  })
+}
+
+let refreshTimeout: ReturnType<typeof BackgroundTimer.setTimeout> | null = null
+let refreshInterval: ReturnType<typeof BackgroundTimer.setInterval> | null = null
+// actually turn on or off an applet:
+const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> => {
+  // Offline apps don't need to wait for server confirmation
+  if (applet.offline) {
+    return startStopOfflineApplet(applet, status)
+  }
+
+  if (applet.local) {
+    // return composer.startStop(applet, status)
+    return startStopOfflineApplet(applet, status)
+  }
+
+  // Clear any pending refresh timers
+  if (refreshTimeout) {
+    BackgroundTimer.clearTimeout(refreshTimeout)
+    refreshTimeout = null
+  }
+  if (refreshInterval) {
+    BackgroundTimer.clearInterval(refreshInterval)
+    refreshInterval = null
+  }
+
+  // For online apps, poll every 1s for up to 6s to confirm server state
+  if (status) {
+    let pollCount = 0
+    const MAX_POLLS = 6
+    refreshInterval = BackgroundTimer.setInterval(() => {
+      pollCount++
+      useAppletStatusStore.getState().refreshApplets()
+      if (pollCount >= MAX_POLLS) {
+        if (refreshInterval) {
+          BackgroundTimer.clearInterval(refreshInterval)
+          refreshInterval = null
+        }
+      }
+    }, 1000)
+  } else {
+    // For stop, single refresh after 2s is fine
+    refreshTimeout = BackgroundTimer.setTimeout(() => {
+      useAppletStatusStore.getState().refreshApplets()
+    }, 2000)
+  }
+
+  if (status) {
+    return restComms.startApp(applet.packageName)
+  } else {
+    return restComms.stopApp(applet.packageName)
+  }
+}
+
+export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
+  apps: [],
+
+  retryStartApp: (packageName: string) => {
+    // Re-send start request and set up polling (used by error screen retry)
+    if (refreshInterval) {
+      BackgroundTimer.clearInterval(refreshInterval)
+      refreshInterval = null
+    }
+    let pollCount = 0
+    const MAX_POLLS = 6
+    refreshInterval = BackgroundTimer.setInterval(() => {
+      pollCount++
+      useAppletStatusStore.getState().refreshApplets()
+      if (pollCount >= MAX_POLLS) {
+        if (refreshInterval) {
+          BackgroundTimer.clearInterval(refreshInterval)
+          refreshInterval = null
+        }
+      }
+    }, 1000)
+    restComms.startApp(packageName)
+  },
+
+  refreshApplets: async () => {
+    const state = get()
+    console.log(`APPLETS: refreshApplets()`)
+    // cancel any pending refresh timeouts:
+    if (refreshTimeout) {
+      BackgroundTimer.clearTimeout(refreshTimeout)
+      refreshTimeout = null
+    }
+
+    let onlineApps: ClientAppletInterface[] = []
+    let res = await restComms.getApplets()
+    if (res.is_error()) {
+      console.error(`APPLETS: Failed to get applets: ${res.error}`)
+      // continue anyway in case we're just offline:
+      Sentry.captureException(res.error)
+    } else {
+      // convert to the client applet interface:
+      onlineApps = res.value.map((app) => ({
+        ...app,
+        loading: false,
+        offline: false,
+        offlineRoute: "",
+        local: false,
+        hidden: false,
+        hardwareRequirements: [
+          ...app.hardwareRequirements,
+          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+        ],
+      }))
+    }
+
+    // merge in the offline apps:
+    let applets: ClientAppletInterface[] = [
+      ...onlineApps,
+      ...(await getOfflineApplets()),
+      ...(await composer.getLocalApplets()),
+    ]
+
+    // remove duplicates and keep the online versions:
+    const packageNameMap = new Map<string, ClientAppletInterface>()
+    applets.forEach((app) => {
+      const existing = packageNameMap.get(app.packageName)
+      if (!existing) {
+        packageNameMap.set(app.packageName, app)
+      }
+    })
+    applets = Array.from(packageNameMap.values())
+
+    // add in any existing screenshots:
+    let oldApplets = useAppletStatusStore.getState().apps
+    oldApplets.forEach((app) => {
+      if (app.screenshot) {
+        for (const applet of applets) {
+          if (applet.packageName === app.packageName) {
+            applet.screenshot = app.screenshot
+          }
+        }
+      }
+    })
+
+    // add in the compatibility info:
+    let defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
+    let capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+
+    for (const applet of applets) {
+      // console.log(`APPLETS: ${applet.packageName} ${JSON.stringify(applet.hardwareRequirements)}`)
+      let result = HardwareCompatibility.checkCompatibility(applet.hardwareRequirements, capabilities)
+      applet.compatibility = result
+    }
+
+    for (const applet of applets) {
+      applet.hidden = state.getHiddenStatus(applet.packageName)
+    }
+
+    // Platform-specific app filtering and routing
+    applets = applets.filter((applet) => {
+      // Notify is not supported on iOS yet - remove entirely
+      if (Platform.OS === "ios" && applet.packageName === notifyPackageName) {
+        return false
+      }
+      return true
+    })
+    for (const applet of applets) {
+      if (applet.packageName === notifyPackageName) {
+        // On Android, route to notification settings instead of generic webview settings
+        applet.offlineRoute = "/miniapps/settings/notifications"
+      }
+    }
+
+    set({apps: applets})
+  },
+
+  startApplet: async (applet: ClientAppletInterface, options?: {skipNavigation?: boolean}) => {
+    const packageName = applet.packageName
+
+    if (!applet) {
+      console.error(`Applet not found for package name: ${packageName}`)
+      return
+    }
+
+    // do nothing if any applet is currently loading:
+    if (get().apps.some((a) => a.loading)) {
+      console.log(`APPLETS: Skipping start applet ${packageName} because another applet is currently loading`)
+      return
+    }
+
+    // console.log(`APPLETS: Starting applet ${packageName}`, applet.compatibility)
+    // console.log(`APPLETS: All apps: ${applet}`)
+
+    // show incompatible alert if the applet is incompatible:
+    if (!applet.compatibility?.isCompatible) {
+      // if one of the missing types is EXIST, show a specific message:
+      const missingTypes = applet.compatibility?.missingRequired?.map((req) => req.type) || []
+      if (missingTypes.includes(HardwareType.EXIST)) {
+        await showAlert({
+          title: translate("home:glassesRequired"),
+          buttons: [{text: translate("common:ok")}],
+          message: translate("home:glassesRequiredMessage", {app: applet.name}),
+        })
+        return
+      }
+      const missingHardware =
+        missingTypes
+          .filter((t) => t !== HardwareType.EXIST)
+          .map((t) => t.toLowerCase())
+          .join(", ") || "required features"
+
+      await showAlert({
+        title: translate("home:hardwareIncompatible"),
+        buttons: [{text: translate("common:ok")}],
+        message: translate("home:hardwareIncompatibleMessage", {
+          app: applet.name,
+          missing: missingHardware,
+        }),
+      })
+
+      return
+    }
+
+    // Handle foreground apps - only one can run at a time
+    if (applet.type === "standard") {
+      const runningForegroundApps = get().apps.filter(
+        (app) => app.running && app.type === "standard" && app.packageName !== packageName,
+      )
+
+      console.log(`Found ${runningForegroundApps.length} running foreground apps to stop`)
+
+      // Stop all other running foreground apps (both online and offline)
+      for (const runningApp of runningForegroundApps) {
+        console.log(`Stopping foreground app: ${runningApp.name} (${runningApp.packageName})`)
+
+        startStopApplet(runningApp, false)
+      }
+    }
+
+    // offline apps should not need to load:
+    let shouldLoad = !applet.offline && !applet.local
+
+    // Start the new app
+    set((state) => ({
+      apps: state.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a)),
+    }))
+
+    // open the app webview if it has one:
+    let appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
+    if (appSwitcherUi && !options?.skipNavigation) {
+      // only open if the current route is home:
+      const currentRoute = getCurrentRoute()
+      if (currentRoute === "/home") {
+        saveLastOpenTime(applet.packageName)
+        if (applet.offlineRoute) {
+          push(applet.offlineRoute, {transition: "zoom"})
+        } else if (applet.offline) {
+          // offline app with no route - nothing to navigate to
+        } else if (applet.local) {
+          push("/applet/local", {
+            packageName: applet.packageName,
+            version: applet.version,
+            appName: applet.name,
+            transition: "zoom",
+          })
+        } else if (applet.webviewUrl && applet.healthy) {
+          // Check if app has webviewURL and navigate directly to it
+          push("/applet/webview", {
+            webviewURL: applet.webviewUrl,
+            appName: applet.name,
+            packageName: applet.packageName,
+            transition: "zoom",
+          })
+        } else {
+          // open settings page
+          push("/applet/settings", {
+            packageName: applet.packageName,
+            appName: applet.name,
+            transition: "zoom",
+          })
+        }
+      }
+    }
+
+    const result = await startStopApplet(applet, true)
+    if (result.is_error()) {
+      console.error(`Failed to start applet ${applet.packageName}: ${result.error}`)
+      set((state) => ({
+        apps: state.apps.map((a) => (a.packageName === packageName ? {...a, running: false, loading: false} : a)),
+      }))
+      return
+    }
+
+    await useSettingsStore.getState().setSetting(SETTINGS.has_ever_activated_app.key, true)
+  },
+
+  stopApplet: async (packageName: string) => {
+    const applet = get().apps.find((a) => a.packageName === packageName)
+    if (!applet) {
+      console.error(`Applet with package name ${packageName} not found`)
+      return
+    }
+
+    let shouldLoad = !applet.offline && !applet.local
+    set((state) => ({
+      apps: state.apps.map((a) =>
+        a.packageName === packageName ? {...a, running: false, screenshot: undefined, loading: shouldLoad} : a,
+      ),
+    }))
+
+    startStopApplet(applet, false)
+  },
+
+  uninstallApplet: async (packageName: string) => {
+    const applet = get().apps.find((a) => a.packageName === packageName)
+    if (!applet) {
+      console.error(`Applet with package name ${packageName} not found`)
+      return
+    }
+
+    if (applet.running) {
+      await startStopApplet(applet, false)
+    }
+    await restComms.uninstallApp(packageName)
+    set((state) => ({
+      apps: state.apps.filter((a) => a.packageName !== packageName),
+    }))
+  },
+
+  setHiddenStatus: (packageName: string, status: boolean) => {
+    set((state) => ({
+      apps: state.apps.map((a) => (a.packageName === packageName ? {...a, hidden: status} : a)),
+    }))
+    storage.save(`${packageName}_hidden`, status)
+    if (!status) {
+      // update the order map to remove the entry for the package name:
+      const orderMap = getAppsOrder()
+      if (orderMap.is_ok()) {
+        delete orderMap.value[packageName]
+        saveAppsOrder(orderMap.value)
+      }
+    }
+  },
+
+  getHiddenStatus: (packageName: string): boolean => {
+    const hidden = storage.load<boolean>(`${packageName}_hidden`)
+    if (hidden.is_ok()) {
+      return hidden.value
+    }
+    return false
+  },
+
+  stopAllApplets: (): AsyncResult<void, Error> => {
+    return Res.try_async(async () => {
+      const runningApps = get().apps.filter((app) => app.running)
+
+      for (const app of runningApps) {
+        await get().stopApplet(app.packageName)
+      }
+    })
+  },
+
+  saveScreenshot: async (packageName: string, screenshot: string) => {
+    // await storage.save(`${packageName}_screenshot`, screenshot)
+    set((state) => ({
+      apps: state.apps.map((a) => (a.packageName === packageName ? {...a, screenshot} : a)),
+    }))
+  },
+
+  setInstalledLmas: (_installedLmas: ClientAppletInterface[]) => {
+    // set({localMiniApps: installedLmas})
+  },
+}))
+
+// Re-evaluate app compatibility when default_wearable changes
+// This fixes the bug where switching devices leaves apps greyed out with stale compatibility
+useSettingsStore.subscribe(
+  (state) => state.getSetting(SETTINGS.default_wearable.key),
+  (defaultWearable) => {
+    const apps = useAppletStatusStore.getState().apps
+    if (apps.length === 0) return
+
+    const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+    let changed = false
+    const updatedApps = apps.map((applet) => {
+      const result = HardwareCompatibility.checkCompatibility(applet.hardwareRequirements, capabilities)
+      if (result.isCompatible !== applet.compatibility?.isCompatible) {
+        changed = true
+      }
+      return {...applet, compatibility: result}
+    })
+
+    if (changed) {
+      useAppletStatusStore.setState({apps: updatedApps})
+    }
+  },
+)
+
+export const useApplets = () => useAppletStatusStore((state) => state.apps)
+export const useStartApplet = () => useAppletStatusStore((state) => state.startApplet)
+export const useStopApplet = () => useAppletStatusStore((state) => state.stopApplet)
+export const useRefreshApplets = () => useAppletStatusStore((state) => state.refreshApplets)
+export const useStopAllApplets = () => useAppletStatusStore((state) => state.stopAllApplets)
+export const useInactiveForegroundApps = () => {
+  const apps = useApplets()
+  const [isOffline] = useSetting(SETTINGS.offline_mode.key)
+  return useMemo(() => {
+    if (isOffline) {
+      return apps.filter((app) => (app.type === "standard" || app.type === "background") && !app.running && app.offline)
+    }
+    return apps.filter((app) => (app.type === "standard" || app.type === "background" || !app.type) && !app.running)
+  }, [apps, isOffline])
+}
+export const useForegroundApps = () => {
+  const apps = useApplets()
+  const [isOffline] = useSetting(SETTINGS.offline_mode.key)
+  return useMemo(() => {
+    if (isOffline) {
+      return apps.filter((app) => (app.type === "standard" || app.type === "background" || !app.type) && app.offline)
+    }
+    return apps.filter((app) => app.type === "standard" || app.type === "background" || !app.type)
+  }, [apps, isOffline])
+}
+
+export const useActiveApps = () => {
+  const apps = useApplets()
+  return useMemo(() => apps.filter((app) => app.running), [apps])
+}
+
+export const useActiveBackgroundApps = () => {
+  const apps = useApplets()
+  return useMemo(() => apps.filter((app) => app.type === "background" && app.running), [apps])
+}
+
+export const useBackgroundApps = () => {
+  const apps = useApplets()
+  return useMemo(
+    () => ({
+      active: apps.filter((app) => app.type === "background" && app.running),
+      inactive: apps.filter((app) => app.type === "background" && !app.running),
+    }),
+    [apps],
+  )
+}
+
+export const useActiveForegroundApp = () => {
+  const apps = useApplets()
+  return useMemo(() => apps.find((app) => (app.type === "standard" || !app.type) && app.running) || null, [apps])
+}
+
+export const useActiveBackgroundAppsCount = () => {
+  const apps = useApplets()
+  return useMemo(() => apps.filter((app) => app.type === "background" && app.running).length, [apps])
+}
+
+export const useIncompatibleApps = () => {
+  const apps = useApplets()
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+
+  return useMemo(() => {
+    // if no default wearable, return all apps:
+    if (!defaultWearable) {
+      return apps
+    }
+    // otherwise, return only incompatible apps:
+    return apps.filter((app) => !app.compatibility?.isCompatible)
+  }, [apps, defaultWearable])
+}
+
+export const useLocalMiniApps = () => {
+  return useAppletStatusStore.getState().apps.filter((app) => app.local)
+}
+
+export const useActiveAppPackageNames = () =>
+  useAppletStatusStore(useShallow((state) => state.apps.filter((app) => app.running).map((a) => a.packageName)))
+
+// export const useIncompatibleApps = async () => {
+//   const apps = useApplets()
+//   const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
+
+//   const capabilities: Capabilities | null = await getCapabilitiesForModel(defaultWearable)
+//   if (!capabilities) {
+//     console.error("Failed to fetch capabilities")
+//     return []
+//   }
+
+//   return useMemo(() => {
+//     return apps.filter((app) => {
+//       let result = HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities)
+//       return !result.isCompatible
+//     })
+//   }, [apps])
+// }
+
+// export const useFilteredApps = async () => {
+//   const apps = useApplets()
+//   const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
+
+//   const capabilities: Capabilities | null = getCapabilitiesForModel(defaultWearable)
+//   if (!capabilities) {
+//     console.error("Failed to fetch capabilities")
+//     throw new Error("Failed to fetch capabilities")
+//   }
+
+//   return useMemo(() => {
+//     return {
+
+//     })
+//   }, [apps])
+// }
