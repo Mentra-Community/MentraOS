@@ -1,17 +1,14 @@
-import {AppletInterface, DeviceTypes, getModelCapabilities, HardwareRequirementLevel, HardwareType} from "@/types"
+import {AppletInterface, HardwareType} from "@/types"
 import {useMemo} from "react"
-import {Platform} from "react-native"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
-import * as Sentry from "@sentry/react-native"
 
 import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
-import {BackgroundTimer} from "@/utils/timers"
 import {storage} from "@/utils/storage"
-import {useShallow} from "zustand/react/shallow"
 import composer from "@/services/Composer"
 
-export interface ClientAppletInterface extends AppletInterface {
+// runtime state of an applet:
+export interface ClientApp extends AppletInterface {
   offline: boolean
   offlineRoute: string
   compatibility?: CompatibilityResult
@@ -29,19 +26,19 @@ export interface ClientAppletInterface extends AppletInterface {
 }
 
 interface AppStatusState {
-  apps: ClientAppletInterface[]
+  apps: ClientApp[]
   refresh: () => Promise<void>
-  start: (applet: ClientAppletInterface) => Promise<void>
+  start: (applet: ClientApp) => Promise<void>
   stop: (packageName: string) => Promise<void>
   stopAll: () => AsyncResult<void, Error>
   saveScreenshot: (packageName: string, screenshot: string) => Promise<void>
-  setInstalledLmas: (installedLmas: ClientAppletInterface[]) => void
+  setInstalledLmas: (installedLmas: ClientApp[]) => void
   setHiddenStatus: (packageName: string, status: boolean) => void
   getHiddenStatus: (packageName: string) => boolean
   uninstallApplet: (packageName: string) => Promise<void>
 }
 
-export const DUMMY_APPLET: ClientAppletInterface = {
+export const DUMMY_APPLET: ClientApp = {
   packageName: "",
   name: "",
   webviewUrl: "",
@@ -108,7 +105,7 @@ const getRawPackageNamePriority = (pkg: string) => {
   return 0
 }
 
-export const sortAppsByPackageNamePriority = (a: ClientAppletInterface, b: ClientAppletInterface): number => {
+export const sortAppsByPackageNamePriority = (a: ClientApp, b: ClientApp): number => {
   const pa = getRawPackageNamePriority(a.packageName)
   const pb = getRawPackageNamePriority(b.packageName)
   if (pa !== pb) {
@@ -118,7 +115,7 @@ export const sortAppsByPackageNamePriority = (a: ClientAppletInterface, b: Clien
   return a.name.localeCompare(b.name)
 }
 
-const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> => {
+const startStopApplet = (applet: ClientApp, status: boolean): AsyncResult<void, Error> => {
   // await useSettingsStore.getState().setSetting(packageName, status)
   return Res.try_async(async () => {
     let packageName = applet.packageName
@@ -141,7 +138,7 @@ const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncR
   })
 }
 
-export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
+export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
 
   refresh: async () => {
@@ -149,11 +146,11 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     console.log(`APPLETS: refreshApplets()`)
 
     // merge in the offline apps:
-    let applets: ClientAppletInterface[] = [...(await composer.getLocalApplets())]
+    let applets: ClientApp[] = [...(await composer.getApps())]
 
     
     // add in any existing screenshots:
-    let oldApplets = useAppletStatusStore.getState().apps
+    let oldApplets = useAppStatusStore.getState().apps
     oldApplets.forEach((app) => {
       if (app.screenshot) {
         for (const applet of applets) {
@@ -196,7 +193,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     set({apps: applets})
   },
 
-  start: async (applet: ClientAppletInterface) => {
+  start: async (applet: ClientApp) => {
     const packageName = applet.packageName
     const applet = get().apps.find((a) => a.packageName === packageName)
 
@@ -368,7 +365,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     }))
   },
 
-  setInstalledLmas: (_installedLmas: ClientAppletInterface[]) => {
+  setInstalledLmas: (_installedLmas: ClientApp[]) => {
     // set({localMiniApps: installedLmas})
   },
 }))
@@ -378,7 +375,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
 // useSettingsStore.subscribe(
 //   (state) => state.getSetting(SETTINGS.default_wearable.key),
 //   (defaultWearable) => {
-//     const apps = useAppletStatusStore.getState().apps
+//     const apps = useAppStatusStore.getState().apps
 //     if (apps.length === 0) return
 
 //     const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
@@ -392,16 +389,16 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
 //     })
 
 //     if (changed) {
-//       useAppletStatusStore.setState({apps: updatedApps})
+//       useAppStatusStore.setState({apps: updatedApps})
 //     }
 //   },
 // )
 
-export const useApplets = () => useAppletStatusStore((state) => state.apps)
-export const useStart = () => useAppletStatusStore((state) => state.start)
-export const useStop = () => useAppletStatusStore((state) => state.stop)
-export const useRefresh = () => useAppletStatusStore((state) => state.refresh)
-export const useStopAll = () => useAppletStatusStore((state) => state.stopAll)
+export const useApplets = () => useAppStatusStore((state) => state.apps)
+export const useStart = () => useAppStatusStore((state) => state.start)
+export const useStop = () => useAppStatusStore((state) => state.stop)
+export const useRefresh = () => useAppStatusStore((state) => state.refresh)
+export const useStopAll = () => useAppStatusStore((state) => state.stopAll)
 // export const useInactiveForegroundApps = () => {
 //   const apps = useApplets()
 //   const [isOffline] = useSetting(SETTINGS.offline_mode.key)
@@ -424,7 +421,7 @@ export const useStopAll = () => useAppletStatusStore((state) => state.stopAll)
 // }
 
 export const useActiveApps = () => {
-  const apps = useApplets()
+  const apps = useApps()
   return useMemo(() => apps.filter((app) => app.running), [apps])
 }
 
@@ -443,8 +440,8 @@ export const useActiveApps = () => {
 // }
 
 // export const useLocalMiniApps = () => {
-//   return useAppletStatusStore.getState().apps.filter((app) => app.local)
+//   return useAppStatusStore.getState().apps.filter((app) => app.local)
 // }
 
 // export const useActiveAppPackageNames = () =>
-//   useAppletStatusStore(useShallow((state) => state.apps.filter((app) => app.running).map((a) => a.packageName)))
+//   useAppStatusStore(useShallow((state) => state.apps.filter((app) => app.running).map((a) => a.packageName)))

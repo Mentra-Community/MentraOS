@@ -1,4 +1,4 @@
-import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import {AppletInterface, AppletPermission} from "@/types"
 import CoreModule from "core"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"

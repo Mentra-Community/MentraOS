@@ -1,4 +1,4 @@
-import {ClientAppletInterface, saveLocalAppRunningState, useAppletStatusStore} from "@/stores/applets"
+import {ClientApp, saveLocalAppRunningState, useAppStatusStore} from "@/stores/apps"
 import {storage} from "@/utils/storage/storage"
 import {printDirectory} from "@/utils/storage/zip"
 import {Directory, Paths, File} from "expo-file-system"
@@ -163,7 +163,7 @@ async function downloadAndInstallMiniApp(url: string) {
 
 // this class manages the on-disk state of installed mini apps
 class Composer {
-  private installedLmas: ClientAppletInterface[] = []
+  private installedLmas: ClientApp[] = []
   private refreshNeeded: boolean = false
 
   private static instance: Composer | null = null
@@ -182,9 +182,8 @@ class Composer {
   // if any mini app needs online or offlline transcriptions, we need to feed them the necessary data
   private async initialize() {
     // update the applets store with the installed mini apps:
-    // useAppletStatusStore.getState().setInstalledLmas(this.installedLmas)
-    // useAppletStatusStore.getState().refreshApplets()
-
+    // useAppStatusStore.getState().setInstalledLmas(this.installedLmas)
+    // useAppStatusStore.getState().refreshApplets()
   }
 
   public async fanOutPcm(bytes: Uint8Array) {
@@ -197,16 +196,16 @@ class Composer {
   }
 
   // download the mini app from the url and unzip it to the app's cache directory/lma/<packageName>
-  public installMiniApp(url: string): AsyncResult<void, Error> {
+  public install(url: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       await downloadAndInstallMiniApp(url)
       console.log("COMPOSER: Downloaded and installed mini app")
       this.refreshNeeded = true
-      await useAppletStatusStore.getState().refreshApplets()
+      await useAppStatusStore.getState().refreshApplets()
     })
   }
 
-  public uninstallMiniApp(packageName: string, version: string): AsyncResult<void, Error> {
+  public uninstall(packageName: string, version: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
       lmaDir.delete()
@@ -217,7 +216,7 @@ class Composer {
         packageDir.delete()
       }
       this.refreshNeeded = true
-      await useAppletStatusStore.getState().refreshApplets()
+      await useAppStatusStore.getState().refreshApplets()
     })
   }
 
@@ -238,7 +237,7 @@ class Composer {
     }
   }
 
-  public getAppletInstalledVersions(packageName: string): string[] {
+  public getInstalledVersions(packageName: string): string[] {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName)
       const lma = lmaDir.list()
@@ -250,14 +249,14 @@ class Composer {
     }
   }
 
-  public async getActiveAppletVersion(packageName: string): Promise<string> {
+  public async getActiveAppVersion(packageName: string): Promise<string> {
     let res = storage.load<string>(`${packageName}_active_version`)
     if (res.is_ok()) {
       return res.value
     }
     // if no active version is set, set it to the latest version:
     // get the versions:
-    let versions = this.getAppletInstalledVersions(packageName)
+    let versions = this.getInstalledVersions(packageName)
     // make sure they are sorted, newest first
     versions.sort((a, b) => semver.rcompare(a, b))
     await this.setActiveAppletVersion(packageName, versions[0])
@@ -281,11 +280,11 @@ class Composer {
     }
   }
   // return {packageName: string, versions: string[]}
-  public getInstalledAppletsInfo(): InstalledLma[] {
+  public getInstalledAppsInfo(): InstalledLma[] {
     const packageNames = this.getPackageNames()
     const appletsInfo: InstalledLma[] = []
     for (const packageName of packageNames) {
-      const versionStrings = this.getAppletInstalledVersions(packageName)
+      const versionStrings = this.getInstalledVersions(packageName)
       const installedVersion: InstalledLma = {packageName, versions: {}}
 
       for (const versionString of versionStrings) {
@@ -298,21 +297,21 @@ class Composer {
     return appletsInfo
   }
 
-  public async getLocalApplets(): Promise<ClientAppletInterface[]> {
+  public async getApps(): Promise<ClientApp[]> {
     if (!this.refreshNeeded && this.installedLmas.length > 0) {
       // return this.installedLmas
       // this is the source of truth for running state:
-      return useAppletStatusStore.getState().apps.filter((a) => a.local)
+      return useAppStatusStore.getState().apps.filter((a) => a.local)
     }
 
     try {
-      const installedLmasInfo = await this.getInstalledAppletsInfo()
+      const installedLmasInfo = await this.getInstalledAppsInfo()
       // console.log("COMPOSER: Installed Lmas Info", installedLmasInfo)
       // use the latest version for now (will be overriddable later via <packageName>_version_key)
       // build the installedLmas array:
-      const lmas: ClientAppletInterface[] = []
+      const lmas: ClientApp[] = []
       for (const lmaInfo of installedLmasInfo) {
-        let versionString = await this.getActiveAppletVersion(lmaInfo.packageName)
+        let versionString = await this.getActiveAppVersion(lmaInfo.packageName)
         let versionInfo = lmaInfo.versions[versionString]
         lmas.push({
           packageName: lmaInfo.packageName,
@@ -346,7 +345,7 @@ class Composer {
     }
   }
 
-  public getLocalMiniAppHtml(packageName: string, version: string): Result<string, Error> {
+  public getAppHtml(packageName: string, version: string): Result<string, Error> {
     return Res.try(() => {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
       const htmlFile = new File(lmaDir, "index.html")
@@ -354,7 +353,7 @@ class Composer {
     })
   }
 
-  // public startStop(applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> {
+  // public startStop(applet: ClientApp, status: boolean): AsyncResult<void, Error> {
   //   return Res.try_async(async () => {})
   // }
 
