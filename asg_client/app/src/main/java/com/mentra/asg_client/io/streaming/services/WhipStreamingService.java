@@ -159,12 +159,25 @@ public class WhipStreamingService extends Service {
   private static final long STATS_INTERVAL_MS = 2000;
   private long mLastVideoBytesSent = 0;
   private long mLastAudioBytesSent = 0;
+  private long mLastStatsSampleAtMs = 0;
+  private long mStatsRequestGeneration = 0;
   private long mStreamStartedAtMs = 0;
   private final Runnable mStatsRunnable = new Runnable() {
     @Override
     public void run() {
       if (mPeerConnection == null) return;
+      final long requestGeneration = ++mStatsRequestGeneration;
       mPeerConnection.getStats(report -> {
+        synchronized (mStateLock) {
+          if (requestGeneration != mStatsRequestGeneration
+              || mStreamState != StreamState.STREAMING
+              || mIsReconnecting
+              || mPeerConnection == null) {
+            Log.d(TAG, "Dropping stale stream stats sample");
+            return;
+          }
+        }
+
         long videoBytesTotal = 0, audioBytesTotal = 0;
         long videoPackets = 0, audioPackets = 0;
         int videoFps = mStreamConfig.getVideoFps();
@@ -191,16 +204,25 @@ public class WhipStreamingService extends Service {
           }
           else if ("audio".equals(kind)) { audioBytesTotal = b; audioPackets = p; }
         }
-        long videoDelta = videoBytesTotal - mLastVideoBytesSent;
-        long audioDelta = audioBytesTotal - mLastAudioBytesSent;
+        long nowMs = System.currentTimeMillis();
+        long elapsedMs = mLastStatsSampleAtMs > 0
+            ? nowMs - mLastStatsSampleAtMs
+            : STATS_INTERVAL_MS;
+        if (elapsedMs <= 0) {
+          elapsedMs = STATS_INTERVAL_MS;
+        }
+
+        long videoDelta = Math.max(0, videoBytesTotal - mLastVideoBytesSent);
+        long audioDelta = Math.max(0, audioBytesTotal - mLastAudioBytesSent);
         mLastVideoBytesSent = videoBytesTotal;
         mLastAudioBytesSent = audioBytesTotal;
-        long videoBitrateBps = videoDelta * 8 * 1000 / STATS_INTERVAL_MS;
+        mLastStatsSampleAtMs = nowMs;
+        long videoBitrateBps = videoDelta * 8 * 1000 / elapsedMs;
         int cpuTempMilli = WhipThermalUtils.readCpuTemperature();
         Log.d(TAG, String.format(
             "↑ video: %d B/s (%d pkts total)  audio: %d B/s (%d pkts total)",
-            videoDelta * 1000 / STATS_INTERVAL_MS, videoPackets,
-            audioDelta * 1000 / STATS_INTERVAL_MS, audioPackets));
+            videoDelta * 1000 / elapsedMs, videoPackets,
+            audioDelta * 1000 / elapsedMs, audioPackets));
         notifyStreamMetrics(
             videoBitrateBps,
             videoFps,
@@ -345,6 +367,10 @@ public class WhipStreamingService extends Service {
     cancelStreamTimeout();
     stopBatteryMonitoring();
     stopThermalMonitoring();
+    mStatsRequestGeneration++;
+    mLastVideoBytesSent = 0;
+    mLastAudioBytesSent = 0;
+    mLastStatsSampleAtMs = 0;
     mStreamStartedAtMs = 0;
     Log.d(TAG, "Stopping WHIP streaming (forReconnect=" + forReconnect + ")");
 
@@ -726,6 +752,8 @@ public class WhipStreamingService extends Service {
             }
             mLastVideoBytesSent = 0;
             mLastAudioBytesSent = 0;
+            mLastStatsSampleAtMs = 0;
+            mStatsRequestGeneration = 0;
             mStreamStartedAtMs = System.currentTimeMillis();
             mMainHandler.postDelayed(mStatsRunnable, STATS_INTERVAL_MS);
             scheduleStreamTimeout(mCurrentStreamId);
