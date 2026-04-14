@@ -585,7 +585,14 @@ public class WhipStreamingService extends Service {
         encoding.maxBitrateBps = mStreamConfig.getVideoBitrate();
       }
 
-      sender.setParameters(params);
+      boolean applied = sender.setParameters(params);
+      if (!applied) {
+        String error = "Failed to apply WHIP bitrate cap: "
+            + (mStreamConfig.getVideoBitrate() / 1000) + " kbps";
+        Log.e(TAG, error);
+        notifyError(error);
+        continue;
+      }
       Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
           + " kbps, degradation: MAINTAIN_FRAMERATE");
     }
