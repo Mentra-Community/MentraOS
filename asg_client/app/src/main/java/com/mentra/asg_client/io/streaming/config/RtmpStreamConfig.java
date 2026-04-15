@@ -37,20 +37,6 @@ public class RtmpStreamConfig {
     public RtmpStreamConfig() {
     }
 
-    public RtmpStreamConfig(RtmpStreamConfig other) {
-        if (other == null) {
-            return;
-        }
-        this.videoWidth = other.videoWidth;
-        this.videoHeight = other.videoHeight;
-        this.videoBitrate = other.videoBitrate;
-        this.videoFps = other.videoFps;
-        this.audioBitrate = other.audioBitrate;
-        this.audioSampleRate = other.audioSampleRate;
-        this.echoCancellation = other.echoCancellation;
-        this.noiseSuppression = other.noiseSuppression;
-    }
-
     /**
      * Parse video and audio config from JSON objects sent by the SDK.
      * Supports both full key names and compact keys for MTU-constrained messages:
