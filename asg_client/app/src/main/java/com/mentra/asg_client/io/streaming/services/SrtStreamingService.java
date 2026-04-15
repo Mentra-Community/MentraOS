@@ -965,11 +965,7 @@ public class SrtStreamingService extends Service {
       Log.i(TAG, "Applied SRT video bitrate: " + (mStreamConfig.getVideoBitrate() / 1000)
           + " kbps");
     } catch (Exception e) {
-      String error = "Failed to apply SRT bitrate update: " + e.getMessage();
-      Log.e(TAG, error, e);
-      if (sStatusCallback != null) {
-        sStatusCallback.onStreamError(error, mCurrentStreamId);
-      }
+      Log.w(TAG, "Failed to apply SRT bitrate update", e);
     }
   }
 

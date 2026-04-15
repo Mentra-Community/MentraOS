@@ -1550,11 +1550,7 @@ public class RtmpStreamingService extends Service {
             Log.i(TAG, "Applied RTMP video bitrate: " + (mStreamConfig.getVideoBitrate() / 1000)
                 + " kbps");
         } catch (Exception e) {
-            String error = "Failed to apply RTMP bitrate update: " + e.getMessage();
-            Log.e(TAG, error, e);
-            if (sStatusCallback != null) {
-                sStatusCallback.onStreamError(error, mCurrentStreamId);
-            }
+            Log.w(TAG, "Failed to apply RTMP bitrate update", e);
         }
     }
 
