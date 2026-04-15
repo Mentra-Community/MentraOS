@@ -89,9 +89,6 @@ public class WhipStreamingService extends Service {
   private static final String TAG = "WhipStreamingService";
   private static final String CHANNEL_ID = "WhipStreamingChannel";
   private static final int NOTIFICATION_ID = 8891;
-  // Keep telemetry active, but let test builds disable bitrate throttling without
-  // removing the temperature-control code path entirely.
-  private static volatile boolean sThermalBitrateThrottlingEnabled = false;
 
   // Static instance so static helper methods can reach the running service
   private static WhipStreamingService sInstance;
