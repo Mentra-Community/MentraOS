@@ -43,4 +43,27 @@ public class UvcSinkFactoryPolicyTest {
     FrameSink sink = factory.create(config, null);
     Assert.assertEquals("FileSink", sink.getName());
   }
+
+  @Test
+  public void v4l2SinkUsesResolvedPathOverConfigPath() {
+    UvcSinkFactory factory = new UvcSinkFactory(false);
+    UvcConfig config = new UvcConfig.Builder()
+        .setSinkType(SinkType.V4L2)
+        .setDevicePath("/dev/video0")
+        .build();
+
+    FrameSink sink = factory.create(config, "/dev/video3");
+    Assert.assertEquals("V4l2Sink", sink.getName());
+  }
+
+  @Test
+  public void v4l2SinkFallsBackToDefaultPathWhenBothNull() {
+    UvcSinkFactory factory = new UvcSinkFactory(false);
+    UvcConfig config = new UvcConfig.Builder()
+        .setSinkType(SinkType.V4L2)
+        .build();
+
+    FrameSink sink = factory.create(config, null);
+    Assert.assertEquals("V4l2Sink", sink.getName());
+  }
 }

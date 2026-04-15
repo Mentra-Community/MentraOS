@@ -2,13 +2,16 @@ package com.mentra.asg_client.io.uvc.core;
 
 import com.mentra.asg_client.io.uvc.model.UvcConfig;
 import com.mentra.asg_client.io.uvc.model.UvcState;
+import com.mentra.asg_client.io.uvc.sink.FrameSink;
 import com.mentra.asg_client.io.uvc.sink.SinkType;
 import com.mentra.asg_client.io.uvc.sink.UvcSinkFactory;
+import com.mentra.asg_client.io.uvc.sink.V4l2Sink;
 
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 
 public class UvcBridgeManagerTest {
@@ -133,6 +136,97 @@ public class UvcBridgeManagerTest {
     manager.stop();
   }
 
+  @Test
+  public void startWithV4l2SinkWritesToTempFile() throws Exception {
+    File tmp = Files.createTempFile("uvc-v4l2-manager", ".raw").toFile();
+    try {
+      UvcSinkFactory factory = new UvcSinkFactory(false) {
+        @Override
+        public FrameSink create(UvcConfig config, String resolvedDevicePath) {
+          return new V4l2Sink(tmp.getAbsolutePath());
+        }
+      };
+
+      UvcBridgeManager manager = new UvcBridgeManager(factory, new UvcDeviceLocator());
+      UvcConfig config = new UvcConfig.Builder()
+          .setSinkType(SinkType.V4L2)
+          .setDevicePath(tmp.getAbsolutePath())
+          .setFps(25)
+          .build();
+
+      Assert.assertTrue("Manager should start with V4L2 sink", manager.start(config));
+      Thread.sleep(200);
+      manager.stop();
+
+      UvcBridgeManager.MetricsSnapshot snapshot = manager.getMetricsSnapshot();
+      Assert.assertTrue("writtenFrames should be > 0 with V4L2 sink", snapshot.writtenFrames > 0);
+      Assert.assertTrue("Temp file should have content", tmp.length() > 0);
+      Assert.assertEquals(UvcState.IDLE, manager.getState());
+    } finally {
+      tmp.delete();
+    }
+  }
+
+  @Test
+  public void v4l2SinkWriteFailureTransitionsToError() throws Exception {
+    UvcSinkFactory factory = new UvcSinkFactory(false) {
+      @Override
+      public FrameSink create(UvcConfig config, String resolvedDevicePath) {
+        return new FailingV4l2Sink();
+      }
+    };
+
+    UvcBridgeManager manager = new UvcBridgeManager(factory, new UvcDeviceLocator());
+    UvcConfig config = new UvcConfig.Builder()
+        .setSinkType(SinkType.V4L2)
+        .setDevicePath("/dev/video0")
+        .setFps(30)
+        .build();
+
+    Assert.assertTrue("Manager should start (sink opens fine)", manager.start(config));
+    Thread.sleep(150);
+
+    UvcBridgeManager.MetricsSnapshot snapshot = manager.getMetricsSnapshot();
+    Assert.assertEquals("State should be ERROR after write failure", UvcState.ERROR, snapshot.state);
+    Assert.assertEquals("frame_write_failed", snapshot.lastErrorCode);
+
+    manager.stop();
+  }
+
+  @Test
+  public void previewGateIsCallerControlledNotDebugFlag() throws Exception {
+    UvcSinkFactory productionFactory = new UvcSinkFactory(false) {
+      @Override
+      public FrameSink create(UvcConfig config, String resolvedDevicePath) {
+        try {
+          File tmp = Files.createTempFile("uvc-preview-gate", ".raw").toFile();
+          tmp.deleteOnExit();
+          return new V4l2Sink(tmp.getAbsolutePath());
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      }
+    };
+
+    UvcBridgeManager manager = new UvcBridgeManager(productionFactory, new UvcDeviceLocator());
+    UvcConfig config = new UvcConfig.Builder()
+        .setSinkType(SinkType.V4L2)
+        .setProducerMode(com.mentra.asg_client.io.uvc.model.UvcProducerMode.SYNTHETIC)
+        .setPreviewEnabled(true)
+        .build();
+
+    Assert.assertTrue("Manager should start", manager.start(config));
+    Thread.sleep(150);
+
+    UvcBridgeManager.PreviewFrameSnapshot preview = manager.getPreviewFrameSnapshot();
+    Assert.assertNotNull(
+        "Preview snapshot should be non-null when previewEnabled=true (DEBUG gate removed)",
+        preview);
+    Assert.assertTrue("Preview bytes should not be empty", preview.jpegBytes.length > 0);
+
+    manager.stop();
+  }
+
   private void deleteRecursively(File file) {
     if (file == null || !file.exists()) {
       return;
@@ -156,6 +250,27 @@ public class UvcBridgeManagerTest {
     @Override
     protected boolean isCameraBusy() {
       return true;
+    }
+  }
+
+  private static class FailingV4l2Sink implements FrameSink {
+    @Override
+    public void open(UvcConfig config) {
+      // opens fine
+    }
+
+    @Override
+    public void writeFrame(long frameIndex, long timestampNs, byte[] payload) throws IOException {
+      throw new IOException("Simulated V4L2 write failure (EINVAL)");
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public String getName() {
+      return "FailingV4l2Sink";
     }
   }
 }

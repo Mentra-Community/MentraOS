@@ -121,9 +121,9 @@ public class UvcConfig {
   }
 
   public static class Builder {
-    private int fps = 15;
-    private int width = 640;
-    private int height = 480;
+    private int fps = 30;
+    private int width = 1280;
+    private int height = 720;
     private SinkType sinkType = SinkType.NULL;
     private boolean allowTestSinks = false;
     private String outputDirectory = null;

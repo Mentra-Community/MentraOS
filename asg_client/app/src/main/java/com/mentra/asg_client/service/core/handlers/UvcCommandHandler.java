@@ -56,9 +56,9 @@ public class UvcCommandHandler implements ICommandHandler {
 
   private boolean handleStart(JSONObject data) {
     String sink = data != null ? data.optString("sink", "NULL") : "NULL";
-    int fps = data != null ? data.optInt("fps", 15) : 15;
-    int width = data != null ? data.optInt("width", 640) : 640;
-    int height = data != null ? data.optInt("height", 480) : 480;
+    int fps = data != null ? data.optInt("fps", 30) : 30;
+    int width = data != null ? data.optInt("width", 1280) : 1280;
+    int height = data != null ? data.optInt("height", 720) : 720;
     String producerMode = data != null ? data.optString("producer_mode", "CAMERA2") : "CAMERA2";
     boolean previewEnabled = data != null && data.optBoolean("preview_enabled", true);
     boolean allowTestSinks = data != null && data.optBoolean("allow_test_sinks", true);
@@ -132,6 +132,7 @@ public class UvcCommandHandler implements ICommandHandler {
         data.put("last_frame_ts_ns", snapshot.lastFrameTimestampNs);
         data.put("last_error_code", snapshot.lastErrorCode);
         data.put("last_error_message", snapshot.lastErrorMessage);
+        data.put("usb_host_connected", snapshot.usbHostConnected);
         response.put("data", data);
       }
       return communicationManager.sendBluetoothResponse(response);

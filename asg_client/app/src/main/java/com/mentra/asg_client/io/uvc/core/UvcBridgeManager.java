@@ -1,9 +1,9 @@
 package com.mentra.asg_client.io.uvc.core;
 
 import android.content.Context;
+import android.hardware.usb.UsbManager;
 import android.util.Log;
 
-import com.mentra.asg_client.BuildConfig;
 import com.mentra.asg_client.camera.CameraNeo;
 import com.mentra.asg_client.io.uvc.model.UvcConfig;
 import com.mentra.asg_client.io.uvc.model.UvcProducerMode;
@@ -144,7 +144,24 @@ public class UvcBridgeManager {
         activeSink != null ? activeSink.getName() : "none",
         activeProducer != null ? activeProducer.getName() : "none",
         lastErrorCode,
-        lastErrorMessage);
+        lastErrorMessage,
+        isUsbHostConnected());
+  }
+
+  protected boolean isUsbHostConnected() {
+    if (context == null) {
+      return false;
+    }
+    try {
+      UsbManager usbManager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
+      if (usbManager == null) {
+        return false;
+      }
+      return !usbManager.getDeviceList().isEmpty();
+    } catch (Exception e) {
+      logWarn("Could not read USB host connection state: " + e.getMessage());
+      return false;
+    }
   }
 
   public PreviewFrameSnapshot getPreviewFrameSnapshot() {
@@ -254,13 +271,7 @@ public class UvcBridgeManager {
   }
 
   private boolean shouldPublishPreview() {
-    if (activeConfig == null || !activeConfig.isPreviewEnabled()) {
-      return false;
-    }
-    if (!BuildConfig.DEBUG && !activeConfig.isAllowTestSinks()) {
-      return false;
-    }
-    return true;
+    return activeConfig != null && activeConfig.isPreviewEnabled();
   }
 
   protected boolean isCameraBusy() {
@@ -281,6 +292,7 @@ public class UvcBridgeManager {
     public final String producerName;
     public final String lastErrorCode;
     public final String lastErrorMessage;
+    public final boolean usbHostConnected;
 
     public MetricsSnapshot(
         long producedFrames,
@@ -291,7 +303,8 @@ public class UvcBridgeManager {
         String sinkName,
         String producerName,
         String lastErrorCode,
-        String lastErrorMessage) {
+        String lastErrorMessage,
+        boolean usbHostConnected) {
       this.producedFrames = producedFrames;
       this.writtenFrames = writtenFrames;
       this.droppedFrames = droppedFrames;
@@ -301,6 +314,7 @@ public class UvcBridgeManager {
       this.producerName = producerName;
       this.lastErrorCode = lastErrorCode;
       this.lastErrorMessage = lastErrorMessage;
+      this.usbHostConnected = usbHostConnected;
     }
   }
 
