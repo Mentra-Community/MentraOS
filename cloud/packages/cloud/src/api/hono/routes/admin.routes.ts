@@ -58,6 +58,11 @@ app.post("/apps/:packageName/reject", validateAdminEmail, rejectApp);
 app.get("/memory/now", validateAdminEmail, getMemorySnapshot);
 app.post("/memory/heap-snapshot", validateAdminEmail, takeHeapSnapshotHandler);
 
+// Heap profiler sampling routes (allocation timeline)
+app.post("/memory/sampling/start", validateAdminEmail, startHeapSamplingHandler);
+app.post("/memory/sampling/stop", validateAdminEmail, stopHeapSamplingHandler);
+app.get("/memory/sampling/status", validateAdminEmail, getHeapSamplingStatusHandler);
+
 // Bun-native heap snapshot — returns JSON directly (loadable in Chrome DevTools → Memory → Load).
 // Lighter than the Node inspector-based POST version above.
 // Save response as .heapsnapshot file, then load in Chrome DevTools Memory tab.
@@ -508,6 +513,113 @@ async function getMemorySnapshot(c: AppContext) {
     logger.error(error, "Error generating memory telemetry snapshot");
     return c.json({ error: "Failed to generate memory telemetry snapshot" }, 500);
   }
+}
+
+// Module-level state for the heap profiler sampling session
+let heapSamplingSession: inspector.Session | null = null;
+let heapSamplingStartedAt: Date | null = null;
+
+/**
+ * POST /api/admin/memory/sampling/start
+ * Start heap profiler allocation-timeline sampling.
+ * Accepts optional { samplingInterval } body (bytes between samples, default 32768).
+ * Load the .heapprofile from /stop in Chrome DevTools → Memory → Load.
+ */
+async function startHeapSamplingHandler(c: AppContext) {
+  if (heapSamplingSession) {
+    return c.json({ error: "Heap sampling is already running" }, 400);
+  }
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { samplingInterval } = body as { samplingInterval?: number };
+
+    await new Promise<void>((resolve, reject) => {
+      const session = new inspector.Session();
+      try {
+        session.connect();
+        session.post("HeapProfiler.enable", (err) => {
+          if (err) {
+            session.disconnect();
+            return reject(err);
+          }
+          session.post("HeapProfiler.startSampling", { samplingInterval }, (err2) => {
+            if (err2) {
+              session.disconnect();
+              return reject(err2);
+            }
+            heapSamplingSession = session;
+            heapSamplingStartedAt = new Date();
+            resolve();
+          });
+        });
+      } catch (err) {
+        try {
+          session.disconnect();
+        } catch {
+          /* ignore */
+        }
+        reject(err);
+      }
+    });
+
+    return c.json({
+      message: "Heap sampling started",
+      startedAt: heapSamplingStartedAt!.toISOString(),
+    });
+  } catch (error) {
+    logger.error(error, "Error starting heap sampling");
+    return c.json({ error: "Failed to start heap sampling" }, 500);
+  }
+}
+
+/**
+ * POST /api/admin/memory/sampling/stop
+ * Stop heap profiler sampling and stream the .heapprofile directly as a download.
+ * Load in Chrome DevTools → Memory → Load to view the allocation timeline.
+ */
+async function stopHeapSamplingHandler(c: AppContext) {
+  if (!heapSamplingSession) {
+    return c.json({ error: "Heap sampling is not running" }, 400);
+  }
+
+  const session = heapSamplingSession;
+  heapSamplingSession = null;
+  heapSamplingStartedAt = null;
+
+  try {
+    const profile = await new Promise<any>((resolve, reject) => {
+      session.post("HeapProfiler.stopSampling", (err, result: any) => {
+        session.post("HeapProfiler.disable");
+        session.disconnect();
+        if (err) return reject(err);
+        resolve(result.profile);
+      });
+    });
+
+    const filename = `heap-sample-${Date.now()}.heapprofile`;
+    return new Response(JSON.stringify(profile), {
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  } catch (error) {
+    logger.error(error, "Error stopping heap sampling");
+    return c.json({ error: "Failed to stop heap sampling" }, 500);
+  }
+}
+
+/**
+ * GET /api/admin/memory/sampling/status
+ * Check whether heap sampling is currently active.
+ */
+async function getHeapSamplingStatusHandler(c: AppContext) {
+  return c.json({
+    running: heapSamplingSession !== null,
+    startedAt: heapSamplingStartedAt?.toISOString() ?? null,
+    durationMs: heapSamplingStartedAt ? Date.now() - heapSamplingStartedAt.getTime() : null,
+  });
 }
 
 /**
